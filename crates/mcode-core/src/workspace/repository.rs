@@ -330,6 +330,15 @@ impl ThreadRepo {
         Ok(affected > 0)
     }
 
+    pub fn update_worktree_path(conn: &Connection, id: &Uuid, worktree_path: &str) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let affected = conn.execute(
+            "UPDATE threads SET worktree_path = ?1, updated_at = ?2 WHERE id = ?3",
+            params![worktree_path, now, id.to_string()],
+        )?;
+        Ok(affected > 0)
+    }
+
     pub fn soft_delete(conn: &Connection, id: &Uuid) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let affected = conn.execute(

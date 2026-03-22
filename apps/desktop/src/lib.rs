@@ -194,6 +194,11 @@ pub fn run() {
                             if count == 1 { " is" } else { "s are" }
                         );
 
+                        // Clone the tokio handle for use inside the dialog
+                        // callback, which runs on a non-tokio thread where
+                        // Handle::current() would panic.
+                        let rt_for_callback = rt.clone();
+
                         // Show confirmation dialog via callback
                         handle
                             .dialog()
@@ -208,8 +213,7 @@ pub fn run() {
                                 let handle = handle.clone();
                                 move |confirmed| {
                                     if confirmed {
-                                        let rt = tokio::runtime::Handle::current();
-                                        rt.block_on(state.shutdown());
+                                        rt_for_callback.block_on(state.shutdown());
                                         handle.exit(0);
                                     }
                                 }

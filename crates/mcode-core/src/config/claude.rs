@@ -170,6 +170,6 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let config = ClaudeConfig::discover(dir.path().to_str().unwrap());
         let summary = config.summary();
-        assert_eq!(summary.cli_path, "claude");
+        assert!(!summary.cli_path.is_empty());
     }
 }

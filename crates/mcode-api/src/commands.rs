@@ -82,6 +82,9 @@ impl AppState {
 
         let conn = self.db.lock().await;
         let mut thread = ThreadRepo::create(&conn, workspace_id, title, mode, branch)?;
+        if let Some(ref wt_path) = worktree_path {
+            ThreadRepo::update_worktree_path(&conn, &thread.id, wt_path)?;
+        }
         thread.worktree_path = worktree_path;
         Ok(thread)
     }

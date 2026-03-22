@@ -2,6 +2,21 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
+/// Validate a worktree name to prevent path traversal and other issues.
+fn validate_name(name: &str) -> Result<()> {
+    anyhow::ensure!(!name.is_empty(), "Worktree name cannot be empty");
+    anyhow::ensure!(
+        !name.contains("..")
+            && !name.contains('/')
+            && !name.contains('\\')
+            && !name.starts_with('.'),
+        "Worktree name contains invalid characters: {}",
+        name
+    );
+    anyhow::ensure!(name.len() <= 100, "Worktree name too long (max 100 chars)");
+    Ok(())
+}
+
 /// Manages git worktrees for thread isolation.
 pub struct WorktreeManager;
 
@@ -9,6 +24,8 @@ impl WorktreeManager {
     /// Create a new git worktree for the given name.
     /// Creates a new branch `mcode/<name>` and checks it out in `.mcode-worktrees/<name>`.
     pub fn create(repo_path: &str, name: &str) -> Result<WorktreeInfo> {
+        validate_name(name)?;
+
         let repo_path = Path::new(repo_path);
         anyhow::ensure!(
             repo_path.is_dir(),
@@ -43,14 +60,21 @@ impl WorktreeManager {
         let branch = repo.branch(&branch_name, &head_commit, false)?;
         let branch_ref = branch.into_reference();
 
-        // Create the worktree
-        let worktree = repo
-            .worktree(
-                name,
-                &worktree_dir,
-                Some(git2::WorktreeAddOptions::new().reference(Some(&branch_ref))),
-            )
-            .context("Failed to create worktree")?;
+        // Create the worktree, rolling back the branch on failure
+        let worktree = match repo.worktree(
+            name,
+            &worktree_dir,
+            Some(git2::WorktreeAddOptions::new().reference(Some(&branch_ref))),
+        ) {
+            Ok(wt) => wt,
+            Err(e) => {
+                // Rollback: delete the branch we just created
+                if let Ok(mut branch) = repo.find_branch(&branch_name, git2::BranchType::Local) {
+                    let _ = branch.delete();
+                }
+                return Err(anyhow::anyhow!("Failed to create worktree: {}", e));
+            }
+        };
 
         let worktree_path = worktree.path().to_str().unwrap_or_default().to_string();
 
@@ -70,6 +94,8 @@ impl WorktreeManager {
 
     /// Remove a git worktree by name.
     pub fn remove(repo_path: &str, name: &str) -> Result<bool> {
+        validate_name(name)?;
+
         let repo_path = Path::new(repo_path);
         let repo = git2::Repository::open(repo_path).context("Failed to open git repository")?;
 
