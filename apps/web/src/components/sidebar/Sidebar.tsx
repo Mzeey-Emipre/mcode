@@ -1,6 +1,4 @@
-import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { WorkspaceList } from "./WorkspaceList";
-import { ThreadList } from "./ThreadList";
+import { ProjectTree } from "./ProjectTree";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PanelLeftClose, PanelLeft } from "lucide-react";
 import { useState } from "react";
@@ -8,7 +6,6 @@ import { cn } from "@/lib/utils";
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
-  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
   return (
     <div
@@ -30,22 +27,10 @@ export function Sidebar() {
         </button>
       </div>
 
-      {!collapsed && (
-        <>
-          {/* Workspaces */}
-          <div className="flex-1 overflow-hidden">
-            <WorkspaceList />
-          </div>
+      {/* Project tree */}
+      {!collapsed && <ProjectTree />}
 
-          {/* Threads for active workspace */}
-          {activeWorkspaceId && (
-            <div className="flex-1 overflow-hidden border-t border-border">
-              <ThreadList />
-            </div>
-          )}
-        </>
-      )}
-
+      {/* Settings at bottom - text + icon */}
       {!collapsed && (
         <div className="border-t border-border p-3">
           <SettingsDialog />

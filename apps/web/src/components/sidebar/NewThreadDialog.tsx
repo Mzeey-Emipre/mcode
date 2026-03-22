@@ -50,9 +50,10 @@ export function NewThreadDialog() {
         render={
           <button
             aria-label="New thread"
-            className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent/50 hover:text-foreground"
           >
-            <Plus size={14} />
+            <Plus size={11} />
+            New thread
           </button>
         }
       />
