@@ -1,3 +1,5 @@
+pub mod commands;
+
 pub use mcode_core;
 
 pub fn api_version() -> &'static str {
