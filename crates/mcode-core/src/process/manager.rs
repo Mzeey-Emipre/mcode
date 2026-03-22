@@ -6,10 +6,18 @@ use uuid::Uuid;
 
 use super::provider::{AgentHandle, ClaudeProvider, SpawnConfig};
 
+pub const DEFAULT_MAX_CONCURRENT_AGENTS: usize = 5;
+
 /// Manages running agent processes with concurrency limits.
 pub struct ProcessManager {
     processes: Mutex<HashMap<Uuid, AgentHandle>>,
     max_concurrent: usize,
+}
+
+impl Default for ProcessManager {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_CONCURRENT_AGENTS)
+    }
 }
 
 impl ProcessManager {
@@ -23,6 +31,10 @@ impl ProcessManager {
     /// Spawn a new agent process for the given thread.
     pub async fn spawn(&self, thread_id: Uuid, config: SpawnConfig) -> Result<u32> {
         let mut procs = self.processes.lock().await;
+
+        if procs.contains_key(&thread_id) {
+            anyhow::bail!("Agent already running for thread {}", thread_id);
+        }
 
         if procs.len() >= self.max_concurrent {
             anyhow::bail!(
@@ -41,8 +53,11 @@ impl ProcessManager {
 
     /// Terminate a specific agent process.
     pub async fn terminate(&self, thread_id: &Uuid) -> Result<()> {
-        let mut procs = self.processes.lock().await;
-        if let Some(mut handle) = procs.remove(thread_id) {
+        let handle = {
+            let mut procs = self.processes.lock().await;
+            procs.remove(thread_id)
+        };
+        if let Some(mut handle) = handle {
             handle.terminate().await?;
             info!(thread_id = %thread_id, "Agent terminated");
         } else {
@@ -53,16 +68,17 @@ impl ProcessManager {
 
     /// Terminate all running agent processes. Returns IDs of terminated agents.
     pub async fn terminate_all(&self) -> Vec<Uuid> {
-        let mut procs = self.processes.lock().await;
+        let drained: Vec<(Uuid, AgentHandle)> = {
+            let mut procs = self.processes.lock().await;
+            procs.drain().collect()
+        };
         let mut terminated = Vec::new();
-
-        for (id, mut handle) in procs.drain() {
+        for (id, mut handle) in drained {
             if let Err(e) = handle.terminate().await {
                 warn!(thread_id = %id, error = %e, "Failed to terminate agent");
             }
             terminated.push(id);
         }
-
         info!(count = terminated.len(), "All agents terminated");
         terminated
     }

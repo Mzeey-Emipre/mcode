@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use std::path::Path;
 use std::process::ExitStatus;
 use tokio::io::AsyncBufReadExt;
 use tokio::process::{Child, Command};
@@ -37,6 +38,30 @@ impl ClaudeProvider {
     }
 
     pub fn spawn(config: SpawnConfig) -> Result<AgentHandle> {
+        // Validate session_name
+        anyhow::ensure!(
+            config.session_name.len() <= 255
+                && !config.session_name.is_empty()
+                && config
+                    .session_name
+                    .bytes()
+                    .all(|b| b != 0 && b.is_ascii_graphic()),
+            "invalid session_name: must be 1-255 ASCII printable characters"
+        );
+
+        // Validate cwd
+        let cwd_path = Path::new(&config.cwd);
+        anyhow::ensure!(
+            cwd_path.is_absolute(),
+            "cwd must be an absolute path: {}",
+            config.cwd
+        );
+        anyhow::ensure!(
+            cwd_path.is_dir(),
+            "cwd must be an existing directory: {}",
+            config.cwd
+        );
+
         let mut cmd = Command::new("claude");
         cmd.current_dir(&config.cwd);
         cmd.arg("--output-format").arg("stream-json");
@@ -51,6 +76,7 @@ impl ClaudeProvider {
 
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        cmd.kill_on_drop(true);
 
         info!(
             session = %config.session_name,
@@ -61,7 +87,17 @@ impl ClaudeProvider {
 
         let mut child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
-        let stdout = child.stdout.take().expect("stdout must be piped");
+        let stdout = child.stdout.take().context("Claude stdout was not piped")?;
+        let stderr = child.stderr.take().context("Claude stderr was not piped")?;
+
+        // Drain stderr to prevent child stalls
+        tokio::spawn(async move {
+            let reader = tokio::io::BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                tracing::debug!(stderr = %line, "Claude CLI stderr");
+            }
+        });
 
         let (event_tx, event_rx) = mpsc::channel::<StreamEvent>(512);
 

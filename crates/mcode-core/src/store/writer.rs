@@ -3,7 +3,8 @@ use rusqlite::Connection;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info};
 
-pub enum DbCommand {
+#[allow(dead_code)]
+pub(crate) enum DbCommand {
     Execute {
         sql: String,
         params: Vec<String>,
@@ -17,10 +18,12 @@ pub enum DbCommand {
     Shutdown,
 }
 
-pub struct DbWriter {
+#[allow(dead_code)]
+pub(crate) struct DbWriter {
     sender: mpsc::Sender<DbCommand>,
 }
 
+#[allow(dead_code)]
 impl DbWriter {
     pub fn new(db_path: &str) -> Result<Self> {
         let db_path = db_path.to_string();

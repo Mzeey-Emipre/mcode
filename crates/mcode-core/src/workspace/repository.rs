@@ -36,17 +36,40 @@ impl WorkspaceRepo {
 
         let result = stmt.query_row(params![id.to_string()], |row| {
             Ok(Workspace {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
                 name: row.get(1)?,
                 path: row.get(2)?,
-                provider_config: serde_json::from_str(&row.get::<_, String>(3)?)
-                    .unwrap_or_default(),
+                provider_config: serde_json::from_str(&row.get::<_, String>(3)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
                 created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            4,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
                 updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            5,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
             })
         });
 
@@ -64,17 +87,40 @@ impl WorkspaceRepo {
 
         let result = stmt.query_row(params![path], |row| {
             Ok(Workspace {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
                 name: row.get(1)?,
                 path: row.get(2)?,
-                provider_config: serde_json::from_str(&row.get::<_, String>(3)?)
-                    .unwrap_or_default(),
+                provider_config: serde_json::from_str(&row.get::<_, String>(3)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
                 created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            4,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
                 updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            5,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
             })
         });
 
@@ -92,17 +138,40 @@ impl WorkspaceRepo {
 
         let rows = stmt.query_map([], |row| {
             Ok(Workspace {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
                 name: row.get(1)?,
                 path: row.get(2)?,
-                provider_config: serde_json::from_str(&row.get::<_, String>(3)?)
-                    .unwrap_or_default(),
+                provider_config: serde_json::from_str(&row.get::<_, String>(3)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
                 created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            4,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
                 updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            5,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
             })
         })?;
 
@@ -179,17 +248,35 @@ impl ThreadRepo {
 
         let rows = stmt.query_map(params![workspace_id.to_string()], |row| {
             Ok(Thread {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
-                workspace_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                workspace_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
                 title: row.get(2)?,
-                status: row
-                    .get::<_, String>(3)?
-                    .parse()
-                    .unwrap_or(ThreadStatus::Active),
-                mode: row
-                    .get::<_, String>(4)?
-                    .parse()
-                    .unwrap_or(ThreadMode::Direct),
+                status: row.get::<_, String>(3)?.parse().map_err(|e: String| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        e.into(),
+                    )
+                })?,
+                mode: row.get::<_, String>(4)?.parse().map_err(|e: String| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        e.into(),
+                    )
+                })?,
                 worktree_path: row.get(5)?,
                 branch: row.get(6)?,
                 issue_number: row.get(7)?,
@@ -199,10 +286,22 @@ impl ThreadRepo {
                 pid: row.get(11)?,
                 created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(12)?)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            12,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
                 updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(13)?)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            13,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
                 deleted_at: None,
             })
         })?;
@@ -281,24 +380,61 @@ impl MessageRepo {
 
         let rows = stmt.query_map(params![thread_id.to_string(), limit], |row| {
             Ok(Message {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
-                thread_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
-                role: row
-                    .get::<_, String>(2)?
-                    .parse()
-                    .unwrap_or(MessageRole::User),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                thread_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                role: row.get::<_, String>(2)?.parse().map_err(|e: String| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Text,
+                        e.into(),
+                    )
+                })?,
                 content: row.get(3)?,
                 tool_calls: row
                     .get::<_, Option<String>>(4)?
-                    .and_then(|s| serde_json::from_str(&s).ok()),
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            4,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
                 files_changed: row
                     .get::<_, Option<String>>(5)?
-                    .and_then(|s| serde_json::from_str(&s).ok()),
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            5,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
                 cost_usd: row.get(6)?,
                 tokens_used: row.get(7)?,
                 timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            8,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
                 sequence: row.get(9)?,
             })
         })?;
