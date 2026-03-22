@@ -1,6 +1,6 @@
 {
   "name": "mcode-desktop",
-  "version": "0.2.0",
+  "version": "0.0.1",
   "description": "Mcode AI agent orchestration desktop app",
   "main": "dist/main/index.js",
   "type": "module",
