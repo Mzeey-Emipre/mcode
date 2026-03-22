@@ -68,10 +68,11 @@ export function Composer({ threadId }: ComposerProps) {
   }, [input, isAgentRunning, threadId, sendMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
+    // Shift+Enter allows natural newline
   };
 
   // Auto-resize textarea
@@ -83,161 +84,162 @@ export function Composer({ threadId }: ComposerProps) {
   };
 
   return (
-    <div className="border-t border-border">
-      {/* Textarea */}
-      <div className="px-4 pt-3">
+    <div className="border-t border-border px-4 py-3">
+      {/* Main composer container - dark bg, rounded */}
+      <div className="rounded-xl bg-muted/50 ring-1 ring-border focus-within:ring-primary/50">
+        {/* Textarea */}
         <textarea
           ref={textareaRef}
           value={input}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           placeholder="Ask for follow-up changes or attach images"
-          rows={2}
-          className="w-full resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+          rows={1}
+          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           disabled={isAgentRunning}
         />
-      </div>
 
-      {/* Controls row */}
-      <div className="flex items-center gap-1 px-3 py-1.5">
-        {/* Model picker */}
-        <div className="relative">
+        {/* Controls row - inside the container */}
+        <div className="flex items-center gap-1 px-3 pb-2">
+          {/* Model picker */}
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowModelPicker(!showModelPicker);
+                setShowReasoningPicker(false);
+              }}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Sparkles size={12} className="text-orange-400" />
+              {currentModel.label.replace("Claude ", "")}
+              <ChevronDown size={10} />
+            </button>
+            {showModelPicker && (
+              <div className="absolute bottom-full left-0 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
+                {CLAUDE_MODELS.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setModel(m.id);
+                      setShowModelPicker(false);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
+                      model === m.id
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                    )}
+                  >
+                    <Sparkles size={11} className="text-orange-400" />
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <span className="text-border">|</span>
+
+          {/* Reasoning level */}
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowReasoningPicker(!showReasoningPicker);
+                setShowModelPicker(false);
+              }}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              {reasoning.charAt(0).toUpperCase() + reasoning.slice(1)}
+              <ChevronDown size={10} />
+            </button>
+            {showReasoningPicker && (
+              <div className="absolute bottom-full left-0 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
+                {(["low", "medium", "high"] as const).map((level) => (
+                  <button
+                    key={level}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setReasoning(level);
+                      setShowReasoningPicker(false);
+                    }}
+                    className={cn(
+                      "flex w-full items-center rounded px-3 py-1.5 text-xs capitalize",
+                      reasoning === level
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                    )}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <span className="text-border">|</span>
+
+          {/* Chat / Plan toggle */}
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowModelPicker(!showModelPicker);
-              setShowReasoningPicker(false);
-            }}
+            onClick={() => setMode(mode === "chat" ? "plan" : "chat")}
             className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            <Sparkles size={12} className="text-orange-400" />
-            {currentModel.label.replace("Claude ", "")}
-            <ChevronDown size={10} />
+            {mode === "chat" ? (
+              <>
+                <MessageSquare size={12} />
+                Chat
+              </>
+            ) : (
+              <>
+                <FileEdit size={12} />
+                Plan
+              </>
+            )}
           </button>
-          {showModelPicker && (
-            <div className="absolute bottom-full left-0 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
-              {CLAUDE_MODELS.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setModel(m.id);
-                    setShowModelPicker(false);
-                  }}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                    model === m.id
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                  )}
-                >
-                  <Sparkles size={11} className="text-orange-400" />
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
 
-        <span className="text-border">|</span>
+          <span className="text-border">|</span>
 
-        {/* Reasoning level */}
-        <div className="relative">
+          {/* Full access / Supervised toggle */}
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowReasoningPicker(!showReasoningPicker);
-              setShowModelPicker(false);
-            }}
+            onClick={() => setAccess(access === "full" ? "supervised" : "full")}
             className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            {reasoning.charAt(0).toUpperCase() + reasoning.slice(1)}
-            <ChevronDown size={10} />
+            {access === "full" ? (
+              <>
+                <Unlock size={12} />
+                Full access
+              </>
+            ) : (
+              <>
+                <Lock size={12} />
+                Supervised
+              </>
+            )}
           </button>
-          {showReasoningPicker && (
-            <div className="absolute bottom-full left-0 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
-              {(["low", "medium", "high"] as const).map((level) => (
-                <button
-                  key={level}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setReasoning(level);
-                    setShowReasoningPicker(false);
-                  }}
-                  className={cn(
-                    "flex w-full items-center rounded px-3 py-1.5 text-xs capitalize",
-                    reasoning === level
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                  )}
-                >
-                  {level}
-                </button>
-              ))}
-            </div>
-          )}
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Send button */}
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || isAgentRunning}
+            className={cn(
+              "rounded-full p-1.5 transition-colors",
+              input.trim() && !isAgentRunning
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : "bg-muted text-muted-foreground opacity-40"
+            )}
+          >
+            <ArrowUp size={14} />
+          </button>
         </div>
-
-        <span className="text-border">|</span>
-
-        {/* Chat / Plan toggle */}
-        <button
-          onClick={() => setMode(mode === "chat" ? "plan" : "chat")}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          {mode === "chat" ? (
-            <>
-              <MessageSquare size={12} />
-              Chat
-            </>
-          ) : (
-            <>
-              <FileEdit size={12} />
-              Plan
-            </>
-          )}
-        </button>
-
-        <span className="text-border">|</span>
-
-        {/* Full access / Supervised toggle */}
-        <button
-          onClick={() => setAccess(access === "full" ? "supervised" : "full")}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          {access === "full" ? (
-            <>
-              <Unlock size={12} />
-              Full access
-            </>
-          ) : (
-            <>
-              <Lock size={12} />
-              Supervised
-            </>
-          )}
-        </button>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Send button */}
-        <button
-          onClick={handleSend}
-          disabled={!input.trim() || isAgentRunning}
-          className={cn(
-            "rounded-full p-1.5 transition-colors",
-            input.trim() && !isAgentRunning
-              ? "bg-primary text-primary-foreground hover:bg-primary/90"
-              : "bg-muted text-muted-foreground opacity-40"
-          )}
-        >
-          <ArrowUp size={14} />
-        </button>
       </div>
 
-      {/* Status bar: Local/Worktree + Branch */}
-      <div className="flex items-center justify-between border-t border-border/50 px-3 py-1">
+      {/* Status bar - below the container */}
+      <div className="flex items-center justify-between px-1 pt-1.5">
         <button className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground">
           <FolderOpen size={11} />
           {activeThread?.mode === "worktree" ? "Worktree" : "Local"}

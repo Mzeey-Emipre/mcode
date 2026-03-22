@@ -1,9 +1,11 @@
 import { useEffect, useCallback, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useThreadStore } from "@/stores/threadStore";
 import { isTauri } from "@/transport/tauri";
 import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ContextMenu } from "@/components/ui/context-menu";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay } from "@/lib/thread-status";
 import type { Workspace, Thread } from "@/transport/types";
@@ -21,6 +23,14 @@ function setExpandedState(state: Record<string, boolean>) {
   localStorage.setItem("mcode-expanded-projects", JSON.stringify(state));
 }
 
+interface ContextMenuState {
+  x: number;
+  y: number;
+  threadId: string;
+  threadTitle: string;
+  workspacePath: string;
+}
+
 export function ProjectTree() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -32,10 +42,13 @@ export function ProjectTree() {
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
   const createThread = useWorkspaceStore((s) => s.createThread);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
+  const deleteThread = useWorkspaceStore((s) => s.deleteThread);
   const error = useWorkspaceStore((s) => s.error);
+  const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
   const [isCreating, setIsCreating] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   useEffect(() => {
     loadWorkspaces();
@@ -90,6 +103,20 @@ export function ProjectTree() {
     }
   }, [createWorkspace, setActiveWorkspace, workspaces, isCreating]);
 
+  const handleThreadContextMenu = useCallback(
+    (e: React.MouseEvent, thread: Thread, workspacePath: string) => {
+      e.preventDefault();
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        threadId: thread.id,
+        threadTitle: thread.title,
+        workspacePath,
+      });
+    },
+    []
+  );
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2">
@@ -116,6 +143,7 @@ export function ProjectTree() {
               isActive={activeWorkspaceId === ws.id}
               activeThreadId={activeThreadId}
               threads={activeWorkspaceId === ws.id ? threads : []}
+              runningThreadIds={runningThreadIds}
               onToggle={() => toggleExpand(ws.id)}
               onSelectThread={(id) => setActiveThread(id)}
               onCreateThread={createThread}
@@ -126,6 +154,9 @@ export function ProjectTree() {
                   // Error already set in store
                 }
               }}
+              onThreadContextMenu={(e, thread) =>
+                handleThreadContextMenu(e, thread, ws.path)
+              }
             />
           ))}
 
@@ -148,6 +179,46 @@ export function ProjectTree() {
       {error && (
         <p className="px-3 py-1 text-xs text-destructive">{error}</p>
       )}
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          items={[
+            {
+              label: "Rename thread",
+              onClick: () => {
+                // TODO: implement rename
+              },
+            },
+            {
+              label: "Copy Path",
+              onClick: () => {
+                navigator.clipboard.writeText(contextMenu.workspacePath);
+              },
+            },
+            {
+              label: "Copy Thread ID",
+              onClick: () => {
+                navigator.clipboard.writeText(contextMenu.threadId);
+              },
+            },
+            { label: "", onClick: () => {}, divider: true },
+            {
+              label: "Delete",
+              destructive: true,
+              onClick: async () => {
+                try {
+                  await deleteThread(contextMenu.threadId, false);
+                } catch {
+                  // Error handled in store
+                }
+              },
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }
@@ -160,10 +231,12 @@ interface ProjectNodeProps {
   isActive: boolean;
   activeThreadId: string | null;
   threads: Thread[];
+  runningThreadIds: Set<string>;
   onToggle: () => void;
   onSelectThread: (id: string) => void;
   onCreateThread: (title: string, mode: "direct" | "worktree", branch: string) => Promise<Thread>;
   onDelete: () => void;
+  onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
 }
 
 function ProjectNode({
@@ -172,10 +245,12 @@ function ProjectNode({
   isActive,
   activeThreadId,
   threads,
+  runningThreadIds,
   onToggle,
   onSelectThread,
   onCreateThread,
   onDelete,
+  onThreadContextMenu,
 }: ProjectNodeProps) {
   return (
     <div className="mb-0.5">
@@ -221,7 +296,7 @@ function ProjectNode({
       {isExpanded && (
         <div className="ml-3 border-l border-border/50 pl-2">
           {threads.map((thread) => {
-            const status = getStatusDisplay(thread);
+            const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
             return (
               <div
                 key={thread.id}
@@ -234,6 +309,7 @@ function ProjectNode({
                   }
                 }}
                 onClick={() => onSelectThread(thread.id)}
+                onContextMenu={(e) => onThreadContextMenu(e, thread)}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer",
                   activeThreadId === thread.id
@@ -242,9 +318,11 @@ function ProjectNode({
                 )}
               >
                 <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotClass)} />
-                <span className={cn("shrink-0 text-xs", status.color)}>
-                  {status.label}
-                </span>
+                {status.label && (
+                  <span className={cn("shrink-0 text-xs", status.color)}>
+                    {status.label}
+                  </span>
+                )}
                 <span className="truncate flex-1 text-xs">
                   {thread.title}
                 </span>

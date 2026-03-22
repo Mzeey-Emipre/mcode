@@ -13,6 +13,7 @@ export function ChatView() {
   const clearMessages = useThreadStore((s) => s.clearMessages);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const stopAgent = useThreadStore((s) => s.stopAgent);
+  const messages = useThreadStore((s) => s.messages);
 
   const streamingByThread = useThreadStore((s) => s.streamingByThread);
   const streamingContent = activeThreadId ? (streamingByThread[activeThreadId] ?? "") : "";
@@ -44,6 +45,9 @@ export function ChatView() {
     );
   }
 
+  const hasMessages = messages.length > 0;
+  const showEmptyState = !hasMessages && !isAgentRunning;
+
   return (
     <div className="flex h-full flex-col bg-background">
       {/* Header */}
@@ -65,9 +69,17 @@ export function ChatView() {
         )}
       </div>
 
-      {/* Messages */}
+      {/* Messages or empty state */}
       <div className="flex-1 overflow-hidden">
-        <MessageList />
+        {showEmptyState ? (
+          <div className="flex h-full items-center justify-center">
+            <p className="text-sm text-muted-foreground">
+              Send a message to start the conversation.
+            </p>
+          </div>
+        ) : (
+          <MessageList />
+        )}
       </div>
 
       {/* Streaming content / indicator */}
