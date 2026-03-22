@@ -309,12 +309,12 @@ pub fn run() {
 
                 // Start sidecar and event forwarding on the async runtime
                 let state_for_ready = state.clone();
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     match state.start_sidecar(&sidecar_path).await {
                         Ok(mut event_rx) => {
                             tracing::info!("Sidecar started, forwarding events to frontend");
                             // Forward sidecar events to frontend
-                            tokio::spawn(async move {
+                            tauri::async_runtime::spawn(async move {
                                 while let Some(event) = event_rx.recv().await {
                                     if let Some(sid) = session_id_from_event(&event) {
                                         let thread_id =
