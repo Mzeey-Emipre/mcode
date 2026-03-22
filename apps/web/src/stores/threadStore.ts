@@ -44,11 +44,26 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   },
 
   sendMessage: async (threadId, content) => {
-    // Agent continues running after message is queued, cleared by stopAgent
+    // Add user message to local state immediately (optimistic)
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      thread_id: threadId,
+      role: "user",
+      content,
+      tool_calls: null,
+      files_changed: null,
+      cost_usd: null,
+      tokens_used: null,
+      timestamp: new Date().toISOString(),
+      sequence: get().messages.length + 1,
+    };
+
     set((state) => ({
+      messages: [...state.messages, userMessage],
       runningThreadIds: new Set([...state.runningThreadIds, threadId]),
       error: null,
     }));
+
     try {
       await getTransport().sendMessage(threadId, content);
     } catch (e) {

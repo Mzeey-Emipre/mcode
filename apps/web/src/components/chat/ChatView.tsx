@@ -4,7 +4,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { StreamingIndicator } from "./StreamingIndicator";
-import { Bot, GitBranch, Square } from "lucide-react";
+import { Bot, Square } from "lucide-react";
 
 export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -18,6 +18,7 @@ export function ChatView() {
   const streamingContent = activeThreadId ? (streamingByThread[activeThreadId] ?? "") : "";
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
 
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
   useEffect(() => {
@@ -47,19 +48,11 @@ export function ChatView() {
     <div className="flex h-full flex-col bg-background">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
-        <div>
-          <h2 className="text-sm font-medium text-foreground">
-            {activeThread.title}
-          </h2>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <GitBranch size={10} />
-            <span>{activeThread.branch}</span>
-            {activeThread.mode === "worktree" && (
-              <span className="rounded bg-primary/10 px-1 text-primary">
-                worktree
-              </span>
-            )}
-          </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">New thread</span>
+          <span className="rounded bg-accent px-2 py-0.5 text-xs font-medium text-foreground">
+            {workspaces.find((w) => w.id === activeThread.workspace_id)?.name ?? ""}
+          </span>
         </div>
         {isAgentRunning && activeThreadId && (
           <button

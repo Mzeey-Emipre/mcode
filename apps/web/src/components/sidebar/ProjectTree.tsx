@@ -6,7 +6,6 @@ import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay } from "@/lib/thread-status";
-import { NewThreadDialog } from "./NewThreadDialog";
 import type { Workspace, Thread } from "@/transport/types";
 
 // Persist expand/collapse in localStorage
@@ -31,6 +30,7 @@ export function ProjectTree() {
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
+  const createThread = useWorkspaceStore((s) => s.createThread);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
   const error = useWorkspaceStore((s) => s.error);
 
@@ -118,6 +118,7 @@ export function ProjectTree() {
               threads={activeWorkspaceId === ws.id ? threads : []}
               onToggle={() => toggleExpand(ws.id)}
               onSelectThread={(id) => setActiveThread(id)}
+              onCreateThread={createThread}
               onDelete={async () => {
                 try {
                   await deleteWorkspace(ws.id);
@@ -161,6 +162,7 @@ interface ProjectNodeProps {
   threads: Thread[];
   onToggle: () => void;
   onSelectThread: (id: string) => void;
+  onCreateThread: (title: string, mode: "direct" | "worktree", branch: string) => Promise<Thread>;
   onDelete: () => void;
 }
 
@@ -172,6 +174,7 @@ function ProjectNode({
   threads,
   onToggle,
   onSelectThread,
+  onCreateThread,
   onDelete,
 }: ProjectNodeProps) {
   return (
@@ -261,7 +264,20 @@ function ProjectNode({
           {/* New thread button inside expanded project */}
           {isActive && (
             <div className="mt-0.5 px-1">
-              <NewThreadDialog />
+              <button
+                onClick={async () => {
+                  try {
+                    const thread = await onCreateThread("New thread", "direct", "main");
+                    onSelectThread(thread.id);
+                  } catch (e) {
+                    console.error("Failed to create thread:", e);
+                  }
+                }}
+                className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+              >
+                <Plus size={11} />
+                New thread
+              </button>
             </div>
           )}
         </div>
