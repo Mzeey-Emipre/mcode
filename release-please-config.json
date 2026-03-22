@@ -14,27 +14,12 @@
     { "type": "ci", "section": "CI", "hidden": true }
   ],
   "plugins": [
-    { "type": "cargo-workspace" }
+    { "type": "node-workspace" }
   ],
   "packages": {
-    "crates/mcode-core": {
-      "release-type": "rust",
-      "component": "mcode-core"
-    },
-    "crates/mcode-api": {
-      "release-type": "rust",
-      "component": "mcode-api"
-    },
     "apps/desktop": {
-      "release-type": "rust",
-      "component": "mcode-desktop",
-      "extra-files": [
-        {
-          "type": "json",
-          "path": "tauri.conf.json",
-          "jsonpath": "$.version"
-        }
-      ]
+      "release-type": "node",
+      "component": "mcode-desktop"
     },
     "apps/web": {
       "release-type": "node",

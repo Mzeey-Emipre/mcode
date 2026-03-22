@@ -9,7 +9,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "rebuild": "electron-rebuild -f -w better-sqlite3"
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "dist": "electron-builder --publish never"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.81",
@@ -27,9 +28,32 @@
     "@tailwindcss/vite": "^4.2.2",
     "@vitejs/plugin-react": "^6.0.1",
     "electron": "^35.0.0",
+    "electron-builder": "^25.1.0",
     "electron-vite": "^5.0.0",
     "vite": "^8.0.1",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.8.0"
+  },
+  "build": {
+    "appId": "com.mzeey.mcode",
+    "productName": "Mcode",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": ["nsis", "zip"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Development"
+    }
   }
 }
