@@ -151,8 +151,7 @@ mod tests {
     fn cli_path_respects_env_var() {
         // Test the fallback logic directly without mutating env
         // (set_var/remove_var is unsafe in parallel tests)
-        let default = std::env::var("MCODE_CLAUDE_PATH")
-            .unwrap_or_else(|_| "claude".to_string());
+        let default = std::env::var("MCODE_CLAUDE_PATH").unwrap_or_else(|_| "claude".to_string());
         let dir = TempDir::new().unwrap();
         let config = ClaudeConfig::discover(dir.path().to_str().unwrap());
         assert_eq!(config.cli_path, default);

@@ -2204,6 +2204,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mcode-core",
+ "rusqlite",
  "serde",
  "serde_json",
  "tokio",
@@ -2235,6 +2236,7 @@ dependencies = [
 name = "mcode-desktop"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "mcode-api",
  "serde",
  "serde_json",
@@ -2247,6 +2249,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
