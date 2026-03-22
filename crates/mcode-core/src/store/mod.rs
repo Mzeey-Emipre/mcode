@@ -16,6 +16,11 @@ pub fn run_migrations(db_path: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn run_migrations_on_conn(conn: &mut Connection) -> Result<()> {
+    migrations::runner().run(conn)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
