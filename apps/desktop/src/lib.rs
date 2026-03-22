@@ -59,7 +59,6 @@ async fn create_thread(
     title: String,
     mode: String,
     branch: String,
-    workspace_path: String,
 ) -> Result<String, String> {
     let ws_uuid = uuid::Uuid::parse_str(&workspace_id).map_err(|e| e.to_string())?;
     let thread_mode = match mode.as_str() {
@@ -68,7 +67,7 @@ async fn create_thread(
         other => return Err(format!("Unknown thread mode: {other}")),
     };
     let thread = state
-        .create_thread(&ws_uuid, &title, thread_mode, &branch, &workspace_path)
+        .create_thread(&ws_uuid, &title, thread_mode, &branch)
         .await
         .map_err(|e| e.to_string())?;
     serde_json::to_string(&thread).map_err(|e| e.to_string())
@@ -133,6 +132,21 @@ async fn discover_config(
     serde_json::to_string(&config.summary()).map_err(|e| e.to_string())
 }
 
+// -- Runtime helper --
+
+/// Returns the current tokio runtime handle, or lazily creates a fallback runtime.
+/// This is needed because Tauri's dialog callbacks may run on a non-tokio thread.
+fn get_runtime_handle() -> tokio::runtime::Handle {
+    tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
+        static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+        RT.get_or_init(|| {
+            tokio::runtime::Runtime::new().expect("Failed to create fallback runtime")
+        })
+        .handle()
+        .clone()
+    })
+}
+
 // -- App setup --
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -181,7 +195,7 @@ pub fn run() {
                     let handle = window.app_handle().clone();
 
                     // Check if agents are running
-                    let rt = tokio::runtime::Handle::current();
+                    let rt = get_runtime_handle();
                     let count = rt.block_on(state.active_agent_count());
 
                     if count > 0 {
@@ -193,11 +207,6 @@ pub fn run() {
                              They'll resume when you reopen Mcode.",
                             if count == 1 { " is" } else { "s are" }
                         );
-
-                        // Clone the tokio handle for use inside the dialog
-                        // callback, which runs on a non-tokio thread where
-                        // Handle::current() would panic.
-                        let rt_for_callback = rt.clone();
 
                         // Show confirmation dialog via callback
                         handle
@@ -213,7 +222,10 @@ pub fn run() {
                                 let handle = handle.clone();
                                 move |confirmed| {
                                     if confirmed {
-                                        rt_for_callback.block_on(state.shutdown());
+                                        // Use get_runtime_handle() since the
+                                        // callback may run on a non-tokio thread.
+                                        let rt = get_runtime_handle();
+                                        rt.block_on(state.shutdown());
                                         handle.exit(0);
                                     }
                                 }

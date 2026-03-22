@@ -59,7 +59,6 @@ impl AppState {
         title: &str,
         mode: ThreadMode,
         branch: &str,
-        workspace_path: &str,
     ) -> Result<Thread> {
         // Step 1: Create DB record first (with worktree_path = None)
         let conn = self.db.lock().await;
@@ -68,6 +67,13 @@ impl AppState {
 
         // Step 2: If worktree mode, create worktree on filesystem
         if mode == ThreadMode::Worktree {
+            // Load workspace path from DB (not from caller)
+            let conn = self.db.lock().await;
+            let workspace = WorkspaceRepo::find_by_id(&conn, workspace_id)?
+                .ok_or_else(|| anyhow::anyhow!("Workspace not found: {}", workspace_id))?;
+            let ws_path = workspace.path.clone();
+            drop(conn);
+
             let sanitized_title = title
                 .chars()
                 .map(|c| {
@@ -80,8 +86,11 @@ impl AppState {
                 .collect::<String>()
                 .to_lowercase();
 
-            let ws_path = workspace_path.to_string();
-            let sanitized = sanitized_title.clone();
+            // Append short thread ID suffix to prevent name collisions
+            let short_id = &thread.id.to_string()[..8];
+            let sanitized_with_id = format!("{}-{}", sanitized_title, short_id);
+
+            let sanitized = sanitized_with_id;
             let wt_result =
                 tokio::task::spawn_blocking(move || WorktreeManager::create(&ws_path, &sanitized))
                     .await?;
@@ -90,8 +99,20 @@ impl AppState {
                 Ok(info) => {
                     // Step 3: Update worktree_path in DB
                     let conn = self.db.lock().await;
-                    ThreadRepo::update_worktree_path(&conn, &thread.id, &info.path)?;
-                    thread.worktree_path = Some(info.path);
+                    match ThreadRepo::update_worktree_path(&conn, &thread.id, &info.path) {
+                        Ok(true) => {
+                            thread.worktree_path = Some(info.path);
+                        }
+                        Ok(false) | Err(_) => {
+                            // Rollback: remove worktree from disk and DB row
+                            let _ = std::fs::remove_dir_all(&info.path);
+                            let _ = ThreadRepo::hard_delete(&conn, &thread.id);
+                            return Err(anyhow::anyhow!(
+                                "Failed to persist worktree path for thread {}",
+                                thread.id
+                            ));
+                        }
+                    }
                 }
                 Err(e) => {
                     // Rollback: delete the DB row
@@ -129,6 +150,11 @@ impl AppState {
 
             let thread = ThreadRepo::find_by_id(&conn, thread_id)?
                 .ok_or_else(|| anyhow::anyhow!("Thread not found: {}", thread_id))?;
+
+            // Reject deleted threads
+            if thread.status == ThreadStatus::Deleted || thread.deleted_at.is_some() {
+                anyhow::bail!("Cannot send message to deleted thread: {}", thread_id);
+            }
 
             let workspace = WorkspaceRepo::find_by_id(&conn, &thread.workspace_id)?
                 .ok_or_else(|| anyhow::anyhow!("Workspace not found: {}", thread.workspace_id))?;

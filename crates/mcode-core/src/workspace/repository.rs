@@ -310,7 +310,19 @@ impl ThreadRepo {
                             Box::new(e),
                         )
                     })?,
-                deleted_at: None,
+                deleted_at: row
+                    .get::<_, Option<String>>(14)?
+                    .map(|s| {
+                        chrono::DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc))
+                    })
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            14,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
             })
         })?;
 
@@ -400,7 +412,19 @@ impl ThreadRepo {
                             Box::new(e),
                         )
                     })?,
-                deleted_at: None,
+                deleted_at: row
+                    .get::<_, Option<String>>(14)?
+                    .map(|s| {
+                        chrono::DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc))
+                    })
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            14,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
             })
         });
 
