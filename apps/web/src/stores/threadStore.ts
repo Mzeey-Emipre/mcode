@@ -105,14 +105,119 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   },
 
   handleAgentEvent: (threadId, event) => {
-    const eventType = event.type as string;
+    // Support both old CLI format (event.type) and new sidecar format (event.method)
+    const method = (event.method as string) || "";
+    const eventType = (event.type as string) || "";
+    const params = (event.params as Record<string, unknown>) || event;
 
-    // DEBUG: Log all events to diagnose streaming pipeline
-    console.log("[mcode] agent event:", eventType, "thread:", threadId, "currentThread:", get().currentThreadId, "event:", JSON.stringify(event).slice(0, 200));
+    // -- Sidecar events (new format) --
+
+    if (method === "bridge.crashed") {
+      set({
+        runningThreadIds: new Set(),
+        streamingByThread: {},
+        error: "Agent bridge crashed. Please restart the app.",
+      });
+      return;
+    }
+
+    if (method === "session.message" || (eventType === "session.message")) {
+      const content = (params.content as string) || "";
+      if (content) {
+        const message: Message = {
+          id: (params.messageId as string) || crypto.randomUUID(),
+          thread_id: threadId,
+          role: "assistant",
+          content,
+          tool_calls: null,
+          files_changed: null,
+          cost_usd: null,
+          tokens_used: (params.tokens as number) ?? null,
+          timestamp: new Date().toISOString(),
+          sequence: get().messages.length + 1,
+        };
+        set((state) => ({
+          messages: state.currentThreadId === threadId
+            ? [...state.messages, message]
+            : state.messages,
+        }));
+      }
+      return;
+    }
+
+    if (method === "session.turnComplete" || method === "session.ended") {
+      const costUsd = (params.costUsd as number) ?? null;
+      const tokensIn = (params.totalTokensIn as number) ?? 0;
+      const tokensOut = (params.totalTokensOut as number) ?? 0;
+
+      // Commit any remaining streaming content
+      const streamContent = get().streamingByThread[threadId] ?? "";
+      if (streamContent) {
+        const message: Message = {
+          id: crypto.randomUUID(),
+          thread_id: threadId,
+          role: "assistant",
+          content: streamContent,
+          tool_calls: null,
+          files_changed: null,
+          cost_usd: costUsd,
+          tokens_used: tokensIn + tokensOut || null,
+          timestamp: new Date().toISOString(),
+          sequence: get().messages.length + 1,
+        };
+        set((state) => {
+          const nextStreaming = { ...state.streamingByThread };
+          delete nextStreaming[threadId];
+          const nextRunning = new Set(state.runningThreadIds);
+          nextRunning.delete(threadId);
+          return {
+            messages: state.currentThreadId === threadId
+              ? [...state.messages, message]
+              : state.messages,
+            streamingByThread: nextStreaming,
+            runningThreadIds: nextRunning,
+          };
+        });
+      } else {
+        set((state) => {
+          const nextRunning = new Set(state.runningThreadIds);
+          nextRunning.delete(threadId);
+          const nextStreaming = { ...state.streamingByThread };
+          delete nextStreaming[threadId];
+          return { runningThreadIds: nextRunning, streamingByThread: nextStreaming };
+        });
+      }
+      return;
+    }
+
+    if (method === "session.error") {
+      const errorMsg = (params.error as string) || "Unknown error";
+      set((state) => {
+        const nextRunning = new Set(state.runningThreadIds);
+        nextRunning.delete(threadId);
+        const nextStreaming = { ...state.streamingByThread };
+        delete nextStreaming[threadId];
+        return { error: errorMsg, runningThreadIds: nextRunning, streamingByThread: nextStreaming };
+      });
+      return;
+    }
+
+    if (method === "session.delta") {
+      const text = (params.text as string) || "";
+      if (text) {
+        set((state) => ({
+          streamingByThread: {
+            ...state.streamingByThread,
+            [threadId]: (state.streamingByThread[threadId] ?? "") + text,
+          },
+        }));
+      }
+      return;
+    }
+
+    // -- Legacy CLI events (backward compatibility) --
 
     if (eventType === "assistant") {
-      // Claude CLI sends the complete response as an "assistant" message
-      // Extract text from message.content array
       const msg = event.message as Record<string, unknown> | undefined;
       if (msg) {
         const contentArr = msg.content as Array<Record<string, unknown>> | undefined;
@@ -156,7 +261,6 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
         }));
       }
     } else if (eventType === "result") {
-      // Agent turn complete: commit any remaining streaming content
       const content = get().streamingByThread[threadId] ?? "";
       if (content) {
         const resultData = (event.result as Record<string, unknown>) ?? {};
@@ -184,7 +288,6 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
         });
       }
     } else if (eventType === "agent_finished") {
-      // Agent process exited
       set((state) => {
         const nextRunning = new Set(state.runningThreadIds);
         nextRunning.delete(threadId);

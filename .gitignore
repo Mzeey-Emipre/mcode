@@ -5,6 +5,9 @@ target/
 apps/web/node_modules/
 apps/web/dist/
 
+# Sidecar
+apps/sidecar/node_modules/
+
 # Environment
 .env
 .env.local

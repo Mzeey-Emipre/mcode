@@ -1,13 +1,14 @@
 use anyhow::Result;
 use mcode_core::config::claude::ClaudeConfig;
 use mcode_core::process::manager::ProcessManager;
-use mcode_core::process::provider::SpawnConfig;
+use mcode_core::process::sidecar::Sidecar;
 use mcode_core::store::models::{
     Message, MessageRole, Thread, ThreadMode, ThreadStatus, Workspace,
 };
 use mcode_core::workspace::repository::{MessageRepo, ThreadRepo, WorkspaceRepo};
 use mcode_core::worktree::WorktreeManager;
 use rusqlite::Connection;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -17,6 +18,8 @@ use uuid::Uuid;
 pub struct AppState {
     pub process_manager: ProcessManager,
     pub db: Arc<Mutex<Connection>>,
+    pub sidecar: Mutex<Option<Sidecar>>,
+    pub sidecar_ready: AtomicBool,
 }
 
 impl AppState {
@@ -31,7 +34,22 @@ impl AppState {
         Ok(Self {
             process_manager: ProcessManager::default(),
             db: Arc::new(Mutex::new(conn)),
+            sidecar: Mutex::new(None),
+            sidecar_ready: AtomicBool::new(false),
         })
+    }
+
+    /// Start the Node.js sidecar process. Returns the event receiver for forwarding
+    /// sidecar events to the frontend.
+    pub async fn start_sidecar(
+        &self,
+        script_path: &str,
+    ) -> Result<tokio::sync::mpsc::Receiver<mcode_core::process::sidecar::SidecarEvent>> {
+        let (sidecar, event_rx) = Sidecar::start(script_path).await?;
+        let mut guard = self.sidecar.lock().await;
+        *guard = Some(sidecar);
+        info!(script = %script_path, "Sidecar started and stored in AppState");
+        Ok(event_rx)
     }
 
     // -- Workspace commands --
@@ -140,7 +158,17 @@ impl AppState {
 
     pub async fn delete_thread(&self, thread_id: &Uuid, cleanup_worktree: bool) -> Result<bool> {
         // Stop any running agent before deleting
-        if self.process_manager.is_running(thread_id).await {
+        let session_id = format!("mcode-{}", thread_id);
+        let has_sidecar = {
+            let guard = self.sidecar.lock().await;
+            if let Some(sidecar) = guard.as_ref() {
+                let _ = sidecar.stop_session(&session_id).await;
+                true
+            } else {
+                false
+            }
+        };
+        if !has_sidecar && self.process_manager.is_running(thread_id).await {
             self.process_manager.terminate(thread_id).await?;
         }
 
@@ -165,13 +193,26 @@ impl AppState {
 
     // -- Agent commands --
 
-    pub async fn send_message(&self, thread_id: &Uuid, content: &str) -> Result<u32> {
-        // Fix 8: Guard double-spawn race before any DB writes
-        if self.process_manager.is_running(thread_id).await {
-            anyhow::bail!("Agent is already running for this thread");
+    pub async fn send_message(
+        &self,
+        thread_id: &Uuid,
+        content: &str,
+        permission_mode: &str,
+    ) -> Result<()> {
+        // Wait for sidecar to be ready (poll with timeout)
+        if !self.sidecar_ready.load(Ordering::Acquire) {
+            for _ in 0..50 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if self.sidecar_ready.load(Ordering::Acquire) {
+                    break;
+                }
+            }
+            if !self.sidecar_ready.load(Ordering::Acquire) {
+                anyhow::bail!("Sidecar not ready. Please wait a moment and try again.");
+            }
         }
 
-        // Fix 1: Load thread from DB to get workspace_id, then load workspace path
+        // Load thread from DB to get workspace_id, then load workspace path
         let (session_name, cwd, is_resume) = {
             let conn = self.db.lock().await;
 
@@ -209,40 +250,64 @@ impl AppState {
             (session_name, cwd, has_messages)
         };
 
-        // Spawn the agent process
-        let config = SpawnConfig {
-            session_name,
-            prompt: content.to_string(),
-            cwd,
-            resume: is_resume,
-        };
+        // Re-validate cwd before passing to sidecar
+        let cwd_path = std::path::Path::new(&cwd);
+        anyhow::ensure!(
+            cwd_path.is_absolute() && cwd_path.is_dir(),
+            "cwd is not a valid absolute directory: {}",
+            cwd
+        );
 
-        match self.process_manager.spawn(*thread_id, config).await {
-            Ok(pid) => {
-                info!(thread_id = %thread_id, pid = pid, "Agent started");
-                Ok(pid)
-            }
-            Err(e) => {
-                // Rollback: revert thread status since spawn failed
-                let conn = self.db.lock().await;
-                let _ = ThreadRepo::update_status(&conn, thread_id, &ThreadStatus::Paused);
-                tracing::error!(thread_id = %thread_id, error = %e, "Agent spawn failed, reverted status");
-                Err(e)
+        // Send via sidecar
+        {
+            let guard = self.sidecar.lock().await;
+            let sidecar = guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Sidecar not started"))?;
+
+            match sidecar
+                .send_message(
+                    &session_name,
+                    content,
+                    &cwd,
+                    "claude-sonnet-4-6",
+                    is_resume,
+                    permission_mode,
+                )
+                .await
+            {
+                Ok(_request_id) => {
+                    info!(thread_id = %thread_id, session = %session_name, "Message sent via sidecar");
+                    Ok(())
+                }
+                Err(e) => {
+                    drop(guard);
+                    // Rollback: revert thread status since send failed
+                    let conn = self.db.lock().await;
+                    let _ = ThreadRepo::update_status(&conn, thread_id, &ThreadStatus::Paused);
+                    tracing::error!(thread_id = %thread_id, error = %e, "Sidecar send failed, reverted status");
+                    Err(e)
+                }
             }
         }
     }
 
-    /// Take the event receiver for a thread's agent process.
-    /// Returns None if the thread has no running agent or events were already taken.
-    pub async fn take_events(
-        &self,
-        thread_id: &Uuid,
-    ) -> Option<tokio::sync::mpsc::Receiver<mcode_core::process::stream::StreamEvent>> {
-        self.process_manager.take_events(thread_id).await
-    }
-
     pub async fn stop_agent(&self, thread_id: &Uuid) -> Result<()> {
-        self.process_manager.terminate(thread_id).await?;
+        let session_id = format!("mcode-{}", thread_id);
+
+        // Try sidecar first, fall back to process manager
+        let has_sidecar = {
+            let guard = self.sidecar.lock().await;
+            if let Some(sidecar) = guard.as_ref() {
+                sidecar.stop_session(&session_id).await?;
+                true
+            } else {
+                false
+            }
+        };
+        if !has_sidecar {
+            self.process_manager.terminate(thread_id).await?;
+        }
 
         let conn = self.db.lock().await;
         ThreadRepo::update_status(&conn, thread_id, &ThreadStatus::Paused)?;
@@ -271,9 +336,18 @@ impl AppState {
     pub async fn shutdown(&self) -> Vec<Uuid> {
         let terminated = self.process_manager.terminate_all().await;
 
+        // Shut down the sidecar process
+        {
+            let mut guard = self.sidecar.lock().await;
+            if let Some(mut sidecar) = guard.take() {
+                if let Err(e) = sidecar.shutdown().await {
+                    tracing::error!(error = %e, "Failed to shut down sidecar");
+                }
+            }
+        }
+
         let conn = self.db.lock().await;
         for id in &terminated {
-            // Fix 6: Log error instead of silencing
             if let Err(e) = ThreadRepo::update_status(&conn, id, &ThreadStatus::Interrupted) {
                 tracing::error!(thread_id = %id, error = %e, "Failed to mark thread interrupted on shutdown");
             }

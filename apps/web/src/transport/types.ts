@@ -55,7 +55,7 @@ export interface McodeTransport {
   deleteThread(threadId: string, cleanupWorktree: boolean): Promise<boolean>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string): Promise<number>;
+  sendMessage(threadId: string, content: string): Promise<void>;
   stopAgent(threadId: string): Promise<void>;
   getActiveAgentCount(): Promise<number>;
 

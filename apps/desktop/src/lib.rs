@@ -1,4 +1,6 @@
 use mcode_api::commands::AppState;
+use mcode_api::mcode_core::process::sidecar::SidecarEvent;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
@@ -75,9 +77,9 @@ async fn create_thread(
     if branch.is_empty() || branch.len() > 250 {
         return Err("Branch name must be 1-250 characters".into());
     }
-    let has_invalid_chars = branch.chars().any(|c| {
-        matches!(c, ' ' | '\t' | '~' | '^' | ':' | '?' | '*' | '[' | '\\')
-    });
+    let has_invalid_chars = branch
+        .chars()
+        .any(|c| matches!(c, ' ' | '\t' | '~' | '^' | ':' | '?' | '*' | '[' | '\\'));
     if has_invalid_chars || branch.starts_with('-') || branch.contains("..") {
         return Err("Branch name contains invalid characters".into());
     }
@@ -110,40 +112,19 @@ async fn delete_thread(
 #[tauri::command]
 async fn send_message(
     state: tauri::State<'_, Arc<AppState>>,
-    app: tauri::AppHandle,
     thread_id: String,
     content: String,
-) -> Result<u32, String> {
+    permission_mode: Option<String>,
+) -> Result<(), String> {
     let uuid = uuid::Uuid::parse_str(&thread_id).map_err(|e| e.to_string())?;
-    let pid = state
-        .send_message(&uuid, &content)
+    let mode = permission_mode.as_deref().unwrap_or("default");
+    state
+        .send_message(&uuid, &content, mode)
         .await
         .map_err(|e| e.to_string())?;
 
-    // Start streaming events from the agent to the frontend
-    let events = state.take_events(&uuid).await;
-    if let Some(mut rx) = events {
-        let app_handle = app.clone();
-        let tid = thread_id.clone();
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let payload = serde_json::json!({
-                    "thread_id": tid,
-                    "event": event,
-                });
-                let _ = app_handle.emit_to("main", "agent-event", payload);
-            }
-            // Agent process finished
-            let _ = app_handle.emit_to("main", "agent-event", serde_json::json!({
-                "thread_id": tid,
-                "event": { "type": "agent_finished" },
-            }));
-        });
-    } else {
-        tracing::warn!(thread_id = %thread_id, "No event stream available for thread");
-    }
-
-    Ok(pid)
+    // Events are forwarded by the sidecar event loop started in setup
+    Ok(())
 }
 
 #[tauri::command]
@@ -248,6 +229,38 @@ fn get_runtime_handle() -> tokio::runtime::Handle {
     })
 }
 
+// -- Sidecar path resolution --
+
+/// Resolve the path to the sidecar script.
+/// In dev mode, resolve relative to the cargo workspace root.
+fn resolve_sidecar_path() -> String {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let workspace_root = std::path::Path::new(manifest_dir)
+        .parent() // apps
+        .and_then(|p| p.parent()) // workspace root
+        .expect("Could not find workspace root");
+
+    workspace_root
+        .join("apps")
+        .join("sidecar")
+        .join("claude-bridge.mjs")
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Extract the session ID from a sidecar event, if present.
+fn session_id_from_event(event: &SidecarEvent) -> Option<&str> {
+    match event {
+        SidecarEvent::Message { session_id, .. }
+        | SidecarEvent::Delta { session_id, .. }
+        | SidecarEvent::TurnComplete { session_id, .. }
+        | SidecarEvent::Error { session_id, .. }
+        | SidecarEvent::Ended { session_id, .. }
+        | SidecarEvent::System { session_id, .. } => Some(session_id.as_str()),
+        SidecarEvent::BridgeReady { .. } => None,
+    }
+}
+
 // -- App setup --
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -288,6 +301,62 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
         .manage(app_state.clone())
+        .setup({
+            let state = app_state.clone();
+            move |app| {
+                let app_handle = app.handle().clone();
+                let sidecar_path = resolve_sidecar_path();
+
+                // Start sidecar and event forwarding on the async runtime
+                let state_for_ready = state.clone();
+                tokio::spawn(async move {
+                    match state.start_sidecar(&sidecar_path).await {
+                        Ok(mut event_rx) => {
+                            tracing::info!("Sidecar started, forwarding events to frontend");
+                            // Forward sidecar events to frontend
+                            tokio::spawn(async move {
+                                while let Some(event) = event_rx.recv().await {
+                                    if let Some(sid) = session_id_from_event(&event) {
+                                        let thread_id =
+                                            sid.strip_prefix("mcode-").unwrap_or(sid).to_string();
+                                        let payload = serde_json::json!({
+                                            "thread_id": thread_id,
+                                            "event": serde_json::to_value(&event)
+                                                .unwrap_or_default(),
+                                        });
+                                        let _ = app_handle.emit_to("main", "agent-event", payload);
+                                    } else {
+                                        // BridgeReady
+                                        state_for_ready
+                                            .sidecar_ready
+                                            .store(true, Ordering::Release);
+                                        tracing::info!("Sidecar bridge ready");
+                                    }
+                                }
+                                // Sidecar event stream ended unexpectedly
+                                tracing::error!("Sidecar event stream ended unexpectedly");
+                                let _ = app_handle.emit_to(
+                                    "main",
+                                    "agent-event",
+                                    serde_json::json!({
+                                        "thread_id": "",
+                                        "event": {
+                                            "method": "bridge.crashed",
+                                            "params": {}
+                                        }
+                                    }),
+                                );
+                            });
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "Failed to start sidecar");
+                        }
+                    }
+                });
+
+                Ok(())
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_version,
             list_workspaces,

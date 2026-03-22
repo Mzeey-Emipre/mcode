@@ -40,7 +40,6 @@ export function App() {
   useEffect(() => {
     const handleEvent = useThreadStore.getState().handleAgentEvent;
     startListening((event) => {
-      console.log("[mcode] raw event received:", JSON.stringify(event).slice(0, 300));
       handleEvent(event.thread_id, event.event);
     });
     return () => stopListening();

@@ -46,7 +46,7 @@ export function createTauriTransport(): McodeTransport {
     },
 
     async sendMessage(threadId, content) {
-      return invoke<number>("send_message", { threadId, content });
+      await invoke<void>("send_message", { threadId, content });
     },
 
     async stopAgent(threadId) {
