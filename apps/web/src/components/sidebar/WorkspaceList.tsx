@@ -79,7 +79,10 @@ export function WorkspaceList() {
               tabIndex={0}
               aria-pressed={activeWorkspaceId === ws.id}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
+                if (
+                  (e.key === "Enter" || e.key === " ") &&
+                  e.target === e.currentTarget
+                ) {
                   e.preventDefault();
                   setActiveWorkspace(ws.id);
                 }
@@ -96,9 +99,13 @@ export function WorkspaceList() {
               <span className="truncate flex-1">{ws.name}</span>
               <button
                 aria-label={`Delete ${ws.name}`}
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
-                  deleteWorkspace(ws.id);
+                  try {
+                    await deleteWorkspace(ws.id);
+                  } catch {
+                    // Error already set in store and rendered below
+                  }
                 }}
                 className="opacity-0 rounded p-0.5 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
               >
