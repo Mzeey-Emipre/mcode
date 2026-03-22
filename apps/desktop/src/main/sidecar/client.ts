@@ -76,6 +76,12 @@ export class SidecarClient extends EventEmitter {
       permissionMode: isBypass ? ("bypassPermissions" as const) : ("default" as const),
       ...(isBypass ? { allowDangerouslySkipPermissions: true } : {}),
       abortController,
+      // Load CLAUDE.md, skills, hooks, and settings from user + project config
+      settingSources: ["user" as const, "project" as const, "local" as const],
+      // Activate Claude Code system prompt so the agent respects slash commands and conventions
+      systemPrompt: { type: "preset" as const, preset: "claude_code" as const },
+      // Enable Claude Code tools (Read, Write, Edit, Bash, Glob, Grep, Agent, etc.)
+      tools: { type: "preset" as const, preset: "claude_code" as const },
     };
 
     try {
