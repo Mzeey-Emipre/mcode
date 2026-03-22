@@ -18,7 +18,9 @@ export function App() {
       key: "k",
       ctrl: true,
       description: "Open command palette",
-      handler: () => console.log("Command palette (placeholder)"),
+      handler: () => {
+        // TODO: command palette
+      },
     });
 
     const unregEscape = registerShortcut({

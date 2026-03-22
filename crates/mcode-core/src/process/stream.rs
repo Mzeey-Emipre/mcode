@@ -191,4 +191,38 @@ mod tests {
         let line = r#"{"type":"unknown_future_type","data":"something"}"#;
         assert!(parse_stream_line(line).is_none());
     }
+
+    #[test]
+    fn parse_malformed_json_does_not_crash() {
+        // Various malformed inputs that should return None, not panic
+        assert!(parse_stream_line("{invalid json").is_none());
+        assert!(parse_stream_line(r#"{"type": "unknown_type"}"#).is_none());
+        assert!(parse_stream_line("just plain text").is_none());
+        assert!(parse_stream_line(r#"{"partial":"#).is_none());
+        assert!(parse_stream_line("").is_none());
+        assert!(parse_stream_line("null").is_none());
+        assert!(parse_stream_line("[]").is_none());
+    }
+
+    #[test]
+    fn parse_tool_use_content_block() {
+        let line = r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_123","name":"Read","input":{"file_path":"/tmp/test.rs"}}}"#;
+        let event = parse_stream_line(line).unwrap();
+        match event {
+            StreamEvent::ContentBlockStart {
+                index,
+                content_block,
+            } => {
+                assert_eq!(index, 0);
+                match content_block {
+                    ContentBlock::ToolUse { id, name, .. } => {
+                        assert_eq!(id, "toolu_123");
+                        assert_eq!(name, "Read");
+                    }
+                    _ => panic!("Expected ToolUse content block"),
+                }
+            }
+            _ => panic!("Expected ContentBlockStart event"),
+        }
+    }
 }

@@ -8,7 +8,7 @@ interface ThreadState {
   loading: boolean;
   error: string | null;
   currentThreadId: string | null;
-  streamingContent: string;
+  streamingByThread: Record<string, string>;
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
@@ -26,7 +26,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   loading: false,
   error: null,
   currentThreadId: null,
-  streamingContent: "",
+  streamingByThread: {},
 
   loadMessages: async (threadId) => {
     set({ loading: true, error: null, currentThreadId: threadId });
@@ -81,7 +81,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   },
 
   clearMessages: () => {
-    set({ messages: [], error: null, streamingContent: "" });
+    set({ messages: [], error: null, streamingByThread: {} });
     // Note: does NOT reset runningThreadIds - agents may still be running
   },
 
@@ -95,13 +95,17 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     if (eventType === "content_block_delta") {
       const delta = event.delta as Record<string, unknown> | undefined;
       if (delta && delta.type === "text_delta") {
+        const text = (delta.text as string) || "";
         set((state) => ({
-          streamingContent: state.streamingContent + ((delta.text as string) || ""),
+          streamingByThread: {
+            ...state.streamingByThread,
+            [threadId]: (state.streamingByThread[threadId] ?? "") + text,
+          },
         }));
       }
     } else if (eventType === "result") {
       // Agent turn complete: commit streaming content as a message
-      const content = get().streamingContent;
+      const content = get().streamingByThread[threadId] ?? "";
       if (content) {
         const resultData = (event.result as Record<string, unknown>) ?? {};
         const message: Message = {
@@ -116,17 +120,25 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           timestamp: new Date().toISOString(),
           sequence: get().messages.length + 1,
         };
-        set((state) => ({
-          messages: [...state.messages, message],
-          streamingContent: "",
-        }));
+        set((state) => {
+          const next = { ...state.streamingByThread };
+          delete next[threadId];
+          return {
+            messages: state.currentThreadId === threadId
+              ? [...state.messages, message]
+              : state.messages,
+            streamingByThread: next,
+          };
+        });
       }
     } else if (eventType === "agent_finished") {
       // Agent process exited
       set((state) => {
-        const next = new Set(state.runningThreadIds);
-        next.delete(threadId);
-        return { runningThreadIds: next, streamingContent: "" };
+        const nextRunning = new Set(state.runningThreadIds);
+        nextRunning.delete(threadId);
+        const nextStreaming = { ...state.streamingByThread };
+        delete nextStreaming[threadId];
+        return { runningThreadIds: nextRunning, streamingByThread: nextStreaming };
       });
     }
   },

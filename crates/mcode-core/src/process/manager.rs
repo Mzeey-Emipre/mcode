@@ -135,4 +135,18 @@ mod tests {
         let terminated = manager.terminate_all().await;
         assert!(terminated.is_empty());
     }
+
+    #[tokio::test]
+    async fn take_events_returns_none_for_unknown_thread() {
+        let manager = ProcessManager::default();
+        let unknown_id = Uuid::new_v4();
+        assert!(manager.take_events(&unknown_id).await.is_none());
+    }
+
+    // NOTE: Testing that `take_events` returns `None` on a second call for
+    // the same thread requires inserting an `AgentHandle` into the process map.
+    // `AgentHandle` has no public constructor; it can only be created via
+    // `ClaudeProvider::spawn`, which requires the `claude` CLI binary.
+    // This "consumed on second call" behavior (the `Option::take` semantics)
+    // is covered by integration tests that spawn a real agent process.
 }

@@ -14,7 +14,8 @@ export function ChatView() {
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const stopAgent = useThreadStore((s) => s.stopAgent);
 
-  const streamingContent = useThreadStore((s) => s.streamingContent);
+  const streamingByThread = useThreadStore((s) => s.streamingByThread);
+  const streamingContent = activeThreadId ? (streamingByThread[activeThreadId] ?? "") : "";
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
 
   const activeThread = threads.find((t) => t.id === activeThreadId);

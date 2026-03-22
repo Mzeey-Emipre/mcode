@@ -71,6 +71,17 @@ async fn create_thread(
     branch: String,
 ) -> Result<String, String> {
     let ws_uuid = uuid::Uuid::parse_str(&workspace_id).map_err(|e| e.to_string())?;
+    // Validate branch name
+    if branch.is_empty() || branch.len() > 250 {
+        return Err("Branch name must be 1-250 characters".into());
+    }
+    let has_invalid_chars = branch.chars().any(|c| {
+        matches!(c, ' ' | '\t' | '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+    });
+    if has_invalid_chars || branch.starts_with('-') || branch.contains("..") {
+        return Err("Branch name contains invalid characters".into());
+    }
+
     let thread_mode = match mode.as_str() {
         "worktree" => mcode_api::mcode_core::store::models::ThreadMode::Worktree,
         "direct" => mcode_api::mcode_core::store::models::ThreadMode::Direct,
@@ -120,14 +131,16 @@ async fn send_message(
                     "thread_id": tid,
                     "event": event,
                 });
-                let _ = app_handle.emit("agent-event", payload);
+                let _ = app_handle.emit_to("main", "agent-event", payload);
             }
             // Agent process finished
-            let _ = app_handle.emit("agent-event", serde_json::json!({
+            let _ = app_handle.emit_to("main", "agent-event", serde_json::json!({
                 "thread_id": tid,
                 "event": { "type": "agent_finished" },
             }));
         });
+    } else {
+        tracing::warn!(thread_id = %thread_id, "No event stream available for thread");
     }
 
     Ok(pid)
@@ -181,6 +194,10 @@ fn get_log_path() -> Result<String, String> {
 
 #[tauri::command]
 fn get_recent_logs(lines: usize) -> Result<String, String> {
+    const MAX_LINES: usize = 1000;
+    const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
+    let lines = lines.min(MAX_LINES);
+
     let log_dir = dirs::home_dir()
         .ok_or_else(|| "Could not find home directory".to_string())?
         .join(".mcode")
@@ -203,6 +220,12 @@ fn get_recent_logs(lines: usize) -> Result<String, String> {
     let latest = entries
         .first()
         .ok_or_else(|| "No log files found".to_string())?;
+
+    let meta = std::fs::metadata(latest.path()).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_FILE_BYTES {
+        return Err("Log file exceeds 10MB, please check ~/.mcode/logs/ directly".into());
+    }
+
     let content = std::fs::read_to_string(latest.path()).map_err(|e| e.to_string())?;
 
     // Return last N lines

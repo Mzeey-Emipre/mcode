@@ -14,20 +14,33 @@ export function NewThreadDialog() {
   const [title, setTitle] = useState("");
   const [mode, setMode] = useState<"direct" | "worktree">("direct");
   const [branch, setBranch] = useState("main");
+  const [error, setError] = useState<string | null>(null);
   const createThread = useWorkspaceStore((s) => s.createThread);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
 
   const handleCreate = async () => {
     if (!title.trim()) return;
+    if (!branch.trim()) {
+      setError("Branch name is required");
+      return;
+    }
+    // Validate branch characters
+    const invalidBranch = /[\s~^:?*[\\]|\.\./.test(branch) || branch.startsWith("-");
+    if (invalidBranch) {
+      setError("Branch name contains invalid characters");
+      return;
+    }
+    setError(null);
     try {
-      const thread = await createThread(title.trim(), mode, branch);
+      const thread = await createThread(title.trim(), mode, branch.trim());
       setActiveThread(thread.id);
       setOpen(false);
       setTitle("");
       setMode("direct");
       setBranch("main");
     } catch (e) {
-      console.error("Failed to create thread:", e);
+      setError(String(e));
+      // Keep dialog open so user can fix
     }
   };
 
@@ -90,6 +103,10 @@ export function NewThreadDialog() {
               className="rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
+
+          {error && (
+            <p className="text-xs text-destructive">{error}</p>
+          )}
 
           <button
             onClick={handleCreate}
