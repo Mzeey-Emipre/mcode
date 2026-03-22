@@ -25,22 +25,26 @@ impl DbWriter {
     pub fn new(db_path: &str) -> Result<Self> {
         let db_path = db_path.to_string();
         let (tx, mut rx) = mpsc::channel::<DbCommand>(256);
+        let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<()>>();
 
         std::thread::spawn(move || {
             let conn = match Connection::open(&db_path) {
                 Ok(c) => c,
                 Err(e) => {
                     error!("Failed to open database: {}", e);
+                    let _ = init_tx.send(Err(anyhow::anyhow!("Failed to open database: {}", e)));
                     return;
                 }
             };
 
             if let Err(e) = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;") {
                 error!("Failed to set pragmas: {}", e);
+                let _ = init_tx.send(Err(anyhow::anyhow!("Failed to set pragmas: {}", e)));
                 return;
             }
 
             info!("Database writer started: {}", db_path);
+            let _ = init_tx.send(Ok(()));
 
             while let Some(cmd) = rx.blocking_recv() {
                 match cmd {
@@ -76,6 +80,11 @@ impl DbWriter {
 
             info!("Database writer shut down");
         });
+
+        // Wait for initialization result
+        init_rx
+            .recv()
+            .map_err(|_| anyhow::anyhow!("Database writer thread died during init"))??;
 
         Ok(Self { sender: tx })
     }
