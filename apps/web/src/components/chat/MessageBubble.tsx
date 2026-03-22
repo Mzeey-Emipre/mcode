@@ -1,5 +1,6 @@
 import type { Message } from "@/transport";
 import { Bot } from "lucide-react";
+import { MarkdownContent } from "./MarkdownContent";
 
 interface MessageBubbleProps {
   message: Message;
@@ -26,9 +27,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       </div>
       <div className="flex-1 space-y-2">
         <div className="rounded-xl bg-muted/50 px-4 py-3 text-sm text-foreground">
-          <p className="whitespace-pre-wrap break-words leading-relaxed">
-            {message.content}
-          </p>
+          <MarkdownContent content={message.content} />
         </div>
         {/* Metadata row */}
         <div className="flex items-center gap-3 px-1">

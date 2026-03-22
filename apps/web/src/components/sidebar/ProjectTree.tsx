@@ -1,7 +1,15 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, useRef } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { isTauri } from "@/transport/tauri";
+
+function isElectron(): boolean {
+  return typeof window !== "undefined" && "electronAPI" in window;
+}
+
+function isDesktop(): boolean {
+  return isTauri() || isElectron();
+}
 import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -37,12 +45,14 @@ export function ProjectTree() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const threads = useWorkspaceStore((s) => s.threads);
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
+  const loadThreads = useWorkspaceStore((s) => s.loadThreads);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
-  const createThread = useWorkspaceStore((s) => s.createThread);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
   const deleteThread = useWorkspaceStore((s) => s.deleteThread);
+  const setPendingNewThread = useWorkspaceStore((s) => s.setPendingNewThread);
+  const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const error = useWorkspaceStore((s) => s.error);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
 
@@ -54,6 +64,18 @@ export function ProjectTree() {
     loadWorkspaces();
   }, [loadWorkspaces]);
 
+  // Load threads for workspaces that were expanded in a previous session
+  const didLoadExpandedRef = useRef(false);
+  useEffect(() => {
+    if (workspaces.length === 0 || didLoadExpandedRef.current) return;
+    didLoadExpandedRef.current = true;
+    for (const ws of workspaces) {
+      if (expanded[ws.id]) {
+        loadThreads(ws.id);
+      }
+    }
+  }, [workspaces, expanded, loadThreads]);
+
   // Persist expanded state
   useEffect(() => {
     setExpandedState(expanded);
@@ -61,23 +83,36 @@ export function ProjectTree() {
 
   const toggleExpand = useCallback((wsId: string) => {
     setExpanded((prev) => {
-      const next = { ...prev, [wsId]: !prev[wsId] };
+      const isExpanding = !prev[wsId];
+      const next = { ...prev, [wsId]: isExpanding };
+      if (isExpanding) {
+        // Load threads independently without changing the active workspace
+        loadThreads(wsId);
+      }
       return next;
     });
-    // Load threads if expanding and this workspace is being selected
-    setActiveWorkspace(wsId);
-  }, [setActiveWorkspace]);
+  }, [loadThreads]);
 
   const handleOpenFolder = useCallback(async () => {
-    if (!isTauri() || isCreating) return;
+    if (!isDesktop() || isCreating) return;
     setIsCreating(true);
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "Select a project folder",
-      });
+      let selected: string | null = null;
+
+      if (isElectron()) {
+        selected = await window.electronAPI!.invoke(
+          "show-open-dialog",
+          { title: "Select a project folder" },
+        ) as string | null;
+      } else {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const result = await open({
+          directory: true,
+          multiple: false,
+          title: "Select a project folder",
+        });
+        selected = typeof result === "string" ? result : null;
+      }
 
       if (selected && typeof selected === "string") {
         const existing = workspaces.find((ws) => ws.path === selected);
@@ -142,11 +177,18 @@ export function ProjectTree() {
               isExpanded={expanded[ws.id] ?? false}
               isActive={activeWorkspaceId === ws.id}
               activeThreadId={activeThreadId}
-              threads={activeWorkspaceId === ws.id ? threads : []}
+              threads={threads.filter((t) => t.workspace_id === ws.id)}
               runningThreadIds={runningThreadIds}
               onToggle={() => toggleExpand(ws.id)}
-              onSelectThread={(id) => setActiveThread(id)}
-              onCreateThread={createThread}
+              onSelectThread={(id) => {
+                setActiveWorkspace(ws.id);
+                setActiveThread(id);
+              }}
+              onCreateThread={() => {
+                setActiveWorkspace(ws.id);
+                setPendingNewThread(true);
+                setActiveThread(null);
+              }}
               onDelete={async () => {
                 try {
                   await deleteWorkspace(ws.id);
@@ -189,7 +231,15 @@ export function ProjectTree() {
             {
               label: "Rename thread",
               onClick: () => {
-                // TODO: implement rename
+                const newTitle = window.prompt(
+                  "Rename thread:",
+                  contextMenu.threadTitle
+                );
+                if (newTitle && newTitle.trim() && newTitle !== contextMenu.threadTitle) {
+                  updateThreadTitle(contextMenu.threadId, newTitle.trim()).catch(
+                    (e) => console.error("Failed to rename thread:", e)
+                  );
+                }
               },
             },
             {
@@ -234,7 +284,7 @@ interface ProjectNodeProps {
   runningThreadIds: Set<string>;
   onToggle: () => void;
   onSelectThread: (id: string) => void;
-  onCreateThread: (title: string, mode: "direct" | "worktree", branch: string) => Promise<Thread>;
+  onCreateThread: () => void;
   onDelete: () => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
 }
@@ -333,31 +383,22 @@ function ProjectNode({
             );
           })}
 
-          {threads.length === 0 && isActive && (
+          {threads.length === 0 && (
             <p className="px-2 py-1 text-[11px] text-muted-foreground italic">
               No threads
             </p>
           )}
 
           {/* New thread button inside expanded project */}
-          {isActive && (
-            <div className="mt-0.5 px-1">
-              <button
-                onClick={async () => {
-                  try {
-                    const thread = await onCreateThread("New thread", "direct", "main");
-                    onSelectThread(thread.id);
-                  } catch (e) {
-                    console.error("Failed to create thread:", e);
-                  }
-                }}
-                className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-              >
-                <Plus size={11} />
-                New thread
-              </button>
-            </div>
-          )}
+          <div className="mt-0.5 px-1">
+            <button
+              onClick={onCreateThread}
+              className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+            >
+              <Plus size={11} />
+              New thread
+            </button>
+          </div>
         </div>
       )}
     </div>
