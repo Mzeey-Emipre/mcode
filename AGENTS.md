@@ -5,6 +5,15 @@ Performant AI agent orchestration desktop app built with Rust + Tauri.
 ## Directory Structure
 
 ```text
+apps/
+├── desktop/                # Tauri desktop shell (Rust)
+└── web/                    # React app (shared desktop + web)
+    └── src/
+        ├── app/            # Routes and providers
+        ├── components/     # UI components (sidebar, chat, terminal, diff)
+        ├── stores/         # Zustand state management
+        ├── transport/      # Tauri IPC / WebSocket adapter
+        └── lib/            # Utilities and types
 crates/
 ├── mcode-core/             # Pure Rust library (process mgmt, store, events)
 │   └── src/
@@ -17,14 +26,6 @@ crates/
 ├── mcode-api/              # Adapter layer (commands, events, queries)
 │   └── src/
 └── mcode-server/           # Web server (v0.2+, Axum + WebSocket)
-src-tauri/                  # Tauri desktop shell
-frontend/                   # React app (shared desktop + web)
-├── src/
-│   ├── app/               # Routes and providers
-│   ├── components/        # UI components (sidebar, chat, terminal, diff)
-│   ├── stores/            # Zustand state management
-│   ├── transport/         # Tauri IPC / WebSocket adapter
-│   └── lib/               # Utilities and types
 www/                        # Marketing page (v0.3+)
 docs/plans/                 # Design and planning docs
 ```

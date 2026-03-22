@@ -2,8 +2,8 @@
 target/
 
 # Frontend
-frontend/node_modules/
-frontend/dist/
+apps/web/node_modules/
+apps/web/dist/
 
 # Environment
 .env
