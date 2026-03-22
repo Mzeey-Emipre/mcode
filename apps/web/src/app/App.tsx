@@ -3,7 +3,9 @@ import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatView } from "@/components/chat/ChatView";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useThreadStore } from "@/stores/threadStore";
 import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
+import { startListening, stopListening } from "@/transport/events";
 
 export function App() {
   const theme = useSettingsStore((s) => s.theme);
@@ -16,7 +18,9 @@ export function App() {
       key: "k",
       ctrl: true,
       description: "Open command palette",
-      handler: () => console.log("Command palette (placeholder)"),
+      handler: () => {
+        // TODO: command palette
+      },
     });
 
     const unregEscape = registerShortcut({
@@ -30,6 +34,15 @@ export function App() {
       unregCmdK();
       unregEscape();
     };
+  }, []);
+
+  // Agent event streaming
+  useEffect(() => {
+    const handleEvent = useThreadStore.getState().handleAgentEvent;
+    startListening((event) => {
+      handleEvent(event.thread_id, event.event);
+    });
+    return () => stopListening();
   }, []);
 
   // Apply theme

@@ -1,19 +1,50 @@
 import type { McodeTransport } from "./types";
-import { createTauriTransport, isTauri } from "./tauri";
+import { createElectronTransport } from "./electron";
+import { createTauriTransport } from "./tauri";
 
-export type { McodeTransport, Workspace, Thread, Message } from "./types";
+export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch } from "./types";
 
 let transport: McodeTransport | null = null;
 
+function isElectron(): boolean {
+  return typeof window !== "undefined" && "electronAPI" in window;
+}
+
+function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function createMockTransport(): McodeTransport {
+  return {
+    async getVersion() { return "0.2.0 (dev)"; },
+    async listWorkspaces() { return []; },
+    async createWorkspace() { throw new Error("Mock transport: createWorkspace not available"); },
+    async deleteWorkspace() { return false; },
+    async listThreads() { return []; },
+    async createThread() { throw new Error("Mock transport: createThread not available"); },
+    async deleteThread() { return false; },
+    async listBranches() { return []; },
+    async getCurrentBranch() { return "main"; },
+    async checkoutBranch() {},
+    async sendMessage() {},
+    async stopAgent() {},
+    async getActiveAgentCount() { return 0; },
+    async getMessages() { return []; },
+    async discoverConfig() { return {}; },
+    async createAndSendMessage() { throw new Error("Mock transport: createAndSendMessage not available"); },
+    async updateThreadTitle() { return false; },
+  };
+}
+
 export function getTransport(): McodeTransport {
   if (!transport) {
-    if (isTauri()) {
+    if (isElectron()) {
+      transport = createElectronTransport();
+    } else if (isTauri()) {
       transport = createTauriTransport();
     } else {
-      // Future: createWebSocketTransport() for web version
-      throw new Error(
-        "No transport available. Running outside Tauri without a web server."
-      );
+      console.warn("No Electron or Tauri runtime detected, using mock transport");
+      transport = createMockTransport();
     }
   }
   return transport;

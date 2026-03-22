@@ -1,8 +1,18 @@
-# Rust
-target/
+# Node modules (root + all workspaces)
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Turbo
+.turbo/
+
+# Electron
+apps/desktop/dist/
+apps/desktop/out/
 
 # Frontend
-apps/web/node_modules/
 apps/web/dist/
 
 # Environment
@@ -25,6 +35,11 @@ Thumbs.db
 
 # Worktrees
 .worktrees/
+
+# Playwright
+playwright-report/
+test-results/
+apps/web/e2e/screenshots/
 
 # Logs
 *.log

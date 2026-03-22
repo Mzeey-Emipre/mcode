@@ -8,6 +8,17 @@ vi.mock("@/transport", () => ({
     listWorkspaces: vi.fn().mockResolvedValue([]),
     listThreads: vi.fn().mockResolvedValue([]),
     getMessages: vi.fn().mockResolvedValue([]),
+    sendMessage: vi.fn().mockResolvedValue(undefined),
+    createAndSendMessage: vi.fn().mockResolvedValue({ id: "t1", title: "test", model: null }),
+    updateThreadTitle: vi.fn().mockResolvedValue(true),
+    createWorkspace: vi.fn().mockResolvedValue({}),
+    deleteWorkspace: vi.fn().mockResolvedValue(true),
+    createThread: vi.fn().mockResolvedValue({}),
+    deleteThread: vi.fn().mockResolvedValue(true),
+    stopAgent: vi.fn().mockResolvedValue(undefined),
+    getActiveAgentCount: vi.fn().mockResolvedValue(0),
+    discoverConfig: vi.fn().mockResolvedValue({}),
+    getVersion: vi.fn().mockResolvedValue("0.2.0"),
   }),
 }));
 

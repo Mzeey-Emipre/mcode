@@ -1,0 +1,406 @@
+import { useEffect, useCallback, useState, useRef } from "react";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useThreadStore } from "@/stores/threadStore";
+import { isTauri } from "@/transport/tauri";
+
+function isElectron(): boolean {
+  return typeof window !== "undefined" && "electronAPI" in window;
+}
+
+function isDesktop(): boolean {
+  return isTauri() || isElectron();
+}
+import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ContextMenu } from "@/components/ui/context-menu";
+import { relativeTime } from "@/lib/time";
+import { getStatusDisplay } from "@/lib/thread-status";
+import type { Workspace, Thread } from "@/transport/types";
+
+// Persist expand/collapse in localStorage
+function getExpandedState(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem("mcode-expanded-projects") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function setExpandedState(state: Record<string, boolean>) {
+  localStorage.setItem("mcode-expanded-projects", JSON.stringify(state));
+}
+
+interface ContextMenuState {
+  x: number;
+  y: number;
+  threadId: string;
+  threadTitle: string;
+  workspacePath: string;
+}
+
+export function ProjectTree() {
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const threads = useWorkspaceStore((s) => s.threads);
+  const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
+  const loadThreads = useWorkspaceStore((s) => s.loadThreads);
+  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+  const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
+  const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
+  const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
+  const deleteThread = useWorkspaceStore((s) => s.deleteThread);
+  const setPendingNewThread = useWorkspaceStore((s) => s.setPendingNewThread);
+  const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
+  const error = useWorkspaceStore((s) => s.error);
+  const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
+  const [isCreating, setIsCreating] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+  useEffect(() => {
+    loadWorkspaces();
+  }, [loadWorkspaces]);
+
+  // Load threads for workspaces that were expanded in a previous session
+  const didLoadExpandedRef = useRef(false);
+  useEffect(() => {
+    if (workspaces.length === 0 || didLoadExpandedRef.current) return;
+    didLoadExpandedRef.current = true;
+    for (const ws of workspaces) {
+      if (expanded[ws.id]) {
+        loadThreads(ws.id);
+      }
+    }
+  }, [workspaces, expanded, loadThreads]);
+
+  // Persist expanded state
+  useEffect(() => {
+    setExpandedState(expanded);
+  }, [expanded]);
+
+  const toggleExpand = useCallback((wsId: string) => {
+    setExpanded((prev) => {
+      const isExpanding = !prev[wsId];
+      const next = { ...prev, [wsId]: isExpanding };
+      if (isExpanding) {
+        // Load threads independently without changing the active workspace
+        loadThreads(wsId);
+      }
+      return next;
+    });
+  }, [loadThreads]);
+
+  const handleOpenFolder = useCallback(async () => {
+    if (!isDesktop() || isCreating) return;
+    setIsCreating(true);
+    try {
+      let selected: string | null = null;
+
+      if (isElectron()) {
+        selected = await window.electronAPI!.invoke(
+          "show-open-dialog",
+          { title: "Select a project folder" },
+        ) as string | null;
+      } else {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const result = await open({
+          directory: true,
+          multiple: false,
+          title: "Select a project folder",
+        });
+        selected = typeof result === "string" ? result : null;
+      }
+
+      if (selected && typeof selected === "string") {
+        const existing = workspaces.find((ws) => ws.path === selected);
+        if (existing) {
+          setExpanded((prev) => ({ ...prev, [existing.id]: true }));
+          setActiveWorkspace(existing.id);
+          return;
+        }
+
+        const name = selected
+          .replace(/[\\/]+$/, "")
+          .split(/[\\/]/)
+          .pop() || "Untitled";
+
+        const workspace = await createWorkspace(name, selected);
+        setExpanded((prev) => ({ ...prev, [workspace.id]: true }));
+        setActiveWorkspace(workspace.id);
+      }
+    } catch (e) {
+      console.error("Failed to open folder:", e);
+    } finally {
+      setIsCreating(false);
+    }
+  }, [createWorkspace, setActiveWorkspace, workspaces, isCreating]);
+
+  const handleThreadContextMenu = useCallback(
+    (e: React.MouseEvent, thread: Thread, workspacePath: string) => {
+      e.preventDefault();
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        threadId: thread.id,
+        threadTitle: thread.title,
+        workspacePath,
+      });
+    },
+    []
+  );
+
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2">
+        <span className="text-xs font-medium uppercase text-muted-foreground">
+          Projects
+        </span>
+        <button
+          disabled={isCreating}
+          onClick={handleOpenFolder}
+          aria-label="Open project folder"
+          className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+
+      <ScrollArea className="flex-1">
+        <div className="px-1">
+          {workspaces.map((ws) => (
+            <ProjectNode
+              key={ws.id}
+              workspace={ws}
+              isExpanded={expanded[ws.id] ?? false}
+              isActive={activeWorkspaceId === ws.id}
+              activeThreadId={activeThreadId}
+              threads={threads.filter((t) => t.workspace_id === ws.id)}
+              runningThreadIds={runningThreadIds}
+              onToggle={() => toggleExpand(ws.id)}
+              onSelectThread={(id) => {
+                setActiveWorkspace(ws.id);
+                setActiveThread(id);
+              }}
+              onCreateThread={() => {
+                setActiveWorkspace(ws.id);
+                setPendingNewThread(true);
+                setActiveThread(null);
+              }}
+              onDelete={async () => {
+                try {
+                  await deleteWorkspace(ws.id);
+                } catch {
+                  // Error already set in store
+                }
+              }}
+              onThreadContextMenu={(e, thread) =>
+                handleThreadContextMenu(e, thread, ws.path)
+              }
+            />
+          ))}
+
+          {workspaces.length === 0 && (
+            <div className="px-2 py-4 text-center">
+              <p className="text-xs text-muted-foreground">No projects yet.</p>
+              <button
+                disabled={isCreating}
+                onClick={handleOpenFolder}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+              >
+                <FolderOpen size={12} />
+                Open a folder
+              </button>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+
+      {error && (
+        <p className="px-3 py-1 text-xs text-destructive">{error}</p>
+      )}
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          items={[
+            {
+              label: "Rename thread",
+              onClick: () => {
+                const newTitle = window.prompt(
+                  "Rename thread:",
+                  contextMenu.threadTitle
+                );
+                if (newTitle && newTitle.trim() && newTitle !== contextMenu.threadTitle) {
+                  updateThreadTitle(contextMenu.threadId, newTitle.trim()).catch(
+                    (e) => console.error("Failed to rename thread:", e)
+                  );
+                }
+              },
+            },
+            {
+              label: "Copy Path",
+              onClick: () => {
+                navigator.clipboard.writeText(contextMenu.workspacePath);
+              },
+            },
+            {
+              label: "Copy Thread ID",
+              onClick: () => {
+                navigator.clipboard.writeText(contextMenu.threadId);
+              },
+            },
+            { label: "", onClick: () => {}, divider: true },
+            {
+              label: "Delete",
+              destructive: true,
+              onClick: async () => {
+                try {
+                  await deleteThread(contextMenu.threadId, false);
+                } catch {
+                  // Error handled in store
+                }
+              },
+            },
+          ]}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- ProjectNode: a single workspace with its threads ---
+
+interface ProjectNodeProps {
+  workspace: Workspace;
+  isExpanded: boolean;
+  isActive: boolean;
+  activeThreadId: string | null;
+  threads: Thread[];
+  runningThreadIds: Set<string>;
+  onToggle: () => void;
+  onSelectThread: (id: string) => void;
+  onCreateThread: () => void;
+  onDelete: () => void;
+  onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
+}
+
+function ProjectNode({
+  workspace,
+  isExpanded,
+  isActive,
+  activeThreadId,
+  threads,
+  runningThreadIds,
+  onToggle,
+  onSelectThread,
+  onCreateThread,
+  onDelete,
+  onThreadContextMenu,
+}: ProjectNodeProps) {
+  return (
+    <div className="mb-0.5">
+      {/* Workspace row */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        onKeyDown={(e) => {
+          if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        onClick={onToggle}
+        className={cn(
+          "group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm cursor-pointer",
+          isActive
+            ? "text-foreground"
+            : "text-muted-foreground hover:text-foreground"
+        )}
+      >
+        {isExpanded ? (
+          <ChevronDown size={14} className="shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight size={14} className="shrink-0 text-muted-foreground" />
+        )}
+        <FolderOpen size={14} className="shrink-0" />
+        <span className="truncate flex-1 font-medium">{workspace.name}</span>
+        <button
+          aria-label={`Delete ${workspace.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="opacity-0 rounded p-0.5 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+
+      {/* Threads (when expanded) */}
+      {isExpanded && (
+        <div className="ml-3 border-l border-border/50 pl-2">
+          {threads.map((thread) => {
+            const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
+            return (
+              <div
+                key={thread.id}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+                    e.preventDefault();
+                    onSelectThread(thread.id);
+                  }
+                }}
+                onClick={() => onSelectThread(thread.id)}
+                onContextMenu={(e) => onThreadContextMenu(e, thread)}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer",
+                  activeThreadId === thread.id
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                )}
+              >
+                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotClass)} />
+                {status.label && (
+                  <span className={cn("shrink-0 text-xs", status.color)}>
+                    {status.label}
+                  </span>
+                )}
+                <span className="truncate flex-1 text-xs">
+                  {thread.title}
+                </span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  {relativeTime(thread.updated_at)}
+                </span>
+              </div>
+            );
+          })}
+
+          {threads.length === 0 && (
+            <p className="px-2 py-1 text-[11px] text-muted-foreground italic">
+              No threads
+            </p>
+          )}
+
+          {/* New thread button inside expanded project */}
+          <div className="mt-0.5 px-1">
+            <button
+              onClick={onCreateThread}
+              className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+            >
+              <Plus size={11} />
+              New thread
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

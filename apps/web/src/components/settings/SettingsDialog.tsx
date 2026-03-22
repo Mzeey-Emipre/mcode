@@ -21,10 +21,11 @@ export function SettingsDialog() {
       <DialogTrigger
         render={
           <button
+            className="flex w-full items-center gap-2 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label="Settings"
-            className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <Settings size={16} />
+            Settings
           </button>
         }
       />
