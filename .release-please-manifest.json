@@ -1,0 +1,6 @@
+{
+  "crates/mcode-core": "0.1.0",
+  "crates/mcode-api": "0.1.0",
+  "src-tauri": "0.1.0",
+  "frontend": "0.1.0"
+}
