@@ -1,4 +1,6 @@
 pub mod events;
+pub mod process;
+pub mod store;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

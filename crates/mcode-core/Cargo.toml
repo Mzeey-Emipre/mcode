@@ -17,3 +17,6 @@ refinery.workspace = true
 git2.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
