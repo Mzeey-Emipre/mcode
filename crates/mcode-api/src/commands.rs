@@ -61,8 +61,13 @@ impl AppState {
         branch: &str,
         workspace_path: &str,
     ) -> Result<Thread> {
-        // If worktree mode, create the worktree first
-        let worktree_path = if mode == ThreadMode::Worktree {
+        // Step 1: Create DB record first (with worktree_path = None)
+        let conn = self.db.lock().await;
+        let mut thread = ThreadRepo::create(&conn, workspace_id, title, mode.clone(), branch)?;
+        drop(conn); // release lock before filesystem ops
+
+        // Step 2: If worktree mode, create worktree on filesystem
+        if mode == ThreadMode::Worktree {
             let sanitized_title = title
                 .chars()
                 .map(|c| {
@@ -74,18 +79,29 @@ impl AppState {
                 })
                 .collect::<String>()
                 .to_lowercase();
-            let wt_info = WorktreeManager::create(workspace_path, &sanitized_title)?;
-            Some(wt_info.path)
-        } else {
-            None
-        };
 
-        let conn = self.db.lock().await;
-        let mut thread = ThreadRepo::create(&conn, workspace_id, title, mode, branch)?;
-        if let Some(ref wt_path) = worktree_path {
-            ThreadRepo::update_worktree_path(&conn, &thread.id, wt_path)?;
+            let ws_path = workspace_path.to_string();
+            let sanitized = sanitized_title.clone();
+            let wt_result =
+                tokio::task::spawn_blocking(move || WorktreeManager::create(&ws_path, &sanitized))
+                    .await?;
+
+            match wt_result {
+                Ok(info) => {
+                    // Step 3: Update worktree_path in DB
+                    let conn = self.db.lock().await;
+                    ThreadRepo::update_worktree_path(&conn, &thread.id, &info.path)?;
+                    thread.worktree_path = Some(info.path);
+                }
+                Err(e) => {
+                    // Rollback: delete the DB row
+                    let conn = self.db.lock().await;
+                    let _ = ThreadRepo::hard_delete(&conn, &thread.id);
+                    return Err(e);
+                }
+            }
         }
-        thread.worktree_path = worktree_path;
+
         Ok(thread)
     }
 
@@ -101,15 +117,29 @@ impl AppState {
 
     // -- Agent commands --
 
-    pub async fn send_message(
-        &self,
-        thread_id: &Uuid,
-        content: &str,
-        workspace_path: &str,
-    ) -> Result<u32> {
-        // Store user message and determine session context
+    pub async fn send_message(&self, thread_id: &Uuid, content: &str) -> Result<u32> {
+        // Fix 8: Guard double-spawn race before any DB writes
+        if self.process_manager.is_running(thread_id).await {
+            anyhow::bail!("Agent is already running for this thread");
+        }
+
+        // Fix 1: Load thread from DB to get workspace_id, then load workspace path
         let (session_name, cwd, is_resume) = {
             let conn = self.db.lock().await;
+
+            let thread = ThreadRepo::find_by_id(&conn, thread_id)?
+                .ok_or_else(|| anyhow::anyhow!("Thread not found: {}", thread_id))?;
+
+            let workspace = WorkspaceRepo::find_by_id(&conn, &thread.workspace_id)?
+                .ok_or_else(|| anyhow::anyhow!("Workspace not found: {}", thread.workspace_id))?;
+
+            // Use worktree_path for worktree threads, otherwise workspace path
+            let cwd = if thread.mode == ThreadMode::Worktree {
+                thread.worktree_path.unwrap_or(workspace.path.clone())
+            } else {
+                workspace.path.clone()
+            };
+
             let next_seq = {
                 let msgs = MessageRepo::list_by_thread(&conn, thread_id, 1)?;
                 msgs.last().map(|m| m.sequence + 1).unwrap_or(1)
@@ -118,7 +148,7 @@ impl AppState {
 
             let session_name = format!("mcode-{}", thread_id);
             let has_messages = next_seq > 1;
-            (session_name, workspace_path.to_string(), has_messages)
+            (session_name, cwd, has_messages)
         };
 
         // Spawn the agent process
@@ -173,7 +203,10 @@ impl AppState {
 
         let conn = self.db.lock().await;
         for id in &terminated {
-            let _ = ThreadRepo::update_status(&conn, id, &ThreadStatus::Interrupted);
+            // Fix 6: Log error instead of silencing
+            if let Err(e) = ThreadRepo::update_status(&conn, id, &ThreadStatus::Interrupted) {
+                tracing::error!(thread_id = %id, error = %e, "Failed to mark thread interrupted on shutdown");
+            }
         }
 
         info!(count = terminated.len(), "Shutdown complete");

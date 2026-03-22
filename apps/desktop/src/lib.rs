@@ -64,7 +64,8 @@ async fn create_thread(
     let ws_uuid = uuid::Uuid::parse_str(&workspace_id).map_err(|e| e.to_string())?;
     let thread_mode = match mode.as_str() {
         "worktree" => mcode_api::mcode_core::store::models::ThreadMode::Worktree,
-        _ => mcode_api::mcode_core::store::models::ThreadMode::Direct,
+        "direct" => mcode_api::mcode_core::store::models::ThreadMode::Direct,
+        other => return Err(format!("Unknown thread mode: {other}")),
     };
     let thread = state
         .create_thread(&ws_uuid, &title, thread_mode, &branch, &workspace_path)
@@ -87,11 +88,10 @@ async fn send_message(
     state: tauri::State<'_, Arc<AppState>>,
     thread_id: String,
     content: String,
-    workspace_path: String,
 ) -> Result<u32, String> {
     let uuid = uuid::Uuid::parse_str(&thread_id).map_err(|e| e.to_string())?;
     state
-        .send_message(&uuid, &content, &workspace_path)
+        .send_message(&uuid, &content)
         .await
         .map_err(|e| e.to_string())
 }
@@ -221,6 +221,7 @@ pub fn run() {
                     } else {
                         // No agents, shut down immediately
                         rt.block_on(state.shutdown());
+                        handle.exit(0);
                     }
                 }
             }

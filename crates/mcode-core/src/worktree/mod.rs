@@ -61,7 +61,7 @@ impl WorktreeManager {
         let branch_ref = branch.into_reference();
 
         // Create the worktree, rolling back the branch on failure
-        let worktree = match repo.worktree(
+        let _worktree = match repo.worktree(
             name,
             &worktree_dir,
             Some(git2::WorktreeAddOptions::new().reference(Some(&branch_ref))),
@@ -76,12 +76,10 @@ impl WorktreeManager {
             }
         };
 
-        let worktree_path = worktree.path().to_str().unwrap_or_default().to_string();
-
         info!(
             name = %name,
             branch = %branch_name,
-            path = %worktree_path,
+            path = %worktree_dir.display(),
             "Created git worktree"
         );
 
@@ -154,8 +152,9 @@ impl WorktreeManager {
     }
 
     /// Get the worktree path for a given name.
-    pub fn worktree_path(repo_path: &str, name: &str) -> PathBuf {
-        Path::new(repo_path).join(".mcode-worktrees").join(name)
+    pub fn worktree_path(repo_path: &str, name: &str) -> Result<PathBuf> {
+        validate_name(name)?;
+        Ok(Path::new(repo_path).join(".mcode-worktrees").join(name))
     }
 }
 
@@ -236,7 +235,13 @@ mod tests {
 
     #[test]
     fn worktree_path_is_correct() {
-        let path = WorktreeManager::worktree_path("/tmp/repo", "my-feature");
+        let path = WorktreeManager::worktree_path("/tmp/repo", "my-feature").unwrap();
         assert!(path.ends_with(".mcode-worktrees/my-feature"));
+    }
+
+    #[test]
+    fn worktree_path_rejects_traversal() {
+        let result = WorktreeManager::worktree_path("/tmp/repo", "../escape");
+        assert!(result.is_err());
     }
 }
