@@ -104,8 +104,15 @@ impl AppState {
                             thread.worktree_path = Some(info.path);
                         }
                         Ok(false) | Err(_) => {
-                            // Rollback: remove worktree from disk and DB row
-                            let _ = std::fs::remove_dir_all(&info.path);
+                            // Rollback: use git-aware removal to clean up
+                            // .git/worktrees metadata, then delete DB row
+                            let ws = WorkspaceRepo::find_by_id(&conn, workspace_id)?;
+                            if let Some(ws) = ws {
+                                let _ = WorktreeManager::remove(
+                                    &ws.path,
+                                    info.path.rsplit(['/', '\\']).next().unwrap_or(&info.path),
+                                );
+                            }
                             let _ = ThreadRepo::hard_delete(&conn, &thread.id);
                             return Err(anyhow::anyhow!(
                                 "Failed to persist worktree path for thread {}",
@@ -132,6 +139,11 @@ impl AppState {
     }
 
     pub async fn delete_thread(&self, thread_id: &Uuid) -> Result<bool> {
+        // Stop any running agent before deleting
+        if self.process_manager.is_running(thread_id).await {
+            self.process_manager.terminate(thread_id).await?;
+        }
+
         let conn = self.db.lock().await;
         ThreadRepo::soft_delete(&conn, thread_id)
     }
@@ -161,7 +173,9 @@ impl AppState {
 
             // Use worktree_path for worktree threads, otherwise workspace path
             let cwd = if thread.mode == ThreadMode::Worktree {
-                thread.worktree_path.unwrap_or(workspace.path.clone())
+                thread.worktree_path.ok_or_else(|| {
+                    anyhow::anyhow!("Worktree thread {} has no worktree_path set", thread_id)
+                })?
             } else {
                 workspace.path.clone()
             };
@@ -171,6 +185,9 @@ impl AppState {
                 msgs.last().map(|m| m.sequence + 1).unwrap_or(1)
             };
             MessageRepo::create(&conn, thread_id, MessageRole::User, content, next_seq)?;
+
+            // Reserve: mark thread as Active before releasing lock
+            ThreadRepo::update_status(&conn, thread_id, &ThreadStatus::Active)?;
 
             let session_name = format!("mcode-{}", thread_id);
             let has_messages = next_seq > 1;
@@ -185,16 +202,19 @@ impl AppState {
             resume: is_resume,
         };
 
-        let pid = self.process_manager.spawn(*thread_id, config).await?;
-
-        // Update thread status to active
-        {
-            let conn = self.db.lock().await;
-            ThreadRepo::update_status(&conn, thread_id, &ThreadStatus::Active)?;
+        match self.process_manager.spawn(*thread_id, config).await {
+            Ok(pid) => {
+                info!(thread_id = %thread_id, pid = pid, "Agent started");
+                Ok(pid)
+            }
+            Err(e) => {
+                // Rollback: revert thread status since spawn failed
+                let conn = self.db.lock().await;
+                let _ = ThreadRepo::update_status(&conn, thread_id, &ThreadStatus::Paused);
+                tracing::error!(thread_id = %thread_id, error = %e, "Agent spawn failed, reverted status");
+                Err(e)
+            }
         }
-
-        info!(thread_id = %thread_id, pid = pid, "Agent started");
-        Ok(pid)
     }
 
     pub async fn stop_agent(&self, thread_id: &Uuid) -> Result<()> {
