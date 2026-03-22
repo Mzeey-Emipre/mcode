@@ -241,12 +241,20 @@ impl ThreadRepo {
         })
     }
 
-    pub fn list_by_workspace(conn: &Connection, workspace_id: &Uuid) -> Result<Vec<Thread>> {
+    pub fn list_by_workspace(
+        conn: &Connection,
+        workspace_id: &Uuid,
+        limit: i64,
+    ) -> Result<Vec<Thread>> {
+        anyhow::ensure!(
+            (1..=1000).contains(&limit),
+            "limit must be between 1 and 1000"
+        );
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_id, title, status, mode, worktree_path, branch, issue_number, pr_number, pr_status, session_name, pid, created_at, updated_at, deleted_at FROM threads WHERE workspace_id = ?1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 100",
+            "SELECT id, workspace_id, title, status, mode, worktree_path, branch, issue_number, pr_number, pr_status, session_name, pid, created_at, updated_at, deleted_at FROM threads WHERE workspace_id = ?1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?2",
         )?;
 
-        let rows = stmt.query_map(params![workspace_id.to_string()], |row| {
+        let rows = stmt.query_map(params![workspace_id.to_string(), limit], |row| {
             Ok(Thread {
                 id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
@@ -374,8 +382,12 @@ impl MessageRepo {
     }
 
     pub fn list_by_thread(conn: &Connection, thread_id: &Uuid, limit: i64) -> Result<Vec<Message>> {
+        anyhow::ensure!(
+            (1..=1000).contains(&limit),
+            "limit must be between 1 and 1000"
+        );
         let mut stmt = conn.prepare(
-            "SELECT id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence FROM messages WHERE thread_id = ?1 ORDER BY sequence ASC LIMIT ?2",
+            "SELECT id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence FROM (SELECT id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence FROM messages WHERE thread_id = ?1 ORDER BY sequence DESC LIMIT ?2) ORDER BY sequence ASC",
         )?;
 
         let rows = stmt.query_map(params![thread_id.to_string(), limit], |row| {
@@ -514,7 +526,7 @@ mod tests {
         assert_eq!(t1.status, ThreadStatus::Active);
         assert!(t1.session_name.starts_with("mcode-"));
 
-        let threads = ThreadRepo::list_by_workspace(&conn, &ws.id).unwrap();
+        let threads = ThreadRepo::list_by_workspace(&conn, &ws.id, 100).unwrap();
         assert_eq!(threads.len(), 2);
     }
 
@@ -536,7 +548,7 @@ mod tests {
         assert!(ThreadRepo::soft_delete(&conn, &thread.id).unwrap());
 
         // Soft-deleted threads should not appear in list
-        let threads = ThreadRepo::list_by_workspace(&conn, &ws.id).unwrap();
+        let threads = ThreadRepo::list_by_workspace(&conn, &ws.id, 100).unwrap();
         assert!(threads.is_empty());
     }
 
