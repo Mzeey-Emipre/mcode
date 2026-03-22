@@ -4,7 +4,7 @@ Performant AI agent orchestration desktop app built with Rust + Tauri.
 
 ## Directory Structure
 
-```
+```text
 crates/
 ├── mcode-core/             # Pure Rust library (process mgmt, store, events)
 │   └── src/
