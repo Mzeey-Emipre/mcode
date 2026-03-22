@@ -77,9 +77,13 @@ async fn create_thread(
 async fn delete_thread(
     state: tauri::State<'_, Arc<AppState>>,
     thread_id: String,
+    cleanup_worktree: bool,
 ) -> Result<bool, String> {
     let uuid = uuid::Uuid::parse_str(&thread_id).map_err(|e| e.to_string())?;
-    state.delete_thread(&uuid).await.map_err(|e| e.to_string())
+    state
+        .delete_thread(&uuid, cleanup_worktree)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

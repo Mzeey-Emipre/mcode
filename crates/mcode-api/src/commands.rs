@@ -138,10 +138,25 @@ impl AppState {
         ThreadRepo::list_by_workspace(&conn, workspace_id, 100)
     }
 
-    pub async fn delete_thread(&self, thread_id: &Uuid) -> Result<bool> {
+    pub async fn delete_thread(&self, thread_id: &Uuid, cleanup_worktree: bool) -> Result<bool> {
         // Stop any running agent before deleting
         if self.process_manager.is_running(thread_id).await {
             self.process_manager.terminate(thread_id).await?;
+        }
+
+        // If cleanup requested, remove the worktree from disk + git
+        if cleanup_worktree {
+            let conn = self.db.lock().await;
+            if let Some(thread) = ThreadRepo::find_by_id(&conn, thread_id)? {
+                if let Some(ref wt_path) = thread.worktree_path {
+                    let workspace = WorkspaceRepo::find_by_id(&conn, &thread.workspace_id)?;
+                    if let Some(ws) = workspace {
+                        let wt_name = wt_path.rsplit(['/', '\\']).next().unwrap_or(wt_path);
+                        let _ = WorktreeManager::remove(&ws.path, wt_name);
+                    }
+                }
+            }
+            drop(conn);
         }
 
         let conn = self.db.lock().await;
