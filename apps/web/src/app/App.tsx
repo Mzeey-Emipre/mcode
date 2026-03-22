@@ -1,35 +1,59 @@
-import { useEffect, useState } from "react";
-
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: unknown;
-  }
-}
-
-const isTauri = (): boolean => typeof window.__TAURI_INTERNALS__ !== "undefined";
+import { useEffect } from "react";
+import { Sidebar } from "@/components/sidebar/Sidebar";
+import { ChatView } from "@/components/chat/ChatView";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
 
 export function App() {
-  const [version, setVersion] = useState<string>("");
+  const theme = useSettingsStore((s) => s.theme);
 
+  // Keyboard shortcuts
   useEffect(() => {
-    if (isTauri()) {
-      import("@tauri-apps/api/core").then(({ invoke }) => {
-        invoke<string>("get_version").then(setVersion);
-      });
-    }
+    const cleanup = initShortcuts();
+
+    const unregCmdK = registerShortcut({
+      key: "k",
+      ctrl: true,
+      description: "Open command palette",
+      handler: () => console.log("Command palette (placeholder)"),
+    });
+
+    const unregEscape = registerShortcut({
+      key: "Escape",
+      description: "Deselect thread",
+      handler: () => useWorkspaceStore.getState().setActiveThread(null),
+    });
+
+    return () => {
+      cleanup();
+      unregCmdK();
+      unregEscape();
+    };
   }, []);
 
+  // Apply theme
+  useEffect(() => {
+    const root = document.documentElement;
+    const applyTheme = (dark: boolean) => root.classList.toggle("dark", dark);
+
+    if (theme === "system") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      applyTheme(mq.matches);
+      const handler = (e: MediaQueryListEvent) => applyTheme(e.matches);
+      mq.addEventListener("change", handler);
+      return () => mq.removeEventListener("change", handler);
+    } else {
+      applyTheme(theme === "dark");
+    }
+  }, [theme]);
+
   return (
-    <div className="flex h-screen items-center justify-center bg-background text-foreground">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold tracking-tight">Mcode</h1>
-        <p className="mt-2 text-muted-foreground">
-          AI Agent Orchestration
-        </p>
-        {version && (
-          <p className="mt-1 text-sm text-muted-foreground">v{version}</p>
-        )}
-      </div>
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <Sidebar />
+      <main className="flex-1 overflow-hidden">
+        <ChatView />
+      </main>
     </div>
   );
 }
