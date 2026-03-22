@@ -1,0 +1,98 @@
+import type { McodeTransport, Workspace, Thread, Message, GitBranch } from "./types";
+
+export function createElectronTransport(): McodeTransport {
+  const api = window.electronAPI;
+
+  if (!api) {
+    throw new Error(
+      "Electron preload API not available. Ensure the preload script exposes window.electronAPI.",
+    );
+  }
+
+  return {
+    async createWorkspace(name, path) {
+      return api.invoke("create-workspace", name, path) as Promise<Workspace>;
+    },
+
+    async listWorkspaces() {
+      return api.invoke("list-workspaces") as Promise<Workspace[]>;
+    },
+
+    async deleteWorkspace(id) {
+      return api.invoke("delete-workspace", id) as Promise<boolean>;
+    },
+
+    async createThread(workspaceId, title, mode, branch) {
+      return api.invoke(
+        "create-thread",
+        workspaceId,
+        title,
+        mode,
+        branch,
+      ) as Promise<Thread>;
+    },
+
+    async listThreads(workspaceId) {
+      return api.invoke("list-threads", workspaceId) as Promise<Thread[]>;
+    },
+
+    async deleteThread(threadId, cleanupWorktree) {
+      return api.invoke(
+        "delete-thread",
+        threadId,
+        cleanupWorktree,
+      ) as Promise<boolean>;
+    },
+
+    async listBranches(workspaceId) {
+      return api.invoke("list-branches", workspaceId) as Promise<GitBranch[]>;
+    },
+
+    async getCurrentBranch(workspaceId) {
+      return api.invoke("get-current-branch", workspaceId) as Promise<string>;
+    },
+
+    async checkoutBranch(workspaceId, branch) {
+      await api.invoke("checkout-branch", workspaceId, branch);
+    },
+
+    async sendMessage(threadId, content, model) {
+      await api.invoke("send-message", threadId, content, undefined, model);
+    },
+
+    async createAndSendMessage(workspaceId, content, model, permissionMode, mode, branch) {
+      return api.invoke("create-and-send-message", workspaceId, content, model, permissionMode, mode, branch) as Promise<Thread>;
+    },
+
+    async updateThreadTitle(threadId, title) {
+      return api.invoke("update-thread-title", threadId, title) as Promise<boolean>;
+    },
+
+    async stopAgent(threadId) {
+      await api.invoke("stop-agent", threadId);
+    },
+
+    async getActiveAgentCount() {
+      return api.invoke("get-active-agent-count") as Promise<number>;
+    },
+
+    async getMessages(threadId, limit) {
+      return api.invoke(
+        "get-messages",
+        threadId,
+        limit,
+      ) as Promise<Message[]>;
+    },
+
+    async discoverConfig(workspacePath) {
+      return api.invoke(
+        "discover-config",
+        workspacePath,
+      ) as Promise<Record<string, unknown>>;
+    },
+
+    async getVersion() {
+      return api.invoke("get-version") as Promise<string>;
+    },
+  };
+}

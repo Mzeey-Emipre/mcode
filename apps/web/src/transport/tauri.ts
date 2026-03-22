@@ -45,8 +45,28 @@ export function createTauriTransport(): McodeTransport {
       return invoke<boolean>("delete_thread", { threadId, cleanupWorktree });
     },
 
-    async sendMessage(threadId, content) {
-      await invoke<void>("send_message", { threadId, content });
+    async listBranches() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async getCurrentBranch() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async checkoutBranch() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async sendMessage(threadId, content, model) {
+      await invoke<void>("send_message", { threadId, content, model });
+    },
+
+    async createAndSendMessage() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async updateThreadTitle() {
+      throw new Error("Not implemented in Tauri");
     },
 
     async stopAgent(threadId) {

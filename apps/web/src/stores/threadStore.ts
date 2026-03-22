@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Message } from "@/transport";
+import type { Message, ToolCall } from "@/transport";
 import { getTransport } from "@/transport";
 
 interface ThreadState {
@@ -9,10 +9,12 @@ interface ThreadState {
   error: string | null;
   currentThreadId: string | null;
   streamingByThread: Record<string, string>;
+  toolCallsByThread: Record<string, ToolCall[]>;
+  agentStartTimes: Record<string, number>;
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
@@ -27,6 +29,8 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   error: null,
   currentThreadId: null,
   streamingByThread: {},
+  toolCallsByThread: {},
+  agentStartTimes: {},
 
   loadMessages: async (threadId) => {
     set({ loading: true, error: null, currentThreadId: threadId });
@@ -43,7 +47,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
   },
 
-  sendMessage: async (threadId, content) => {
+  sendMessage: async (threadId, content, model) => {
     // Add user message to local state immediately (optimistic)
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -61,16 +65,19 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     set((state) => ({
       messages: [...state.messages, userMessage],
       runningThreadIds: new Set([...state.runningThreadIds, threadId]),
+      agentStartTimes: { ...state.agentStartTimes, [threadId]: Date.now() },
       error: null,
     }));
 
     try {
-      await getTransport().sendMessage(threadId, content);
+      await getTransport().sendMessage(threadId, content, model);
     } catch (e) {
       set((state) => {
         const next = new Set(state.runningThreadIds);
         next.delete(threadId);
-        return { error: String(e), runningThreadIds: next };
+        const nextStartTimes = { ...state.agentStartTimes };
+        delete nextStartTimes[threadId];
+        return { error: String(e), runningThreadIds: next, agentStartTimes: nextStartTimes };
       });
     }
   },
@@ -145,6 +152,52 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       return;
     }
 
+    if (method === "session.toolUse") {
+      const toolCall: ToolCall = {
+        id: (params.toolCallId as string) || crypto.randomUUID(),
+        toolName: (params.toolName as string) || "unknown",
+        toolInput: (params.toolInput as Record<string, unknown>) || {},
+        output: null,
+        isError: false,
+        isComplete: false,
+      };
+      set((state) => ({
+        toolCallsByThread: {
+          ...state.toolCallsByThread,
+          [threadId]: [...(state.toolCallsByThread[threadId] ?? []), toolCall],
+        },
+      }));
+      return;
+    }
+
+    if (method === "session.toolResult") {
+      const toolCallId = (params.toolCallId as string) || "";
+      const output = (params.output as string) || "";
+      const isError = (params.isError as boolean) || false;
+      set((state) => {
+        const calls = state.toolCallsByThread[threadId] ?? [];
+        // Try matching by ID first; fall back to the last incomplete tool call
+        // when the SDK sends a null or non-matching toolCallId.
+        const hasIdMatch = toolCallId && calls.some((tc) => tc.id === toolCallId);
+        let matched = false;
+        const updated = hasIdMatch
+          ? calls.map((tc) =>
+              tc.id === toolCallId ? { ...tc, output, isError, isComplete: true } : tc
+            )
+          : calls.map((tc) => {
+              if (!matched && !tc.isComplete) {
+                matched = true;
+                return { ...tc, output, isError, isComplete: true };
+              }
+              return tc;
+            });
+        return {
+          toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
+        };
+      });
+      return;
+    }
+
     if (method === "session.turnComplete" || method === "session.ended") {
       const costUsd = (params.costUsd as number) ?? null;
       const tokensIn = (params.totalTokensIn as number) ?? 0;
@@ -170,12 +223,18 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           delete nextStreaming[threadId];
           const nextRunning = new Set(state.runningThreadIds);
           nextRunning.delete(threadId);
+          const nextStartTimes = { ...state.agentStartTimes };
+          delete nextStartTimes[threadId];
+          const nextToolCalls = { ...state.toolCallsByThread };
+          delete nextToolCalls[threadId];
           return {
             messages: state.currentThreadId === threadId
               ? [...state.messages, message]
               : state.messages,
             streamingByThread: nextStreaming,
             runningThreadIds: nextRunning,
+            agentStartTimes: nextStartTimes,
+            toolCallsByThread: nextToolCalls,
           };
         });
       } else {
@@ -184,7 +243,16 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           nextRunning.delete(threadId);
           const nextStreaming = { ...state.streamingByThread };
           delete nextStreaming[threadId];
-          return { runningThreadIds: nextRunning, streamingByThread: nextStreaming };
+          const nextStartTimes = { ...state.agentStartTimes };
+          delete nextStartTimes[threadId];
+          const nextToolCalls = { ...state.toolCallsByThread };
+          delete nextToolCalls[threadId];
+          return {
+            runningThreadIds: nextRunning,
+            streamingByThread: nextStreaming,
+            agentStartTimes: nextStartTimes,
+            toolCallsByThread: nextToolCalls,
+          };
         });
       }
       return;
@@ -197,7 +265,17 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
         nextRunning.delete(threadId);
         const nextStreaming = { ...state.streamingByThread };
         delete nextStreaming[threadId];
-        return { error: errorMsg, runningThreadIds: nextRunning, streamingByThread: nextStreaming };
+        const nextStartTimes = { ...state.agentStartTimes };
+        delete nextStartTimes[threadId];
+        const nextToolCalls = { ...state.toolCallsByThread };
+        delete nextToolCalls[threadId];
+        return {
+          error: errorMsg,
+          runningThreadIds: nextRunning,
+          streamingByThread: nextStreaming,
+          agentStartTimes: nextStartTimes,
+          toolCallsByThread: nextToolCalls,
+        };
       });
       return;
     }

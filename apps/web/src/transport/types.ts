@@ -22,7 +22,17 @@ export interface Thread {
   pid: number | null;
   created_at: string;
   updated_at: string;
+  model: string | null;
   deleted_at: string | null;
+}
+
+export interface ToolCall {
+  id: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  output: string | null;
+  isError: boolean;
+  isComplete: boolean;
 }
 
 export interface Message {
@@ -36,6 +46,13 @@ export interface Message {
   tokens_used: number | null;
   timestamp: string;
   sequence: number;
+}
+
+export interface GitBranch {
+  name: string;
+  shortSha: string;
+  type: "local" | "remote" | "worktree";
+  isCurrent: boolean;
 }
 
 export interface McodeTransport {
@@ -54,10 +71,26 @@ export interface McodeTransport {
   listThreads(workspaceId: string): Promise<Thread[]>;
   deleteThread(threadId: string, cleanupWorktree: boolean): Promise<boolean>;
 
+  // Git branch commands
+  listBranches(workspaceId: string): Promise<GitBranch[]>;
+  getCurrentBranch(workspaceId: string): Promise<string>;
+  checkoutBranch(workspaceId: string, branch: string): Promise<void>;
+
   // Agent commands
-  sendMessage(threadId: string, content: string): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string): Promise<void>;
+  createAndSendMessage(
+    workspaceId: string,
+    content: string,
+    model: string,
+    permissionMode?: string,
+    mode?: "direct" | "worktree",
+    branch?: string,
+  ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
   getActiveAgentCount(): Promise<number>;
+
+  // Thread mutations
+  updateThreadTitle(threadId: string, title: string): Promise<boolean>;
 
   // Message queries
   getMessages(threadId: string, limit: number): Promise<Message[]>;
