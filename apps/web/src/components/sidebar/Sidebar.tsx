@@ -1,6 +1,7 @@
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { WorkspaceList } from "./WorkspaceList";
 import { ThreadList } from "./ThreadList";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PanelLeftClose, PanelLeft } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,12 @@ export function Sidebar() {
             </div>
           )}
         </>
+      )}
+
+      {!collapsed && (
+        <div className="border-t border-border p-3">
+          <SettingsDialog />
+        </div>
       )}
     </div>
   );
