@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import type Database from "better-sqlite3";
-import type { Message, MessageRole } from "../models";
+import type { Message, MessageRole } from "../models.js";
 
 interface MessageRow {
   id: string;

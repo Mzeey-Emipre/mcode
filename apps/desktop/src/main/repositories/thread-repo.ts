@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import type Database from "better-sqlite3";
-import type { Thread, ThreadMode, ThreadStatus } from "../models";
+import type { Thread, ThreadMode, ThreadStatus } from "../models.js";
 
 interface ThreadRow {
   id: string;

@@ -1,6 +1,4 @@
 {
-  "crates/mcode-core": "0.1.0",
-  "crates/mcode-api": "0.1.0",
-  "apps/desktop": "0.1.0",
-  "apps/web": "0.1.0"
+  "apps/desktop": "0.2.0",
+  "apps/web": "0.2.0"
 }

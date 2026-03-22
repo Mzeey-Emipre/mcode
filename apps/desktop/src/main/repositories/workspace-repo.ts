@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import type Database from "better-sqlite3";
-import type { Workspace } from "../models";
+import type { Workspace } from "../models.js";
 
 interface WorkspaceRow {
   id: string;
