@@ -23,6 +23,15 @@ async fn create_workspace(
     name: String,
     path: String,
 ) -> Result<String, String> {
+    // Validate workspace path
+    let ws_path = std::path::Path::new(&path);
+    if !ws_path.is_absolute() {
+        return Err("Workspace path must be absolute".into());
+    }
+    if !ws_path.is_dir() {
+        return Err("Workspace path must be an existing directory".into());
+    }
+
     let workspace = state
         .create_workspace(&name, &path)
         .await

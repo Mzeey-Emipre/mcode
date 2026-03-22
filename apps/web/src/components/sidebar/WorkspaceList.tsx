@@ -1,12 +1,9 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { isTauri } from "@/transport/tauri";
 import { FolderOpen, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
-
-function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
 
 export function WorkspaceList() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -15,14 +12,17 @@ export function WorkspaceList() {
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
+  const error = useWorkspaceStore((s) => s.error);
+
+  const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
     loadWorkspaces();
   }, [loadWorkspaces]);
 
   const handleOpenFolder = useCallback(async () => {
-    if (!isTauri()) return;
-
+    if (!isTauri() || isCreating) return;
+    setIsCreating(true);
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({
@@ -32,6 +32,13 @@ export function WorkspaceList() {
       });
 
       if (selected && typeof selected === "string") {
+        // If workspace with this path already exists, just activate it
+        const existing = workspaces.find((ws) => ws.path === selected);
+        if (existing) {
+          setActiveWorkspace(existing.id);
+          return;
+        }
+
         // Extract folder name from path
         const name = selected
           .replace(/[\\/]+$/, "")
@@ -43,8 +50,10 @@ export function WorkspaceList() {
       }
     } catch (e) {
       console.error("Failed to open folder:", e);
+    } finally {
+      setIsCreating(false);
     }
-  }, [createWorkspace, setActiveWorkspace]);
+  }, [createWorkspace, setActiveWorkspace, workspaces, isCreating]);
 
   return (
     <div className="flex flex-col">
@@ -53,9 +62,10 @@ export function WorkspaceList() {
           Projects
         </span>
         <button
+          disabled={isCreating}
           onClick={handleOpenFolder}
           aria-label="Open project folder"
-          className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
         >
           <Plus size={14} />
         </button>
@@ -67,6 +77,7 @@ export function WorkspaceList() {
               key={ws.id}
               role="button"
               tabIndex={0}
+              aria-pressed={activeWorkspaceId === ws.id}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
@@ -89,7 +100,7 @@ export function WorkspaceList() {
                   e.stopPropagation();
                   deleteWorkspace(ws.id);
                 }}
-                className="invisible rounded p-0.5 text-muted-foreground hover:text-destructive group-hover:visible"
+                className="opacity-0 rounded p-0.5 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <Trash2 size={12} />
               </button>
@@ -99,8 +110,9 @@ export function WorkspaceList() {
             <div className="px-2 py-4 text-center">
               <p className="text-xs text-muted-foreground">No projects yet.</p>
               <button
+                disabled={isCreating}
                 onClick={handleOpenFolder}
-                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:border-primary hover:text-primary"
+                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50"
               >
                 <FolderOpen size={12} />
                 Open a folder
@@ -109,6 +121,9 @@ export function WorkspaceList() {
           )}
         </div>
       </ScrollArea>
+      {error && (
+        <p className="px-3 py-1 text-xs text-destructive">{error}</p>
+      )}
     </div>
   );
 }
