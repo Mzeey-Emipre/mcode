@@ -25,7 +25,7 @@
       "release-type": "rust",
       "component": "mcode-api"
     },
-    "src-tauri": {
+    "apps/desktop": {
       "release-type": "rust",
       "component": "mcode-desktop",
       "extra-files": [
@@ -36,7 +36,7 @@
         }
       ]
     },
-    "frontend": {
+    "apps/web": {
       "release-type": "node",
       "component": "mcode-frontend"
     }

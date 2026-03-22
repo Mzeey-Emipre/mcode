@@ -26,7 +26,7 @@ cd mcode
 
 # Setup
 bash scripts/setup-env.sh
-cd frontend && npm install && cd ..
+cd apps/web && npm install && cd ../..
 
 # Run in dev mode
 cargo tauri dev

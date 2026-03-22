@@ -3,6 +3,7 @@ name: Release Please
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,13 +12,24 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+
     outputs:
       releases_created: ${{ steps.release.outputs.releases_created }}
-      tag_name: ${{ steps.release.outputs['src-tauri--tag_name'] }}
-      version: ${{ steps.release.outputs['src-tauri--version'] }}
+      tag_name: ${{ steps.release.outputs['apps/desktop--tag_name'] }}
+      version: ${{ steps.release.outputs['apps/desktop--version'] }}
+
     steps:
-      - uses: googleapis/release-please-action@v4
-        id: release
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@v1
         with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.bot-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

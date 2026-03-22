@@ -33,10 +33,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: apps/web/package-lock.json
 
       - name: Install frontend deps
-        run: cd frontend && npm ci
+        run: cd apps/web && npm ci
 
       - name: Install Linux deps
         if: matrix.platform == 'ubuntu-22.04'
@@ -49,6 +49,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
           releaseName: "Mcode ${{ github.ref_name }}"
           args: --target ${{ matrix.target }}

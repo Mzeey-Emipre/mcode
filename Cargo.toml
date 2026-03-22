@@ -3,7 +3,7 @@ resolver = "2"
 members = [
   "crates/mcode-core",
   "crates/mcode-api",
-  "src-tauri",
+  "apps/desktop",
 ]
 
 [workspace.package]
