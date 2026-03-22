@@ -115,6 +115,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({
       activeWorkspaceId: id,
       ...(shouldClearThread ? { activeThreadId: null } : {}),
+      branches: [],
+      newThreadBranch: "",
     });
     if (id) {
       get().loadThreads(id);
