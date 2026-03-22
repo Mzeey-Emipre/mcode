@@ -36,6 +36,7 @@ export function createMockThread(overrides?: Partial<Thread>): Thread {
     pid: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    model: null,
     deleted_at: null,
     ...overrides,
   };
@@ -64,10 +65,15 @@ export const mockTransport: McodeTransport = {
   createThread: vi.fn(),
   listThreads: vi.fn().mockResolvedValue([]),
   deleteThread: vi.fn().mockResolvedValue(true),
+  listBranches: vi.fn().mockResolvedValue([]),
+  getCurrentBranch: vi.fn().mockResolvedValue("main"),
+  checkoutBranch: vi.fn().mockResolvedValue(undefined),
   sendMessage: vi.fn().mockResolvedValue(1),
   stopAgent: vi.fn().mockResolvedValue(undefined),
   getActiveAgentCount: vi.fn().mockResolvedValue(0),
   getMessages: vi.fn().mockResolvedValue([]),
+  createAndSendMessage: vi.fn(),
+  updateThreadTitle: vi.fn().mockResolvedValue(true),
   discoverConfig: vi.fn().mockResolvedValue({}),
   getVersion: vi.fn().mockResolvedValue("0.1.0"),
 };

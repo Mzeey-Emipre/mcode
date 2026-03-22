@@ -78,7 +78,7 @@ describe("Workspace Behavior", () => {
     expect(state.activeThreadId).toBe(thread.id);
   });
 
-  it("when the user switches workspaces rapidly, only the final workspace's threads show", async () => {
+  it("when the user loads threads for multiple workspaces, all threads are merged", async () => {
     const ws1 = createMockWorkspace({ id: "ws-1" });
     const ws2 = createMockWorkspace({ id: "ws-2" });
     const threads1 = [
@@ -98,17 +98,17 @@ describe("Workspace Behavior", () => {
       )
       .mockImplementationOnce(() => Promise.resolve(threads2));
 
-    // Switch rapidly: ws-1 then ws-2
-    useWorkspaceStore.getState().setActiveWorkspace("ws-1");
-    useWorkspaceStore.getState().setActiveWorkspace("ws-2");
+    // Load threads for both workspaces (simulates expanding both folders)
+    useWorkspaceStore.getState().loadThreads("ws-1");
+    useWorkspaceStore.getState().loadThreads("ws-2");
 
     // Wait for both to resolve
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     const state = useWorkspaceStore.getState();
-    // Should show ws-2's threads, not ws-1's (stale response discarded)
-    expect(state.activeWorkspaceId).toBe("ws-2");
-    expect(state.threads).toEqual(threads2);
+    // Both workspaces' threads should be present (merged, not replaced)
+    expect(state.threads).toHaveLength(2);
+    expect(state.threads.map((t) => t.title).sort()).toEqual(["Thread A", "Thread B"]);
   });
 
   it("when the user creates a thread, it appears in the list", async () => {
