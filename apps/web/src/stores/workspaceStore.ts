@@ -29,7 +29,7 @@ interface WorkspaceState {
     mode: "direct" | "worktree",
     branch: string,
   ) => Promise<Thread>;
-  createAndSendMessage: (content: string, model: string) => Promise<Thread>;
+  createAndSendMessage: (content: string, model: string, permissionMode?: string) => Promise<Thread>;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
   setPendingNewThread: (value: boolean) => void;
@@ -158,7 +158,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  createAndSendMessage: async (content, model) => {
+  createAndSendMessage: async (content, model, permissionMode) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
 
@@ -168,7 +168,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
     try {
       const thread = await getTransport().createAndSendMessage(
-        workspaceId, content, model, undefined, newThreadMode, branch,
+        workspaceId, content, model, permissionMode, newThreadMode, branch,
       );
       set((state) => ({
         threads: [thread, ...state.threads],

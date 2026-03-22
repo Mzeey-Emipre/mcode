@@ -56,8 +56,8 @@ export function createElectronTransport(): McodeTransport {
       await api.invoke("checkout-branch", workspaceId, branch);
     },
 
-    async sendMessage(threadId, content, model) {
-      await api.invoke("send-message", threadId, content, undefined, model);
+    async sendMessage(threadId, content, model, permissionMode) {
+      await api.invoke("send-message", threadId, content, permissionMode, model);
     },
 
     async createAndSendMessage(workspaceId, content, model, permissionMode, mode, branch) {

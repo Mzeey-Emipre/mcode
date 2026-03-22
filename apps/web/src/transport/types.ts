@@ -77,7 +77,7 @@ export interface McodeTransport {
   checkoutBranch(workspaceId: string, branch: string): Promise<void>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string, model?: string): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string, permissionMode?: string): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
     content: string,
