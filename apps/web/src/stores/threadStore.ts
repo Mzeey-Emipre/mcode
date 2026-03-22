@@ -14,7 +14,7 @@ interface ThreadState {
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: string) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
@@ -47,7 +47,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
   },
 
-  sendMessage: async (threadId, content, model) => {
+  sendMessage: async (threadId, content, model, permissionMode) => {
     // Add user message to local state immediately (optimistic)
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -70,7 +70,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }));
 
     try {
-      await getTransport().sendMessage(threadId, content, model);
+      await getTransport().sendMessage(threadId, content, model, permissionMode);
     } catch (e) {
       set((state) => {
         const next = new Set(state.runningThreadIds);

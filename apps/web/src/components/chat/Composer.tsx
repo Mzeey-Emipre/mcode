@@ -133,15 +133,15 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(trimmed, modelId);
+        await useWorkspaceStore.getState().createAndSendMessage(trimmed, modelId, access);
       } finally {
         setPreparingWorktree(false);
       }
     } else if (threadId) {
-      await sendMessage(threadId, trimmed, modelId);
+      await sendMessage(threadId, trimmed, modelId, access);
     }
     textareaRef.current?.focus();
-  }, [input, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId]);
+  }, [input, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
