@@ -1,0 +1,19 @@
+[package]
+name = "mcode-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core library for Mcode agent orchestration"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+rusqlite.workspace = true
+refinery.workspace = true
+git2.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
