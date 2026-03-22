@@ -2,7 +2,7 @@ import type { McodeTransport } from "./types";
 import { createElectronTransport } from "./electron";
 import { createTauriTransport } from "./tauri";
 
-export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch } from "./types";
+export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, PermissionMode } from "./types";
 
 let transport: McodeTransport | null = null;
 

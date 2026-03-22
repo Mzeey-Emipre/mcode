@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Message, ToolCall } from "@/transport";
+import type { Message, ToolCall, PermissionMode } from "@/transport";
 import { getTransport } from "@/transport";
 
 interface ThreadState {
@@ -14,7 +14,7 @@ interface ThreadState {
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: string) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;

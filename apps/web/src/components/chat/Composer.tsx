@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import type { PermissionMode } from "@/transport";
 import {
   ArrowUp,
   Square,
@@ -24,7 +25,7 @@ interface ComposerProps {
 }
 
 type InteractionMode = "chat" | "plan";
-type AccessMode = "full" | "supervised";
+type AccessMode = PermissionMode;
 type ReasoningLevel = "low" | "medium" | "high";
 
 export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) {
@@ -32,7 +33,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const [modelId, setModelId] = useState(getDefaultModel().id);
   const [reasoning, setReasoning] = useState<ReasoningLevel>("high");
   const [mode, setMode] = useState<InteractionMode>("chat");
-  const [access, setAccess] = useState<AccessMode>("full");
+  const [access, setAccess] = useState<AccessMode>("supervised");
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
   const [execMode, setExecModeLocal] = useState<"direct" | "worktree">("direct");
   const [preparingWorktree, setPreparingWorktree] = useState(false);

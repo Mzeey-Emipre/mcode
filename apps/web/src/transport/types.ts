@@ -55,6 +55,8 @@ export interface GitBranch {
   isCurrent: boolean;
 }
 
+export type PermissionMode = "full" | "supervised";
+
 export interface McodeTransport {
   // Workspace commands
   createWorkspace(name: string, path: string): Promise<Workspace>;
@@ -77,12 +79,12 @@ export interface McodeTransport {
   checkoutBranch(workspaceId: string, branch: string): Promise<void>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string, model?: string, permissionMode?: string): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
     content: string,
     model: string,
-    permissionMode?: string,
+    permissionMode?: PermissionMode,
     mode?: "direct" | "worktree",
     branch?: string,
   ): Promise<Thread>;

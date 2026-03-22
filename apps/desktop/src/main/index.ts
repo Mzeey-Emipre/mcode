@@ -184,8 +184,9 @@ function registerIpcHandlers(state: AppState): void {
   // -- Agent --
   ipcMain.handle(
     "send-message",
-    async (_event, threadId: string, content: string, permissionMode?: string, model?: string) => {
-      const mode = permissionMode ?? "default";
+    async (_event, threadId: string, content: string, model?: string, permissionMode?: string) => {
+      const validModes = new Set(["full", "supervised", "default"]);
+      const mode = validModes.has(permissionMode ?? "") ? permissionMode! : "default";
       await state.sendMessage(threadId, content, mode, model);
     },
   );
@@ -194,9 +195,11 @@ function registerIpcHandlers(state: AppState): void {
   ipcMain.handle(
     "create-and-send-message",
     async (_event, workspaceId: string, content: string, model: string, permissionMode?: string, mode?: string, branch?: string) => {
+      const validModes = new Set(["full", "supervised", "default"]);
+      const safePermission = validModes.has(permissionMode ?? "") ? permissionMode! : "default";
       return state.createAndSendMessage(
         workspaceId, content, model,
-        permissionMode ?? "default",
+        safePermission,
         (mode as "direct" | "worktree") ?? "direct",
         branch ?? "main",
       );
