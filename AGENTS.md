@@ -1,42 +1,42 @@
 # Mcode
 
-Performant AI agent orchestration desktop app built with Rust + Tauri.
+Performant AI agent orchestration desktop app built with Electron + TypeScript.
 
 ## Directory Structure
 
 ```text
 apps/
-├── desktop/                # Tauri desktop shell (Rust)
-└── web/                    # React app (shared desktop + web)
-    └── src/
-        ├── app/            # Routes and providers
-        ├── components/     # UI components (sidebar, chat, terminal, diff)
-        ├── stores/         # Zustand state management
-        ├── transport/      # Tauri IPC / WebSocket adapter
-        └── lib/            # Utilities and types
-crates/
-├── mcode-core/             # Pure Rust library (process mgmt, store, events)
+├── desktop/                # Electron app (TypeScript)
 │   └── src/
-│       ├── process/        # Claude CLI spawn, stream-json parsing
-│       ├── config/         # Config discovery (read-only)
-│       ├── workspace/      # Workspace + thread management
-│       ├── worktree/       # Git worktree operations (git2)
-│       ├── store/          # SQLite persistence + migrations
-│       └── events.rs       # Typed event bus
-├── mcode-api/              # Adapter layer (commands, events, queries)
+│       ├── main/           # Main process
+│       │   ├── index.ts    # Entry, IPC handlers, lifecycle
+│       │   ├── app-state.ts # Central orchestrator
+│       │   ├── models.ts   # Shared types (Workspace, Thread, Message)
+│       │   ├── sidecar/    # Claude Agent SDK client (direct import)
+│       │   ├── store/      # SQLite (better-sqlite3) + migrations
+│       │   ├── repositories/ # Workspace, Thread, Message repos
+│       │   ├── worktree.ts # Git worktree via shell commands
+│       │   ├── config.ts   # Claude config discovery
+│       │   └── logger.ts   # Rotating file logger
+│       └── preload/        # contextBridge IPC exposure
+├── web/                    # React frontend (shared)
 │   └── src/
-└── mcode-server/           # Web server (v0.2+, Axum + WebSocket)
-www/                        # Marketing page (v0.3+)
+│       ├── app/            # Routes and providers
+│       ├── components/     # UI components (sidebar, chat, terminal, diff)
+│       ├── stores/         # Zustand state management
+│       ├── transport/      # Electron IPC / Tauri IPC adapter
+│       └── lib/            # Utilities and types
 docs/plans/                 # Design and planning docs
 ```
 
 ## Tech Stack
 
-- **Backend:** Rust (tokio, rusqlite, git2, serde, tracing)
-- **Desktop:** Tauri v2 (WebView2 on Windows, WKWebView on macOS)
+- **Runtime:** Bun (package manager + script runner)
+- **Desktop:** Electron 35, electron-vite
+- **Backend:** TypeScript (better-sqlite3, shell git, winston, Claude Agent SDK)
 - **Frontend:** React 19, Vite, shadcn/ui, Tailwind CSS 4, Zustand
-- **Database:** SQLite (single-writer pattern, refinery migrations)
-- **Testing:** cargo test (Rust), Vitest (frontend)
+- **Database:** SQLite (WAL mode, better-sqlite3)
+- **Testing:** Vitest (both backend and frontend)
 
 ## Commit Guidelines
 
@@ -48,12 +48,12 @@ Keep commits atomic. Each commit represents one logical change.
 ## Key Documentation
 
 - **Design doc:** docs/plans/2026-03-22-mcode-design.md
-- **Implementation plan:** docs/plans/2026-03-22-mcode-implementation-plan.md
-- **Tauri v2 docs:** https://v2.tauri.app/
+- **Electron migration plan:** docs/plans/2026-03-22-electron-migration-plan.md
+- **Electron docs:** https://www.electronjs.org/docs
+- **electron-vite docs:** https://electron-vite.org/
+- **better-sqlite3 docs:** https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
 - **shadcn/ui docs:** https://ui.shadcn.com/
 - **Tailwind CSS 4:** https://tailwindcss.com/docs
-- **rusqlite docs:** https://docs.rs/rusqlite/latest/rusqlite/
-- **git2 docs:** https://docs.rs/git2/latest/git2/
 
 ## Performance Requirements
 
@@ -64,6 +64,13 @@ Keep commits atomic. Each commit represents one logical change.
 | First 100 messages load | < 50ms |
 | App startup to usable | < 2 seconds |
 | Frontend bundle size | < 2MB gzipped |
+
+## Testing
+
+- **Unit tests:** `bun run test` from root (Vitest, runs in apps/web and apps/desktop)
+- **E2E tests:** `cd apps/web && bun run e2e` (Playwright, requires `bun run dev:web` or auto-starts)
+- **E2E headed:** `cd apps/web && bun run e2e:headed` (opens browser to watch)
+- **Screenshots:** E2E tests save screenshots to `apps/web/e2e/screenshots/` for visual verification
 
 ## Worktrees
 
