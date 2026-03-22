@@ -33,6 +33,9 @@ export const useThreadStore = create<ThreadState>((set) => ({
   },
 
   sendMessage: async (threadId, content) => {
+    // isAgentRunning stays true on success because the agent process
+    // continues after the message is queued. It is cleared by stopAgent()
+    // or when the agent process exits (via event streaming, not yet wired).
     set({ isAgentRunning: true, error: null });
     try {
       await getTransport().sendMessage(threadId, content);

@@ -46,17 +46,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   createWorkspace: async (name, path) => {
-    const workspace = await getTransport().createWorkspace(name, path);
-    set((state) => ({ workspaces: [workspace, ...state.workspaces] }));
-    return workspace;
+    set({ error: null });
+    try {
+      const workspace = await getTransport().createWorkspace(name, path);
+      set((state) => ({ workspaces: [workspace, ...state.workspaces] }));
+      return workspace;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
   },
 
   deleteWorkspace: async (id) => {
-    await getTransport().deleteWorkspace(id);
-    set((state) => ({
-      workspaces: state.workspaces.filter((w) => w.id !== id),
-      activeWorkspaceId: state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
-    }));
+    set({ error: null });
+    try {
+      await getTransport().deleteWorkspace(id);
+      set((state) => ({
+        workspaces: state.workspaces.filter((w) => w.id !== id),
+        activeWorkspaceId: state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
   },
 
   setActiveWorkspace: (id) => {
@@ -67,11 +79,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   loadThreads: async (workspaceId) => {
+    set({ loading: true, error: null });
     try {
       const threads = await getTransport().listThreads(workspaceId);
-      set({ threads });
+      if (get().activeWorkspaceId === workspaceId) {
+        set({ threads, loading: false });
+      }
     } catch (e) {
-      set({ error: String(e) });
+      if (get().activeWorkspaceId === workspaceId) {
+        set({ error: String(e), loading: false });
+      }
     }
   },
 
@@ -79,22 +96,34 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const { activeWorkspaceId } = get();
     if (!activeWorkspaceId) throw new Error("No active workspace");
 
-    const thread = await getTransport().createThread(
-      activeWorkspaceId,
-      title,
-      mode,
-      branch,
-    );
-    set((state) => ({ threads: [thread, ...state.threads] }));
-    return thread;
+    set({ error: null });
+    try {
+      const thread = await getTransport().createThread(
+        activeWorkspaceId,
+        title,
+        mode,
+        branch,
+      );
+      set((state) => ({ threads: [thread, ...state.threads] }));
+      return thread;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
   },
 
   deleteThread: async (threadId, cleanupWorktree) => {
-    await getTransport().deleteThread(threadId, cleanupWorktree);
-    set((state) => ({
-      threads: state.threads.filter((t) => t.id !== threadId),
-      activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
-    }));
+    set({ error: null });
+    try {
+      await getTransport().deleteThread(threadId, cleanupWorktree);
+      set((state) => ({
+        threads: state.threads.filter((t) => t.id !== threadId),
+        activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
   },
 
   setActiveThread: (id) => {
