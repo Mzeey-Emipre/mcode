@@ -25,7 +25,7 @@ import {
 import type { GitBranchInfo } from "./worktree.js";
 import { discoverConfig, type ConfigSummary } from "./config.js";
 import { logger } from "./logger.js";
-import type { Workspace, Thread, Message, ThreadStatus } from "./models.js";
+import type { Workspace, Thread, Message } from "./models.js";
 
 export class AppState {
   readonly db: Database.Database;
