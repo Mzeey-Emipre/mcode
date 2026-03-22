@@ -1,8 +1,9 @@
 use mcode_api::commands::AppState;
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_appender::rolling;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // -- Tauri commands --
 
@@ -98,14 +99,38 @@ async fn delete_thread(
 #[tauri::command]
 async fn send_message(
     state: tauri::State<'_, Arc<AppState>>,
+    app: tauri::AppHandle,
     thread_id: String,
     content: String,
 ) -> Result<u32, String> {
     let uuid = uuid::Uuid::parse_str(&thread_id).map_err(|e| e.to_string())?;
-    state
+    let pid = state
         .send_message(&uuid, &content)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // Start streaming events from the agent to the frontend
+    let events = state.take_events(&uuid).await;
+    if let Some(mut rx) = events {
+        let app_handle = app.clone();
+        let tid = thread_id.clone();
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                let payload = serde_json::json!({
+                    "thread_id": tid,
+                    "event": event,
+                });
+                let _ = app_handle.emit("agent-event", payload);
+            }
+            // Agent process finished
+            let _ = app_handle.emit("agent-event", serde_json::json!({
+                "thread_id": tid,
+                "event": { "type": "agent_finished" },
+            }));
+        });
+    }
+
+    Ok(pid)
 }
 
 #[tauri::command]
@@ -145,6 +170,46 @@ async fn discover_config(
     serde_json::to_string(&config.summary()).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_log_path() -> Result<String, String> {
+    let log_dir = dirs::home_dir()
+        .ok_or_else(|| "Could not find home directory".to_string())?
+        .join(".mcode")
+        .join("logs");
+    Ok(log_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn get_recent_logs(lines: usize) -> Result<String, String> {
+    let log_dir = dirs::home_dir()
+        .ok_or_else(|| "Could not find home directory".to_string())?
+        .join(".mcode")
+        .join("logs");
+
+    // Find the most recent log file
+    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .file_name()
+                .map(|n| n.to_string_lossy().starts_with("mcode.log"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    entries.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+
+    let latest = entries
+        .first()
+        .ok_or_else(|| "No log files found".to_string())?;
+    let content = std::fs::read_to_string(latest.path()).map_err(|e| e.to_string())?;
+
+    // Return last N lines
+    let result: Vec<&str> = content.lines().rev().take(lines).collect();
+    Ok(result.into_iter().rev().collect::<Vec<_>>().join("\n"))
+}
+
 // -- Runtime helper --
 
 /// Returns the current tokio runtime handle, or lazily creates a fallback runtime.
@@ -164,7 +229,21 @@ fn get_runtime_handle() -> tokio::runtime::Handle {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    fmt().with_env_filter(EnvFilter::from_default_env()).init();
+    // Set up rotating file logger alongside stderr
+    let log_dir = dirs::home_dir()
+        .expect("Could not find home directory")
+        .join(".mcode")
+        .join("logs");
+    std::fs::create_dir_all(&log_dir).expect("Could not create log directory");
+
+    let file_appender = rolling::daily(&log_dir, "mcode.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(fmt::layer().json().with_writer(non_blocking))
+        .init();
 
     tracing::info!("Mcode v{} starting", mcode_api::api_version());
 
@@ -199,6 +278,8 @@ pub fn run() {
             get_messages,
             get_active_agent_count,
             discover_config,
+            get_log_path,
+            get_recent_logs,
         ])
         .on_window_event({
             let state = app_state.clone();

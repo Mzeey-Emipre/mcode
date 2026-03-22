@@ -232,6 +232,15 @@ impl AppState {
         }
     }
 
+    /// Take the event receiver for a thread's agent process.
+    /// Returns None if the thread has no running agent or events were already taken.
+    pub async fn take_events(
+        &self,
+        thread_id: &Uuid,
+    ) -> Option<tokio::sync::mpsc::Receiver<mcode_core::process::stream::StreamEvent>> {
+        self.process_manager.take_events(thread_id).await
+    }
+
     pub async fn stop_agent(&self, thread_id: &Uuid) -> Result<()> {
         self.process_manager.terminate(thread_id).await?;
 

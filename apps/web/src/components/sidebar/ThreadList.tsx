@@ -1,5 +1,6 @@
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { ThreadItem } from "./ThreadItem";
+import { NewThreadDialog } from "./NewThreadDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 export function ThreadList() {
@@ -13,6 +14,7 @@ export function ThreadList() {
         <span className="text-xs font-medium uppercase text-muted-foreground">
           Threads
         </span>
+        <NewThreadDialog />
       </div>
       <ScrollArea className="flex-1">
         <div className="space-y-0.5 px-2">

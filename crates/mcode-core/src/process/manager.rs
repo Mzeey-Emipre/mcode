@@ -84,16 +84,13 @@ impl ProcessManager {
     }
 
     /// Take the event receiver for a thread's agent process.
-    /// Returns None if the thread has no running agent.
+    /// Returns None if the thread has no running agent or events were already taken.
     pub async fn take_events(
         &self,
         thread_id: &Uuid,
     ) -> Option<tokio::sync::mpsc::Receiver<super::stream::StreamEvent>> {
         let mut procs = self.processes.lock().await;
-        procs.get_mut(thread_id).map(|h| {
-            let (_, rx) = tokio::sync::mpsc::channel(1);
-            std::mem::replace(&mut h.events, rx)
-        })
+        procs.get_mut(thread_id).and_then(|h| h.events.take())
     }
 
     /// Get the number of currently running agents.

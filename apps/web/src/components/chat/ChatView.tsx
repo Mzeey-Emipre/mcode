@@ -4,7 +4,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { StreamingIndicator } from "./StreamingIndicator";
-import { GitBranch, Square } from "lucide-react";
+import { Bot, GitBranch, Square } from "lucide-react";
 
 export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -14,6 +14,7 @@ export function ChatView() {
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const stopAgent = useThreadStore((s) => s.stopAgent);
 
+  const streamingContent = useThreadStore((s) => s.streamingContent);
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
@@ -75,8 +76,20 @@ export function ChatView() {
         <MessageList />
       </div>
 
-      {/* Streaming indicator */}
-      {isAgentRunning && <StreamingIndicator />}
+      {/* Streaming content / indicator */}
+      {isAgentRunning && streamingContent && (
+        <div className="border-t border-border px-4 py-3">
+          <div className="flex gap-3">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <Bot size={14} />
+            </div>
+            <div className="max-w-[80%] text-sm text-foreground">
+              <p className="whitespace-pre-wrap break-words">{streamingContent}</p>
+            </div>
+          </div>
+        </div>
+      )}
+      {isAgentRunning && !streamingContent && <StreamingIndicator />}
 
       {/* Composer */}
       <Composer threadId={activeThread.id} />

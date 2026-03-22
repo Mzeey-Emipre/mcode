@@ -118,7 +118,7 @@ impl ClaudeProvider {
         Ok(AgentHandle {
             child,
             pid,
-            events: event_rx,
+            events: Some(event_rx),
         })
     }
 }
@@ -127,7 +127,7 @@ impl ClaudeProvider {
 pub struct AgentHandle {
     child: Child,
     pub pid: u32,
-    pub events: mpsc::Receiver<StreamEvent>,
+    pub events: Option<mpsc::Receiver<StreamEvent>>,
 }
 
 impl AgentHandle {

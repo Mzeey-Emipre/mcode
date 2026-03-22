@@ -8,6 +8,7 @@ interface ThreadState {
   loading: boolean;
   error: string | null;
   currentThreadId: string | null;
+  streamingContent: string;
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
@@ -16,6 +17,7 @@ interface ThreadState {
   addMessage: (message: Message) => void;
   clearMessages: () => void;
   isThreadRunning: (threadId: string) => boolean;
+  handleAgentEvent: (threadId: string, event: Record<string, unknown>) => void;
 }
 
 export const useThreadStore = create<ThreadState>((set, get) => ({
@@ -24,6 +26,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   loading: false,
   error: null,
   currentThreadId: null,
+  streamingContent: "",
 
   loadMessages: async (threadId) => {
     set({ loading: true, error: null, currentThreadId: threadId });
@@ -78,11 +81,53 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   },
 
   clearMessages: () => {
-    set({ messages: [], error: null });
+    set({ messages: [], error: null, streamingContent: "" });
     // Note: does NOT reset runningThreadIds - agents may still be running
   },
 
   isThreadRunning: (threadId) => {
     return get().runningThreadIds.has(threadId);
+  },
+
+  handleAgentEvent: (threadId, event) => {
+    const eventType = event.type as string;
+
+    if (eventType === "content_block_delta") {
+      const delta = event.delta as Record<string, unknown> | undefined;
+      if (delta && delta.type === "text_delta") {
+        set((state) => ({
+          streamingContent: state.streamingContent + ((delta.text as string) || ""),
+        }));
+      }
+    } else if (eventType === "result") {
+      // Agent turn complete: commit streaming content as a message
+      const content = get().streamingContent;
+      if (content) {
+        const resultData = (event.result as Record<string, unknown>) ?? {};
+        const message: Message = {
+          id: crypto.randomUUID(),
+          thread_id: threadId,
+          role: "assistant",
+          content,
+          tool_calls: null,
+          files_changed: null,
+          cost_usd: (resultData.cost_usd as number) ?? null,
+          tokens_used: (resultData.tokens_used as number) ?? null,
+          timestamp: new Date().toISOString(),
+          sequence: get().messages.length + 1,
+        };
+        set((state) => ({
+          messages: [...state.messages, message],
+          streamingContent: "",
+        }));
+      }
+    } else if (eventType === "agent_finished") {
+      // Agent process exited
+      set((state) => {
+        const next = new Set(state.runningThreadIds);
+        next.delete(threadId);
+        return { runningThreadIds: next, streamingContent: "" };
+      });
+    }
   },
 }));
