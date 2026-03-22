@@ -107,7 +107,41 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   handleAgentEvent: (threadId, event) => {
     const eventType = event.type as string;
 
-    if (eventType === "content_block_delta") {
+    if (eventType === "assistant") {
+      // Claude CLI sends the complete response as an "assistant" message
+      // Extract text from message.content array
+      const msg = event.message as Record<string, unknown> | undefined;
+      if (msg) {
+        const contentArr = msg.content as Array<Record<string, unknown>> | undefined;
+        if (contentArr && Array.isArray(contentArr)) {
+          const textParts = contentArr
+            .filter((c) => c.type === "text")
+            .map((c) => (c.text as string) || "")
+            .join("");
+
+          if (textParts) {
+            const usage = msg.usage as Record<string, unknown> | undefined;
+            const message: Message = {
+              id: (msg.id as string) || crypto.randomUUID(),
+              thread_id: threadId,
+              role: "assistant",
+              content: textParts,
+              tool_calls: null,
+              files_changed: null,
+              cost_usd: null,
+              tokens_used: (usage?.output_tokens as number) ?? null,
+              timestamp: new Date().toISOString(),
+              sequence: get().messages.length + 1,
+            };
+            set((state) => ({
+              messages: state.currentThreadId === threadId
+                ? [...state.messages, message]
+                : state.messages,
+            }));
+          }
+        }
+      }
+    } else if (eventType === "content_block_delta") {
       const delta = event.delta as Record<string, unknown> | undefined;
       if (delta && delta.type === "text_delta") {
         const text = (delta.text as string) || "";
@@ -119,7 +153,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
         }));
       }
     } else if (eventType === "result") {
-      // Agent turn complete: commit streaming content as a message
+      // Agent turn complete: commit any remaining streaming content
       const content = get().streamingByThread[threadId] ?? "";
       if (content) {
         const resultData = (event.result as Record<string, unknown>) ?? {};

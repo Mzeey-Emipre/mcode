@@ -106,10 +106,18 @@ impl ClaudeProvider {
             let mut lines = reader.lines();
 
             while let Ok(Some(line)) = lines.next_line().await {
-                if let Some(event) = parse_stream_line(&line) {
-                    if event_tx.send(event).await.is_err() {
-                        debug!("Event receiver dropped, stopping stream reader");
-                        break;
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match parse_stream_line(&line) {
+                    Some(event) => {
+                        if event_tx.send(event).await.is_err() {
+                            debug!("Event receiver dropped, stopping stream reader");
+                            break;
+                        }
+                    }
+                    None => {
+                        tracing::debug!(raw = %line, "Unparsed Claude CLI output line");
                     }
                 }
             }
