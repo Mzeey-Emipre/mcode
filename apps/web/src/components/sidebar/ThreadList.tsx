@@ -1,6 +1,5 @@
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { ThreadItem } from "./ThreadItem";
-import { Plus } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 export function ThreadList() {
@@ -14,9 +13,6 @@ export function ThreadList() {
         <span className="text-xs font-medium uppercase text-muted-foreground">
           Threads
         </span>
-        <button className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
-          <Plus size={14} />
-        </button>
       </div>
       <ScrollArea className="flex-1">
         <div className="space-y-0.5 px-2">

@@ -30,10 +30,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         )}
       >
         <p className="whitespace-pre-wrap break-words">{message.content}</p>
-        {message.tokens_used && (
+        {message.tokens_used != null && (
           <p className="mt-1 text-[10px] opacity-60">
             {message.tokens_used.toLocaleString()} tokens
-            {message.cost_usd ? ` · $${message.cost_usd.toFixed(4)}` : ""}
+            {message.cost_usd != null ? ` · $${message.cost_usd.toFixed(4)}` : ""}
           </p>
         )}
       </div>

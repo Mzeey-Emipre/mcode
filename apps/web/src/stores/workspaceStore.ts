@@ -64,6 +64,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set((state) => ({
         workspaces: state.workspaces.filter((w) => w.id !== id),
         activeWorkspaceId: state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
+        // Clear threads if deleting the active workspace
+        threads: state.activeWorkspaceId === id ? [] : state.threads,
+        activeThreadId: state.activeWorkspaceId === id ? null : state.activeThreadId,
       }));
     } catch (e) {
       set({ error: String(e) });

@@ -42,6 +42,14 @@ export function ThreadItem({ thread, isActive, onClick }: ThreadItemProps) {
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className={cn(
         "group flex flex-col gap-1 rounded-md px-2 py-1.5 cursor-pointer",
         isActive

@@ -27,6 +27,14 @@ export function WorkspaceList() {
           {workspaces.map((ws) => (
             <div
               key={ws.id}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setActiveWorkspace(ws.id);
+                }
+              }}
               className={cn(
                 "group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm cursor-pointer",
                 activeWorkspaceId === ws.id
@@ -38,6 +46,7 @@ export function WorkspaceList() {
               <FolderOpen size={14} className="shrink-0" />
               <span className="truncate flex-1">{ws.name}</span>
               <button
+                aria-label={`Delete ${ws.name}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   deleteWorkspace(ws.id);

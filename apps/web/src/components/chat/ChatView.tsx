@@ -11,8 +11,10 @@ export function ChatView() {
   const threads = useWorkspaceStore((s) => s.threads);
   const loadMessages = useThreadStore((s) => s.loadMessages);
   const clearMessages = useThreadStore((s) => s.clearMessages);
-  const isAgentRunning = useThreadStore((s) => s.isAgentRunning);
+  const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const stopAgent = useThreadStore((s) => s.stopAgent);
+
+  const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
 

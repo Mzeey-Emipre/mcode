@@ -20,7 +20,10 @@ export function SettingsDialog() {
     <Dialog>
       <DialogTrigger
         render={
-          <button className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+          <button
+            aria-label="Settings"
+            className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
             <Settings size={16} />
           </button>
         }
@@ -54,11 +57,12 @@ export function SettingsDialog() {
 
           {/* Max concurrent agents */}
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-foreground">
+            <label htmlFor="max-agents" className="text-sm font-medium text-foreground">
               Max Concurrent Agents
             </label>
             <div className="flex items-center gap-3">
               <input
+                id="max-agents"
                 type="range"
                 min={1}
                 max={10}
@@ -78,6 +82,8 @@ export function SettingsDialog() {
               Notifications
             </label>
             <button
+              role="switch"
+              aria-checked={notifications}
               onClick={() => setNotifications(!notifications)}
               className={`relative h-5 w-9 rounded-full transition-colors ${
                 notifications ? "bg-primary" : "bg-muted"

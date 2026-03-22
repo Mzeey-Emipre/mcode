@@ -10,7 +10,8 @@ export function Composer({ threadId }: ComposerProps) {
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendMessage = useThreadStore((s) => s.sendMessage);
-  const isAgentRunning = useThreadStore((s) => s.isAgentRunning);
+  const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+  const isAgentRunning = runningThreadIds.has(threadId);
 
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
