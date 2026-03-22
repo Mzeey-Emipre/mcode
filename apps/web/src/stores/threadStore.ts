@@ -107,6 +107,9 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   handleAgentEvent: (threadId, event) => {
     const eventType = event.type as string;
 
+    // DEBUG: Log all events to diagnose streaming pipeline
+    console.log("[mcode] agent event:", eventType, "thread:", threadId, "currentThread:", get().currentThreadId, "event:", JSON.stringify(event).slice(0, 200));
+
     if (eventType === "assistant") {
       // Claude CLI sends the complete response as an "assistant" message
       // Extract text from message.content array
