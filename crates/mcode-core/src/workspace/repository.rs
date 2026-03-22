@@ -310,7 +310,19 @@ impl ThreadRepo {
                             Box::new(e),
                         )
                     })?,
-                deleted_at: None,
+                deleted_at: row
+                    .get::<_, Option<String>>(14)?
+                    .map(|s| {
+                        chrono::DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc))
+                    })
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            14,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
             })
         })?;
 
@@ -327,6 +339,105 @@ impl ThreadRepo {
             "UPDATE threads SET status = ?1, updated_at = ?2 WHERE id = ?3",
             params![status.to_string(), now, id.to_string()],
         )?;
+        Ok(affected > 0)
+    }
+
+    pub fn update_worktree_path(conn: &Connection, id: &Uuid, worktree_path: &str) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let affected = conn.execute(
+            "UPDATE threads SET worktree_path = ?1, updated_at = ?2 WHERE id = ?3",
+            params![worktree_path, now, id.to_string()],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn find_by_id(conn: &Connection, id: &Uuid) -> Result<Option<Thread>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, workspace_id, title, status, mode, worktree_path, branch, issue_number, pr_number, pr_status, session_name, pid, created_at, updated_at, deleted_at FROM threads WHERE id = ?1",
+        )?;
+
+        let result = stmt.query_row(params![id.to_string()], |row| {
+            Ok(Thread {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                workspace_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                title: row.get(2)?,
+                status: row.get::<_, String>(3)?.parse().map_err(|e: String| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        e.into(),
+                    )
+                })?,
+                mode: row.get::<_, String>(4)?.parse().map_err(|e: String| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        e.into(),
+                    )
+                })?,
+                worktree_path: row.get(5)?,
+                branch: row.get(6)?,
+                issue_number: row.get(7)?,
+                pr_number: row.get(8)?,
+                pr_status: row.get(9)?,
+                session_name: row.get(10)?,
+                pid: row.get(11)?,
+                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(12)?)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            12,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(13)?)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            13,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                deleted_at: row
+                    .get::<_, Option<String>>(14)?
+                    .map(|s| {
+                        chrono::DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc))
+                    })
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            14,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+            })
+        });
+
+        match result {
+            Ok(thread) => Ok(Some(thread)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn hard_delete(conn: &Connection, id: &Uuid) -> Result<bool> {
+        let affected =
+            conn.execute("DELETE FROM threads WHERE id = ?1", params![id.to_string()])?;
         Ok(affected > 0)
     }
 
