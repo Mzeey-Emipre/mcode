@@ -1,0 +1,96 @@
+import { useEffect, useCallback } from "react";
+import { ChevronDown, FolderOpen } from "lucide-react";
+import { getTransport } from "@/transport";
+import { useInstalledEditors } from "@/hooks/useInstalledEditors";
+import { registerShortcut } from "@/lib/shortcuts";
+import { VsCodeIcon, ZedIcon, CursorIcon } from "./EditorIcons";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+
+interface EditorEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: React.ReactNode;
+}
+
+const EDITOR_CONFIG: Record<string, { label: string; icon: (size: number) => React.ReactNode }> = {
+  code: { label: "VS Code", icon: (s) => <VsCodeIcon size={s} /> },
+  cursor: { label: "Cursor", icon: (s) => <CursorIcon size={s} /> },
+  zed: { label: "Zed", icon: (s) => <ZedIcon size={s} /> },
+};
+
+interface OpenInEditorMenuProps {
+  /** Absolute path to open. */
+  dirPath: string;
+}
+
+export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
+  const installedEditors = useInstalledEditors();
+
+  const entries: EditorEntry[] = installedEditors
+    .filter((id) => id in EDITOR_CONFIG)
+    .map((id) => ({
+      id,
+      label: EDITOR_CONFIG[id].label,
+      icon: EDITOR_CONFIG[id].icon(14),
+    }));
+
+  const handleOpenEditor = (editorId: string) => {
+    getTransport().openInEditor(editorId, dirPath).catch(console.error);
+  };
+
+  const handleOpenExplorer = useCallback(() => {
+    getTransport().openInExplorer(dirPath).catch(console.error);
+  }, [dirPath]);
+
+  // Ctrl/Cmd+O shortcut to open in file explorer (via centralized shortcut system)
+  useEffect(() => {
+    return registerShortcut({
+      key: "o",
+      ctrl: true,
+      description: "Open in file explorer",
+      handler: handleOpenExplorer,
+    });
+  }, [handleOpenExplorer]);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
+        <FolderOpen size={12} />
+        Open
+        <ChevronDown size={10} />
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent align="end" sideOffset={4} className="min-w-[160px]">
+        {entries.map((entry) => (
+          <DropdownMenuItem
+            key={entry.id}
+            onClick={() => handleOpenEditor(entry.id)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs"
+          >
+            {entry.icon}
+            <span>{entry.label}</span>
+          </DropdownMenuItem>
+        ))}
+
+        {entries.length > 0 && <DropdownMenuSeparator />}
+
+        <DropdownMenuItem
+          onClick={handleOpenExplorer}
+          className="flex items-center justify-between px-3 py-1.5 text-xs"
+        >
+          <span className="flex items-center gap-2">
+            <FolderOpen size={14} />
+            <span>Explorer</span>
+          </span>
+          <kbd className="ml-4 text-[10px] text-muted-foreground">Ctrl+O</kbd>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
