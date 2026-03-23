@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { ChevronDown, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { NamingMode } from "@/lib/settings";
 
-export type NamingMode = "auto" | "custom";
+export type { NamingMode };
 
 interface NamingModeSelectorProps {
   mode: NamingMode;
@@ -14,6 +15,7 @@ const NAMING_OPTIONS: Array<{ value: NamingMode; label: string }> = [
   { value: "custom", label: "Custom" },
 ];
 
+/** Toggle between Auto and Custom branch naming for new worktrees. */
 export function NamingModeSelector({ mode, onModeChange }: NamingModeSelectorProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);

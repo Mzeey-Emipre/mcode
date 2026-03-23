@@ -10,12 +10,20 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "fs";
 import { join, basename } from "path";
 import { homedir } from "os";
 
-/** Get the worktree base directory under ~/.mcode/worktrees/{workspace-slug}/ */
+/** Resolve the worktree base directory path under ~/.mcode/worktrees/{workspace-slug}/. */
 function getWorktreeBaseDir(repoPath: string): string {
-  const slug = basename(repoPath).toLowerCase().replace(/[^a-z0-9-]/g, "-");
-  const dir = join(homedir(), ".mcode", "worktrees", slug);
+  return join(homedir(), ".mcode", "worktrees", worktreeSlug(repoPath));
+}
+
+/** Resolve and ensure the worktree base directory exists. */
+function ensureWorktreeBaseDir(repoPath: string): string {
+  const dir = getWorktreeBaseDir(repoPath);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function worktreeSlug(repoPath: string): string {
+  return basename(repoPath).toLowerCase().replace(/[^a-z0-9-]/g, "-");
 }
 
 export interface WorktreeInfo {
@@ -46,7 +54,11 @@ export function validateName(name: string): void {
   }
 }
 
-/** Validate a git branch name. */
+/**
+ * Validate a git branch name against git-check-ref-format rules.
+ * Rejects names that git would refuse or that could interfere with
+ * git internals (e.g. `.lock` suffixes, reflog syntax).
+ */
 export function validateBranchName(branch: string): void {
   if (!branch || branch.length > 250) {
     throw new Error("Branch name must be 1-250 characters");
@@ -56,6 +68,18 @@ export function validateBranchName(branch: string): void {
   }
   if (/[ \t~^:?*\[\\\x00-\x1f\x7f]/.test(branch) || branch.includes("..")) {
     throw new Error(`Branch name contains invalid characters: ${branch}`);
+  }
+  if (branch.endsWith(".lock") || branch.endsWith(".") || branch.endsWith("/")) {
+    throw new Error(`Branch name has an invalid suffix: ${branch}`);
+  }
+  if (branch.includes("@{") || branch.includes("//")) {
+    throw new Error(`Branch name contains invalid sequence: ${branch}`);
+  }
+  if (branch === "@") {
+    throw new Error("Branch name cannot be '@'");
+  }
+  if (/(?:^|\/)\./.test(branch)) {
+    throw new Error(`Branch name component cannot start with '.': ${branch}`);
   }
 }
 
@@ -77,7 +101,7 @@ export function createWorktree(
 
   const branch = branchName ?? `mcode/${name}`;
   validateBranchName(branch);
-  const wtPath = join(getWorktreeBaseDir(repoPath), name);
+  const wtPath = join(ensureWorktreeBaseDir(repoPath), name);
 
   if (existsSync(wtPath)) {
     throw new Error(`Worktree directory already exists: ${wtPath}`);
@@ -150,6 +174,8 @@ export function listWorktrees(repoPath: string): WorktreeInfo[] {
       } else if (line.startsWith("branch ")) {
         const ref = line.slice("branch ".length).trim();
         branchByPath.set(currentPath, ref.replace("refs/heads/", ""));
+      } else if (line === "detached") {
+        branchByPath.set(currentPath, "(detached)");
       }
     }
   } catch {

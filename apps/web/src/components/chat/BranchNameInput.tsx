@@ -9,6 +9,11 @@ interface BranchNameInputProps {
   onCustomChange: (value: string) => void;
 }
 
+/**
+ * Shows the branch name for a new worktree.
+ * In auto mode, renders a greyed-out preview (e.g. `mcode-a1b2c3`).
+ * In custom mode, renders an editable text input.
+ */
 export function BranchNameInput({
   namingMode,
   autoPreview,

@@ -58,6 +58,35 @@ describe("validateBranchName", () => {
   it("rejects names with spaces", () => {
     expect(() => validateBranchName("my branch")).toThrow("invalid characters");
   });
+
+  it("rejects .lock suffix", () => {
+    expect(() => validateBranchName("main.lock")).toThrow("invalid suffix");
+  });
+
+  it("rejects trailing dot", () => {
+    expect(() => validateBranchName("main.")).toThrow("invalid suffix");
+  });
+
+  it("rejects trailing slash", () => {
+    expect(() => validateBranchName("feat/")).toThrow("invalid suffix");
+  });
+
+  it("rejects @{ reflog syntax", () => {
+    expect(() => validateBranchName("main@{0}")).toThrow("invalid sequence");
+  });
+
+  it("rejects consecutive slashes", () => {
+    expect(() => validateBranchName("feat//bar")).toThrow("invalid sequence");
+  });
+
+  it("rejects single @", () => {
+    expect(() => validateBranchName("@")).toThrow("cannot be '@'");
+  });
+
+  it("rejects dot-prefixed path component", () => {
+    expect(() => validateBranchName(".hidden")).toThrow("cannot start with '.'");
+    expect(() => validateBranchName("refs/.foo")).toThrow("cannot start with '.'");
+  });
 });
 
 // Tests in this describe block share a git repo and run in declared order.

@@ -1,3 +1,9 @@
+/**
+ * Lightweight localStorage-based settings for user preferences that
+ * don't warrant a round-trip to the main process (e.g. UI defaults).
+ */
+
+/** Branch naming strategy for new worktrees. */
 export type NamingMode = "auto" | "custom";
 
 const SETTINGS_KEY = "mcode-settings";
@@ -12,6 +18,7 @@ const DEFAULTS: Settings = {
   "worktree.aiConfirmation": true,
 };
 
+/** Read a setting from localStorage, falling back to a built-in default. */
 export function getSetting<K extends keyof Settings>(key: K): Settings[K] {
   try {
     const stored = localStorage.getItem(SETTINGS_KEY);
@@ -23,6 +30,7 @@ export function getSetting<K extends keyof Settings>(key: K): Settings[K] {
   }
 }
 
+/** Persist a setting to localStorage. Silently no-ops on storage errors. */
 export function setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
   try {
     const stored = localStorage.getItem(SETTINGS_KEY);

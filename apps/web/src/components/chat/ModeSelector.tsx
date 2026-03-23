@@ -2,6 +2,12 @@ import { useState, useEffect, useRef } from "react";
 import { ChevronDown, FolderOpen, GitBranch, GitFork, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+/**
+ * How the user wants to run the next thread.
+ * - "direct": run in the workspace directory
+ * - "worktree": create a new git worktree
+ * - "existing-worktree": attach to an already-created worktree
+ */
 export type ComposerMode = "direct" | "worktree" | "existing-worktree";
 
 interface ModeSelectorProps {
@@ -20,6 +26,7 @@ const ALL_OPTIONS: Array<{ value: ComposerMode; label: string; icon: typeof Fold
   { value: "existing-worktree", label: "Existing worktree", icon: GitFork },
 ];
 
+/** Dropdown for choosing how a new thread runs (local, new worktree, existing worktree). */
 export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);

@@ -2,8 +2,9 @@ import { create } from "zustand";
 import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo } from "@/transport";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
-import { getSetting } from "@/lib/settings";
+import { getSetting, type NamingMode } from "@/lib/settings";
 
+/** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
 function generateBranchId(): string {
   return `mcode-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -22,7 +23,7 @@ interface WorkspaceState {
   newThreadBranch: string;
   worktrees: WorktreeInfo[];
   worktreesLoading: boolean;
-  namingMode: "auto" | "custom";
+  namingMode: NamingMode;
   customBranchName: string;
   autoPreviewBranch: string;
   selectedWorktree: WorktreeInfo | null;
@@ -55,7 +56,7 @@ interface WorkspaceState {
 
   // Worktree actions
   loadWorktrees: (workspaceId: string) => Promise<void>;
-  setNamingMode: (mode: "auto" | "custom") => void;
+  setNamingMode: (mode: NamingMode) => void;
   setCustomBranchName: (name: string) => void;
   setSelectedWorktree: (worktree: WorktreeInfo | null) => void;
   regenerateAutoPreview: () => void;

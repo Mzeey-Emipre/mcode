@@ -55,6 +55,7 @@ export interface GitBranch {
   isCurrent: boolean;
 }
 
+/** A managed git worktree under ~/.mcode/worktrees/. */
 export interface WorktreeInfo {
   name: string;
   path: string;

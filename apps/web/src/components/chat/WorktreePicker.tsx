@@ -10,6 +10,7 @@ interface WorktreePickerProps {
   loading: boolean;
 }
 
+/** Searchable dropdown listing managed worktrees for attaching to an existing one. */
 export function WorktreePicker({
   worktrees,
   selectedPath,
