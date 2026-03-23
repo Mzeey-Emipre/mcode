@@ -1,6 +1,7 @@
 import { useRef, useEffect } from "react";
 import { GitBranch } from "lucide-react";
-import type { NamingMode } from "./NamingModeSelector";
+import type { NamingMode } from "@/lib/settings";
+import { Input } from "@/components/ui/input";
 
 interface BranchNameInputProps {
   namingMode: NamingMode;
@@ -40,13 +41,13 @@ export function BranchNameInput({
   return (
     <div className="flex items-center gap-1">
       <GitBranch size={11} className="text-muted-foreground" />
-      <input
+      <Input
         ref={inputRef}
         type="text"
         value={customValue}
         onChange={(e) => onCustomChange(e.target.value)}
         placeholder="branch-name"
-        className="w-[160px] rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none"
+        className="h-auto w-[160px] rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus-visible:border-primary"
       />
     </div>
   );

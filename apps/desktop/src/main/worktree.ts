@@ -6,7 +6,7 @@
  */
 
 import { execFileSync } from "child_process";
-import { existsSync, mkdirSync, readdirSync, statSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import { homedir } from "os";
 
@@ -151,53 +151,55 @@ export function removeWorktree(repoPath: string, name: string, branchName?: stri
   return true;
 }
 
-/** List all mcode worktrees in a repository. */
+/**
+ * List managed worktrees for a repository using git porcelain output.
+ * Only returns worktrees that live under the managed base dir and are
+ * registered with git. Returns [] if the git command fails.
+ */
 export function listWorktrees(repoPath: string): WorktreeInfo[] {
-  const worktreesDir = getWorktreeBaseDir(repoPath);
+  const worktreesDir = getWorktreeBaseDir(repoPath).replace(/\\/g, "/").toLowerCase();
 
-  if (!existsSync(worktreesDir)) {
-    return [];
-  }
-
-  // Build a map of worktree path -> branch from git
-  const branchByPath = new Map<string, string>();
+  let output: string;
   try {
-    const output = execFileSync(
+    output = execFileSync(
       "git",
       ["-C", repoPath, "worktree", "list", "--porcelain"],
       { stdio: "pipe", encoding: "utf-8" },
     );
-    let currentPath = "";
-    for (const line of output.split("\n")) {
-      if (line.startsWith("worktree ")) {
-        currentPath = line.slice("worktree ".length).trim().replace(/\\/g, "/");
-      } else if (line.startsWith("branch ")) {
-        const ref = line.slice("branch ".length).trim();
-        branchByPath.set(currentPath, ref.replace("refs/heads/", ""));
-      } else if (line === "detached") {
-        branchByPath.set(currentPath, "(detached)");
-      }
-    }
   } catch {
-    // Fall back to name-based assumption if git command fails
+    return [];
   }
 
-  const entries = readdirSync(worktreesDir);
   const result: WorktreeInfo[] = [];
+  let currentPath = "";
+  let currentBranch = "";
 
-  for (const entry of entries) {
-    const entryPath = join(worktreesDir, entry);
-    try {
-      if (statSync(entryPath).isDirectory()) {
-        const normalized = entryPath.replace(/\\/g, "/");
-        result.push({
-          name: entry,
-          path: entryPath,
-          branch: branchByPath.get(normalized) ?? `mcode/${entry}`,
-        });
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length).trim();
+      currentBranch = "";
+    } else if (line.startsWith("branch ")) {
+      currentBranch = line.slice("branch ".length).trim().replace("refs/heads/", "");
+    } else if (line === "detached") {
+      currentBranch = "(detached)";
+    } else if (line.trim() === "" && currentPath) {
+      // Blank line separates worktree entries; emit if under managed dir
+      const normalized = currentPath.replace(/\\/g, "/").toLowerCase();
+      if (normalized.startsWith(worktreesDir + "/") && currentBranch) {
+        const name = basename(currentPath);
+        result.push({ name, path: currentPath, branch: currentBranch });
       }
-    } catch {
-      // Skip entries we cannot stat
+      currentPath = "";
+      currentBranch = "";
+    }
+  }
+
+  // Handle last entry (porcelain output may not end with blank line)
+  if (currentPath && currentBranch) {
+    const normalized = currentPath.replace(/\\/g, "/").toLowerCase();
+    if (normalized.startsWith(worktreesDir + "/")) {
+      const name = basename(currentPath);
+      result.push({ name, path: currentPath, branch: currentBranch });
     }
   }
 

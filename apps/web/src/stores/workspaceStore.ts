@@ -143,6 +143,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       branches: [],
       newThreadBranch: "",
       worktrees: [],
+      worktreesLoading: false,
       selectedWorktree: null,
     });
     if (id) {
@@ -199,7 +200,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     if (newThreadMode === "worktree") {
       mode = "worktree";
-      branch = namingMode === "custom" ? customBranchName : autoPreviewBranch;
+      if (namingMode === "custom") {
+        if (!customBranchName.trim()) {
+          // Fallback to auto if custom name is empty
+          branch = autoPreviewBranch;
+          set({ namingMode: "auto" as NamingMode });
+        } else {
+          branch = customBranchName;
+        }
+      } else {
+        branch = autoPreviewBranch;
+      }
     } else if (newThreadMode === "existing-worktree") {
       mode = "worktree";
       if (!selectedWorktree) throw new Error("No worktree selected");
@@ -311,11 +322,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   loadWorktrees: async (workspaceId) => {
-    set({ worktreesLoading: true });
+    set({ worktreesLoading: true, error: null });
     try {
       const worktrees = await getTransport().listWorktrees(workspaceId);
       if (get().activeWorkspaceId !== workspaceId) return;
-      set({ worktrees, worktreesLoading: false });
+      set({ worktrees, worktreesLoading: false, error: null });
     } catch (e) {
       if (get().activeWorkspaceId !== workspaceId) return;
       set({ worktreesLoading: false, error: String(e) });

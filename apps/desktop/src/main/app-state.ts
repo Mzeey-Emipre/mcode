@@ -193,10 +193,12 @@ export class AppState {
       this.sidecar.stopSession(sessionId);
     }
 
-    // If cleanup requested, remove the worktree from disk and git
+    // If cleanup requested and this is an app-provisioned worktree, remove it.
+    // Attached (non-managed) worktrees are left on disk since they were not
+    // created by the app and may be shared by other threads.
     if (cleanupWorktree) {
       const thread = ThreadRepo.findById(this.db, threadId);
-      if (thread?.worktree_path) {
+      if (thread?.worktree_path && thread.worktree_managed) {
         const workspace = WorkspaceRepo.findById(this.db, thread.workspace_id);
         if (workspace) {
           const wtName = thread.worktree_path
@@ -350,17 +352,21 @@ export class AppState {
       const knownWorktrees = listWorktrees(workspace.path);
       const normalize = (p: string) => p.replace(/\\/g, "/").toLowerCase();
       const normalizedInput = normalize(existingWorktreePath);
-      const isKnown = knownWorktrees.some(
+      const matched = knownWorktrees.find(
         (wt) => normalize(wt.path) === normalizedInput,
       );
-      if (!isKnown) {
+      if (!matched) {
         throw new Error("Path is not a recognized managed worktree");
       }
 
-      // Attach to existing worktree: DB record only, no git operations
-      thread = ThreadRepo.create(this.db, workspaceId, title, "worktree", branch);
+      // Use the canonical branch from the matched worktree, not the caller-supplied value
+      const canonicalBranch = matched.branch;
+
+      // Attach to existing worktree: DB record only, no git operations.
+      // Mark worktree_managed=false since we did not provision this worktree.
+      thread = ThreadRepo.create(this.db, workspaceId, title, "worktree", canonicalBranch, false);
       ThreadRepo.updateWorktreePath(this.db, thread.id, existingWorktreePath);
-      thread = { ...thread, worktree_path: existingWorktreePath };
+      thread = { ...thread, worktree_path: existingWorktreePath, branch: canonicalBranch };
     } else if (mode === "worktree") {
       thread = this.createThread(workspaceId, title, "worktree", branch);
     } else {
