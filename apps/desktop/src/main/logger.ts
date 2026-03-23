@@ -7,9 +7,9 @@ import winston from "winston";
 import DailyRotateFile from "winston-daily-rotate-file";
 import { mkdirSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { MCODE_DIR } from "./paths.js";
 
-const LOG_DIR = join(homedir(), ".mcode", "logs");
+const LOG_DIR = join(MCODE_DIR, "logs");
 const MAX_LINES = 1000;
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -66,7 +66,7 @@ export function getRecentLogs(lines: number): string {
 
   if (stat.size > MAX_FILE_BYTES) {
     throw new Error(
-      "Log file exceeds 10MB, please check ~/.mcode/logs/ directly",
+      `Log file exceeds 10MB, please check ${LOG_DIR} directly`,
     );
   }
 
