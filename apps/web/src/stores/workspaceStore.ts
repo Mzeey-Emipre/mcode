@@ -247,8 +247,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   deleteThread: async (threadId, cleanupWorktree) => {
     set({ error: null });
     try {
-      useTerminalStore.getState().removeAllTerminals(threadId);
       await getTransport().deleteThread(threadId, cleanupWorktree);
+      useTerminalStore.getState().removeAllTerminals(threadId);
       set((state) => ({
         threads: state.threads.filter((t) => t.id !== threadId),
         activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,

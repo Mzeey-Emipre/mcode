@@ -31,7 +31,7 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
           import("@xterm/xterm/css/xterm.css"),
         ]);
 
-      if (disposed) return;
+      if (disposed || !containerRef.current) return;
 
       const term = new XTerminal({
         scrollback: 500,
@@ -60,9 +60,10 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       // Listen for pty output
       const removePtyData = window.electronAPI?.on(
         "pty:data",
-        (id: unknown, data: unknown) => {
-          if (id === ptyId && typeof data === "string") {
-            term.write(data);
+        (...args: unknown[]) => {
+          const payload = args[0] as { ptyId: string; data: string };
+          if (payload.ptyId === ptyId && typeof payload.data === "string") {
+            term.write(payload.data);
           }
         },
       );
@@ -70,10 +71,11 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       // Listen for pty exit
       const removePtyExit = window.electronAPI?.on(
         "pty:exit",
-        (id: unknown, exitCode: unknown) => {
-          if (id === ptyId) {
-            term.writeln(
-              `\r\n[Process exited with code ${exitCode ?? "unknown"}]`,
+        (...args: unknown[]) => {
+          const payload = args[0] as { ptyId: string; exitCode: number };
+          if (payload.ptyId === ptyId) {
+            term.write(
+              `\r\n\x1b[90m[Process exited with code ${payload.exitCode}]\x1b[0m\r\n`,
             );
           }
         },
@@ -96,13 +98,20 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       });
       observer.observe(el);
 
-      cleanupRef.current = () => {
+      const cleanup = () => {
         dataDisposable.dispose();
         removePtyData?.();
         removePtyExit?.();
         observer.disconnect();
         term.dispose();
       };
+
+      if (disposed) {
+        cleanup();
+        return;
+      }
+
+      cleanupRef.current = cleanup;
     }
 
     init(container);

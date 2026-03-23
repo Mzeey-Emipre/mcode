@@ -383,11 +383,21 @@ function registerPtyHandlers(ptys: PtyManager, state: AppState): void {
     return ptys.create(threadId, cwd);
   });
 
-  ipcMain.handle("pty:write", (_event, ptyId: string, data: string) => {
+  ipcMain.handle("pty:write", (_event, ptyId: unknown, data: unknown) => {
+    if (typeof ptyId !== "string" || typeof data !== "string") {
+      throw new Error("Invalid pty:write arguments");
+    }
     ptys.write(ptyId, data);
   });
 
-  ipcMain.handle("pty:resize", (_event, ptyId: string, cols: number, rows: number) => {
+  ipcMain.handle("pty:resize", (_event, ptyId: unknown, cols: unknown, rows: unknown) => {
+    if (
+      typeof ptyId !== "string" ||
+      typeof cols !== "number" || !Number.isFinite(cols) || cols < 1 ||
+      typeof rows !== "number" || !Number.isFinite(rows) || rows < 1
+    ) {
+      throw new Error("Invalid pty:resize arguments");
+    }
     ptys.resize(ptyId, cols, rows);
   });
 
