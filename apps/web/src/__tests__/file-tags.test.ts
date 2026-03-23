@@ -60,8 +60,9 @@ describe("buildInjectedMessage", () => {
       { path: "a.ts", content: "const a = 1;" },
       { path: "b.ts", content: "const b = 2;" },
     ]);
-    expect(result).toContain('<file path="a.ts">');
-    expect(result).toContain('<file path="b.ts">');
+    expect(result).toBe(
+      'compare @a.ts and @b.ts\n\n---\n<file path="a.ts">\nconst a = 1;\n</file>\n<file path="b.ts">\nconst b = 2;\n</file>'
+    );
   });
 
   it("returns original text when no files", () => {
