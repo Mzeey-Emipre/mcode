@@ -11,6 +11,10 @@ function createMockQuery(events: Array<Record<string, unknown>>) {
       }
     },
     setModel: vi.fn().mockResolvedValue(undefined),
+    interrupt: vi.fn(),
+    setPermissionMode: vi.fn(),
+    setMaxThinkingTokens: vi.fn(),
+    close: vi.fn(),
   };
   return iterable as unknown as ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").query>;
 }
@@ -475,6 +479,9 @@ describe("SidecarClient", () => {
 
     const callArgs = vi.mocked(query).mock.calls[0]?.[0] as { options: Record<string, unknown> };
     expect(callArgs.options).not.toHaveProperty("allowDangerouslySkipPermissions");
+    expect(callArgs.options.settingSources).toEqual(["user", "project", "local"]);
+    expect(callArgs.options.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
+    expect(callArgs.options.tools).toEqual({ type: "preset", preset: "claude_code" });
   });
 
   it("session cleanup removes session from map in finally block", async () => {

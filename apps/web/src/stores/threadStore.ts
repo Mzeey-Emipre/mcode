@@ -206,7 +206,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       const isError = (params.isError as boolean) || false;
       set((state) => {
         const calls = state.toolCallsByThread[threadId] ?? [];
-        // Try matching by ID first; fall back to the last incomplete tool call
+        // Try matching by ID first; fall back to the first incomplete tool call
         // when the SDK sends a null or non-matching toolCallId.
         const hasIdMatch = toolCallId && calls.some((tc) => tc.id === toolCallId);
         let matched = false;

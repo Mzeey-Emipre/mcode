@@ -107,7 +107,7 @@ describe("AppState", () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     db = createTestDb();
     appState = buildAppState(db);
   });
@@ -529,8 +529,9 @@ describe("AppState", () => {
         "main",
       );
 
-      expect(result.title.length).toBeLessThanOrEqual(53); // 50 + "..."
-      expect(result.title).toContain("...");
+      expect(result.title).toBe(
+        "This is a very long message that should be...",
+      );
     });
 
     it("uses first line only for title", async () => {

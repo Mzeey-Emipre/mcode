@@ -8,9 +8,14 @@ vi.mock("which", () => ({
   default: { sync: vi.fn() },
 }));
 
+vi.mock("os", () => ({
+  homedir: vi.fn(),
+}));
+
 import { discoverConfig, spawnEnv } from "../config.js";
 import { existsSync } from "fs";
 import which from "which";
+import { homedir } from "os";
 
 describe("discoverConfig", () => {
   let savedEnv: string | undefined;
@@ -18,6 +23,7 @@ describe("discoverConfig", () => {
   beforeEach(() => {
     savedEnv = process.env.MCODE_CLAUDE_PATH;
     vi.clearAllMocks();
+    vi.mocked(homedir).mockReturnValue("/home/test");
   });
 
   afterEach(() => {
@@ -73,8 +79,15 @@ describe("discoverConfig", () => {
 });
 
 describe("spawnEnv", () => {
-  it("includes HOME key", () => {
+  it("includes HOME from os.homedir()", () => {
+    vi.mocked(homedir).mockReturnValue("/home/tester");
     const env = spawnEnv();
-    expect(env.HOME).toBeTruthy();
+    expect(env.HOME).toBe("/home/tester");
+  });
+
+  it("omits HOME when homedir() returns empty string", () => {
+    vi.mocked(homedir).mockReturnValue("");
+    const env = spawnEnv();
+    expect(env.HOME).toBeUndefined();
   });
 });

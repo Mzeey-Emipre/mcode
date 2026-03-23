@@ -102,7 +102,7 @@ Expected: Vitest runs successfully with 0 tests.
 
 - [ ] **Step 6: Commit**
 
-```
+```text
 test: add Vitest config and DB test helper for desktop app
 ```
 
@@ -369,7 +369,7 @@ Expected: All 24 tests pass.
 
 - [ ] **Step 7: Commit**
 
-```
+```text
 test: add repository integration tests (workspace, thread, message)
 ```
 
@@ -554,7 +554,7 @@ Expected: All AppState tests pass (~30 tests).
 
 - [ ] **Step 5: Commit**
 
-```
+```text
 test: add AppState integration tests (createThread, sendMessage, lifecycle)
 ```
 
@@ -693,7 +693,7 @@ Expected: All worktree tests pass.
 
 - [ ] **Step 3: Commit**
 
-```
+```text
 test: add worktree validateName unit tests and git integration tests
 ```
 
@@ -799,7 +799,7 @@ Expected: All config tests pass.
 
 - [ ] **Step 3: Commit**
 
-```
+```text
 test: add config discovery unit tests
 ```
 
@@ -985,7 +985,7 @@ Expected: All sidecar tests pass.
 
 - [ ] **Step 3: Commit**
 
-```
+```text
 test: add SidecarClient unit tests with mocked SDK query
 ```
 
@@ -1296,7 +1296,7 @@ Expected: All new + existing frontend tests pass.
 
 - [ ] **Step 7: Commit**
 
-```
+```text
 test: add frontend utility tests (settings, model-registry, time, shortcuts, thread-status)
 ```
 
@@ -1561,7 +1561,7 @@ Expected: All tests pass (existing + new).
 
 - [ ] **Step 4: Commit**
 
-```
+```text
 test: add tool-call-matching and agent-event-branch tests
 ```
 
@@ -1583,7 +1583,7 @@ Expected: Combined coverage >= 80% lines.
 
 - [ ] **Step 3: Commit all if any uncommitted changes remain**
 
-```
+```text
 test: verify 80%+ test coverage across desktop and web
 ```
 
@@ -1593,7 +1593,7 @@ test: verify 80%+ test coverage across desktop and web
 
 Tasks can be executed in parallel as follows:
 
-```
+```text
 Task 1 (infra) ──┬── Task 2 (repos)
                  ├── Task 3 (app-state)
                  ├── Task 4 (worktree)

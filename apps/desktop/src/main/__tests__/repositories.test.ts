@@ -98,10 +98,11 @@ describe("ThreadRepo", () => {
   });
 
   it("listByWorkspace clamps limit: >1000 becomes 1000", () => {
-    ThreadRepo.create(db, workspaceId, "T1", "direct", "main");
-    // Just verify it doesn't throw with large limit
+    for (let i = 1; i <= 1005; i++) {
+      ThreadRepo.create(db, workspaceId, `T${i}`, "direct", "main");
+    }
     const list = ThreadRepo.listByWorkspace(db, workspaceId, 9999);
-    expect(list).toHaveLength(1);
+    expect(list).toHaveLength(1000);
   });
 
   it("softDelete sets deleted_at and status to deleted", () => {
@@ -130,12 +131,14 @@ describe("ThreadRepo", () => {
     const t = ThreadRepo.create(db, workspaceId, "T", "direct", "main");
     expect(ThreadRepo.updateTitle(db, t.id, "New Title")).toBe(true);
     expect(ThreadRepo.updateTitle(db, "nonexistent", "New Title")).toBe(false);
+    expect(ThreadRepo.findById(db, t.id)?.title).toBe("New Title");
   });
 
   it("updateWorktreePath returns true on success, false for nonexistent", () => {
     const t = ThreadRepo.create(db, workspaceId, "T", "direct", "main");
     expect(ThreadRepo.updateWorktreePath(db, t.id, "/tmp/wt")).toBe(true);
     expect(ThreadRepo.updateWorktreePath(db, "nonexistent", "/tmp/wt")).toBe(false);
+    expect(ThreadRepo.findById(db, t.id)?.worktree_path).toBe("/tmp/wt");
   });
 
   it("updateStatus transitions correctly", () => {
@@ -187,9 +190,11 @@ describe("MessageRepo", () => {
   });
 
   it("listByThread clamps limit: >1000 becomes 1000", () => {
-    MessageRepo.create(db, threadId, "user", "A", 1);
+    for (let i = 1; i <= 1005; i++) {
+      MessageRepo.create(db, threadId, "user", `M${i}`, i);
+    }
     const msgs = MessageRepo.listByThread(db, threadId, 9999);
-    expect(msgs).toHaveLength(1); // only 1 message exists
+    expect(msgs).toHaveLength(1000);
   });
 
   it("parseJsonField: malformed JSON in tool_calls returns null", () => {
