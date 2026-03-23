@@ -179,7 +179,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       await sendMessage(threadId, trimmed, modelId, access);
     }
     textareaRef.current?.focus();
-  }, [input, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, composerMode, namingMode, customBranchName, selectedWorktree]);
+  }, [input, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

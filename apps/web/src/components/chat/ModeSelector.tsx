@@ -16,13 +16,9 @@ interface ModeSelectorProps {
   locked: boolean;
 }
 
-const BASE_OPTIONS: Array<{ value: ComposerMode; label: string; icon: typeof FolderOpen }> = [
+const MODE_OPTIONS: Array<{ value: ComposerMode; label: string; icon: typeof FolderOpen }> = [
   { value: "direct", label: "Local", icon: FolderOpen },
   { value: "worktree", label: "New worktree", icon: GitBranch },
-];
-
-const ALL_OPTIONS: Array<{ value: ComposerMode; label: string; icon: typeof FolderOpen }> = [
-  ...BASE_OPTIONS,
   { value: "existing-worktree", label: "Existing worktree", icon: GitFork },
 ];
 
@@ -31,7 +27,7 @@ export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) 
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const options = ALL_OPTIONS;
+  const options = MODE_OPTIONS;
   const selected = options.find((o) => o.value === mode) ?? options[0];
   const Icon = selected.icon;
 
