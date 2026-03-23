@@ -62,6 +62,23 @@ export interface GitBranch {
  */
 export type PermissionMode = "full" | "supervised";
 
+export const PERMISSION_MODES = {
+  FULL: "full" as const,
+  SUPERVISED: "supervised" as const,
+} satisfies Record<string, PermissionMode>;
+
+/**
+ * Interaction mode for agent sessions.
+ * - "chat": normal conversation with full tool access
+ * - "plan": read-only planning mode (no writes or execution)
+ */
+export type InteractionMode = "chat" | "plan";
+
+export const INTERACTION_MODES = {
+  CHAT: "chat" as const,
+  PLAN: "plan" as const,
+} satisfies Record<string, InteractionMode>;
+
 export interface McodeTransport {
   // Workspace commands
   createWorkspace(name: string, path: string): Promise<Workspace>;
