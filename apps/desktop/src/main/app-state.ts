@@ -7,9 +7,9 @@
  * sidecar communication is async via EventEmitter.
  */
 
-import { existsSync, statSync, mkdirSync, copyFileSync, rmSync } from "fs";
-import { writeFileSync } from "fs";
-import { isAbsolute, join, extname } from "path";
+import { existsSync, statSync, rmSync } from "fs";
+import { copyFile, writeFile, mkdir, unlink } from "fs/promises";
+import { isAbsolute, join } from "path";
 import { randomUUID } from "crypto";
 import { clipboard, app } from "electron";
 import type Database from "better-sqlite3";
@@ -281,8 +281,8 @@ export class AppState {
     const nextSeq = existingMessages.length > 0
       ? existingMessages[existingMessages.length - 1].sequence + 1
       : 1;
-    const storedAttachments = this.persistAttachments(threadId, attachments);
-    MessageRepo.create(this.db, threadId, "user", content, nextSeq, storedAttachments.length > 0 ? storedAttachments : undefined);
+    const { stored, persisted } = await this.persistAttachments(threadId, attachments);
+    MessageRepo.create(this.db, threadId, "user", content, nextSeq, stored.length > 0 ? stored : undefined);
 
     // Step 4: mark thread as active
     ThreadRepo.updateStatus(this.db, threadId, "active");
@@ -302,7 +302,7 @@ export class AppState {
       throw new Error(`cwd is not a valid absolute directory: ${cwd}`);
     }
 
-    // Step 5: send via sidecar
+    // Step 5: send via sidecar (use persisted paths, not original temp paths)
     if (!this.sidecar) {
       ThreadRepo.updateStatus(this.db, threadId, "paused");
       throw new Error("Sidecar not started");
@@ -316,7 +316,7 @@ export class AppState {
         resolvedModel,
         isResume,
         permissionMode,
-        storedAttachments.length > 0 ? attachments : undefined,
+        persisted.length > 0 ? persisted : undefined,
       );
       logger.info("Message sent via sidecar", { threadId, session: sessionName, model: resolvedModel });
     } catch (err) {
@@ -412,32 +412,53 @@ export class AppState {
   // Attachment handling
   // ---------------------------------------------------------------------------
 
-  private persistAttachments(threadId: string, attachments: AttachmentMeta[]): StoredAttachment[] {
-    if (attachments.length === 0) return [];
+  private async persistAttachments(
+    threadId: string,
+    attachments: AttachmentMeta[],
+  ): Promise<{ stored: StoredAttachment[]; persisted: AttachmentMeta[] }> {
+    if (attachments.length === 0) return { stored: [], persisted: [] };
 
     const baseDir = join(app.getPath("userData"), "attachments", threadId);
-    mkdirSync(baseDir, { recursive: true });
+    await mkdir(baseDir, { recursive: true });
 
-    return attachments.map((att) => {
-      const ext = extname(att.name) || mimeToExt(att.mimeType);
-      const destPath = join(baseDir, `${att.id}${ext}`);
+    const tempDir = join(app.getPath("temp"), "mcode-attachments");
 
+    const results = await Promise.all(attachments.map(async (att) => {
       if (!existsSync(att.sourcePath)) {
         throw new Error(`Attachment file not found: ${att.sourcePath}`);
       }
 
-      copyFileSync(att.sourcePath, destPath);
+      // Validate actual file size against per-type limits
+      const actualSize = statSync(att.sourcePath).size;
+      const maxSize = getMaxSizeForMime(att.mimeType);
+      if (actualSize > maxSize) {
+        throw new Error(`Attachment "${att.name}" exceeds ${maxSize} byte limit (actual: ${actualSize})`);
+      }
+
+      // Derive extension from MIME type only (untrusted filename ignored)
+      const ext = mimeToExt(att.mimeType);
+      const destPath = join(baseDir, `${att.id}${ext}`);
+
+      await copyFile(att.sourcePath, destPath);
+
+      // Clean up temp file if it came from clipboard paste
+      if (att.sourcePath.startsWith(tempDir)) {
+        try { await unlink(att.sourcePath); } catch { /* non-fatal */ }
+      }
 
       return {
-        id: att.id,
-        name: att.name,
-        mimeType: att.mimeType,
-        sizeBytes: att.sizeBytes,
+        stored: { id: att.id, name: att.name, mimeType: att.mimeType, sizeBytes: actualSize } as StoredAttachment,
+        persisted: { ...att, sourcePath: destPath, sizeBytes: actualSize } as AttachmentMeta,
       };
-    });
+    }));
+
+    return {
+      stored: results.map((r) => r.stored),
+      persisted: results.map((r) => r.persisted),
+    };
   }
 
-  readClipboardImage(): AttachmentMeta | null {
+  async readClipboardImage(): Promise<AttachmentMeta | null> {
     const img = clipboard.readImage();
     if (img.isEmpty()) return null;
 
@@ -445,9 +466,9 @@ export class AppState {
     const id = randomUUID();
     const name = `clipboard-${Date.now()}.jpg`;
     const tempDir = join(app.getPath("temp"), "mcode-attachments");
-    mkdirSync(tempDir, { recursive: true });
+    await mkdir(tempDir, { recursive: true });
     const tempPath = join(tempDir, `${id}.jpg`);
-    writeFileSync(tempPath, buffer);
+    await writeFile(tempPath, buffer);
 
     return {
       id,
@@ -542,4 +563,15 @@ function mimeToExt(mimeType: string): string {
     "text/plain": ".txt",
   };
   return map[mimeType] ?? "";
+}
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const MAX_PDF_SIZE = 32 * 1024 * 1024;
+const MAX_TEXT_SIZE = 1 * 1024 * 1024;
+
+function getMaxSizeForMime(mimeType: string): number {
+  if (mimeType.startsWith("image/")) return MAX_IMAGE_SIZE;
+  if (mimeType === "application/pdf") return MAX_PDF_SIZE;
+  if (mimeType === "text/plain") return MAX_TEXT_SIZE;
+  return MAX_IMAGE_SIZE; // conservative fallback
 }

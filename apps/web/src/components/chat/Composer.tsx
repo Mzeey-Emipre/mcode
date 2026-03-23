@@ -164,7 +164,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           mimeType: file.type,
           sizeBytes: file.size,
           previewUrl,
-          filePath: filePaths?.[i] ?? null,
+          filePath: filePaths?.[i] || null,
         });
       }
 
@@ -188,10 +188,36 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       e.preventDefault();
       const api = window.electronAPI;
       if (api?.getPathForFile) {
+        // getPathForFile returns "" for clipboard blobs (no real file on disk).
+        // Use || to treat empty strings as null, falling through to readClipboardImage.
         const paths = imageFiles.map((f) => {
-          try { return api.getPathForFile(f); } catch { return null; }
+          try { return api.getPathForFile(f) || null; } catch { return null; }
         });
-        addFiles(imageFiles, paths);
+        const hasRealPaths = paths.some((p) => p !== null);
+        if (hasRealPaths) {
+          addFiles(imageFiles, paths);
+        } else {
+          // Clipboard images have no file path; use main process clipboard reader
+          try {
+            const meta = await getTransport().readClipboardImage();
+            if (meta) {
+              setAttachments((prev) => {
+                if (prev.length >= MAX_ATTACHMENTS) return prev;
+                const previewUrl = imageFiles[0] ? URL.createObjectURL(imageFiles[0]) : "";
+                return [...prev, {
+                  id: meta.id,
+                  name: meta.name,
+                  mimeType: meta.mimeType,
+                  sizeBytes: meta.sizeBytes,
+                  previewUrl,
+                  filePath: meta.sourcePath,
+                }];
+              });
+            }
+          } catch {
+            addFiles(imageFiles);
+          }
+        }
       } else {
         try {
           const meta = await getTransport().readClipboardImage();

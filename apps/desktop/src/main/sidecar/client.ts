@@ -298,10 +298,16 @@ export class SidecarClient extends EventEmitter {
           });
         }
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         logger.error("Failed to read attachment", {
           id: att.id,
           path: att.sourcePath,
-          error: err instanceof Error ? err.message : String(err),
+          error: errMsg,
+        });
+        // Surface the failure so the user and Claude both know the attachment was dropped
+        contentBlocks.push({
+          type: "text",
+          text: `[Attachment failed to load: ${att.name} - ${errMsg}]`,
         });
       }
     }

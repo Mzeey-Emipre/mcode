@@ -12,7 +12,7 @@
 
 import { app, BrowserWindow, ipcMain, dialog, protocol } from "electron";
 import { isAbsolute, join } from "path";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { AppState } from "./app-state.js";
 import { sessionIdFromEvent } from "./sidecar/types.js";
@@ -356,45 +356,44 @@ app.whenReady().then(() => {
   const mcodeDir = join(homedir(), ".mcode");
   mkdirSync(mcodeDir, { recursive: true });
 
-  // Register custom protocol for serving attachment images from disk
-  protocol.handle("mcode-attachment", (request) => {
+  // Register custom protocol for serving attachment images from disk.
+  // URL scheme: mcode-attachment://{threadId}/{attachmentId}.{ext}
+  protocol.handle("mcode-attachment", async (request) => {
     const url = new URL(request.url);
-    const filename = url.hostname + url.pathname;
+    const threadId = url.hostname;
+    const filename = url.pathname.replace(/^\//, "");
 
-    // Validate filename format: UUID with extension (e.g., "a1b2c3d4-xxxx.png")
+    // Validate threadId (hex UUID) and filename (hex-uuid.ext)
+    if (!VALID_ATTACHMENT_ID.test(threadId)) {
+      return new Response("Invalid thread ID", { status: 400 });
+    }
     if (!/^[a-f0-9-]+\.\w+$/.test(filename)) {
       return new Response("Invalid attachment ID", { status: 400 });
     }
 
-    const attachmentsBase = join(homedir(), ".mcode", "attachments");
-    if (!existsSync(attachmentsBase)) {
+    const filePath = join(app.getPath("userData"), "attachments", threadId, filename);
+    if (!existsSync(filePath)) {
       return new Response("Not found", { status: 404 });
     }
 
-    // Search thread directories for the attachment file
-    const threadDirs = readdirSync(attachmentsBase, { withFileTypes: true })
-      .filter((d) => d.isDirectory());
+    const ext = filename.split(".").pop() ?? "";
+    const mimeMap: Record<string, string> = {
+      jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+      gif: "image/gif", webp: "image/webp", pdf: "application/pdf",
+      txt: "text/plain",
+    };
+    const { createReadStream } = await import("fs");
+    const { Readable } = await import("stream");
+    const nodeStream = createReadStream(filePath);
+    const webStream = Readable.toWeb(nodeStream) as ReadableStream;
 
-    for (const dir of threadDirs) {
-      const filePath = join(attachmentsBase, dir.name, filename);
-      if (existsSync(filePath)) {
-        const data = readFileSync(filePath);
-        const ext = filename.split(".").pop() ?? "";
-        const mimeMap: Record<string, string> = {
-          jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
-          gif: "image/gif", webp: "image/webp", pdf: "application/pdf",
-          txt: "text/plain",
-        };
-        return new Response(data, {
-          headers: {
-            "Content-Type": mimeMap[ext] ?? "application/octet-stream",
-            "Cache-Control": "public, max-age=31536000, immutable",
-          },
-        });
-      }
-    }
-
-    return new Response("Not found", { status: 404 });
+    return new Response(webStream, {
+      headers: {
+        "Content-Type": mimeMap[ext] ?? "application/octet-stream",
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Content-Security-Policy": "default-src 'none'",
+      },
+    });
   });
 
   // Initialize AppState with database

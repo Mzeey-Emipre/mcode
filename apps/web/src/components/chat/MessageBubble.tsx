@@ -12,11 +12,13 @@ function extFromMime(mimeType: string): string {
     "image/png": ".png",
     "image/gif": ".gif",
     "image/webp": ".webp",
+    "application/pdf": ".pdf",
+    "text/plain": ".txt",
   };
   return map[mimeType] ?? "";
 }
 
-function AttachmentDisplay({ attachments }: { attachments: StoredAttachment[] }) {
+function AttachmentDisplay({ attachments, threadId }: { attachments: StoredAttachment[]; threadId: string }) {
   const images = attachments.filter((a) => a.mimeType.startsWith("image/"));
   const files = attachments.filter((a) => !a.mimeType.startsWith("image/"));
 
@@ -27,7 +29,7 @@ function AttachmentDisplay({ attachments }: { attachments: StoredAttachment[] })
           {images.map((img) => (
             <div key={img.id} className="overflow-hidden rounded-lg">
               <img
-                src={`mcode-attachment://${img.id}${extFromMime(img.mimeType)}`}
+                src={`mcode-attachment://${threadId}/${img.id}${extFromMime(img.mimeType)}`}
                 alt={img.name}
                 className="h-auto max-h-[160px] w-full object-cover"
                 loading="lazy"
@@ -59,7 +61,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         <div className="max-w-[75%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
           {message.attachments && message.attachments.length > 0 && (
             <div className="mb-2">
-              <AttachmentDisplay attachments={message.attachments} />
+              <AttachmentDisplay attachments={message.attachments} threadId={message.thread_id} />
             </div>
           )}
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
