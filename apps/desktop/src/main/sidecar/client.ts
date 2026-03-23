@@ -13,7 +13,7 @@ import {
   unstable_v2_createSession,
   unstable_v2_resumeSession,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKSession } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKSession, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import type { SidecarEvent } from "./types.js";
@@ -305,7 +305,7 @@ export class SidecarClient extends EventEmitter {
     message: string,
     attachments: AttachmentMeta[],
     sessionId: string,
-  ): Promise<{ role: "user"; content: Array<Record<string, unknown>> }> {
+  ): Promise<SDKUserMessage> {
     const contentBlocks: Array<Record<string, unknown>> = [];
 
     for (const att of attachments) {
@@ -356,7 +356,15 @@ export class SidecarClient extends EventEmitter {
 
     contentBlocks.push({ type: "text", text: message });
 
-    return { role: "user" as const, content: contentBlocks };
+    return {
+      type: "user" as const,
+      message: {
+        role: "user" as const,
+        content: contentBlocks as SDKUserMessage["message"]["content"],
+      },
+      parent_tool_use_id: null,
+      session_id: sessionId,
+    };
   }
 
   /** Evict sessions that have been idle longer than IDLE_TTL_MS. */
