@@ -20,6 +20,8 @@ const MCODE_COMMANDS: Command[] = [
 /** Regex: matches `/` at start of line or after whitespace, followed by non-space chars. */
 const TRIGGER_RE = /(^|\s)(\/\S*)$/;
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
 interface UseSlashCommandOptions {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onMcodeCommand?: (action: string) => void;
@@ -49,7 +51,6 @@ export function useSlashCommand({
 
   // Cache: loaded skills + timestamp for TTL
   const skillsCache = useRef<{ names: string[]; fetchedAt: number } | null>(null);
-  const CACHE_TTL_MS = 5 * 60 * 1000;
 
   const loadSkills = useCallback(async (): Promise<string[]> => {
     const now = Date.now();
@@ -162,7 +163,10 @@ export function useSlashCommand({
       const match = TRIGGER_RE.exec(before);
 
       if (match) {
-        const triggerStart = before.lastIndexOf(match[2]);
+        // Use match.index + leading group length to anchor to the exact regex match
+        // position, rather than lastIndexOf which can pick the wrong occurrence
+        // when the same trigger text appears multiple times before the cursor.
+        const triggerStart = match.index + match[1].length;
         const newValue =
           value.slice(0, triggerStart) + `/${cmd.name} ` + value.slice(cursor);
         setInput(newValue);
