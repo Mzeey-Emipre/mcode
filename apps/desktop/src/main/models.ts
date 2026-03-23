@@ -38,6 +38,8 @@ export interface Thread {
   readonly pr_number: number | null;
   readonly pr_status: string | null;
   readonly session_name: string;
+  /** The SDK's internal session ID, used for resumeSession after app restart. */
+  readonly sdk_session_id: string | null;
   readonly pid: number | null;
   readonly created_at: string;
   readonly updated_at: string;

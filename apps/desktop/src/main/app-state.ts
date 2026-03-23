@@ -310,6 +310,11 @@ export class AppState {
       throw new Error("Sidecar not started");
     }
 
+    // Hydrate the SDK session ID mapping so resume uses the correct ID
+    if (isResume && thread.sdk_session_id) {
+      this.sidecar.setSdkSessionId(sessionName, thread.sdk_session_id);
+    }
+
     try {
       this.sidecar.sendMessage(
         sessionName,

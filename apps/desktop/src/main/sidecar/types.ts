@@ -69,6 +69,13 @@ export type SidecarEvent =
         output: string;
         isError: boolean;
       };
+    }
+  | {
+      method: "session.sdkSessionId";
+      params: {
+        sessionId: string;
+        sdkSessionId: string;
+      };
     };
 
 /** Extract the session ID from a sidecar event. */

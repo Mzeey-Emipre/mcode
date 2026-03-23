@@ -15,6 +15,7 @@ interface ThreadRow {
   pr_number: number | null;
   pr_status: string | null;
   session_name: string;
+  sdk_session_id: string | null;
   pid: number | null;
   model: string | null;
   created_at: string;
@@ -36,6 +37,7 @@ function rowToThread(row: ThreadRow): Thread {
     pr_number: row.pr_number,
     pr_status: row.pr_status,
     session_name: row.session_name,
+    sdk_session_id: row.sdk_session_id,
     pid: row.pid,
     model: row.model ?? null,
     created_at: row.created_at,
@@ -45,7 +47,7 @@ function rowToThread(row: ThreadRow): Thread {
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, session_name, pid, model, created_at, updated_at, deleted_at";
+  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, session_name, sdk_session_id, pid, model, created_at, updated_at, deleted_at";
 
 export function create(
   db: Database.Database,
@@ -77,6 +79,7 @@ export function create(
     pr_number: null,
     pr_status: null,
     session_name: sessionName,
+    sdk_session_id: null,
     pid: null,
     model: null,
     created_at: now,
@@ -166,6 +169,31 @@ export function updateModel(
   const result = db
     .prepare("UPDATE threads SET model = ?, updated_at = ? WHERE id = ?")
     .run(model, now, id);
+
+  return result.changes > 0;
+}
+
+export function updateSdkSessionId(
+  db: Database.Database,
+  id: string,
+  sdkSessionId: string,
+): boolean {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare("UPDATE threads SET sdk_session_id = ?, updated_at = ? WHERE id = ?")
+    .run(sdkSessionId, now, id);
+
+  return result.changes > 0;
+}
+
+export function clearSdkSessionId(
+  db: Database.Database,
+  id: string,
+): boolean {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare("UPDATE threads SET sdk_session_id = NULL, updated_at = ? WHERE id = ?")
+    .run(now, id);
 
   return result.changes > 0;
 }

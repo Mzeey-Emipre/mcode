@@ -1,5 +1,5 @@
 import type { Message, StoredAttachment } from "@/transport";
-import { Bot, FileText, File } from "lucide-react";
+import { Bot, FileText, File, RotateCcw } from "lucide-react";
 import { MarkdownContent } from "./MarkdownContent";
 import { stripInjectedFiles } from "@/lib/file-tags";
 
@@ -54,6 +54,19 @@ function AttachmentDisplay({ attachments, threadId }: { attachments: StoredAttac
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
+  if (message.role === "system") {
+    return (
+      <div className="flex items-center gap-3 py-2">
+        <div className="h-px flex-1 bg-border" />
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <RotateCcw size={12} />
+          <span>{message.content}</span>
+        </div>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+    );
+  }
+
   const isUser = message.role === "user";
 
   if (isUser) {
