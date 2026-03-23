@@ -244,6 +244,10 @@ function registerIpcHandlers(state: AppState): void {
     return state.checkoutBranch(workspaceId, branch);
   });
 
+  ipcMain.handle("list-worktrees", (_event, workspaceId: string) => {
+    return state.listWorktrees(workspaceId);
+  });
+
   // -- Threads --
   ipcMain.handle("list-threads", (_event, workspaceId: string) => {
     return state.listThreads(workspaceId);
@@ -275,13 +279,24 @@ function registerIpcHandlers(state: AppState): void {
   // -- Lazy thread creation --
   ipcMain.handle(
     "create-and-send-message",
-    async (_event, workspaceId: string, content: string, model: string, permissionMode?: string, mode?: string, branch?: string, attachments?: unknown[]) => {
+    async (
+      _event,
+      workspaceId: string,
+      content: string,
+      model: string,
+      permissionMode?: string,
+      mode?: string,
+      branch?: string,
+      existingWorktreePath?: string,
+      attachments?: unknown[],
+    ) => {
       const validatedAttachments = validateAttachments(attachments);
       return state.createAndSendMessage(
         workspaceId, content, model,
         sanitizePermissionMode(permissionMode),
         (mode as "direct" | "worktree") ?? "direct",
         branch ?? "main",
+        existingWorktreePath ?? undefined,
         validatedAttachments,
       );
     },

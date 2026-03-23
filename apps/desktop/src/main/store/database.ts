@@ -93,7 +93,12 @@ function runMigrations(db: Database.Database): void {
   }
 
   if (currentVersion < 3) {
-    db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT DEFAULT NULL");
+    db.exec("ALTER TABLE threads ADD COLUMN worktree_managed INTEGER NOT NULL DEFAULT 1");
     db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(3);
+  }
+
+  if (currentVersion < 4) {
+    db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT DEFAULT NULL");
+    db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(4);
   }
 }

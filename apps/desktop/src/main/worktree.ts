@@ -6,16 +6,24 @@
  */
 
 import { execFileSync } from "child_process";
-import { existsSync, mkdirSync, readdirSync, statSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import { homedir } from "os";
 
-/** Get the worktree base directory under ~/.mcode/worktrees/{workspace-slug}/ */
+/** Resolve the worktree base directory path under ~/.mcode/worktrees/{workspace-slug}/. */
 function getWorktreeBaseDir(repoPath: string): string {
-  const slug = basename(repoPath).toLowerCase().replace(/[^a-z0-9-]/g, "-");
-  const dir = join(homedir(), ".mcode", "worktrees", slug);
+  return join(homedir(), ".mcode", "worktrees", worktreeSlug(repoPath));
+}
+
+/** Resolve and ensure the worktree base directory exists. */
+function ensureWorktreeBaseDir(repoPath: string): string {
+  const dir = getWorktreeBaseDir(repoPath);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function worktreeSlug(repoPath: string): string {
+  return basename(repoPath).toLowerCase().replace(/[^a-z0-9-]/g, "-");
 }
 
 export interface WorktreeInfo {
@@ -47,12 +55,43 @@ export function validateName(name: string): void {
 }
 
 /**
+ * Validate a git branch name against git-check-ref-format rules.
+ * Rejects names that git would refuse or that could interfere with
+ * git internals (e.g. `.lock` suffixes, reflog syntax).
+ */
+export function validateBranchName(branch: string): void {
+  if (!branch || branch.length > 250) {
+    throw new Error("Branch name must be 1-250 characters");
+  }
+  if (branch.startsWith("-")) {
+    throw new Error("Branch name cannot start with '-'");
+  }
+  if (/[ \t~^:?*\[\\\x00-\x1f\x7f]/.test(branch) || branch.includes("..")) {
+    throw new Error(`Branch name contains invalid characters: ${branch}`);
+  }
+  if (branch.endsWith(".lock") || branch.endsWith(".") || branch.endsWith("/")) {
+    throw new Error(`Branch name has an invalid suffix: ${branch}`);
+  }
+  if (branch.includes("@{") || branch.includes("//")) {
+    throw new Error(`Branch name contains invalid sequence: ${branch}`);
+  }
+  if (branch === "@") {
+    throw new Error("Branch name cannot be '@'");
+  }
+  if (/(?:^|\/)\./.test(branch)) {
+    throw new Error(`Branch name component cannot start with '.': ${branch}`);
+  }
+}
+
+/**
  * Create a new git worktree for the given name.
- * Creates branch `mcode/<name>` and checks it out in `~/.mcode/worktrees/<workspace>/<name>`.
+ * Checks it out in `~/.mcode/worktrees/<workspace>/<name>`.
+ * Uses the provided branchName, or defaults to `mcode/<name>`.
  */
 export function createWorktree(
   repoPath: string,
   name: string,
+  branchName?: string,
 ): WorktreeInfo {
   validateName(name);
 
@@ -60,8 +99,9 @@ export function createWorktree(
     throw new Error(`Repository path does not exist: ${repoPath}`);
   }
 
-  const branch = `mcode/${name}`;
-  const wtPath = join(getWorktreeBaseDir(repoPath), name);
+  const branch = branchName ?? `mcode/${name}`;
+  validateBranchName(branch);
+  const wtPath = join(ensureWorktreeBaseDir(repoPath), name);
 
   if (existsSync(wtPath)) {
     throw new Error(`Worktree directory already exists: ${wtPath}`);
@@ -75,11 +115,12 @@ export function createWorktree(
 }
 
 /** Remove a git worktree by name. Returns true on success, false on failure. */
-export function removeWorktree(repoPath: string, name: string): boolean {
+export function removeWorktree(repoPath: string, name: string, branchName?: string): boolean {
   validateName(name);
 
   const wtPath = join(getWorktreeBaseDir(repoPath), name);
-  const branch = `mcode/${name}`;
+  const branch = branchName ?? `mcode/${name}`;
+  validateBranchName(branch);
 
   try {
     execFileSync(
@@ -110,29 +151,55 @@ export function removeWorktree(repoPath: string, name: string): boolean {
   return true;
 }
 
-/** List all mcode worktrees in a repository. */
+/**
+ * List managed worktrees for a repository using git porcelain output.
+ * Only returns worktrees that live under the managed base dir and are
+ * registered with git. Returns [] if the git command fails.
+ */
 export function listWorktrees(repoPath: string): WorktreeInfo[] {
-  const worktreesDir = getWorktreeBaseDir(repoPath);
+  const worktreesDir = getWorktreeBaseDir(repoPath).replace(/\\/g, "/").toLowerCase();
 
-  if (!existsSync(worktreesDir)) {
+  let output: string;
+  try {
+    output = execFileSync(
+      "git",
+      ["-C", repoPath, "worktree", "list", "--porcelain"],
+      { stdio: "pipe", encoding: "utf-8" },
+    );
+  } catch {
     return [];
   }
 
-  const entries = readdirSync(worktreesDir);
   const result: WorktreeInfo[] = [];
+  let currentPath = "";
+  let currentBranch = "";
 
-  for (const entry of entries) {
-    const entryPath = join(worktreesDir, entry);
-    try {
-      if (statSync(entryPath).isDirectory()) {
-        result.push({
-          name: entry,
-          path: entryPath,
-          branch: `mcode/${entry}`,
-        });
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length).trim();
+      currentBranch = "";
+    } else if (line.startsWith("branch ")) {
+      currentBranch = line.slice("branch ".length).trim().replace("refs/heads/", "");
+    } else if (line === "detached") {
+      currentBranch = "(detached)";
+    } else if (line.trim() === "" && currentPath) {
+      // Blank line separates worktree entries; emit if under managed dir
+      const normalized = currentPath.replace(/\\/g, "/").toLowerCase();
+      if (normalized.startsWith(worktreesDir + "/") && currentBranch) {
+        const name = basename(currentPath);
+        result.push({ name, path: currentPath, branch: currentBranch });
       }
-    } catch {
-      // Skip entries we cannot stat
+      currentPath = "";
+      currentBranch = "";
+    }
+  }
+
+  // Handle last entry (porcelain output may not end with blank line)
+  if (currentPath && currentBranch) {
+    const normalized = currentPath.replace(/\\/g, "/").toLowerCase();
+    if (normalized.startsWith(worktreesDir + "/")) {
+      const name = basename(currentPath);
+      result.push({ name, path: currentPath, branch: currentBranch });
     }
   }
 

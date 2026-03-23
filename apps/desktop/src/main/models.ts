@@ -32,6 +32,8 @@ export interface Thread {
   readonly mode: ThreadMode;
   readonly worktree_path: string | null;
   readonly branch: string;
+  /** Whether the worktree was provisioned by the app (true) or attached externally (false). */
+  readonly worktree_managed: boolean;
   readonly issue_number: number | null;
   readonly pr_number: number | null;
   readonly pr_status: string | null;

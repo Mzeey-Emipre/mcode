@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { validateName, createWorktree, removeWorktree, listBranches, getCurrentBranch, branchExists, checkoutBranch, listWorktrees } from "../worktree.js";
+import { validateName, validateBranchName, createWorktree, removeWorktree, listBranches, getCurrentBranch, branchExists, checkoutBranch, listWorktrees } from "../worktree.js";
 import { execFileSync } from "child_process";
 import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
@@ -33,6 +33,59 @@ describe("validateName", () => {
 
   it("rejects dot-prefixed names", () => {
     expect(() => validateName(".hidden")).toThrow("cannot start with '.'");
+  });
+});
+
+describe("validateBranchName", () => {
+  it("accepts valid branch names", () => {
+    expect(() => validateBranchName("feat/my-feature")).not.toThrow();
+    expect(() => validateBranchName("mcode-abc123")).not.toThrow();
+    expect(() => validateBranchName("fix/issue-42")).not.toThrow();
+  });
+
+  it("rejects empty string", () => {
+    expect(() => validateBranchName("")).toThrow("1-250 characters");
+  });
+
+  it("rejects names starting with dash", () => {
+    expect(() => validateBranchName("-flag")).toThrow("cannot start with '-'");
+  });
+
+  it("rejects names with double dots", () => {
+    expect(() => validateBranchName("foo..bar")).toThrow("invalid characters");
+  });
+
+  it("rejects names with spaces", () => {
+    expect(() => validateBranchName("my branch")).toThrow("invalid characters");
+  });
+
+  it("rejects .lock suffix", () => {
+    expect(() => validateBranchName("main.lock")).toThrow("invalid suffix");
+  });
+
+  it("rejects trailing dot", () => {
+    expect(() => validateBranchName("main.")).toThrow("invalid suffix");
+  });
+
+  it("rejects trailing slash", () => {
+    expect(() => validateBranchName("feat/")).toThrow("invalid suffix");
+  });
+
+  it("rejects @{ reflog syntax", () => {
+    expect(() => validateBranchName("main@{0}")).toThrow("invalid sequence");
+  });
+
+  it("rejects consecutive slashes", () => {
+    expect(() => validateBranchName("feat//bar")).toThrow("invalid sequence");
+  });
+
+  it("rejects single @", () => {
+    expect(() => validateBranchName("@")).toThrow("cannot be '@'");
+  });
+
+  it("rejects dot-prefixed path component", () => {
+    expect(() => validateBranchName(".hidden")).toThrow("cannot start with '.'");
+    expect(() => validateBranchName("refs/.foo")).toThrow("cannot start with '.'");
   });
 });
 
@@ -81,6 +134,30 @@ describe("Git operations (integration)", { timeout: 30_000 }, () => {
 
   it("createWorktree throws if worktree already exists", () => {
     expect(() => createWorktree(repoPath, "test-feature")).toThrow("already exists");
+  });
+
+  it("createWorktree accepts a custom branch name", () => {
+    const info = createWorktree(repoPath, "custom-wt", "feat/custom-branch");
+    expect(info.branch).toBe("feat/custom-branch");
+    expect(info.path).toContain("custom-wt");
+    expect(branchExists(repoPath, "feat/custom-branch")).toBe(true);
+  });
+
+  it("listWorktrees returns actual branch names", () => {
+    createWorktree(repoPath, "branch-read-test", "fix/read-actual");
+    try {
+      const wts = listWorktrees(repoPath);
+      const wt = wts.find((w) => w.name === "branch-read-test");
+      expect(wt).toBeDefined();
+      expect(wt!.branch).toBe("fix/read-actual");
+    } finally {
+      removeWorktree(repoPath, "branch-read-test", "fix/read-actual");
+    }
+  });
+
+  it("removeWorktree deletes a custom-named branch", () => {
+    removeWorktree(repoPath, "custom-wt", "feat/custom-branch");
+    expect(branchExists(repoPath, "feat/custom-branch")).toBe(false);
   });
 
   it("listWorktrees returns entries", () => {

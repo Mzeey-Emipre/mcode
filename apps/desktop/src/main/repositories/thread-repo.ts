@@ -10,6 +10,7 @@ interface ThreadRow {
   mode: string;
   worktree_path: string | null;
   branch: string;
+  worktree_managed: number;
   issue_number: number | null;
   pr_number: number | null;
   pr_status: string | null;
@@ -30,6 +31,7 @@ function rowToThread(row: ThreadRow): Thread {
     mode: row.mode as ThreadMode,
     worktree_path: row.worktree_path,
     branch: row.branch,
+    worktree_managed: row.worktree_managed === 1,
     issue_number: row.issue_number,
     pr_number: row.pr_number,
     pr_status: row.pr_status,
@@ -43,7 +45,7 @@ function rowToThread(row: ThreadRow): Thread {
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, issue_number, pr_number, pr_status, session_name, pid, model, created_at, updated_at, deleted_at";
+  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, session_name, pid, model, created_at, updated_at, deleted_at";
 
 export function create(
   db: Database.Database,
@@ -51,14 +53,16 @@ export function create(
   title: string,
   mode: ThreadMode,
   branch: string,
+  worktreeManaged = true,
 ): Thread {
   const id = randomUUID();
   const now = new Date().toISOString();
   const sessionName = `mcode-${id}`;
+  const managedInt = worktreeManaged ? 1 : 0;
 
   db.prepare(
-    "INSERT INTO threads (id, workspace_id, title, status, mode, branch, session_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(id, workspaceId, title, "active", mode, branch, sessionName, now, now);
+    "INSERT INTO threads (id, workspace_id, title, status, mode, branch, worktree_managed, session_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(id, workspaceId, title, "active", mode, branch, managedInt, sessionName, now, now);
 
   return {
     id,
@@ -68,6 +72,7 @@ export function create(
     mode,
     worktree_path: null,
     branch,
+    worktree_managed: worktreeManaged,
     issue_number: null,
     pr_number: null,
     pr_status: null,

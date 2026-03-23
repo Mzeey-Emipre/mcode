@@ -1,4 +1,4 @@
-import type { McodeTransport, Workspace, Thread, Message, GitBranch, AttachmentMeta } from "./types";
+import type { McodeTransport, Workspace, Thread, Message, GitBranch, WorktreeInfo, AttachmentMeta } from "./types";
 
 export function createElectronTransport(): McodeTransport {
   const api = window.electronAPI;
@@ -56,12 +56,19 @@ export function createElectronTransport(): McodeTransport {
       await api.invoke("checkout-branch", workspaceId, branch);
     },
 
+    async listWorktrees(workspaceId) {
+      return api.invoke("list-worktrees", workspaceId) as Promise<WorktreeInfo[]>;
+    },
+
     async sendMessage(threadId, content, model, permissionMode, attachments) {
       await api.invoke("send-message", threadId, content, model, permissionMode, attachments);
     },
 
-    async createAndSendMessage(workspaceId, content, model, permissionMode, mode, branch, attachments) {
-      return api.invoke("create-and-send-message", workspaceId, content, model, permissionMode, mode, branch, attachments) as Promise<Thread>;
+    async createAndSendMessage(workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments) {
+      return api.invoke(
+        "create-and-send-message",
+        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments,
+      ) as Promise<Thread>;
     },
 
     async updateThreadTitle(threadId, title) {

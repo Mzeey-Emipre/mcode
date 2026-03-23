@@ -57,6 +57,10 @@ export function createTauriTransport(): McodeTransport {
       throw new Error("Not implemented in Tauri");
     },
 
+    async listWorktrees() {
+      throw new Error("Not implemented in Tauri");
+    },
+
     async sendMessage(threadId, content, model, permissionMode) {
       await invoke<void>("send_message", { threadId, content, model, permissionMode });
     },

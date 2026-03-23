@@ -21,11 +21,13 @@ import { SidecarClient } from "./sidecar/client.js";
 import {
   createWorktree,
   removeWorktree,
+  listWorktrees,
   listBranches,
   getCurrentBranch,
   checkoutBranch,
+  validateBranchName,
 } from "./worktree.js";
-import type { GitBranchInfo } from "./worktree.js";
+import type { GitBranchInfo, WorktreeInfo } from "./worktree.js";
 import { discoverConfig, type ConfigSummary } from "./config.js";
 import { logger } from "./logger.js";
 import type { Workspace, Thread, Message, AttachmentMeta, StoredAttachment } from "./models.js";
@@ -92,6 +94,12 @@ export class AppState {
     checkoutBranch(workspace.path, branch);
   }
 
+  listWorktrees(workspaceId: string): WorktreeInfo[] {
+    const workspace = WorkspaceRepo.findById(this.db, workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+    return listWorktrees(workspace.path);
+  }
+
   // ---------------------------------------------------------------------------
   // Thread commands
   // ---------------------------------------------------------------------------
@@ -111,14 +119,7 @@ export class AppState {
     mode: string,
     branch: string,
   ): Thread {
-    // Validate branch name (mirrors the Tauri command validation)
-    if (!branch || branch.length > 250) {
-      throw new Error("Branch name must be 1-250 characters");
-    }
-    const invalidBranchChars = /[ \t~^:?*[\\\]]/;
-    if (invalidBranchChars.test(branch) || branch.startsWith("-") || branch.includes("..")) {
-      throw new Error("Branch name contains invalid characters");
-    }
+    validateBranchName(branch);
 
     const threadMode = mode === "worktree" || mode === "direct" ? mode : (() => {
       throw new Error(`Unknown thread mode: ${mode}`);
@@ -147,20 +148,18 @@ export class AppState {
       const worktreeName = `${sanitizedTitle}-${shortId}`;
 
       try {
-        const info = createWorktree(workspace.path, worktreeName);
+        // Pass branch as the actual git branch name
+        const info = createWorktree(workspace.path, worktreeName, branch);
 
-        // Step 3: update worktree_path and branch in DB
+        // Step 3: update worktree_path in DB
         ThreadRepo.updateStatus(this.db, thread.id, "active");
         const updated = ThreadRepo.updateWorktreePath(this.db, thread.id, info.path);
-        // Update the branch field to the actual worktree branch name
-        if (info.branch) {
-          const stmt = this.db.prepare("UPDATE threads SET branch = ?, updated_at = ? WHERE id = ?");
-          stmt.run(info.branch, new Date().toISOString(), thread.id);
-        }
+        // Branch is already correct in DB from ThreadRepo.create - no raw SQL needed
+
         if (!updated) {
           // Rollback: remove worktree then delete DB record
           try {
-            removeWorktree(workspace.path, worktreeName);
+            removeWorktree(workspace.path, worktreeName, branch);
           } catch {
             // best-effort cleanup
           }
@@ -197,10 +196,12 @@ export class AppState {
       this.sidecar.stopSession(sessionId);
     }
 
-    // If cleanup requested, remove the worktree from disk and git
+    // If cleanup requested and this is an app-provisioned worktree, remove it.
+    // Attached (non-managed) worktrees are left on disk since they were not
+    // created by the app and may be shared by other threads.
     if (cleanupWorktree) {
       const thread = ThreadRepo.findById(this.db, threadId);
-      if (thread?.worktree_path) {
+      if (thread?.worktree_path && thread.worktree_managed) {
         const workspace = WorkspaceRepo.findById(this.db, thread.workspace_id);
         if (workspace) {
           const wtName = thread.worktree_path
@@ -208,7 +209,7 @@ export class AppState {
             .split("/")
             .pop() ?? thread.worktree_path;
           try {
-            removeWorktree(workspace.path, wtName);
+            removeWorktree(workspace.path, wtName, thread.branch);
           } catch {
             // Non-fatal: worktree may already be gone
           }
@@ -355,13 +356,39 @@ export class AppState {
     permissionMode = "default",
     mode: "direct" | "worktree" = "direct",
     branch = "main",
+    existingWorktreePath?: string,
     attachments: AttachmentMeta[] = [],
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
-    const thread = mode === "worktree"
-      ? this.createThread(workspaceId, title, "worktree", branch)
-      : ThreadRepo.create(this.db, workspaceId, title, "direct", branch);
+    let thread: Thread;
+    if (existingWorktreePath) {
+      // Validate: path must be a known managed worktree (prevents path traversal)
+      const workspace = WorkspaceRepo.findById(this.db, workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+      const knownWorktrees = listWorktrees(workspace.path);
+      const normalize = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+      const normalizedInput = normalize(existingWorktreePath);
+      const matched = knownWorktrees.find(
+        (wt) => normalize(wt.path) === normalizedInput,
+      );
+      if (!matched) {
+        throw new Error("Path is not a recognized managed worktree");
+      }
+
+      // Use the canonical branch from the matched worktree, not the caller-supplied value
+      const canonicalBranch = matched.branch;
+
+      // Attach to existing worktree: DB record only, no git operations.
+      // Mark worktree_managed=false since we did not provision this worktree.
+      thread = ThreadRepo.create(this.db, workspaceId, title, "worktree", canonicalBranch, false);
+      ThreadRepo.updateWorktreePath(this.db, thread.id, existingWorktreePath);
+      thread = { ...thread, worktree_path: existingWorktreePath, branch: canonicalBranch };
+    } else if (mode === "worktree") {
+      thread = this.createThread(workspaceId, title, "worktree", branch);
+    } else {
+      thread = ThreadRepo.create(this.db, workspaceId, title, "direct", branch);
+    }
 
     await this.sendMessage(thread.id, content, permissionMode, model, attachments);
 

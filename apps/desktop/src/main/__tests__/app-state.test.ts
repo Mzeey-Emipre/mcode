@@ -10,6 +10,7 @@ import * as MessageRepo from "../repositories/message-repo.js";
 vi.mock("../worktree.js", () => ({
   createWorktree: vi.fn(),
   removeWorktree: vi.fn(),
+  listWorktrees: vi.fn().mockReturnValue([]),
   listBranches: vi.fn().mockReturnValue([]),
   getCurrentBranch: vi.fn().mockReturnValue("main"),
   checkoutBranch: vi.fn(),
@@ -680,6 +681,7 @@ describe("AppState", () => {
       expect(removeWorktree).toHaveBeenCalledWith(
         "/tmp/proj",
         "feature-abc", // last path segment
+        "main", // thread.branch
       );
     });
 

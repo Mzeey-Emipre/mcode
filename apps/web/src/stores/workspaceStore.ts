@@ -1,7 +1,13 @@
 import { create } from "zustand";
-import type { Workspace, Thread, GitBranch, PermissionMode, AttachmentMeta } from "@/transport";
+import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo, AttachmentMeta } from "@/transport";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
+import { getSetting, type NamingMode } from "@/lib/settings";
+
+/** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
+function generateBranchId(): string {
+  return `mcode-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 interface WorkspaceState {
   workspaces: Workspace[];
@@ -13,8 +19,14 @@ interface WorkspaceState {
   error: string | null;
   branches: GitBranch[];
   branchesLoading: boolean;
-  newThreadMode: "direct" | "worktree";
+  newThreadMode: "direct" | "worktree" | "existing-worktree";
   newThreadBranch: string;
+  worktrees: WorktreeInfo[];
+  worktreesLoading: boolean;
+  namingMode: NamingMode;
+  customBranchName: string;
+  autoPreviewBranch: string;
+  selectedWorktree: WorktreeInfo | null;
 
   // Workspace actions
   loadWorkspaces: () => Promise<void>;
@@ -39,8 +51,15 @@ interface WorkspaceState {
   loadBranches: (workspaceId: string) => Promise<void>;
   getCurrentBranch: (workspaceId: string) => Promise<string>;
   checkoutBranch: (workspaceId: string, branch: string) => Promise<void>;
-  setNewThreadMode: (mode: "direct" | "worktree") => void;
+  setNewThreadMode: (mode: "direct" | "worktree" | "existing-worktree") => void;
   setNewThreadBranch: (branch: string) => void;
+
+  // Worktree actions
+  loadWorktrees: (workspaceId: string) => Promise<void>;
+  setNamingMode: (mode: NamingMode) => void;
+  setCustomBranchName: (name: string) => void;
+  setSelectedWorktree: (worktree: WorktreeInfo | null) => void;
+  regenerateAutoPreview: () => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -55,6 +74,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   branchesLoading: false,
   newThreadMode: "direct" as const,
   newThreadBranch: "",
+  worktrees: [],
+  worktreesLoading: false,
+  namingMode: "auto" as const,
+  customBranchName: "",
+  autoPreviewBranch: generateBranchId(),
+  selectedWorktree: null,
 
   loadWorkspaces: async () => {
     set({ loading: true, error: null });
@@ -117,6 +142,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       ...(shouldClearThread ? { activeThreadId: null } : {}),
       branches: [],
       newThreadBranch: "",
+      worktrees: [],
+      worktreesLoading: false,
+      selectedWorktree: null,
     });
     if (id) {
       get().loadThreads(id);
@@ -164,13 +192,36 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
 
-    const { newThreadMode, newThreadBranch } = get();
-    const branch = newThreadBranch || "main";
+    const { newThreadMode, newThreadBranch, namingMode, customBranchName, autoPreviewBranch, selectedWorktree } = get();
+
+    let mode: "direct" | "worktree" = "direct";
+    let branch = newThreadBranch || "main";
+    let existingWorktreePath: string | undefined;
+
+    if (newThreadMode === "worktree") {
+      mode = "worktree";
+      if (namingMode === "custom") {
+        if (!customBranchName.trim()) {
+          // Fallback to auto if custom name is empty
+          branch = autoPreviewBranch;
+          set({ namingMode: "auto" as NamingMode });
+        } else {
+          branch = customBranchName;
+        }
+      } else {
+        branch = autoPreviewBranch;
+      }
+    } else if (newThreadMode === "existing-worktree") {
+      mode = "worktree";
+      if (!selectedWorktree) throw new Error("No worktree selected");
+      branch = selectedWorktree.branch;
+      existingWorktreePath = selectedWorktree.path;
+    }
 
     set({ error: null });
     try {
       const thread = await getTransport().createAndSendMessage(
-        workspaceId, content, model, permissionMode, newThreadMode, branch, attachments,
+        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments,
       );
       set((state) => ({
         threads: [thread, ...state.threads],
@@ -235,7 +286,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setPendingNewThread: (value) => {
     set({
       pendingNewThread: value,
-      ...(value ? { newThreadMode: "direct" as const, newThreadBranch: "" } : {}),
+      ...(value
+        ? {
+            newThreadMode: "direct" as const,
+            newThreadBranch: "",
+            namingMode: getSetting("worktree.defaultNamingMode"),
+            customBranchName: "",
+            autoPreviewBranch: generateBranchId(),
+            selectedWorktree: null,
+          }
+        : {}),
     });
   },
 
@@ -281,4 +341,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setNewThreadBranch: (branch) => {
     set({ newThreadBranch: branch });
   },
+
+  loadWorktrees: async (workspaceId) => {
+    set({ worktreesLoading: true, error: null });
+    try {
+      const worktrees = await getTransport().listWorktrees(workspaceId);
+      if (get().activeWorkspaceId !== workspaceId) return;
+      set({ worktrees, worktreesLoading: false, error: null });
+    } catch (e) {
+      if (get().activeWorkspaceId !== workspaceId) return;
+      set({ worktreesLoading: false, error: String(e) });
+    }
+  },
+
+  setNamingMode: (mode) => set({ namingMode: mode }),
+  setCustomBranchName: (name) => set({ customBranchName: name }),
+  setSelectedWorktree: (worktree) => set({ selectedWorktree: worktree }),
+  regenerateAutoPreview: () => set({ autoPreviewBranch: generateBranchId() }),
 }));
