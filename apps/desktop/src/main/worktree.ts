@@ -48,11 +48,13 @@ export function validateName(name: string): void {
 
 /**
  * Create a new git worktree for the given name.
- * Creates branch `mcode/<name>` and checks it out in `~/.mcode/worktrees/<workspace>/<name>`.
+ * Checks it out in `~/.mcode/worktrees/<workspace>/<name>`.
+ * Uses the provided branchName, or defaults to `mcode/<name>`.
  */
 export function createWorktree(
   repoPath: string,
   name: string,
+  branchName?: string,
 ): WorktreeInfo {
   validateName(name);
 
@@ -60,7 +62,7 @@ export function createWorktree(
     throw new Error(`Repository path does not exist: ${repoPath}`);
   }
 
-  const branch = `mcode/${name}`;
+  const branch = branchName ?? `mcode/${name}`;
   const wtPath = join(getWorktreeBaseDir(repoPath), name);
 
   if (existsSync(wtPath)) {
@@ -75,11 +77,11 @@ export function createWorktree(
 }
 
 /** Remove a git worktree by name. Returns true on success, false on failure. */
-export function removeWorktree(repoPath: string, name: string): boolean {
+export function removeWorktree(repoPath: string, name: string, branchName?: string): boolean {
   validateName(name);
 
   const wtPath = join(getWorktreeBaseDir(repoPath), name);
-  const branch = `mcode/${name}`;
+  const branch = branchName ?? `mcode/${name}`;
 
   try {
     execFileSync(
@@ -118,6 +120,27 @@ export function listWorktrees(repoPath: string): WorktreeInfo[] {
     return [];
   }
 
+  // Build a map of worktree path -> branch from git
+  const branchByPath = new Map<string, string>();
+  try {
+    const output = execFileSync(
+      "git",
+      ["-C", repoPath, "worktree", "list", "--porcelain"],
+      { stdio: "pipe", encoding: "utf-8" },
+    );
+    let currentPath = "";
+    for (const line of output.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        currentPath = line.slice("worktree ".length).trim().replace(/\\/g, "/");
+      } else if (line.startsWith("branch ")) {
+        const ref = line.slice("branch ".length).trim();
+        branchByPath.set(currentPath, ref.replace("refs/heads/", ""));
+      }
+    }
+  } catch {
+    // Fall back to name-based assumption if git command fails
+  }
+
   const entries = readdirSync(worktreesDir);
   const result: WorktreeInfo[] = [];
 
@@ -125,10 +148,11 @@ export function listWorktrees(repoPath: string): WorktreeInfo[] {
     const entryPath = join(worktreesDir, entry);
     try {
       if (statSync(entryPath).isDirectory()) {
+        const normalized = entryPath.replace(/\\/g, "/");
         result.push({
           name: entry,
           path: entryPath,
-          branch: `mcode/${entry}`,
+          branch: branchByPath.get(normalized) ?? `mcode/${entry}`,
         });
       }
     } catch {

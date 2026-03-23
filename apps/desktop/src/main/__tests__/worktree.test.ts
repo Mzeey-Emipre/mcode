@@ -83,6 +83,28 @@ describe("Git operations (integration)", { timeout: 30_000 }, () => {
     expect(() => createWorktree(repoPath, "test-feature")).toThrow("already exists");
   });
 
+  it("createWorktree accepts a custom branch name", () => {
+    const info = createWorktree(repoPath, "custom-wt", "feat/custom-branch");
+    expect(info.branch).toBe("feat/custom-branch");
+    expect(info.path).toContain("custom-wt");
+    expect(branchExists(repoPath, "feat/custom-branch")).toBe(true);
+  });
+
+  it("listWorktrees returns actual branch names", () => {
+    createWorktree(repoPath, "branch-read-test", "fix/read-actual");
+    const wts = listWorktrees(repoPath);
+    const wt = wts.find((w) => w.name === "branch-read-test");
+    expect(wt).toBeDefined();
+    expect(wt!.branch).toBe("fix/read-actual");
+    // cleanup
+    removeWorktree(repoPath, "branch-read-test", "fix/read-actual");
+  });
+
+  it("removeWorktree deletes a custom-named branch", () => {
+    removeWorktree(repoPath, "custom-wt", "feat/custom-branch");
+    expect(branchExists(repoPath, "feat/custom-branch")).toBe(false);
+  });
+
   it("listWorktrees returns entries", () => {
     const wts = listWorktrees(repoPath);
     expect(wts.some((w) => w.name === "test-feature")).toBe(true);
