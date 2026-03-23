@@ -1,4 +1,4 @@
-import type { McodeTransport, Workspace, Thread, Message, GitBranch, WorktreeInfo } from "./types";
+import type { McodeTransport, Workspace, Thread, Message, GitBranch, WorktreeInfo, AttachmentMeta } from "./types";
 
 export function createElectronTransport(): McodeTransport {
   const api = window.electronAPI;
@@ -60,14 +60,14 @@ export function createElectronTransport(): McodeTransport {
       return api.invoke("list-worktrees", workspaceId) as Promise<WorktreeInfo[]>;
     },
 
-    async sendMessage(threadId, content, model, permissionMode) {
-      await api.invoke("send-message", threadId, content, model, permissionMode);
+    async sendMessage(threadId, content, model, permissionMode, attachments) {
+      await api.invoke("send-message", threadId, content, model, permissionMode, attachments);
     },
 
-    async createAndSendMessage(workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath) {
+    async createAndSendMessage(workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments) {
       return api.invoke(
         "create-and-send-message",
-        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath,
+        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments,
       ) as Promise<Thread>;
     },
 
@@ -75,8 +75,16 @@ export function createElectronTransport(): McodeTransport {
       return api.invoke("update-thread-title", threadId, title) as Promise<boolean>;
     },
 
+    async markThreadViewed(threadId) {
+      await api.invoke("mark-thread-viewed", threadId);
+    },
+
     async stopAgent(threadId) {
       await api.invoke("stop-agent", threadId);
+    },
+
+    async readClipboardImage() {
+      return api.invoke("read-clipboard-image") as Promise<AttachmentMeta | null>;
     },
 
     async getActiveAgentCount() {

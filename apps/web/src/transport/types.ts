@@ -46,6 +46,22 @@ export interface Message {
   tokens_used: number | null;
   timestamp: string;
   sequence: number;
+  attachments: StoredAttachment[] | null;
+}
+
+export interface AttachmentMeta {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  sourcePath: string;
+}
+
+export interface StoredAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
 }
 
 export interface GitBranch {
@@ -109,7 +125,7 @@ export interface McodeTransport {
   listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
     content: string,
@@ -118,12 +134,16 @@ export interface McodeTransport {
     mode?: "direct" | "worktree",
     branch?: string,
     existingWorktreePath?: string,
+    attachments?: AttachmentMeta[],
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
+  readClipboardImage(): Promise<AttachmentMeta | null>;
   getActiveAgentCount(): Promise<number>;
 
   // Thread mutations
   updateThreadTitle(threadId: string, title: string): Promise<boolean>;
+  /** Clear the "completed" badge for a thread. Transitions completed -> paused in the DB. */
+  markThreadViewed(threadId: string): Promise<void>;
 
   // Message queries
   getMessages(threadId: string, limit: number): Promise<Message[]>;

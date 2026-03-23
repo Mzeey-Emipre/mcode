@@ -10,7 +10,7 @@
  *   - Handle graceful shutdown
  */
 
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, protocol } from "electron";
 import { isAbsolute, join } from "path";
 import { existsSync, mkdirSync, statSync } from "fs";
 import { homedir } from "os";
@@ -18,7 +18,9 @@ import { AppState } from "./app-state.js";
 import { sessionIdFromEvent } from "./sidecar/types.js";
 import type { SidecarEvent } from "./sidecar/types.js";
 import * as MessageRepo from "./repositories/message-repo.js";
+import * as ThreadRepo from "./repositories/thread-repo.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
+import type { AttachmentMeta } from "./models.js";
 
 /** Validated permission mode values accepted by the IPC boundary. */
 type SafePermissionMode = "full" | "supervised" | "default";
@@ -31,6 +33,41 @@ const VALID_PERMISSION_MODES = new Set<SafePermissionMode>(["full", "supervised"
  */
 function sanitizePermissionMode(mode?: string): SafePermissionMode {
   return VALID_PERMISSION_MODES.has(mode as SafePermissionMode) ? (mode as SafePermissionMode) : "default";
+}
+
+const VALID_ATTACHMENT_ID = /^[a-f0-9-]+$/;
+const VALID_MIME_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp",
+  "application/pdf", "text/plain",
+]);
+const MAX_ATTACHMENTS = 5;
+
+function validateAttachments(raw?: unknown[]): AttachmentMeta[] {
+  if (!raw || !Array.isArray(raw) || raw.length === 0) return [];
+  if (raw.length > MAX_ATTACHMENTS) {
+    throw new Error(`Too many attachments (max ${MAX_ATTACHMENTS})`);
+  }
+
+  return raw.map((item) => {
+    const att = item as Record<string, unknown>;
+    const id = String(att.id ?? "");
+    const name = String(att.name ?? "");
+    const mimeType = String(att.mimeType ?? "");
+    const sizeBytes = Number(att.sizeBytes ?? 0);
+    const sourcePath = String(att.sourcePath ?? "");
+
+    if (!VALID_ATTACHMENT_ID.test(id)) {
+      throw new Error(`Invalid attachment ID: ${id}`);
+    }
+    if (!VALID_MIME_TYPES.has(mimeType)) {
+      throw new Error(`Unsupported MIME type: ${mimeType}`);
+    }
+    if (!sourcePath || !isAbsolute(sourcePath)) {
+      throw new Error(`Invalid attachment path: ${sourcePath}`);
+    }
+
+    return { id, name, mimeType, sizeBytes, sourcePath };
+  });
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -107,7 +144,17 @@ function setupEventForwarding(state: AppState): void {
       }
     }
 
-    // Track session lifecycle
+    // Track session lifecycle and persist thread status to DB.
+    //
+    // Status transitions on session events:
+    //   session.message       -> trackSessionStarted (mark as running)
+    //   session.turnComplete  -> "completed" (natural finish)
+    //   session.ended         -> "completed" (natural finish)
+    //   session.error         -> "errored"  (agent failure)
+    //
+    // Guard: only write "completed" when the DB status is still "active".
+    // If the user clicked stop, stopAgent() already wrote "paused" and
+    // we must not overwrite it.
     if (event.method === "session.message") {
       state.trackSessionStarted(threadId);
     }
@@ -116,6 +163,28 @@ function setupEventForwarding(state: AppState): void {
       event.method === "session.ended"
     ) {
       state.trackSessionEnded(threadId);
+      try {
+        const thread = ThreadRepo.findById(state.db, threadId);
+        if (thread && thread.status === "active") {
+          ThreadRepo.updateStatus(state.db, threadId, "completed");
+        }
+      } catch (err) {
+        logger.error("Failed to update thread status to completed", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (event.method === "session.error") {
+      state.trackSessionEnded(threadId);
+      try {
+        ThreadRepo.updateStatus(state.db, threadId, "errored");
+      } catch (err) {
+        logger.error("Failed to update thread status to errored", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     // Forward to renderer
@@ -201,8 +270,9 @@ function registerIpcHandlers(state: AppState): void {
   // -- Agent --
   ipcMain.handle(
     "send-message",
-    async (_event, threadId: string, content: string, model?: string, permissionMode?: string) => {
-      await state.sendMessage(threadId, content, sanitizePermissionMode(permissionMode), model);
+    async (_event, threadId: string, content: string, model?: string, permissionMode?: string, attachments?: unknown[]) => {
+      const validatedAttachments = validateAttachments(attachments);
+      await state.sendMessage(threadId, content, sanitizePermissionMode(permissionMode), model, validatedAttachments);
     },
   );
 
@@ -218,13 +288,16 @@ function registerIpcHandlers(state: AppState): void {
       mode?: string,
       branch?: string,
       existingWorktreePath?: string,
+      attachments?: unknown[],
     ) => {
+      const validatedAttachments = validateAttachments(attachments);
       return state.createAndSendMessage(
         workspaceId, content, model,
         sanitizePermissionMode(permissionMode),
         (mode as "direct" | "worktree") ?? "direct",
         branch ?? "main",
         existingWorktreePath ?? undefined,
+        validatedAttachments,
       );
     },
   );
@@ -236,6 +309,18 @@ function registerIpcHandlers(state: AppState): void {
       return state.updateThreadTitle(threadId, title);
     },
   );
+
+  /**
+   * Clear the "completed" badge when the user opens a thread.
+   * Transitions completed -> paused so the sidebar no longer shows the
+   * green indicator. No-op for threads in any other status.
+   */
+  ipcMain.handle("mark-thread-viewed", (_event, threadId: string) => {
+    const thread = ThreadRepo.findById(state.db, threadId);
+    if (thread && thread.status === "completed") {
+      ThreadRepo.updateStatus(state.db, threadId, "paused");
+    }
+  });
 
   ipcMain.handle("stop-agent", (_event, threadId: string) => {
     state.stopAgent(threadId);
@@ -273,6 +358,10 @@ function registerIpcHandlers(state: AppState): void {
 
   ipcMain.handle("get-recent-logs", (_event, lines: number) => {
     return getRecentLogs(lines);
+  });
+
+  ipcMain.handle("read-clipboard-image", async () => {
+    return state.readClipboardImage();
   });
 }
 
@@ -326,6 +415,46 @@ app.whenReady().then(() => {
   // Ensure ~/.mcode/ directory exists
   const mcodeDir = join(homedir(), ".mcode");
   mkdirSync(mcodeDir, { recursive: true });
+
+  // Register custom protocol for serving attachment images from disk.
+  // URL scheme: mcode-attachment://{threadId}/{attachmentId}.{ext}
+  protocol.handle("mcode-attachment", async (request) => {
+    const url = new URL(request.url);
+    const threadId = url.hostname;
+    const filename = url.pathname.replace(/^\//, "");
+
+    // Validate threadId (hex UUID) and filename (hex-uuid.ext)
+    if (!VALID_ATTACHMENT_ID.test(threadId)) {
+      return new Response("Invalid thread ID", { status: 400 });
+    }
+    if (!/^[a-f0-9-]+\.\w+$/.test(filename)) {
+      return new Response("Invalid attachment ID", { status: 400 });
+    }
+
+    const filePath = join(app.getPath("userData"), "attachments", threadId, filename);
+    if (!existsSync(filePath)) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    const ext = filename.split(".").pop() ?? "";
+    const mimeMap: Record<string, string> = {
+      jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+      gif: "image/gif", webp: "image/webp", pdf: "application/pdf",
+      txt: "text/plain",
+    };
+    const { createReadStream } = await import("fs");
+    const { Readable } = await import("stream");
+    const nodeStream = createReadStream(filePath);
+    const webStream = Readable.toWeb(nodeStream) as ReadableStream;
+
+    return new Response(webStream, {
+      headers: {
+        "Content-Type": mimeMap[ext] ?? "application/octet-stream",
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Content-Security-Policy": "default-src 'none'",
+      },
+    });
+  });
 
   // Initialize AppState with database
   const dbPath = join(mcodeDir, "mcode.db");

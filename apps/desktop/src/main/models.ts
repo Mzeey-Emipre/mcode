@@ -56,4 +56,22 @@ export interface Message {
   readonly tokens_used: number | null;
   readonly timestamp: string;
   readonly sequence: number;
+  readonly attachments: StoredAttachment[] | null;
+}
+
+/** Metadata for an image or file attachment. No binary data, just a pointer. */
+export interface AttachmentMeta {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly sourcePath: string;
+}
+
+/** Stored attachment metadata (no sourcePath, since files live at a known location). */
+export interface StoredAttachment {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
 }

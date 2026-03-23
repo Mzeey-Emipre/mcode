@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo } from "@/transport";
+import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo, AttachmentMeta } from "@/transport";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { getSetting, type NamingMode } from "@/lib/settings";
@@ -41,7 +41,7 @@ interface WorkspaceState {
     mode: "direct" | "worktree",
     branch: string,
   ) => Promise<Thread>;
-  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode) => Promise<Thread>;
+  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]) => Promise<Thread>;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
   setPendingNewThread: (value: boolean) => void;
@@ -188,7 +188,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  createAndSendMessage: async (content, model, permissionMode) => {
+  createAndSendMessage: async (content, model, permissionMode, attachments) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
 
@@ -221,7 +221,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
     try {
       const thread = await getTransport().createAndSendMessage(
-        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath,
+        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments,
       );
       set((state) => ({
         threads: [thread, ...state.threads],
@@ -257,9 +257,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  /**
+   * Set the active thread and clear the "completed" badge if present.
+   *
+   * When a user opens a completed thread, the green badge is dismissed
+   * both locally (optimistic) and in the DB (via markThreadViewed IPC)
+   * so it stays cleared across workspace switches and app restarts.
+   */
   setActiveThread: (id) => {
-    // Only clear pendingNewThread when selecting an actual thread
-    set({ activeThreadId: id, ...(id ? { pendingNewThread: false } : {}) });
+    const thread = id ? get().threads.find((t) => t.id === id) : null;
+    const isCompleted = thread?.status === "completed";
+
+    set((state) => ({
+      activeThreadId: id,
+      ...(id ? { pendingNewThread: false } : {}),
+      threads: isCompleted
+        ? state.threads.map((t) =>
+            t.id === id ? { ...t, status: "paused" as const } : t,
+          )
+        : state.threads,
+    }));
+
+    if (isCompleted && id) {
+      getTransport().markThreadViewed(id).catch(() => {});
+    }
   },
 
   setPendingNewThread: (value) => {
