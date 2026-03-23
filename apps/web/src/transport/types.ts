@@ -1,3 +1,8 @@
+export interface SkillInfo {
+  name: string;
+  description: string;
+}
+
 export interface Workspace {
   id: string;
   name: string;
@@ -168,4 +173,7 @@ export interface McodeTransport {
 
   // GitHub PR
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;
+
+  // Skills
+  listSkills(): Promise<SkillInfo[]>;
 }

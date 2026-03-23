@@ -3,6 +3,7 @@ import type {
   Workspace,
   Thread,
   Message,
+  SkillInfo,
 } from "@/transport/types";
 import { vi } from "vitest";
 
@@ -84,4 +85,5 @@ export const mockTransport: McodeTransport = {
   openInEditor: vi.fn().mockResolvedValue(undefined),
   openInExplorer: vi.fn().mockResolvedValue(undefined),
   getBranchPr: vi.fn().mockResolvedValue(null),
+  listSkills: vi.fn().mockResolvedValue([] as SkillInfo[]),
 };

@@ -24,6 +24,8 @@ import { BranchNameInput } from "./BranchNameInput";
 import { WorktreePicker } from "./WorktreePicker";
 import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
+import { useSlashCommand } from "./useSlashCommand";
+import { SlashCommandPopup } from "./SlashCommandPopup";
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const SUPPORTED_FILE_TYPES = new Set(["application/pdf", "text/plain"]);
@@ -73,6 +75,20 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const loadBranches = useWorkspaceStore((s) => s.loadBranches);
   const setNewThreadMode = useWorkspaceStore((s) => s.setNewThreadMode);
   const setNewThreadBranch = useWorkspaceStore((s) => s.setNewThreadBranch);
+
+  const autocomplete = useSlashCommand({
+    textareaRef,
+    onMcodeCommand: (action) => {
+      if (action === "toggle-plan") {
+        const next =
+          mode === INTERACTION_MODES.PLAN
+            ? INTERACTION_MODES.CHAT
+            : INTERACTION_MODES.PLAN;
+        setMode(next);
+        if (threadId) setThreadSettings(threadId, { interactionMode: next });
+      }
+    },
+  });
 
   const worktrees = useWorkspaceStore((s) => s.worktrees);
   const worktreesLoading = useWorkspaceStore((s) => s.worktreesLoading);
@@ -353,7 +369,25 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     textareaRef.current?.focus();
   }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // When the popup is open, intercept Enter/Tab for selection BEFORE
+    // any other handler sees them. This prevents Enter from also sending
+    // the message while the popup is visible.
+    if (autocomplete.isOpen) {
+      if (e.key === "Enter" || e.key === "Tab") {
+        const cmd = autocomplete.items[autocomplete.selectedIndex];
+        if (cmd) {
+          e.preventDefault();
+          e.stopPropagation();
+          autocomplete.onSelect(cmd, setInput);
+          return;
+        }
+      }
+      // ArrowUp/ArrowDown/Escape: delegate to hook
+      autocomplete.onKeyDown(e);
+      if (e.defaultPrevented) return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (isAgentRunning) return;
@@ -364,7 +398,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
+    const value = e.target.value;
+    setInput(value);
+    autocomplete.onInputChange(value);
     const el = e.target;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 200) + "px";
@@ -578,6 +614,16 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           ) : null}
         </div>
       </div>
+
+      <SlashCommandPopup
+        isOpen={autocomplete.isOpen}
+        isLoading={autocomplete.isLoading}
+        items={autocomplete.items}
+        selectedIndex={autocomplete.selectedIndex}
+        anchorRect={autocomplete.anchorRect}
+        onSelect={(cmd) => autocomplete.onSelect(cmd, setInput)}
+        onDismiss={autocomplete.onDismiss}
+      />
     </div>
   );
 }

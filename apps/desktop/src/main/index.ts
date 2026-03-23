@@ -23,6 +23,7 @@ import { logger, getLogPath, getRecentLogs } from "./logger.js";
 import type { AttachmentMeta } from "./models.js";
 import { detectEditors, openInEditor, openInExplorer } from "./editors.js";
 import { getBranchPr } from "./github.js";
+import { listSkills } from "./skills.js";
 
 /** Validated permission mode values accepted by the IPC boundary. */
 type SafePermissionMode = "full" | "supervised" | "default";
@@ -248,6 +249,10 @@ function registerIpcHandlers(state: AppState): void {
 
   ipcMain.handle("list-worktrees", (_event, workspaceId: string) => {
     return state.listWorktrees(workspaceId);
+  });
+
+  ipcMain.handle("list-skills", () => {
+    return listSkills();
   });
 
   // -- Threads --
