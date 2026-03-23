@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo, AttachmentMeta } from "@/transport";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
+import { useTerminalStore } from "./terminalStore";
 import { getSetting, type NamingMode } from "@/lib/settings";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
@@ -246,6 +247,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   deleteThread: async (threadId, cleanupWorktree) => {
     set({ error: null });
     try {
+      useTerminalStore.getState().removeAllTerminals(threadId);
       await getTransport().deleteThread(threadId, cleanupWorktree);
       set((state) => ({
         threads: state.threads.filter((t) => t.id !== threadId),
