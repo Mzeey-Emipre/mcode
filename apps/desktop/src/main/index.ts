@@ -19,6 +19,7 @@ import { sessionIdFromEvent } from "./sidecar/types.js";
 import type { SidecarEvent } from "./sidecar/types.js";
 import * as MessageRepo from "./repositories/message-repo.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
+import type { AttachmentMeta } from "./models.js";
 
 /** Validated permission mode values accepted by the IPC boundary. */
 type SafePermissionMode = "full" | "supervised" | "default";
@@ -31,6 +32,41 @@ const VALID_PERMISSION_MODES = new Set<SafePermissionMode>(["full", "supervised"
  */
 function sanitizePermissionMode(mode?: string): SafePermissionMode {
   return VALID_PERMISSION_MODES.has(mode as SafePermissionMode) ? (mode as SafePermissionMode) : "default";
+}
+
+const VALID_ATTACHMENT_ID = /^[a-f0-9-]+$/;
+const VALID_MIME_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp",
+  "application/pdf", "text/plain",
+]);
+const MAX_ATTACHMENTS = 5;
+
+function validateAttachments(raw?: unknown[]): AttachmentMeta[] {
+  if (!raw || !Array.isArray(raw) || raw.length === 0) return [];
+  if (raw.length > MAX_ATTACHMENTS) {
+    throw new Error(`Too many attachments (max ${MAX_ATTACHMENTS})`);
+  }
+
+  return raw.map((item) => {
+    const att = item as Record<string, unknown>;
+    const id = String(att.id ?? "");
+    const name = String(att.name ?? "");
+    const mimeType = String(att.mimeType ?? "");
+    const sizeBytes = Number(att.sizeBytes ?? 0);
+    const sourcePath = String(att.sourcePath ?? "");
+
+    if (!VALID_ATTACHMENT_ID.test(id)) {
+      throw new Error(`Invalid attachment ID: ${id}`);
+    }
+    if (!VALID_MIME_TYPES.has(mimeType)) {
+      throw new Error(`Unsupported MIME type: ${mimeType}`);
+    }
+    if (!sourcePath || !isAbsolute(sourcePath)) {
+      throw new Error(`Invalid attachment path: ${sourcePath}`);
+    }
+
+    return { id, name, mimeType, sizeBytes, sourcePath };
+  });
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -197,20 +233,23 @@ function registerIpcHandlers(state: AppState): void {
   // -- Agent --
   ipcMain.handle(
     "send-message",
-    async (_event, threadId: string, content: string, model?: string, permissionMode?: string) => {
-      await state.sendMessage(threadId, content, sanitizePermissionMode(permissionMode), model);
+    async (_event, threadId: string, content: string, model?: string, permissionMode?: string, attachments?: unknown[]) => {
+      const validatedAttachments = validateAttachments(attachments);
+      await state.sendMessage(threadId, content, sanitizePermissionMode(permissionMode), model, validatedAttachments);
     },
   );
 
   // -- Lazy thread creation --
   ipcMain.handle(
     "create-and-send-message",
-    async (_event, workspaceId: string, content: string, model: string, permissionMode?: string, mode?: string, branch?: string) => {
+    async (_event, workspaceId: string, content: string, model: string, permissionMode?: string, mode?: string, branch?: string, attachments?: unknown[]) => {
+      const validatedAttachments = validateAttachments(attachments);
       return state.createAndSendMessage(
         workspaceId, content, model,
         sanitizePermissionMode(permissionMode),
         (mode as "direct" | "worktree") ?? "direct",
         branch ?? "main",
+        validatedAttachments,
       );
     },
   );
@@ -259,6 +298,10 @@ function registerIpcHandlers(state: AppState): void {
 
   ipcMain.handle("get-recent-logs", (_event, lines: number) => {
     return getRecentLogs(lines);
+  });
+
+  ipcMain.handle("read-clipboard-image", async () => {
+    return state.readClipboardImage();
   });
 }
 
