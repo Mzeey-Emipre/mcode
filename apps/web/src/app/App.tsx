@@ -1,9 +1,11 @@
 import { useEffect } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatView } from "@/components/chat/ChatView";
+import { TerminalPanel } from "@/components/terminal";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useTerminalStore } from "@/stores/terminalStore";
 import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
 import { startListening, stopListening } from "@/transport/events";
 
@@ -29,10 +31,18 @@ export function App() {
       handler: () => useWorkspaceStore.getState().setActiveThread(null),
     });
 
+    const unregCtrlJ = registerShortcut({
+      key: "j",
+      ctrl: true,
+      description: "Toggle terminal panel",
+      handler: () => useTerminalStore.getState().togglePanel(),
+    });
+
     return () => {
       cleanup();
       unregCmdK();
       unregEscape();
+      unregCtrlJ();
     };
   }, []);
 
@@ -64,9 +74,12 @@ export function App() {
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <Sidebar />
-      <main className="flex-1 overflow-hidden">
-        <ChatView />
-      </main>
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <main className="flex-1 overflow-hidden">
+          <ChatView />
+        </main>
+        <TerminalPanel />
+      </div>
     </div>
   );
 }
