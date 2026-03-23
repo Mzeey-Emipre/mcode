@@ -1,138 +1,160 @@
 # Performance Audit Checklist
 
-_Last audited: 2026-03-23_
-
-This document tracks performance patterns inspired by high-performance editors like Zed. Use it as a recurring checklist to catch regressions and identify improvements.
-
-## Audit Categories
-
-### 1. List Virtualization
-All scrollable lists rendering dynamic content should use virtual scrolling (e.g. @tanstack/react-virtual) when item count can exceed ~30.
-
-**Checklist:**
-| Component | File | Virtualized? | Notes |
-|-----------|------|-------------|-------|
-| Message List | `apps/web/src/components/chat/MessageList.tsx` | ❌ No | `messages.map()` renders ALL messages. Critical — DOM node count is #1 Electron memory killer |
-| Slash Command Popup | `apps/web/src/components/chat/SlashCommandPopup.tsx` | ✅ Yes | Uses @tanstack/react-virtual with 20-item threshold and overscan of 2 |
-| File Tag Popup | `apps/web/src/components/chat/FileTagPopup.tsx` | ❌ No | `files.map()` renders all files in a max-h-[240px] container |
-| Project Tree | `apps/web/src/components/sidebar/ProjectTree.tsx` | ❌ No | Renders all workspaces and threads — can reach 5000+ DOM nodes |
-| Terminal Output | `apps/web/src/components/terminal/TerminalView.tsx` | ✅ Yes | xterm.js handles this natively with 500-line scrollback |
-| Terminal List | `apps/web/src/components/terminal/TerminalList.tsx` | N/A | Typically 1-5 items, not a concern |
-
-**How to verify:** Open React DevTools Profiler, load a conversation with 200+ messages, check DOM node count in Performance tab. Should stay under ~500 nodes in the message area.
+Performance principles for building a fast, memory-efficient Electron + React app. Inspired by what high-performance native editors (Zed, Sublime) get right. Use this as a recurring checklist when reviewing code or adding new features.
 
 ---
 
-### 2. Component Memoization
-Components that receive stable props but live inside frequently-updating parents must use `React.memo`. Expensive render logic should use `useMemo`.
+## 1. Virtualize All Scrollable Lists
 
-**Checklist:**
-| Component | File | Memoized? | Notes |
-|-----------|------|----------|-------|
-| MessageBubble | `apps/web/src/components/chat/MessageBubble.tsx` | ❌ No | Re-renders on every message addition even if its own message didn't change |
-| MarkdownContent | `apps/web/src/components/chat/MarkdownContent.tsx` | ❌ No | Runs react-markdown + remark-gfm on every render — expensive for large messages |
-| ToolCallCard | `apps/web/src/components/chat/ToolCallCard.tsx` | ❌ No | Re-renders when parent updates |
+Any list that can grow beyond ~30 items must use virtual scrolling. Only DOM nodes visible in the viewport (plus a small overscan) should exist.
 
-**How to verify:** React DevTools Profiler → record a session where a new message streams in → check "Why did this render?" for MessageBubble components that didn't change.
+**Do:**
+- Use a virtualizer (`@tanstack/react-virtual`, `react-window`, etc.) for dynamic-length lists
+- Set a fixed or estimated item height for the virtualizer
+- Add overscan (2-5 items) for smooth scrolling
 
----
+**Don't:**
+- Render all items with `.map()` inside a scrollable container
+- Rely on `max-height` + `overflow-y: auto` as a substitute for virtualization
+- Assume a list will stay small forever
 
-### 3. IPC Efficiency (Electron Main ↔ Renderer)
-Every `ipcRenderer.invoke()` serializes/deserializes JSON. High-frequency calls should be batched or use MessagePort.
-
-**Checklist:**
-| Pattern | Status | Notes |
-|---------|--------|-------|
-| Individual request/response calls | ✅ Clean | 36 handlers, each well-scoped |
-| Agent event forwarding | ⚠️ Unbatched | Each sidecar event sent individually via `webContents.send()` |
-| PTY data streaming | ⚠️ Unbatched | Terminal output forwarded per-event, no batching window |
-| Context isolation | ✅ Enabled | `contextIsolation: true`, `nodeIntegration: false` |
-| Input validation on IPC boundary | ✅ Present | All handlers validate inputs |
-
-**How to verify:** In main process, add temporary logging to count IPC messages/sec during active agent streaming. If >100/sec, implement a 16ms (one frame) batching window.
+**How to verify:**
+- Open React DevTools, inspect a scrollable container, scroll to the bottom. DOM node count should stay constant regardless of list length.
+- Chrome DevTools Performance tab: DOM node count in any scrollable area should stay under ~500 regardless of data size.
 
 ---
 
-### 4. Lazy Loading & Code Splitting
-Heavy modules should be loaded on demand. Use `React.lazy()` + `Suspense` for route-level and panel-level splitting.
+## 2. Memoize Expensive Components
 
-**Checklist:**
-| Module | File | Lazy? | Bundle Size | Notes |
-|--------|------|-------|-------------|-------|
-| xterm.js | `TerminalView.tsx` | ✅ Yes | 404KB | Dynamic import on mount — good |
-| react-markdown + remark-gfm | `MarkdownContent.tsx` | ❌ No | ~50KB | Eagerly imported at module level |
-| cmdk | `ui/command.tsx` | ❌ No | ~15KB | Only used in WorktreePicker |
-| Settings Dialog | `SettingsDialog.tsx` | ❌ No | Small | Eagerly imported in Sidebar |
-| Composer | `ChatView.tsx` | ❌ No | 729 lines | Always loaded, largest component |
+Components inside frequently-updating parents should be wrapped in `React.memo()`. Expensive render logic (markdown parsing, syntax highlighting, computed layouts) should use `useMemo`.
 
-**Bundle sizes:**
-- Desktop main bundle: **1.9MB** (target: <1MB with splitting)
-- Web main bundle: **659KB** (target: <400KB with splitting)
-- xterm chunk: 404KB (lazy ✅)
+**Do:**
+- Wrap list item components in `React.memo()` so they skip re-rendering when their props haven't changed
+- Use `useMemo` for expensive transformations (e.g. markdown-to-HTML parsing)
+- Use `useCallback` for event handlers passed as props to memoized children
 
-**How to verify:** Install `rollup-plugin-visualizer` in vite config, run build, inspect treemap for largest chunks. No single eagerly-loaded chunk should exceed 500KB.
+**Don't:**
+- Let a parent re-render cause every child in a list to re-render
+- Re-parse markdown or re-run syntax highlighting on every render when the source text hasn't changed
+- Recreate component config objects (e.g. custom renderers) inside render
+
+**How to verify:**
+- React DevTools Profiler: record a session, trigger a state change, check "Why did this render?" on sibling items. They should show "Did not render" if their props didn't change.
 
 ---
 
-### 5. Layout Thrashing
-Never interleave DOM reads (e.g. `scrollHeight`, `getBoundingClientRect`) with DOM writes (e.g. `style.height = ...`). Batch reads first, then writes.
+## 3. Keep IPC Lean (Electron Main <-> Renderer)
 
-**Checklist:**
-| Location | File | Issue |
-|----------|------|-------|
-| Textarea auto-resize | `Composer.tsx:83-92` | Sets `height = "auto"` then reads `scrollHeight` then writes `height` again — forces two layout passes |
+Every `ipcRenderer.invoke()` serializes and deserializes JSON. Minimize the frequency and size of IPC calls.
 
-**How to verify:** Chrome DevTools → Performance tab → record while typing in composer → look for purple "Layout" bars >1ms. Repeated forced reflows indicate thrashing.
+**Do:**
+- Batch related data into a single IPC call instead of multiple small ones
+- For high-frequency streaming data (>60 events/sec), implement a batching window (e.g. 16ms / one frame) before forwarding to the renderer
+- Use `MessagePort` or `SharedArrayBuffer` for high-throughput channels (terminal output, streaming responses)
+- Enable context isolation and disable node integration
+- Validate inputs on all IPC boundaries
 
----
+**Don't:**
+- Send individual IPC messages for every token, keystroke, or terminal byte
+- Pass large objects (full file contents, entire conversation history) through IPC when only a delta is needed
 
-### 6. Store Subscription Granularity
-Zustand selectors should pick individual fields. Never call `useStore()` without a selector.
-
-**Checklist:**
-| Pattern | Status | Notes |
-|---------|--------|-------|
-| All stores use selectors | ✅ Yes | No bare `useStore()` calls found |
-| Selector granularity | ✅ Good | Components select 1-2 fields each |
-| Store count | ✅ Appropriate | 4 stores with clear separation |
-
-**How to verify:** `grep -r "useThreadStore()" --include="*.tsx"` — any call without a selector argument `(s => ...)` is a problem.
+**How to verify:**
+- Add temporary IPC message counting in the main process during heavy workloads. If sustained >100 messages/sec, implement batching.
 
 ---
 
-### 7. Streaming Response Efficiency
-AI response streaming should accumulate on the backend and send complete snapshots, not token-by-token updates to the renderer.
+## 4. Lazy-Load Heavy Modules and Panels
 
-**Checklist:**
-| Pattern | Status | Notes |
-|---------|--------|-------|
-| Backend text accumulation | ✅ Good | `lastAssistantText` accumulator in sidecar client |
-| Frontend receives full text | ✅ Good | No token-by-token DOM updates |
-| Message array immutability | ✅ Good | Spread operator for new array on each message |
+Only load what's needed at startup. Defer everything else until the user needs it.
 
-**How to verify:** Add console.time/timeEnd around threadStore message updates during streaming — each update should be <2ms.
+**Do:**
+- Use `React.lazy()` + `Suspense` for panels and views not visible on initial render (settings, terminal, secondary tabs)
+- Dynamic `import()` for heavy libraries only used in specific features (terminal emulators, markdown parsers, diagram renderers)
+- Code-split at route/panel boundaries
+
+**Don't:**
+- Eagerly import large libraries at module level if they're only used conditionally
+- Load all features at startup "just in case"
+- Ship a single monolithic JS bundle
+
+**How to verify:**
+- Run a bundle visualizer (`rollup-plugin-visualizer`, `webpack-bundle-analyzer`). No single eagerly-loaded chunk should exceed 500KB.
+- Track startup time: measure time from `app.ready` to first meaningful paint.
+
+---
+
+## 5. Avoid Layout Thrashing
+
+Never interleave DOM reads and DOM writes. Batch all reads first, then all writes.
+
+**Do:**
+- Read layout properties (`scrollHeight`, `getBoundingClientRect`, `offsetWidth`) before making any style changes
+- Use `requestAnimationFrame` to defer writes to the next frame if reads and writes can't be separated
+- Use CSS for auto-sizing where possible (e.g. `field-sizing: content` for textareas)
+
+**Don't:**
+- Write a style, immediately read a layout property, then write again (e.g. `height = "auto"` -> read `scrollHeight` -> write `height`)
+- Call `getBoundingClientRect()` in a loop that also modifies styles
+- Trigger forced synchronous layouts inside scroll or resize handlers
+
+**How to verify:**
+- Chrome DevTools Performance tab: record interactions, look for repeated purple "Layout" bars >1ms. These indicate forced reflows.
+
+---
+
+## 6. Use Fine-Grained Store Selectors
+
+When using state management (Zustand, Redux, etc.), components should subscribe to the smallest slice of state they need.
+
+**Do:**
+- Use selectors: `useStore((s) => s.specificField)`
+- Split stores by domain (settings, threads, UI state) rather than one mega-store
+- Derive computed values with selectors, not in components
+
+**Don't:**
+- Subscribe to the entire store: `useStore()` with no selector
+- Subscribe to a parent object when you only need one field
+- Trigger re-renders in unrelated components by mutating shared objects
+
+**How to verify:**
+- `grep` for bare store hook calls without selector arguments. Every usage should have `(s => ...)`.
+- React DevTools Profiler: after a state change, only components that use the changed field should re-render.
+
+---
+
+## 7. Stream Responses Efficiently
+
+For AI/LLM response streaming, accumulate text on the backend and send complete snapshots to the renderer. Avoid token-by-token DOM updates.
+
+**Do:**
+- Accumulate streamed tokens into a buffer on the backend/main process
+- Send the full accumulated text (or meaningful deltas) to the renderer at a throttled rate
+- Use immutable state updates (spread into new array) for message lists
+
+**Don't:**
+- Forward every individual token as a separate event to the renderer
+- Concatenate strings in a loop on the renderer side (creates GC pressure)
+- Re-render the entire message list on every token
+
+**How to verify:**
+- During streaming, measure time per state update in the store. Each update should be <2ms.
+- Check that only the actively-streaming component re-renders, not all siblings.
 
 ---
 
 ## Scoring Guide
 
-Run this audit periodically. Score each category:
-- ✅ **Pass** — meets target
-- ⚠️ **Warning** — functional but has known optimization opportunities
-- ❌ **Fail** — measurable performance impact, needs fix
+When running this audit, score each category:
 
-| Category | Current Score | Target |
-|----------|--------------|--------|
-| List Virtualization | ❌ Fail (3/5 lists unvirtualized) | All lists >30 items virtualized |
-| Component Memoization | ❌ Fail (0/3 key components memoized) | All frequently-rendered components memoized |
-| IPC Efficiency | ⚠️ Warning (clean but unbatched streaming) | Batch high-frequency events |
-| Lazy Loading | ⚠️ Warning (only xterm lazy) | All panels + heavy libs lazy-loaded, main bundle <500KB |
-| Layout Thrashing | ❌ Fail (1 known instance) | Zero forced reflows |
-| Store Subscriptions | ✅ Pass | Fine-grained selectors everywhere |
-| Streaming Efficiency | ✅ Pass | Backend accumulation, no token-by-token renders |
+| Score | Meaning |
+|-------|---------|
+| Pass | Meets the principle across all relevant code |
+| Warning | Mostly good, but has known gaps that don't yet cause measurable issues |
+| Fail | Measurable performance impact, needs a fix |
 
 ---
 
-## Related Issues
+## Related
 
-Performance issues are tracked as GitHub issues with the `perf` label.
+- Performance issues are tracked on GitHub with the `perf` label
+- Run this checklist before major releases and after adding new list-based UI or heavy features
