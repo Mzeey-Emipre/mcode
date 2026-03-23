@@ -74,6 +74,7 @@ export const mockTransport: McodeTransport = {
   getMessages: vi.fn().mockResolvedValue([]),
   createAndSendMessage: vi.fn(),
   updateThreadTitle: vi.fn().mockResolvedValue(true),
+  markThreadViewed: vi.fn().mockResolvedValue(undefined),
   discoverConfig: vi.fn().mockResolvedValue({}),
   getVersion: vi.fn().mockResolvedValue("0.1.0"),
 };
