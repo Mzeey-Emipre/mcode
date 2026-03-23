@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport } from "./mocks/transport";
 
-vi.mock("@/transport", () => ({
+vi.mock("@/transport", async () => ({
+  ...(await vi.importActual("@/transport")),
   getTransport: () => mockTransport,
 }));
 
