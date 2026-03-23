@@ -177,15 +177,19 @@ export function ProjectTree() {
     []
   );
 
-  const handleInlineEditCommit = useCallback(() => {
+  const handleInlineEditCommit = useCallback(async () => {
     if (!inlineEdit) return;
     const newTitle = inlineEdit.title.trim();
-    if (newTitle && newTitle !== inlineEdit.originalTitle) {
-      updateThreadTitle(inlineEdit.threadId, newTitle).catch((e) =>
-        console.error("Failed to rename thread:", e)
-      );
+    if (!newTitle || newTitle === inlineEdit.originalTitle) {
+      setInlineEdit(null);
+      return;
     }
-    setInlineEdit(null);
+    try {
+      await updateThreadTitle(inlineEdit.threadId, newTitle);
+      setInlineEdit(null);
+    } catch {
+      // Error surfaced via store.error; keep editor open so user can retry
+    }
   }, [inlineEdit, updateThreadTitle]);
 
   const handleDeleteConfirm = useCallback(async () => {
@@ -350,6 +354,7 @@ export function ProjectTree() {
               <Switch
                 checked={deleteWorktree}
                 onCheckedChange={(checked) => setDeleteWorktree(checked)}
+                className="data-[checked]:bg-destructive"
               />
             </div>
           )}
