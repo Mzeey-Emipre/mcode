@@ -54,6 +54,7 @@ export function createMockMessage(overrides?: Partial<Message>): Message {
     tokens_used: null,
     timestamp: new Date().toISOString(),
     sequence: 1,
+    attachments: null,
     ...overrides,
   };
 }
@@ -76,4 +77,5 @@ export const mockTransport: McodeTransport = {
   updateThreadTitle: vi.fn().mockResolvedValue(true),
   discoverConfig: vi.fn().mockResolvedValue({}),
   getVersion: vi.fn().mockResolvedValue("0.1.0"),
+  readClipboardImage: vi.fn().mockResolvedValue(null),
 };
