@@ -8,7 +8,7 @@
 import { execFileSync } from "child_process";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
-import { MCODE_DIR } from "./paths";
+import { MCODE_DIR } from "./paths.js";
 
 /** Resolve the worktree base directory path under the mcode data dir. */
 function getWorktreeBaseDir(repoPath: string): string {

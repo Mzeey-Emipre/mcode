@@ -7,7 +7,7 @@ import winston from "winston";
 import DailyRotateFile from "winston-daily-rotate-file";
 import { mkdirSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
-import { MCODE_DIR } from "./paths";
+import { MCODE_DIR } from "./paths.js";
 
 const LOG_DIR = join(MCODE_DIR, "logs");
 const MAX_LINES = 1000;
