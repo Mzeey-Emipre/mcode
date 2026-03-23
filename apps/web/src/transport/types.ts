@@ -55,6 +55,12 @@ export interface GitBranch {
   isCurrent: boolean;
 }
 
+export interface WorktreeInfo {
+  name: string;
+  path: string;
+  branch: string;
+}
+
 /**
  * Permission mode for Claude agent sessions.
  * - "full": maps to SDK bypassPermissions (no prompts, unrestricted access)
@@ -99,6 +105,7 @@ export interface McodeTransport {
   listBranches(workspaceId: string): Promise<GitBranch[]>;
   getCurrentBranch(workspaceId: string): Promise<string>;
   checkoutBranch(workspaceId: string, branch: string): Promise<void>;
+  listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands
   sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode): Promise<void>;
@@ -109,6 +116,7 @@ export interface McodeTransport {
     permissionMode?: PermissionMode,
     mode?: "direct" | "worktree",
     branch?: string,
+    existingWorktreePath?: string,
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
   getActiveAgentCount(): Promise<number>;
