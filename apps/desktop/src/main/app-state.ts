@@ -29,6 +29,7 @@ import {
 } from "./worktree.js";
 import type { GitBranchInfo, WorktreeInfo } from "./worktree.js";
 import { discoverConfig, type ConfigSummary } from "./config.js";
+import { listWorkspaceFiles as gitListFiles, readFileContent as gitReadFile, resolveWorkingDir } from "./file-ops.js";
 import { logger } from "./logger.js";
 import type { Workspace, Thread, Message, AttachmentMeta, StoredAttachment } from "./models.js";
 
@@ -433,6 +434,30 @@ export class AppState {
 
   getConfig(workspacePath: string): ConfigSummary {
     return discoverConfig(workspacePath);
+  }
+
+  // ---------------------------------------------------------------------------
+  // File operations (for @ file tagging)
+  // ---------------------------------------------------------------------------
+
+  listWorkspaceFiles(workspaceId: string, threadId?: string): string[] {
+    const workspace = WorkspaceRepo.findById(this.db, workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+
+    const thread = threadId ? ThreadRepo.findById(this.db, threadId) : null;
+    const cwd = resolveWorkingDir(workspace, thread);
+
+    return gitListFiles(cwd);
+  }
+
+  readFileContent(workspaceId: string, relativePath: string, threadId?: string): string {
+    const workspace = WorkspaceRepo.findById(this.db, workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+
+    const thread = threadId ? ThreadRepo.findById(this.db, threadId) : null;
+    const cwd = resolveWorkingDir(workspace, thread);
+
+    return gitReadFile(cwd, relativePath);
   }
 
   // ---------------------------------------------------------------------------
