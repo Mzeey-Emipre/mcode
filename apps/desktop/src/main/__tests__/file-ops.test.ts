@@ -36,6 +36,13 @@ describe("listWorkspaceFiles", () => {
     vi.mocked(execFileSync).mockReturnValue(Buffer.from("a.ts\n\nb.ts\n"));
     expect(listWorkspaceFiles("/workspace")).toEqual(["a.ts", "b.ts"]);
   });
+
+  it("wraps git errors with domain message", () => {
+    vi.mocked(execFileSync).mockImplementation(() => {
+      throw new Error("git not found");
+    });
+    expect(() => listWorkspaceFiles("/workspace")).toThrow("Failed to list files");
+  });
 });
 
 describe("readFileContent", () => {
@@ -71,13 +78,6 @@ describe("readFileContent", () => {
   it("throws when file does not exist", () => {
     vi.mocked(existsSync).mockReturnValue(false);
     expect(() => readFileContent("/workspace", "src/missing.ts")).toThrow("File not found");
-  });
-
-  it("wraps git ls-files errors with domain message", () => {
-    vi.mocked(execFileSync).mockImplementation(() => {
-      throw new Error("git not found");
-    });
-    expect(() => listWorkspaceFiles("/workspace")).toThrow("Failed to list files");
   });
 });
 

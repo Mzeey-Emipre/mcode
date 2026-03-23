@@ -73,7 +73,10 @@ export function buildInjectedMessage(
   if (files.length === 0) return text;
 
   const fileBlocks = files
-    .map((f) => `<file path="${f.path}">\n${f.content}\n</file>`)
+    .map((f) => {
+      const escaped = f.content.replace(/<\/file>/gi, "<\\/file>");
+      return `<file path="${f.path}">\n${escaped}\n</file>`;
+    })
     .join("\n");
 
   return `${text}${FILE_INJECTION_SEPARATOR}${fileBlocks}`;

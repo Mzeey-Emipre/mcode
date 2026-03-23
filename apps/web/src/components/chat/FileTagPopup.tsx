@@ -42,7 +42,9 @@ export function useFileTagPopup({
     if (listRef.current) {
       const items = listRef.current.querySelectorAll("[data-file-item]");
       items.forEach((item, i) => {
-        (item as HTMLElement).dataset.selected = i === 0 ? "true" : "false";
+        const el = item as HTMLElement;
+        el.dataset.selected = i === 0 ? "true" : "false";
+        el.setAttribute("aria-selected", i === 0 ? "true" : "false");
       });
     }
   }, [files, query]);
@@ -55,7 +57,9 @@ export function useFileTagPopup({
     selectedIndexRef.current = clamped;
 
     items.forEach((item, i) => {
-      (item as HTMLElement).dataset.selected = i === clamped ? "true" : "false";
+      const el = item as HTMLElement;
+      el.dataset.selected = i === clamped ? "true" : "false";
+      el.setAttribute("aria-selected", i === clamped ? "true" : "false");
     });
 
     // Scroll into view
@@ -103,6 +107,8 @@ export function FileTagPopup({ files, isOpen, onSelect, listRef }: FileTagPopupP
   return (
     <div
       ref={listRef}
+      role="listbox"
+      aria-label="File suggestions"
       className="absolute bottom-full left-0 z-50 mb-1 w-full max-h-[240px] overflow-y-auto rounded-lg border border-border bg-popover shadow-lg"
     >
       <div className="p-1">
@@ -111,6 +117,8 @@ export function FileTagPopup({ files, isOpen, onSelect, listRef }: FileTagPopupP
           return (
             <button
               key={filePath}
+              role="option"
+              aria-selected={index === 0 ? "true" : "false"}
               data-file-item
               data-selected={index === 0 ? "true" : "false"}
               onClick={() => onSelect(filePath)}

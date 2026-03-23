@@ -82,6 +82,17 @@ describe("buildInjectedMessage", () => {
   it("returns original text when no files", () => {
     expect(buildInjectedMessage("hello", [])).toBe("hello");
   });
+
+  it("escapes </file> sequences in content to prevent tag breakage", () => {
+    const result = buildInjectedMessage("see @src/a.ts", [
+      { path: "src/a.ts", content: 'const x = "</file>";' },
+    ]);
+    expect(result).toBe(
+      'see @src/a.ts\n\n---\n<file path="src/a.ts">\nconst x = "<\\/file>";\n</file>',
+    );
+    // strip still works on escaped output
+    expect(stripInjectedFiles(result)).toBe("see @src/a.ts");
+  });
 });
 
 describe("stripInjectedFiles", () => {

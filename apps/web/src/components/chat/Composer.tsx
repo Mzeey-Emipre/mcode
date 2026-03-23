@@ -419,6 +419,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, display);
     }
     textareaRef.current?.focus();
+  // taggedFiles omitted: handleSend only clears it via setTaggedFiles (stable setter), never reads the value.
   }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

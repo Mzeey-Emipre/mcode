@@ -99,12 +99,11 @@ export function useFileAutocomplete({
       setQuery(q);
       setTriggerStart(atPos);
 
-      // Lazy load file list on first @ trigger
-      let files = allFiles;
-      if (files.length === 0) {
-        const loaded = await loadFiles();
-        if (loaded) files = loaded;
-      }
+      // Lazy load file list on first @ trigger.
+      // Always prefer the direct return from loadFiles() over the
+      // closure-captured allFiles, which may be stale after an async gap.
+      const loaded = allFiles.length === 0 ? await loadFiles() : undefined;
+      const files = loaded ?? allFiles;
 
       // Filter: plain substring match
       const filtered =
