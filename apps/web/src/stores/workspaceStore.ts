@@ -208,7 +208,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setActiveThread: (id) => {
     // Only clear pendingNewThread when selecting an actual thread
-    set({ activeThreadId: id, ...(id ? { pendingNewThread: false } : {}) });
+    const thread = id ? get().threads.find((t) => t.id === id) : null;
+    const isCompleted = thread?.status === "completed";
+
+    set((state) => ({
+      activeThreadId: id,
+      ...(id ? { pendingNewThread: false } : {}),
+      // Clear "completed" badge when the user opens the thread
+      threads: isCompleted
+        ? state.threads.map((t) =>
+            t.id === id ? { ...t, status: "paused" as const } : t,
+          )
+        : state.threads,
+    }));
+
+    // Persist to DB so the badge stays cleared across reloads
+    if (isCompleted && id) {
+      getTransport().markThreadViewed(id).catch(() => {});
+    }
   },
 
   setPendingNewThread: (value) => {

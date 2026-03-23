@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode } from "@/transport";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
+import { useWorkspaceStore } from "./workspaceStore";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -285,6 +286,13 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           };
         });
       }
+
+      // Update thread status in workspaceStore so sidebar reflects completion
+      useWorkspaceStore.setState((ws) => ({
+        threads: ws.threads.map((t) =>
+          t.id === threadId ? { ...t, status: "completed" as const } : t,
+        ),
+      }));
       return;
     }
 
@@ -307,6 +315,13 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           toolCallsByThread: nextToolCalls,
         };
       });
+
+      // Update thread status in workspaceStore so sidebar reflects error
+      useWorkspaceStore.setState((ws) => ({
+        threads: ws.threads.map((t) =>
+          t.id === threadId ? { ...t, status: "errored" as const } : t,
+        ),
+      }));
       return;
     }
 

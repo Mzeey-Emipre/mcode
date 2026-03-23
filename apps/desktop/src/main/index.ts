@@ -18,6 +18,7 @@ import { AppState } from "./app-state.js";
 import { sessionIdFromEvent } from "./sidecar/types.js";
 import type { SidecarEvent } from "./sidecar/types.js";
 import * as MessageRepo from "./repositories/message-repo.js";
+import * as ThreadRepo from "./repositories/thread-repo.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
 
 /** Validated permission mode values accepted by the IPC boundary. */
@@ -107,7 +108,7 @@ function setupEventForwarding(state: AppState): void {
       }
     }
 
-    // Track session lifecycle
+    // Track session lifecycle and persist status
     if (event.method === "session.message") {
       state.trackSessionStarted(threadId);
     }
@@ -116,6 +117,31 @@ function setupEventForwarding(state: AppState): void {
       event.method === "session.ended"
     ) {
       state.trackSessionEnded(threadId);
+      // Mark completed only if the agent finished naturally (status still
+      // "active"). If the user manually stopped it, stopAgent() already
+      // set the status to "paused" and we should not overwrite that.
+      try {
+        const thread = ThreadRepo.findById(state.db, threadId);
+        if (thread && thread.status === "active") {
+          ThreadRepo.updateStatus(state.db, threadId, "completed");
+        }
+      } catch (err) {
+        logger.error("Failed to update thread status to completed", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (event.method === "session.error") {
+      state.trackSessionEnded(threadId);
+      try {
+        ThreadRepo.updateStatus(state.db, threadId, "errored");
+      } catch (err) {
+        logger.error("Failed to update thread status to errored", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     // Forward to renderer
@@ -222,6 +248,14 @@ function registerIpcHandlers(state: AppState): void {
       return state.updateThreadTitle(threadId, title);
     },
   );
+
+  // -- Mark thread viewed (clears "completed" badge) --
+  ipcMain.handle("mark-thread-viewed", (_event, threadId: string) => {
+    const thread = ThreadRepo.findById(state.db, threadId);
+    if (thread && thread.status === "completed") {
+      ThreadRepo.updateStatus(state.db, threadId, "paused");
+    }
+  });
 
   ipcMain.handle("stop-agent", (_event, threadId: string) => {
     state.stopAgent(threadId);

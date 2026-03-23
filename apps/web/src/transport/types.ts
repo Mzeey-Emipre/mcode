@@ -115,6 +115,7 @@ export interface McodeTransport {
 
   // Thread mutations
   updateThreadTitle(threadId: string, title: string): Promise<boolean>;
+  markThreadViewed(threadId: string): Promise<void>;
 
   // Message queries
   getMessages(threadId: string, limit: number): Promise<Message[]>;

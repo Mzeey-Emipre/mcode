@@ -69,6 +69,10 @@ export function createTauriTransport(): McodeTransport {
       throw new Error("Not implemented in Tauri");
     },
 
+    async markThreadViewed() {
+      throw new Error("Not implemented in Tauri");
+    },
+
     async stopAgent(threadId) {
       return invoke<void>("stop_agent", { threadId });
     },
