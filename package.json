@@ -7,7 +7,7 @@
     "apps/web"
   ],
   "scripts": {
-    "postinstall": "cd apps/desktop && npx electron-rebuild -f -w better-sqlite3",
+    "postinstall": "node apps/desktop/node_modules/electron/install.js && cd apps/desktop && npx electron-rebuild -f -w better-sqlite3",
     "dev": "turbo run dev",
     "dev:desktop": "cd apps/desktop && bun run dev",
     "dev:web": "cd apps/web && bun run dev",
