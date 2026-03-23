@@ -166,6 +166,10 @@ export interface McodeTransport {
   // Meta
   getVersion(): Promise<string>;
 
+  // File operations (@ file tagging)
+  listWorkspaceFiles(workspaceId: string, threadId?: string): Promise<string[]>;
+  readFileContent(workspaceId: string, relativePath: string, threadId?: string): Promise<string>;
+
   // Editor actions
   detectEditors(): Promise<string[]>;
   openInEditor(editor: string, dirPath: string): Promise<void>;

@@ -1,6 +1,7 @@
 import type { Message, StoredAttachment } from "@/transport";
 import { Bot, FileText, File } from "lucide-react";
 import { MarkdownContent } from "./MarkdownContent";
+import { stripInjectedFiles } from "@/lib/file-tags";
 
 interface MessageBubbleProps {
   message: Message;
@@ -64,7 +65,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               <AttachmentDisplay attachments={message.attachments} threadId={message.thread_id} />
             </div>
           )}
-          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+          <p className="whitespace-pre-wrap break-words">{stripInjectedFiles(message.content)}</p>
         </div>
       </div>
     );

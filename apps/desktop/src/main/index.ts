@@ -371,6 +371,24 @@ function registerIpcHandlers(state: AppState): void {
     return state.readClipboardImage();
   });
 
+  // -- File operations (@ file tagging) --
+  ipcMain.handle(
+    "list-workspace-files",
+    (_event, workspaceId: string, threadId?: string) => {
+      return state.listWorkspaceFiles(workspaceId, threadId);
+    },
+  );
+
+  ipcMain.handle(
+    "read-file-content",
+    (_event, workspaceId: string, relativePath: string, threadId?: string) => {
+      if (typeof relativePath !== "string" || !relativePath) {
+        throw new Error("relativePath must be a non-empty string");
+      }
+      return state.readFileContent(workspaceId, relativePath, threadId);
+    },
+  );
+
   // -- Editor actions --
   ipcMain.handle("detect-editors", () => {
     return detectEditors();

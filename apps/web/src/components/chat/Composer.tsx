@@ -24,6 +24,10 @@ import { BranchNameInput } from "./BranchNameInput";
 import { WorktreePicker } from "./WorktreePicker";
 import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
+import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
+import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
+import { TextOverlay } from "./TextOverlay";
+import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { useSlashCommand } from "./useSlashCommand";
 import { SlashCommandPopup } from "./SlashCommandPopup";
 
@@ -56,8 +60,45 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragDepthRef = useRef(0);
+  const [taggedFiles, setTaggedFiles] = useState<Set<string>>(new Set());
+  const overlayRef = useRef<HTMLDivElement>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const fileAutocomplete = useFileAutocomplete({
+    workspaceId,
+    threadId,
+  });
+
+  const handleFileSelect = (filePath: string) => {
+    const selected = fileAutocomplete.selectFile(filePath);
+    const before = input.slice(0, fileAutocomplete.triggerStart);
+    const after = input.slice(
+      fileAutocomplete.triggerStart + 1 + fileAutocomplete.query.length,
+    );
+    const newInput = `${before}@${selected} ${after}`;
+    setInput(newInput);
+    setTaggedFiles((prev) => new Set([...prev, selected]));
+
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        const cursorPos = before.length + 1 + selected.length + 1;
+        ta.setSelectionRange(cursorPos, cursorPos);
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+      }
+    });
+  };
+
+  const filePopup = useFileTagPopup({
+    files: fileAutocomplete.filteredFiles,
+    query: fileAutocomplete.query,
+    isOpen: fileAutocomplete.isOpen,
+    onSelect: handleFileSelect,
+    onDismiss: fileAutocomplete.dismiss,
+  });
   const sendMessage = useThreadStore((s) => s.sendMessage);
   const stopAgent = useThreadStore((s) => s.stopAgent);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
@@ -76,7 +117,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const setNewThreadMode = useWorkspaceStore((s) => s.setNewThreadMode);
   const setNewThreadBranch = useWorkspaceStore((s) => s.setNewThreadBranch);
 
-  const autocomplete = useSlashCommand({
+  const slashCommand = useSlashCommand({
     textareaRef,
     onMcodeCommand: (action) => {
       if (action === "toggle-plan") {
@@ -318,6 +359,31 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     if (!trimmed && attachments.length === 0) return;
     if (isAgentRunning) return;
 
+    // Content injection: read tagged files and build injected message
+    let messageContent = trimmed;
+    const refs = extractFileRefs(trimmed);
+    if (refs.length > 0 && workspaceId) {
+      try {
+        const transport = getTransport();
+        const fileContents = await Promise.all(
+          refs.map(async (path) => {
+            try {
+              const content = await transport.readFileContent(workspaceId, path, threadId);
+              return { path, content };
+            } catch {
+              return null;
+            }
+          }),
+        );
+        const validFiles = fileContents.filter(
+          (f): f is { path: string; content: string } => f !== null,
+        );
+        messageContent = buildInjectedMessage(trimmed, validFiles);
+      } catch {
+        // If file reading fails entirely, send without injection
+      }
+    }
+
     // Validate worktree mode requirements
     if (isNewThread && newThreadMode === "worktree" && namingMode === "custom" && !customBranchName.trim()) {
       return;
@@ -335,10 +401,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         );
         if (!confirmed) return;
         await useWorkspaceStore.getState().checkoutBranch(workspaceId, newThreadBranch);
+        clearFileListCache(workspaceId);
       }
     }
 
     setInput("");
+    setTaggedFiles(new Set());
     const currentAttachments: AttachmentMeta[] = attachments
       .filter((a) => a.filePath != null)
       .map((a) => ({
@@ -359,32 +427,36 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(trimmed, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined);
+        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined);
       } finally {
         setPreparingWorktree(false);
       }
     } else if (threadId) {
-      await sendMessage(threadId, trimmed, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined);
+      const display = messageContent !== trimmed ? trimmed : undefined;
+      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, display);
     }
     textareaRef.current?.focus();
+  // taggedFiles omitted: handleSend only clears it via setTaggedFiles (stable setter), never reads the value.
   }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // When the popup is open, intercept Enter/Tab for selection BEFORE
-    // any other handler sees them. This prevents Enter from also sending
-    // the message while the popup is visible.
-    if (autocomplete.isOpen) {
+    // Let the file tag popup handle keys when open
+    if (filePopup.handleKeyDown(e)) return;
+
+    // When the slash command popup is open, intercept Enter/Tab for selection
+    // BEFORE any other handler sees them.
+    if (slashCommand.isOpen) {
       if (e.key === "Enter" || e.key === "Tab") {
-        const cmd = autocomplete.items[autocomplete.selectedIndex];
+        const cmd = slashCommand.items[slashCommand.selectedIndex];
         if (cmd) {
           e.preventDefault();
           e.stopPropagation();
-          autocomplete.onSelect(cmd, setInput);
+          slashCommand.onSelect(cmd, setInput);
           return;
         }
       }
       // ArrowUp/ArrowDown/Escape: delegate to hook
-      autocomplete.onKeyDown(e);
+      slashCommand.onKeyDown(e);
       if (e.defaultPrevented) return;
     }
 
@@ -393,17 +465,31 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       if (isAgentRunning) return;
       handleSend();
     }
-    // Shift+Enter allows natural newline
   };
 
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value;
-    setInput(value);
-    autocomplete.onInputChange(value);
+    const newValue = e.target.value;
+    setInput(newValue);
+    slashCommand.onInputChange(newValue);
     const el = e.target;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 200) + "px";
+
+    // Sync overlay scroll
+    if (overlayRef.current) {
+      overlayRef.current.scrollTop = el.scrollTop;
+    }
+
+    // Update autocomplete state
+    fileAutocomplete.handleInputChange(newValue, el.selectionStart ?? newValue.length);
+
+    // Update tagged files: remove any that are no longer in the text
+    const currentRefs = new Set(extractFileRefs(newValue));
+    setTaggedFiles((prev) => {
+      const next = new Set([...prev].filter((f) => currentRefs.has(f)));
+      return next.size === prev.size ? prev : next;
+    });
   };
 
   return (
@@ -419,18 +505,32 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        {/* Textarea */}
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder="Ask for follow-up changes or attach images"
-          rows={1}
-          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
-          disabled={isAgentRunning}
-        />
+        {/* Textarea with overlay */}
+        <div className="relative">
+          <TextOverlay ref={overlayRef} text={input} validRefs={taggedFiles} />
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onScroll={(e) => {
+              if (overlayRef.current) {
+                overlayRef.current.scrollTop = e.currentTarget.scrollTop;
+              }
+            }}
+            placeholder="Ask for follow-up changes or attach images"
+            rows={1}
+            className="relative z-10 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+            disabled={isAgentRunning}
+          />
+          <FileTagPopup
+            files={fileAutocomplete.filteredFiles}
+            isOpen={fileAutocomplete.isOpen}
+            onSelect={handleFileSelect}
+            listRef={filePopup.listRef}
+          />
+        </div>
 
         {/* Attachment previews */}
         <AttachmentPreview attachments={attachments} onRemove={removeAttachment} />
@@ -616,13 +716,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       </div>
 
       <SlashCommandPopup
-        isOpen={autocomplete.isOpen}
-        isLoading={autocomplete.isLoading}
-        items={autocomplete.items}
-        selectedIndex={autocomplete.selectedIndex}
-        anchorRect={autocomplete.anchorRect}
-        onSelect={(cmd) => autocomplete.onSelect(cmd, setInput)}
-        onDismiss={autocomplete.onDismiss}
+        isOpen={slashCommand.isOpen}
+        isLoading={slashCommand.isLoading}
+        items={slashCommand.items}
+        selectedIndex={slashCommand.selectedIndex}
+        anchorRect={slashCommand.anchorRect}
+        onSelect={(cmd) => slashCommand.onSelect(cmd, setInput)}
+        onDismiss={slashCommand.onDismiss}
       />
     </div>
   );

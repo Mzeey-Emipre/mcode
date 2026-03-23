@@ -101,6 +101,14 @@ export function createTauriTransport(): McodeTransport {
       return null;
     },
 
+    async listWorkspaceFiles() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async readFileContent() {
+      throw new Error("Not implemented in Tauri");
+    },
+
     async detectEditors() {
       throw new Error("Not implemented in Tauri");
     },

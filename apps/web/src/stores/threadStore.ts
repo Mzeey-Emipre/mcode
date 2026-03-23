@@ -22,7 +22,7 @@ interface ThreadState {
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
@@ -65,13 +65,14 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
   },
 
-  sendMessage: async (threadId, content, model, permissionMode, attachments) => {
+  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent) => {
     // Add user message to local state immediately (optimistic)
+    // Use displayContent for the UI (without injected file blocks) if provided
     const userMessage: Message = {
       id: crypto.randomUUID(),
       thread_id: threadId,
       role: "user",
-      content,
+      content: displayContent ?? content,
       tool_calls: null,
       files_changed: null,
       cost_usd: null,

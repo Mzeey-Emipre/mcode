@@ -110,6 +110,14 @@ export function createElectronTransport(): McodeTransport {
       return api.invoke("get-version") as Promise<string>;
     },
 
+    async listWorkspaceFiles(workspaceId, threadId) {
+      return api.invoke("list-workspace-files", workspaceId, threadId) as Promise<string[]>;
+    },
+
+    async readFileContent(workspaceId, relativePath, threadId) {
+      return api.invoke("read-file-content", workspaceId, relativePath, threadId) as Promise<string>;
+    },
+
     async detectEditors() {
       return api.invoke("detect-editors") as Promise<string[]>;
     },
@@ -123,7 +131,7 @@ export function createElectronTransport(): McodeTransport {
     },
 
     async getBranchPr(branch, cwd) {
-      return api.invoke("get-branch-pr", branch, cwd) as Promise<PrInfo | null>;
+      return api.invoke("get-branch-pr", branch, cwd) as Promise<PrInfo | null>
     },
 
     async listSkills() {
