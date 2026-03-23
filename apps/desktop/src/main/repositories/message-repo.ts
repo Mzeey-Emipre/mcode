@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import type Database from "better-sqlite3";
-import type { Message, MessageRole } from "../models.js";
+import type { Message, MessageRole, StoredAttachment } from "../models.js";
 
 interface MessageRow {
   id: string;
@@ -13,6 +13,7 @@ interface MessageRow {
   tokens_used: number | null;
   timestamp: string;
   sequence: number;
+  attachments: string | null;
 }
 
 function parseJsonField(value: string | null): unknown | null {
@@ -38,11 +39,12 @@ function rowToMessage(row: MessageRow): Message {
     tokens_used: row.tokens_used,
     timestamp: row.timestamp,
     sequence: row.sequence,
+    attachments: parseJsonField(row.attachments) as StoredAttachment[] | null,
   };
 }
 
 const MESSAGE_COLUMNS =
-  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence";
+  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments";
 
 export function create(
   db: Database.Database,
@@ -50,13 +52,15 @@ export function create(
   role: MessageRole,
   content: string,
   sequence: number,
+  attachments?: StoredAttachment[],
 ): Message {
   const id = randomUUID();
   const now = new Date().toISOString();
+  const attachmentsJson = attachments && attachments.length > 0 ? JSON.stringify(attachments) : null;
 
   db.prepare(
-    "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(id, threadId, role, content, now, sequence);
+    "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(id, threadId, role, content, now, sequence, attachmentsJson);
 
   return {
     id,
@@ -69,6 +73,7 @@ export function create(
     tokens_used: null,
     timestamp: now,
     sequence,
+    attachments: attachments ?? null,
   };
 }
 
