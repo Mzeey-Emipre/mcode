@@ -81,6 +81,8 @@ export function SlashCommandPopup({
   return (
     <div
       data-slash-popup
+      role="listbox"
+      aria-label="Slash commands"
       style={style}
       className={cn(
         "z-50 overflow-hidden rounded-lg border border-border bg-card shadow-lg",
@@ -141,6 +143,8 @@ function CommandRow({
   return (
     <button
       type="button"
+      role="option"
+      aria-selected={selected}
       onMouseDown={(e) => {
         e.preventDefault(); // prevent textarea blur
         onSelect(cmd);
@@ -188,7 +192,7 @@ function CommandRow({
 
 function SkeletonRows() {
   return (
-    <div className="p-1">
+    <div aria-busy="true" aria-label="Loading commands" className="p-1">
       {[0, 1, 2].map((i) => (
         <div key={i} className="flex items-center gap-3 px-3 py-2">
           <div className="h-5 w-5 rounded bg-muted animate-pulse" />
@@ -204,7 +208,7 @@ function SkeletonRows() {
 
 function EmptyState() {
   return (
-    <div className="flex items-center gap-3 px-3 py-2">
+    <div aria-live="polite" role="status" className="flex items-center gap-3 px-3 py-2">
       <span className="flex h-5 w-5 flex-shrink-0" /> {/* icon placeholder */}
       <span className="text-sm text-muted-foreground">No commands match</span>
     </div>
