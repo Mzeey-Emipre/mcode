@@ -7,8 +7,11 @@
  * sidecar communication is async via EventEmitter.
  */
 
-import { existsSync, statSync } from "fs";
-import { isAbsolute } from "path";
+import { existsSync, statSync, mkdirSync, copyFileSync, rmSync } from "fs";
+import { writeFileSync } from "fs";
+import { isAbsolute, join, extname } from "path";
+import { randomUUID } from "crypto";
+import { clipboard, app } from "electron";
 import type Database from "better-sqlite3";
 import { openDatabase } from "./store/database.js";
 import * as WorkspaceRepo from "./repositories/workspace-repo.js";
@@ -25,7 +28,7 @@ import {
 import type { GitBranchInfo } from "./worktree.js";
 import { discoverConfig, type ConfigSummary } from "./config.js";
 import { logger } from "./logger.js";
-import type { Workspace, Thread, Message } from "./models.js";
+import type { Workspace, Thread, Message, AttachmentMeta, StoredAttachment } from "./models.js";
 
 export class AppState {
   readonly db: Database.Database;
@@ -214,6 +217,16 @@ export class AppState {
     }
 
     this.activeSessionIds.delete(threadId);
+
+    const attachmentsDir = join(app.getPath("userData"), "attachments", threadId);
+    if (existsSync(attachmentsDir)) {
+      try {
+        rmSync(attachmentsDir, { recursive: true, force: true });
+      } catch {
+        // Non-fatal
+      }
+    }
+
     return ThreadRepo.softDelete(this.db, threadId);
   }
 
@@ -237,6 +250,7 @@ export class AppState {
     content: string,
     permissionMode: string,
     model = "claude-sonnet-4-6",
+    attachments: AttachmentMeta[] = [],
   ): Promise<void> {
     // Step 1: load thread from DB and validate
     const thread = ThreadRepo.findById(this.db, threadId);
@@ -267,7 +281,8 @@ export class AppState {
     const nextSeq = existingMessages.length > 0
       ? existingMessages[existingMessages.length - 1].sequence + 1
       : 1;
-    MessageRepo.create(this.db, threadId, "user", content, nextSeq);
+    const storedAttachments = this.persistAttachments(threadId, attachments);
+    MessageRepo.create(this.db, threadId, "user", content, nextSeq, storedAttachments.length > 0 ? storedAttachments : undefined);
 
     // Step 4: mark thread as active
     ThreadRepo.updateStatus(this.db, threadId, "active");
@@ -301,6 +316,7 @@ export class AppState {
         resolvedModel,
         isResume,
         permissionMode,
+        storedAttachments.length > 0 ? attachments : undefined,
       );
       logger.info("Message sent via sidecar", { threadId, session: sessionName, model: resolvedModel });
     } catch (err) {
@@ -339,6 +355,7 @@ export class AppState {
     permissionMode = "default",
     mode: "direct" | "worktree" = "direct",
     branch = "main",
+    attachments: AttachmentMeta[] = [],
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
@@ -346,7 +363,7 @@ export class AppState {
       ? this.createThread(workspaceId, title, "worktree", branch)
       : ThreadRepo.create(this.db, workspaceId, title, "direct", branch);
 
-    await this.sendMessage(thread.id, content, permissionMode, model);
+    await this.sendMessage(thread.id, content, permissionMode, model, attachments);
 
     // Re-read from DB to pick up model update applied by sendMessage
     const updated = ThreadRepo.findById(this.db, thread.id);
@@ -389,6 +406,56 @@ export class AppState {
 
   getConfig(workspacePath: string): ConfigSummary {
     return discoverConfig(workspacePath);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Attachment handling
+  // ---------------------------------------------------------------------------
+
+  private persistAttachments(threadId: string, attachments: AttachmentMeta[]): StoredAttachment[] {
+    if (attachments.length === 0) return [];
+
+    const baseDir = join(app.getPath("userData"), "attachments", threadId);
+    mkdirSync(baseDir, { recursive: true });
+
+    return attachments.map((att) => {
+      const ext = extname(att.name) || mimeToExt(att.mimeType);
+      const destPath = join(baseDir, `${att.id}${ext}`);
+
+      if (!existsSync(att.sourcePath)) {
+        throw new Error(`Attachment file not found: ${att.sourcePath}`);
+      }
+
+      copyFileSync(att.sourcePath, destPath);
+
+      return {
+        id: att.id,
+        name: att.name,
+        mimeType: att.mimeType,
+        sizeBytes: att.sizeBytes,
+      };
+    });
+  }
+
+  readClipboardImage(): AttachmentMeta | null {
+    const img = clipboard.readImage();
+    if (img.isEmpty()) return null;
+
+    const buffer = img.toJPEG(85);
+    const id = randomUUID();
+    const name = `clipboard-${Date.now()}.jpg`;
+    const tempDir = join(app.getPath("temp"), "mcode-attachments");
+    mkdirSync(tempDir, { recursive: true });
+    const tempPath = join(tempDir, `${id}.jpg`);
+    writeFileSync(tempPath, buffer);
+
+    return {
+      id,
+      name,
+      mimeType: "image/jpeg",
+      sizeBytes: buffer.byteLength,
+      sourcePath: tempPath,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -463,4 +530,16 @@ function truncateTitle(content: string): string {
   const lastSpace = truncated.lastIndexOf(" ");
   const cutPoint = lastSpace > 0 ? lastSpace : 50;
   return truncated.slice(0, cutPoint) + "...";
+}
+
+function mimeToExt(mimeType: string): string {
+  const map: Record<string, string> = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+    "text/plain": ".txt",
+  };
+  return map[mimeType] ?? "";
 }
