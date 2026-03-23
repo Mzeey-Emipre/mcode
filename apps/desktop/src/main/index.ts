@@ -10,9 +10,9 @@
  *   - Handle graceful shutdown
  */
 
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, protocol } from "electron";
 import { isAbsolute, join } from "path";
-import { existsSync, mkdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { AppState } from "./app-state.js";
 import { sessionIdFromEvent } from "./sidecar/types.js";
@@ -355,6 +355,47 @@ app.whenReady().then(() => {
   // Ensure ~/.mcode/ directory exists
   const mcodeDir = join(homedir(), ".mcode");
   mkdirSync(mcodeDir, { recursive: true });
+
+  // Register custom protocol for serving attachment images from disk
+  protocol.handle("mcode-attachment", (request) => {
+    const url = new URL(request.url);
+    const filename = url.hostname + url.pathname;
+
+    // Validate filename format: UUID with extension (e.g., "a1b2c3d4-xxxx.png")
+    if (!/^[a-f0-9-]+\.\w+$/.test(filename)) {
+      return new Response("Invalid attachment ID", { status: 400 });
+    }
+
+    const attachmentsBase = join(homedir(), ".mcode", "attachments");
+    if (!existsSync(attachmentsBase)) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    // Search thread directories for the attachment file
+    const threadDirs = readdirSync(attachmentsBase, { withFileTypes: true })
+      .filter((d) => d.isDirectory());
+
+    for (const dir of threadDirs) {
+      const filePath = join(attachmentsBase, dir.name, filename);
+      if (existsSync(filePath)) {
+        const data = readFileSync(filePath);
+        const ext = filename.split(".").pop() ?? "";
+        const mimeMap: Record<string, string> = {
+          jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+          gif: "image/gif", webp: "image/webp", pdf: "application/pdf",
+          txt: "text/plain",
+        };
+        return new Response(data, {
+          headers: {
+            "Content-Type": mimeMap[ext] ?? "application/octet-stream",
+            "Cache-Control": "public, max-age=31536000, immutable",
+          },
+        });
+      }
+    }
+
+    return new Response("Not found", { status: 404 });
+  });
 
   // Initialize AppState with database
   const dbPath = join(mcodeDir, "mcode.db");
