@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
+import { formatDuration } from "../../lib/time";
 
 interface StreamingIndicatorProps {
   startTime?: number;
@@ -23,7 +24,7 @@ export function StreamingIndicator({ startTime }: StreamingIndicatorProps) {
   return (
     <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
       <Loader2 size={14} className="animate-spin" />
-      <span>Working for {elapsed}s</span>
+      <span>Working for {formatDuration(elapsed)}</span>
     </div>
   );
 }
