@@ -48,6 +48,15 @@ interface ComposerProps {
 type AccessMode = PermissionMode;
 type ReasoningLevel = "low" | "medium" | "high";
 
+/**
+ * Main message composer with model/mode selectors and branch controls.
+ *
+ * Status bar layout varies by mode:
+ * - **Direct:** `[Local v]` … `[From branch v]`
+ * - **Worktree:** `[Worktree v]` … `[From branch v] [Auto v] [branch-name]`
+ * - **Existing worktree:** `[Worktree v]` … `[Select worktree v]`
+ * - **Locked (existing thread):** read-only branch badge
+ */
 export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) {
   const [input, setInput] = useState("");
   const [modelId, setModelId] = useState(getDefaultModel().id);
