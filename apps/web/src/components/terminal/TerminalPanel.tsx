@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore, type TerminalInstance } from "@/stores/terminalStore";
 import { TerminalToolbar } from "./TerminalToolbar";
 import { TerminalList } from "./TerminalList";
 import { TerminalView } from "./TerminalView";
@@ -8,6 +8,7 @@ import { TerminalView } from "./TerminalView";
 const DEFAULT_HEIGHT = 300;
 const MIN_HEIGHT = 150;
 const MAX_HEIGHT_RATIO = 0.7;
+const EMPTY_TERMINALS: readonly TerminalInstance[] = [];
 
 export function TerminalPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -19,7 +20,7 @@ export function TerminalPanel() {
   const removeAllTerminals = useTerminalStore((s) => s.removeAllTerminals);
 
   const terminals = useTerminalStore(
-    (s) => (activeThreadId ? s.terminals[activeThreadId] : undefined) ?? [],
+    (s) => (activeThreadId ? s.terminals[activeThreadId] : undefined) ?? EMPTY_TERMINALS,
   );
 
   const [panelHeight, setPanelHeight] = useState(DEFAULT_HEIGHT);
@@ -74,19 +75,25 @@ export function TerminalPanel() {
     [removeTerminal],
   );
 
-  // Close all terminals for the active thread
+  // Close all terminals for the active thread (single IPC call)
   const closeAllTerminals = useCallback(() => {
     if (!activeThreadId) return;
-    for (const t of terminals) {
-      window.electronAPI?.invoke("pty:kill", t.id);
-    }
+    window.electronAPI?.invoke("pty:kill-by-thread", activeThreadId);
     removeAllTerminals(activeThreadId);
-  }, [activeThreadId, terminals, removeAllTerminals]);
+  }, [activeThreadId, removeAllTerminals]);
 
   // Auto-create first terminal when panel opens with none
+  const autoCreateFailed = useRef(false);
   useEffect(() => {
-    if (panelVisible && activeThreadId && terminals.length === 0) {
-      createTerminal();
+    // Reset failure flag when thread changes or panel closes
+    if (!panelVisible || !activeThreadId) {
+      autoCreateFailed.current = false;
+      return;
+    }
+    if (terminals.length === 0 && !autoCreateFailed.current) {
+      createTerminal().catch(() => {
+        autoCreateFailed.current = true;
+      });
     }
   }, [panelVisible, activeThreadId, terminals.length, createTerminal]);
 
@@ -108,7 +115,6 @@ export function TerminalPanel() {
       {/* Toolbar row */}
       <div className="flex justify-end px-2 py-1">
         <TerminalToolbar
-          threadId={activeThreadId}
           onAdd={createTerminal}
           onDeleteAll={closeAllTerminals}
         />

@@ -7,7 +7,7 @@
     "apps/web"
   ],
   "scripts": {
-    "postinstall": "cd apps/desktop && npx electron-rebuild -f -w better-sqlite3",
+    "postinstall": "cd apps/desktop && node -e \"require('@electron/rebuild').rebuild({buildPath:process.cwd(),electronVersion:require('electron/package.json').version,force:true,onlyModules:['better-sqlite3']}).then(()=>console.log('Rebuild OK')).catch(e=>{console.error(e.message);process.exit(1)});\"",
     "dev": "turbo run dev",
     "dev:desktop": "cd apps/desktop && bun run dev",
     "dev:web": "cd apps/web && bun run dev",
@@ -24,6 +24,7 @@
   "trustedDependencies": [
     "electron",
     "better-sqlite3",
+    "node-pty",
     "@electron/rebuild"
   ]
 }

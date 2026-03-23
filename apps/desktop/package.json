@@ -10,7 +10,7 @@
     "preview": "electron-vite preview",
     "prod": "electron-vite build && electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "rebuild": "electron-rebuild -f -w better-sqlite3,node-pty",
     "dist": "electron-builder --publish never",
     "test": "vitest run"
   },
@@ -19,6 +19,7 @@
     "better-sqlite3": "^11.7.0",
     "@electron/rebuild": "^3.7.1",
     "uuid": "^11.1.0",
+    "node-pty": "^1.1.0",
     "which": "^5.0.0",
     "winston": "^3.17.0",
     "winston-daily-rotate-file": "^5.0.0"

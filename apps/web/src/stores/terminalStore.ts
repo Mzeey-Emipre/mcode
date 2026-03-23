@@ -73,7 +73,10 @@ export const useTerminalStore = create<TerminalState>((set) => ({
         if (filtered.length !== instances.length) {
           found = true;
         }
-        updatedTerminals[threadId] = filtered;
+        // Don't keep empty arrays in the map
+        if (filtered.length > 0) {
+          updatedTerminals[threadId] = filtered;
+        }
       }
 
       if (!found) {
@@ -103,13 +106,19 @@ export const useTerminalStore = create<TerminalState>((set) => ({
         state.activeTerminalId !== null &&
         removedIds.has(state.activeTerminalId);
 
+      // Remove the key entirely instead of leaving an empty array
+      const updatedTerminals = { ...state.terminals };
+      delete updatedTerminals[threadId];
+
+      // Only hide panel if no terminals remain across all threads
+      const anyRemaining = Object.values(updatedTerminals).some(
+        (list) => list.length > 0,
+      );
+
       return {
-        terminals: {
-          ...state.terminals,
-          [threadId]: [],
-        },
+        terminals: updatedTerminals,
         activeTerminalId: wasActive ? null : state.activeTerminalId,
-        panelVisible: false,
+        panelVisible: anyRemaining ? state.panelVisible : false,
       };
     });
   },

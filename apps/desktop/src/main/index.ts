@@ -374,7 +374,10 @@ function registerIpcHandlers(state: AppState): void {
 // ---------------------------------------------------------------------------
 
 function registerPtyHandlers(ptys: PtyManager, state: AppState): void {
-  ipcMain.handle("pty:create", (_event, threadId: string) => {
+  ipcMain.handle("pty:create", (_event, threadId: unknown) => {
+    if (typeof threadId !== "string") {
+      throw new Error("Invalid pty:create arguments");
+    }
     const thread = ThreadRepo.findById(state.db, threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     const workspace = WorkspaceRepo.findById(state.db, thread.workspace_id);
@@ -383,29 +386,42 @@ function registerPtyHandlers(ptys: PtyManager, state: AppState): void {
     return ptys.create(threadId, cwd);
   });
 
+  const MAX_WRITE_BYTES = 65536;
+
   ipcMain.handle("pty:write", (_event, ptyId: unknown, data: unknown) => {
     if (typeof ptyId !== "string" || typeof data !== "string") {
       throw new Error("Invalid pty:write arguments");
     }
+    if (data.length > MAX_WRITE_BYTES) {
+      throw new Error("pty:write data exceeds maximum chunk size");
+    }
     ptys.write(ptyId, data);
   });
+
+  const MAX_DIMENSION = 500;
 
   ipcMain.handle("pty:resize", (_event, ptyId: unknown, cols: unknown, rows: unknown) => {
     if (
       typeof ptyId !== "string" ||
-      typeof cols !== "number" || !Number.isFinite(cols) || cols < 1 ||
-      typeof rows !== "number" || !Number.isFinite(rows) || rows < 1
+      typeof cols !== "number" || !Number.isFinite(cols) || cols < 1 || cols > MAX_DIMENSION ||
+      typeof rows !== "number" || !Number.isFinite(rows) || rows < 1 || rows > MAX_DIMENSION
     ) {
       throw new Error("Invalid pty:resize arguments");
     }
     ptys.resize(ptyId, cols, rows);
   });
 
-  ipcMain.handle("pty:kill", (_event, ptyId: string) => {
+  ipcMain.handle("pty:kill", (_event, ptyId: unknown) => {
+    if (typeof ptyId !== "string") {
+      throw new Error("Invalid pty:kill arguments");
+    }
     ptys.kill(ptyId);
   });
 
-  ipcMain.handle("pty:kill-by-thread", (_event, threadId: string) => {
+  ipcMain.handle("pty:kill-by-thread", (_event, threadId: unknown) => {
+    if (typeof threadId !== "string") {
+      throw new Error("Invalid pty:kill-by-thread arguments");
+    }
     ptys.killByThread(threadId);
   });
 }
@@ -539,6 +555,14 @@ app.whenReady().then(() => {
       createWindow();
       if (appState) {
         setupCloseHandler(appState);
+      }
+      // Re-wire PTY sender to the new window's webContents
+      if (ptyManager && mainWindow) {
+        ptyManager.setSender((...args) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(...args);
+          }
+        });
       }
     }
   });

@@ -3,13 +3,11 @@ import { Button } from "@/components/ui/button";
 import { useTerminalStore } from "@/stores/terminalStore";
 
 interface TerminalToolbarProps {
-  readonly threadId: string;
   readonly onAdd: () => void;
   readonly onDeleteAll: () => void;
 }
 
 export function TerminalToolbar({
-  threadId: _threadId,
   onAdd,
   onDeleteAll,
 }: TerminalToolbarProps) {

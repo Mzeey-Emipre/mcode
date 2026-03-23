@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
+// Static import so bundler deduplicates the stylesheet
+import "@xterm/xterm/css/xterm.css";
 
 interface TerminalViewProps {
   readonly ptyId: string;
@@ -25,10 +27,6 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
         await Promise.all([
           import("@xterm/xterm"),
           import("@xterm/addon-fit"),
-          // CSS import has no type declarations; ignore the type error
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error css module import
-          import("@xterm/xterm/css/xterm.css"),
         ]);
 
       if (disposed || !containerRef.current) return;
@@ -86,7 +84,7 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
         if (!disposed && fitAddonRef.current) {
           fitAddonRef.current.fit();
           const dims = fitAddonRef.current.proposeDimensions();
-          if (dims) {
+          if (dims && dims.cols > 0 && dims.rows > 0) {
             window.electronAPI?.invoke(
               "pty:resize",
               ptyId,
@@ -106,12 +104,16 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
         term.dispose();
       };
 
+      // Set cleanupRef BEFORE the disposed check so the effect's
+      // synchronous teardown can always reach it, even if it races
+      // with this async init completing.
+      cleanupRef.current = cleanup;
+
       if (disposed) {
         cleanup();
+        cleanupRef.current = null;
         return;
       }
-
-      cleanupRef.current = cleanup;
     }
 
     init(container);
@@ -125,14 +127,10 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
     };
   }, [ptyId]);
 
-  // Re-fit when visibility changes
+  // Re-fit when visibility changes (ResizeObserver handles the rest)
   useEffect(() => {
     if (visible && fitAddonRef.current) {
-      // Delay fit slightly to let the container dimensions settle
-      const timer = setTimeout(() => {
-        fitAddonRef.current?.fit();
-      }, 0);
-      return () => clearTimeout(timer);
+      fitAddonRef.current.fit();
     }
   }, [visible]);
 

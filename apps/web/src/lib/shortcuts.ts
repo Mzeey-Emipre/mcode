@@ -19,6 +19,12 @@ export function registerShortcut(shortcut: Shortcut): () => void {
 }
 
 export function handleKeyDown(e: KeyboardEvent): void {
+  // Don't intercept keystrokes when a terminal (xterm) has focus
+  const target = e.target as HTMLElement;
+  if (target.closest(".xterm") || target.classList.contains("xterm-helper-textarea")) {
+    return;
+  }
+
   for (const shortcut of shortcuts) {
     const ctrlOrMeta = shortcut.ctrl || shortcut.meta;
     const keyMatches = e.key.toLowerCase() === shortcut.key.toLowerCase();

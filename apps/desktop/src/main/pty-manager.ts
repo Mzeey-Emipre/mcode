@@ -135,8 +135,10 @@ export class PtyManager {
   /** Kill all PTY sessions for a given thread. */
   killByThread(threadId: string): void {
     const ptys = this.threadIndex.get(threadId);
-    if (!ptys) return;
-    for (const ptyId of ptys) {
+    if (!ptys || ptys.size === 0) return;
+    // Snapshot IDs before iterating -- kill() mutates threadIndex via removePty()
+    const ids = [...ptys];
+    for (const ptyId of ids) {
       this.kill(ptyId);
     }
     logger.info("All PTYs killed for thread", { threadId });
@@ -144,7 +146,9 @@ export class PtyManager {
 
   /** Kill all PTY sessions across all threads. */
   shutdown(): void {
-    for (const ptyId of this.sessions.keys()) {
+    // Snapshot keys before iterating, since kill() mutates the map.
+    const ids = [...this.sessions.keys()];
+    for (const ptyId of ids) {
       this.kill(ptyId);
     }
   }
@@ -154,12 +158,14 @@ export class PtyManager {
   // ---------------------------------------------------------------------------
 
   private destroyPty(session: PtySession): void {
-    try {
-      session.dataDisposable.dispose();
-      session.exitDisposable.dispose();
-      session.pty.kill();
-    } catch (err) {
-      logger.warn("Failed to kill PTY", { id: session.id, error: err });
+    try { session.dataDisposable.dispose(); } catch (err) {
+      logger.warn("Failed to dispose data listener", { id: session.id, error: err });
+    }
+    try { session.exitDisposable.dispose(); } catch (err) {
+      logger.warn("Failed to dispose exit listener", { id: session.id, error: err });
+    }
+    try { session.pty.kill(); } catch (err) {
+      logger.warn("Failed to kill PTY process", { id: session.id, error: err });
     }
   }
 

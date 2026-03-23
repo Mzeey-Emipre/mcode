@@ -1,5 +1,7 @@
 import { TerminalSquare, X } from "lucide-react";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore, type TerminalInstance } from "@/stores/terminalStore";
+
+const EMPTY_TERMINALS: readonly TerminalInstance[] = [];
 
 interface TerminalListProps {
   readonly threadId: string;
@@ -8,7 +10,7 @@ interface TerminalListProps {
 
 export function TerminalList({ threadId, onClose }: TerminalListProps) {
   const terminals = useTerminalStore(
-    (s) => s.terminals[threadId] ?? [],
+    (s) => s.terminals[threadId] ?? EMPTY_TERMINALS,
   );
   const activeTerminalId = useTerminalStore((s) => s.activeTerminalId);
   const setActiveTerminal = useTerminalStore((s) => s.setActiveTerminal);
@@ -37,6 +39,7 @@ export function TerminalList({ threadId, onClose }: TerminalListProps) {
               </span>
             </div>
             <button
+              type="button"
               className="invisible text-muted-foreground hover:text-foreground group-hover:visible"
               onClick={(e) => {
                 e.stopPropagation();

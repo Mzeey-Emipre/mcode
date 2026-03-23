@@ -60,7 +60,7 @@ describe("PtyManager", () => {
     onDataCallback = null;
     onExitCallback = null;
     uuidCounter = 0;
-    vi.mocked(uuid).mockImplementation(() => `pty-${++uuidCounter}`);
+    vi.mocked(uuid).mockImplementation((() => `pty-${++uuidCounter}`) as typeof uuid);
     manager = new PtyManager();
   });
 
