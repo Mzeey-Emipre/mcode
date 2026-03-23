@@ -237,8 +237,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ branchesLoading: true });
     try {
       const branches = await getTransport().listBranches(workspaceId);
+      if (get().activeWorkspaceId !== workspaceId) return;
       set({ branches, branchesLoading: false });
     } catch (e) {
+      if (get().activeWorkspaceId !== workspaceId) return;
       set({ branchesLoading: false, error: String(e) });
     }
   },
