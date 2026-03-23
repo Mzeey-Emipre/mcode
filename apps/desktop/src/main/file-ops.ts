@@ -1,6 +1,6 @@
 import { execFileSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
-import { resolve, isAbsolute } from "path";
+import { resolve, normalize, isAbsolute, sep } from "path";
 import type { Workspace, Thread } from "./models.js";
 
 /**
@@ -22,14 +22,18 @@ export function resolveWorkingDir(
  * Returns relative paths sorted by git's default ordering.
  */
 export function listWorkspaceFiles(cwd: string): string[] {
-  const output = execFileSync("git", ["ls-files"], {
-    cwd,
-    maxBuffer: 10 * 1024 * 1024,
-  });
-  return output
-    .toString("utf-8")
-    .split("\n")
-    .filter((line) => line.length > 0);
+  try {
+    const output = execFileSync("git", ["ls-files"], {
+      cwd,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return output
+      .toString("utf-8")
+      .split("\n")
+      .filter((line) => line.length > 0);
+  } catch (err) {
+    throw new Error(`Failed to list files: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /**
@@ -43,8 +47,9 @@ export function readFileContent(rootDir: string, relativePath: string): string {
 
   const fullPath = resolve(rootDir, relativePath);
   const normalizedRoot = resolve(rootDir);
+  const rootWithSep = normalizedRoot.endsWith(sep) ? normalizedRoot : normalizedRoot + sep;
 
-  if (!fullPath.startsWith(normalizedRoot)) {
+  if (!fullPath.startsWith(rootWithSep) && fullPath !== normalizedRoot) {
     throw new Error(`File path escapes workspace root: ${relativePath}`);
   }
 

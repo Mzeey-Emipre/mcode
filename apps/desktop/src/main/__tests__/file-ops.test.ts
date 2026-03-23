@@ -54,6 +54,11 @@ describe("readFileContent", () => {
   it("rejects absolute paths", () => {
     expect(() => readFileContent("/workspace", "/etc/passwd")).toThrow("Invalid file path");
   });
+
+  it("rejects paths that resolve to sibling directories", () => {
+    // /workspace-evil passes startsWith("/workspace") without the sep fix
+    expect(() => readFileContent("/workspace", "../../workspace-evil/secret")).toThrow();
+  });
 });
 
 describe("resolveWorkingDir", () => {
