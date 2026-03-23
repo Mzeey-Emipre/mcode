@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
+import { useWorkspaceStore } from "./workspaceStore";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -213,7 +214,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       const isError = (params.isError as boolean) || false;
       set((state) => {
         const calls = state.toolCallsByThread[threadId] ?? [];
-        // Try matching by ID first; fall back to the last incomplete tool call
+        // Try matching by ID first; fall back to the first incomplete tool call
         // when the SDK sends a null or non-matching toolCallId.
         const hasIdMatch = toolCallId && calls.some((tc) => tc.id === toolCallId);
         let matched = false;
@@ -293,6 +294,14 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           };
         });
       }
+
+      // Sync the thread's status in workspaceStore so the sidebar shows
+      // the green "Completed" badge without waiting for a full thread reload.
+      useWorkspaceStore.setState((ws) => ({
+        threads: ws.threads.map((t) =>
+          t.id === threadId ? { ...t, status: "completed" as const } : t,
+        ),
+      }));
       return;
     }
 
@@ -315,6 +324,14 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           toolCallsByThread: nextToolCalls,
         };
       });
+
+      // Sync the thread's status in workspaceStore so the sidebar shows
+      // the red "Errored" badge without waiting for a full thread reload.
+      useWorkspaceStore.setState((ws) => ({
+        threads: ws.threads.map((t) =>
+          t.id === threadId ? { ...t, status: "errored" as const } : t,
+        ),
+      }));
       return;
     }
 

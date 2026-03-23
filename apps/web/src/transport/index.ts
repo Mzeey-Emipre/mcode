@@ -35,6 +35,7 @@ function createMockTransport(): McodeTransport {
     async createAndSendMessage() { throw new Error("Mock transport: createAndSendMessage not available"); },
     async updateThreadTitle() { return false; },
     async readClipboardImage() { return null; },
+    async markThreadViewed() {},
   };
 }
 

@@ -18,6 +18,7 @@ import { AppState } from "./app-state.js";
 import { sessionIdFromEvent } from "./sidecar/types.js";
 import type { SidecarEvent } from "./sidecar/types.js";
 import * as MessageRepo from "./repositories/message-repo.js";
+import * as ThreadRepo from "./repositories/thread-repo.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
 import type { AttachmentMeta } from "./models.js";
 
@@ -143,7 +144,17 @@ function setupEventForwarding(state: AppState): void {
       }
     }
 
-    // Track session lifecycle
+    // Track session lifecycle and persist thread status to DB.
+    //
+    // Status transitions on session events:
+    //   session.message       -> trackSessionStarted (mark as running)
+    //   session.turnComplete  -> "completed" (natural finish)
+    //   session.ended         -> "completed" (natural finish)
+    //   session.error         -> "errored"  (agent failure)
+    //
+    // Guard: only write "completed" when the DB status is still "active".
+    // If the user clicked stop, stopAgent() already wrote "paused" and
+    // we must not overwrite it.
     if (event.method === "session.message") {
       state.trackSessionStarted(threadId);
     }
@@ -152,6 +163,28 @@ function setupEventForwarding(state: AppState): void {
       event.method === "session.ended"
     ) {
       state.trackSessionEnded(threadId);
+      try {
+        const thread = ThreadRepo.findById(state.db, threadId);
+        if (thread && thread.status === "active") {
+          ThreadRepo.updateStatus(state.db, threadId, "completed");
+        }
+      } catch (err) {
+        logger.error("Failed to update thread status to completed", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (event.method === "session.error") {
+      state.trackSessionEnded(threadId);
+      try {
+        ThreadRepo.updateStatus(state.db, threadId, "errored");
+      } catch (err) {
+        logger.error("Failed to update thread status to errored", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     // Forward to renderer
@@ -261,6 +294,18 @@ function registerIpcHandlers(state: AppState): void {
       return state.updateThreadTitle(threadId, title);
     },
   );
+
+  /**
+   * Clear the "completed" badge when the user opens a thread.
+   * Transitions completed -> paused so the sidebar no longer shows the
+   * green indicator. No-op for threads in any other status.
+   */
+  ipcMain.handle("mark-thread-viewed", (_event, threadId: string) => {
+    const thread = ThreadRepo.findById(state.db, threadId);
+    if (thread && thread.status === "completed") {
+      ThreadRepo.updateStatus(state.db, threadId, "paused");
+    }
+  });
 
   ipcMain.handle("stop-agent", (_event, threadId: string) => {
     state.stopAgent(threadId);

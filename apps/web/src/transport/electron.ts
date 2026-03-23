@@ -68,6 +68,10 @@ export function createElectronTransport(): McodeTransport {
       return api.invoke("update-thread-title", threadId, title) as Promise<boolean>;
     },
 
+    async markThreadViewed(threadId) {
+      await api.invoke("mark-thread-viewed", threadId);
+    },
+
     async stopAgent(threadId) {
       await api.invoke("stop-agent", threadId);
     },

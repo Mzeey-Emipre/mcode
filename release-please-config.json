@@ -12,21 +12,10 @@
     { "type": "test", "section": "Tests", "hidden": true },
     { "type": "ci", "section": "CI", "hidden": true }
   ],
-  "plugins": [
-    { "type": "node-workspace" }
-  ],
   "packages": {
     ".": {
       "release-type": "node",
       "component": "mcode"
-    },
-    "apps/desktop": {
-      "release-type": "node",
-      "component": "mcode-desktop"
-    },
-    "apps/web": {
-      "release-type": "node",
-      "component": "mcode-frontend"
     }
   }
 }

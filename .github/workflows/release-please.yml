@@ -3,6 +3,8 @@ name: Release Please
 on:
   push:
     branches: [main]
+    paths:
+      - '.release-please-manifest.json'
   workflow_dispatch:
 
 permissions:
@@ -15,8 +17,8 @@ jobs:
 
     outputs:
       releases_created: ${{ steps.release.outputs.releases_created }}
-      tag_name: ${{ steps.release.outputs['apps/desktop--tag_name'] }}
-      version: ${{ steps.release.outputs['apps/desktop--version'] }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
 
     steps:
       - name: Generate bot token
