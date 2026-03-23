@@ -687,6 +687,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
               />
             ) : composerMode === "worktree" ? (
               <>
+                <BranchPicker
+                  branches={branches}
+                  selectedBranch={newThreadBranch || "main"}
+                  onSelect={setNewThreadBranch}
+                  loading={branchesLoading}
+                  locked={false}
+                />
                 <NamingModeSelector mode={namingMode} onModeChange={setNamingMode} />
                 <BranchNameInput
                   namingMode={namingMode}
