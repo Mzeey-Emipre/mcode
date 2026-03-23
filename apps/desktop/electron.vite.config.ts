@@ -12,7 +12,7 @@ export default defineConfig({
         entry: resolve(__dirname, "src/main/index.ts"),
       },
       rollupOptions: {
-        external: ["electron", "better-sqlite3", "winston", "winston-daily-rotate-file", "@anthropic-ai/claude-agent-sdk"],
+        external: ["electron", "better-sqlite3", "node-pty", "winston", "winston-daily-rotate-file", "@anthropic-ai/claude-agent-sdk"],
       },
     },
   },

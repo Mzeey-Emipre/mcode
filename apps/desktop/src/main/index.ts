@@ -19,6 +19,8 @@ import { sessionIdFromEvent } from "./sidecar/types.js";
 import type { SidecarEvent } from "./sidecar/types.js";
 import * as MessageRepo from "./repositories/message-repo.js";
 import * as ThreadRepo from "./repositories/thread-repo.js";
+import * as WorkspaceRepo from "./repositories/workspace-repo.js";
+import { PtyManager } from "./pty-manager.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
 import type { AttachmentMeta } from "./models.js";
 import { detectEditors, openInEditor, openInExplorer } from "./editors.js";
@@ -75,6 +77,7 @@ function validateAttachments(raw?: unknown[]): AttachmentMeta[] {
 
 let mainWindow: BrowserWindow | null = null;
 let appState: AppState | null = null;
+let ptyManager: PtyManager | null = null;
 
 // ---------------------------------------------------------------------------
 // Window creation
@@ -270,6 +273,7 @@ function registerIpcHandlers(state: AppState): void {
   ipcMain.handle(
     "delete-thread",
     (_event, threadId: string, cleanupWorktree: boolean) => {
+      ptyManager?.killByThread(threadId);
       return state.deleteThread(threadId, cleanupWorktree);
     },
   );
@@ -448,6 +452,63 @@ function registerIpcHandlers(state: AppState): void {
 }
 
 // ---------------------------------------------------------------------------
+// PTY IPC handler registration
+// ---------------------------------------------------------------------------
+
+function registerPtyHandlers(ptys: PtyManager, state: AppState): void {
+  ipcMain.handle("pty:create", (_event, threadId: unknown) => {
+    if (typeof threadId !== "string") {
+      throw new Error("Invalid pty:create arguments");
+    }
+    const thread = ThreadRepo.findById(state.db, threadId);
+    if (!thread) throw new Error(`Thread not found: ${threadId}`);
+    const workspace = WorkspaceRepo.findById(state.db, thread.workspace_id);
+    if (!workspace) throw new Error(`Workspace not found: ${thread.workspace_id}`);
+    const cwd = thread.worktree_path ?? workspace.path;
+    return ptys.create(threadId, cwd);
+  });
+
+  const MAX_WRITE_BYTES = 65536;
+
+  ipcMain.handle("pty:write", (_event, ptyId: unknown, data: unknown) => {
+    if (typeof ptyId !== "string" || typeof data !== "string") {
+      throw new Error("Invalid pty:write arguments");
+    }
+    if (data.length > MAX_WRITE_BYTES) {
+      throw new Error("pty:write data exceeds maximum chunk size");
+    }
+    ptys.write(ptyId, data);
+  });
+
+  const MAX_DIMENSION = 500;
+
+  ipcMain.handle("pty:resize", (_event, ptyId: unknown, cols: unknown, rows: unknown) => {
+    if (
+      typeof ptyId !== "string" ||
+      typeof cols !== "number" || !Number.isFinite(cols) || cols < 1 || cols > MAX_DIMENSION ||
+      typeof rows !== "number" || !Number.isFinite(rows) || rows < 1 || rows > MAX_DIMENSION
+    ) {
+      throw new Error("Invalid pty:resize arguments");
+    }
+    ptys.resize(ptyId, cols, rows);
+  });
+
+  ipcMain.handle("pty:kill", (_event, ptyId: unknown) => {
+    if (typeof ptyId !== "string") {
+      throw new Error("Invalid pty:kill arguments");
+    }
+    ptys.kill(ptyId);
+  });
+
+  ipcMain.handle("pty:kill-by-thread", (_event, threadId: unknown) => {
+    if (typeof threadId !== "string") {
+      throw new Error("Invalid pty:kill-by-thread arguments");
+    }
+    ptys.killByThread(threadId);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Window close handler
 // ---------------------------------------------------------------------------
 
@@ -477,11 +538,13 @@ function setupCloseHandler(state: AppState): void {
         })
         .then(({ response }) => {
           if (response === 0) {
+            ptyManager?.shutdown();
             state.shutdown();
             app.quit();
           }
         });
     } else {
+      ptyManager?.shutdown();
       state.shutdown();
     }
   });
@@ -548,6 +611,15 @@ app.whenReady().then(() => {
   // Register IPC handlers
   registerIpcHandlers(appState);
 
+  // Initialize PTY manager and register PTY IPC handlers
+  ptyManager = new PtyManager();
+  ptyManager.setSender((...args) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(...args);
+    }
+  });
+  registerPtyHandlers(ptyManager, appState);
+
   // Start sidecar and set up event forwarding
   try {
     setupEventForwarding(appState);
@@ -566,12 +638,21 @@ app.whenReady().then(() => {
       if (appState) {
         setupCloseHandler(appState);
       }
+      // Re-wire PTY sender to the new window's webContents
+      if (ptyManager && mainWindow) {
+        ptyManager.setSender((...args) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(...args);
+          }
+        });
+      }
     }
   });
 });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
+    ptyManager?.shutdown();
     if (appState) {
       appState.shutdown();
     }
