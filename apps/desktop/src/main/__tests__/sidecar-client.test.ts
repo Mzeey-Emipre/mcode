@@ -417,8 +417,36 @@ describe("SidecarClient (v2 session API)", () => {
     expect(unstable_v2_resumeSession).toHaveBeenCalledWith("abc-def", expect.any(Object));
   });
 
-  it("passes executableArgs --cwd to session options", async () => {
+  it("uses captured SDK session ID for subsequent resumeSession calls", async () => {
+    // First turn: createSession with a system init that has session_id
+    const session1 = createMockSession([
+      { type: "system", subtype: "init", session_id: "sdk-real-id-999" },
+      { type: "result", stop_reason: "end_turn" },
+    ]);
+    vi.mocked(unstable_v2_createSession).mockReturnValue(session1);
+
+    const events = collectEvents(client);
+    client.sendMessage("mcode-abc-def", "msg1", "/tmp", "claude-sonnet-4-6", false, "default");
+    await waitForEvent(events, "session.ended");
+
+    // Second turn: stream ended, pool entry deleted, so resume path is taken.
+    // Should use the captured SDK session ID, not our thread UUID.
+    const session2 = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(unstable_v2_resumeSession).mockReturnValue(session2);
+
+    events.length = 0;
+    client.sendMessage("mcode-abc-def", "msg2", "/tmp", "claude-sonnet-4-6", true, "default");
+    await waitForEvent(events, "session.turnComplete");
+
+    expect(unstable_v2_resumeSession).toHaveBeenCalledWith(
+      "sdk-real-id-999",
+      expect.any(Object),
+    );
+  });
+
+  it("changes process.cwd to workspace path when creating session", async () => {
     const session = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
+    const chdirSpy = vi.spyOn(process, "chdir").mockImplementation(() => {});
     vi.mocked(unstable_v2_createSession).mockReturnValue(session);
 
     const events = collectEvents(client);
@@ -426,18 +454,15 @@ describe("SidecarClient (v2 session API)", () => {
 
     await waitForEvent(events, "session.turnComplete");
 
-    expect(unstable_v2_createSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        executableArgs: ["--cwd", "/my/workspace"],
-      }),
-    );
+    expect(chdirSpy).toHaveBeenCalledWith("/my/workspace");
+    chdirSpy.mockRestore();
   });
 
   // -------------------------------------------------------------------------
   // Permission mode
   // -------------------------------------------------------------------------
 
-  it("uses bypassPermissions when permissionMode is 'full'", async () => {
+  it("uses bypassPermissions with allowDangerouslySkipPermissions when permissionMode is 'full'", async () => {
     const session = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
     vi.mocked(unstable_v2_createSession).mockReturnValue(session);
 
@@ -447,7 +472,10 @@ describe("SidecarClient (v2 session API)", () => {
     await waitForEvent(events, "session.turnComplete");
 
     expect(unstable_v2_createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ permissionMode: "bypassPermissions" }),
+      expect.objectContaining({
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+      }),
     );
   });
 

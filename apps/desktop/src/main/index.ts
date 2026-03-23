@@ -128,6 +128,28 @@ function setupEventForwarding(state: AppState): void {
       ? sessionId.slice(6)
       : sessionId;
 
+    // Persist session-restarted marker to DB so it survives navigation
+    if (event.method === "session.system" && (event.params as Record<string, unknown>).subtype === "session_restarted") {
+      try {
+        const existingMsgs = MessageRepo.listByThread(state.db, threadId, 1);
+        const nextSeq = existingMsgs.length > 0
+          ? existingMsgs[existingMsgs.length - 1].sequence + 1
+          : 1;
+        MessageRepo.create(
+          state.db,
+          threadId,
+          "system",
+          "Session restarted. The agent no longer has context from earlier messages.",
+          nextSeq,
+        );
+      } catch (err) {
+        logger.error("Failed to persist session restart marker", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // Persist assistant messages to DB so they survive navigation
     if (event.method === "session.message") {
       try {
@@ -191,6 +213,28 @@ function setupEventForwarding(state: AppState): void {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+
+    // Persist or clear the SDK session ID so resume works after app restart.
+    // Empty string means "clear stale ID" (resume failed, conversation not found).
+    if (event.method === "session.sdkSessionId") {
+      try {
+        if (event.params.sdkSessionId) {
+          ThreadRepo.updateSdkSessionId(
+            state.db,
+            threadId,
+            event.params.sdkSessionId,
+          );
+        } else {
+          ThreadRepo.clearSdkSessionId(state.db, threadId);
+        }
+      } catch (err) {
+        logger.error("Failed to persist SDK session ID", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return; // Internal event, don't forward to renderer
     }
 
     // Forward to renderer

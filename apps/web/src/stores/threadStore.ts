@@ -166,6 +166,31 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       return;
     }
 
+    if (method === "session.system") {
+      const subtype = params.subtype as string;
+      if (subtype === "session_restarted") {
+        const message: Message = {
+          id: crypto.randomUUID(),
+          thread_id: threadId,
+          role: "system",
+          content: "Session restarted. The agent no longer has context from earlier messages.",
+          tool_calls: null,
+          files_changed: null,
+          cost_usd: null,
+          tokens_used: null,
+          timestamp: new Date().toISOString(),
+          sequence: get().messages.length + 1,
+          attachments: null,
+        };
+        set((state) => ({
+          messages: state.currentThreadId === threadId
+            ? [...state.messages, message]
+            : state.messages,
+        }));
+      }
+      return;
+    }
+
     if (method === "session.message" || (eventType === "session.message")) {
       const content = (params.content as string) || "";
       if (content) {

@@ -29,6 +29,7 @@ interface SessionEntry {
   session: SDKSession;
   model: string;
   lastUsedAt: number;
+  sdkSessionId?: string;
 }
 
 /** Idle TTL before a session is evicted (10 minutes). */
@@ -36,8 +37,46 @@ const IDLE_TTL_MS = 10 * 60 * 1000;
 /** How often to check for idle sessions (1 minute). */
 const EVICTION_INTERVAL_MS = 60 * 1000;
 
+/**
+ * Create an SDK session with the correct working directory.
+ *
+ * The v2 SDKSessionOptions type lacks a cwd field, and the v2 session
+ * constructor hardcodes extraArgs to {}, so there's no direct way to
+ * set the working directory. The transport reads process.cwd() as the
+ * fallback. We temporarily chdir before the synchronous session
+ * constructor runs, then restore immediately.
+ */
+function createSessionInCwd(
+  cwd: string,
+  options: Parameters<typeof unstable_v2_createSession>[0],
+): SDKSession {
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(cwd);
+    return unstable_v2_createSession(options);
+  } finally {
+    process.chdir(originalCwd);
+  }
+}
+
+function resumeSessionInCwd(
+  cwd: string,
+  sessionId: string,
+  options: Parameters<typeof unstable_v2_resumeSession>[1],
+): SDKSession {
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(cwd);
+    return unstable_v2_resumeSession(sessionId, options);
+  } finally {
+    process.chdir(originalCwd);
+  }
+}
+
 export class SidecarClient extends EventEmitter {
   private sessions = new Map<string, SessionEntry>();
+  /** Maps our mcode session ID to the SDK's internal session ID for resume. */
+  private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
   private ready = true;
 
@@ -120,8 +159,8 @@ export class SidecarClient extends EventEmitter {
 
     const sessionOptions = {
       model: resolvedModel,
-      executableArgs: ["--cwd", resolvedCwd],
       permissionMode: sdkPermissionMode,
+      ...(isBypass && { allowDangerouslySkipPermissions: true }),
     };
 
     if (existing && existing.model === resolvedModel) {
@@ -138,24 +177,54 @@ export class SidecarClient extends EventEmitter {
       this.sessions.delete(sessionId);
     }
 
-    // Create or resume a new SDK session
+    // Create or resume a new SDK session.
+    // For resume, prefer the SDK's own session ID (captured from prior turns)
+    // over our mcode thread UUID, since the SDK assigns its own IDs.
+    const resumeId = this.sdkSessionIds.get(sessionId) ?? uuid;
     const session = resume
-      ? unstable_v2_resumeSession(uuid, sessionOptions)
-      : unstable_v2_createSession(sessionOptions);
+      ? resumeSessionInCwd(resolvedCwd, resumeId, sessionOptions)
+      : createSessionInCwd(resolvedCwd, sessionOptions);
 
-    logger.info("Session created", { sessionId, resume, model: resolvedModel, cwd: resolvedCwd });
+    logger.info("Session created", { sessionId, resume, resumeId, model: resolvedModel, cwd: resolvedCwd });
 
     const entry: SessionEntry = { session, model: resolvedModel, lastUsedAt: Date.now() };
     this.sessions.set(sessionId, entry);
 
-    // Start the long-lived stream loop before sending the first message
-    this.startStreamLoop(sessionId, session);
-
-    // Queue the first message
+    // Build prompt before starting the stream loop (needed for retry)
     const prompt = attachments && attachments.length > 0
       ? await this.buildMultimodalMessage(message, attachments, sessionId)
       : message;
-    await session.send(prompt);
+
+    // Start the stream loop. If resume fails with "No conversation found",
+    // the loop signals back via a one-time event so we can retry with createSession.
+    if (resume) {
+      const retryPromise = new Promise<boolean>((resolve) => {
+        const handler = () => { resolve(true); };
+        this.once(`_resumeFailed:${sessionId}`, handler);
+        // If the stream ends without triggering retry, clean up the listener
+        this.once(`_streamDone:${sessionId}`, () => {
+          this.removeListener(`_resumeFailed:${sessionId}`, handler);
+          resolve(false);
+        });
+      });
+
+      this.startStreamLoop(sessionId, session);
+      await session.send(prompt);
+
+      const needsRetry = await retryPromise;
+      if (needsRetry) {
+        logger.info("Resume failed, falling back to createSession", { sessionId });
+        this.sdkSessionIds.delete(sessionId);
+        const freshSession = createSessionInCwd(resolvedCwd, sessionOptions);
+        const freshEntry: SessionEntry = { session: freshSession, model: resolvedModel, lastUsedAt: Date.now() };
+        this.sessions.set(sessionId, freshEntry);
+        this.startStreamLoop(sessionId, freshSession);
+        await freshSession.send(prompt);
+      }
+    } else {
+      this.startStreamLoop(sessionId, session);
+      await session.send(prompt);
+    }
   }
 
   /**
@@ -167,12 +236,74 @@ export class SidecarClient extends EventEmitter {
     (async () => {
       try {
         let lastAssistantText = "";
+        let sessionInitialized = false;
 
         for await (const msg of session.stream()) {
           const entry = this.sessions.get(sessionId);
           if (entry) entry.lastUsedAt = Date.now();
 
           const anyMsg = msg as Record<string, unknown>;
+
+          // Diagnostic: log every event type for debugging stream issues
+          logger.info("Stream event", {
+            sessionId,
+            type: anyMsg.type,
+            subtype: (anyMsg.subtype as string) ?? undefined,
+            ...(anyMsg.type === "result" && anyMsg.subtype !== "success" && {
+              errors: anyMsg.errors,
+              is_error: anyMsg.is_error,
+            }),
+          });
+
+          // Mark session as successfully initialized on first non-error event
+          if (!sessionInitialized && anyMsg.type !== "result") {
+            sessionInitialized = true;
+          }
+
+          // Only capture SDK session ID from successful sessions.
+          // Error results also carry a session_id, but that session isn't
+          // valid for future resume calls and would poison the mapping.
+          const sdkSid = anyMsg.session_id as string | undefined;
+          if (sdkSid && sessionInitialized && !this.sdkSessionIds.has(sessionId)) {
+            this.sdkSessionIds.set(sessionId, sdkSid);
+            logger.info("Captured SDK session ID", { sessionId, sdkSessionId: sdkSid });
+            this.emit("event", {
+              method: "session.sdkSessionId",
+              params: { sessionId, sdkSessionId: sdkSid },
+            } as SidecarEvent);
+          }
+
+          // Detect failed resume and clear stale SDK session ID so the
+          // next attempt falls back to createSession.
+          if (
+            anyMsg.type === "result" &&
+            anyMsg.is_error === true &&
+            !sessionInitialized
+          ) {
+            const errors = anyMsg.errors as string[] | undefined;
+            const isNoConversation = errors?.some((e) =>
+              typeof e === "string" && e.includes("No conversation found"),
+            );
+            if (isNoConversation) {
+              logger.warn("Resume failed: conversation not found, will retry with createSession", { sessionId });
+              this.sdkSessionIds.delete(sessionId);
+              this.emit("event", {
+                method: "session.sdkSessionId",
+                params: { sessionId, sdkSessionId: "" },
+              } as SidecarEvent);
+              // Notify the UI so it can render a session-restart marker
+              this.emit("event", {
+                method: "session.system",
+                params: {
+                  sessionId,
+                  subtype: "session_restarted",
+                },
+              } as SidecarEvent);
+              // Signal doSendMessage to retry with createSession
+              this.emit(`_resumeFailed:${sessionId}`);
+              return; // Exit the stream loop; doSendMessage handles retry
+            }
+          }
 
           switch (anyMsg.type) {
             case "assistant": {
@@ -292,6 +423,7 @@ export class SidecarClient extends EventEmitter {
       } finally {
         this.sessions.delete(sessionId);
         logger.info("Session stream ended", { sessionId });
+        this.emit(`_streamDone:${sessionId}`);
         this.emit("event", {
           method: "session.ended",
           params: { sessionId },
@@ -379,6 +511,11 @@ export class SidecarClient extends EventEmitter {
     }
   }
 
+  /** Pre-load an SDK session ID mapping (e.g. from the database on startup). */
+  setSdkSessionId(sessionId: string, sdkSessionId: string): void {
+    this.sdkSessionIds.set(sessionId, sdkSessionId);
+  }
+
   /** Close a specific session's stream. */
   stopSession(sessionId: string): void {
     const entry = this.sessions.get(sessionId);
@@ -397,6 +534,7 @@ export class SidecarClient extends EventEmitter {
       entry.session.close();
     }
     this.sessions.clear();
+    this.sdkSessionIds.clear();
     logger.info("SidecarClient shutdown complete");
   }
 }
