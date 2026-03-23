@@ -11,6 +11,12 @@ interface BranchPickerProps {
   locked: boolean;
 }
 
+/**
+ * Searchable dropdown for selecting a git branch.
+ * Used in direct mode for the working branch and in worktree mode
+ * for choosing the base branch to create the worktree from ("From main").
+ * When `locked` is true, renders a read-only badge instead of a dropdown.
+ */
 export function BranchPicker({ branches, selectedBranch, onSelect, loading, locked }: BranchPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");

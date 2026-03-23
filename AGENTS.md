@@ -31,6 +31,24 @@ apps/
 docs/plans/                   # Design and planning docs (gitignored)
 ```
 
+## Composer Status Bar
+
+The `Composer` component (`apps/web/src/components/chat/Composer.tsx`) renders a status bar below the text input with mode and branch controls. The layout depends on the selected `ComposerMode`:
+
+| Mode | Left | Right |
+|------|------|-------|
+| Direct | `ModeSelector` | `BranchPicker` |
+| New worktree | `ModeSelector` | `BranchPicker` → `NamingModeSelector` → `BranchNameInput` |
+| Existing worktree | `ModeSelector` | `WorktreePicker` |
+| Locked (existing thread) | `ModeSelector` (locked) | `BranchPicker` (locked, read-only) |
+
+Key components:
+- **`BranchPicker`** – searchable branch dropdown, used in both direct and worktree modes
+- **`ModeSelector`** – switches between Local / New worktree / Existing worktree
+- **`NamingModeSelector`** – toggles Auto / Custom branch naming
+- **`BranchNameInput`** – shows auto-generated or editable branch name
+- **`WorktreePicker`** – searchable dropdown for existing worktrees
+
 ## Commit Guidelines
 
 Use [Conventional Commits](https://www.conventionalcommits.org/).
