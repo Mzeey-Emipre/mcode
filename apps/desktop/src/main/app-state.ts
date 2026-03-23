@@ -348,9 +348,10 @@ export class AppState {
       const workspace = WorkspaceRepo.findById(this.db, workspaceId);
       if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
       const knownWorktrees = listWorktrees(workspace.path);
-      const normalizedInput = existingWorktreePath.replace(/\\/g, "/");
+      const normalize = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+      const normalizedInput = normalize(existingWorktreePath);
       const isKnown = knownWorktrees.some(
-        (wt) => wt.path.replace(/\\/g, "/") === normalizedInput,
+        (wt) => normalize(wt.path) === normalizedInput,
       );
       if (!isKnown) {
         throw new Error("Path is not a recognized managed worktree");
