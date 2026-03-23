@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
+import {
+  extractFileRefs,
+  buildInjectedMessage,
+  stripInjectedFiles,
+} from "@/lib/file-tags";
 
 describe("extractFileRefs", () => {
   it("extracts a single @path reference", () => {
@@ -10,7 +14,7 @@ describe("extractFileRefs", () => {
 
   it("extracts multiple @path references", () => {
     expect(
-      extractFileRefs("compare @src/a.ts and @src/b.ts")
+      extractFileRefs("compare @src/a.ts and @src/b.ts"),
     ).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
@@ -28,6 +32,10 @@ describe("extractFileRefs", () => {
     expect(extractFileRefs("contact user@example.com")).toEqual([]);
   });
 
+  it("ignores @ mid-word (no preceding whitespace)", () => {
+    expect(extractFileRefs("foo@bar/baz.ts")).toEqual([]);
+  });
+
   it("handles paths with hyphens and dots", () => {
     expect(extractFileRefs("see @src/my-component.test.tsx")).toEqual([
       "src/my-component.test.tsx",
@@ -43,6 +51,12 @@ describe("extractFileRefs", () => {
       "src/__tests__/foo.test.ts",
     ]);
   });
+
+  it("works correctly when called multiple times (no regex state leak)", () => {
+    expect(extractFileRefs("@src/a.ts")).toEqual(["src/a.ts"]);
+    expect(extractFileRefs("@src/b.ts")).toEqual(["src/b.ts"]);
+    expect(extractFileRefs("no refs")).toEqual([]);
+  });
 });
 
 describe("buildInjectedMessage", () => {
@@ -51,7 +65,7 @@ describe("buildInjectedMessage", () => {
       { path: "src/a.ts", content: "const a = 1;" },
     ]);
     expect(result).toBe(
-      'check @src/a.ts\n\n---\n<file path="src/a.ts">\nconst a = 1;\n</file>'
+      'check @src/a.ts\n\n---\n<file path="src/a.ts">\nconst a = 1;\n</file>',
     );
   });
 
@@ -61,11 +75,39 @@ describe("buildInjectedMessage", () => {
       { path: "b.ts", content: "const b = 2;" },
     ]);
     expect(result).toBe(
-      'compare @a.ts and @b.ts\n\n---\n<file path="a.ts">\nconst a = 1;\n</file>\n<file path="b.ts">\nconst b = 2;\n</file>'
+      'compare @a.ts and @b.ts\n\n---\n<file path="a.ts">\nconst a = 1;\n</file>\n<file path="b.ts">\nconst b = 2;\n</file>',
     );
   });
 
   it("returns original text when no files", () => {
     expect(buildInjectedMessage("hello", [])).toBe("hello");
+  });
+});
+
+describe("stripInjectedFiles", () => {
+  it("strips injected file blocks from a message", () => {
+    const msg = 'check @src/a.ts\n\n---\n<file path="src/a.ts">\nconst a = 1;\n</file>';
+    expect(stripInjectedFiles(msg)).toBe("check @src/a.ts");
+  });
+
+  it("returns original text when no file blocks present", () => {
+    expect(stripInjectedFiles("hello world")).toBe("hello world");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(stripInjectedFiles("")).toBe("");
+  });
+
+  it("strips multiple injected files", () => {
+    const msg = 'text\n\n---\n<file path="a.ts">\na\n</file>\n<file path="b.ts">\nb\n</file>';
+    expect(stripInjectedFiles(msg)).toBe("text");
+  });
+
+  it("is the inverse of buildInjectedMessage", () => {
+    const original = "look at @src/foo.ts please";
+    const injected = buildInjectedMessage(original, [
+      { path: "src/foo.ts", content: "export const foo = 42;" },
+    ]);
+    expect(stripInjectedFiles(injected)).toBe(original);
   });
 });

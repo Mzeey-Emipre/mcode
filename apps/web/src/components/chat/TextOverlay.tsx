@@ -1,6 +1,6 @@
 // apps/web/src/components/chat/TextOverlay.tsx
 import { forwardRef } from "react";
-import { FILE_PATH_PATTERN } from "@/lib/file-tags";
+import { HIGHLIGHT_RE } from "@/lib/file-tags";
 
 interface TextOverlayProps {
   text: string;
@@ -22,11 +22,11 @@ function buildSegments(text: string, validRefs: Set<string>): Segment[] {
     return [{ text, highlighted: false }];
   }
 
-  const pattern = new RegExp(String.raw`(?:^|(?<=\s))(@${FILE_PATH_PATTERN})`, "g");
+  HIGHLIGHT_RE.lastIndex = 0;
   const segments: Segment[] = [];
   let lastIndex = 0;
 
-  for (const match of text.matchAll(pattern)) {
+  for (const match of text.matchAll(HIGHLIGHT_RE)) {
     const matchStart = match.index!;
     const matchText = match[1]; // The @path text
     const refPath = matchText.slice(1); // Remove the @

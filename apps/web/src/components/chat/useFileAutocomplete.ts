@@ -28,6 +28,13 @@ export function clearFileListCache(workspaceId?: string): void {
   }
 }
 
+/**
+ * Hook for @ file autocomplete in the Composer.
+ *
+ * Detects `@` triggers by scanning backward from the cursor, lazy-loads
+ * the workspace file list via IPC on first trigger, and filters results
+ * by substring match. Caches file lists per workspace at module scope.
+ */
 export function useFileAutocomplete({
   workspaceId,
   threadId,
