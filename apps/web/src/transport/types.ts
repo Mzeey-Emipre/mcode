@@ -55,6 +55,11 @@ export interface GitBranch {
   isCurrent: boolean;
 }
 
+/**
+ * Permission mode for Claude agent sessions.
+ * - "full": maps to SDK bypassPermissions (no prompts, unrestricted access)
+ * - "supervised": maps to SDK default mode (prompts for dangerous operations)
+ */
 export type PermissionMode = "full" | "supervised";
 
 export interface McodeTransport {
