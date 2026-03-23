@@ -94,7 +94,7 @@ apps/
 │       │   └── types.ts          # McodeTransport interface, shared types
 │       └── lib/              # Utilities (branch names, time, shortcuts)
 │
-docs/plans/                   # Design and planning docs
+docs/plans/                   # Design and planning docs (local only, gitignored)
 ```
 
 ## 5. Data Layer
@@ -150,10 +150,10 @@ erDiagram
 
 ### 5.2 Migrations
 
-Forward-only SQL migrations live in `apps/desktop/src/main/store/migrations/`. The `database.ts` module applies them on startup using a `_migrations` tracking table. Current migrations:
+Forward-only migrations are applied on startup by `database.ts` using a `_migrations` tracking table. Large schema changes go in SQL files under `apps/desktop/src/main/store/migrations/`. Small column additions are applied inline in `database.ts`'s `runMigrations()` function to avoid file overhead for single-statement changes. Both paths use the same version tracking. Current migrations:
 
-- **V001**: Initial schema (workspaces, threads, messages, indexes)
-- **V002**: Add `model` column to threads (inline in database.ts)
+- **V001**: Initial schema (workspaces, threads, messages, indexes) - `migrations/V001__initial_schema.sql`
+- **V002**: Add `model` column to threads - inline in `database.ts`
 
 ### 5.3 Repository Pattern
 
