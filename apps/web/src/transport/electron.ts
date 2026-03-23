@@ -109,5 +109,9 @@ export function createElectronTransport(): McodeTransport {
     async getVersion() {
       return api.invoke("get-version") as Promise<string>;
     },
+
+    async listSkills() {
+      return api.invoke("list-skills") as Promise<string[]>;
+    },
   };
 }

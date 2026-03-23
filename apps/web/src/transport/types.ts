@@ -153,4 +153,7 @@ export interface McodeTransport {
 
   // Meta
   getVersion(): Promise<string>;
+
+  // Skills
+  listSkills(): Promise<string[]>;
 }

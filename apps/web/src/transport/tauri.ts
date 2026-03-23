@@ -100,6 +100,10 @@ export function createTauriTransport(): McodeTransport {
     async readClipboardImage() {
       return null;
     },
+
+    async listSkills() {
+      throw new Error("Not implemented in Tauri");
+    },
   };
 }
 

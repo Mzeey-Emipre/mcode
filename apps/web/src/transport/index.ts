@@ -37,6 +37,7 @@ function createMockTransport(): McodeTransport {
     async updateThreadTitle() { return false; },
     async readClipboardImage() { return null; },
     async markThreadViewed() {},
+    async listSkills() { return []; },
   };
 }
 
