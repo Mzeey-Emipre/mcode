@@ -3,6 +3,8 @@
  * Each PTY is tied to a thread ID, with a maximum of 4 PTYs per thread.
  */
 
+import { isAbsolute } from "path";
+import { existsSync, statSync } from "fs";
 import { spawn } from "node-pty";
 import type { IPty, IDisposable } from "node-pty";
 import { v4 as uuid } from "uuid";
@@ -52,6 +54,10 @@ export class PtyManager {
    * @throws If the thread already has MAX_PTYS_PER_THREAD sessions.
    */
   create(threadId: string, cwd: string): string {
+    if (!isAbsolute(cwd) || !existsSync(cwd) || !statSync(cwd).isDirectory()) {
+      throw new Error(`Invalid working directory: ${cwd}`);
+    }
+
     const threadPtys = this.threadIndex.get(threadId);
     const count = threadPtys?.size ?? 0;
 
@@ -128,35 +134,19 @@ export class PtyManager {
 
   /** Kill all PTY sessions for a given thread. */
   killByThread(threadId: string): void {
-    const ptyIds = this.threadIndex.get(threadId);
-    if (!ptyIds) {
-      return;
+    const ptys = this.threadIndex.get(threadId);
+    if (!ptys) return;
+    for (const ptyId of ptys) {
+      this.kill(ptyId);
     }
-    for (const ptyId of ptyIds) {
-      const session = this.sessions.get(ptyId);
-      if (session) {
-        this.destroyPty(session);
-      }
-    }
-    // Remove all entries for this thread
-    const newSessions = new Map(this.sessions);
-    for (const ptyId of ptyIds) {
-      newSessions.delete(ptyId);
-    }
-    this.sessions = newSessions;
-
-    const newIndex = new Map(this.threadIndex);
-    newIndex.delete(threadId);
-    this.threadIndex = newIndex;
+    logger.info("All PTYs killed for thread", { threadId });
   }
 
   /** Kill all PTY sessions across all threads. */
   shutdown(): void {
-    for (const session of this.sessions.values()) {
-      this.destroyPty(session);
+    for (const ptyId of this.sessions.keys()) {
+      this.kill(ptyId);
     }
-    this.sessions = new Map();
-    this.threadIndex = new Map();
   }
 
   // ---------------------------------------------------------------------------

@@ -36,9 +36,20 @@ vi.mock("uuid", () => ({
   v4: vi.fn(() => "mock-uuid"),
 }));
 
+vi.mock("fs", () => ({
+  existsSync: vi.fn(() => true),
+  statSync: vi.fn(() => ({ isDirectory: () => true })),
+}));
+
+vi.mock("path", () => ({
+  isAbsolute: vi.fn((p: string) => p.startsWith("/")),
+}));
+
 import { PtyManager } from "../pty-manager.js";
 import { spawn as ptySpawn } from "node-pty";
 import { v4 as uuid } from "uuid";
+import { existsSync, statSync } from "fs";
+import { isAbsolute } from "path";
 
 describe("PtyManager", () => {
   let manager: PtyManager;
@@ -104,6 +115,32 @@ describe("PtyManager", () => {
       // different thread should still work
       const id = manager.create("thread-2", "/tmp");
       expect(id).toBe("pty-5");
+    });
+
+    it("throws for a relative cwd path", () => {
+      vi.mocked(isAbsolute).mockReturnValueOnce(false);
+      expect(() => manager.create("thread-1", "relative/path")).toThrow(
+        "Invalid working directory: relative/path",
+      );
+      expect(ptySpawn).not.toHaveBeenCalled();
+    });
+
+    it("throws when cwd does not exist", () => {
+      vi.mocked(existsSync).mockReturnValueOnce(false);
+      expect(() => manager.create("thread-1", "/nonexistent")).toThrow(
+        "Invalid working directory: /nonexistent",
+      );
+      expect(ptySpawn).not.toHaveBeenCalled();
+    });
+
+    it("throws when cwd is a file, not a directory", () => {
+      vi.mocked(statSync).mockReturnValueOnce({
+        isDirectory: () => false,
+      } as ReturnType<typeof statSync>);
+      expect(() => manager.create("thread-1", "/tmp/somefile.txt")).toThrow(
+        "Invalid working directory: /tmp/somefile.txt",
+      );
+      expect(ptySpawn).not.toHaveBeenCalled();
     });
   });
 
