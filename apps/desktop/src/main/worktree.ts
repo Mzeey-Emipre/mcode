@@ -54,7 +54,7 @@ export function validateBranchName(branch: string): void {
   if (branch.startsWith("-")) {
     throw new Error("Branch name cannot start with '-'");
   }
-  if (/[ \t~^:?*[\\\x00-\x1f\x7f]/.test(branch) || branch.includes("..")) {
+  if (/[ \t~^:?*\[\\\x00-\x1f\x7f]/.test(branch) || branch.includes("..")) {
     throw new Error(`Branch name contains invalid characters: ${branch}`);
   }
 }

@@ -75,6 +75,10 @@ export function WorktreePicker({
             <div className="flex items-center justify-center py-4">
               <Loader2 size={16} className="animate-spin text-muted-foreground" />
             </div>
+          ) : worktrees.length === 0 ? (
+            <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+              No worktrees found in this workspace
+            </p>
           ) : filtered.length === 0 ? (
             <p className="px-2 py-3 text-center text-xs text-muted-foreground">
               No worktrees match

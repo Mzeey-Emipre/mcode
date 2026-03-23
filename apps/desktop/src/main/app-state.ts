@@ -22,6 +22,7 @@ import {
   listBranches,
   getCurrentBranch,
   checkoutBranch,
+  validateBranchName,
 } from "./worktree.js";
 import type { GitBranchInfo, WorktreeInfo } from "./worktree.js";
 import { discoverConfig, type ConfigSummary } from "./config.js";
@@ -115,14 +116,7 @@ export class AppState {
     mode: string,
     branch: string,
   ): Thread {
-    // Validate branch name (mirrors the Tauri command validation)
-    if (!branch || branch.length > 250) {
-      throw new Error("Branch name must be 1-250 characters");
-    }
-    const invalidBranchChars = /[ \t~^:?*[\\\]]/;
-    if (invalidBranchChars.test(branch) || branch.startsWith("-") || branch.includes("..")) {
-      throw new Error("Branch name contains invalid characters");
-    }
+    validateBranchName(branch);
 
     const threadMode = mode === "worktree" || mode === "direct" ? mode : (() => {
       throw new Error(`Unknown thread mode: ${mode}`);
@@ -350,6 +344,18 @@ export class AppState {
 
     let thread: Thread;
     if (existingWorktreePath) {
+      // Validate: path must be a known managed worktree (prevents path traversal)
+      const workspace = WorkspaceRepo.findById(this.db, workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+      const knownWorktrees = listWorktrees(workspace.path);
+      const normalizedInput = existingWorktreePath.replace(/\\/g, "/");
+      const isKnown = knownWorktrees.some(
+        (wt) => wt.path.replace(/\\/g, "/") === normalizedInput,
+      );
+      if (!isKnown) {
+        throw new Error("Path is not a recognized managed worktree");
+      }
+
       // Attach to existing worktree: DB record only, no git operations
       thread = ThreadRepo.create(this.db, workspaceId, title, "worktree", branch);
       ThreadRepo.updateWorktreePath(this.db, thread.id, existingWorktreePath);

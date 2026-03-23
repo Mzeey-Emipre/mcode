@@ -8,7 +8,6 @@ interface ModeSelectorProps {
   mode: ComposerMode;
   onModeChange: (mode: ComposerMode) => void;
   locked: boolean;
-  hasWorktrees?: boolean;
 }
 
 const BASE_OPTIONS: Array<{ value: ComposerMode; label: string; icon: typeof FolderOpen }> = [
@@ -16,17 +15,16 @@ const BASE_OPTIONS: Array<{ value: ComposerMode; label: string; icon: typeof Fol
   { value: "worktree", label: "New worktree", icon: GitBranch },
 ];
 
-const EXISTING_OPTION = {
-  value: "existing-worktree" as const,
-  label: "Existing worktree",
-  icon: GitFork,
-};
+const ALL_OPTIONS: Array<{ value: ComposerMode; label: string; icon: typeof FolderOpen }> = [
+  ...BASE_OPTIONS,
+  { value: "existing-worktree", label: "Existing worktree", icon: GitFork },
+];
 
-export function ModeSelector({ mode, onModeChange, locked, hasWorktrees = false }: ModeSelectorProps) {
+export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const options = hasWorktrees ? [...BASE_OPTIONS, EXISTING_OPTION] : BASE_OPTIONS;
+  const options = ALL_OPTIONS;
   const selected = options.find((o) => o.value === mode) ?? options[0];
   const Icon = selected.icon;
 

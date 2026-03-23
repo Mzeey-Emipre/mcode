@@ -114,13 +114,6 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [isNewThread, workspaceId, branches.length, loadBranches]);
 
-  // Load worktrees for existing-worktree availability
-  useEffect(() => {
-    if (isNewThread && workspaceId) {
-      loadWorktrees(workspaceId);
-    }
-  }, [isNewThread, workspaceId, loadWorktrees]);
-
   // Auto-select current branch if none selected
   useEffect(() => {
     if (isNewThread && !newThreadBranch && branches.length > 0) {
@@ -353,7 +346,6 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           mode={composerMode}
           onModeChange={setComposerMode}
           locked={!isNewThread}
-          hasWorktrees={worktrees.length > 0}
         />
         <div className="ml-auto flex items-center gap-1">
           {isNewThread ? (
