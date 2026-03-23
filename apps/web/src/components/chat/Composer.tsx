@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import type { PermissionMode, InteractionMode } from "@/transport";
-import { PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
+import type { PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
+import { PERMISSION_MODES, INTERACTION_MODES, getTransport } from "@/transport";
 import {
   ArrowUp,
   Square,
@@ -18,6 +18,16 @@ import { getDefaultModel } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import { BranchPicker } from "./BranchPicker";
+import { AttachmentPreview } from "./AttachmentPreview";
+import type { PendingAttachment } from "./AttachmentPreview";
+
+const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+const SUPPORTED_FILE_TYPES = new Set(["application/pdf", "text/plain"]);
+const ALL_SUPPORTED_TYPES = new Set([...SUPPORTED_IMAGE_TYPES, ...SUPPORTED_FILE_TYPES]);
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const MAX_PDF_SIZE = 32 * 1024 * 1024;
+const MAX_TEXT_SIZE = 1 * 1024 * 1024;
+const MAX_ATTACHMENTS = 5;
 
 interface ComposerProps {
   threadId?: string;
@@ -37,6 +47,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
   const [execMode, setExecModeLocal] = useState<"direct" | "worktree">("direct");
   const [preparingWorktree, setPreparingWorktree] = useState(false);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendMessage = useThreadStore((s) => s.sendMessage);
@@ -123,9 +136,127 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [threadId, stopAgent]);
 
+  const getMaxSize = (mimeType: string): number => {
+    if (SUPPORTED_IMAGE_TYPES.has(mimeType)) return MAX_IMAGE_SIZE;
+    if (mimeType === "application/pdf") return MAX_PDF_SIZE;
+    if (mimeType === "text/plain") return MAX_TEXT_SIZE;
+    return 0;
+  };
+
+  const addFiles = useCallback((files: File[], filePaths?: (string | null)[]) => {
+    setAttachments((prev) => {
+      const remaining = MAX_ATTACHMENTS - prev.length;
+      if (remaining <= 0) return prev;
+
+      const newAttachments: PendingAttachment[] = [];
+      for (let i = 0; i < Math.min(files.length, remaining); i++) {
+        const file = files[i];
+        if (!ALL_SUPPORTED_TYPES.has(file.type)) continue;
+        if (file.size > getMaxSize(file.type)) continue;
+
+        const previewUrl = file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : "";
+
+        newAttachments.push({
+          id: crypto.randomUUID(),
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          previewUrl,
+          filePath: filePaths?.[i] ?? null,
+        });
+      }
+
+      return [...prev, ...newAttachments];
+    });
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => {
+      const removed = prev.find((a) => a.id === id);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }, []);
+
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData.files);
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      const api = window.electronAPI;
+      if (api?.getPathForFile) {
+        const paths = imageFiles.map((f) => {
+          try { return api.getPathForFile(f); } catch { return null; }
+        });
+        addFiles(imageFiles, paths);
+      } else {
+        try {
+          const meta = await getTransport().readClipboardImage();
+          if (meta) {
+            setAttachments((prev) => {
+              if (prev.length >= MAX_ATTACHMENTS) return prev;
+              const previewUrl = imageFiles[0] ? URL.createObjectURL(imageFiles[0]) : "";
+              return [...prev, {
+                id: meta.id,
+                name: meta.name,
+                mimeType: meta.mimeType,
+                sizeBytes: meta.sizeBytes,
+                previewUrl,
+                filePath: meta.sourcePath,
+              }];
+            });
+          }
+        } catch {
+          addFiles(imageFiles);
+        }
+      }
+    }
+  }, [addFiles]);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current += 1;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current -= 1;
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0;
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    const supported = files.filter((f) => ALL_SUPPORTED_TYPES.has(f.type));
+    if (supported.length === 0) return;
+    const api = window.electronAPI;
+    const paths = supported.map((f) => {
+      try { return api?.getPathForFile?.(f) ?? null; } catch { return null; }
+    });
+    addFiles(supported, paths);
+    textareaRef.current?.focus();
+  }, [addFiles]);
+
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
-    if (!trimmed || isAgentRunning) return;
+    if (!trimmed && attachments.length === 0) return;
+    if (isAgentRunning) return;
 
     // Checkout confirmation for local mode when a different branch is selected
     if (isNewThread && newThreadMode === "direct" && newThreadBranch && workspaceId) {
@@ -140,20 +271,35 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
 
     setInput("");
+    const currentAttachments: AttachmentMeta[] = attachments
+      .filter((a) => a.filePath != null)
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+        sourcePath: a.filePath!,
+      }));
+
+    for (const att of attachments) {
+      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+    }
+    setAttachments([]);
+
     if (isNewThread && workspaceId) {
       if (newThreadMode === "worktree") {
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(trimmed, modelId, access);
+        await useWorkspaceStore.getState().createAndSendMessage(trimmed, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined);
       } finally {
         setPreparingWorktree(false);
       }
     } else if (threadId) {
-      await sendMessage(threadId, trimmed, modelId, access);
+      await sendMessage(threadId, trimmed, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined);
     }
     textareaRef.current?.focus();
-  }, [input, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -175,18 +321,38 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   return (
     <div className="border-t border-border px-4 py-3">
       {/* Main composer container - dark bg, rounded */}
-      <div className="rounded-xl bg-muted/50 ring-1 ring-border focus-within:ring-primary/50">
+      <div
+        className={cn(
+          "relative rounded-xl bg-muted/50 ring-1 ring-border focus-within:ring-primary/50",
+          isDragOver && "ring-2 ring-primary"
+        )}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
         {/* Textarea */}
         <textarea
           ref={textareaRef}
           value={input}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder="Ask for follow-up changes or attach images"
           rows={1}
           className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           disabled={isAgentRunning}
         />
+
+        {/* Attachment previews */}
+        <AttachmentPreview attachments={attachments} onRemove={removeAttachment} />
+
+        {/* Drag overlay */}
+        {isDragOver && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-primary/10 backdrop-blur-sm">
+            <span className="text-sm font-medium text-primary">Drop files here</span>
+          </div>
+        )}
 
         {/* Controls row - inside the container */}
         <div className="flex items-center gap-1 px-3 pb-2">
@@ -297,14 +463,14 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           {/* Send / Stop toggle */}
           <button
             onClick={isAgentRunning ? handleStop : handleSend}
-            disabled={preparingWorktree || (!isAgentRunning && !input.trim())}
+            disabled={preparingWorktree || (!isAgentRunning && !input.trim() && attachments.length === 0)}
             className={cn(
               "rounded-full p-2 transition-colors",
               preparingWorktree
                 ? "bg-primary text-primary-foreground animate-spin"
                 : isAgentRunning
                   ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  : input.trim()
+                  : (input.trim() || attachments.length > 0)
                     ? "bg-primary text-primary-foreground hover:bg-primary/90"
                     : "bg-muted text-muted-foreground opacity-40"
             )}
