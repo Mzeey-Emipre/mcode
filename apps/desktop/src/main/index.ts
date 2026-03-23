@@ -21,6 +21,8 @@ import * as MessageRepo from "./repositories/message-repo.js";
 import * as ThreadRepo from "./repositories/thread-repo.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
 import type { AttachmentMeta } from "./models.js";
+import { detectEditors, openInEditor, openInExplorer } from "./editors.js";
+import { getBranchPr } from "./github.js";
 
 /** Validated permission mode values accepted by the IPC boundary. */
 type SafePermissionMode = "full" | "supervised" | "default";
@@ -363,6 +365,50 @@ function registerIpcHandlers(state: AppState): void {
   ipcMain.handle("read-clipboard-image", async () => {
     return state.readClipboardImage();
   });
+
+  // -- Editor actions --
+  ipcMain.handle("detect-editors", () => {
+    return detectEditors();
+  });
+
+  ipcMain.handle(
+    "open-in-editor",
+    (_event, editor: string, dirPath: string) => {
+      if (!isAbsolute(dirPath)) {
+        throw new Error("Editor path must be absolute");
+      }
+      if (!existsSync(dirPath)) {
+        throw new Error(`Path does not exist: ${dirPath}`);
+      }
+      const validEditors = new Set(["code", "cursor", "zed"]);
+      if (!validEditors.has(editor)) {
+        throw new Error(`Unknown editor: ${editor}`);
+      }
+      openInEditor(editor as "code" | "cursor" | "zed", dirPath);
+    },
+  );
+
+  ipcMain.handle("open-in-explorer", (_event, dirPath: string) => {
+    if (!isAbsolute(dirPath)) {
+      throw new Error("Explorer path must be absolute");
+    }
+    if (!existsSync(dirPath)) {
+      throw new Error(`Path does not exist: ${dirPath}`);
+    }
+    return openInExplorer(dirPath);
+  });
+
+  // -- GitHub PR --
+  ipcMain.handle(
+    "get-branch-pr",
+    async (_event, branch: string, cwd: string) => {
+      if (!branch || !cwd) return null;
+      if (!isAbsolute(cwd)) {
+        throw new Error("Working directory must be absolute");
+      }
+      return getBranchPr(branch, cwd);
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
