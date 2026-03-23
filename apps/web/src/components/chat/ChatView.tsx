@@ -5,6 +5,7 @@ import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { StreamingIndicator } from "./StreamingIndicator";
 import { ToolCallCard } from "./ToolCallCard";
+import { HeaderActions } from "./HeaderActions";
 
 export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -92,6 +93,7 @@ export function ChatView() {
             {workspaces.find((w) => w.id === activeThread.workspace_id)?.name ?? ""}
           </span>
         </div>
+        <HeaderActions thread={activeThread} />
       </div>
 
       {/* Messages, tool calls, and streaming - all in one scrollable area */}

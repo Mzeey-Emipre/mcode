@@ -1,4 +1,4 @@
-import type { McodeTransport, Workspace, Thread, Message, GitBranch, WorktreeInfo, AttachmentMeta } from "./types";
+import type { McodeTransport, Workspace, Thread, Message, GitBranch, WorktreeInfo, AttachmentMeta, PrInfo } from "./types";
 
 export function createElectronTransport(): McodeTransport {
   const api = window.electronAPI;
@@ -116,6 +116,22 @@ export function createElectronTransport(): McodeTransport {
 
     async readFileContent(workspaceId, relativePath, threadId) {
       return api.invoke("read-file-content", workspaceId, relativePath, threadId) as Promise<string>;
+    },
+
+    async detectEditors() {
+      return api.invoke("detect-editors") as Promise<string[]>;
+    },
+
+    async openInEditor(editor, dirPath) {
+      await api.invoke("open-in-editor", editor, dirPath);
+    },
+
+    async openInExplorer(dirPath) {
+      await api.invoke("open-in-explorer", dirPath);
+    },
+
+    async getBranchPr(branch, cwd) {
+      return api.invoke("get-branch-pr", branch, cwd) as Promise<PrInfo | null>
     },
   };
 }

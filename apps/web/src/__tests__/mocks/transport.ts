@@ -82,4 +82,8 @@ export const mockTransport: McodeTransport = {
   readClipboardImage: vi.fn().mockResolvedValue(null),
   listWorkspaceFiles: vi.fn().mockResolvedValue([]),
   readFileContent: vi.fn().mockResolvedValue(""),
+  detectEditors: vi.fn().mockResolvedValue([]),
+  openInEditor: vi.fn().mockResolvedValue(undefined),
+  openInExplorer: vi.fn().mockResolvedValue(undefined),
+  getBranchPr: vi.fn().mockResolvedValue(null),
 };

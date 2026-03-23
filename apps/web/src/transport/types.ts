@@ -78,6 +78,13 @@ export interface WorktreeInfo {
   branch: string;
 }
 
+/** PR metadata returned by the main process. */
+export interface PrInfo {
+  number: number;
+  url: string;
+  state: string;
+}
+
 /**
  * Permission mode for Claude agent sessions.
  * - "full": maps to SDK bypassPermissions (no prompts, unrestricted access)
@@ -157,4 +164,12 @@ export interface McodeTransport {
   // File operations (@ file tagging)
   listWorkspaceFiles(workspaceId: string, threadId?: string): Promise<string[]>;
   readFileContent(workspaceId: string, relativePath: string, threadId?: string): Promise<string>;
+
+  // Editor actions
+  detectEditors(): Promise<string[]>;
+  openInEditor(editor: string, dirPath: string): Promise<void>;
+  openInExplorer(dirPath: string): Promise<void>;
+
+  // GitHub PR
+  getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;
 }
