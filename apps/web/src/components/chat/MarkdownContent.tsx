@@ -1,3 +1,4 @@
+import type { Element } from "hast";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -34,16 +35,14 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
             {children}
           </blockquote>
         ),
-        code: ({ className, children }) => {
-          const isInline = !className;
-          if (isInline) {
-            return (
-              <code className="bg-muted rounded px-1.5 py-0.5 text-sm font-mono">
-                {children}
-              </code>
-            );
-          }
-          const language = className?.replace("language-", "") ?? "";
+        pre: ({ children, node }) => {
+          const firstChild = node?.children?.[0];
+          const langClass =
+            firstChild?.type === "element"
+              ? (((firstChild as Element).properties?.className as string[] | undefined)?.[0] ?? "")
+              : "";
+          const language = langClass.replace("language-", "");
+
           return (
             <div className="my-2 rounded-lg overflow-hidden border border-border">
               {language && (
@@ -51,13 +50,17 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
                   {language}
                 </div>
               )}
-              <pre className="bg-muted/30 p-3 overflow-x-auto">
-                <code className="text-sm font-mono leading-relaxed">{children}</code>
+              <pre className="bg-muted/30 p-3 overflow-x-auto text-sm font-mono leading-relaxed [&_code]:bg-transparent [&_code]:p-0 [&_code]:rounded-none">
+                {children}
               </pre>
             </div>
           );
         },
-        pre: ({ children }) => <>{children}</>,
+        code: ({ children }) => (
+          <code className="bg-muted rounded px-1.5 py-0.5 text-sm font-mono">
+            {children}
+          </code>
+        ),
         hr: () => <hr className="my-4 border-border" />,
         table: ({ children }) => (
           <div className="overflow-x-auto my-2">
