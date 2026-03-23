@@ -1,40 +1,35 @@
 # Mcode
 
-Performant AI agent orchestration desktop app. Built with Rust + Tauri.
+AI agent orchestration desktop app. Manage multiple Claude coding sessions across projects with config inheritance and git worktree isolation.
 
 ## Features
 
-- Manage multiple AI coding agent sessions across projects
-- Full config inheritance from your Claude Code setup
+- Multiple concurrent Claude agent sessions
+- Full config inheritance from your Claude Code setup (`~/.claude/`, project `.claude/`)
 - Git worktree isolation per thread
-- Live streaming agent output
+- Live streaming agent output with tool call rendering
 - Keyboard-driven UX
 
-## Prerequisites
+## Quick Start
 
-- [Claude Code CLI](https://claude.ai/download) installed and on PATH
-- [Git](https://git-scm.com/) installed
-- [Rust](https://rustup.rs/) (for building from source)
-- [Node.js](https://nodejs.org/) 20+ (for frontend)
-
-## Development
+**Prerequisites:** [Bun](https://bun.sh/), [Git](https://git-scm.com/), [Claude Code CLI](https://claude.ai/download) on PATH
 
 ```bash
-# Clone
 git clone https://github.com/Mzeey-Emipre/mcode.git
 cd mcode
-
-# Setup
 bash scripts/setup-env.sh
-cd apps/web && npm install && cd ../..
-
-# Run in dev mode
-cargo tauri dev
+bun install
+bun run dev:desktop
 ```
 
-## Architecture
+## Documentation
 
-See [Design Document](docs/plans/2026-03-22-mcode-design.md).
+- **[Architecture](ARCHITECTURE.md)** - system design, data model, IPC flow, diagrams
+- **[Design doc (original)](docs/plans/2026-03-22-mcode-design-tauri-original.md)** - historical Tauri-era design
+
+## Tech Stack
+
+Electron 35, TypeScript, React 19, SQLite (better-sqlite3), Claude Agent SDK, shadcn/ui, Tailwind CSS 4, Zustand, Turborepo + Bun.
 
 ## License
 

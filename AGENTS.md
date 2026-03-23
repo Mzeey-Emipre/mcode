@@ -2,41 +2,7 @@
 
 Performant AI agent orchestration desktop app built with Electron + TypeScript.
 
-## Directory Structure
-
-```text
-apps/
-├── desktop/                # Electron app (TypeScript)
-│   └── src/
-│       ├── main/           # Main process
-│       │   ├── index.ts    # Entry, IPC handlers, lifecycle
-│       │   ├── app-state.ts # Central orchestrator
-│       │   ├── models.ts   # Shared types (Workspace, Thread, Message)
-│       │   ├── sidecar/    # Claude Agent SDK client (direct import)
-│       │   ├── store/      # SQLite (better-sqlite3) + migrations
-│       │   ├── repositories/ # Workspace, Thread, Message repos
-│       │   ├── worktree.ts # Git worktree via shell commands
-│       │   ├── config.ts   # Claude config discovery
-│       │   └── logger.ts   # Rotating file logger
-│       └── preload/        # contextBridge IPC exposure
-├── web/                    # React frontend (shared)
-│   └── src/
-│       ├── app/            # Routes and providers
-│       ├── components/     # UI components (sidebar, chat, terminal, diff)
-│       ├── stores/         # Zustand state management
-│       ├── transport/      # Electron IPC / Tauri IPC adapter
-│       └── lib/            # Utilities and types
-docs/plans/                 # Design and planning docs
-```
-
-## Tech Stack
-
-- **Runtime:** Bun (package manager + script runner)
-- **Desktop:** Electron 35, electron-vite
-- **Backend:** TypeScript (better-sqlite3, shell git, winston, Claude Agent SDK)
-- **Frontend:** React 19, Vite, shadcn/ui, Tailwind CSS 4, Zustand
-- **Database:** SQLite (WAL mode, better-sqlite3)
-- **Testing:** Vitest (both backend and frontend)
+For system architecture, data model, IPC flow, and diagrams, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ## Commit Guidelines
 
@@ -47,8 +13,8 @@ Keep commits atomic. Each commit represents one logical change.
 
 ## Key Documentation
 
-- **Design doc:** docs/plans/2026-03-22-mcode-design.md
-- **Electron migration plan:** docs/plans/2026-03-22-electron-migration-plan.md
+- **Architecture:** [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Original design doc:** [docs/plans/2026-03-22-mcode-design-tauri-original.md](docs/plans/2026-03-22-mcode-design-tauri-original.md)
 - **Electron docs:** https://www.electronjs.org/docs
 - **electron-vite docs:** https://electron-vite.org/
 - **better-sqlite3 docs:** https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
