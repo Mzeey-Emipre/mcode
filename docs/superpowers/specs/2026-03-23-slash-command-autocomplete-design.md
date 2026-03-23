@@ -26,7 +26,8 @@ apps/
     ├── transport/
     │   ├── types.ts               # + listSkills(): Promise<string[]>
     │   ├── electron.ts            # + IPC call implementation
-    │   └── index.ts               # + mock (returns [])
+    │   ├── tauri.ts               # + listSkills stub (throws / returns [])
+    │   └── index.ts               # + listSkills stub in createMockTransport()
     └── components/chat/
         ├── useSlashCommand.ts     # NEW: trigger detection, filter, keyboard nav, cache
         ├── SlashCommandPopup.tsx  # NEW: dropdown UI
@@ -37,9 +38,17 @@ apps/
 
 ### Skill Discovery (IPC)
 
-Main process adds a `list-skills` handler. On invocation, it scans `~/.claude/skills/*.md` and returns the filenames without the `.md` extension as `string[]`. No file contents are read -- the name is the command.
+Main process adds a `list-skills` handler. Skills are stored as directories under `~/.claude/skills/` (e.g. `~/.claude/skills/commit/`, `~/.claude/skills/review-pr/`). The handler calls `readdirSync(skillsDir, { withFileTypes: true })`, filters for directories, and returns their names as `string[]`. No file contents are read -- the directory name is the command.
 
-The hook caches the result in a `useRef` after first load. The IPC call fires once per component mount (lazy, on first `/` keystroke). Cache is never invalidated while the Composer is mounted.
+All three transports implement `listSkills(): Promise<string[]>` on `McodeTransport`:
+
+| Transport | Behaviour |
+|-----------|-----------|
+| `electron.ts` | IPC call to the `list-skills` handler |
+| `tauri.ts` | `throw new Error("Not implemented in Tauri")` (matches Tauri stub pattern) |
+| `createMockTransport()` in `index.ts` | `return []` (matches mock silent-degradation pattern used by `listBranches`, `listWorktrees`) |
+
+The hook caches the result in a `useRef` after first load. The IPC call fires once per session (lazy, on first `/` keystroke). The cache has a 5-minute TTL: if the user triggers autocomplete and 5 minutes have elapsed since the last fetch, the hook re-fetches in the background and updates the list. This lets users install a new skill mid-session and see it without restarting.
 
 ### Mcode Command Registry
 
@@ -66,7 +75,7 @@ No match = popup closes immediately. Match = popup opens with the filter string 
 
 ### Filtering
 
-Substring `includes()` match on command name. A 50ms debounce delays filter state updates -- not trigger detection itself, which is instant.
+Case-insensitive substring match: `name.toLowerCase().includes(filter.toLowerCase())`. No debounce -- filtering over ~80 strings is sub-millisecond and debouncing creates visible lag with no benefit.
 
 ## Component Design
 
@@ -104,7 +113,9 @@ The hook does not know about plan mode or any other Composer internals. It deleg
 
 Floating `div` positioned absolute relative to the textarea container. Uses `anchorRect` to place itself above the cursor with a 4px gap, flipping below if viewport space is insufficient.
 
-Shows up to 8 items at once. Virtual scrolling renders only visible rows -- DOM size stays constant regardless of skill count.
+`anchorRect` is recomputed on every `onChange` while the popup is open (not just at trigger time). This keeps the popup anchored correctly as the textarea resizes with additional lines.
+
+Shows up to 8 items at once. `@tanstack/react-virtual` (already a dependency via `MessageList`) handles virtual scrolling if the list exceeds 20 items; below that threshold, render all rows directly to avoid the overhead.
 
 **Item row layout:**
 
@@ -120,7 +131,7 @@ Shows up to 8 items at once. Virtual scrolling renders only visible rows -- DOM 
 
 **Loading state:** skeleton shimmer on first load only (single IPC call).
 
-**Empty state:** "No commands match" in `text-muted-foreground`, no icon.
+**Empty state:** A single row with an empty icon placeholder (same width as the icon column) and "No commands match" in `text-muted-foreground`. The placeholder keeps alignment consistent with populated rows.
 
 ### Composer Integration
 
@@ -132,7 +143,10 @@ const {
   textareaRef,
   onMcodeCommand: (action) => {
     if (action === "toggle-plan") {
-      const next = INTERACTION_MODES.PLAN;
+      // Toggle: if already in plan mode, switch back to chat
+      const next = mode === INTERACTION_MODES.PLAN
+        ? INTERACTION_MODES.CHAT
+        : INTERACTION_MODES.PLAN;
       setMode(next);
       if (threadId) setThreadSettings(threadId, { interactionMode: next });
     }
@@ -176,4 +190,5 @@ Selected row gets a left border accent (`border-l-2 border-primary`) in addition
 | Mcode side-effect dispatch | Unit | `onMcodeCommand` called with correct action |
 | IPC cache | Unit | `list-skills` called once, not on second open |
 | Popup positioning | Component | Flips above/below based on viewport rect |
-| list-skills handler | Integration | Scans `~/.claude/skills/`, returns correct names |
+| list-skills handler | Integration | Scans `~/.claude/skills/` subdirectories, returns directory names (not `.md` files) |
+| Cache TTL | Unit | Re-fetches after 5 minutes, not before |
