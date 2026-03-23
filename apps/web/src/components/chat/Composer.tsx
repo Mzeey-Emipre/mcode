@@ -25,7 +25,7 @@ import { WorktreePicker } from "./WorktreePicker";
 import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete } from "./useFileAutocomplete";
-import { FileTagPopup } from "./FileTagPopup";
+import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { TextOverlay } from "./TextOverlay";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 
@@ -68,31 +68,33 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     threadId,
   });
 
-  const filePopup = FileTagPopup({
+  const handleFileSelect = (filePath: string) => {
+    const selected = autocomplete.selectFile(filePath);
+    const before = input.slice(0, autocomplete.triggerStart);
+    const after = input.slice(
+      autocomplete.triggerStart + 1 + autocomplete.query.length,
+    );
+    const newInput = `${before}@${selected} ${after}`;
+    setInput(newInput);
+    setTaggedFiles((prev) => new Set([...prev, selected]));
+
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        const cursorPos = before.length + 1 + selected.length + 1;
+        ta.setSelectionRange(cursorPos, cursorPos);
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+      }
+    });
+  };
+
+  const filePopup = useFileTagPopup({
     files: autocomplete.filteredFiles,
     query: autocomplete.query,
     isOpen: autocomplete.isOpen,
-    onSelect: (filePath) => {
-      const selected = autocomplete.selectFile(filePath);
-      const before = input.slice(0, autocomplete.triggerStart);
-      const after = input.slice(
-        autocomplete.triggerStart + 1 + autocomplete.query.length,
-      );
-      const newInput = `${before}@${selected} ${after}`;
-      setInput(newInput);
-      setTaggedFiles((prev) => new Set([...prev, selected]));
-
-      requestAnimationFrame(() => {
-        const ta = textareaRef.current;
-        if (ta) {
-          ta.focus();
-          const cursorPos = before.length + 1 + selected.length + 1;
-          ta.setSelectionRange(cursorPos, cursorPos);
-          ta.style.height = "auto";
-          ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
-        }
-      });
-    },
+    onSelect: handleFileSelect,
     onDismiss: autocomplete.dismiss,
   });
   const sendMessage = useThreadStore((s) => s.sendMessage);
@@ -485,7 +487,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             className="relative z-10 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             disabled={isAgentRunning}
           />
-          {filePopup.popup}
+          <FileTagPopup
+            files={autocomplete.filteredFiles}
+            isOpen={autocomplete.isOpen}
+            onSelect={handleFileSelect}
+            listRef={filePopup.listRef}
+          />
         </div>
 
         {/* Attachment previews */}

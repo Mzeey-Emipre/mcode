@@ -1,6 +1,6 @@
 import { execFileSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
-import { resolve, normalize, isAbsolute, sep } from "path";
+import { readFileSync, existsSync, statSync } from "fs";
+import { resolve, isAbsolute, sep } from "path";
 import type { Workspace, Thread } from "./models.js";
 
 /**
@@ -55,6 +55,14 @@ export function readFileContent(rootDir: string, relativePath: string): string {
 
   if (!existsSync(fullPath)) {
     throw new Error(`File not found: ${relativePath}`);
+  }
+
+  const MAX_FILE_SIZE = 256 * 1024; // 256 KB
+  const stats = statSync(fullPath);
+  if (stats.size > MAX_FILE_SIZE) {
+    throw new Error(
+      `File too large for injection: ${relativePath} (${stats.size} bytes, max ${MAX_FILE_SIZE})`,
+    );
   }
 
   return readFileSync(fullPath, "utf-8");

@@ -1,3 +1,9 @@
+/**
+ * Core pattern matching a file path after the @ trigger.
+ * Must contain at least one / or . to distinguish from @mentions.
+ */
+export const FILE_PATH_PATTERN = String.raw`[\w./-][\w./-]*(?:[/.][\w./-]+)+`;
+
 /** Extract file path references from message text.
  *
  * A valid @path:
@@ -7,7 +13,7 @@
  * - Stops at whitespace or end-of-string
  */
 export function extractFileRefs(text: string): string[] {
-  const pattern = /(?:^|(?<=\s))@([\w./-][\w./-]*(?:[/.][\w./-]+)+)/g;
+  const pattern = new RegExp(String.raw`(?:^|(?<=\s))@(${FILE_PATH_PATTERN})`, "g");
   return [...text.matchAll(pattern)].map((m) => m[1]);
 }
 

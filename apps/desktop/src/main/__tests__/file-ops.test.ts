@@ -11,11 +11,12 @@ vi.mock("fs", async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    statSync: vi.fn(),
   };
 });
 
 import { execFileSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, statSync } from "fs";
 
 describe("listWorkspaceFiles", () => {
   beforeEach(() => { vi.clearAllMocks(); });
@@ -42,9 +43,16 @@ describe("readFileContent", () => {
 
   it("reads file content from workspace root", () => {
     vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(statSync).mockReturnValue({ size: 100 } as any);
     vi.mocked(readFileSync).mockReturnValue("file content");
     const result = readFileContent("/workspace", "src/index.ts");
     expect(result).toBe("file content");
+  });
+
+  it("rejects files exceeding size limit", () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(statSync).mockReturnValue({ size: 300 * 1024 } as any);
+    expect(() => readFileContent("/workspace", "src/big.ts")).toThrow("File too large");
   });
 
   it("rejects paths with ..", () => {

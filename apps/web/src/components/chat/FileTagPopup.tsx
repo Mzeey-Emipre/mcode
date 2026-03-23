@@ -3,12 +3,19 @@ import { useRef, useEffect, useCallback } from "react";
 import { File } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-interface FileTagPopupProps {
+interface FileTagPopupOptions {
   files: string[];
   query: string;
   isOpen: boolean;
   onSelect: (filePath: string) => void;
   onDismiss: () => void;
+}
+
+interface FileTagPopupProps {
+  files: string[];
+  isOpen: boolean;
+  onSelect: (filePath: string) => void;
+  listRef: React.RefObject<HTMLDivElement | null>;
 }
 
 /** Split a file path into directory + filename for styled rendering. */
@@ -18,13 +25,14 @@ function splitPath(path: string): { dir: string; name: string } {
   return { dir: path.slice(0, lastSlash + 1), name: path.slice(lastSlash + 1) };
 }
 
-export function FileTagPopup({
+/** Hook for keyboard navigation within the file tag popup. */
+export function useFileTagPopup({
   files,
   query,
   isOpen,
   onSelect,
   onDismiss,
-}: FileTagPopupProps) {
+}: FileTagPopupOptions) {
   const listRef = useRef<HTMLDivElement>(null);
   const selectedIndexRef = useRef(0);
 
@@ -85,7 +93,14 @@ export function FileTagPopup({
     [isOpen, files, onSelect, onDismiss, updateSelection],
   );
 
-  const popup = (!isOpen || files.length === 0) ? null : (
+  return { handleKeyDown, listRef };
+}
+
+/** Dropdown popup displaying file suggestions for @ tagging. */
+export function FileTagPopup({ files, isOpen, onSelect, listRef }: FileTagPopupProps) {
+  if (!isOpen || files.length === 0) return null;
+
+  return (
     <div
       ref={listRef}
       className="absolute bottom-full left-0 z-50 mb-1 w-full max-h-[240px] overflow-y-auto rounded-lg border border-border bg-popover shadow-lg"
@@ -116,6 +131,4 @@ export function FileTagPopup({
       </div>
     </div>
   );
-
-  return { popup, handleKeyDown };
 }

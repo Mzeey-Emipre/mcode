@@ -1,5 +1,6 @@
 // apps/web/src/components/chat/TextOverlay.tsx
 import { forwardRef } from "react";
+import { FILE_PATH_PATTERN } from "@/lib/file-tags";
 
 interface TextOverlayProps {
   text: string;
@@ -21,7 +22,7 @@ function buildSegments(text: string, validRefs: Set<string>): Segment[] {
     return [{ text, highlighted: false }];
   }
 
-  const pattern = /(?:^|(?<=\s))(@[\w./-][\w./-]*(?:[/.][\w./-]+)+)/g;
+  const pattern = new RegExp(String.raw`(?:^|(?<=\s))(@${FILE_PATH_PATTERN})`, "g");
   const segments: Segment[] = [];
   let lastIndex = 0;
 
