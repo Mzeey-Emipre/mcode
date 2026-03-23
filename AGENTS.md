@@ -4,6 +4,33 @@ Performant AI agent orchestration desktop app built with Electron + TypeScript.
 
 For system architecture, data model, IPC flow, and diagrams, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
+## Directory Structure
+
+```text
+apps/
+├── desktop/                  # Electron app (TypeScript)
+│   └── src/
+│       ├── main/             # Main process
+│       │   ├── index.ts      # Entry, IPC handlers, lifecycle
+│       │   ├── app-state.ts  # Central orchestrator
+│       │   ├── models.ts     # Shared types (Workspace, Thread, Message)
+│       │   ├── sidecar/      # Claude Agent SDK client (direct import)
+│       │   ├── store/        # SQLite (better-sqlite3) + migrations
+│       │   ├── repositories/ # Workspace, Thread, Message repos
+│       │   ├── worktree.ts   # Git worktree via shell commands
+│       │   ├── config.ts     # Claude config discovery
+│       │   └── logger.ts     # Rotating file logger
+│       └── preload/          # contextBridge IPC exposure
+├── web/                      # React frontend (shared)
+│   └── src/
+│       ├── app/              # Routes and providers
+│       ├── components/       # UI components (sidebar, chat, terminal, diff)
+│       ├── stores/           # Zustand state management
+│       ├── transport/        # Electron IPC / Tauri IPC adapter
+│       └── lib/              # Utilities and types
+docs/plans/                   # Design and planning docs (gitignored)
+```
+
 ## Commit Guidelines
 
 Use [Conventional Commits](https://www.conventionalcommits.org/).
