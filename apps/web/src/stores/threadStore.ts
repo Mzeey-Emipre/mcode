@@ -287,7 +287,8 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
         });
       }
 
-      // Update thread status in workspaceStore so sidebar reflects completion
+      // Sync the thread's status in workspaceStore so the sidebar shows
+      // the green "Completed" badge without waiting for a full thread reload.
       useWorkspaceStore.setState((ws) => ({
         threads: ws.threads.map((t) =>
           t.id === threadId ? { ...t, status: "completed" as const } : t,
@@ -316,7 +317,8 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
         };
       });
 
-      // Update thread status in workspaceStore so sidebar reflects error
+      // Sync the thread's status in workspaceStore so the sidebar shows
+      // the red "Errored" badge without waiting for a full thread reload.
       useWorkspaceStore.setState((ws) => ({
         threads: ws.threads.map((t) =>
           t.id === threadId ? { ...t, status: "errored" as const } : t,

@@ -108,7 +108,17 @@ function setupEventForwarding(state: AppState): void {
       }
     }
 
-    // Track session lifecycle and persist status
+    // Track session lifecycle and persist thread status to DB.
+    //
+    // Status transitions on session events:
+    //   session.message       -> trackSessionStarted (mark as running)
+    //   session.turnComplete  -> "completed" (natural finish)
+    //   session.ended         -> "completed" (natural finish)
+    //   session.error         -> "errored"  (agent failure)
+    //
+    // Guard: only write "completed" when the DB status is still "active".
+    // If the user clicked stop, stopAgent() already wrote "paused" and
+    // we must not overwrite it.
     if (event.method === "session.message") {
       state.trackSessionStarted(threadId);
     }
@@ -117,9 +127,6 @@ function setupEventForwarding(state: AppState): void {
       event.method === "session.ended"
     ) {
       state.trackSessionEnded(threadId);
-      // Mark completed only if the agent finished naturally (status still
-      // "active"). If the user manually stopped it, stopAgent() already
-      // set the status to "paused" and we should not overwrite that.
       try {
         const thread = ThreadRepo.findById(state.db, threadId);
         if (thread && thread.status === "active") {
@@ -249,7 +256,11 @@ function registerIpcHandlers(state: AppState): void {
     },
   );
 
-  // -- Mark thread viewed (clears "completed" badge) --
+  /**
+   * Clear the "completed" badge when the user opens a thread.
+   * Transitions completed -> paused so the sidebar no longer shows the
+   * green indicator. No-op for threads in any other status.
+   */
   ipcMain.handle("mark-thread-viewed", (_event, threadId: string) => {
     const thread = ThreadRepo.findById(state.db, threadId);
     if (thread && thread.status === "completed") {
