@@ -1,12 +1,19 @@
 /**
  * SidecarClient: imports the Claude Agent SDK directly and runs queries
- * in-process instead of spawning a child process.
+ * in-process using the v2 persistent session API.
  *
- * Emits the same "event" (SidecarEvent) interface as the old JSON-RPC client,
+ * Sessions are kept alive in a pool, eliminating per-message MCP server
+ * restarts and full conversation history replay on each turn.
+ *
+ * Emits the same "event" (SidecarEvent) interface as the previous client,
  * keeping compatibility with app-state.ts and index.ts.
  */
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  unstable_v2_createSession,
+  unstable_v2_resumeSession,
+} from "@anthropic-ai/claude-agent-sdk";
+import type { SDKSession } from "@anthropic-ai/claude-agent-sdk";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import type { SidecarEvent } from "./types.js";
@@ -18,8 +25,20 @@ export interface SidecarClientEvents {
   error: [Error];
 }
 
+interface SessionEntry {
+  session: SDKSession;
+  model: string;
+  lastUsedAt: number;
+}
+
+/** Idle TTL before a session is evicted (10 minutes). */
+const IDLE_TTL_MS = 10 * 60 * 1000;
+/** How often to check for idle sessions (1 minute). */
+const EVICTION_INTERVAL_MS = 60 * 1000;
+
 export class SidecarClient extends EventEmitter {
-  private sessions = new Map<string, AbortController>();
+  private sessions = new Map<string, SessionEntry>();
+  private evictionTimer: ReturnType<typeof setInterval> | null = null;
   private ready = true;
 
   /**
@@ -28,7 +47,7 @@ export class SidecarClient extends EventEmitter {
    */
   static start(): SidecarClient {
     const client = new SidecarClient();
-    logger.info("SidecarClient started (in-process SDK)");
+    logger.info("SidecarClient started (in-process SDK v2)");
     return client;
   }
 
@@ -40,21 +59,41 @@ export class SidecarClient extends EventEmitter {
   /**
    * Send a user message to a Claude agent session.
    *
-   * Runs the SDK query() async generator in-process and emits SidecarEvents
-   * on the same EventEmitter interface the old JSON-RPC client used.
+   * Uses the v2 persistent session pool: a session is created once per
+   * thread and reused across turns. Messages are queued via session.send()
+   * and streamed via session.stream().
    *
-   * SDK options include settingSources (user/project/local) to load CLAUDE.md,
-   * skills, hooks, and settings; the claude_code system prompt preset; and the
-   * full Claude Code tool surface.
+   * Three-state model:
+   *   1. No pool entry + resume=false → createSession()
+   *   2. No pool entry + resume=true  → resumeSession()
+   *   3. Pool entry exists, same model → session.send() only
+   *   4. Pool entry exists, model changed → close old, createSession()
    *
    * @param sessionId - Thread session ID (prefixed with "mcode-")
    * @param message - User message content
    * @param cwd - Working directory for the agent session
    * @param model - Claude model identifier (e.g. "claude-sonnet-4-6")
-   * @param resume - Whether to resume an existing session or start a new one
+   * @param resume - Whether to resume a previously persisted session
    * @param permissionMode - "full" maps to bypassPermissions; anything else maps to default
+   * @param attachments - Optional file attachments
    */
-  async sendMessage(
+  sendMessage(
+    sessionId: string,
+    message: string,
+    cwd: string,
+    model: string,
+    resume: boolean,
+    permissionMode: string,
+    attachments?: AttachmentMeta[],
+  ): void {
+    this.doSendMessage(sessionId, message, cwd, model, resume, permissionMode, attachments).catch(
+      (e: unknown) => {
+        logger.error("Unexpected sendMessage error", { sessionId, error: String(e) });
+      },
+    );
+  }
+
+  private async doSendMessage(
     sessionId: string,
     message: string,
     cwd: string,
@@ -63,206 +102,210 @@ export class SidecarClient extends EventEmitter {
     permissionMode: string,
     attachments?: AttachmentMeta[],
   ): Promise<void> {
-    // Abort any existing session with the same ID to prevent duplicates
-    const existing = this.sessions.get(sessionId);
-    if (existing) {
-      existing.abort();
-      this.sessions.delete(sessionId);
+    // Start eviction timer lazily so fake timers in tests work correctly
+    if (!this.evictionTimer) {
+      this.evictionTimer = setInterval(() => this.evictIdleSessions(), EVICTION_INTERVAL_MS);
     }
 
-    const abortController = new AbortController();
-    this.sessions.set(sessionId, abortController);
-
-    // Extract UUID from "mcode-{uuid}" format for SDK session identity
-    const uuid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
-
+    const existing = this.sessions.get(sessionId);
     const isBypass = permissionMode === "full";
+    const sdkPermissionMode = isBypass ? ("bypassPermissions" as const) : ("default" as const);
+    const uuid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+    const resolvedCwd = cwd || process.cwd();
+    const resolvedModel = model || "claude-sonnet-4-6";
+
     if (isBypass) {
       logger.warn("Using bypassPermissions for session", { sessionId });
     }
-    logger.info("Starting SDK query", { sessionId, resume, model, cwd });
 
-    const options = {
-      cwd: cwd || process.cwd(),
-      model: model || "claude-sonnet-4-6",
-      // First message: set sessionId to pin the UUID; subsequent: resume by UUID
-      ...(resume ? { resume: uuid } : { sessionId: uuid }),
-      permissionMode: isBypass ? ("bypassPermissions" as const) : ("default" as const),
-      ...(isBypass ? { allowDangerouslySkipPermissions: true } : {}),
-      abortController,
-      // Load CLAUDE.md, skills, hooks, and settings from user + project config
-      settingSources: ["user" as const, "project" as const, "local" as const],
-      // Activate Claude Code system prompt so the agent respects slash commands and conventions
-      systemPrompt: { type: "preset" as const, preset: "claude_code" as const },
-      // Enable Claude Code tools (Read, Write, Edit, Bash, Glob, Grep, Agent, etc.)
-      tools: { type: "preset" as const, preset: "claude_code" as const },
+    const sessionOptions = {
+      model: resolvedModel,
+      executableArgs: ["--cwd", resolvedCwd],
+      permissionMode: sdkPermissionMode,
     };
 
-    try {
-      let lastAssistantText = "";
-      const hasAttachments = attachments && attachments.length > 0;
-      const prompt = hasAttachments
-        ? this.buildMultimodalPrompt(message, attachments, sessionId)
-        : message;
-      const q = query({ prompt, options });
+    if (existing && existing.model === resolvedModel) {
+      // Reuse existing session — just queue the next message
+      existing.lastUsedAt = Date.now();
+      await existing.session.send(message);
+      return;
+    }
 
-      // When resuming a session, the model from the original session persists.
-      // Call setModel() to switch to the user's current selection.
-      if (resume && model) {
-        q.setModel(model).catch(() => {
-          // setModel may fail if streaming input isn't supported; ignore
-        });
-      }
+    // Close old session if model changed
+    if (existing) {
+      logger.info("Model changed, closing existing session", { sessionId });
+      existing.session.close();
+      this.sessions.delete(sessionId);
+    }
 
-      for await (const msg of q) {
-        if (abortController.signal.aborted) break;
+    // Create or resume a new SDK session
+    const session = resume
+      ? unstable_v2_resumeSession(uuid, sessionOptions)
+      : unstable_v2_createSession(sessionOptions);
 
-        switch (msg.type) {
-          case "assistant": {
-            const contentBlocks = msg.message?.content || [];
-            const text = contentBlocks
-              .filter((b: { type: string }) => b.type === "text")
-              .map((b: { type: string; text?: string }) => b.text ?? "")
-              .join("");
+    logger.info("Session created", { sessionId, resume, model: resolvedModel, cwd: resolvedCwd });
 
-            // Deduplicate: only update if text changed
-            if (text && text !== lastAssistantText) {
-              lastAssistantText = text;
+    const entry: SessionEntry = { session, model: resolvedModel, lastUsedAt: Date.now() };
+    this.sessions.set(sessionId, entry);
+
+    // Start the long-lived stream loop before sending the first message
+    this.startStreamLoop(sessionId, session);
+
+    // Queue the first message
+    const prompt = attachments && attachments.length > 0
+      ? await this.buildMultimodalMessage(message, attachments, sessionId)
+      : message;
+    await session.send(prompt);
+  }
+
+  /**
+   * Run the persistent stream loop for a session.
+   * Processes all events from session.stream() until the stream closes.
+   * Cleans up the pool entry and emits session.ended when done.
+   */
+  private startStreamLoop(sessionId: string, session: SDKSession): void {
+    (async () => {
+      try {
+        let lastAssistantText = "";
+
+        for await (const msg of session.stream()) {
+          const entry = this.sessions.get(sessionId);
+          if (entry) entry.lastUsedAt = Date.now();
+
+          const anyMsg = msg as Record<string, unknown>;
+
+          switch (anyMsg.type) {
+            case "assistant": {
+              const contentBlocks =
+                (anyMsg.message as { content?: Array<Record<string, unknown>> })?.content ?? [];
+              const text = contentBlocks
+                .filter((b) => b.type === "text")
+                .map((b) => (b.text as string) ?? "")
+                .join("");
+
+              if (text && text !== lastAssistantText) {
+                lastAssistantText = text;
+              }
+
+              for (const block of contentBlocks) {
+                if (block.type === "tool_use") {
+                  this.emit("event", {
+                    method: "session.toolUse",
+                    params: {
+                      sessionId,
+                      toolCallId: (block.id as string) || null,
+                      toolName: (block.name as string) || "unknown",
+                      toolInput: (block.input as Record<string, unknown>) || {},
+                    },
+                  } as SidecarEvent);
+                }
+              }
+              break;
             }
 
-            // Extract tool_use blocks from the assistant message content
-            for (const block of contentBlocks) {
-              if (block.type === "tool_use") {
-                const toolBlock = block as { type: string; id?: string; name?: string; input?: Record<string, unknown> };
+            case "result": {
+              if (lastAssistantText) {
                 this.emit("event", {
-                  method: "session.toolUse",
+                  method: "session.message",
                   params: {
                     sessionId,
-                    toolCallId: toolBlock.id || null,
-                    toolName: toolBlock.name || "unknown",
-                    toolInput: toolBlock.input || {},
+                    type: "assistant",
+                    content: lastAssistantText,
+                    messageId: null,
+                    tokens:
+                      (anyMsg.usage as { output_tokens?: number })?.output_tokens ?? null,
                   },
                 } as SidecarEvent);
               }
-            }
-            break;
-          }
 
-          case "result": {
-            const resultMsg = msg as {
-              type: string;
-              stop_reason?: string;
-              subtype?: string;
-              total_cost_usd?: number;
-              usage?: { input_tokens?: number; output_tokens?: number };
-            };
-
-            // Emit the final accumulated text as a session.message
-            if (lastAssistantText) {
               this.emit("event", {
-                method: "session.message",
+                method: "session.turnComplete",
                 params: {
                   sessionId,
-                  type: "assistant",
-                  content: lastAssistantText,
-                  messageId: null,
-                  tokens: resultMsg.usage?.output_tokens ?? null,
+                  reason:
+                    (anyMsg.stop_reason as string) ||
+                    (anyMsg.subtype as string) ||
+                    "end_turn",
+                  costUsd: (anyMsg.total_cost_usd as number) ?? null,
+                  totalTokensIn:
+                    (anyMsg.usage as { input_tokens?: number })?.input_tokens ?? 0,
+                  totalTokensOut:
+                    (anyMsg.usage as { output_tokens?: number })?.output_tokens ?? 0,
                 },
               } as SidecarEvent);
+
+              lastAssistantText = "";
+              break;
             }
 
-            this.emit("event", {
-              method: "session.turnComplete",
-              params: {
-                sessionId,
-                reason: resultMsg.stop_reason || resultMsg.subtype || "end_turn",
-                costUsd: resultMsg.total_cost_usd ?? null,
-                totalTokensIn: resultMsg.usage?.input_tokens ?? 0,
-                totalTokensOut: resultMsg.usage?.output_tokens ?? 0,
-              },
-            } as SidecarEvent);
+            case "system": {
+              this.emit("event", {
+                method: "session.system",
+                params: {
+                  sessionId,
+                  subtype: (anyMsg.subtype as string) || "unknown",
+                },
+              } as SidecarEvent);
+              break;
+            }
 
-            // Reset for next turn
-            lastAssistantText = "";
-            break;
-          }
-
-          case "system": {
-            const sysMsg = msg as { type: string; subtype?: string };
-            this.emit("event", {
-              method: "session.system",
-              params: {
-                sessionId,
-                subtype: sysMsg.subtype || "unknown",
-              },
-            } as SidecarEvent);
-            break;
-          }
-
-          default: {
-            // Handle tool_use and tool_result event types from the SDK
-            const anyMsg = msg as Record<string, unknown>;
-
-            if (anyMsg.type === "tool_use") {
+            case "tool_use": {
               this.emit("event", {
                 method: "session.toolUse",
                 params: {
                   sessionId,
                   toolCallId: (anyMsg.id as string) || null,
-                  toolName: (anyMsg.tool_name as string) || (anyMsg.name as string) || "unknown",
-                  toolInput: (anyMsg.tool_input as Record<string, unknown>) || (anyMsg.input as Record<string, unknown>) || {},
+                  toolName:
+                    (anyMsg.tool_name as string) || (anyMsg.name as string) || "unknown",
+                  toolInput:
+                    (anyMsg.tool_input as Record<string, unknown>) ||
+                    (anyMsg.input as Record<string, unknown>) ||
+                    {},
                 },
               } as SidecarEvent);
+              break;
             }
 
-            if (anyMsg.type === "tool_result") {
+            case "tool_result": {
               const content = anyMsg.content;
               this.emit("event", {
                 method: "session.toolResult",
                 params: {
                   sessionId,
                   toolCallId: (anyMsg.tool_use_id as string) || null,
-                  output: typeof content === "string"
-                    ? content
-                    : JSON.stringify(content ?? ""),
+                  output:
+                    typeof content === "string" ? content : JSON.stringify(content ?? ""),
                   isError: Boolean(anyMsg.is_error),
                 },
               } as SidecarEvent);
+              break;
             }
-            break;
           }
         }
+      } catch (e: unknown) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        logger.error("SDK stream error", { sessionId, error: errorMessage });
+        this.emit("event", {
+          method: "session.error",
+          params: { sessionId, error: errorMessage },
+        } as SidecarEvent);
+      } finally {
+        this.sessions.delete(sessionId);
+        logger.info("Session stream ended", { sessionId });
+        this.emit("event", {
+          method: "session.ended",
+          params: { sessionId },
+        } as SidecarEvent);
       }
-    } catch (e: unknown) {
-      const errorMessage = e instanceof Error ? e.message : String(e);
-      logger.error("SDK query error", { sessionId, error: errorMessage });
-      this.emit("event", {
-        method: "session.error",
-        params: {
-          sessionId,
-          error: errorMessage,
-        },
-      } as SidecarEvent);
-    } finally {
-      this.sessions.delete(sessionId);
-      logger.info("Session ended", { sessionId });
-      this.emit("event", {
-        method: "session.ended",
-        params: { sessionId },
-      } as SidecarEvent);
-    }
+    })();
   }
 
-  private async *buildMultimodalPrompt(
+  /** Build a multimodal SDKUserMessage from text + attachments. */
+  private async buildMultimodalMessage(
     message: string,
     attachments: AttachmentMeta[],
     sessionId: string,
-  ): AsyncGenerator<{
-    type: "user";
-    session_id: string;
-    parent_tool_use_id: null;
-    message: { role: "user"; content: Array<Record<string, unknown>> };
-  }> {
+  ): Promise<{ role: "user"; content: Array<Record<string, unknown>> }> {
     const contentBlocks: Array<Record<string, unknown>> = [];
 
     for (const att of attachments) {
@@ -304,7 +347,6 @@ export class SidecarClient extends EventEmitter {
           path: att.sourcePath,
           error: errMsg,
         });
-        // Surface the failure so the user and Claude both know the attachment was dropped
         contentBlocks.push({
           type: "text",
           text: `[Attachment failed to load: ${att.name} - ${errMsg}]`,
@@ -314,29 +356,37 @@ export class SidecarClient extends EventEmitter {
 
     contentBlocks.push({ type: "text", text: message });
 
-    yield {
-      type: "user" as const,
-      session_id: sessionId,
-      parent_tool_use_id: null,
-      message: {
-        role: "user" as const,
-        content: contentBlocks,
-      },
-    };
+    return { role: "user" as const, content: contentBlocks };
   }
 
-  /** Abort a running session. */
-  stopSession(sessionId: string): void {
-    const controller = this.sessions.get(sessionId);
-    if (controller) {
-      controller.abort();
+  /** Evict sessions that have been idle longer than IDLE_TTL_MS. */
+  private evictIdleSessions(): void {
+    const now = Date.now();
+    for (const [sessionId, entry] of this.sessions) {
+      if (now - entry.lastUsedAt > IDLE_TTL_MS) {
+        logger.info("Evicting idle session", { sessionId });
+        entry.session.close();
+        // Pool entry is removed when the stream loop's finally block runs
+      }
     }
   }
 
-  /** Abort all running sessions. */
+  /** Close a specific session's stream. */
+  stopSession(sessionId: string): void {
+    const entry = this.sessions.get(sessionId);
+    if (entry) {
+      entry.session.close();
+    }
+  }
+
+  /** Close all sessions and stop the eviction timer. */
   shutdown(): void {
-    for (const [, controller] of this.sessions) {
-      controller.abort();
+    if (this.evictionTimer) {
+      clearInterval(this.evictionTimer);
+      this.evictionTimer = null;
+    }
+    for (const [, entry] of this.sessions) {
+      entry.session.close();
     }
     this.sessions.clear();
     logger.info("SidecarClient shutdown complete");
