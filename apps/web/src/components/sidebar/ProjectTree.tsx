@@ -10,10 +10,18 @@ function isElectron(): boolean {
 function isDesktop(): boolean {
   return isTauri() || isElectron();
 }
-import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown } from "lucide-react";
+import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ContextMenu } from "@/components/ui/context-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay } from "@/lib/thread-status";
 import type { Workspace, Thread } from "@/transport/types";
@@ -37,6 +45,19 @@ interface ContextMenuState {
   threadId: string;
   threadTitle: string;
   workspacePath: string;
+  worktreePath: string | null;
+}
+
+interface DeleteDialogState {
+  threadId: string;
+  threadTitle: string;
+  worktreePath: string | null;
+}
+
+interface InlineEditState {
+  threadId: string;
+  title: string;
+  originalTitle: string;
 }
 
 export function ProjectTree() {
@@ -59,6 +80,9 @@ export function ProjectTree() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
   const [isCreating, setIsCreating] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
+  const [deleteWorktree, setDeleteWorktree] = useState(false);
 
   useEffect(() => {
     loadWorkspaces();
@@ -147,10 +171,33 @@ export function ProjectTree() {
         threadId: thread.id,
         threadTitle: thread.title,
         workspacePath,
+        worktreePath: thread.worktree_path,
       });
     },
     []
   );
+
+  const handleInlineEditCommit = useCallback(() => {
+    if (!inlineEdit) return;
+    const newTitle = inlineEdit.title.trim();
+    if (newTitle && newTitle !== inlineEdit.originalTitle) {
+      updateThreadTitle(inlineEdit.threadId, newTitle).catch((e) =>
+        console.error("Failed to rename thread:", e)
+      );
+    }
+    setInlineEdit(null);
+  }, [inlineEdit, updateThreadTitle]);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteDialog) return;
+    try {
+      await deleteThread(deleteDialog.threadId, deleteWorktree);
+      setDeleteDialog(null);
+      setDeleteWorktree(false);
+    } catch {
+      // Error shown via store.error; keep dialog open so user can retry
+    }
+  }, [deleteDialog, deleteWorktree, deleteThread]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -179,6 +226,12 @@ export function ProjectTree() {
               activeThreadId={activeThreadId}
               threads={threads.filter((t) => t.workspace_id === ws.id)}
               runningThreadIds={runningThreadIds}
+              inlineEdit={inlineEdit}
+              onInlineEditChange={(title) =>
+                setInlineEdit((prev) => prev ? { ...prev, title } : null)
+              }
+              onInlineEditCommit={handleInlineEditCommit}
+              onInlineEditCancel={() => setInlineEdit(null)}
               onToggle={() => toggleExpand(ws.id)}
               onSelectThread={(id) => {
                 setActiveWorkspace(ws.id);
@@ -229,17 +282,13 @@ export function ProjectTree() {
           onClose={() => setContextMenu(null)}
           items={[
             {
-              label: "Rename thread",
+              label: "Rename",
               onClick: () => {
-                const newTitle = window.prompt(
-                  "Rename thread:",
-                  contextMenu.threadTitle
-                );
-                if (newTitle && newTitle.trim() && newTitle !== contextMenu.threadTitle) {
-                  updateThreadTitle(contextMenu.threadId, newTitle.trim()).catch(
-                    (e) => console.error("Failed to rename thread:", e)
-                  );
-                }
+                setInlineEdit({
+                  threadId: contextMenu.threadId,
+                  title: contextMenu.threadTitle,
+                  originalTitle: contextMenu.threadTitle,
+                });
               },
             },
             {
@@ -258,17 +307,68 @@ export function ProjectTree() {
             {
               label: "Delete",
               destructive: true,
-              onClick: async () => {
-                try {
-                  await deleteThread(contextMenu.threadId, false);
-                } catch {
-                  // Error handled in store
-                }
+              onClick: () => {
+                setDeleteDialog({
+                  threadId: contextMenu.threadId,
+                  threadTitle: contextMenu.threadTitle,
+                  worktreePath: contextMenu.worktreePath,
+                });
+                setDeleteWorktree(false);
               },
             },
           ]}
         />
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteDialog(null);
+            setDeleteWorktree(false);
+          }
+        }}
+      >
+        <DialogContent showCloseButton={false} className="sm:max-w-md overflow-hidden">
+          <div className="flex flex-col gap-2">
+            <DialogTitle>Delete thread</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete &ldquo;{deleteDialog?.threadTitle}&rdquo;?
+              This action cannot be undone.
+            </DialogDescription>
+          </div>
+          {deleteDialog?.worktreePath && (
+            <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border p-3">
+              <GitBranch size={14} className="shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">Delete worktree</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {deleteDialog.worktreePath}
+                </div>
+              </div>
+              <Switch
+                checked={deleteWorktree}
+                onCheckedChange={(checked) => setDeleteWorktree(checked)}
+              />
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteDialog(null);
+                setDeleteWorktree(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteConfirm}>
+              Delete
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -282,6 +382,10 @@ interface ProjectNodeProps {
   activeThreadId: string | null;
   threads: Thread[];
   runningThreadIds: Set<string>;
+  inlineEdit: InlineEditState | null;
+  onInlineEditChange: (title: string) => void;
+  onInlineEditCommit: () => void;
+  onInlineEditCancel: () => void;
   onToggle: () => void;
   onSelectThread: (id: string) => void;
   onCreateThread: () => void;
@@ -296,6 +400,10 @@ function ProjectNode({
   activeThreadId,
   threads,
   runningThreadIds,
+  inlineEdit,
+  onInlineEditChange,
+  onInlineEditCommit,
+  onInlineEditCancel,
   onToggle,
   onSelectThread,
   onCreateThread,
@@ -347,18 +455,22 @@ function ProjectNode({
         <div className="ml-3 border-l border-border/50 pl-2">
           {threads.map((thread) => {
             const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
+            const isEditing = inlineEdit?.threadId === thread.id;
             return (
               <div
                 key={thread.id}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
+                  if (isEditing) return;
                   if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
                     e.preventDefault();
                     onSelectThread(thread.id);
                   }
                 }}
-                onClick={() => onSelectThread(thread.id)}
+                onClick={() => {
+                  if (!isEditing) onSelectThread(thread.id);
+                }}
                 onContextMenu={(e) => onThreadContextMenu(e, thread)}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer",
@@ -373,12 +485,31 @@ function ProjectNode({
                     {status.label}
                   </span>
                 )}
-                <span className="truncate flex-1 text-xs">
-                  {thread.title}
-                </span>
-                <span className="shrink-0 text-[10px] text-muted-foreground">
-                  {relativeTime(thread.updated_at)}
-                </span>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={inlineEdit.title}
+                    onChange={(e) => onInlineEditChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") onInlineEditCommit();
+                      if (e.key === "Escape") onInlineEditCancel();
+                      e.stopPropagation();
+                    }}
+                    onBlur={onInlineEditCommit}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex-1 rounded border border-ring bg-background px-1 py-0 text-xs text-foreground outline-none"
+                  />
+                ) : (
+                  <span className="truncate flex-1 text-xs">
+                    {thread.title}
+                  </span>
+                )}
+                {!isEditing && (
+                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                    {relativeTime(thread.updated_at)}
+                  </span>
+                )}
               </div>
             );
           })}
