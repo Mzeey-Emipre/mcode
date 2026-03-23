@@ -21,6 +21,7 @@ import * as MessageRepo from "./repositories/message-repo.js";
 import * as ThreadRepo from "./repositories/thread-repo.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
 import type { AttachmentMeta } from "./models.js";
+import { listSkills } from "./skills.js";
 
 /** Validated permission mode values accepted by the IPC boundary. */
 type SafePermissionMode = "full" | "supervised" | "default";
@@ -246,6 +247,10 @@ function registerIpcHandlers(state: AppState): void {
 
   ipcMain.handle("list-worktrees", (_event, workspaceId: string) => {
     return state.listWorktrees(workspaceId);
+  });
+
+  ipcMain.handle("list-skills", () => {
+    return listSkills();
   });
 
   // -- Threads --
