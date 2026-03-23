@@ -8,8 +8,10 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { EventEmitter } from "events";
+import { readFile } from "fs/promises";
 import type { SidecarEvent } from "./types.js";
 import { logger } from "../logger.js";
+import type { AttachmentMeta } from "../models.js";
 
 export interface SidecarClientEvents {
   event: [SidecarEvent];
@@ -59,6 +61,7 @@ export class SidecarClient extends EventEmitter {
     model: string,
     resume: boolean,
     permissionMode: string,
+    attachments?: AttachmentMeta[],
   ): Promise<void> {
     // Abort any existing session with the same ID to prevent duplicates
     const existing = this.sessions.get(sessionId);
@@ -97,7 +100,11 @@ export class SidecarClient extends EventEmitter {
 
     try {
       let lastAssistantText = "";
-      const q = query({ prompt: message, options });
+      const hasAttachments = attachments && attachments.length > 0;
+      const prompt = hasAttachments
+        ? this.buildMultimodalPrompt(message, attachments, sessionId)
+        : message;
+      const q = query({ prompt, options });
 
       // When resuming a session, the model from the original session persists.
       // Call setModel() to switch to the user's current selection.
@@ -244,6 +251,72 @@ export class SidecarClient extends EventEmitter {
         params: { sessionId },
       } as SidecarEvent);
     }
+  }
+
+  private async *buildMultimodalPrompt(
+    message: string,
+    attachments: AttachmentMeta[],
+    sessionId: string,
+  ): AsyncGenerator<{
+    type: "user";
+    session_id: string;
+    parent_tool_use_id: null;
+    message: { role: "user"; content: Array<Record<string, unknown>> };
+  }> {
+    const contentBlocks: Array<Record<string, unknown>> = [];
+
+    for (const att of attachments) {
+      try {
+        const data = await readFile(att.sourcePath);
+
+        if (att.mimeType.startsWith("image/")) {
+          contentBlocks.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: att.mimeType,
+              data: data.toString("base64"),
+            },
+          });
+        } else if (att.mimeType === "application/pdf") {
+          contentBlocks.push({
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: "application/pdf",
+              data: data.toString("base64"),
+            },
+          });
+        } else if (att.mimeType === "text/plain") {
+          contentBlocks.push({
+            type: "document",
+            source: {
+              type: "text",
+              media_type: "text/plain",
+              data: data.toString("utf-8"),
+            },
+          });
+        }
+      } catch (err) {
+        logger.error("Failed to read attachment", {
+          id: att.id,
+          path: att.sourcePath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    contentBlocks.push({ type: "text", text: message });
+
+    yield {
+      type: "user" as const,
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      message: {
+        role: "user" as const,
+        content: contentBlocks,
+      },
+    };
   }
 
   /** Abort a running session. */
