@@ -21,7 +21,7 @@ const MCODE_COMMANDS: Command[] = [
 const TRIGGER_RE = /(^|\s)(\/\S*)$/;
 
 interface UseSlashCommandOptions {
-  textareaRef: React.RefObject<HTMLTextAreaElement>;
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onMcodeCommand?: (action: string) => void;
 }
 
