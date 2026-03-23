@@ -33,5 +33,8 @@ export default defineConfig({
     setupFiles: "./src/test-setup.ts",
     pool: "threads",
     exclude: ["e2e/**", "node_modules/**"],
+    env: {
+      NODE_ENV: "test",
+    },
   },
 });

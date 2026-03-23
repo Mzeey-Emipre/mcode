@@ -124,6 +124,10 @@ export function createTauriTransport(): McodeTransport {
     async getBranchPr() {
       throw new Error("Not implemented in Tauri");
     },
+
+    async listSkills() {
+      return [];
+    },
   };
 }
 
