@@ -4,7 +4,11 @@ import { renderHook, act } from "@testing-library/react";
 // Mock transport so IPC doesn't run
 vi.mock("@/transport", () => ({
   getTransport: vi.fn(() => ({
-    listSkills: vi.fn().mockResolvedValue(["commit", "review-pr", "tdd"]),
+    listSkills: vi.fn().mockResolvedValue([
+      { name: "commit", description: "Create a git commit" },
+      { name: "review-pr", description: "Review a pull request" },
+      { name: "tdd", description: "Write tests first" },
+    ]),
   })),
 }));
 
@@ -206,7 +210,7 @@ describe("mcode side-effect dispatch", () => {
 
 describe("IPC cache", () => {
   it("calls listSkills only once across multiple trigger openings", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue(["commit"]);
+    const mockListSkills = vi.fn().mockResolvedValue([{ name: "commit", description: "Create a git commit" }]);
     vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
 
     const ref = makeTextarea("/");

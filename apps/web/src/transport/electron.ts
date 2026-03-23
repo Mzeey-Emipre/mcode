@@ -1,4 +1,4 @@
-import type { McodeTransport, Workspace, Thread, Message, GitBranch, WorktreeInfo, AttachmentMeta } from "./types";
+import type { McodeTransport, Workspace, Thread, Message, GitBranch, WorktreeInfo, AttachmentMeta, SkillInfo } from "./types";
 
 export function createElectronTransport(): McodeTransport {
   const api = window.electronAPI;
@@ -111,7 +111,7 @@ export function createElectronTransport(): McodeTransport {
     },
 
     async listSkills() {
-      return api.invoke("list-skills") as Promise<string[]>;
+      return api.invoke("list-skills") as Promise<SkillInfo[]>;
     },
   };
 }

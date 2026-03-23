@@ -1,3 +1,8 @@
+export interface SkillInfo {
+  name: string;
+  description: string;
+}
+
 export interface Workspace {
   id: string;
   name: string;
@@ -155,5 +160,5 @@ export interface McodeTransport {
   getVersion(): Promise<string>;
 
   // Skills
-  listSkills(): Promise<string[]>;
+  listSkills(): Promise<SkillInfo[]>;
 }

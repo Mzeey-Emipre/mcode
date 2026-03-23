@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { getTransport } from "@/transport";
+import { getTransport, type SkillInfo } from "@/transport";
 
 export interface Command {
   name: string;
@@ -50,23 +50,23 @@ export function useSlashCommand({
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
   // Cache: loaded skills + timestamp for TTL
-  const skillsCache = useRef<{ names: string[]; fetchedAt: number } | null>(null);
+  const skillsCache = useRef<{ skills: SkillInfo[]; fetchedAt: number } | null>(null);
 
-  const loadSkills = useCallback(async (): Promise<string[]> => {
+  const loadSkills = useCallback(async (): Promise<SkillInfo[]> => {
     const now = Date.now();
     if (skillsCache.current && now - skillsCache.current.fetchedAt < CACHE_TTL_MS) {
-      return skillsCache.current.names;
+      return skillsCache.current.skills;
     }
-    const names = await getTransport().listSkills();
-    skillsCache.current = { names, fetchedAt: now };
-    return names;
+    const skills = await getTransport().listSkills();
+    skillsCache.current = { skills, fetchedAt: now };
+    return skills;
   }, []);
 
-  const buildItems = useCallback((skillNames: string[], filter: string): Command[] => {
+  const buildItems = useCallback((skillInfos: SkillInfo[], filter: string): Command[] => {
     const f = filter.toLowerCase();
-    const skills: Command[] = skillNames.map((name) => ({
+    const skills: Command[] = skillInfos.map(({ name, description }) => ({
       name,
-      description: `Run /${name}`,
+      description: description || `Run /${name}`,
       namespace: "skill" as const,
     }));
     const all = [...MCODE_COMMANDS, ...skills];
@@ -101,20 +101,20 @@ export function useSlashCommand({
       if (!skillsCache.current) {
         setIsLoading(true);
         loadSkills()
-          .then((names) => {
+          .then((skills) => {
             setIsLoading(false);
-            setItems(buildItems(names, filter));
+            setItems(buildItems(skills, filter));
           })
           .catch(() => {
             setIsLoading(false);
           });
       } else {
-        setItems(buildItems(skillsCache.current.names, filter));
+        setItems(buildItems(skillsCache.current.skills, filter));
         // Background refresh if TTL expired
         if (Date.now() - skillsCache.current.fetchedAt >= CACHE_TTL_MS) {
           loadSkills()
-            .then((names) => {
-              setItems(buildItems(names, filter));
+            .then((skills) => {
+              setItems(buildItems(skills, filter));
             })
             .catch(() => {
               // Background refresh failed silently; existing cache remains
