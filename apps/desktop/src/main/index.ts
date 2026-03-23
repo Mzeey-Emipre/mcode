@@ -660,4 +660,18 @@ app.on("window-all-closed", () => {
   }
 });
 
+// On macOS, window-all-closed is not fired when the user quits via Cmd+Q
+// (the app stays alive until explicitly quit). This handler ensures sessions
+// are cleanly closed on macOS quit as well.
+app.on("before-quit", () => {
+  ptyManager?.shutdown();
+  if (appState) {
+    try {
+      appState.shutdown();
+    } catch {
+      // best-effort
+    }
+  }
+});
+
 export { mainWindow };
