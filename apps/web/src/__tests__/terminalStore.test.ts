@@ -128,7 +128,7 @@ describe("TerminalStore", () => {
 
       useTerminalStore.getState().removeTerminal("pty-1");
 
-      expect(useTerminalStore.getState().terminals["thread-1"]).toHaveLength(0);
+      expect(useTerminalStore.getState().terminals["thread-1"]).toBeUndefined();
       expect(useTerminalStore.getState().terminals["thread-2"]).toHaveLength(1);
     });
   });
@@ -141,7 +141,7 @@ describe("TerminalStore", () => {
       useTerminalStore.getState().removeAllTerminals("thread-1");
 
       const terminals = useTerminalStore.getState().terminals["thread-1"];
-      expect(terminals).toHaveLength(0);
+      expect(terminals).toBeUndefined();
     });
 
     it("hides the panel", () => {
