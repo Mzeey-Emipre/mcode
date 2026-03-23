@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "node-pty";
-import type { ITerminal } from "node-pty";
+import type { IPty, IDisposable } from "node-pty";
 import { v4 as uuid } from "uuid";
 import { logger } from "./logger.js";
 
@@ -17,7 +17,9 @@ const TERM_NAME = "xterm-256color";
 interface PtySession {
   readonly id: string;
   readonly threadId: string;
-  readonly pty: ITerminal;
+  readonly pty: IPty;
+  readonly dataDisposable: IDisposable;
+  readonly exitDisposable: IDisposable;
 }
 
 /** Sender function signature, matching Electron's webContents.send. */
@@ -71,16 +73,16 @@ export class PtyManager {
       cwd,
     });
 
-    pty.on("data", (data: string) => {
+    const dataDisposable = pty.onData((data: string) => {
       this.sender?.("pty:data", { ptyId: id, data });
     });
 
-    pty.on("exit", (exitCode: number) => {
+    const exitDisposable = pty.onExit(({ exitCode }) => {
       this.sender?.("pty:exit", { ptyId: id, exitCode });
       this.removePty(id);
     });
 
-    const session: PtySession = { id, threadId, pty };
+    const session: PtySession = { id, threadId, pty, dataDisposable, exitDisposable };
     this.sessions = new Map([...this.sessions, [id, session]]);
 
     const updatedSet = new Set(threadPtys ?? []);
@@ -163,8 +165,8 @@ export class PtyManager {
 
   private destroyPty(session: PtySession): void {
     try {
-      session.pty.removeAllListeners("data");
-      session.pty.removeAllListeners("exit");
+      session.dataDisposable.dispose();
+      session.exitDisposable.dispose();
       session.pty.kill();
     } catch (err) {
       logger.warn("Failed to kill PTY", { id: session.id, error: err });

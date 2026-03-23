@@ -4,7 +4,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Mocks
 // ---------------------------------------------------------------------------
 
-let onHandlers: Record<string, ((...args: unknown[]) => void)[]> = {};
+let onDataCallback: ((data: string) => void) | null = null;
+let onExitCallback: ((e: { exitCode: number; signal?: number }) => void) | null = null;
 
 function createMockPty() {
   return {
@@ -12,11 +13,14 @@ function createMockPty() {
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),
-    on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
-      onHandlers[event] = onHandlers[event] ?? [];
-      onHandlers[event].push(cb);
+    onData: vi.fn((cb: (data: string) => void) => {
+      onDataCallback = cb;
+      return { dispose: vi.fn() };
     }),
-    removeAllListeners: vi.fn(),
+    onExit: vi.fn((cb: (e: { exitCode: number; signal?: number }) => void) => {
+      onExitCallback = cb;
+      return { dispose: vi.fn() };
+    }),
   };
 }
 
@@ -42,7 +46,8 @@ describe("PtyManager", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    onHandlers = {};
+    onDataCallback = null;
+    onExitCallback = null;
     uuidCounter = 0;
     vi.mocked(uuid).mockImplementation(() => `pty-${++uuidCounter}`);
     manager = new PtyManager();
@@ -148,8 +153,11 @@ describe("PtyManager", () => {
     it("kills a single PTY and removes it from tracking", () => {
       const id = manager.create("thread-1", "/tmp");
       const mockPty = vi.mocked(ptySpawn).mock.results[0].value;
+      const dataDisposable = mockPty.onData.mock.results[0].value;
+      const exitDisposable = mockPty.onExit.mock.results[0].value;
       manager.kill(id);
-      expect(mockPty.removeAllListeners).toHaveBeenCalled();
+      expect(dataDisposable.dispose).toHaveBeenCalled();
+      expect(exitDisposable.dispose).toHaveBeenCalled();
       expect(mockPty.kill).toHaveBeenCalled();
       // Writing after kill should throw
       expect(() => manager.write(id, "data")).toThrow("PTY not found");
@@ -242,9 +250,8 @@ describe("PtyManager", () => {
       manager.create("thread-1", "/tmp");
 
       // Simulate data event from the PTY
-      const dataHandler = onHandlers["data"]?.[0];
-      expect(dataHandler).toBeDefined();
-      dataHandler!("hello world");
+      expect(onDataCallback).toBeDefined();
+      onDataCallback!("hello world");
 
       expect(sender).toHaveBeenCalledWith("pty:data", {
         ptyId: "pty-1",
@@ -259,9 +266,8 @@ describe("PtyManager", () => {
       manager.create("thread-1", "/tmp");
 
       // Simulate exit event
-      const exitHandler = onHandlers["exit"]?.[0];
-      expect(exitHandler).toBeDefined();
-      exitHandler!(0, undefined);
+      expect(onExitCallback).toBeDefined();
+      onExitCallback!({ exitCode: 0 });
 
       expect(sender).toHaveBeenCalledWith("pty:exit", {
         ptyId: "pty-1",
@@ -272,10 +278,9 @@ describe("PtyManager", () => {
     it("does not throw when no sender is set", () => {
       manager.create("thread-1", "/tmp");
 
-      const dataHandler = onHandlers["data"]?.[0];
-      expect(dataHandler).toBeDefined();
+      expect(onDataCallback).toBeDefined();
       // Should not throw even without a sender
-      expect(() => dataHandler!("some data")).not.toThrow();
+      expect(() => onDataCallback!("some data")).not.toThrow();
     });
   });
 });
