@@ -101,6 +101,22 @@ export function createTauriTransport(): McodeTransport {
       return null;
     },
 
+    async detectEditors() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async openInEditor() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async openInExplorer() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async getBranchPr() {
+      throw new Error("Not implemented in Tauri");
+    },
+
     async listSkills() {
       return [];
     },

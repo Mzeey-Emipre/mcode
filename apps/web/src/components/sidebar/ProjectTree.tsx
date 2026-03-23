@@ -105,6 +105,41 @@ export function ProjectTree() {
     setExpandedState(expanded);
   }, [expanded]);
 
+  // F2 shortcut: rename the active thread
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "F2") return;
+      if (!activeThreadId) return;
+      if (inlineEdit) return;
+
+      // Don't trigger when user is in any editable context
+      const target = e.target as HTMLElement;
+      const tag = target?.tagName;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target?.isContentEditable ||
+        target?.closest?.('[contenteditable="true"]') ||
+        target?.getAttribute?.("role") === "textbox" ||
+        target?.hasAttribute?.("aria-multiline")
+      ) return;
+
+      const thread = threads.find((t) => t.id === activeThreadId);
+      if (thread) {
+        e.preventDefault();
+        setInlineEdit({
+          threadId: thread.id,
+          title: thread.title,
+          originalTitle: thread.title,
+        });
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [activeThreadId, threads, inlineEdit]);
+
   const toggleExpand = useCallback((wsId: string) => {
     setExpanded((prev) => {
       const isExpanding = !prev[wsId];

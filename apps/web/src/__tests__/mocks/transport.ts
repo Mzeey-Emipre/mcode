@@ -81,5 +81,9 @@ export const mockTransport: McodeTransport = {
   discoverConfig: vi.fn().mockResolvedValue({}),
   getVersion: vi.fn().mockResolvedValue("0.1.0"),
   readClipboardImage: vi.fn().mockResolvedValue(null),
+  detectEditors: vi.fn().mockResolvedValue([]),
+  openInEditor: vi.fn().mockResolvedValue(undefined),
+  openInExplorer: vi.fn().mockResolvedValue(undefined),
+  getBranchPr: vi.fn().mockResolvedValue(null),
   listSkills: vi.fn().mockResolvedValue([] as SkillInfo[]),
 };
