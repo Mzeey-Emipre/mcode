@@ -6,7 +6,8 @@ import {
   createMockThread,
 } from "./mocks/transport";
 
-vi.mock("@/transport", () => ({
+vi.mock("@/transport", async () => ({
+  ...(await vi.importActual("@/transport")),
   getTransport: () => mockTransport,
 }));
 
