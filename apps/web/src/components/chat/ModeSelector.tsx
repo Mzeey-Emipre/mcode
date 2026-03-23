@@ -1,23 +1,33 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, FolderOpen, GitBranch, Check } from "lucide-react";
+import { ChevronDown, FolderOpen, GitBranch, GitFork, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+export type ComposerMode = "direct" | "worktree" | "existing-worktree";
+
 interface ModeSelectorProps {
-  mode: "direct" | "worktree";
-  onModeChange: (mode: "direct" | "worktree") => void;
+  mode: ComposerMode;
+  onModeChange: (mode: ComposerMode) => void;
   locked: boolean;
+  hasWorktrees?: boolean;
 }
 
-const MODE_OPTIONS = [
-  { value: "direct" as const, label: "Local", icon: FolderOpen },
-  { value: "worktree" as const, label: "New worktree", icon: GitBranch },
+const BASE_OPTIONS: Array<{ value: ComposerMode; label: string; icon: typeof FolderOpen }> = [
+  { value: "direct", label: "Local", icon: FolderOpen },
+  { value: "worktree", label: "New worktree", icon: GitBranch },
 ];
 
-export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) {
+const EXISTING_OPTION = {
+  value: "existing-worktree" as const,
+  label: "Existing worktree",
+  icon: GitFork,
+};
+
+export function ModeSelector({ mode, onModeChange, locked, hasWorktrees = false }: ModeSelectorProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const selected = MODE_OPTIONS.find((o) => o.value === mode) ?? MODE_OPTIONS[0];
+  const options = hasWorktrees ? [...BASE_OPTIONS, EXISTING_OPTION] : BASE_OPTIONS;
+  const selected = options.find((o) => o.value === mode) ?? options[0];
   const Icon = selected.icon;
 
   useEffect(() => {
@@ -31,7 +41,8 @@ export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) 
   }, []);
 
   if (locked) {
-    const lockedLabel = mode === "worktree" ? "Worktree" : "Local";
+    const lockedLabel =
+      mode === "worktree" || mode === "existing-worktree" ? "Worktree" : "Local";
     return (
       <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70">
         <Icon size={11} />
@@ -52,8 +63,8 @@ export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) 
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-md border border-border bg-popover p-1 shadow-lg">
-          {MODE_OPTIONS.map((option) => {
+        <div className="absolute bottom-full left-0 mb-1 min-w-[160px] rounded-md border border-border bg-popover p-1 shadow-lg">
+          {options.map((option) => {
             const OptionIcon = option.icon;
             return (
               <button
