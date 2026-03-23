@@ -114,6 +114,7 @@ async function activateThreadAndInjectMessages(
     ({ workspace, thread, threadId }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stores: any[] = (window as any).__mcodeStores ?? [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const wsStore = stores.find((s: any) => {
         const st = s.getState();
         return "activeThreadId" in st && "threads" in st && "workspaces" in st;
@@ -152,7 +153,7 @@ async function activateThreadAndInjectMessages(
 
   // Step 3: now inject our messages - loadMessages is done so it won't overwrite
   await page.evaluate(
-    ({ threadId, messages }) => {
+    ({ threadId: _threadId, messages }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stores: any[] = (window as any).__mcodeStores ?? [];
       const threadStore = stores.find(
@@ -292,6 +293,7 @@ test.describe("Session Restart Divider", () => {
       ({ workspace, thread, threadId }) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const stores: any[] = (window as any).__mcodeStores ?? [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const wsStore = stores.find((s: any) => "activeThreadId" in s.getState() && "threads" in s.getState());
         if (!wsStore) return;
         wsStore.setState({
@@ -360,6 +362,7 @@ test.describe("Session Restart Divider", () => {
       ({ workspace, thread, threadId }) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const stores: any[] = (window as any).__mcodeStores ?? [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const wsStore = stores.find((s: any) => "activeThreadId" in s.getState() && "threads" in s.getState());
         if (!wsStore) return;
         wsStore.setState({
