@@ -46,6 +46,22 @@ export interface Message {
   tokens_used: number | null;
   timestamp: string;
   sequence: number;
+  attachments: StoredAttachment[] | null;
+}
+
+export interface AttachmentMeta {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  sourcePath: string;
+}
+
+export interface StoredAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
 }
 
 export interface GitBranch {
@@ -101,7 +117,7 @@ export interface McodeTransport {
   checkoutBranch(workspaceId: string, branch: string): Promise<void>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
     content: string,
@@ -109,8 +125,10 @@ export interface McodeTransport {
     permissionMode?: PermissionMode,
     mode?: "direct" | "worktree",
     branch?: string,
+    attachments?: AttachmentMeta[],
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
+  readClipboardImage(): Promise<AttachmentMeta | null>;
   getActiveAgentCount(): Promise<number>;
 
   // Thread mutations

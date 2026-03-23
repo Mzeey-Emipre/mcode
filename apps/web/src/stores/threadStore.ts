@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Message, ToolCall, PermissionMode, InteractionMode } from "@/transport";
+import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 
@@ -22,7 +22,7 @@ interface ThreadState {
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
@@ -65,7 +65,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
   },
 
-  sendMessage: async (threadId, content, model, permissionMode) => {
+  sendMessage: async (threadId, content, model, permissionMode, attachments) => {
     // Add user message to local state immediately (optimistic)
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -78,6 +78,12 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       tokens_used: null,
       timestamp: new Date().toISOString(),
       sequence: get().messages.length + 1,
+      attachments: attachments?.map((a) => ({
+        id: a.id,
+        name: a.name,
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+      })) ?? null,
     };
 
     set((state) => ({
@@ -88,7 +94,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }));
 
     try {
-      await getTransport().sendMessage(threadId, content, model, permissionMode);
+      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments);
     } catch (e) {
       set((state) => {
         const next = new Set(state.runningThreadIds);
@@ -173,6 +179,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           tokens_used: (params.tokens as number) ?? null,
           timestamp: new Date().toISOString(),
           sequence: get().messages.length + 1,
+          attachments: null,
         };
         set((state) => ({
           messages: state.currentThreadId === threadId
@@ -248,6 +255,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           tokens_used: tokensIn + tokensOut || null,
           timestamp: new Date().toISOString(),
           sequence: get().messages.length + 1,
+          attachments: null,
         };
         set((state) => {
           const nextStreaming = { ...state.streamingByThread };
@@ -365,6 +373,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
               tokens_used: (usage?.output_tokens as number) ?? null,
               timestamp: new Date().toISOString(),
               sequence: get().messages.length + 1,
+              attachments: null,
             };
             set((state) => ({
               messages: state.currentThreadId === threadId
@@ -400,6 +409,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           tokens_used: (resultData.tokens_used as number) ?? null,
           timestamp: new Date().toISOString(),
           sequence: get().messages.length + 1,
+          attachments: null,
         };
         set((state) => {
           const next = { ...state.streamingByThread };

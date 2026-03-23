@@ -92,6 +92,10 @@ export function createTauriTransport(): McodeTransport {
     async getVersion() {
       return invoke<string>("get_version");
     },
+
+    async readClipboardImage() {
+      return null;
+    },
   };
 }
 

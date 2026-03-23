@@ -10,7 +10,7 @@
  *   - Handle graceful shutdown
  */
 
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, protocol } from "electron";
 import { isAbsolute, join } from "path";
 import { existsSync, mkdirSync, statSync } from "fs";
 import { homedir } from "os";
@@ -20,6 +20,7 @@ import type { SidecarEvent } from "./sidecar/types.js";
 import * as MessageRepo from "./repositories/message-repo.js";
 import * as ThreadRepo from "./repositories/thread-repo.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
+import type { AttachmentMeta } from "./models.js";
 
 /** Validated permission mode values accepted by the IPC boundary. */
 type SafePermissionMode = "full" | "supervised" | "default";
@@ -32,6 +33,41 @@ const VALID_PERMISSION_MODES = new Set<SafePermissionMode>(["full", "supervised"
  */
 function sanitizePermissionMode(mode?: string): SafePermissionMode {
   return VALID_PERMISSION_MODES.has(mode as SafePermissionMode) ? (mode as SafePermissionMode) : "default";
+}
+
+const VALID_ATTACHMENT_ID = /^[a-f0-9-]+$/;
+const VALID_MIME_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp",
+  "application/pdf", "text/plain",
+]);
+const MAX_ATTACHMENTS = 5;
+
+function validateAttachments(raw?: unknown[]): AttachmentMeta[] {
+  if (!raw || !Array.isArray(raw) || raw.length === 0) return [];
+  if (raw.length > MAX_ATTACHMENTS) {
+    throw new Error(`Too many attachments (max ${MAX_ATTACHMENTS})`);
+  }
+
+  return raw.map((item) => {
+    const att = item as Record<string, unknown>;
+    const id = String(att.id ?? "");
+    const name = String(att.name ?? "");
+    const mimeType = String(att.mimeType ?? "");
+    const sizeBytes = Number(att.sizeBytes ?? 0);
+    const sourcePath = String(att.sourcePath ?? "");
+
+    if (!VALID_ATTACHMENT_ID.test(id)) {
+      throw new Error(`Invalid attachment ID: ${id}`);
+    }
+    if (!VALID_MIME_TYPES.has(mimeType)) {
+      throw new Error(`Unsupported MIME type: ${mimeType}`);
+    }
+    if (!sourcePath || !isAbsolute(sourcePath)) {
+      throw new Error(`Invalid attachment path: ${sourcePath}`);
+    }
+
+    return { id, name, mimeType, sizeBytes, sourcePath };
+  });
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -230,20 +266,23 @@ function registerIpcHandlers(state: AppState): void {
   // -- Agent --
   ipcMain.handle(
     "send-message",
-    async (_event, threadId: string, content: string, model?: string, permissionMode?: string) => {
-      await state.sendMessage(threadId, content, sanitizePermissionMode(permissionMode), model);
+    async (_event, threadId: string, content: string, model?: string, permissionMode?: string, attachments?: unknown[]) => {
+      const validatedAttachments = validateAttachments(attachments);
+      await state.sendMessage(threadId, content, sanitizePermissionMode(permissionMode), model, validatedAttachments);
     },
   );
 
   // -- Lazy thread creation --
   ipcMain.handle(
     "create-and-send-message",
-    async (_event, workspaceId: string, content: string, model: string, permissionMode?: string, mode?: string, branch?: string) => {
+    async (_event, workspaceId: string, content: string, model: string, permissionMode?: string, mode?: string, branch?: string, attachments?: unknown[]) => {
+      const validatedAttachments = validateAttachments(attachments);
       return state.createAndSendMessage(
         workspaceId, content, model,
         sanitizePermissionMode(permissionMode),
         (mode as "direct" | "worktree") ?? "direct",
         branch ?? "main",
+        validatedAttachments,
       );
     },
   );
@@ -305,6 +344,10 @@ function registerIpcHandlers(state: AppState): void {
   ipcMain.handle("get-recent-logs", (_event, lines: number) => {
     return getRecentLogs(lines);
   });
+
+  ipcMain.handle("read-clipboard-image", async () => {
+    return state.readClipboardImage();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +400,46 @@ app.whenReady().then(() => {
   // Ensure ~/.mcode/ directory exists
   const mcodeDir = join(homedir(), ".mcode");
   mkdirSync(mcodeDir, { recursive: true });
+
+  // Register custom protocol for serving attachment images from disk.
+  // URL scheme: mcode-attachment://{threadId}/{attachmentId}.{ext}
+  protocol.handle("mcode-attachment", async (request) => {
+    const url = new URL(request.url);
+    const threadId = url.hostname;
+    const filename = url.pathname.replace(/^\//, "");
+
+    // Validate threadId (hex UUID) and filename (hex-uuid.ext)
+    if (!VALID_ATTACHMENT_ID.test(threadId)) {
+      return new Response("Invalid thread ID", { status: 400 });
+    }
+    if (!/^[a-f0-9-]+\.\w+$/.test(filename)) {
+      return new Response("Invalid attachment ID", { status: 400 });
+    }
+
+    const filePath = join(app.getPath("userData"), "attachments", threadId, filename);
+    if (!existsSync(filePath)) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    const ext = filename.split(".").pop() ?? "";
+    const mimeMap: Record<string, string> = {
+      jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+      gif: "image/gif", webp: "image/webp", pdf: "application/pdf",
+      txt: "text/plain",
+    };
+    const { createReadStream } = await import("fs");
+    const { Readable } = await import("stream");
+    const nodeStream = createReadStream(filePath);
+    const webStream = Readable.toWeb(nodeStream) as ReadableStream;
+
+    return new Response(webStream, {
+      headers: {
+        "Content-Type": mimeMap[ext] ?? "application/octet-stream",
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Content-Security-Policy": "default-src 'none'",
+      },
+    });
+  });
 
   // Initialize AppState with database
   const dbPath = join(mcodeDir, "mcode.db");

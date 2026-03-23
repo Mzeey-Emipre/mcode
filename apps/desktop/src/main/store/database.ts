@@ -91,4 +91,9 @@ function runMigrations(db: Database.Database): void {
     db.exec("ALTER TABLE threads ADD COLUMN model TEXT DEFAULT NULL");
     db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(2);
   }
+
+  if (currentVersion < 3) {
+    db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT DEFAULT NULL");
+    db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(3);
+  }
 }
