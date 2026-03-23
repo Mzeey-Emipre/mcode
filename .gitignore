@@ -41,5 +41,8 @@ playwright-report/
 test-results/
 apps/web/e2e/screenshots/
 
+# Plans (local working docs)
+docs/plans/
+
 # Logs
 *.log
