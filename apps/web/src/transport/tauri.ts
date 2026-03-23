@@ -102,7 +102,7 @@ export function createTauriTransport(): McodeTransport {
     },
 
     async listSkills() {
-      throw new Error("Not implemented in Tauri");
+      return [];
     },
   };
 }

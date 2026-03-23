@@ -148,6 +148,53 @@ describe("keyboard navigation", () => {
     expect(result.current.selectedIndex).toBe(1);
   });
 
+  it("ArrowUp decrements selectedIndex", async () => {
+    const ref = makeTextarea("/");
+    const { result } = renderHook(() =>
+      useSlashCommand({ textareaRef: ref })
+    );
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {}); // flush skill load
+
+    // Move down first so there's room to go up
+    await act(async () => {
+      result.current.onKeyDown({
+        key: "ArrowDown",
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+    });
+    expect(result.current.selectedIndex).toBe(1);
+
+    await act(async () => {
+      result.current.onKeyDown({
+        key: "ArrowUp",
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+    });
+    expect(result.current.selectedIndex).toBe(0);
+  });
+
+  it("ArrowUp clamps at 0 and does not go negative", async () => {
+    const ref = makeTextarea("/");
+    const { result } = renderHook(() =>
+      useSlashCommand({ textareaRef: ref })
+    );
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.selectedIndex).toBe(0);
+    await act(async () => {
+      result.current.onKeyDown({
+        key: "ArrowUp",
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+    });
+    expect(result.current.selectedIndex).toBe(0);
+  });
+
   it("Escape closes the popup", async () => {
     const ref = makeTextarea("/");
     const { result } = renderHook(() =>
