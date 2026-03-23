@@ -14,7 +14,6 @@ Keep commits atomic. Each commit represents one logical change.
 ## Key Documentation
 
 - **Architecture:** [ARCHITECTURE.md](ARCHITECTURE.md)
-- **Original design doc:** [docs/plans/2026-03-22-mcode-design-tauri-original.md](docs/plans/2026-03-22-mcode-design-tauri-original.md)
 - **Electron docs:** https://www.electronjs.org/docs
 - **electron-vite docs:** https://electron-vite.org/
 - **better-sqlite3 docs:** https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md

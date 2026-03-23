@@ -25,7 +25,6 @@ bun run dev:desktop
 ## Documentation
 
 - **[Architecture](ARCHITECTURE.md)** - system design, data model, IPC flow, diagrams
-- **[Design doc (original)](docs/plans/2026-03-22-mcode-design-tauri-original.md)** - historical Tauri-era design
 
 ## Tech Stack
 
