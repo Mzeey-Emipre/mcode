@@ -99,17 +99,25 @@ export function useSlashCommand({
 
       if (!skillsCache.current) {
         setIsLoading(true);
-        loadSkills().then((names) => {
-          setIsLoading(false);
-          setItems(buildItems(names, filter));
-        });
+        loadSkills()
+          .then((names) => {
+            setIsLoading(false);
+            setItems(buildItems(names, filter));
+          })
+          .catch(() => {
+            setIsLoading(false);
+          });
       } else {
         setItems(buildItems(skillsCache.current.names, filter));
         // Background refresh if TTL expired
         if (Date.now() - skillsCache.current.fetchedAt >= CACHE_TTL_MS) {
-          loadSkills().then((names) => {
-            setItems(buildItems(names, filter));
-          });
+          loadSkills()
+            .then((names) => {
+              setItems(buildItems(names, filter));
+            })
+            .catch(() => {
+              // Background refresh failed silently; existing cache remains
+            });
         }
       }
     },
