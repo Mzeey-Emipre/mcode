@@ -46,6 +46,19 @@ export function validateName(name: string): void {
   }
 }
 
+/** Validate a git branch name. */
+export function validateBranchName(branch: string): void {
+  if (!branch || branch.length > 250) {
+    throw new Error("Branch name must be 1-250 characters");
+  }
+  if (branch.startsWith("-")) {
+    throw new Error("Branch name cannot start with '-'");
+  }
+  if (/[ \t~^:?*[\\\x00-\x1f\x7f]/.test(branch) || branch.includes("..")) {
+    throw new Error(`Branch name contains invalid characters: ${branch}`);
+  }
+}
+
 /**
  * Create a new git worktree for the given name.
  * Checks it out in `~/.mcode/worktrees/<workspace>/<name>`.
@@ -63,6 +76,7 @@ export function createWorktree(
   }
 
   const branch = branchName ?? `mcode/${name}`;
+  validateBranchName(branch);
   const wtPath = join(getWorktreeBaseDir(repoPath), name);
 
   if (existsSync(wtPath)) {
@@ -82,6 +96,7 @@ export function removeWorktree(repoPath: string, name: string, branchName?: stri
 
   const wtPath = join(getWorktreeBaseDir(repoPath), name);
   const branch = branchName ?? `mcode/${name}`;
+  validateBranchName(branch);
 
   try {
     execFileSync(

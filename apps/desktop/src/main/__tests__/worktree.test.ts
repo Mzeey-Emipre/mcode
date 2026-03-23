@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { validateName, createWorktree, removeWorktree, listBranches, getCurrentBranch, branchExists, checkoutBranch, listWorktrees } from "../worktree.js";
+import { validateName, validateBranchName, createWorktree, removeWorktree, listBranches, getCurrentBranch, branchExists, checkoutBranch, listWorktrees } from "../worktree.js";
 import { execFileSync } from "child_process";
 import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
@@ -33,6 +33,30 @@ describe("validateName", () => {
 
   it("rejects dot-prefixed names", () => {
     expect(() => validateName(".hidden")).toThrow("cannot start with '.'");
+  });
+});
+
+describe("validateBranchName", () => {
+  it("accepts valid branch names", () => {
+    expect(() => validateBranchName("feat/my-feature")).not.toThrow();
+    expect(() => validateBranchName("mcode-abc123")).not.toThrow();
+    expect(() => validateBranchName("fix/issue-42")).not.toThrow();
+  });
+
+  it("rejects empty string", () => {
+    expect(() => validateBranchName("")).toThrow("1-250 characters");
+  });
+
+  it("rejects names starting with dash", () => {
+    expect(() => validateBranchName("-flag")).toThrow("cannot start with '-'");
+  });
+
+  it("rejects names with double dots", () => {
+    expect(() => validateBranchName("foo..bar")).toThrow("invalid characters");
+  });
+
+  it("rejects names with spaces", () => {
+    expect(() => validateBranchName("my branch")).toThrow("invalid characters");
   });
 });
 
@@ -92,12 +116,14 @@ describe("Git operations (integration)", { timeout: 30_000 }, () => {
 
   it("listWorktrees returns actual branch names", () => {
     createWorktree(repoPath, "branch-read-test", "fix/read-actual");
-    const wts = listWorktrees(repoPath);
-    const wt = wts.find((w) => w.name === "branch-read-test");
-    expect(wt).toBeDefined();
-    expect(wt!.branch).toBe("fix/read-actual");
-    // cleanup
-    removeWorktree(repoPath, "branch-read-test", "fix/read-actual");
+    try {
+      const wts = listWorktrees(repoPath);
+      const wt = wts.find((w) => w.name === "branch-read-test");
+      expect(wt).toBeDefined();
+      expect(wt!.branch).toBe("fix/read-actual");
+    } finally {
+      removeWorktree(repoPath, "branch-read-test", "fix/read-actual");
+    }
   });
 
   it("removeWorktree deletes a custom-named branch", () => {
