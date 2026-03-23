@@ -20,6 +20,19 @@ import type { SidecarEvent } from "./sidecar/types.js";
 import * as MessageRepo from "./repositories/message-repo.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
 
+/** Validated permission mode values accepted by the IPC boundary. */
+type SafePermissionMode = "full" | "supervised" | "default";
+const VALID_PERMISSION_MODES = new Set<SafePermissionMode>(["full", "supervised", "default"]);
+
+/**
+ * Validate a permission mode string from the renderer process.
+ * Returns "default" for any unrecognized value, preventing injection
+ * of arbitrary strings into the SDK's bypassPermissions flag.
+ */
+function sanitizePermissionMode(mode?: string): SafePermissionMode {
+  return VALID_PERMISSION_MODES.has(mode as SafePermissionMode) ? (mode as SafePermissionMode) : "default";
+}
+
 let mainWindow: BrowserWindow | null = null;
 let appState: AppState | null = null;
 
@@ -184,9 +197,8 @@ function registerIpcHandlers(state: AppState): void {
   // -- Agent --
   ipcMain.handle(
     "send-message",
-    async (_event, threadId: string, content: string, permissionMode?: string, model?: string) => {
-      const mode = permissionMode ?? "default";
-      await state.sendMessage(threadId, content, mode, model);
+    async (_event, threadId: string, content: string, model?: string, permissionMode?: string) => {
+      await state.sendMessage(threadId, content, sanitizePermissionMode(permissionMode), model);
     },
   );
 
@@ -196,7 +208,7 @@ function registerIpcHandlers(state: AppState): void {
     async (_event, workspaceId: string, content: string, model: string, permissionMode?: string, mode?: string, branch?: string) => {
       return state.createAndSendMessage(
         workspaceId, content, model,
-        permissionMode ?? "default",
+        sanitizePermissionMode(permissionMode),
         (mode as "direct" | "worktree") ?? "direct",
         branch ?? "main",
       );

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Workspace, Thread, GitBranch } from "@/transport";
+import type { Workspace, Thread, GitBranch, PermissionMode } from "@/transport";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 
@@ -29,7 +29,7 @@ interface WorkspaceState {
     mode: "direct" | "worktree",
     branch: string,
   ) => Promise<Thread>;
-  createAndSendMessage: (content: string, model: string, permissionMode?: string) => Promise<Thread>;
+  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode) => Promise<Thread>;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
   setPendingNewThread: (value: boolean) => void;

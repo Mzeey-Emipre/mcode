@@ -3,7 +3,8 @@ import { describe, it, expect, vi } from "vitest";
 import { App } from "../app/App";
 
 // Mock the transport module to prevent Tauri initialization errors
-vi.mock("@/transport", () => ({
+vi.mock("@/transport", async () => ({
+  ...(await vi.importActual("@/transport")),
   getTransport: () => ({
     listWorkspaces: vi.fn().mockResolvedValue([]),
     listThreads: vi.fn().mockResolvedValue([]),

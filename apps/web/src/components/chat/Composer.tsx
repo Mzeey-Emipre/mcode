@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import type { PermissionMode, InteractionMode } from "@/transport";
+import { PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import {
   ArrowUp,
   Square,
@@ -23,16 +25,15 @@ interface ComposerProps {
   workspaceId?: string;
 }
 
-type InteractionMode = "chat" | "plan";
-type AccessMode = "full" | "supervised";
+type AccessMode = PermissionMode;
 type ReasoningLevel = "low" | "medium" | "high";
 
 export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) {
   const [input, setInput] = useState("");
   const [modelId, setModelId] = useState(getDefaultModel().id);
   const [reasoning, setReasoning] = useState<ReasoningLevel>("high");
-  const [mode, setMode] = useState<InteractionMode>("chat");
-  const [access, setAccess] = useState<AccessMode>("full");
+  const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.CHAT);
+  const [access, setAccess] = useState<AccessMode>(PERMISSION_MODES.FULL);
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
   const [execMode, setExecModeLocal] = useState<"direct" | "worktree">("direct");
   const [preparingWorktree, setPreparingWorktree] = useState(false);
@@ -41,6 +42,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const sendMessage = useThreadStore((s) => s.sendMessage);
   const stopAgent = useThreadStore((s) => s.stopAgent);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+  const getThreadSettings = useThreadStore((s) => s.getThreadSettings);
+  const setThreadSettings = useThreadStore((s) => s.setThreadSettings);
   const isAgentRunning = threadId ? runningThreadIds.has(threadId) : false;
 
   const threads = useWorkspaceStore((s) => s.threads);
@@ -60,6 +63,15 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       setModelId(activeThread.model);
     }
   }, [activeThread?.model]);
+
+  // Sync access mode and interaction mode from per-thread settings
+  useEffect(() => {
+    if (threadId) {
+      const settings = getThreadSettings(threadId);
+      setAccess(settings.permissionMode);
+      setMode(settings.interactionMode);
+    }
+  }, [threadId, getThreadSettings]);
 
   // Combined setter that keeps local + store in sync
   const setExecMode = useCallback(
@@ -228,10 +240,14 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
           {/* Chat / Plan toggle */}
           <button
-            onClick={() => setMode(mode === "chat" ? "plan" : "chat")}
+            onClick={() => {
+              const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
+              setMode(next);
+              if (threadId) setThreadSettings(threadId, { interactionMode: next });
+            }}
             className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            {mode === "chat" ? (
+            {mode === INTERACTION_MODES.CHAT ? (
               <>
                 <MessageSquare size={12} />
                 Chat
@@ -248,10 +264,14 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
           {/* Full access / Supervised toggle */}
           <button
-            onClick={() => setAccess(access === "full" ? "supervised" : "full")}
+            onClick={() => {
+              const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
+              setAccess(next);
+              if (threadId) setThreadSettings(threadId, { permissionMode: next });
+            }}
             className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            {access === "full" ? (
+            {access === PERMISSION_MODES.FULL ? (
               <>
                 <Unlock size={12} />
                 Full access

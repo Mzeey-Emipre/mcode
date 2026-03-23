@@ -1,6 +1,11 @@
 import { create } from "zustand";
-import type { Message, ToolCall } from "@/transport";
-import { getTransport } from "@/transport";
+import type { Message, ToolCall, PermissionMode, InteractionMode } from "@/transport";
+import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
+
+export interface ThreadSettings {
+  permissionMode: PermissionMode;
+  interactionMode: InteractionMode;
+}
 
 interface ThreadState {
   messages: Message[];
@@ -11,16 +16,27 @@ interface ThreadState {
   streamingByThread: Record<string, string>;
   toolCallsByThread: Record<string, ToolCall[]>;
   agentStartTimes: Record<string, number>;
+  /** Per-thread permission mode and interaction mode. */
+  settingsByThread: Record<string, ThreadSettings>;
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: string) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
   isThreadRunning: (threadId: string) => boolean;
   handleAgentEvent: (threadId: string, event: Record<string, unknown>) => void;
+
+  // Per-thread settings
+  getThreadSettings: (threadId: string) => ThreadSettings;
+  setThreadSettings: (threadId: string, settings: Partial<ThreadSettings>) => void;
 }
+
+const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
+  permissionMode: PERMISSION_MODES.FULL,
+  interactionMode: INTERACTION_MODES.CHAT,
+};
 
 export const useThreadStore = create<ThreadState>((set, get) => ({
   messages: [],
@@ -31,6 +47,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   streamingByThread: {},
   toolCallsByThread: {},
   agentStartTimes: {},
+  settingsByThread: {},
 
   loadMessages: async (threadId) => {
     set({ loading: true, error: null, currentThreadId: threadId });
@@ -109,6 +126,19 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
 
   isThreadRunning: (threadId) => {
     return get().runningThreadIds.has(threadId);
+  },
+
+  getThreadSettings: (threadId) => {
+    return get().settingsByThread[threadId] ?? DEFAULT_THREAD_SETTINGS;
+  },
+
+  setThreadSettings: (threadId, settings) => {
+    set((state) => ({
+      settingsByThread: {
+        ...state.settingsByThread,
+        [threadId]: { ...state.getThreadSettings(threadId), ...settings },
+      },
+    }));
   },
 
   handleAgentEvent: (threadId, event) => {

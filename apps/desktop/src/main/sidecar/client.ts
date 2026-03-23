@@ -40,6 +40,17 @@ export class SidecarClient extends EventEmitter {
    *
    * Runs the SDK query() async generator in-process and emits SidecarEvents
    * on the same EventEmitter interface the old JSON-RPC client used.
+   *
+   * SDK options include settingSources (user/project/local) to load CLAUDE.md,
+   * skills, hooks, and settings; the claude_code system prompt preset; and the
+   * full Claude Code tool surface.
+   *
+   * @param sessionId - Thread session ID (prefixed with "mcode-")
+   * @param message - User message content
+   * @param cwd - Working directory for the agent session
+   * @param model - Claude model identifier (e.g. "claude-sonnet-4-6")
+   * @param resume - Whether to resume an existing session or start a new one
+   * @param permissionMode - "full" maps to bypassPermissions; anything else maps to default
    */
   async sendMessage(
     sessionId: string,
