@@ -109,5 +109,13 @@ export function createElectronTransport(): McodeTransport {
     async getVersion() {
       return api.invoke("get-version") as Promise<string>;
     },
+
+    async listWorkspaceFiles(workspaceId, threadId) {
+      return api.invoke("list-workspace-files", workspaceId, threadId) as Promise<string[]>;
+    },
+
+    async readFileContent(workspaceId, relativePath, threadId) {
+      return api.invoke("read-file-content", workspaceId, relativePath, threadId) as Promise<string>;
+    },
   };
 }

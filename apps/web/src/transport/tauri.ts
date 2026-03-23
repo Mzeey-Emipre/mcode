@@ -100,6 +100,14 @@ export function createTauriTransport(): McodeTransport {
     async readClipboardImage() {
       return null;
     },
+
+    async listWorkspaceFiles() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async readFileContent() {
+      throw new Error("Not implemented in Tauri");
+    },
   };
 }
 
