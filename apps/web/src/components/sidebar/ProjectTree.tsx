@@ -112,13 +112,22 @@ export function ProjectTree() {
       if (!activeThreadId) return;
       if (inlineEdit) return;
 
-      // Don't trigger when user is typing in an input or textarea
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Don't trigger when user is in any editable context
+      const target = e.target as HTMLElement;
+      const tag = target?.tagName;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target?.isContentEditable ||
+        target?.closest?.('[contenteditable="true"]') ||
+        target?.getAttribute?.("role") === "textbox" ||
+        target?.hasAttribute?.("aria-multiline")
+      ) return;
 
-      e.preventDefault();
       const thread = threads.find((t) => t.id === activeThreadId);
       if (thread) {
+        e.preventDefault();
         setInlineEdit({
           threadId: thread.id,
           title: thread.title,
