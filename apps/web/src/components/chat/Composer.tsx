@@ -24,7 +24,7 @@ import { BranchNameInput } from "./BranchNameInput";
 import { WorktreePicker } from "./WorktreePicker";
 import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
-import { useFileAutocomplete } from "./useFileAutocomplete";
+import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { TextOverlay } from "./TextOverlay";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
@@ -401,6 +401,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         );
         if (!confirmed) return;
         await useWorkspaceStore.getState().checkoutBranch(workspaceId, newThreadBranch);
+        clearFileListCache(workspaceId);
       }
     }
 

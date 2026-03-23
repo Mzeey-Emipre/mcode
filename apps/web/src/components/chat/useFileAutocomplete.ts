@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { getTransport } from "@/transport";
 
 interface UseFileAutocompleteOptions {
@@ -16,13 +16,25 @@ interface UseFileAutocompleteResult {
   dismiss: () => void;
 }
 
-/** Cache file list per workspace to avoid repeated IPC calls. */
+/** Build a composite cache key from workspace + thread scope. */
+function scopeKey(workspaceId: string, threadId?: string): string {
+  return threadId ? `${workspaceId}:${threadId}` : workspaceId;
+}
+
+/** Cache file list per scope (workspace + thread) to avoid repeated IPC calls. */
 const fileListCache = new Map<string, string[]>();
 
-/** Clear the cache (call after git operations). */
-export function clearFileListCache(workspaceId?: string): void {
+/** In-flight fetch promises keyed by scope, so concurrent callers reuse the same request. */
+const inFlightFetches = new Map<string, Promise<string[]>>();
+
+/**
+ * Clear the cached file list for a scope.
+ * Pass workspaceId (and optionally threadId) to clear a specific scope,
+ * or call with no arguments to clear everything.
+ */
+export function clearFileListCache(workspaceId?: string, threadId?: string): void {
   if (workspaceId) {
-    fileListCache.delete(workspaceId);
+    fileListCache.delete(scopeKey(workspaceId, threadId));
   } else {
     fileListCache.clear();
   }
@@ -33,7 +45,7 @@ export function clearFileListCache(workspaceId?: string): void {
  *
  * Detects `@` triggers by scanning backward from the cursor, lazy-loads
  * the workspace file list via IPC on first trigger, and filters results
- * by substring match. Caches file lists per workspace at module scope.
+ * by substring match. Caches file lists per scope at module scope.
  */
 export function useFileAutocomplete({
   workspaceId,
@@ -44,29 +56,61 @@ export function useFileAutocomplete({
   const [filteredFiles, setFilteredFiles] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [triggerStart, setTriggerStart] = useState(-1);
-  const loadingRef = useRef(false);
 
-  const loadFiles = useCallback(async () => {
-    if (!workspaceId || loadingRef.current) return;
+  // Reset local state when scope changes so stale data isn't used.
+  const prevScopeRef = useRef<string>("");
+  useEffect(() => {
+    const key = workspaceId ? scopeKey(workspaceId, threadId) : "";
+    if (key !== prevScopeRef.current) {
+      prevScopeRef.current = key;
+      setAllFiles([]);
+    }
+  }, [workspaceId, threadId]);
 
-    const cached = fileListCache.get(workspaceId);
+  const loadFiles = useCallback(async (): Promise<string[] | undefined> => {
+    if (!workspaceId) return;
+
+    const key = scopeKey(workspaceId, threadId);
+
+    // Return from cache if available.
+    const cached = fileListCache.get(key);
     if (cached) {
       setAllFiles(cached);
       return cached;
     }
 
-    loadingRef.current = true;
-    try {
-      const files = await getTransport().listWorkspaceFiles(workspaceId, threadId);
-      fileListCache.set(workspaceId, files);
+    // Reuse an in-flight fetch for the same scope instead of starting a new one.
+    const existing = inFlightFetches.get(key);
+    if (existing) {
+      const files = await existing;
       setAllFiles(files);
       return files;
-    } catch (err) {
-      console.error("[useFileAutocomplete] Failed to load files:", err);
-      return [];
-    } finally {
-      loadingRef.current = false;
     }
+
+    // Start a new fetch and store its promise so concurrent callers share it.
+    const fetchPromise = getTransport()
+      .listWorkspaceFiles(workspaceId, threadId)
+      .then((files) => {
+        fileListCache.set(key, files);
+        return files;
+      })
+      .catch((err) => {
+        console.error("[useFileAutocomplete] Failed to load files:", err);
+        return [] as string[];
+      })
+      .finally(() => {
+        inFlightFetches.delete(key);
+      });
+
+    inFlightFetches.set(key, fetchPromise);
+
+    const files = await fetchPromise;
+    // Only update state if scope hasn't changed during the async gap.
+    const currentKey = scopeKey(workspaceId, threadId);
+    if (currentKey === key) {
+      setAllFiles(files);
+    }
+    return files;
   }, [workspaceId, threadId]);
 
   const handleInputChange = useCallback(
