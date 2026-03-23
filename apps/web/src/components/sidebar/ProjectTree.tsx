@@ -355,6 +355,7 @@ export function ProjectTree() {
                 checked={deleteWorktree}
                 onCheckedChange={(checked) => setDeleteWorktree(checked)}
                 className="data-[checked]:bg-destructive"
+                aria-label="Delete worktree"
               />
             </div>
           )}
@@ -496,8 +497,10 @@ function ProjectNode({
                     value={inlineEdit.title}
                     onChange={(e) => onInlineEditChange(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") onInlineEditCommit();
-                      if (e.key === "Escape") onInlineEditCancel();
+                      if (!e.nativeEvent.isComposing) {
+                        if (e.key === "Enter") onInlineEditCommit();
+                        if (e.key === "Escape") onInlineEditCancel();
+                      }
                       e.stopPropagation();
                     }}
                     onBlur={onInlineEditCommit}
