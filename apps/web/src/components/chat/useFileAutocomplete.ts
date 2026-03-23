@@ -54,6 +54,9 @@ export function useFileAutocomplete({
       fileListCache.set(workspaceId, files);
       setAllFiles(files);
       return files;
+    } catch (err) {
+      console.error("[useFileAutocomplete] Failed to load files:", err);
+      return [];
     } finally {
       loadingRef.current = false;
     }

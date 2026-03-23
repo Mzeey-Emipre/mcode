@@ -120,7 +120,7 @@ export function ChatView() {
       </div>
 
       {/* Composer */}
-      <Composer threadId={activeThread.id} />
+      <Composer threadId={activeThread.id} workspaceId={activeWorkspaceId ?? undefined} />
     </div>
   );
 }

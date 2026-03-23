@@ -22,6 +22,13 @@ export interface FileContent {
   content: string;
 }
 
+/** Strip injected file blocks from a message for display purposes. */
+export function stripInjectedFiles(text: string): string {
+  const separator = "\n\n---\n<file path=";
+  const idx = text.indexOf(separator);
+  return idx === -1 ? text : text.slice(0, idx);
+}
+
 /** Build the final message with file content injected after a separator. */
 export function buildInjectedMessage(
   text: string,

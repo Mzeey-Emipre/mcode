@@ -415,7 +415,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setPreparingWorktree(false);
       }
     } else if (threadId) {
-      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined);
+      const display = messageContent !== trimmed ? trimmed : undefined;
+      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, display);
     }
     textareaRef.current?.focus();
   }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree]);
