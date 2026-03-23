@@ -17,7 +17,11 @@ import { cn } from "@/lib/utils";
 import { getDefaultModel } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
+import type { ComposerMode } from "./ModeSelector";
 import { BranchPicker } from "./BranchPicker";
+import { NamingModeSelector } from "./NamingModeSelector";
+import { BranchNameInput } from "./BranchNameInput";
+import { WorktreePicker } from "./WorktreePicker";
 
 interface ComposerProps {
   threadId?: string;
@@ -35,7 +39,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.CHAT);
   const [access, setAccess] = useState<AccessMode>(PERMISSION_MODES.FULL);
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
-  const [execMode, setExecModeLocal] = useState<"direct" | "worktree">("direct");
+  const [composerMode, setComposerModeLocal] = useState<ComposerMode>("direct");
   const [preparingWorktree, setPreparingWorktree] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -57,6 +61,17 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const setNewThreadMode = useWorkspaceStore((s) => s.setNewThreadMode);
   const setNewThreadBranch = useWorkspaceStore((s) => s.setNewThreadBranch);
 
+  const worktrees = useWorkspaceStore((s) => s.worktrees);
+  const worktreesLoading = useWorkspaceStore((s) => s.worktreesLoading);
+  const namingMode = useWorkspaceStore((s) => s.namingMode);
+  const customBranchName = useWorkspaceStore((s) => s.customBranchName);
+  const autoPreviewBranch = useWorkspaceStore((s) => s.autoPreviewBranch);
+  const selectedWorktree = useWorkspaceStore((s) => s.selectedWorktree);
+  const loadWorktrees = useWorkspaceStore((s) => s.loadWorktrees);
+  const setNamingMode = useWorkspaceStore((s) => s.setNamingMode);
+  const setCustomBranchName = useWorkspaceStore((s) => s.setCustomBranchName);
+  const setSelectedWorktree = useWorkspaceStore((s) => s.setSelectedWorktree);
+
   // Sync modelId with the active thread's locked model when switching threads
   useEffect(() => {
     if (activeThread?.model) {
@@ -74,18 +89,21 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   }, [threadId, getThreadSettings]);
 
   // Combined setter that keeps local + store in sync
-  const setExecMode = useCallback(
-    (mode: "direct" | "worktree") => {
-      setExecModeLocal(mode);
+  const setComposerMode = useCallback(
+    (mode: ComposerMode) => {
+      setComposerModeLocal(mode);
       setNewThreadMode(mode);
+      if (mode === "existing-worktree" && workspaceId) {
+        loadWorktrees(workspaceId);
+      }
     },
-    [setNewThreadMode],
+    [setNewThreadMode, loadWorktrees, workspaceId],
   );
 
-  // Sync execMode with thread's persisted mode when switching threads
+  // Sync composerMode with thread's persisted mode when switching threads
   useEffect(() => {
     const mode = activeThread?.mode === "worktree" ? "worktree" : "direct";
-    setExecModeLocal(mode);
+    setComposerModeLocal(mode);
     setNewThreadMode(mode);
   }, [activeThread?.mode, setNewThreadMode]);
 
@@ -95,6 +113,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       loadBranches(workspaceId);
     }
   }, [isNewThread, workspaceId, branches.length, loadBranches]);
+
+  // Load worktrees for existing-worktree availability
+  useEffect(() => {
+    if (isNewThread && workspaceId) {
+      loadWorktrees(workspaceId);
+    }
+  }, [isNewThread, workspaceId, loadWorktrees]);
 
   // Auto-select current branch if none selected
   useEffect(() => {
@@ -127,6 +152,14 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     const trimmed = input.trim();
     if (!trimmed || isAgentRunning) return;
 
+    // Validate worktree mode requirements
+    if (isNewThread && newThreadMode === "worktree" && namingMode === "custom" && !customBranchName.trim()) {
+      return;
+    }
+    if (isNewThread && newThreadMode === "existing-worktree" && !selectedWorktree) {
+      return;
+    }
+
     // Checkout confirmation for local mode when a different branch is selected
     if (isNewThread && newThreadMode === "direct" && newThreadBranch && workspaceId) {
       const currentBranch = await useWorkspaceStore.getState().getCurrentBranch(workspaceId);
@@ -141,7 +174,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
     setInput("");
     if (isNewThread && workspaceId) {
-      if (newThreadMode === "worktree") {
+      if (newThreadMode === "worktree" || newThreadMode === "existing-worktree") {
         setPreparingWorktree(true);
       }
       try {
@@ -153,7 +186,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       await sendMessage(threadId, trimmed, modelId, access);
     }
     textareaRef.current?.focus();
-  }, [input, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access]);
+  }, [input, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, composerMode, namingMode, customBranchName, selectedWorktree]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -317,19 +350,39 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       {/* Status bar - below the container */}
       <div className="flex items-center justify-between px-1 pt-1.5">
         <ModeSelector
-          mode={execMode}
-          onModeChange={setExecMode}
+          mode={composerMode}
+          onModeChange={setComposerMode}
           locked={!isNewThread}
+          hasWorktrees={worktrees.length > 0}
         />
-        <div className="ml-auto flex items-center">
+        <div className="ml-auto flex items-center gap-1">
           {isNewThread ? (
-            <BranchPicker
-              branches={branches}
-              selectedBranch={newThreadBranch || "main"}
-              onSelect={setNewThreadBranch}
-              loading={branchesLoading}
-              locked={false}
-            />
+            composerMode === "direct" ? (
+              <BranchPicker
+                branches={branches}
+                selectedBranch={newThreadBranch || "main"}
+                onSelect={setNewThreadBranch}
+                loading={branchesLoading}
+                locked={false}
+              />
+            ) : composerMode === "worktree" ? (
+              <>
+                <NamingModeSelector mode={namingMode} onModeChange={setNamingMode} />
+                <BranchNameInput
+                  namingMode={namingMode}
+                  autoPreview={autoPreviewBranch}
+                  customValue={customBranchName}
+                  onCustomChange={setCustomBranchName}
+                />
+              </>
+            ) : composerMode === "existing-worktree" ? (
+              <WorktreePicker
+                worktrees={worktrees}
+                selectedPath={selectedWorktree?.path ?? ""}
+                onSelect={setSelectedWorktree}
+                loading={worktreesLoading}
+              />
+            ) : null
           ) : activeThread?.branch ? (
             <BranchPicker
               branches={[]}
