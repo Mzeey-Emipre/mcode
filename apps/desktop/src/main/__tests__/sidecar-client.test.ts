@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SidecarEvent } from "../sidecar/types.js";
 
-// Helper: create a mock async iterable that yields events and has setModel
+// Helper: create a mock async iterable that yields events and has setModel.
+// Returns typed as ReturnType<typeof query> to avoid repeated casts at call sites.
 function createMockQuery(events: Array<Record<string, unknown>>) {
   const iterable = {
     async *[Symbol.asyncIterator]() {
@@ -11,7 +12,7 @@ function createMockQuery(events: Array<Record<string, unknown>>) {
     },
     setModel: vi.fn().mockResolvedValue(undefined),
   };
-  return iterable;
+  return iterable as unknown as ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").query>;
 }
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -63,7 +64,7 @@ describe("SidecarClient", () => {
           total_cost_usd: 0.01,
           usage: { input_tokens: 50, output_tokens: 100 },
         },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -103,7 +104,7 @@ describe("SidecarClient", () => {
           },
         },
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-123", "Read file", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -129,7 +130,7 @@ describe("SidecarClient", () => {
           tool_input: { command: "ls" },
         },
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-123", "List files", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -155,7 +156,7 @@ describe("SidecarClient", () => {
           is_error: false,
         },
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-123", "Read file", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -181,7 +182,7 @@ describe("SidecarClient", () => {
           is_error: false,
         },
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-123", "Op", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -200,7 +201,7 @@ describe("SidecarClient", () => {
       createMockQuery([
         { type: "system", subtype: "init" },
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -222,7 +223,7 @@ describe("SidecarClient", () => {
         },
         setModel: vi.fn().mockResolvedValue(undefined),
       };
-      return iter as ReturnType<typeof query>;
+      return iter as unknown as ReturnType<typeof query>;
     });
 
     await client.sendMessage("mcode-456", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -247,7 +248,7 @@ describe("SidecarClient", () => {
         },
         setModel: vi.fn().mockResolvedValue(undefined),
       };
-      return iter as ReturnType<typeof query>;
+      return iter as unknown as ReturnType<typeof query>;
     });
 
     await client.sendMessage("mcode-789", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -269,7 +270,7 @@ describe("SidecarClient", () => {
           message: { content: [] },
         },
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -287,7 +288,7 @@ describe("SidecarClient", () => {
       { type: "result", stop_reason: "end_turn" },
     ]);
 
-    vi.mocked(query).mockReturnValue(mockIterable as ReturnType<typeof query>);
+    vi.mocked(query).mockReturnValue(mockIterable as unknown as ReturnType<typeof query>);
 
     await client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", true, "default");
 
@@ -299,7 +300,7 @@ describe("SidecarClient", () => {
       { type: "result", stop_reason: "end_turn" },
     ]);
 
-    vi.mocked(query).mockReturnValue(mockIterable as ReturnType<typeof query>);
+    vi.mocked(query).mockReturnValue(mockIterable as unknown as ReturnType<typeof query>);
 
     await client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
 
@@ -335,7 +336,7 @@ describe("SidecarClient", () => {
         },
         setModel: vi.fn().mockResolvedValue(undefined),
       };
-      return iter as ReturnType<typeof query>;
+      return iter as unknown as ReturnType<typeof query>;
     });
 
     const sendPromise = client.sendMessage("mcode-stop", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -370,7 +371,7 @@ describe("SidecarClient", () => {
         },
         setModel: vi.fn().mockResolvedValue(undefined),
       };
-      return iter as ReturnType<typeof query>;
+      return iter as unknown as ReturnType<typeof query>;
     });
 
     const p1 = client.sendMessage("mcode-dup", "msg1", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -398,7 +399,7 @@ describe("SidecarClient", () => {
     vi.mocked(query).mockReturnValue(
       createMockQuery([
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-abc-def", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -417,7 +418,7 @@ describe("SidecarClient", () => {
     vi.mocked(query).mockReturnValue(
       createMockQuery([
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-abc-def", "Hi", "/tmp", "claude-sonnet-4-6", true, "default");
@@ -440,7 +441,7 @@ describe("SidecarClient", () => {
     vi.mocked(query).mockReturnValue(
       createMockQuery([
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "full");
@@ -459,7 +460,7 @@ describe("SidecarClient", () => {
     vi.mocked(query).mockReturnValue(
       createMockQuery([
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -480,7 +481,7 @@ describe("SidecarClient", () => {
     vi.mocked(query).mockReturnValue(
       createMockQuery([
         { type: "result", stop_reason: "end_turn" },
-      ]) as ReturnType<typeof query>,
+      ]),
     );
 
     await client.sendMessage("mcode-cleanup", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
