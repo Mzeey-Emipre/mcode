@@ -18,11 +18,12 @@ import { SidecarClient } from "./sidecar/client.js";
 import {
   createWorktree,
   removeWorktree,
+  listWorktrees,
   listBranches,
   getCurrentBranch,
   checkoutBranch,
 } from "./worktree.js";
-import type { GitBranchInfo } from "./worktree.js";
+import type { GitBranchInfo, WorktreeInfo } from "./worktree.js";
 import { discoverConfig, type ConfigSummary } from "./config.js";
 import { logger } from "./logger.js";
 import type { Workspace, Thread, Message } from "./models.js";
@@ -89,6 +90,12 @@ export class AppState {
     checkoutBranch(workspace.path, branch);
   }
 
+  listWorktrees(workspaceId: string): WorktreeInfo[] {
+    const workspace = WorkspaceRepo.findById(this.db, workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+    return listWorktrees(workspace.path);
+  }
+
   // ---------------------------------------------------------------------------
   // Thread commands
   // ---------------------------------------------------------------------------
@@ -144,20 +151,18 @@ export class AppState {
       const worktreeName = `${sanitizedTitle}-${shortId}`;
 
       try {
-        const info = createWorktree(workspace.path, worktreeName);
+        // Pass branch as the actual git branch name
+        const info = createWorktree(workspace.path, worktreeName, branch);
 
-        // Step 3: update worktree_path and branch in DB
+        // Step 3: update worktree_path in DB
         ThreadRepo.updateStatus(this.db, thread.id, "active");
         const updated = ThreadRepo.updateWorktreePath(this.db, thread.id, info.path);
-        // Update the branch field to the actual worktree branch name
-        if (info.branch) {
-          const stmt = this.db.prepare("UPDATE threads SET branch = ?, updated_at = ? WHERE id = ?");
-          stmt.run(info.branch, new Date().toISOString(), thread.id);
-        }
+        // Branch is already correct in DB from ThreadRepo.create - no raw SQL needed
+
         if (!updated) {
           // Rollback: remove worktree then delete DB record
           try {
-            removeWorktree(workspace.path, worktreeName);
+            removeWorktree(workspace.path, worktreeName, branch);
           } catch {
             // best-effort cleanup
           }
@@ -205,7 +210,7 @@ export class AppState {
             .split("/")
             .pop() ?? thread.worktree_path;
           try {
-            removeWorktree(workspace.path, wtName);
+            removeWorktree(workspace.path, wtName, thread.branch);
           } catch {
             // Non-fatal: worktree may already be gone
           }
@@ -339,12 +344,21 @@ export class AppState {
     permissionMode = "default",
     mode: "direct" | "worktree" = "direct",
     branch = "main",
+    existingWorktreePath?: string,
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
-    const thread = mode === "worktree"
-      ? this.createThread(workspaceId, title, "worktree", branch)
-      : ThreadRepo.create(this.db, workspaceId, title, "direct", branch);
+    let thread: Thread;
+    if (existingWorktreePath) {
+      // Attach to existing worktree: DB record only, no git operations
+      thread = ThreadRepo.create(this.db, workspaceId, title, "worktree", branch);
+      ThreadRepo.updateWorktreePath(this.db, thread.id, existingWorktreePath);
+      thread = { ...thread, worktree_path: existingWorktreePath };
+    } else if (mode === "worktree") {
+      thread = this.createThread(workspaceId, title, "worktree", branch);
+    } else {
+      thread = ThreadRepo.create(this.db, workspaceId, title, "direct", branch);
+    }
 
     await this.sendMessage(thread.id, content, permissionMode, model);
 
