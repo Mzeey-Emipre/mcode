@@ -9,15 +9,17 @@ interface HeaderActionsProps {
 }
 
 export function HeaderActions({ thread }: HeaderActionsProps) {
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
-  const workspace = workspaces.find((w) => w.id === thread.workspace_id);
+  const workspace = useWorkspaceStore((s) =>
+    s.workspaces.find((w) => w.id === thread.workspace_id),
+  );
 
   // Determine the path to open: worktree path if available, otherwise workspace root
   const dirPath = thread.worktree_path ?? workspace?.path ?? null;
 
-  // Poll for PR on the thread's branch
+  // Only poll for PRs on feature branches (not main/master)
   const cwd = workspace?.path ?? null;
-  const pr = useBranchPr(thread.branch, cwd);
+  const shouldPollPr = thread.branch !== "main" && thread.branch !== "master";
+  const pr = useBranchPr(shouldPollPr ? thread.branch : null, cwd);
 
   if (!dirPath) return null;
 

@@ -10,7 +10,7 @@
  *   - Handle graceful shutdown
  */
 
-import { app, BrowserWindow, ipcMain, dialog, protocol } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, protocol, shell } from "electron";
 import { isAbsolute, join } from "path";
 import { existsSync, mkdirSync, statSync } from "fs";
 import { AppState } from "./app-state.js";
@@ -406,9 +406,22 @@ function registerIpcHandlers(state: AppState): void {
       if (!isAbsolute(cwd)) {
         throw new Error("Working directory must be absolute");
       }
+      if (!existsSync(cwd)) return null;
       return getBranchPr(branch, cwd);
     },
   );
+
+  // -- External URLs (safe shell.openExternal for renderer) --
+  ipcMain.handle("open-external-url", (_event, url: string) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "https:") {
+        shell.openExternal(url);
+      }
+    } catch {
+      // Invalid URL, ignore
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

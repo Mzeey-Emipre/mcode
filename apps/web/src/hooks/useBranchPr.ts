@@ -16,8 +16,10 @@ export function useBranchPr(
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    // Clear stale data from previous thread immediately
+    setPr(null);
+
     if (!branch || !cwd) {
-      setPr(null);
       return;
     }
 
@@ -46,6 +48,8 @@ export function useBranchPr(
           intervalRef.current = null;
         }
       } else {
+        // Clear any stale interval before starting a new one
+        if (intervalRef.current) clearInterval(intervalRef.current);
         fetchPr();
         intervalRef.current = setInterval(fetchPr, POLL_INTERVAL_MS);
       }
