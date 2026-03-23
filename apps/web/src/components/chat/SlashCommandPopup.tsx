@@ -83,6 +83,7 @@ export function SlashCommandPopup({
       data-slash-popup
       role="listbox"
       aria-label="Slash commands"
+      aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
       style={style}
       className={cn(
         "z-50 overflow-hidden rounded-lg border border-border bg-card shadow-lg",
@@ -96,13 +97,15 @@ export function SlashCommandPopup({
       ) : (
         <div
           ref={scrollRef}
+          role="presentation"
           style={{ maxHeight, overflowY: "auto" }}
         >
           {useVirtual ? (
-            <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+            <div role="presentation" style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualizer.getVirtualItems().map((vi) => (
                 <div
                   key={vi.key}
+                  role="presentation"
                   style={{ position: "absolute", top: vi.start, width: "100%", height: vi.size }}
                   data-index={vi.index}
                 >
@@ -116,7 +119,7 @@ export function SlashCommandPopup({
             </div>
           ) : (
             items.map((cmd, i) => (
-              <div key={cmd.name} data-index={i}>
+              <div key={cmd.name} role="presentation" data-index={i}>
                 <CommandRow
                   cmd={cmd}
                   selected={i === selectedIndex}
@@ -143,6 +146,7 @@ function CommandRow({
   return (
     <button
       type="button"
+      id={`slash-cmd-${cmd.name}`}
       role="option"
       aria-selected={selected}
       onMouseDown={(e) => {
