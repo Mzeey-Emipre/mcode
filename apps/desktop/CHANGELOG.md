@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.0.1...mcode-v0.1.0) (2026-03-23)
+## [0.1.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-desktop-v0.0.1...mcode-desktop-v0.1.0) (2026-03-23)
 
 
 ### Features
@@ -16,5 +16,3 @@
 ### Bug Fixes
 
 * clear stale branch data when switching workspaces ([#10](https://github.com/Mzeey-Emipre/mcode/issues/10)) ([f353afd](https://github.com/Mzeey-Emipre/mcode/commit/f353afda3aab1f236216437e93e2ab6cfa34616d))
-
-## Changelog
