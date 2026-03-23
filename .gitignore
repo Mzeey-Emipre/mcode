@@ -32,6 +32,7 @@ Thumbs.db
 
 # Mcode data
 .mcode/
+.mcode-dev/
 
 # Worktrees
 .worktrees/

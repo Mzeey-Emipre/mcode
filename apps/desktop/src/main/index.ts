@@ -13,8 +13,8 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol } from "electron";
 import { isAbsolute, join } from "path";
 import { existsSync, mkdirSync, statSync } from "fs";
-import { homedir } from "os";
 import { AppState } from "./app-state.js";
+import { MCODE_DIR } from "./paths.js";
 import { sessionIdFromEvent } from "./sidecar/types.js";
 import type { SidecarEvent } from "./sidecar/types.js";
 import * as MessageRepo from "./repositories/message-repo.js";
@@ -412,8 +412,8 @@ function setupCloseHandler(state: AppState): void {
 app.whenReady().then(() => {
   logger.info(`Mcode v${app.getVersion()} starting`);
 
-  // Ensure ~/.mcode/ directory exists
-  const mcodeDir = join(homedir(), ".mcode");
+  // Ensure mcode data directory exists (~/.mcode or ~/.mcode-dev)
+  const mcodeDir = MCODE_DIR;
   mkdirSync(mcodeDir, { recursive: true });
 
   // Register custom protocol for serving attachment images from disk.

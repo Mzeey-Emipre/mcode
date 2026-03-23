@@ -8,11 +8,11 @@
 import { execFileSync } from "child_process";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
-import { homedir } from "os";
+import { MCODE_DIR } from "./paths";
 
-/** Resolve the worktree base directory path under ~/.mcode/worktrees/{workspace-slug}/. */
+/** Resolve the worktree base directory path under the mcode data dir. */
 function getWorktreeBaseDir(repoPath: string): string {
-  return join(homedir(), ".mcode", "worktrees", worktreeSlug(repoPath));
+  return join(MCODE_DIR, "worktrees", worktreeSlug(repoPath));
 }
 
 /** Resolve and ensure the worktree base directory exists. */
