@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
+import { useQueueStore } from "./queueStore";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -44,6 +45,17 @@ function clearFadingTimers(threadId: string) {
   if (timers) {
     timers.forEach(clearTimeout);
     fadingTimers.delete(threadId);
+  }
+}
+
+/** Pending dequeue timers per thread, so duplicate turnComplete events don't double-dequeue. */
+const dequeueTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearDequeueTimer(threadId: string) {
+  const timer = dequeueTimers.get(threadId);
+  if (timer) {
+    clearTimeout(timer);
+    dequeueTimers.delete(threadId);
   }
 }
 
@@ -191,6 +203,8 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     // -- Sidecar events (new format) --
 
     if (method === "bridge.crashed") {
+      // Cancel all pending dequeue timers to prevent sends after crash
+      for (const tid of dequeueTimers.keys()) clearDequeueTimer(tid);
       set({
         runningThreadIds: new Set(),
         streamingByThread: {},
@@ -404,6 +418,35 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           t.id === threadId ? { ...t, status: "completed" as const } : t,
         ),
       }));
+
+      // Auto-dequeue: send next queued message after a brief visual pause.
+      // Only on turnComplete (not session.ended) so explicit stops don't drain the queue.
+      // Uses tracked timers to prevent double-dequeue from duplicate events.
+      if (method === "session.turnComplete") {
+        clearDequeueTimer(threadId);
+        const timer = setTimeout(() => {
+          dequeueTimers.delete(threadId);
+          // Guard: verify the thread still exists and isn't already running
+          const threadExists = useWorkspaceStore.getState().threads.some(
+            (t) => t.id === threadId && t.deleted_at == null,
+          );
+          if (!threadExists) return;
+          if (get().runningThreadIds.has(threadId)) return;
+
+          const next = useQueueStore.getState().dequeueNext(threadId);
+          if (next) {
+            get().sendMessage(
+              threadId,
+              next.content,
+              next.model,
+              next.permissionMode,
+              next.attachments.length > 0 ? next.attachments : undefined,
+              next.displayContent,
+            );
+          }
+        }, 400);
+        dequeueTimers.set(threadId, timer);
+      }
       return;
     }
 
@@ -426,6 +469,10 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           toolCallsByThread: nextToolCalls,
         };
       });
+
+      // Clear any pending dequeue timer and queue for this thread on error
+      clearDequeueTimer(threadId);
+      useQueueStore.getState().clearQueue(threadId);
 
       // Sync the thread's status in workspaceStore so the sidebar shows
       // the red "Errored" badge without waiting for a full thread reload.
