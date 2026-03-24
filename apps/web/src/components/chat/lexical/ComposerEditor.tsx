@@ -29,6 +29,10 @@ interface ComposerEditorProps {
   editorRef?: React.MutableRefObject<LexicalEditor | null>;
   disabled?: boolean;
   placeholder?: string;
+  /** When true, intercept navigation keys for popup keyboard handling. */
+  isPopupOpen?: boolean;
+  /** Called when a navigation key is pressed while popup is open. Returns true if handled. */
+  onPopupKeyDown?: (key: string) => boolean;
 }
 
 const EDITOR_THEME = {
@@ -60,6 +64,8 @@ export function ComposerEditor({
   editorRef,
   disabled,
   placeholder = "Ask for follow-up changes or attach images",
+  isPopupOpen,
+  onPopupKeyDown,
 }: ComposerEditorProps) {
   const internalRef = useRef<LexicalEditor | null>(null);
   const ref = editorRef ?? internalRef;
@@ -114,7 +120,12 @@ export function ComposerEditor({
           onDismiss={onSlashDismiss}
           isPopupOpen={isSlashPopupOpen}
         />
-        <KeyboardPlugin onSubmit={onSubmit} disabled={disabled} />
+        <KeyboardPlugin
+          onSubmit={onSubmit}
+          disabled={disabled}
+          isPopupOpen={isPopupOpen}
+          onPopupKeyDown={onPopupKeyDown}
+        />
       </div>
     </LexicalComposer>
   );

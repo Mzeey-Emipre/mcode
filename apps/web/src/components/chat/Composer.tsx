@@ -26,10 +26,12 @@ import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
-import { TextOverlay } from "./TextOverlay";
+import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { useSlashCommand } from "./useSlashCommand";
+import type { Command } from "./useSlashCommand";
 import { SlashCommandPopup } from "./SlashCommandPopup";
+import { type LexicalEditor, $getRoot, $createParagraphNode } from "lexical";
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const SUPPORTED_FILE_TYPES = new Set(["application/pdf", "text/plain"]);
@@ -69,37 +71,26 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragDepthRef = useRef(0);
-  const [taggedFiles, setTaggedFiles] = useState<Set<string>>(new Set());
-  const overlayRef = useRef<HTMLDivElement>(null);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<LexicalEditor | null>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
 
   const fileAutocomplete = useFileAutocomplete({
     workspaceId,
     threadId,
   });
 
-  const handleFileSelect = (filePath: string) => {
-    const selected = fileAutocomplete.selectFile(filePath);
-    const before = input.slice(0, fileAutocomplete.triggerStart);
-    const after = input.slice(
-      fileAutocomplete.triggerStart + 1 + fileAutocomplete.query.length,
-    );
-    const newInput = `${before}@${selected} ${after}`;
-    setInput(newInput);
-    setTaggedFiles((prev) => new Set([...prev, selected]));
-
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current;
-      if (ta) {
-        ta.focus();
-        const cursorPos = before.length + 1 + selected.length + 1;
-        ta.setSelectionRange(cursorPos, cursorPos);
-        ta.style.height = "auto";
-        ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
-      }
-    });
-  };
+  const handleFileSelect = useCallback((filePath: string) => {
+    fileAutocomplete.selectFile(filePath);
+    if (editorRef.current) {
+      insertMentionNode(
+        editorRef.current,
+        filePath,
+        fileAutocomplete.triggerStart,
+        fileAutocomplete.query.length,
+      );
+    }
+  }, [fileAutocomplete]);
 
   const filePopup = useFileTagPopup({
     files: fileAutocomplete.filteredFiles,
@@ -130,7 +121,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const setNewThreadBranch = useWorkspaceStore((s) => s.setNewThreadBranch);
 
   const slashCommand = useSlashCommand({
-    textareaRef,
+    anchorRef: editorContainerRef,
     cwd: workspacePath,
     onMcodeCommand: (action) => {
       if (action === "toggle-plan") {
@@ -364,7 +355,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       try { return api?.getPathForFile?.(f) ?? null; } catch { return null; }
     });
     addFiles(supported, paths);
-    textareaRef.current?.focus();
+    editorRef.current?.focus();
   }, [addFiles]);
 
   const handleSend = useCallback(async () => {
@@ -419,7 +410,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
 
     setInput("");
-    setTaggedFiles(new Set());
+    if (editorRef.current) {
+      editorRef.current.update(() => {
+        const root = $getRoot();
+        root.clear();
+        root.append($createParagraphNode());
+      });
+    }
     const currentAttachments: AttachmentMeta[] = attachments
       .filter((a) => a.filePath != null)
       .map((a) => ({
@@ -448,62 +445,52 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       const display = messageContent !== trimmed ? trimmed : undefined;
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, display);
     }
-    textareaRef.current?.focus();
-  // taggedFiles omitted: handleSend only clears it via setTaggedFiles (stable setter), never reads the value.
+    editorRef.current?.focus();
   }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Let the file tag popup handle keys when open
-    if (filePopup.handleKeyDown(e)) return;
+  const handleEditorChange = useCallback((text: string, _mentionPaths: string[]) => {
+    setInput(text);
+  }, []);
 
-    // When the slash command popup is open, intercept Enter/Tab for selection
-    // BEFORE any other handler sees them.
+  const handleSlashSelect = useCallback((cmd: Command) => {
+    slashCommand.onSelect(cmd, (newValue) => setInput(newValue));
+    if (editorRef.current) {
+      insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
+    }
+  }, [slashCommand]);
+
+  // Unified popup keyboard handler for Lexical's KeyboardPlugin.
+  // Delegates to the file tag popup or slash command popup depending on which is open.
+  const isAnyPopupOpen = fileAutocomplete.isOpen || slashCommand.isOpen;
+
+  const handlePopupKeyDown = useCallback((key: string): boolean => {
+    if (fileAutocomplete.isOpen) {
+      // Synthesize a minimal React.KeyboardEvent for the file popup handler
+      const fakeEvent = {
+        key,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      } as unknown as React.KeyboardEvent;
+      return filePopup.handleKeyDown(fakeEvent);
+    }
     if (slashCommand.isOpen) {
-      if (e.key === "Enter" || e.key === "Tab") {
+      if (key === "Enter" || key === "Tab") {
         const cmd = slashCommand.items[slashCommand.selectedIndex];
         if (cmd) {
-          e.preventDefault();
-          e.stopPropagation();
-          slashCommand.onSelect(cmd, setInput);
-          return;
+          handleSlashSelect(cmd);
+          return true;
         }
       }
-      // ArrowUp/ArrowDown/Escape: delegate to hook
-      slashCommand.onKeyDown(e);
-      if (e.defaultPrevented) return;
+      const fakeEvent = {
+        key,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      } as unknown as React.KeyboardEvent;
+      slashCommand.onKeyDown(fakeEvent);
+      return key === "ArrowDown" || key === "ArrowUp" || key === "Escape";
     }
-
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (isAgentRunning) return;
-      handleSend();
-    }
-  };
-
-  // Auto-resize textarea
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newValue = e.target.value;
-    setInput(newValue);
-    slashCommand.onInputChange(newValue);
-    const el = e.target;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 200) + "px";
-
-    // Sync overlay scroll
-    if (overlayRef.current) {
-      overlayRef.current.scrollTop = el.scrollTop;
-    }
-
-    // Update autocomplete state
-    fileAutocomplete.handleInputChange(newValue, el.selectionStart ?? newValue.length);
-
-    // Update tagged files: remove any that are no longer in the text
-    const currentRefs = new Set(extractFileRefs(newValue));
-    setTaggedFiles((prev) => {
-      const next = new Set([...prev].filter((f) => currentRefs.has(f)));
-      return next.size === prev.size ? prev : next;
-    });
-  };
+    return false;
+  }, [fileAutocomplete.isOpen, filePopup, slashCommand, handleSlashSelect]);
 
   return (
     <div className="border-t border-border px-4 py-3">
@@ -518,24 +505,21 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        {/* Textarea with overlay */}
-        <div className="relative">
-          <TextOverlay ref={overlayRef} text={input} validRefs={taggedFiles} knownCommands={slashCommand.allCommands} />
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            onScroll={(e) => {
-              if (overlayRef.current) {
-                overlayRef.current.scrollTop = e.currentTarget.scrollTop;
-              }
-            }}
-            placeholder="Ask for follow-up changes or attach images"
-            rows={1}
-            className="relative z-10 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+        {/* Lexical editor with file tag popup */}
+        <div className="relative" ref={editorContainerRef} onPaste={handlePaste}>
+          <ComposerEditor
+            onChange={handleEditorChange}
+            onSubmit={handleSend}
+            onMentionTrigger={fileAutocomplete.handleInputChange}
+            onMentionDismiss={fileAutocomplete.dismiss}
+            isMentionPopupOpen={fileAutocomplete.isOpen}
+            onSlashTrigger={slashCommand.onInputChange}
+            onSlashDismiss={slashCommand.onDismiss}
+            isSlashPopupOpen={slashCommand.isOpen}
+            editorRef={editorRef}
             disabled={isAgentRunning}
+            isPopupOpen={isAnyPopupOpen}
+            onPopupKeyDown={handlePopupKeyDown}
           />
           <FileTagPopup
             files={fileAutocomplete.filteredFiles}
@@ -741,7 +725,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         items={slashCommand.items}
         selectedIndex={slashCommand.selectedIndex}
         anchorRect={slashCommand.anchorRect}
-        onSelect={(cmd) => slashCommand.onSelect(cmd, setInput)}
+        onSelect={handleSlashSelect}
         onDismiss={slashCommand.onDismiss}
       />
     </div>
