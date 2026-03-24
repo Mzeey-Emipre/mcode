@@ -101,7 +101,7 @@ export class MentionNode extends DecoratorNode<JSX.Element> {
   }
 
   getTextContent(): string {
-    return `@${this.__filePath}`;
+    return `@${this.getFilePath()}`;
   }
 
   // -- DOM ------------------------------------------------------------------

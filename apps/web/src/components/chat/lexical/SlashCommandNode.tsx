@@ -114,7 +114,7 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
   }
 
   getTextContent(): string {
-    return `/${this.__commandName}`;
+    return `/${this.getCommandName()}`;
   }
 
   // -- DOM ------------------------------------------------------------------
