@@ -113,10 +113,6 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
     return true;
   }
 
-  isIsolated(): boolean {
-    return true;
-  }
-
   getTextContent(): string {
     return `/${this.__commandName}`;
   }

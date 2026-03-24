@@ -59,7 +59,7 @@ function MentionChip({ filePath }: { readonly filePath: string }): JSX.Element {
       {icon?.type === "vscode" ? (
         <img src={icon.url} alt="" className="size-3.5" />
       ) : icon?.type === "lucide" ? (
-        <icon.icon className="size-3.5" />
+        <icon.icon className="size-3.5 text-sky-400" />
       ) : (
         <span className="size-3.5" />
       )}
@@ -97,10 +97,6 @@ export class MentionNode extends DecoratorNode<JSX.Element> {
   // -- Behavior -------------------------------------------------------------
 
   isInline(): boolean {
-    return true;
-  }
-
-  isIsolated(): boolean {
     return true;
   }
 

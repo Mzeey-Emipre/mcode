@@ -33,12 +33,12 @@ describe("SlashCommandNode", () => {
     });
   });
 
-  it("is inline and atomic", () => {
+  it("is inline and not isolated (allows parent editor to handle backspace)", () => {
     const editor = createTestEditor();
     editor.update(() => {
       const node = $createSlashCommandNode("m:plan", "mcode");
       expect(node.isInline()).toBe(true);
-      expect(node.isIsolated()).toBe(true);
+      expect(node.isIsolated()).toBe(false);
     });
   });
 

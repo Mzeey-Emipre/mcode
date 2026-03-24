@@ -40,11 +40,11 @@ describe("MentionNode", () => {
     });
   });
 
-  it("is isolated (atomic)", () => {
+  it("is not isolated (allows parent editor to handle backspace)", () => {
     const editor = createTestEditor();
     editor.update(() => {
       const node = $createMentionNode("src/lib/utils.ts");
-      expect(node.isIsolated()).toBe(true);
+      expect(node.isIsolated()).toBe(false);
     });
   });
 
