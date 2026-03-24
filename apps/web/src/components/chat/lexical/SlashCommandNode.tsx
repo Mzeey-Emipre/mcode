@@ -143,10 +143,11 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
   static importJSON(
     serializedNode: SerializedSlashCommandNode,
   ): SlashCommandNode {
-    return $createSlashCommandNode(
-      serializedNode.commandName,
-      serializedNode.namespace,
-    );
+    const validNamespaces = new Set<SlashCommandNamespace>(["skill", "mcode", "plugin"]);
+    const ns = validNamespaces.has(serializedNode.namespace)
+      ? serializedNode.namespace
+      : "mcode";
+    return $createSlashCommandNode(serializedNode.commandName, ns);
   }
 
   // -- Decoration -----------------------------------------------------------

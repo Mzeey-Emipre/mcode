@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $getSelection,
@@ -21,6 +21,9 @@ interface SlashCommandPluginProps {
 
 /**
  * Lexical plugin that detects /-triggers for slash commands.
+ *
+ * Uses refs for callbacks to register the update listener once,
+ * avoiding re-registration on every prop change.
  */
 export function SlashCommandPlugin({
   onTrigger,
@@ -29,24 +32,31 @@ export function SlashCommandPlugin({
 }: SlashCommandPluginProps): null {
   const [editor] = useLexicalComposerContext();
 
+  const onTriggerRef = useRef(onTrigger);
+  onTriggerRef.current = onTrigger;
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+  const isPopupOpenRef = useRef(isPopupOpen);
+  isPopupOpenRef.current = isPopupOpen;
+
   useEffect(() => {
     return editor.registerUpdateListener(({ editorState }) => {
       editorState.read(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
-          if (isPopupOpen) onDismiss();
+          if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }
 
         const anchor = selection.anchor;
         if (anchor.type !== "text") {
-          if (isPopupOpen) onDismiss();
+          if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }
 
         const node = anchor.getNode();
         if (!(node instanceof TextNode)) {
-          if (isPopupOpen) onDismiss();
+          if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }
 
@@ -56,15 +66,15 @@ export function SlashCommandPlugin({
 
         const match = SLASH_TRIGGER_RE.exec(textBeforeCursor);
         if (!match) {
-          if (isPopupOpen) onDismiss();
+          if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }
 
         // Pass full text content to the existing hook's input handler
-        onTrigger(textContent);
+        onTriggerRef.current(textContent);
       });
     });
-  }, [editor, onTrigger, onDismiss, isPopupOpen]);
+  }, [editor]);
 
   return null;
 }

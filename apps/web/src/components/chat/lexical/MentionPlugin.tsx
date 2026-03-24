@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $getSelection,
@@ -19,6 +19,9 @@ interface MentionPluginProps {
  * Lexical plugin that detects @-triggers for file mentions.
  * Scans the current text node backward from cursor for @ preceded
  * by whitespace or start-of-text.
+ *
+ * Uses refs for callbacks to register the update listener once,
+ * avoiding re-registration on every prop change.
  */
 export function MentionPlugin({
   onTrigger,
@@ -27,24 +30,31 @@ export function MentionPlugin({
 }: MentionPluginProps): null {
   const [editor] = useLexicalComposerContext();
 
+  const onTriggerRef = useRef(onTrigger);
+  onTriggerRef.current = onTrigger;
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+  const isPopupOpenRef = useRef(isPopupOpen);
+  isPopupOpenRef.current = isPopupOpen;
+
   useEffect(() => {
     return editor.registerUpdateListener(({ editorState }) => {
       editorState.read(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
-          if (isPopupOpen) onDismiss();
+          if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }
 
         const anchor = selection.anchor;
         if (anchor.type !== "text") {
-          if (isPopupOpen) onDismiss();
+          if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }
 
         const node = anchor.getNode();
         if (!(node instanceof TextNode)) {
-          if (isPopupOpen) onDismiss();
+          if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }
 
@@ -54,14 +64,14 @@ export function MentionPlugin({
 
         // Only invoke trigger callback when @ is present
         if (!textBeforeCursor.includes("@")) {
-          if (isPopupOpen) onDismiss();
+          if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }
 
-        onTrigger(textContent, cursorOffset);
+        onTriggerRef.current(textContent, cursorOffset);
       });
     });
-  }, [editor, onTrigger, onDismiss, isPopupOpen]);
+  }, [editor]);
 
   return null;
 }

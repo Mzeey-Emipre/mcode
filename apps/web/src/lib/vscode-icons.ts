@@ -33,8 +33,11 @@ const failedCache = new Set<string>();
 /** In-flight fetch deduplication: prevents N identical mentions from triggering N fetches. */
 const inflightFetches = new Map<string, Promise<ResolvedIcon>>();
 
-/** Clear all caches (for testing). */
+/** Clear all caches, revoking blob URLs to free memory. */
 export function clearIconCache(): void {
+  for (const url of blobCache.values()) {
+    URL.revokeObjectURL(url);
+  }
   blobCache.clear();
   failedCache.clear();
   inflightFetches.clear();
@@ -67,6 +70,7 @@ export async function resolveIcon(fileName: string): Promise<ResolvedIcon> {
       const response = await fetch(cdnUrl);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
+      if (!blob.type.startsWith("image/")) throw new Error(`Unexpected MIME type: ${blob.type}`);
       const blobUrl = URL.createObjectURL(blob);
       blobCache.set(fileName, blobUrl);
       return { type: "vscode", url: blobUrl };

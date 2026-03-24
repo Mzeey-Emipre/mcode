@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $getSelection,
+  $isElementNode,
   $isNodeSelection,
   $isRangeSelection,
   COMMAND_PRIORITY_HIGH,
@@ -143,6 +144,8 @@ export function KeyboardPlugin({
       // Case 2: RangeSelection with cursor right after a decorator node
       if ($isRangeSelection(selection) && selection.isCollapsed()) {
         const anchor = selection.anchor;
+
+        // Text anchor at offset 0: check the previous sibling
         if (anchor.type === "text" && anchor.offset === 0 && isBackward) {
           const node = anchor.getNode();
           const prev = node.getPreviousSibling();
@@ -150,6 +153,19 @@ export function KeyboardPlugin({
             event.preventDefault();
             prev.remove();
             return true;
+          }
+        }
+
+        // Element anchor: cursor is between block children (e.g. after a chip with no text node)
+        if (anchor.type === "element" && isBackward) {
+          const parent = anchor.getNode();
+          if ($isElementNode(parent)) {
+            const target = parent.getChildAtIndex(anchor.offset - 1);
+            if (target && ($isMentionNode(target) || $isSlashCommandNode(target))) {
+              event.preventDefault();
+              target.remove();
+              return true;
+            }
           }
         }
       }

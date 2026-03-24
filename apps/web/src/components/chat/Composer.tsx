@@ -564,7 +564,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const handleSlashSelect = useCallback((cmd: Command) => {
     // No-op replaceText: Lexical handles text replacement via insertSlashCommandNode
     slashCommand.onSelect(cmd, () => {});
-    if (editorRef.current) {
+    // Action-only commands (e.g. /plan toggle) should not insert a chip
+    if (!cmd.action && editorRef.current) {
       insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
     }
   }, [slashCommand]);
@@ -591,13 +592,17 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           return true;
         }
       }
+      if (key === "Escape") {
+        slashCommand.onDismiss();
+        return true;
+      }
       const fakeEvent = {
         key,
         preventDefault: () => {},
         stopPropagation: () => {},
       } as unknown as React.KeyboardEvent;
       slashCommand.onKeyDown(fakeEvent);
-      return key === "ArrowDown" || key === "ArrowUp" || key === "Escape";
+      return key === "ArrowDown" || key === "ArrowUp";
     }
     return false;
   }, [fileAutocomplete.isOpen, filePopup, slashCommand, handleSlashSelect]);

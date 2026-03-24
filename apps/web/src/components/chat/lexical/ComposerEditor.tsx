@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useEffect } from "react";
+import { useCallback, useRef, useEffect } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -52,6 +52,15 @@ function EditorRefPlugin({
   return null;
 }
 
+/** Internal plugin that syncs the editor's editable state with the disabled prop. */
+function EditablePlugin({ disabled }: { readonly disabled?: boolean }): null {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => {
+    editor.setEditable(!disabled);
+  }, [editor, disabled]);
+  return null;
+}
+
 export function ComposerEditor({
   onChange,
   onSubmit,
@@ -70,18 +79,15 @@ export function ComposerEditor({
   const internalRef = useRef<LexicalEditor | null>(null);
   const ref = editorRef ?? internalRef;
 
-  const initialConfig = useMemo(
-    () => ({
-      namespace: "McodeComposer",
-      theme: EDITOR_THEME,
-      nodes: [MentionNode, SlashCommandNode],
-      onError: (error: Error) => {
-        console.error("[ComposerEditor]", error);
-      },
-      editable: !disabled,
-    }),
-    [disabled],
-  );
+  const initialConfig = useRef({
+    namespace: "McodeComposer",
+    theme: EDITOR_THEME,
+    nodes: [MentionNode, SlashCommandNode],
+    onError: (error: Error) => {
+      console.error("[ComposerEditor]", error);
+    },
+    editable: true,
+  }).current;
 
   const handleChange = useCallback(
     (_editorState: EditorState, editor: LexicalEditor) => {
@@ -112,6 +118,7 @@ export function ComposerEditor({
         <HistoryPlugin />
         <OnChangePlugin onChange={handleChange} ignoreSelectionChange />
         <EditorRefPlugin editorRef={ref} />
+        <EditablePlugin disabled={disabled} />
         <MentionPlugin
           onTrigger={onMentionTrigger}
           onDismiss={onMentionDismiss}
