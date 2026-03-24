@@ -1,42 +1,71 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SidecarEvent } from "../sidecar/types.js";
-import type { SDKSession } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Create a mock SDKSession whose stream() yields the given events and then
- * optionally hangs (liveAfter=true) or terminates.
+ * Create a mock Query (AsyncGenerator) that yields the given events.
+ * When liveAfter is true, the generator stays open after yielding events
+ * until close() is called.
  */
-function createMockSession(
+function createMockQuery(
   events: Array<Record<string, unknown>>,
   opts: { liveAfter?: boolean } = {},
 ) {
   let closeResolve: (() => void) | undefined;
 
-  const session = {
-    sessionId: "mock-session-id",
-    send: vi.fn().mockResolvedValue(undefined),
-    stream: vi.fn().mockImplementation(async function* () {
-      for (const event of events) {
-        yield event;
+  const generator = {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      if (events.length > 0) {
+        return { value: events.shift()!, done: false };
       }
       if (opts.liveAfter) {
-        // Simulate a long-lived stream that stays open until close() is called
         await new Promise<void>((r) => {
           closeResolve = r;
         });
+        return { value: undefined, done: true };
       }
-    }),
+      return { value: undefined, done: true };
+    },
+    async return() {
+      closeResolve?.();
+      return { value: undefined, done: true };
+    },
+    async throw() {
+      return { value: undefined, done: true };
+    },
     close: vi.fn().mockImplementation(() => {
       closeResolve?.();
     }),
-    [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
+    setModel: vi.fn().mockResolvedValue(undefined),
+    interrupt: vi.fn().mockResolvedValue(undefined),
+    setPermissionMode: vi.fn().mockResolvedValue(undefined),
+    setMaxThinkingTokens: vi.fn().mockResolvedValue(undefined),
+    applyFlagSettings: vi.fn().mockResolvedValue(undefined),
+    initializationResult: vi.fn().mockResolvedValue({}),
+    supportedCommands: vi.fn().mockResolvedValue([]),
+    supportedModels: vi.fn().mockResolvedValue([]),
+    supportedAgents: vi.fn().mockResolvedValue([]),
+    mcpServerStatus: vi.fn().mockResolvedValue([]),
+    accountInfo: vi.fn().mockResolvedValue({}),
+    rewindFiles: vi.fn().mockResolvedValue({}),
+    reconnectMcpServer: vi.fn().mockResolvedValue(undefined),
+    toggleMcpServer: vi.fn().mockResolvedValue(undefined),
+    setMcpServers: vi.fn().mockResolvedValue({}),
+    streamInput: vi.fn().mockResolvedValue(undefined),
+    stopTask: vi.fn().mockResolvedValue(undefined),
   };
 
-  return session as unknown as SDKSession;
+  return generator as unknown as Query & {
+    close: ReturnType<typeof vi.fn>;
+    setModel: ReturnType<typeof vi.fn>;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -44,8 +73,7 @@ function createMockSession(
 // ---------------------------------------------------------------------------
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  unstable_v2_createSession: vi.fn(),
-  unstable_v2_resumeSession: vi.fn(),
+  query: vi.fn(),
 }));
 
 vi.mock("../logger.js", () => ({
@@ -57,10 +85,7 @@ vi.mock("../logger.js", () => ({
 // ---------------------------------------------------------------------------
 
 import { SidecarClient } from "../sidecar/client.js";
-import {
-  unstable_v2_createSession,
-  unstable_v2_resumeSession,
-} from "@anthropic-ai/claude-agent-sdk";
+import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -91,7 +116,7 @@ async function waitForEvent(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("SidecarClient (v2 session API)", () => {
+describe("SidecarClient (v1 query API)", () => {
   let client: SidecarClient;
 
   beforeEach(() => {
@@ -116,7 +141,7 @@ describe("SidecarClient (v2 session API)", () => {
   // -------------------------------------------------------------------------
 
   it("emits session.message and session.turnComplete on result", async () => {
-    const session = createMockSession([
+    const q = createMockQuery([
       {
         type: "assistant",
         message: { content: [{ type: "text", text: "Hello world" }] },
@@ -128,7 +153,7 @@ describe("SidecarClient (v2 session API)", () => {
         usage: { input_tokens: 50, output_tokens: 100 },
       },
     ]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -154,11 +179,11 @@ describe("SidecarClient (v2 session API)", () => {
   });
 
   it("does not emit session.message when no text was accumulated", async () => {
-    const session = createMockSession([
+    const q = createMockQuery([
       { type: "assistant", message: { content: [] } },
       { type: "result", stop_reason: "end_turn" },
     ]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -170,11 +195,11 @@ describe("SidecarClient (v2 session API)", () => {
   });
 
   it("emits session.system for system events", async () => {
-    const session = createMockSession([
+    const q = createMockQuery([
       { type: "system", subtype: "init" },
       { type: "result", stop_reason: "end_turn" },
     ]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -186,7 +211,7 @@ describe("SidecarClient (v2 session API)", () => {
   });
 
   it("emits session.toolUse for tool_use blocks in assistant message", async () => {
-    const session = createMockSession([
+    const q = createMockQuery([
       {
         type: "assistant",
         message: {
@@ -197,7 +222,7 @@ describe("SidecarClient (v2 session API)", () => {
       },
       { type: "result", stop_reason: "end_turn" },
     ]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "Read file", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -214,7 +239,7 @@ describe("SidecarClient (v2 session API)", () => {
   });
 
   it("emits session.toolUse for top-level tool_use events", async () => {
-    const session = createMockSession([
+    const q = createMockQuery([
       {
         type: "tool_use",
         id: "tc2",
@@ -223,7 +248,7 @@ describe("SidecarClient (v2 session API)", () => {
       },
       { type: "result", stop_reason: "end_turn" },
     ]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "List files", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -240,7 +265,7 @@ describe("SidecarClient (v2 session API)", () => {
   });
 
   it("emits session.toolResult for tool_result events", async () => {
-    const session = createMockSession([
+    const q = createMockQuery([
       {
         type: "tool_result",
         tool_use_id: "tc1",
@@ -249,7 +274,7 @@ describe("SidecarClient (v2 session API)", () => {
       },
       { type: "result", stop_reason: "end_turn" },
     ]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "Read file", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -266,7 +291,7 @@ describe("SidecarClient (v2 session API)", () => {
   });
 
   it("emits session.toolResult with JSON stringified content when not a string", async () => {
-    const session = createMockSession([
+    const q = createMockQuery([
       {
         type: "tool_result",
         tool_use_id: "tc1",
@@ -275,7 +300,7 @@ describe("SidecarClient (v2 session API)", () => {
       },
       { type: "result", stop_reason: "end_turn" },
     ]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "Op", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -289,17 +314,32 @@ describe("SidecarClient (v2 session API)", () => {
   });
 
   it("emits session.error and session.ended when stream throws", async () => {
-    const session = {
-      sessionId: "s",
-      send: vi.fn().mockResolvedValue(undefined),
-      stream: vi.fn().mockImplementation(async function* () {
-        throw new Error("SDK crash");
-      }),
+    const q = {
+      [Symbol.asyncIterator]() { return this; },
+      async next() { throw new Error("SDK crash"); },
+      async return() { return { value: undefined, done: true }; },
+      async throw() { return { value: undefined, done: true }; },
       close: vi.fn(),
-      [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
-    } as unknown as SDKSession;
+      setModel: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn().mockResolvedValue(undefined),
+      setPermissionMode: vi.fn().mockResolvedValue(undefined),
+      setMaxThinkingTokens: vi.fn().mockResolvedValue(undefined),
+      applyFlagSettings: vi.fn().mockResolvedValue(undefined),
+      initializationResult: vi.fn().mockResolvedValue({}),
+      supportedCommands: vi.fn().mockResolvedValue([]),
+      supportedModels: vi.fn().mockResolvedValue([]),
+      supportedAgents: vi.fn().mockResolvedValue([]),
+      mcpServerStatus: vi.fn().mockResolvedValue([]),
+      accountInfo: vi.fn().mockResolvedValue({}),
+      rewindFiles: vi.fn().mockResolvedValue({}),
+      reconnectMcpServer: vi.fn().mockResolvedValue(undefined),
+      toggleMcpServer: vi.fn().mockResolvedValue(undefined),
+      setMcpServers: vi.fn().mockResolvedValue({}),
+      streamInput: vi.fn().mockResolvedValue(undefined),
+      stopTask: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Query;
 
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-456", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -317,47 +357,59 @@ describe("SidecarClient (v2 session API)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Three-state session model
+  // Session states
   // -------------------------------------------------------------------------
 
-  it("calls createSession on first message (resume=false, no pool entry)", async () => {
-    const session = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+  it("calls query() on first message (resume=false, no pool entry)", async () => {
+    const q = createMockQuery([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-abc", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
 
     await waitForEvent(events, "session.turnComplete");
 
-    expect(unstable_v2_createSession).toHaveBeenCalledOnce();
-    expect(unstable_v2_resumeSession).not.toHaveBeenCalled();
-    expect(session.send).toHaveBeenCalledWith("Hi");
+    expect(sdkQuery).toHaveBeenCalledOnce();
+    expect(sdkQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          model: "claude-sonnet-4-6",
+          cwd: "/tmp",
+          settingSources: ["user", "project", "local"],
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          tools: { type: "preset", preset: "claude_code" },
+          sessionId: "abc",
+        }),
+      }),
+    );
   });
 
-  it("calls resumeSession when resume=true and no pool entry", async () => {
-    const session = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
-    vi.mocked(unstable_v2_resumeSession).mockReturnValue(session);
+  it("calls query() with resume option when resume=true and no pool entry", async () => {
+    const q = createMockQuery([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-abc-def", "Hi", "/tmp", "claude-sonnet-4-6", true, "default");
 
     await waitForEvent(events, "session.turnComplete");
 
-    expect(unstable_v2_resumeSession).toHaveBeenCalledOnce();
-    expect(unstable_v2_resumeSession).toHaveBeenCalledWith(
-      "abc-def",
-      expect.objectContaining({ model: "claude-sonnet-4-6" }),
+    expect(sdkQuery).toHaveBeenCalledOnce();
+    expect(sdkQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          resume: "abc-def",
+          model: "claude-sonnet-4-6",
+        }),
+      }),
     );
-    expect(unstable_v2_createSession).not.toHaveBeenCalled();
   });
 
-  it("reuses existing session for second message (no re-create)", async () => {
-    // Long-lived session that stays in pool after the first turn
-    const session = createMockSession(
+  it("reuses existing session for second message (push to queue, no re-create)", async () => {
+    const q = createMockQuery(
       [{ type: "result", stop_reason: "end_turn" }],
       { liveAfter: true },
     );
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
 
@@ -365,26 +417,19 @@ describe("SidecarClient (v2 session API)", () => {
     client.sendMessage("mcode-live", "msg1", "/tmp", "claude-sonnet-4-6", false, "default");
     await waitForEvent(events, "session.turnComplete");
 
-    // Second message — session is in pool, should NOT call createSession again
+    // Second message - session is in pool, should NOT call query() again
     client.sendMessage("mcode-live", "msg2", "/tmp", "claude-sonnet-4-6", false, "default");
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(unstable_v2_createSession).toHaveBeenCalledOnce(); // not twice
-    expect(session.send).toHaveBeenCalledTimes(2);
-    expect(session.send).toHaveBeenNthCalledWith(1, "msg1");
-    expect(session.send).toHaveBeenNthCalledWith(2, "msg2");
+    expect(sdkQuery).toHaveBeenCalledOnce(); // not twice
   });
 
-  it("closes session and re-creates on model change", async () => {
-    const session1 = createMockSession(
+  it("calls setModel() on model change instead of recreating", async () => {
+    const q = createMockQuery(
       [{ type: "result", stop_reason: "end_turn" }],
       { liveAfter: true },
     );
-    const session2 = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
-
-    vi.mocked(unstable_v2_createSession)
-      .mockReturnValueOnce(session1)
-      .mockReturnValueOnce(session2);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
 
@@ -392,70 +437,152 @@ describe("SidecarClient (v2 session API)", () => {
     client.sendMessage("mcode-switch", "msg1", "/tmp", "claude-sonnet-4-6", false, "default");
     await waitForEvent(events, "session.turnComplete");
 
-    // Second message with different model — should close session1 and create new
-    events.length = 0;
+    // Second message with different model - should call setModel(), not recreate
     client.sendMessage("mcode-switch", "msg2", "/tmp", "claude-opus-4-6", false, "default");
-    await waitForEvent(events, "session.turnComplete");
+    await new Promise((r) => setTimeout(r, 20));
 
-    expect(session1.close).toHaveBeenCalled();
-    expect(unstable_v2_createSession).toHaveBeenCalledTimes(2);
-    expect(
-      vi.mocked(unstable_v2_createSession).mock.calls[1]?.[0],
-    ).toMatchObject({ model: "claude-opus-4-6" });
+    expect(sdkQuery).toHaveBeenCalledOnce(); // NOT called twice
+    expect(q.setModel).toHaveBeenCalledWith("claude-opus-4-6");
   });
 
-  it("strips 'mcode-' prefix from sessionId for SDK uuid in resumeSession", async () => {
-    const session = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
-    vi.mocked(unstable_v2_resumeSession).mockReturnValue(session);
+  it("strips 'mcode-' prefix from sessionId for SDK uuid", async () => {
+    const q = createMockQuery([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
-    client.sendMessage("mcode-abc-def", "Hi", "/tmp", "claude-sonnet-4-6", true, "default");
+    client.sendMessage("mcode-abc-def", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
 
     await waitForEvent(events, "session.turnComplete");
 
-    // UUID passed to resumeSession should NOT have "mcode-" prefix
-    expect(unstable_v2_resumeSession).toHaveBeenCalledWith("abc-def", expect.any(Object));
+    expect(sdkQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ sessionId: "abc-def" }),
+      }),
+    );
   });
 
-  it("uses captured SDK session ID for subsequent resumeSession calls", async () => {
-    // First turn: createSession with a system init that has session_id
-    const session1 = createMockSession([
+  it("uses captured SDK session ID for subsequent resume calls", async () => {
+    // First turn: query with a system init that has session_id
+    const q1 = createMockQuery([
       { type: "system", subtype: "init", session_id: "sdk-real-id-999" },
       { type: "result", stop_reason: "end_turn" },
     ]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session1);
+    vi.mocked(sdkQuery).mockReturnValue(q1);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-abc-def", "msg1", "/tmp", "claude-sonnet-4-6", false, "default");
     await waitForEvent(events, "session.ended");
 
     // Second turn: stream ended, pool entry deleted, so resume path is taken.
-    // Should use the captured SDK session ID, not our thread UUID.
-    const session2 = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
-    vi.mocked(unstable_v2_resumeSession).mockReturnValue(session2);
+    const q2 = createMockQuery([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(sdkQuery).mockReturnValue(q2);
 
     events.length = 0;
     client.sendMessage("mcode-abc-def", "msg2", "/tmp", "claude-sonnet-4-6", true, "default");
     await waitForEvent(events, "session.turnComplete");
 
-    expect(unstable_v2_resumeSession).toHaveBeenCalledWith(
-      "sdk-real-id-999",
-      expect.any(Object),
+    expect(sdkQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          resume: "sdk-real-id-999",
+        }),
+      }),
     );
   });
 
-  it("changes process.cwd to workspace path when creating session", async () => {
-    const session = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
-    const chdirSpy = vi.spyOn(process, "chdir").mockImplementation(() => {});
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+  it("falls back to fresh query() when resume fails with 'No conversation found'", async () => {
+    // First query: resume attempt that fails
+    const failedQ = createMockQuery([
+      {
+        type: "result",
+        is_error: true,
+        errors: ["No conversation found for session abc-def"],
+        session_id: "stale-id",
+      },
+    ]);
+    // Second query: fresh session succeeds
+    const freshQ = createMockQuery([
+      { type: "system", subtype: "init", session_id: "fresh-sdk-id" },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Hello" }] },
+      },
+      { type: "result", stop_reason: "end_turn" },
+    ]);
+    vi.mocked(sdkQuery)
+      .mockReturnValueOnce(failedQ)
+      .mockReturnValueOnce(freshQ);
+
+    const events = collectEvents(client);
+    client.sendMessage("mcode-abc-def", "Hi", "/tmp", "claude-sonnet-4-6", true, "default");
+
+    await waitForEvent(events, "session.turnComplete");
+
+    // Should have called query() twice: first resume, then fresh
+    expect(sdkQuery).toHaveBeenCalledTimes(2);
+
+    // First call should have resume option
+    expect(vi.mocked(sdkQuery).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        options: expect.objectContaining({ resume: "abc-def" }),
+      }),
+    );
+
+    // Second call should have sessionId (not resume)
+    expect(vi.mocked(sdkQuery).mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        options: expect.objectContaining({ sessionId: "abc-def" }),
+      }),
+    );
+    // Verify resume key is NOT in fresh options
+    expect(vi.mocked(sdkQuery).mock.calls[1]?.[0]?.options).not.toHaveProperty("resume");
+
+    // Should have emitted session_restarted system event
+    const restartEvent = events.find(
+      (e) => e.method === "session.system" && e.params.subtype === "session_restarted",
+    );
+    expect(restartEvent).toBeTruthy();
+
+    // Should have emitted the successful message
+    const msgEvent = events.find((e) => e.method === "session.message");
+    expect(msgEvent).toBeTruthy();
+    if (msgEvent?.method === "session.message") {
+      expect(msgEvent.params.content).toBe("Hello");
+    }
+  });
+
+  it("passes cwd as a direct option (no process.chdir hack)", async () => {
+    const q = createMockQuery([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "Hi", "/my/workspace", "claude-sonnet-4-6", false, "default");
 
     await waitForEvent(events, "session.turnComplete");
 
-    expect(chdirSpy).toHaveBeenCalledWith("/my/workspace");
-    chdirSpy.mockRestore();
+    expect(sdkQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ cwd: "/my/workspace" }),
+      }),
+    );
+  });
+
+  it("passes settingSources to load CLAUDE.md files", async () => {
+    const q = createMockQuery([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(sdkQuery).mockReturnValue(q);
+
+    const events = collectEvents(client);
+    client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
+
+    await waitForEvent(events, "session.turnComplete");
+
+    expect(sdkQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          settingSources: ["user", "project", "local"],
+        }),
+      }),
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -463,33 +590,37 @@ describe("SidecarClient (v2 session API)", () => {
   // -------------------------------------------------------------------------
 
   it("uses bypassPermissions with allowDangerouslySkipPermissions when permissionMode is 'full'", async () => {
-    const session = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    const q = createMockQuery([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "full");
 
     await waitForEvent(events, "session.turnComplete");
 
-    expect(unstable_v2_createSession).toHaveBeenCalledWith(
+    expect(sdkQuery).toHaveBeenCalledWith(
       expect.objectContaining({
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        options: expect.objectContaining({
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+        }),
       }),
     );
   });
 
   it("uses default permissionMode for non-full modes", async () => {
-    const session = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    const q = createMockQuery([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-123", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
 
     await waitForEvent(events, "session.turnComplete");
 
-    expect(unstable_v2_createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ permissionMode: "default" }),
+    expect(sdkQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ permissionMode: "default" }),
+      }),
     );
   });
 
@@ -497,24 +628,24 @@ describe("SidecarClient (v2 session API)", () => {
   // Session lifecycle
   // -------------------------------------------------------------------------
 
-  it("stopSession calls session.close()", async () => {
-    const session = createMockSession(
+  it("stopSession calls query.close()", async () => {
+    const q = createMockQuery(
       [{ type: "result", stop_reason: "end_turn" }],
       { liveAfter: true },
     );
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-stop", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
     await waitForEvent(events, "session.turnComplete");
 
     client.stopSession("mcode-stop");
-    expect(session.close).toHaveBeenCalled();
+    expect(q.close).toHaveBeenCalled();
   });
 
   it("stream loop cleans up pool entry after stream ends", async () => {
-    const session = createMockSession([{ type: "result", stop_reason: "end_turn" }]);
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    const q = createMockQuery([{ type: "result", stop_reason: "end_turn" }]);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     const events = collectEvents(client);
     client.sendMessage("mcode-cleanup", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -525,19 +656,19 @@ describe("SidecarClient (v2 session API)", () => {
     expect(sessions.has("mcode-cleanup")).toBe(false);
   });
 
-  it("shutdown calls close() on all active sessions", async () => {
-    const session1 = createMockSession(
+  it("shutdown calls close() on all active queries", async () => {
+    const q1 = createMockQuery(
       [{ type: "result", stop_reason: "end_turn" }],
       { liveAfter: true },
     );
-    const session2 = createMockSession(
+    const q2 = createMockQuery(
       [{ type: "result", stop_reason: "end_turn" }],
       { liveAfter: true },
     );
 
-    vi.mocked(unstable_v2_createSession)
-      .mockReturnValueOnce(session1)
-      .mockReturnValueOnce(session2);
+    vi.mocked(sdkQuery)
+      .mockReturnValueOnce(q1)
+      .mockReturnValueOnce(q2);
 
     const e1 = collectEvents(client);
     client.sendMessage("mcode-a", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
@@ -549,8 +680,8 @@ describe("SidecarClient (v2 session API)", () => {
 
     client.shutdown();
 
-    expect(session1.close).toHaveBeenCalled();
-    expect(session2.close).toHaveBeenCalled();
+    expect(q1.close).toHaveBeenCalled();
+    expect(q2.close).toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -561,22 +692,43 @@ describe("SidecarClient (v2 session API)", () => {
     vi.useFakeTimers();
 
     let closeResolve: (() => void) | undefined;
-    const session = {
-      sessionId: "s",
-      send: vi.fn().mockResolvedValue(undefined),
-      stream: vi.fn().mockImplementation(async function* () {
-        yield { type: "result", stop_reason: "end_turn" };
-        await new Promise<void>((r) => {
-          closeResolve = r;
-        });
-      }),
-      close: vi.fn().mockImplementation(() => {
+    const q = {
+      [Symbol.asyncIterator]() { return this; },
+      _yielded: false,
+      async next() {
+        if (!this._yielded) {
+          this._yielded = true;
+          return { value: { type: "result", stop_reason: "end_turn" }, done: false };
+        }
+        await new Promise<void>((r) => { closeResolve = r; });
+        return { value: undefined, done: true };
+      },
+      async return() {
         closeResolve?.();
-      }),
-      [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
-    } as unknown as SDKSession;
+        return { value: undefined, done: true };
+      },
+      async throw() { return { value: undefined, done: true }; },
+      close: vi.fn().mockImplementation(() => { closeResolve?.(); }),
+      setModel: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn().mockResolvedValue(undefined),
+      setPermissionMode: vi.fn().mockResolvedValue(undefined),
+      setMaxThinkingTokens: vi.fn().mockResolvedValue(undefined),
+      applyFlagSettings: vi.fn().mockResolvedValue(undefined),
+      initializationResult: vi.fn().mockResolvedValue({}),
+      supportedCommands: vi.fn().mockResolvedValue([]),
+      supportedModels: vi.fn().mockResolvedValue([]),
+      supportedAgents: vi.fn().mockResolvedValue([]),
+      mcpServerStatus: vi.fn().mockResolvedValue([]),
+      accountInfo: vi.fn().mockResolvedValue({}),
+      rewindFiles: vi.fn().mockResolvedValue({}),
+      reconnectMcpServer: vi.fn().mockResolvedValue(undefined),
+      toggleMcpServer: vi.fn().mockResolvedValue(undefined),
+      setMcpServers: vi.fn().mockResolvedValue({}),
+      streamInput: vi.fn().mockResolvedValue(undefined),
+      stopTask: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Query & { close: ReturnType<typeof vi.fn> };
 
-    vi.mocked(unstable_v2_createSession).mockReturnValue(session);
+    vi.mocked(sdkQuery).mockReturnValue(q);
 
     client.sendMessage("mcode-evict", "Hi", "/tmp", "claude-sonnet-4-6", false, "default");
 
@@ -587,7 +739,7 @@ describe("SidecarClient (v2 session API)", () => {
     // Advance time past idle TTL (10 min) + eviction interval (1 min)
     await vi.advanceTimersByTimeAsync(11 * 60 * 1000 + 1000);
 
-    expect(session.close).toHaveBeenCalled();
+    expect(q.close).toHaveBeenCalled();
 
     vi.useRealTimers();
   });

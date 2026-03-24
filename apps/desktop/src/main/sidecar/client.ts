@@ -1,19 +1,17 @@
 /**
  * SidecarClient: imports the Claude Agent SDK directly and runs queries
- * in-process using the v2 persistent session API.
+ * in-process using the v1 query() API with a prompt queue pattern.
  *
- * Sessions are kept alive in a pool, eliminating per-message MCP server
- * restarts and full conversation history replay on each turn.
+ * Each session holds a long-lived query() backed by an AsyncIterable prompt
+ * queue. Pushing messages to the queue feeds them to the SDK subprocess
+ * without cold-starting, keeping MCP servers alive across turns.
  *
- * Emits the same "event" (SidecarEvent) interface as the previous client,
- * keeping compatibility with app-state.ts and index.ts.
+ * Emits the same "event" (SidecarEvent) interface as before, keeping
+ * compatibility with app-state.ts and index.ts.
  */
 
-import {
-  unstable_v2_createSession,
-  unstable_v2_resumeSession,
-} from "@anthropic-ai/claude-agent-sdk";
-import type { SDKSession, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import type { SidecarEvent } from "./types.js";
@@ -26,10 +24,11 @@ export interface SidecarClientEvents {
 }
 
 interface SessionEntry {
-  session: SDKSession;
+  query: Query;
+  pushMessage: (msg: SDKUserMessage) => void;
+  closeQueue: () => void;
   model: string;
   lastUsedAt: number;
-  sdkSessionId?: string;
 }
 
 /** Idle TTL before a session is evicted (10 minutes). */
@@ -38,39 +37,80 @@ const IDLE_TTL_MS = 10 * 60 * 1000;
 const EVICTION_INTERVAL_MS = 60 * 1000;
 
 /**
- * Create an SDK session with the correct working directory.
- *
- * The v2 SDKSessionOptions type lacks a cwd field, and the v2 session
- * constructor hardcodes extraArgs to {}, so there's no direct way to
- * set the working directory. The transport reads process.cwd() as the
- * fallback. We temporarily chdir before the synchronous session
- * constructor runs, then restore immediately.
+ * Create an async iterable prompt queue backed by a simple push/pull bridge.
+ * Messages pushed via `push()` are yielded by the iterable. Calling `close()`
+ * terminates the iterator, signaling the SDK to shut down the subprocess.
  */
-function createSessionInCwd(
-  cwd: string,
-  options: Parameters<typeof unstable_v2_createSession>[0],
-): SDKSession {
-  const originalCwd = process.cwd();
-  try {
-    process.chdir(cwd);
-    return unstable_v2_createSession(options);
-  } finally {
-    process.chdir(originalCwd);
-  }
+/** Max queued messages before push() warns and drops. */
+const MAX_QUEUE_DEPTH = 20;
+
+function createPromptQueue(): {
+  push: (msg: SDKUserMessage) => void;
+  close: () => void;
+  iterable: AsyncIterable<SDKUserMessage>;
+} {
+  const pending: SDKUserMessage[] = [];
+  let waiting: ((result: IteratorResult<SDKUserMessage>) => void) | null = null;
+  let done = false;
+
+  const push = (msg: SDKUserMessage): void => {
+    if (done) return;
+    if (waiting) {
+      const resolve = waiting;
+      waiting = null;
+      resolve({ value: msg, done: false });
+    } else {
+      if (pending.length >= MAX_QUEUE_DEPTH) {
+        logger.warn("Prompt queue full, dropping message", { depth: pending.length });
+        return;
+      }
+      pending.push(msg);
+    }
+  };
+
+  const close = (): void => {
+    done = true;
+    if (waiting) {
+      const resolve = waiting;
+      waiting = null;
+      resolve({ value: undefined as unknown as SDKUserMessage, done: true });
+    }
+  };
+
+  const iterable: AsyncIterable<SDKUserMessage> = {
+    [Symbol.asyncIterator]() {
+      return {
+        next(): Promise<IteratorResult<SDKUserMessage>> {
+          if (pending.length > 0) {
+            return Promise.resolve({ value: pending.shift()!, done: false });
+          }
+          if (done) {
+            return Promise.resolve({ value: undefined as unknown as SDKUserMessage, done: true });
+          }
+          return new Promise((resolve) => {
+            waiting = resolve;
+          });
+        },
+      };
+    },
+  };
+
+  return { push, close, iterable };
 }
 
-function resumeSessionInCwd(
-  cwd: string,
-  sessionId: string,
-  options: Parameters<typeof unstable_v2_resumeSession>[1],
-): SDKSession {
-  const originalCwd = process.cwd();
-  try {
-    process.chdir(cwd);
-    return unstable_v2_resumeSession(sessionId, options);
-  } finally {
-    process.chdir(originalCwd);
-  }
+/**
+ * Convert a plain string message into an SDKUserMessage.
+ */
+function toUserMessage(text: string, sessionId: string): SDKUserMessage {
+  return {
+    type: "user" as const,
+    message: {
+      role: "user" as const,
+      content: text,
+    },
+    parent_tool_use_id: null,
+    session_id: sessionId,
+  };
 }
 
 export class SidecarClient extends EventEmitter {
@@ -86,7 +126,7 @@ export class SidecarClient extends EventEmitter {
    */
   static start(): SidecarClient {
     const client = new SidecarClient();
-    logger.info("SidecarClient started (in-process SDK v2)");
+    logger.info("SidecarClient started (in-process SDK v1 query)");
     return client;
   }
 
@@ -98,23 +138,15 @@ export class SidecarClient extends EventEmitter {
   /**
    * Send a user message to a Claude agent session.
    *
-   * Uses the v2 persistent session pool: a session is created once per
-   * thread and reused across turns. Messages are queued via session.send()
-   * and streamed via session.stream().
+   * Uses the v1 query() prompt queue pattern: a query is started once per
+   * thread with an AsyncIterable prompt. Subsequent messages are pushed to
+   * the queue without restarting the subprocess.
    *
-   * Three-state model:
-   *   1. No pool entry + resume=false → createSession()
-   *   2. No pool entry + resume=true  → resumeSession()
-   *   3. Pool entry exists, same model → session.send() only
-   *   4. Pool entry exists, model changed → close old, createSession()
-   *
-   * @param sessionId - Thread session ID (prefixed with "mcode-")
-   * @param message - User message content
-   * @param cwd - Working directory for the agent session
-   * @param model - Claude model identifier (e.g. "claude-sonnet-4-6")
-   * @param resume - Whether to resume a previously persisted session
-   * @param permissionMode - "full" maps to bypassPermissions; anything else maps to default
-   * @param attachments - Optional file attachments
+   * Session states:
+   *   1. No pool entry + resume=false -> new query()
+   *   2. No pool entry + resume=true  -> query() with { resume: sdkSessionId }
+   *   3. Pool entry exists, same model -> push to queue
+   *   4. Pool entry exists, model changed -> setModel() + push to queue
    */
   sendMessage(
     sessionId: string,
@@ -157,88 +189,124 @@ export class SidecarClient extends EventEmitter {
       logger.warn("Using bypassPermissions for session", { sessionId });
     }
 
-    const sessionOptions = {
-      model: resolvedModel,
-      permissionMode: sdkPermissionMode,
-      ...(isBypass && { allowDangerouslySkipPermissions: true }),
-    };
+    // Build the user message (with attachments if present)
+    const prompt = attachments && attachments.length > 0
+      ? await this.buildMultimodalMessage(message, attachments, sessionId)
+      : toUserMessage(message, sessionId);
 
-    if (existing && existing.model === resolvedModel) {
-      // Reuse existing session — just queue the next message
+    if (existing) {
+      // Reuse existing session
       existing.lastUsedAt = Date.now();
-      await existing.session.send(message);
+
+      if (existing.model !== resolvedModel) {
+        // Model changed: use setModel() instead of close/recreate
+        logger.info("Model changed, calling setModel()", { sessionId, model: resolvedModel });
+        try {
+          await existing.query.setModel(resolvedModel);
+          existing.model = resolvedModel;
+        } catch (err) {
+          logger.error("setModel() failed, closing session for recreation", {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          existing.closeQueue();
+          existing.query.close();
+          this.sessions.delete(sessionId);
+          // Fall through to create a new query below
+          return this.doSendMessage(sessionId, message, cwd, model, false, permissionMode, attachments);
+        }
+      }
+
+      existing.pushMessage(prompt);
       return;
     }
 
-    // Close old session if model changed
-    if (existing) {
-      logger.info("Model changed, closing existing session", { sessionId });
-      existing.session.close();
-      this.sessions.delete(sessionId);
-    }
-
-    // Create or resume a new SDK session.
-    // For resume, prefer the SDK's own session ID (captured from prior turns)
-    // over our mcode thread UUID, since the SDK assigns its own IDs.
+    // Build v1 query options with full settings support
     const resumeId = this.sdkSessionIds.get(sessionId) ?? uuid;
-    const session = resume
-      ? resumeSessionInCwd(resolvedCwd, resumeId, sessionOptions)
-      : createSessionInCwd(resolvedCwd, sessionOptions);
+    const baseOptions = {
+      cwd: resolvedCwd,
+      model: resolvedModel,
+      settingSources: ["user" as const, "project" as const, "local" as const],
+      systemPrompt: { type: "preset" as const, preset: "claude_code" as const },
+      tools: { type: "preset" as const, preset: "claude_code" as const },
+      permissionMode: sdkPermissionMode,
+      ...(isBypass && { allowDangerouslySkipPermissions: true }),
+    };
+    const options = resume
+      ? { ...baseOptions, resume: resumeId }
+      : { ...baseOptions, sessionId: uuid };
 
-    logger.info("Session created", { sessionId, resume, resumeId, model: resolvedModel, cwd: resolvedCwd });
+    const queue = createPromptQueue();
 
-    const entry: SessionEntry = { session, model: resolvedModel, lastUsedAt: Date.now() };
+    logger.info("Starting query()", { sessionId, resume, resumeId, model: resolvedModel, cwd: resolvedCwd });
+
+    const q = sdkQuery({ prompt: queue.iterable, options });
+
+    const entry: SessionEntry = {
+      query: q,
+      pushMessage: queue.push,
+      closeQueue: queue.close,
+      model: resolvedModel,
+      lastUsedAt: Date.now(),
+    };
     this.sessions.set(sessionId, entry);
 
-    // Build prompt before starting the stream loop (needed for retry)
-    const prompt = attachments && attachments.length > 0
-      ? await this.buildMultimodalMessage(message, attachments, sessionId)
-      : message;
-
-    // Start the stream loop. If resume fails with "No conversation found",
-    // the loop signals back via a one-time event so we can retry with createSession.
+    // Start the stream loop, then push the first message
     if (resume) {
       const retryPromise = new Promise<boolean>((resolve) => {
-        const handler = () => { resolve(true); };
-        this.once(`_resumeFailed:${sessionId}`, handler);
-        // If the stream ends without triggering retry, clean up the listener
-        this.once(`_streamDone:${sessionId}`, () => {
-          this.removeListener(`_resumeFailed:${sessionId}`, handler);
+        const resumeHandler = () => {
+          this.removeListener(`_streamDone:${sessionId}`, doneHandler);
+          resolve(true);
+        };
+        const doneHandler = () => {
+          this.removeListener(`_resumeFailed:${sessionId}`, resumeHandler);
           resolve(false);
-        });
+        };
+        this.once(`_resumeFailed:${sessionId}`, resumeHandler);
+        this.once(`_streamDone:${sessionId}`, doneHandler);
       });
 
-      this.startStreamLoop(sessionId, session);
-      await session.send(prompt);
+      this.startStreamLoop(sessionId, q);
+      queue.push(prompt);
 
       const needsRetry = await retryPromise;
       if (needsRetry) {
-        logger.info("Resume failed, falling back to createSession", { sessionId });
+        logger.info("Resume failed, falling back to fresh query()", { sessionId });
         this.sdkSessionIds.delete(sessionId);
-        const freshSession = createSessionInCwd(resolvedCwd, sessionOptions);
-        const freshEntry: SessionEntry = { session: freshSession, model: resolvedModel, lastUsedAt: Date.now() };
+
+        const freshQueue = createPromptQueue();
+        const freshOptions = { ...baseOptions, sessionId: uuid };
+
+        const freshQ = sdkQuery({ prompt: freshQueue.iterable, options: freshOptions });
+        const freshEntry: SessionEntry = {
+          query: freshQ,
+          pushMessage: freshQueue.push,
+          closeQueue: freshQueue.close,
+          model: resolvedModel,
+          lastUsedAt: Date.now(),
+        };
         this.sessions.set(sessionId, freshEntry);
-        this.startStreamLoop(sessionId, freshSession);
-        await freshSession.send(prompt);
+        this.startStreamLoop(sessionId, freshQ);
+        freshQueue.push(prompt);
       }
     } else {
-      this.startStreamLoop(sessionId, session);
-      await session.send(prompt);
+      this.startStreamLoop(sessionId, q);
+      queue.push(prompt);
     }
   }
 
   /**
-   * Run the persistent stream loop for a session.
-   * Processes all events from session.stream() until the stream closes.
-   * Cleans up the pool entry and emits session.ended when done.
+   * Run the stream loop for a query.
+   * Iterates the Query async generator, processes all SDK events,
+   * and cleans up the pool entry when the stream ends.
    */
-  private startStreamLoop(sessionId: string, session: SDKSession): void {
+  private startStreamLoop(sessionId: string, q: Query): void {
     (async () => {
       try {
         let lastAssistantText = "";
         let sessionInitialized = false;
 
-        for await (const msg of session.stream()) {
+        for await (const msg of q) {
           const entry = this.sessions.get(sessionId);
           if (entry) entry.lastUsedAt = Date.now();
 
@@ -261,8 +329,6 @@ export class SidecarClient extends EventEmitter {
           }
 
           // Only capture SDK session ID from successful sessions.
-          // Error results also carry a session_id, but that session isn't
-          // valid for future resume calls and would poison the mapping.
           const sdkSid = anyMsg.session_id as string | undefined;
           if (sdkSid && sessionInitialized && !this.sdkSessionIds.has(sessionId)) {
             this.sdkSessionIds.set(sessionId, sdkSid);
@@ -273,8 +339,7 @@ export class SidecarClient extends EventEmitter {
             } as SidecarEvent);
           }
 
-          // Detect failed resume and clear stale SDK session ID so the
-          // next attempt falls back to createSession.
+          // Detect failed resume and clear stale SDK session ID
           if (
             anyMsg.type === "result" &&
             anyMsg.is_error === true &&
@@ -285,13 +350,12 @@ export class SidecarClient extends EventEmitter {
               typeof e === "string" && e.includes("No conversation found"),
             );
             if (isNoConversation) {
-              logger.warn("Resume failed: conversation not found, will retry with createSession", { sessionId });
+              logger.warn("Resume failed: conversation not found, will retry with fresh query()", { sessionId });
               this.sdkSessionIds.delete(sessionId);
               this.emit("event", {
                 method: "session.sdkSessionId",
                 params: { sessionId, sdkSessionId: "" },
               } as SidecarEvent);
-              // Notify the UI so it can render a session-restart marker
               this.emit("event", {
                 method: "session.system",
                 params: {
@@ -299,9 +363,8 @@ export class SidecarClient extends EventEmitter {
                   subtype: "session_restarted",
                 },
               } as SidecarEvent);
-              // Signal doSendMessage to retry with createSession
               this.emit(`_resumeFailed:${sessionId}`);
-              return; // Exit the stream loop; doSendMessage handles retry
+              return;
             }
           }
 
@@ -421,13 +484,22 @@ export class SidecarClient extends EventEmitter {
           params: { sessionId, error: errorMessage },
         } as SidecarEvent);
       } finally {
-        this.sessions.delete(sessionId);
+        // Only delete the pool entry if it still belongs to this query.
+        // During resume-failed retry, a fresh entry may have replaced ours.
+        const current = this.sessions.get(sessionId);
+        if (current?.query === q) {
+          this.sessions.delete(sessionId);
+        }
         logger.info("Session stream ended", { sessionId });
         this.emit(`_streamDone:${sessionId}`);
-        this.emit("event", {
-          method: "session.ended",
-          params: { sessionId },
-        } as SidecarEvent);
+        // Only emit session.ended if this query still owns the session.
+        // Avoids premature "ended" when a retry stream is already running.
+        if (!current || current.query === q) {
+          this.emit("event", {
+            method: "session.ended",
+            params: { sessionId },
+          } as SidecarEvent);
+        }
       }
     })();
   }
@@ -505,8 +577,9 @@ export class SidecarClient extends EventEmitter {
     for (const [sessionId, entry] of this.sessions) {
       if (now - entry.lastUsedAt > IDLE_TTL_MS) {
         logger.info("Evicting idle session", { sessionId });
-        entry.session.close();
-        // Pool entry is removed when the stream loop's finally block runs
+        this.sessions.delete(sessionId);
+        entry.closeQueue();
+        entry.query.close();
       }
     }
   }
@@ -516,11 +589,13 @@ export class SidecarClient extends EventEmitter {
     this.sdkSessionIds.set(sessionId, sdkSessionId);
   }
 
-  /** Close a specific session's stream. */
+  /** Close a specific session's query. */
   stopSession(sessionId: string): void {
     const entry = this.sessions.get(sessionId);
     if (entry) {
-      entry.session.close();
+      this.sessions.delete(sessionId);
+      entry.closeQueue();
+      entry.query.close();
     }
   }
 
@@ -531,7 +606,8 @@ export class SidecarClient extends EventEmitter {
       this.evictionTimer = null;
     }
     for (const [, entry] of this.sessions) {
-      entry.session.close();
+      entry.closeQueue();
+      entry.query.close();
     }
     this.sessions.clear();
     this.sdkSessionIds.clear();
