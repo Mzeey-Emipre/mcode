@@ -18,6 +18,7 @@ export function TerminalPanel() {
   const addTerminal = useTerminalStore((s) => s.addTerminal);
   const removeTerminal = useTerminalStore((s) => s.removeTerminal);
   const removeAllTerminals = useTerminalStore((s) => s.removeAllTerminals);
+  const syncToThread = useTerminalStore((s) => s.syncToThread);
 
   const terminals = useTerminalStore(
     (s) => (activeThreadId ? s.terminals[activeThreadId] : undefined) ?? EMPTY_TERMINALS,
@@ -81,6 +82,11 @@ export function TerminalPanel() {
     window.electronAPI?.invoke("pty:kill-by-thread", activeThreadId);
     removeAllTerminals(activeThreadId);
   }, [activeThreadId, removeAllTerminals]);
+
+  // Sync activeTerminalId when the active thread changes
+  useEffect(() => {
+    syncToThread(activeThreadId);
+  }, [activeThreadId, syncToThread]);
 
   // Auto-create first terminal when panel opens with none
   const autoCreateFailed = useRef(false);
