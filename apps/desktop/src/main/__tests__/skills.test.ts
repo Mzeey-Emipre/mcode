@@ -44,7 +44,7 @@ function mockDirs(mapping: Record<string, Dirent[]>): void {
     const entries = normalized.get(norm(dir));
     if (entries) return entries;
     throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-  }) as typeof readdirSync);
+  }) as unknown as typeof readdirSync);
 }
 
 /**
@@ -59,7 +59,7 @@ function mockSkillFiles(mapping: Record<string, string>): void {
     const content = normalized.get(norm(filePath));
     if (content !== undefined) return content;
     throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-  }) as typeof readFileSync);
+  }) as unknown as typeof readFileSync);
 }
 
 describe("listSkills", () => {
