@@ -30,6 +30,8 @@ import { TextOverlay } from "./TextOverlay";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { useSlashCommand } from "./useSlashCommand";
 import { SlashCommandPopup } from "./SlashCommandPopup";
+import { PrDetectedCard } from "./PrDetectedCard";
+import type { PrDetail } from "@/transport/types";
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const SUPPORTED_FILE_TYPES = new Set(["application/pdf", "text/plain"]);
@@ -71,6 +73,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const dragDepthRef = useRef(0);
   const [taggedFiles, setTaggedFiles] = useState<Set<string>>(new Set());
   const overlayRef = useRef<HTMLDivElement>(null);
+  const [detectedPr, setDetectedPr] = useState<PrDetail | null>(null);
+  const [prDismissed, setPrDismissed] = useState(false);
+  const prDetectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -217,6 +222,39 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [isNewThread, workspaceId, composerMode, loadOpenPrs]);
 
+  // Detect GitHub PR URLs pasted into the input (debounced 500ms)
+  useEffect(() => {
+    if (prDetectTimeoutRef.current) {
+      clearTimeout(prDetectTimeoutRef.current);
+    }
+
+    if (prDismissed || !isNewThread) {
+      return;
+    }
+
+    const match = input.match(/https?:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/);
+    if (!match) {
+      setDetectedPr(null);
+      return;
+    }
+
+    const url = match[0];
+    prDetectTimeoutRef.current = setTimeout(async () => {
+      try {
+        const pr = await getTransport().getPrByUrl(url);
+        setDetectedPr(pr);
+      } catch {
+        setDetectedPr(null);
+      }
+    }, 500);
+
+    return () => {
+      if (prDetectTimeoutRef.current) {
+        clearTimeout(prDetectTimeoutRef.current);
+      }
+    };
+  }, [input, prDismissed, isNewThread]);
+
   // Full lock when agent running, provider lock when thread has a model
   const isModelFullyLocked = isAgentRunning;
   const isProviderLocked = !isNewThread && activeThread?.model != null;
@@ -241,6 +279,16 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     await fetchBranch(workspaceId, branch);
     setNewThreadBranch(branch);
   }, [workspaceId, fetchBranch, setNewThreadBranch]);
+
+  const handlePrReview = useCallback(async () => {
+    if (!detectedPr || !workspaceId) return;
+    setComposerMode("worktree");
+    await fetchBranch(workspaceId, detectedPr.branch);
+    setNewThreadBranch(detectedPr.branch);
+    setInput(`Review PR #${detectedPr.number}: ${detectedPr.title}`);
+    setDetectedPr(null);
+    setPrDismissed(false);
+  }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranch]);
 
   const getMaxSize = (mimeType: string): number => {
     if (SUPPORTED_IMAGE_TYPES.has(mimeType)) return MAX_IMAGE_SIZE;
@@ -438,6 +486,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
     setInput("");
     setTaggedFiles(new Set());
+    setDetectedPr(null);
+    setPrDismissed(false);
     const currentAttachments: AttachmentMeta[] = attachments
       .filter((a) => a.filePath != null)
       .map((a) => ({
@@ -536,6 +586,22 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
+        {/* PR URL detection card */}
+        {detectedPr && !prDismissed && (
+          <PrDetectedCard
+            number={detectedPr.number}
+            title={detectedPr.title}
+            branch={detectedPr.branch}
+            author={detectedPr.author}
+            onReview={handlePrReview}
+            onDismiss={() => {
+              setDetectedPr(null);
+              setPrDismissed(true);
+            }}
+            loading={!!fetchingBranch}
+          />
+        )}
+
         {/* Textarea with overlay */}
         <div className="relative">
           <TextOverlay ref={overlayRef} text={input} validRefs={taggedFiles} knownCommands={slashCommand.allCommands} />
