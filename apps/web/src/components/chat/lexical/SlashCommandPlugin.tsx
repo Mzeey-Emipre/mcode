@@ -13,9 +13,13 @@ import {
 } from "./SlashCommandNode";
 import { SLASH_TRIGGER_RE } from "../useSlashCommand";
 
+/** Props for the SlashCommandPlugin that detects /-triggers in the editor. */
 interface SlashCommandPluginProps {
+  /** Called when a /command trigger is detected, with the full text content. */
   readonly onTrigger: (value: string) => void;
+  /** Called to close the slash popup when the trigger is no longer valid. */
   readonly onDismiss: () => void;
+  /** Whether the slash command popup is currently visible. */
   readonly isPopupOpen: boolean;
 }
 

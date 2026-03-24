@@ -9,9 +9,13 @@ import {
 } from "lexical";
 import { $createMentionNode } from "./MentionNode";
 
+/** Props for the MentionPlugin that detects @-triggers in the editor. */
 interface MentionPluginProps {
+  /** Called when a valid @ trigger is detected, with the full text and cursor offset. */
   readonly onTrigger: (text: string, cursorPos: number) => void;
+  /** Called to close the mention popup when the trigger is no longer valid. */
   readonly onDismiss: () => void;
+  /** Whether the mention popup is currently visible. */
   readonly isPopupOpen: boolean;
 }
 
@@ -62,8 +66,14 @@ export function MentionPlugin({
         const cursorOffset = anchor.offset;
         const textBeforeCursor = textContent.slice(0, cursorOffset);
 
-        // Only invoke trigger callback when @ is present
-        if (!textBeforeCursor.includes("@")) {
+        // Only fire when @ is preceded by whitespace or at the start of text
+        const lastAt = textBeforeCursor.lastIndexOf("@");
+        if (lastAt === -1) {
+          if (isPopupOpenRef.current) onDismissRef.current();
+          return;
+        }
+        const charBefore = lastAt > 0 ? textBeforeCursor[lastAt - 1] : null;
+        if (charBefore !== null && !/\s/.test(charBefore)) {
           if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }

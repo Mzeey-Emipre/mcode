@@ -20,8 +20,10 @@ import { cn } from "@/lib/utils";
 // Types
 // ---------------------------------------------------------------------------
 
+/** The origin namespace of a slash command: built-in, skill, or plugin. */
 export type SlashCommandNamespace = "skill" | "mcode" | "plugin";
 
+/** JSON-serialized form of a SlashCommandNode for editor state persistence. */
 export interface SerializedSlashCommandNode extends SerializedLexicalNode {
   readonly type: "slash-command";
   readonly commandName: string;
@@ -166,6 +168,7 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
 // Helper exports
 // ---------------------------------------------------------------------------
 
+/** Create a new SlashCommandNode with the given name and namespace. */
 export function $createSlashCommandNode(
   commandName: string,
   namespace: SlashCommandNamespace,
@@ -173,6 +176,7 @@ export function $createSlashCommandNode(
   return new SlashCommandNode(commandName, namespace);
 }
 
+/** Type guard: returns true when the node is a SlashCommandNode. */
 export function $isSlashCommandNode(
   node: LexicalNode | null | undefined,
 ): node is SlashCommandNode {

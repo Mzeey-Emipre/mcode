@@ -18,8 +18,11 @@ import {
 import { $isMentionNode } from "./MentionNode";
 import { $isSlashCommandNode } from "./SlashCommandNode";
 
+/** Keyboard handling callbacks for the Lexical chat composer. */
 interface KeyboardPluginProps {
+  /** Callback to submit the current message. */
   readonly onSubmit: () => void;
+  /** When true, Enter-to-submit is suppressed. */
   readonly disabled?: boolean;
   /** When true, intercept navigation keys for popup handling. */
   readonly isPopupOpen?: boolean;
@@ -145,22 +148,41 @@ export function KeyboardPlugin({
       if ($isRangeSelection(selection) && selection.isCollapsed()) {
         const anchor = selection.anchor;
 
-        // Text anchor at offset 0: check the previous sibling
-        if (anchor.type === "text" && anchor.offset === 0 && isBackward) {
+        if (anchor.type === "text") {
           const node = anchor.getNode();
-          const prev = node.getPreviousSibling();
-          if (prev && ($isMentionNode(prev) || $isSlashCommandNode(prev))) {
-            event.preventDefault();
-            prev.remove();
-            return true;
+          // Backspace at offset 0: remove the previous sibling chip
+          if (anchor.offset === 0 && isBackward) {
+            const prev = node.getPreviousSibling();
+            if (prev && ($isMentionNode(prev) || $isSlashCommandNode(prev))) {
+              event.preventDefault();
+              prev.remove();
+              return true;
+            }
+          }
+          // Forward Delete at end of text: remove the next sibling chip
+          if (!isBackward && anchor.offset === node.getTextContentSize()) {
+            const next = node.getNextSibling();
+            if (next && ($isMentionNode(next) || $isSlashCommandNode(next))) {
+              event.preventDefault();
+              next.remove();
+              return true;
+            }
           }
         }
 
         // Element anchor: cursor is between block children (e.g. after a chip with no text node)
-        if (anchor.type === "element" && isBackward) {
+        if (anchor.type === "element" && $isElementNode(anchor.getNode())) {
           const parent = anchor.getNode();
-          if ($isElementNode(parent)) {
+          if (isBackward && anchor.offset > 0) {
             const target = parent.getChildAtIndex(anchor.offset - 1);
+            if (target && ($isMentionNode(target) || $isSlashCommandNode(target))) {
+              event.preventDefault();
+              target.remove();
+              return true;
+            }
+          }
+          if (!isBackward) {
+            const target = parent.getChildAtIndex(anchor.offset);
             if (target && ($isMentionNode(target) || $isSlashCommandNode(target))) {
               event.preventDefault();
               target.remove();

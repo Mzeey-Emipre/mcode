@@ -27,10 +27,10 @@ describe("getIconUrl", () => {
     expect(url).toBeNull();
   });
 
-  it("handles filenames without extension", () => {
+  it("returns null for filenames that map to the default icon", () => {
+    // Makefile maps to default_file.svg in vscode-icons-js, which we filter out
     const url = getIconUrl("Makefile");
-    // Either returns a URL for known filename or null
-    expect(url === null || typeof url === "string").toBe(true);
+    expect(url).toBeNull();
   });
 });
 

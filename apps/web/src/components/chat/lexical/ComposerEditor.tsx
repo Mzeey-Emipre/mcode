@@ -61,6 +61,7 @@ function EditablePlugin({ disabled }: { readonly disabled?: boolean }): null {
   return null;
 }
 
+/** Rich text composer with inline mention/slash-command chip support. */
 export function ComposerEditor({
   onChange,
   onSubmit,

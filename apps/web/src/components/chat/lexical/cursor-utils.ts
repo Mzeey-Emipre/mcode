@@ -39,7 +39,7 @@ export function getPlainTextFromEditor(editor: LexicalEditor): string {
  * Used to build the tagged files set for content injection.
  */
 export function extractMentionPaths(editor: LexicalEditor): string[] {
-  const paths: string[] = [];
+  const pathSet = new Set<string>();
   editor.getEditorState().read(() => {
     const root = $getRoot();
     const paragraphs = root.getChildren();
@@ -47,10 +47,10 @@ export function extractMentionPaths(editor: LexicalEditor): string[] {
       if (!$isElementNode(paragraph)) continue;
       for (const child of paragraph.getChildren()) {
         if ($isMentionNode(child)) {
-          paths.push(child.getFilePath());
+          pathSet.add(child.getFilePath());
         }
       }
     }
   });
-  return paths;
+  return [...pathSet];
 }

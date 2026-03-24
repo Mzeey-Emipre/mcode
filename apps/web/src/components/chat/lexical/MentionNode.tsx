@@ -14,11 +14,13 @@ import {
   type SerializedLexicalNode,
 } from "lexical";
 import { resolveIcon, type ResolvedIcon } from "@/lib/vscode-icons";
+import { basename } from "@/lib/path";
 
 // ---------------------------------------------------------------------------
 // Serialized shape
 // ---------------------------------------------------------------------------
 
+/** JSON-serialized form of a MentionNode for editor state persistence. */
 export interface SerializedMentionNode extends SerializedLexicalNode {
   readonly type: "mention";
   readonly filePath: string;
@@ -30,11 +32,6 @@ export interface SerializedMentionNode extends SerializedLexicalNode {
 
 const CHIP_CLASS =
   "inline-flex items-center gap-1 rounded-md border bg-sky-500/20 ring-1 ring-sky-500/30 px-1.5 py-0.5 text-xs align-baseline";
-
-function basename(filePath: string): string {
-  const sep = filePath.lastIndexOf("/");
-  return sep === -1 ? filePath : filePath.slice(sep + 1);
-}
 
 function MentionChip({ filePath }: { readonly filePath: string }): JSX.Element {
   const name = basename(filePath);
@@ -72,6 +69,7 @@ function MentionChip({ filePath }: { readonly filePath: string }): JSX.Element {
 // MentionNode (Lexical DecoratorNode)
 // ---------------------------------------------------------------------------
 
+/** Inline decorator node rendering an @file mention chip. */
 export class MentionNode extends DecoratorNode<JSX.Element> {
   __filePath: string;
 
@@ -141,10 +139,12 @@ export class MentionNode extends DecoratorNode<JSX.Element> {
 // Helper exports
 // ---------------------------------------------------------------------------
 
+/** Create a new MentionNode for the given file path. */
 export function $createMentionNode(filePath: string): MentionNode {
   return new MentionNode(filePath);
 }
 
+/** Type guard: returns true when the node is a MentionNode. */
 export function $isMentionNode(
   node: LexicalNode | null | undefined,
 ): node is MentionNode {

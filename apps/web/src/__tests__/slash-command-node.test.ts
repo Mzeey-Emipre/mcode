@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createEditor } from "lexical";
+import { createEditor, $createTextNode } from "lexical";
 import {
   SlashCommandNode,
   $createSlashCommandNode,
@@ -78,5 +78,13 @@ describe("SlashCommandNode", () => {
   it("$isSlashCommandNode returns false for non-SlashCommandNode", () => {
     expect($isSlashCommandNode(null)).toBe(false);
     expect($isSlashCommandNode(undefined)).toBe(false);
+  });
+
+  it("$isSlashCommandNode returns false for other Lexical node types", () => {
+    const editor = createTestEditor();
+    editor.update(() => {
+      const textNode = $createTextNode("hello");
+      expect($isSlashCommandNode(textNode)).toBe(false);
+    });
   });
 });
