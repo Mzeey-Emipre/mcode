@@ -2,16 +2,24 @@ import type { Message, ToolCall } from "@/transport/types";
 
 export type ChatVirtualItem =
   | { key: string; type: "message"; message: Message }
-  | { key: string; type: "active-tools"; toolCalls: ToolCall[] }
-  | { key: string; type: "fading-tools"; toolCalls: ToolCall[] }
+  | { key: string; type: "active-tools"; toolCalls: readonly ToolCall[] }
+  | { key: string; type: "fading-tools"; toolCalls: readonly ToolCall[] }
   | { key: string; type: "streaming"; content: string }
   | {
       key: string;
       type: "indicator";
       startTime: number | undefined;
-      activeToolCalls: ToolCall[];
+      activeToolCalls: readonly ToolCall[];
     };
 
+/**
+ * Flatten messages, tool calls, and streaming state into a linear array
+ * of typed items suitable for virtualized rendering.
+ *
+ * Preserves the existing render order: messages before tool calls,
+ * active/fading tool calls inserted before the last assistant message,
+ * streaming bubble and indicator appended at the end.
+ */
 export function buildVirtualItems(
   messages: readonly Message[],
   toolCalls: readonly ToolCall[],
@@ -45,7 +53,7 @@ export function buildVirtualItems(
     items.push({
       key: "active-tools",
       type: "active-tools",
-      toolCalls: toolCalls as ToolCall[],
+      toolCalls,
     });
   }
 
@@ -53,7 +61,7 @@ export function buildVirtualItems(
     items.push({
       key: "fading-tools",
       type: "fading-tools",
-      toolCalls: fadingToolCalls as ToolCall[],
+      toolCalls: fadingToolCalls,
     });
   }
 
@@ -74,7 +82,7 @@ export function buildVirtualItems(
       key: "indicator",
       type: "indicator",
       startTime: agentStartTime,
-      activeToolCalls: toolCalls as ToolCall[],
+      activeToolCalls: toolCalls,
     });
   }
 
