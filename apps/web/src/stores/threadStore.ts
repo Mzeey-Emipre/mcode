@@ -65,7 +65,33 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   settingsByThread: {},
 
   loadMessages: async (threadId) => {
-    set({ loading: true, error: null, currentThreadId: threadId });
+    // Clear stale real-time state for non-running threads so tool calls
+    // from a previous visit don't linger when switching back.
+    const isRunning = get().runningThreadIds.has(threadId);
+    if (!isRunning) {
+      clearFadingTimers(threadId);
+      set((state) => {
+        const nextToolCalls = { ...state.toolCallsByThread };
+        delete nextToolCalls[threadId];
+        const nextFading = { ...state.fadingToolCallsByThread };
+        delete nextFading[threadId];
+        const nextStreaming = { ...state.streamingByThread };
+        delete nextStreaming[threadId];
+        const nextStartTimes = { ...state.agentStartTimes };
+        delete nextStartTimes[threadId];
+        return {
+          loading: true,
+          error: null,
+          currentThreadId: threadId,
+          toolCallsByThread: nextToolCalls,
+          fadingToolCallsByThread: nextFading,
+          streamingByThread: nextStreaming,
+          agentStartTimes: nextStartTimes,
+        };
+      });
+    } else {
+      set({ loading: true, error: null, currentThreadId: threadId });
+    }
     try {
       const messages = await getTransport().getMessages(threadId, 100);
       // Only commit if this thread is still current
@@ -142,7 +168,11 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   },
 
   clearMessages: () => {
-    set({ messages: [], error: null, streamingByThread: {} });
+    // Cancel all pending fade-out timers to prevent stale writes
+    for (const threadId of fadingTimers.keys()) {
+      clearFadingTimers(threadId);
+    }
+    set({ messages: [], error: null, streamingByThread: {}, fadingToolCallsByThread: {} });
     // Note: does NOT reset runningThreadIds - agents may still be running
   },
 
