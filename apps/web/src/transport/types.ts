@@ -76,11 +76,12 @@ export interface GitBranch {
   isCurrent: boolean;
 }
 
-/** A managed git worktree under ~/.mcode/worktrees/. */
+/** A git worktree registered in the repository. */
 export interface WorktreeInfo {
   name: string;
   path: string;
   branch: string;
+  managed: boolean;
 }
 
 /** PR metadata returned by the main process. */

@@ -30,6 +30,7 @@ export interface WorktreeInfo {
   name: string;
   path: string;
   branch: string;
+  managed: boolean;
 }
 
 export interface GitBranchInfo {
@@ -111,7 +112,7 @@ export function createWorktree(
     stdio: "pipe",
   });
 
-  return { name, path: wtPath, branch };
+  return { name, path: wtPath, branch, managed: true };
 }
 
 /** Remove a git worktree by name. Returns true on success, false on failure. */
@@ -152,12 +153,15 @@ export function removeWorktree(repoPath: string, name: string, branchName?: stri
 }
 
 /**
- * List managed worktrees for a repository using git porcelain output.
- * Only returns worktrees that live under the managed base dir and are
- * registered with git. Returns [] if the git command fails.
+ * List all git worktrees for a repository using git porcelain output.
+ * Returns all worktrees (except the main working tree) with a `managed`
+ * flag indicating whether the worktree lives under the mcode base dir.
+ * Returns [] if the git command fails.
  */
 export function listWorktrees(repoPath: string): WorktreeInfo[] {
   const worktreesDir = getWorktreeBaseDir(repoPath).replace(/\\/g, "/").toLowerCase();
+  // Normalize repo path for comparison to skip the main working tree
+  const normalizedRepo = repoPath.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 
   let output: string;
   try {
@@ -183,11 +187,12 @@ export function listWorktrees(repoPath: string): WorktreeInfo[] {
     } else if (line === "detached") {
       currentBranch = "(detached)";
     } else if (line.trim() === "" && currentPath) {
-      // Blank line separates worktree entries; emit if under managed dir
-      const normalized = currentPath.replace(/\\/g, "/").toLowerCase();
-      if (normalized.startsWith(worktreesDir + "/") && currentBranch) {
-        const name = basename(currentPath);
-        result.push({ name, path: currentPath, branch: currentBranch });
+      const normalized = currentPath.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+      // Skip the main working tree (the repo itself)
+      if (normalized !== normalizedRepo && currentBranch) {
+        const name = currentPath.replace(/\\/g, "/").split("/").pop() || currentPath;
+        const managed = normalized.startsWith(worktreesDir + "/");
+        result.push({ name, path: currentPath, branch: currentBranch, managed });
       }
       currentPath = "";
       currentBranch = "";
@@ -196,10 +201,11 @@ export function listWorktrees(repoPath: string): WorktreeInfo[] {
 
   // Handle last entry (porcelain output may not end with blank line)
   if (currentPath && currentBranch) {
-    const normalized = currentPath.replace(/\\/g, "/").toLowerCase();
-    if (normalized.startsWith(worktreesDir + "/")) {
-      const name = basename(currentPath);
-      result.push({ name, path: currentPath, branch: currentBranch });
+    const normalized = currentPath.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+    if (normalized !== normalizedRepo) {
+      const name = currentPath.replace(/\\/g, "/").split("/").pop() || currentPath;
+      const managed = normalized.startsWith(worktreesDir + "/");
+      result.push({ name, path: currentPath, branch: currentBranch, managed });
     }
   }
 

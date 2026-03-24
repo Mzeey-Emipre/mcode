@@ -379,7 +379,7 @@ export class AppState {
         (wt) => normalize(wt.path) === normalizedInput,
       );
       if (!matched) {
-        throw new Error("Path is not a recognized managed worktree");
+        throw new Error("Path is not a recognized worktree");
       }
 
       // Use the canonical branch from the matched worktree, not the caller-supplied value

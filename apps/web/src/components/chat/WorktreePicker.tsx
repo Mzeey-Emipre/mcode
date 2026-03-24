@@ -76,6 +76,11 @@ export function WorktreePicker({
                       <span className="font-medium">{w.name}</span>
                       <span className="text-[10px] text-muted-foreground">
                         {w.branch} &middot; {truncatePath(w.path)}
+                        {!w.managed && (
+                          <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] leading-none">
+                            external
+                          </span>
+                        )}
                       </span>
                     </CommandItem>
                   ))}
