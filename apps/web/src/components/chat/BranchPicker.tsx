@@ -85,7 +85,7 @@ export function BranchPicker({ branches, selectedBranch, onSelect, loading, lock
       </button>
 
       {open && (
-        <div className="absolute bottom-full right-0 mb-1 w-[260px] rounded-md border border-border bg-popover p-1 shadow-lg">
+        <div className="absolute bottom-full right-0 z-50 mb-1 w-[260px] rounded-md border border-border bg-popover p-1 shadow-lg">
           <input
             ref={searchRef}
             value={search}
