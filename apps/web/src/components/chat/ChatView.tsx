@@ -89,7 +89,7 @@ export function ChatView() {
       </div>
 
       {/* Messages, tool calls, and streaming - all in one scrollable area */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0">
         {showEmptyState ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-sm text-muted-foreground">

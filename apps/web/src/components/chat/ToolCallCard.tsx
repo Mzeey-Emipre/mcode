@@ -5,7 +5,7 @@ import { ChevronRight } from "lucide-react";
 import { TOOL_LABELS, TOOL_ICONS } from "./tool-renderers/constants";
 
 interface ToolCallCardProps {
-  toolCalls: ToolCall[];
+  toolCalls: readonly ToolCall[];
 }
 
 interface ToolCallGroup {
@@ -14,7 +14,7 @@ interface ToolCallGroup {
 }
 
 /** Group consecutive tool calls of the same type */
-function groupConsecutive(toolCalls: ToolCall[]): ToolCallGroup[] {
+function groupConsecutive(toolCalls: readonly ToolCall[]): ToolCallGroup[] {
   const groups: ToolCallGroup[] = [];
   for (const tc of toolCalls) {
     const last = groups[groups.length - 1];
