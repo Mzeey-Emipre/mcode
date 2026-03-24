@@ -145,6 +145,7 @@ describe("AppState", () => {
         name: "feature-12345678",
         path: "/tmp/wt/feature-12345678",
         branch: "mcode/feature-12345678",
+        managed: true,
       });
       const thread = appState.createThread(
         workspaceId,
@@ -572,6 +573,7 @@ describe("AppState", () => {
         name: "hello-12345678",
         path: "/tmp/wt/hello-12345678",
         branch: "mcode/hello-12345678",
+        managed: true,
       });
 
       // For worktree mode, sendMessage uses the worktree_path as cwd.

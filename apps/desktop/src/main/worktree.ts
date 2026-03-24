@@ -314,6 +314,8 @@ export function branchExists(repoPath: string, branch: string): boolean {
  * Throws on failure (e.g. branch not found on remote).
  */
 export function fetchBranch(repoPath: string, branch: string): void {
+  validateBranchName(branch);
+
   // Fetch the specific branch from origin
   execFileSync(
     "git",
