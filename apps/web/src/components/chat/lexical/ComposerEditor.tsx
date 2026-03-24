@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from "react";
+import { useCallback, useMemo, useRef, useEffect } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -12,10 +12,10 @@ import { SlashCommandNode } from "./SlashCommandNode";
 import { MentionPlugin } from "./MentionPlugin";
 import { SlashCommandPlugin } from "./SlashCommandPlugin";
 import { KeyboardPlugin } from "./KeyboardPlugin";
-import { getPlainTextFromEditor, extractMentionPaths } from "./cursor-utils";
+import { getPlainTextFromEditor } from "./cursor-utils";
 
 interface ComposerEditorProps {
-  onChange: (text: string, mentionPaths: string[]) => void;
+  onChange: (text: string) => void;
   onSubmit: () => void;
   /** Called when @ trigger is detected - drives file autocomplete popup */
   onMentionTrigger: (text: string, cursorPos: number) => void;
@@ -70,21 +70,23 @@ export function ComposerEditor({
   const internalRef = useRef<LexicalEditor | null>(null);
   const ref = editorRef ?? internalRef;
 
-  const initialConfig = {
-    namespace: "McodeComposer",
-    theme: EDITOR_THEME,
-    nodes: [MentionNode, SlashCommandNode],
-    onError: (error: Error) => {
-      console.error("[ComposerEditor]", error);
-    },
-    editable: !disabled,
-  };
+  const initialConfig = useMemo(
+    () => ({
+      namespace: "McodeComposer",
+      theme: EDITOR_THEME,
+      nodes: [MentionNode, SlashCommandNode],
+      onError: (error: Error) => {
+        console.error("[ComposerEditor]", error);
+      },
+      editable: !disabled,
+    }),
+    [disabled],
+  );
 
   const handleChange = useCallback(
     (_editorState: EditorState, editor: LexicalEditor) => {
       const text = getPlainTextFromEditor(editor);
-      const paths = extractMentionPaths(editor);
-      onChange(text, paths);
+      onChange(text);
     },
     [onChange],
   );
@@ -108,7 +110,7 @@ export function ComposerEditor({
           ErrorBoundary={LexicalErrorBoundary}
         />
         <HistoryPlugin />
-        <OnChangePlugin onChange={handleChange} />
+        <OnChangePlugin onChange={handleChange} ignoreSelectionChange />
         <EditorRefPlugin editorRef={ref} />
         <MentionPlugin
           onTrigger={onMentionTrigger}

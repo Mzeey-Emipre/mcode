@@ -72,4 +72,21 @@ describe("resolveIcon", () => {
     await resolveIcon("utils.ts");
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("deduplicates concurrent fetches for the same file", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () =>
+        Promise.resolve(new Blob(["<svg/>"], { type: "image/svg+xml" })),
+    });
+
+    // Fire two concurrent resolves before either settles
+    const [r1, r2] = await Promise.all([
+      resolveIcon("index.ts"),
+      resolveIcon("index.ts"),
+    ]);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(r1.type).toBe("vscode");
+    expect(r2.type).toBe("vscode");
+  });
 });

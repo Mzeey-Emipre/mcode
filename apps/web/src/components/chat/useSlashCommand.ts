@@ -18,7 +18,7 @@ const MCODE_COMMANDS: Command[] = [
 ];
 
 /** Regex: matches `/` at start of line or after whitespace, followed by non-space chars. */
-const TRIGGER_RE = /(^|\s)(\/\S*)$/;
+export const SLASH_TRIGGER_RE = /(^|\s)(\/\S*)$/;
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -89,7 +89,7 @@ export function useSlashCommand({
       lastInputRef.current = value;
       const cursor = value.length;
       const before = value.slice(0, cursor);
-      const match = TRIGGER_RE.exec(before);
+      const match = SLASH_TRIGGER_RE.exec(before);
 
       if (!match) {
         setIsOpen(false);
@@ -174,7 +174,7 @@ export function useSlashCommand({
       const value = lastInputRef.current;
       const cursor = value.length;
       const before = value.slice(0, cursor);
-      const match = TRIGGER_RE.exec(before);
+      const match = SLASH_TRIGGER_RE.exec(before);
 
       if (match) {
         // Use match.index + leading group length to anchor to the exact regex match

@@ -483,12 +483,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     editorRef.current?.focus();
   }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments]);
 
-  const handleEditorChange = useCallback((text: string, _mentionPaths: string[]) => {
+  const handleEditorChange = useCallback((text: string) => {
     setInput(text);
   }, []);
 
   const handleSlashSelect = useCallback((cmd: Command) => {
-    slashCommand.onSelect(cmd, (newValue) => setInput(newValue));
+    // No-op replaceText: Lexical handles text replacement via insertSlashCommandNode
+    slashCommand.onSelect(cmd, () => {});
     if (editorRef.current) {
       insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
     }

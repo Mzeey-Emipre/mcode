@@ -50,6 +50,13 @@ export function MentionPlugin({
 
         const textContent = node.getTextContent();
         const cursorOffset = anchor.offset;
+        const textBeforeCursor = textContent.slice(0, cursorOffset);
+
+        // Only invoke trigger callback when @ is present
+        if (!textBeforeCursor.includes("@")) {
+          if (isPopupOpen) onDismiss();
+          return;
+        }
 
         onTrigger(textContent, cursorOffset);
       });

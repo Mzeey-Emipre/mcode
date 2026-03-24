@@ -30,10 +30,14 @@ const blobCache = new Map<string, string>();
 /** Cache for failed lookups to avoid retrying. */
 const failedCache = new Set<string>();
 
+/** In-flight fetch deduplication: prevents N identical mentions from triggering N fetches. */
+const inflightFetches = new Map<string, Promise<ResolvedIcon>>();
+
 /** Clear all caches (for testing). */
 export function clearIconCache(): void {
   blobCache.clear();
   failedCache.clear();
+  inflightFetches.clear();
 }
 
 /**
@@ -54,15 +58,26 @@ export async function resolveIcon(fileName: string): Promise<ResolvedIcon> {
     return { type: "lucide", icon: getFileIcon(fileName) };
   }
 
-  try {
-    const response = await fetch(cdnUrl);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    blobCache.set(fileName, blobUrl);
-    return { type: "vscode", url: blobUrl };
-  } catch {
-    failedCache.add(fileName);
-    return { type: "lucide", icon: getFileIcon(fileName) };
-  }
+  // Deduplicate in-flight fetches for the same file
+  const inflight = inflightFetches.get(fileName);
+  if (inflight) return inflight;
+
+  const fetchPromise = (async (): Promise<ResolvedIcon> => {
+    try {
+      const response = await fetch(cdnUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      blobCache.set(fileName, blobUrl);
+      return { type: "vscode", url: blobUrl };
+    } catch {
+      failedCache.add(fileName);
+      return { type: "lucide", icon: getFileIcon(fileName) };
+    } finally {
+      inflightFetches.delete(fileName);
+    }
+  })();
+
+  inflightFetches.set(fileName, fetchPromise);
+  return fetchPromise;
 }

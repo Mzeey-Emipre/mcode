@@ -11,9 +11,7 @@ import {
   $createSlashCommandNode,
   type SlashCommandNamespace,
 } from "./SlashCommandNode";
-
-/** Regex: matches `/` at start of text or after whitespace. */
-const TRIGGER_RE = /(^|\s)(\/\S*)$/;
+import { SLASH_TRIGGER_RE } from "../useSlashCommand";
 
 interface SlashCommandPluginProps {
   readonly onTrigger: (value: string) => void;
@@ -56,7 +54,7 @@ export function SlashCommandPlugin({
         const cursorOffset = anchor.offset;
         const textBeforeCursor = textContent.slice(0, cursorOffset);
 
-        const match = TRIGGER_RE.exec(textBeforeCursor);
+        const match = SLASH_TRIGGER_RE.exec(textBeforeCursor);
         if (!match) {
           if (isPopupOpen) onDismiss();
           return;
@@ -93,7 +91,7 @@ export function insertSlashCommandNode(
     const cursorOffset = anchor.offset;
     const textBeforeCursor = textContent.slice(0, cursorOffset);
 
-    const match = TRIGGER_RE.exec(textBeforeCursor);
+    const match = SLASH_TRIGGER_RE.exec(textBeforeCursor);
     if (!match) return;
 
     const triggerStart = match.index + match[1].length;

@@ -42,9 +42,13 @@ function MentionChip({ filePath }: { readonly filePath: string }): JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    resolveIcon(name).then((resolved) => {
-      if (!cancelled) setIcon(resolved);
-    });
+    resolveIcon(name)
+      .then((resolved) => {
+        if (!cancelled) setIcon(resolved);
+      })
+      .catch(() => {
+        // Icon resolution failed; chip renders without icon
+      });
     return () => {
       cancelled = true;
     };
