@@ -4,10 +4,13 @@ import { Bot, FileText, File, RotateCcw } from "lucide-react";
 import { MarkdownContent } from "./MarkdownContent";
 import { stripInjectedFiles } from "@/lib/file-tags";
 
+/** Props for {@link MessageBubble}. */
 interface MessageBubbleProps {
+  /** The message object to render. */
   message: Message;
 }
 
+/** Maps a MIME type to a file extension for attachment URLs. */
 function extFromMime(mimeType: string): string {
   const map: Record<string, string> = {
     "image/jpeg": ".jpg",
@@ -20,6 +23,7 @@ function extFromMime(mimeType: string): string {
   return map[mimeType] ?? "";
 }
 
+/** Renders image thumbnails and file badges for message attachments. */
 const AttachmentDisplay = memo(function AttachmentDisplay({
   attachments,
   threadId,
@@ -60,6 +64,7 @@ const AttachmentDisplay = memo(function AttachmentDisplay({
   );
 });
 
+/** Renders a single chat message (system, user, or assistant). Memoized to prevent re-renders when the message ref is unchanged. */
 export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
   const formattedTime = useMemo(
     () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),

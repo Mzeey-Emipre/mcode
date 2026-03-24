@@ -3,12 +3,16 @@ import type { Element } from "hast";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+/** Props for {@link MarkdownContent}. */
 interface MarkdownContentProps {
+  /** Raw markdown string to render. */
   content: string;
 }
 
+/** Stable remark plugin list, hoisted to avoid re-creating on every render. */
 const plugins = [remarkGfm];
 
+/** Stable custom element renderers for react-markdown, hoisted to module scope. */
 const components = {
   h1: ({ children }: { children?: React.ReactNode }) => <h1 className="text-xl font-bold mt-4 mb-2">{children}</h1>,
   h2: ({ children }: { children?: React.ReactNode }) => <h2 className="text-lg font-semibold mt-3 mb-2">{children}</h2>,
@@ -79,6 +83,7 @@ const components = {
   ),
 };
 
+/** Renders a markdown string with GFM support. Memoized to skip re-renders when content is unchanged. */
 export const MarkdownContent = memo(function MarkdownContent({ content }: MarkdownContentProps) {
   return (
     <ReactMarkdown remarkPlugins={plugins} components={components}>
