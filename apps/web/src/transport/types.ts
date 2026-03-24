@@ -179,5 +179,5 @@ export interface McodeTransport {
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;
 
   // Skills
-  listSkills(): Promise<SkillInfo[]>;
+  listSkills(cwd?: string): Promise<SkillInfo[]>;
 }

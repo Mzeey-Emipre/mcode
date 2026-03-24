@@ -29,6 +29,18 @@ export const HIGHLIGHT_RE = new RegExp(
   "g",
 );
 
+/**
+ * Combined regex matching both @file/path and /command tokens in a single pass.
+ * Group 1: @file/path token (including the @).
+ * Group 2: /command-name token (allows word chars, colons for namespaced
+ *          commands like `superpowers:project-manager`, and hyphens).
+ * Used by TextOverlay for unified multi-token highlighting.
+ */
+export const COMBINED_TOKEN_RE = new RegExp(
+  String.raw`(?:^|(?<=\s))(?:(@${FILE_PATH_PATTERN})|(\/[\w:][\w:-]*))`,
+  "g",
+);
+
 /** Sentinel separating user text from injected file blocks. */
 const FILE_INJECTION_SEPARATOR = "\n\n---\n";
 

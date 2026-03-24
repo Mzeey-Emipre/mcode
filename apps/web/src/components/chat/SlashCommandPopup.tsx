@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import { Terminal, Zap } from "lucide-react";
+import { Terminal, Zap, Puzzle } from "lucide-react";
 import type { Command } from "./useSlashCommand";
 
 const ITEM_HEIGHT = 44; // px per row
@@ -164,6 +164,8 @@ function CommandRow({
       <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center text-muted-foreground">
         {cmd.namespace === "mcode" ? (
           <Zap size={12} />
+        ) : cmd.namespace === "plugin" ? (
+          <Puzzle size={12} />
         ) : (
           <Terminal size={12} />
         )}
@@ -185,10 +187,12 @@ function CommandRow({
           "ml-auto flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
           cmd.namespace === "mcode"
             ? "bg-primary/15 text-primary"
-            : "bg-muted text-muted-foreground",
+            : cmd.namespace === "plugin"
+              ? "bg-orange-500/15 text-orange-500"
+              : "bg-muted text-muted-foreground",
         )}
       >
-        {cmd.namespace === "mcode" ? "mcode" : "skill"}
+        {cmd.namespace}
       </span>
     </button>
   );

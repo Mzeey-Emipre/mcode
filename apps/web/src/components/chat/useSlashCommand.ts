@@ -4,7 +4,7 @@ import { getTransport, type SkillInfo } from "@/transport";
 export interface Command {
   name: string;
   description: string;
-  namespace: "skill" | "mcode";
+  namespace: "skill" | "mcode" | "plugin";
   action?: string;
 }
 
@@ -25,12 +25,14 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 interface UseSlashCommandOptions {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onMcodeCommand?: (action: string) => void;
+  cwd?: string;
 }
 
 export interface UseSlashCommandReturn {
   isOpen: boolean;
   isLoading: boolean;
   items: Command[];
+  allCommands: Command[];
   selectedIndex: number;
   anchorRect: DOMRect | null;
   onInputChange: (value: string) => void;
@@ -42,37 +44,42 @@ export interface UseSlashCommandReturn {
 export function useSlashCommand({
   textareaRef,
   onMcodeCommand,
+  cwd,
 }: UseSlashCommandOptions): UseSlashCommandReturn {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [items, setItems] = useState<Command[]>([]);
+  const [allCommands, setAllCommands] = useState<Command[]>(MCODE_COMMANDS);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
-  // Cache: loaded skills + timestamp for TTL
-  const skillsCache = useRef<{ skills: SkillInfo[]; fetchedAt: number } | null>(null);
-
-  const loadSkills = useCallback(async (): Promise<SkillInfo[]> => {
-    const now = Date.now();
-    if (skillsCache.current && now - skillsCache.current.fetchedAt < CACHE_TTL_MS) {
-      return skillsCache.current.skills;
-    }
-    const skills = await getTransport().listSkills();
-    skillsCache.current = { skills, fetchedAt: now };
-    return skills;
-  }, []);
+  // Cache: loaded skills + timestamp for TTL.
+  // Also track which cwd the cache was built for — invalidate on workspace switch.
+  const skillsCache = useRef<{ skills: SkillInfo[]; fetchedAt: number; cwd?: string } | null>(null);
 
   const buildItems = useCallback((skillInfos: SkillInfo[], filter: string): Command[] => {
     const f = filter.toLowerCase();
     const skills: Command[] = skillInfos.map(({ name, description }) => ({
       name,
       description: description || `Run /${name}`,
-      namespace: "skill" as const,
+      namespace: (name.includes(":") ? "plugin" : "skill") as "plugin" | "skill",
     }));
     const all = [...MCODE_COMMANDS, ...skills];
     if (!f) return all;
     return all.filter((cmd) => cmd.name.toLowerCase().includes(f));
   }, []);
+
+  const loadSkills = useCallback(async (): Promise<SkillInfo[]> => {
+    const now = Date.now();
+    const cached = skillsCache.current;
+    if (cached && cached.cwd === cwd && now - cached.fetchedAt < CACHE_TTL_MS) {
+      return cached.skills;
+    }
+    const skills = await getTransport().listSkills(cwd);
+    skillsCache.current = { skills, fetchedAt: now, cwd };
+    setAllCommands(buildItems(skills, ""));
+    return skills;
+  }, [cwd, buildItems]);
 
   const onInputChange = useCallback(
     (value: string) => {
@@ -193,6 +200,7 @@ export function useSlashCommand({
     isOpen,
     isLoading,
     items,
+    allCommands,
     selectedIndex,
     anchorRect,
     onInputChange,

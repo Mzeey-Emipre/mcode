@@ -298,8 +298,8 @@ function registerIpcHandlers(state: AppState): void {
     return state.listWorktrees(workspaceId);
   });
 
-  ipcMain.handle("list-skills", () => {
-    return listSkills();
+  ipcMain.handle("list-skills", (_event, cwd?: string) => {
+    return listSkills(cwd);
   });
 
   // -- Threads --

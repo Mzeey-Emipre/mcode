@@ -275,3 +275,43 @@ describe("IPC cache", () => {
     expect(mockListSkills).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("cwd passthrough", () => {
+  it("passes cwd to listSkills", async () => {
+    const mockListSkills = vi.fn().mockResolvedValue([]);
+    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+
+    const ref = makeTextarea("/");
+    const { result } = renderHook(() =>
+      useSlashCommand({ textareaRef: ref, cwd: "/my/project" })
+    );
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(mockListSkills).toHaveBeenCalledWith("/my/project");
+  });
+});
+
+describe("plugin namespace detection", () => {
+  it("assigns 'plugin' namespace to skills with colon in name", async () => {
+    const mockListSkills = vi.fn().mockResolvedValue([
+      { name: "superpowers:project-manager", description: "Manage projects" },
+      { name: "commit", description: "Create a git commit" },
+    ]);
+    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+
+    const ref = makeTextarea("/");
+    const { result } = renderHook(() =>
+      useSlashCommand({ textareaRef: ref })
+    );
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    const pluginCmd = result.current.items.find((i) => i.name === "superpowers:project-manager");
+    const skillCmd = result.current.items.find((i) => i.name === "commit");
+    expect(pluginCmd?.namespace).toBe("plugin");
+    expect(skillCmd?.namespace).toBe("skill");
+  });
+});

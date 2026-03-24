@@ -115,6 +115,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const setThreadSettings = useThreadStore((s) => s.setThreadSettings);
   const isAgentRunning = threadId ? runningThreadIds.has(threadId) : false;
 
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
+
   const threads = useWorkspaceStore((s) => s.threads);
   const activeThread = threadId ? threads.find((t) => t.id === threadId) : undefined;
 
@@ -128,6 +131,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const slashCommand = useSlashCommand({
     textareaRef,
+    cwd: workspacePath,
     onMcodeCommand: (action) => {
       if (action === "toggle-plan") {
         const next =
@@ -516,7 +520,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       >
         {/* Textarea with overlay */}
         <div className="relative">
-          <TextOverlay ref={overlayRef} text={input} validRefs={taggedFiles} />
+          <TextOverlay ref={overlayRef} text={input} validRefs={taggedFiles} knownCommands={slashCommand.allCommands} />
           <textarea
             ref={textareaRef}
             value={input}

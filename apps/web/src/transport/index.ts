@@ -43,7 +43,7 @@ function createMockTransport(): McodeTransport {
     async openInEditor() {},
     async openInExplorer() {},
     async getBranchPr() { return null; },
-    async listSkills() { return []; },
+    async listSkills(_cwd?: string) { return []; },
   };
 }
 
