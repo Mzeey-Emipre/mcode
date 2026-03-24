@@ -33,6 +33,8 @@ import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
 import { SlashCommandPopup } from "./SlashCommandPopup";
 import { type LexicalEditor, $getRoot, $createParagraphNode } from "lexical";
+import { PrDetectedCard } from "./PrDetectedCard";
+import type { PrDetail } from "@/transport/types";
 import { QueuePopover } from "./QueuePopover";
 import { useQueueStore } from "@/stores/queueStore";
 
@@ -74,6 +76,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragDepthRef = useRef(0);
+  const [detectedPr, setDetectedPr] = useState<PrDetail | null>(null);
+  const [prDismissed, setPrDismissed] = useState(false);
+  const prDetectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const editorRef = useRef<LexicalEditor | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
@@ -148,6 +153,11 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const setNamingMode = useWorkspaceStore((s) => s.setNamingMode);
   const setCustomBranchName = useWorkspaceStore((s) => s.setCustomBranchName);
   const setSelectedWorktree = useWorkspaceStore((s) => s.setSelectedWorktree);
+  const openPrs = useWorkspaceStore((s) => s.openPrs);
+  const openPrsLoading = useWorkspaceStore((s) => s.openPrsLoading);
+  const fetchingBranch = useWorkspaceStore((s) => s.fetchingBranch);
+  const loadOpenPrs = useWorkspaceStore((s) => s.loadOpenPrs);
+  const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
 
   // Sync modelId with the active thread's locked model when switching threads
   useEffect(() => {
@@ -199,6 +209,46 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [isNewThread, newThreadBranch, branches, setNewThreadBranch]);
 
+  // Load open PRs when in worktree mode
+  useEffect(() => {
+    if (isNewThread && workspaceId && composerMode === "worktree") {
+      loadOpenPrs(workspaceId);
+    }
+  }, [isNewThread, workspaceId, composerMode, loadOpenPrs]);
+
+  // Detect GitHub PR URLs pasted into the input (debounced 500ms)
+  useEffect(() => {
+    if (prDetectTimeoutRef.current) {
+      clearTimeout(prDetectTimeoutRef.current);
+    }
+
+    if (prDismissed || !isNewThread) {
+      return;
+    }
+
+    const match = input.match(/https?:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/);
+    if (!match) {
+      setDetectedPr(null);
+      return;
+    }
+
+    const url = match[0];
+    prDetectTimeoutRef.current = setTimeout(async () => {
+      try {
+        const pr = await getTransport().getPrByUrl(url);
+        setDetectedPr(pr);
+      } catch {
+        setDetectedPr(null);
+      }
+    }, 500);
+
+    return () => {
+      if (prDetectTimeoutRef.current) {
+        clearTimeout(prDetectTimeoutRef.current);
+      }
+    };
+  }, [input, prDismissed, isNewThread]);
+
   const hasContent = input.trim().length > 0 || attachments.length > 0;
 
   // Full lock when agent running, provider lock when thread has a model
@@ -219,6 +269,28 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       stopAgent(threadId);
     }
   }, [threadId, stopAgent]);
+
+  const handleFetchAndSelect = useCallback(async (branch: string, prNumber: number) => {
+    if (!workspaceId) return;
+    await fetchBranch(workspaceId, branch, prNumber);
+    setNewThreadBranch(branch);
+    // Use the PR branch name directly as the worktree branch
+    setNamingMode("custom");
+    setCustomBranchName(branch);
+  }, [workspaceId, fetchBranch, setNewThreadBranch, setNamingMode, setCustomBranchName]);
+
+  const handlePrReview = useCallback(async () => {
+    if (!detectedPr || !workspaceId) return;
+    setComposerMode("worktree");
+    await fetchBranch(workspaceId, detectedPr.branch, detectedPr.number);
+    setNewThreadBranch(detectedPr.branch);
+    // Use the PR branch name directly as the worktree branch
+    setNamingMode("custom");
+    setCustomBranchName(detectedPr.branch);
+    setInput(`Review PR #${detectedPr.number}: ${detectedPr.title}`);
+    setDetectedPr(null);
+    setPrDismissed(false);
+  }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranch, setNamingMode, setCustomBranchName]);
 
   const getMaxSize = (mimeType: string): number => {
     if (SUPPORTED_IMAGE_TYPES.has(mimeType)) return MAX_IMAGE_SIZE;
@@ -466,6 +538,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         root.append($createParagraphNode());
       });
     }
+    setDetectedPr(null);
+    setPrDismissed(false);
     const currentAttachments = collectAndClearAttachments();
 
     if (isNewThread && workspaceId) {
@@ -551,6 +625,22 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
+        {/* PR URL detection card */}
+        {detectedPr && !prDismissed && (
+          <PrDetectedCard
+            number={detectedPr.number}
+            title={detectedPr.title}
+            branch={detectedPr.branch}
+            author={detectedPr.author}
+            onReview={handlePrReview}
+            onDismiss={() => {
+              setDetectedPr(null);
+              setPrDismissed(true);
+            }}
+            loading={!!fetchingBranch}
+          />
+        )}
+
         {/* Lexical editor with file tag popup */}
         <div className="relative" ref={editorContainerRef} onPaste={handlePaste}>
           <ComposerEditor
@@ -791,6 +881,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                   onSelect={setNewThreadBranch}
                   loading={branchesLoading}
                   locked={false}
+                  pullRequests={openPrs}
+                  prsLoading={openPrsLoading}
+                  fetchingBranch={fetchingBranch}
+                  onFetchAndSelect={handleFetchAndSelect}
                 />
                 <NamingModeSelector mode={namingMode} onModeChange={setNamingMode} />
                 <BranchNameInput

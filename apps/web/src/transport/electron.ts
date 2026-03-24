@@ -1,4 +1,4 @@
-import type { McodeTransport, Workspace, Thread, Message, GitBranch, WorktreeInfo, AttachmentMeta, SkillInfo, PrInfo } from "./types";
+import type { McodeTransport, Workspace, Thread, Message, GitBranch, WorktreeInfo, AttachmentMeta, SkillInfo, PrInfo, PrDetail } from "./types";
 
 export function createElectronTransport(): McodeTransport {
   const api = window.electronAPI;
@@ -132,6 +132,18 @@ export function createElectronTransport(): McodeTransport {
 
     async getBranchPr(branch, cwd) {
       return api.invoke("get-branch-pr", branch, cwd) as Promise<PrInfo | null>
+    },
+
+    async listOpenPrs(workspaceId) {
+      return api.invoke("list-open-prs", workspaceId) as Promise<PrDetail[]>;
+    },
+
+    async fetchBranch(workspaceId, branch, prNumber?) {
+      await api.invoke("fetch-branch", workspaceId, branch, prNumber);
+    },
+
+    async getPrByUrl(url) {
+      return api.invoke("get-pr-by-url", url) as Promise<PrDetail | null>;
     },
 
     async listSkills(cwd?: string) {

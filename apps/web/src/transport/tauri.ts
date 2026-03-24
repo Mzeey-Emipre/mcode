@@ -125,6 +125,18 @@ export function createTauriTransport(): McodeTransport {
       throw new Error("Not implemented in Tauri");
     },
 
+    async listOpenPrs() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async fetchBranch() {
+      throw new Error("Not implemented in Tauri");
+    },
+
+    async getPrByUrl() {
+      throw new Error("Not implemented in Tauri");
+    },
+
     async listSkills(_cwd?: string) {
       return [];
     },

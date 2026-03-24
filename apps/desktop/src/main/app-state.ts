@@ -26,8 +26,10 @@ import {
   getCurrentBranch,
   checkoutBranch,
   validateBranchName,
+  fetchBranch,
 } from "./worktree.js";
 import type { GitBranchInfo, WorktreeInfo } from "./worktree.js";
+import { listOpenPrs, getPrByUrl } from "./github.js";
 import { discoverConfig, type ConfigSummary } from "./config.js";
 import { listWorkspaceFiles as gitListFiles, readFileContent as gitReadFile, resolveWorkingDir } from "./file-ops.js";
 import { logger } from "./logger.js";
@@ -99,6 +101,25 @@ export class AppState {
     const workspace = WorkspaceRepo.findById(this.db, workspaceId);
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
     return listWorktrees(workspace.path);
+  }
+
+  /** List open pull requests for the workspace's repository. */
+  async listOpenPrs(workspaceId: string): Promise<import("./github.js").PrDetail[]> {
+    const workspace = WorkspaceRepo.findById(this.db, workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+    return listOpenPrs(workspace.path);
+  }
+
+  /** Fetch a remote branch from origin into the workspace's repository. */
+  fetchBranch(workspaceId: string, branch: string, prNumber?: number): void {
+    const workspace = WorkspaceRepo.findById(this.db, workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+    fetchBranch(workspace.path, branch, prNumber);
+  }
+
+  /** Look up a PR by its GitHub URL. */
+  async getPrByUrl(url: string): Promise<import("./github.js").PrDetail | null> {
+    return getPrByUrl(url);
   }
 
   // ---------------------------------------------------------------------------
@@ -369,7 +390,7 @@ export class AppState {
 
     let thread: Thread;
     if (existingWorktreePath) {
-      // Validate: path must be a known managed worktree (prevents path traversal)
+      // Validate: path must be a known worktree (prevents path traversal)
       const workspace = WorkspaceRepo.findById(this.db, workspaceId);
       if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
       const knownWorktrees = listWorktrees(workspace.path);
@@ -379,7 +400,7 @@ export class AppState {
         (wt) => normalize(wt.path) === normalizedInput,
       );
       if (!matched) {
-        throw new Error("Path is not a recognized managed worktree");
+        throw new Error("Path is not a recognized worktree");
       }
 
       // Use the canonical branch from the matched worktree, not the caller-supplied value

@@ -76,16 +76,27 @@ export interface GitBranch {
   isCurrent: boolean;
 }
 
-/** A managed git worktree under ~/.mcode/worktrees/. */
+/** A git worktree registered in the repository. */
 export interface WorktreeInfo {
   name: string;
   path: string;
   branch: string;
+  managed: boolean;
 }
 
 /** PR metadata returned by the main process. */
 export interface PrInfo {
   number: number;
+  url: string;
+  state: string;
+}
+
+/** Detailed PR metadata for branch picker and URL detection. */
+export interface PrDetail {
+  number: number;
+  title: string;
+  branch: string;
+  author: string;
   url: string;
   state: string;
 }
@@ -177,6 +188,11 @@ export interface McodeTransport {
 
   // GitHub PR
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;
+
+  // PR review
+  listOpenPrs(workspaceId: string): Promise<PrDetail[]>;
+  fetchBranch(workspaceId: string, branch: string, prNumber?: number): Promise<void>;
+  getPrByUrl(url: string): Promise<PrDetail | null>;
 
   // Skills
   listSkills(cwd?: string): Promise<SkillInfo[]>;
