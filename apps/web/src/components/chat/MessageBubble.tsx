@@ -61,6 +61,11 @@ const AttachmentDisplay = memo(function AttachmentDisplay({
 });
 
 export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
+  const formattedTime = useMemo(
+    () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    [message.timestamp],
+  );
+
   if (message.role === "system") {
     return (
       <div className="flex items-center gap-3 py-2">
@@ -92,11 +97,6 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
   }
 
   // Assistant message
-  const formattedTime = useMemo(
-    () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    [message.timestamp],
-  );
-
   return (
     <div className="flex gap-3">
       <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted">

@@ -19,16 +19,19 @@ const components = {
   li: ({ children }: { children?: React.ReactNode }) => <li className="leading-relaxed">{children}</li>,
   strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold">{children}</strong>,
   em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
-  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-    <a
-      href={href}
-      className="text-primary underline hover:text-primary/80"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      {children}
-    </a>
-  ),
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+    const safeHref = href && /^https?:|^mailto:/.test(href) ? href : undefined;
+    return (
+      <a
+        href={safeHref}
+        className="text-primary underline hover:text-primary/80"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {children}
+      </a>
+    );
+  },
   blockquote: ({ children }: { children?: React.ReactNode }) => (
     <blockquote className="border-l-2 border-border pl-3 my-2 text-muted-foreground italic">
       {children}
