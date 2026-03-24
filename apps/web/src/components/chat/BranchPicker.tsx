@@ -184,6 +184,7 @@ export function BranchPicker({ branches, selectedBranch, onSelect, loading, lock
                           key={`pr-${pr.number}`}
                           onClick={() => {
                             if (isFetching) return;
+                            setOpen(false);
                             if (onFetchAndSelect) {
                               onFetchAndSelect(pr.branch);
                             } else {

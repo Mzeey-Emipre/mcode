@@ -155,6 +155,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       worktrees: [],
       worktreesLoading: false,
       selectedWorktree: null,
+      openPrs: [],
+      openPrsLoading: false,
+      fetchingBranch: null,
     });
     if (id) {
       get().loadThreads(id);
