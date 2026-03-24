@@ -2,7 +2,7 @@ import type { McodeTransport } from "./types";
 import { createElectronTransport } from "./electron";
 import { createTauriTransport } from "./tauri";
 
-export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo } from "./types";
+export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo, PrDetail } from "./types";
 export { PERMISSION_MODES, INTERACTION_MODES } from "./types";
 
 let transport: McodeTransport | null = null;
@@ -43,6 +43,9 @@ function createMockTransport(): McodeTransport {
     async openInEditor() {},
     async openInExplorer() {},
     async getBranchPr() { return null; },
+    async listOpenPrs() { return []; },
+    async fetchBranch() {},
+    async getPrByUrl() { return null; },
     async listSkills(_cwd?: string) { return []; },
   };
 }

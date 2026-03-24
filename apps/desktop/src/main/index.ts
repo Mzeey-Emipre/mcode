@@ -24,7 +24,7 @@ import { PtyManager } from "./pty-manager.js";
 import { logger, getLogPath, getRecentLogs } from "./logger.js";
 import type { AttachmentMeta } from "./models.js";
 import { detectEditors, openInEditor, openInExplorer } from "./editors.js";
-import { getBranchPr } from "./github.js";
+import { getBranchPr, getPrByUrl } from "./github.js";
 import { listSkills } from "./skills.js";
 
 /** Validated permission mode values accepted by the IPC boundary. */
@@ -479,6 +479,31 @@ function registerIpcHandlers(state: AppState): void {
       }
       if (!existsSync(cwd)) return null;
       return getBranchPr(branch, cwd);
+    },
+  );
+
+  ipcMain.handle(
+    "list-open-prs",
+    async (_event, workspaceId: string) => {
+      return state.listOpenPrs(workspaceId);
+    },
+  );
+
+  ipcMain.handle(
+    "fetch-branch",
+    (_event, workspaceId: string, branch: string) => {
+      if (!branch || typeof branch !== "string") {
+        throw new Error("Branch name is required");
+      }
+      state.fetchBranch(workspaceId, branch);
+    },
+  );
+
+  ipcMain.handle(
+    "get-pr-by-url",
+    async (_event, url: string) => {
+      if (!url || typeof url !== "string") return null;
+      return getPrByUrl(url);
     },
   );
 

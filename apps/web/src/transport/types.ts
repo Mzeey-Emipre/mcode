@@ -91,6 +91,16 @@ export interface PrInfo {
   state: string;
 }
 
+/** Detailed PR metadata for branch picker and URL detection. */
+export interface PrDetail {
+  number: number;
+  title: string;
+  branch: string;
+  author: string;
+  url: string;
+  state: string;
+}
+
 /**
  * Permission mode for Claude agent sessions.
  * - "full": maps to SDK bypassPermissions (no prompts, unrestricted access)
@@ -178,6 +188,11 @@ export interface McodeTransport {
 
   // GitHub PR
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;
+
+  // PR review
+  listOpenPrs(workspaceId: string): Promise<PrDetail[]>;
+  fetchBranch(workspaceId: string, branch: string): Promise<void>;
+  getPrByUrl(url: string): Promise<PrDetail | null>;
 
   // Skills
   listSkills(cwd?: string): Promise<SkillInfo[]>;
