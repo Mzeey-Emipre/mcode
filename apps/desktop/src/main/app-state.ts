@@ -369,7 +369,7 @@ export class AppState {
 
     let thread: Thread;
     if (existingWorktreePath) {
-      // Validate: path must be a known managed worktree (prevents path traversal)
+      // Validate: path must be a known worktree (prevents path traversal)
       const workspace = WorkspaceRepo.findById(this.db, workspaceId);
       if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
       const knownWorktrees = listWorktrees(workspace.path);
