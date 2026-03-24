@@ -22,11 +22,11 @@ function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
     case "message":
       return <MessageBubble message={item.message} />;
     case "active-tools":
-      return <ToolCallCard toolCalls={item.toolCalls as ToolCall[]} />;
+      return <ToolCallCard toolCalls={item.toolCalls} />;
     case "fading-tools":
       return (
         <div className="animate-fade-out">
-          <ToolCallCard toolCalls={item.toolCalls as ToolCall[]} />
+          <ToolCallCard toolCalls={item.toolCalls} />
         </div>
       );
     case "streaming":
@@ -35,9 +35,14 @@ function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
       return (
         <StreamingIndicator
           startTime={item.startTime}
-          activeToolCalls={item.activeToolCalls as ToolCall[]}
+          activeToolCalls={item.activeToolCalls}
         />
       );
+    default: {
+      // @ts-ignore - exhaustive check for all ChatVirtualItem types
+      const _exhaustive: never = item;
+      return null;
+    }
   }
 }
 
@@ -96,6 +101,8 @@ export function MessageList() {
   });
 
   // Don't adjust scroll when near bottom -- prevents jitter during streaming
+  // Safe to assign in render body: useVirtualizer returns a stable instance
+  // (TanStack Virtual v3) so the property is set before the next measurement.
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (
     _item,
     _delta,

@@ -1,0 +1,18 @@
+import "node:module";
+import { defineConfig } from "vitest/config";
+import.meta.url;
+var vitest_config_default = defineConfig({ test: {
+	globals: true,
+	environment: "node",
+	include: ["src/main/__tests__/**/*.test.ts"],
+	coverage: {
+		provider: "v8",
+		reporter: ["text", "json-summary"],
+		include: ["src/main/**/*.ts"],
+		exclude: ["src/main/__tests__/**", "src/preload/**"]
+	}
+} });
+//#endregion
+export { vitest_config_default as default };
+
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoidml0ZXN0LmNvbmZpZy5qcyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyJDOi9Vc2Vycy8tYWRtLWNodWtzLy5tY29kZS93b3JrdHJlZXMvbWNvZGUvaS13YW50LXRvLWltcGxlbWVudC1naC1pc3N1ZS00NC1ub3Qtc3VyZS1ob3ctd2UtLS0tYjQzMzNiNWUvYXBwcy9kZXNrdG9wL3ZpdGVzdC5jb25maWcudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgZGVmaW5lQ29uZmlnIH0gZnJvbSBcInZpdGVzdC9jb25maWdcIjtcclxuXHJcbmV4cG9ydCBkZWZhdWx0IGRlZmluZUNvbmZpZyh7XHJcbiAgdGVzdDoge1xyXG4gICAgZ2xvYmFsczogdHJ1ZSxcclxuICAgIGVudmlyb25tZW50OiBcIm5vZGVcIixcclxuICAgIGluY2x1ZGU6IFtcInNyYy9tYWluL19fdGVzdHNfXy8qKi8qLnRlc3QudHNcIl0sXHJcbiAgICBjb3ZlcmFnZToge1xyXG4gICAgICBwcm92aWRlcjogXCJ2OFwiLFxyXG4gICAgICByZXBvcnRlcjogW1widGV4dFwiLCBcImpzb24tc3VtbWFyeVwiXSxcclxuICAgICAgaW5jbHVkZTogW1wic3JjL21haW4vKiovKi50c1wiXSxcclxuICAgICAgZXhjbHVkZTogW1wic3JjL21haW4vX190ZXN0c19fLyoqXCIsIFwic3JjL3ByZWxvYWQvKipcIl0sXHJcbiAgICB9LFxyXG4gIH0sXHJcbn0pO1xyXG4iXSwibWFwcGluZ3MiOiI7OztBQUVBLElBQUEsd0JBQWUsYUFBYSxFQUMxQixNQUFNO0NBQ0osU0FBUztDQUNULGFBQWE7Q0FDYixTQUFTLENBQUMsa0NBQWtDO0NBQzVDLFVBQVU7RUFDUixVQUFVO0VBQ1YsVUFBVSxDQUFDLFFBQVEsZUFBZTtFQUNsQyxTQUFTLENBQUMsbUJBQW1CO0VBQzdCLFNBQVMsQ0FBQyx5QkFBeUIsaUJBQWlCO0VBQ3JEO0NBQ0YsRUFDRixDQUFDIn0=
