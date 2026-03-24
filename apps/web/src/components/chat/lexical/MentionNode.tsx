@@ -59,7 +59,7 @@ function MentionChip({ filePath }: { readonly filePath: string }): JSX.Element {
       {icon?.type === "vscode" ? (
         <img src={icon.url} alt="" className="size-3.5" />
       ) : icon?.type === "lucide" ? (
-        <icon.icon className="size-3.5 text-sky-400" />
+        <icon.icon className="size-3.5 text-sky-400/70" />
       ) : (
         <span className="size-3.5" />
       )}

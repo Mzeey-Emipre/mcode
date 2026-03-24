@@ -98,57 +98,57 @@ const NAME_ICON: Record<string, LucideIcon> = {
  */
 const EXT_COLOR: Record<string, string> = {
   // JavaScript / TypeScript
-  js: "text-yellow-400", jsx: "text-yellow-400", mjs: "text-yellow-400", cjs: "text-yellow-400",
-  ts: "text-blue-400", tsx: "text-blue-400", mts: "text-blue-400", cts: "text-blue-400",
+  js: "text-amber-300/80", jsx: "text-amber-300/80", mjs: "text-amber-300/80", cjs: "text-amber-300/80",
+  ts: "text-sky-400/80", tsx: "text-sky-400/80", mts: "text-sky-400/80", cts: "text-sky-400/80",
   // Web
-  html: "text-orange-400", htm: "text-orange-400",
-  vue: "text-emerald-400", svelte: "text-orange-500",
+  html: "text-orange-300/80", htm: "text-orange-300/80",
+  vue: "text-emerald-400/70", svelte: "text-orange-400/70",
   // Styles
-  css: "text-blue-300", scss: "text-pink-400", sass: "text-pink-400", less: "text-indigo-400",
+  css: "text-sky-300/80", scss: "text-pink-300/70", sass: "text-pink-300/70", less: "text-indigo-300/70",
   // Data / Config (JSON-like)
-  json: "text-yellow-300", jsonc: "text-yellow-300", json5: "text-yellow-300",
+  json: "text-amber-200/70", jsonc: "text-amber-200/70", json5: "text-amber-200/70",
   // Data / Config (YAML/TOML)
-  yaml: "text-red-300", yml: "text-red-300", toml: "text-gray-400",
+  yaml: "text-rose-300/60", yml: "text-rose-300/60", toml: "text-zinc-400/70",
   // Markdown / Text
-  md: "text-sky-300", mdx: "text-sky-300", txt: "text-gray-400", rst: "text-gray-400",
+  md: "text-slate-400/80", mdx: "text-slate-400/80", txt: "text-zinc-400/60", rst: "text-zinc-400/60",
   // Python
-  py: "text-yellow-300", pyi: "text-yellow-300", pyx: "text-yellow-300",
+  py: "text-sky-300/80", pyi: "text-sky-300/80", pyx: "text-sky-300/80",
   // Rust
-  rs: "text-orange-400",
+  rs: "text-orange-300/70",
   // Go
-  go: "text-cyan-400",
+  go: "text-cyan-300/70",
   // C / C++
-  c: "text-blue-300", h: "text-purple-300", cpp: "text-blue-400", hpp: "text-purple-400", cc: "text-blue-400",
+  c: "text-sky-300/70", h: "text-violet-300/60", cpp: "text-sky-400/70", hpp: "text-violet-300/60", cc: "text-sky-400/70",
   // Java / Kotlin
-  java: "text-red-400", kt: "text-purple-400", kts: "text-purple-400",
+  java: "text-orange-300/70", kt: "text-violet-300/70", kts: "text-violet-300/70",
   // Ruby
-  rb: "text-red-400", rake: "text-red-400",
+  rb: "text-rose-300/70", rake: "text-rose-300/70",
   // Shell
-  sh: "text-emerald-400", bash: "text-emerald-400", zsh: "text-emerald-400",
-  fish: "text-emerald-400", ps1: "text-blue-300", bat: "text-green-400", cmd: "text-green-400",
+  sh: "text-emerald-300/70", bash: "text-emerald-300/70", zsh: "text-emerald-300/70",
+  fish: "text-emerald-300/70", ps1: "text-sky-300/60", bat: "text-emerald-300/60", cmd: "text-emerald-300/60",
   // SQL / Database
-  sql: "text-blue-300", sqlite: "text-blue-300", db: "text-blue-300",
+  sql: "text-sky-300/60", sqlite: "text-sky-300/60", db: "text-sky-300/60",
   // Config
-  env: "text-yellow-300", ini: "text-gray-400", cfg: "text-gray-400", conf: "text-gray-400",
-  lock: "text-gray-500", editorconfig: "text-gray-400", gitignore: "text-gray-400",
+  env: "text-amber-200/60", ini: "text-zinc-400/60", cfg: "text-zinc-400/60", conf: "text-zinc-400/60",
+  lock: "text-zinc-500/50", editorconfig: "text-zinc-400/60", gitignore: "text-zinc-400/60",
   // Images
-  png: "text-emerald-300", jpg: "text-emerald-300", jpeg: "text-emerald-300",
-  gif: "text-emerald-300", svg: "text-orange-300", webp: "text-emerald-300",
-  ico: "text-emerald-300", bmp: "text-emerald-300", avif: "text-emerald-300",
+  png: "text-teal-300/60", jpg: "text-teal-300/60", jpeg: "text-teal-300/60",
+  gif: "text-teal-300/60", svg: "text-amber-300/60", webp: "text-teal-300/60",
+  ico: "text-teal-300/60", bmp: "text-teal-300/60", avif: "text-teal-300/60",
   // Video
-  mp4: "text-purple-300", webm: "text-purple-300", avi: "text-purple-300", mov: "text-purple-300",
+  mp4: "text-violet-300/60", webm: "text-violet-300/60", avi: "text-violet-300/60", mov: "text-violet-300/60",
   // Audio
-  mp3: "text-pink-300", wav: "text-pink-300", ogg: "text-pink-300", flac: "text-pink-300",
+  mp3: "text-pink-300/60", wav: "text-pink-300/60", ogg: "text-pink-300/60", flac: "text-pink-300/60",
 };
 
 const NAME_COLOR: Record<string, string> = {
-  dockerfile: "text-blue-400",
-  makefile: "text-orange-400",
-  ".gitignore": "text-gray-400",
-  ".env": "text-yellow-300",
-  ".env.local": "text-yellow-300",
-  "tsconfig.json": "text-blue-400",
-  "package.json": "text-emerald-400",
+  dockerfile: "text-sky-400/70",
+  makefile: "text-orange-300/70",
+  ".gitignore": "text-zinc-400/60",
+  ".env": "text-amber-200/60",
+  ".env.local": "text-amber-200/60",
+  "tsconfig.json": "text-sky-400/70",
+  "package.json": "text-emerald-300/70",
 };
 
 /**
