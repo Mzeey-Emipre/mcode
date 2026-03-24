@@ -278,17 +278,23 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     if (!workspaceId) return;
     await fetchBranch(workspaceId, branch);
     setNewThreadBranch(branch);
-  }, [workspaceId, fetchBranch, setNewThreadBranch]);
+    // Use the PR branch name directly as the worktree branch
+    setNamingMode("custom");
+    setCustomBranchName(branch);
+  }, [workspaceId, fetchBranch, setNewThreadBranch, setNamingMode, setCustomBranchName]);
 
   const handlePrReview = useCallback(async () => {
     if (!detectedPr || !workspaceId) return;
     setComposerMode("worktree");
     await fetchBranch(workspaceId, detectedPr.branch);
     setNewThreadBranch(detectedPr.branch);
+    // Use the PR branch name directly as the worktree branch
+    setNamingMode("custom");
+    setCustomBranchName(detectedPr.branch);
     setInput(`Review PR #${detectedPr.number}: ${detectedPr.title}`);
     setDetectedPr(null);
     setPrDismissed(false);
-  }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranch]);
+  }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranch, setNamingMode, setCustomBranchName]);
 
   const getMaxSize = (mimeType: string): number => {
     if (SUPPORTED_IMAGE_TYPES.has(mimeType)) return MAX_IMAGE_SIZE;

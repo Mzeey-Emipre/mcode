@@ -108,9 +108,17 @@ export function createWorktree(
     throw new Error(`Worktree directory already exists: ${wtPath}`);
   }
 
-  execFileSync("git", ["-C", repoPath, "worktree", "add", wtPath, "-b", branch], {
-    stdio: "pipe",
-  });
+  if (branchExists(repoPath, branch)) {
+    // Branch already exists (e.g. fetched PR branch) -- check it out directly
+    execFileSync("git", ["-C", repoPath, "worktree", "add", wtPath, branch], {
+      stdio: "pipe",
+    });
+  } else {
+    // Create a new branch
+    execFileSync("git", ["-C", repoPath, "worktree", "add", wtPath, "-b", branch], {
+      stdio: "pipe",
+    });
+  }
 
   return { name, path: wtPath, branch, managed: true };
 }
