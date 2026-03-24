@@ -32,7 +32,7 @@ import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
 import { SlashCommandPopup } from "./SlashCommandPopup";
-import { type LexicalEditor, $getRoot, $createParagraphNode } from "lexical";
+import { type LexicalEditor, $getRoot, $createParagraphNode, $createTextNode } from "lexical";
 import { PrDetectedCard } from "./PrDetectedCard";
 import type { PrDetail } from "@/transport/types";
 import { QueuePopover } from "./QueuePopover";
@@ -287,7 +287,16 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     // Use the PR branch name directly as the worktree branch
     setNamingMode("custom");
     setCustomBranchName(detectedPr.branch);
-    setInput(`Review PR #${detectedPr.number}: ${detectedPr.title}`);
+    const prefill = `Review PR #${detectedPr.number}: ${detectedPr.title}`;
+    setInput(prefill);
+    // Also populate the Lexical editor so the user sees the prefilled text
+    editorRef.current?.update(() => {
+      const root = $getRoot();
+      root.clear();
+      const para = $createParagraphNode();
+      para.append($createTextNode(prefill));
+      root.append(para);
+    });
     setDetectedPr(null);
     setPrDismissed(false);
   }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranch, setNamingMode, setCustomBranchName]);
