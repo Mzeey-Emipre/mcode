@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SidecarEvent } from "../sidecar/types.js";
-import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Query } from "@anthropic-ai/claude-agent-sdk";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -692,12 +692,12 @@ describe("SidecarClient (v1 query API)", () => {
     vi.useFakeTimers();
 
     let closeResolve: (() => void) | undefined;
+    let yielded = false;
     const q = {
       [Symbol.asyncIterator]() { return this; },
-      _yielded: false,
       async next() {
-        if (!this._yielded) {
-          this._yielded = true;
+        if (!yielded) {
+          yielded = true;
           return { value: { type: "result", stop_reason: "end_turn" }, done: false };
         }
         await new Promise<void>((r) => { closeResolve = r; });
