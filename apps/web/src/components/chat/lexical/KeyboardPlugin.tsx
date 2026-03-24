@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $getSelection,
@@ -31,6 +31,10 @@ interface KeyboardPluginProps {
  * - Enter (without Shift): submit message (or select popup item)
  * - Shift+Enter: insert newline (default Lexical behavior)
  * - Arrow keys, Tab, Escape: delegated to popup handler when open
+ *
+ * Uses refs for popup callbacks to avoid constant re-registration of
+ * CRITICAL-priority handlers, which can cause timing gaps where
+ * Enter/Tab events slip through to the submit handler.
  */
 export function KeyboardPlugin({
   onSubmit,
@@ -40,64 +44,63 @@ export function KeyboardPlugin({
 }: KeyboardPluginProps): null {
   const [editor] = useLexicalComposerContext();
 
-  // Popup keyboard interception at CRITICAL priority (above normal handlers)
+  // Refs to always access latest values without re-registering handlers
+  const isPopupOpenRef = useRef(isPopupOpen);
+  isPopupOpenRef.current = isPopupOpen;
+
+  const onPopupKeyDownRef = useRef(onPopupKeyDown);
+  onPopupKeyDownRef.current = onPopupKeyDown;
+
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
+
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+
+  // Register all keyboard handlers once, using refs for latest values
   useEffect(() => {
-    if (!isPopupOpen || !onPopupKeyDown) return;
+    // Popup interception at CRITICAL priority (above submit handler)
+    const popupHandler = (key: string) => (event: KeyboardEvent | null): boolean => {
+      if (!event) return false;
+      if (!isPopupOpenRef.current || !onPopupKeyDownRef.current) return false;
+      if (onPopupKeyDownRef.current(key)) {
+        event.preventDefault();
+        return true;
+      }
+      return false;
+    };
 
     const unregisterDown = editor.registerCommand(
       KEY_ARROW_DOWN_COMMAND,
-      (event: KeyboardEvent) => {
-        if (onPopupKeyDown("ArrowDown")) {
-          event.preventDefault();
-          return true;
-        }
-        return false;
-      },
+      popupHandler("ArrowDown") as (event: KeyboardEvent) => boolean,
       COMMAND_PRIORITY_CRITICAL,
     );
 
     const unregisterUp = editor.registerCommand(
       KEY_ARROW_UP_COMMAND,
-      (event: KeyboardEvent) => {
-        if (onPopupKeyDown("ArrowUp")) {
-          event.preventDefault();
-          return true;
-        }
-        return false;
-      },
+      popupHandler("ArrowUp") as (event: KeyboardEvent) => boolean,
       COMMAND_PRIORITY_CRITICAL,
     );
 
     const unregisterTab = editor.registerCommand(
       KEY_TAB_COMMAND,
-      (event: KeyboardEvent) => {
-        if (onPopupKeyDown("Tab")) {
-          event.preventDefault();
-          return true;
-        }
-        return false;
-      },
+      popupHandler("Tab") as (event: KeyboardEvent) => boolean,
       COMMAND_PRIORITY_CRITICAL,
     );
 
     const unregisterEsc = editor.registerCommand(
       KEY_ESCAPE_COMMAND,
-      (event: KeyboardEvent) => {
-        if (onPopupKeyDown("Escape")) {
-          event.preventDefault();
-          return true;
-        }
-        return false;
-      },
+      popupHandler("Escape") as (event: KeyboardEvent) => boolean,
       COMMAND_PRIORITY_CRITICAL,
     );
 
-    const unregisterEnter = editor.registerCommand(
+    const unregisterPopupEnter = editor.registerCommand(
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (!event) return false;
         if (event.shiftKey) return false;
-        if (onPopupKeyDown("Enter")) {
+        if (!isPopupOpenRef.current || !onPopupKeyDownRef.current) return false;
+        if (onPopupKeyDownRef.current("Enter")) {
           event.preventDefault();
           return true;
         }
@@ -106,34 +109,22 @@ export function KeyboardPlugin({
       COMMAND_PRIORITY_CRITICAL,
     );
 
-    return () => {
-      unregisterDown();
-      unregisterUp();
-      unregisterTab();
-      unregisterEsc();
-      unregisterEnter();
-    };
-  }, [editor, isPopupOpen, onPopupKeyDown]);
-
-  // Normal Enter-to-submit at HIGH priority
-  useEffect(() => {
-    return editor.registerCommand(
+    // Normal Enter-to-submit at HIGH priority
+    const unregisterSubmitEnter = editor.registerCommand(
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (!event) return false;
         if (event.shiftKey) return false;
         event.preventDefault();
-        if (!disabled) {
-          onSubmit();
+        if (!disabledRef.current) {
+          onSubmitRef.current();
         }
         return true;
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [editor, onSubmit, disabled]);
 
-  // Backspace/Delete: remove decorator nodes when selected or cursor-adjacent
-  useEffect(() => {
+    // Backspace/Delete: remove decorator nodes when selected or cursor-adjacent
     const handleDelete = (event: KeyboardEvent, isBackward: boolean): boolean => {
       const selection = $getSelection();
 
@@ -179,6 +170,12 @@ export function KeyboardPlugin({
     );
 
     return () => {
+      unregisterDown();
+      unregisterUp();
+      unregisterTab();
+      unregisterEsc();
+      unregisterPopupEnter();
+      unregisterSubmitEnter();
       unregisterBackspace();
       unregisterDelete();
     };
