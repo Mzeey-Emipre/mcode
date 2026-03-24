@@ -1,72 +1,80 @@
 import { useState } from "react";
-import type { LucideIcon } from "lucide-react";
-import { Bot, Check, ChevronDown, ChevronRight, FileText, FilePen, FolderSearch, Globe,
-  Loader2, Pencil, Search, Terminal, Wrench, X } from "lucide-react";
 import type { ToolCall } from "@/transport/types";
+import { getRenderer } from "./tool-renderers";
+import { ChevronRight } from "lucide-react";
+import { TOOL_LABELS, TOOL_ICONS } from "./tool-renderers/constants";
 
 interface ToolCallCardProps {
   toolCalls: ToolCall[];
 }
 
-const TOOL_ICONS: Record<string, LucideIcon> = {
-  Glob: FolderSearch, Grep: Search, Read: FileText, Write: FilePen,
-  Edit: Pencil, Bash: Terminal, Agent: Bot, WebSearch: Globe, WebFetch: Globe,
-};
-
-function summarizeInput(_name: string, input: Record<string, unknown>): string {
-  for (const key of ["pattern", "file_path", "query", "path"]) {
-    if (input[key]) return String(input[key]);
-  }
-  if (input.command) return String(input.command).slice(0, 80);
-  const keys = Object.keys(input);
-  return keys.length > 0 ? `${keys[0]}: ${String(input[keys[0]]).slice(0, 60)}` : "";
+interface ToolCallGroup {
+  toolName: string;
+  calls: ToolCall[];
 }
 
-function ToolCallItem({ toolCall }: { toolCall: ToolCall }) {
-  const [expanded, setExpanded] = useState(false);
+/** Group consecutive tool calls of the same type */
+function groupConsecutive(toolCalls: ToolCall[]): ToolCallGroup[] {
+  const groups: ToolCallGroup[] = [];
+  for (const tc of toolCalls) {
+    const last = groups[groups.length - 1];
+    if (last && last.toolName === tc.toolName) {
+      last.calls.push(tc);
+    } else {
+      groups.push({ toolName: tc.toolName, calls: [tc] });
+    }
+  }
+  return groups;
+}
 
-  const Icon = TOOL_ICONS[toolCall.toolName] ?? Wrench;
-  const summary = summarizeInput(toolCall.toolName, toolCall.toolInput);
+function CollapsedGroup({
+  group,
+  isActive,
+  lastToolId,
+}: {
+  group: ToolCallGroup;
+  isActive: boolean;
+  lastToolId: string | undefined;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const Icon = TOOL_ICONS[group.toolName];
+  const label = TOOL_LABELS[group.toolName] ?? group.toolName;
 
   return (
-    <div>
+    <div
+      className={`rounded-lg border bg-muted/15 overflow-hidden ${
+        isActive ? "animate-tool-pulse border-border/60" : "border-border/40"
+      }`}
+    >
       <button
         type="button"
-        onClick={() => setExpanded((prev) => !prev)}
-        className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-muted/40"
+        onClick={() => setExpanded((p) => !p)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs cursor-pointer hover:bg-muted/30"
       >
-        <Icon size={12} className="shrink-0 text-muted-foreground" />
-        <span className="shrink-0 text-foreground/70">{toolCall.toolName}</span>
-        {summary && (
-          <span className="min-w-0 flex-1 truncate text-muted-foreground/70">{summary}</span>
-        )}
-        <span className="flex shrink-0 items-center gap-1">
-          {!toolCall.isComplete && (
-            <Loader2 size={10} className="animate-spin text-muted-foreground" />
-          )}
-          {toolCall.isComplete && !toolCall.isError && (
-            <Check size={10} className="text-emerald-500" />
-          )}
-          {toolCall.isComplete && toolCall.isError && (
-            <X size={10} className="text-red-500" />
-          )}
-          <ChevronRight
-            size={10}
-            className={`text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`}
-          />
+        {Icon && <Icon size={14} className="shrink-0 text-muted-foreground" />}
+        <span className="font-medium text-foreground/80">
+          {label} ({group.calls.length})
         </span>
+        <div className="flex flex-1 items-center justify-end gap-1">
+          <ChevronRight
+            size={12}
+            className={`shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`}
+          />
+        </div>
       </button>
 
       {expanded && (
-        <div className="ml-5 mr-2 mt-0.5 mb-1">
-          <pre className="max-h-48 overflow-auto rounded bg-muted/40 p-2 text-xs text-muted-foreground">
-            {JSON.stringify(toolCall.toolInput, null, 2)}
-          </pre>
-          {toolCall.output && (
-            <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted/40 p-2 text-xs text-muted-foreground">
-              {toolCall.output}
-            </pre>
-          )}
+        <div className="border-t border-border/30 px-2 py-1.5 flex flex-col gap-1 max-h-[300px] overflow-y-auto">
+          {group.calls.map((tc) => {
+            const Renderer = getRenderer(tc.toolName);
+            return (
+              <Renderer
+                key={tc.id}
+                toolCall={tc}
+                isActive={tc.id === lastToolId}
+              />
+            );
+          })}
         </div>
       )}
     </div>
@@ -74,33 +82,39 @@ function ToolCallItem({ toolCall }: { toolCall: ToolCall }) {
 }
 
 export function ToolCallCard({ toolCalls }: ToolCallCardProps) {
-  const [collapsed, setCollapsed] = useState(false);
-
   if (toolCalls.length === 0) return null;
 
+  const groups = groupConsecutive(toolCalls);
+  const lastToolId = toolCalls[toolCalls.length - 1]?.id;
+  const lastGroup = groups[groups.length - 1];
+
   return (
-    <div className="flex gap-3">
-      <div className="w-6 shrink-0" />
-      <div className="max-h-[200px] flex-1 overflow-y-auto">
-        <button
-          type="button"
-          onClick={() => setCollapsed((prev) => !prev)}
-          className="flex items-center gap-1 px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDown
-            size={10}
-            className={`transition-transform ${collapsed ? "-rotate-90" : ""}`}
+    // max-h must match the max-height in the fade-out keyframe (index.css)
+    <div className="flex flex-col gap-1.5 max-h-[400px] overflow-y-auto">
+      {groups.map((group, i) => {
+        const isLastGroup = group === lastGroup;
+        // Single item in group — render directly
+        if (group.calls.length === 1) {
+          const tc = group.calls[0];
+          const Renderer = getRenderer(tc.toolName);
+          return (
+            <Renderer
+              key={tc.id}
+              toolCall={tc}
+              isActive={tc.id === lastToolId}
+            />
+          );
+        }
+        // Multiple consecutive same-type — render as collapsed group
+        return (
+          <CollapsedGroup
+            key={`group-${i}-${group.toolName}`}
+            group={group}
+            isActive={isLastGroup}
+            lastToolId={lastToolId}
           />
-          Tool calls ({toolCalls.length})
-        </button>
-        {!collapsed && (
-          <div className="flex flex-col">
-            {toolCalls.map((tc) => (
-              <ToolCallItem key={tc.id} toolCall={tc} />
-            ))}
-          </div>
-        )}
-      </div>
+        );
+      })}
     </div>
   );
 }

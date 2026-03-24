@@ -3,8 +3,6 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
-import { StreamingIndicator } from "./StreamingIndicator";
-import { ToolCallCard } from "./ToolCallCard";
 import { HeaderActions } from "./HeaderActions";
 
 export function ChatView() {
@@ -17,13 +15,7 @@ export function ChatView() {
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const messages = useThreadStore((s) => s.messages);
 
-  const agentStartTimes = useThreadStore((s) => s.agentStartTimes);
-  const toolCallsRaw = useThreadStore((s) =>
-    activeThreadId ? s.toolCallsByThread[activeThreadId] : undefined
-  );
-  const toolCalls = toolCallsRaw ?? [];
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
-  const agentStartTime = activeThreadId ? agentStartTimes[activeThreadId] : undefined;
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeThread = threads.find((t) => t.id === activeThreadId);
@@ -105,19 +97,7 @@ export function ChatView() {
             </p>
           </div>
         ) : (
-          <>
-            <MessageList />
-
-            {/* Active tool calls - inline within the message flow */}
-            {toolCalls.length > 0 && (
-              <div className="px-4 py-2 max-h-[300px] overflow-y-auto">
-                <ToolCallCard toolCalls={toolCalls} />
-              </div>
-            )}
-
-            {/* Streaming indicator with timer */}
-            {isAgentRunning && <StreamingIndicator startTime={agentStartTime} />}
-          </>
+          <MessageList />
         )}
       </div>
 
