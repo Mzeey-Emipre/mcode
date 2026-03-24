@@ -1,116 +1,191 @@
 import { useRef, useEffect, useMemo, useCallback } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { MessageBubble } from "./MessageBubble";
 import { ToolCallCard } from "./ToolCallCard";
 import { StreamingIndicator } from "./StreamingIndicator";
 import { StreamingBubble } from "./StreamingBubble";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  buildVirtualItems,
+  estimateItemHeight,
+} from "./virtual-items";
+import type { ChatVirtualItem } from "./virtual-items";
 import type { ToolCall } from "@/transport/types";
 
 const EMPTY_TOOL_CALLS: ToolCall[] = [];
+const AUTO_SCROLL_THRESHOLD = 64;
+const OVERSCAN = 8;
+const DEFAULT_ITEM_HEIGHT = 80;
+
+function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
+  switch (item.type) {
+    case "message":
+      return <MessageBubble message={item.message} />;
+    case "active-tools":
+      return <ToolCallCard toolCalls={item.toolCalls} />;
+    case "fading-tools":
+      return (
+        <div className="animate-fade-out">
+          <ToolCallCard toolCalls={item.toolCalls} />
+        </div>
+      );
+    case "streaming":
+      return <StreamingBubble content={item.content} />;
+    case "indicator":
+      return (
+        <StreamingIndicator
+          startTime={item.startTime}
+          activeToolCalls={item.activeToolCalls}
+        />
+      );
+  }
+}
 
 export function MessageList() {
-  const messages = useThreadStore((s) => s.messages);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const itemsLengthRef = useRef(0);
 
+  const messages = useThreadStore((s) => s.messages);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const agentStartTimes = useThreadStore((s) => s.agentStartTimes);
   const streamingText = useThreadStore((s) =>
-    activeThreadId ? s.streamingByThread[activeThreadId] : undefined
+    activeThreadId ? s.streamingByThread[activeThreadId] : undefined,
   );
   const toolCallsRaw = useThreadStore((s) =>
-    activeThreadId ? s.toolCallsByThread[activeThreadId] : undefined
+    activeThreadId ? s.toolCallsByThread[activeThreadId] : undefined,
   );
   const fadingToolCallsRaw = useThreadStore((s) =>
-    activeThreadId ? s.fadingToolCallsByThread[activeThreadId] : undefined
+    activeThreadId ? s.fadingToolCallsByThread[activeThreadId] : undefined,
   );
   const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
   const fadingToolCalls = fadingToolCallsRaw ?? EMPTY_TOOL_CALLS;
-  const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
-  const agentStartTime = activeThreadId ? agentStartTimes[activeThreadId] : undefined;
+  const isAgentRunning = activeThreadId
+    ? runningThreadIds.has(activeThreadId)
+    : false;
+  const agentStartTime = activeThreadId
+    ? agentStartTimes[activeThreadId]
+    : undefined;
 
-  const hasActiveToolCalls = toolCalls.length > 0;
-  const hasFadingToolCalls = fadingToolCalls.length > 0;
-  const hasStreamingText = !!streamingText;
+  const items = useMemo(
+    () =>
+      buildVirtualItems(
+        messages,
+        toolCalls,
+        fadingToolCalls,
+        streamingText,
+        isAgentRunning,
+        agentStartTime,
+      ),
+    [
+      messages,
+      toolCalls,
+      fadingToolCalls,
+      streamingText,
+      isAgentRunning,
+      agentStartTime,
+    ],
+  );
 
-  // Split messages: render tool calls between the last user message and
-  // the final assistant reply so they appear inline rather than at the bottom.
-  const { beforeMessages, lastAssistantMsg } = useMemo(() => {
-    const showToolCalls = hasActiveToolCalls || hasFadingToolCalls;
-    if (!showToolCalls || messages.length === 0) {
-      return { beforeMessages: messages, lastAssistantMsg: null };
-    }
-    // Find the last assistant message — tool calls belong just before it
-    const lastIdx = messages.length - 1;
-    const last = messages[lastIdx];
-    if (last.role === "assistant") {
-      return {
-        beforeMessages: messages.slice(0, lastIdx),
-        lastAssistantMsg: last,
-      };
-    }
-    return { beforeMessages: messages, lastAssistantMsg: null };
-  }, [messages, hasActiveToolCalls, hasFadingToolCalls]);
+  itemsLengthRef.current = items.length;
 
-  // Throttled scroll-to-bottom: use instant during streaming to avoid jank,
-  // smooth for discrete events. Throttle to at most once per 200ms.
-  const scrollToBottom = useCallback((smooth: boolean) => {
-    if (scrollTimerRef.current) return;
-    scrollTimerRef.current = setTimeout(() => {
-      scrollTimerRef.current = null;
-      bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "instant" });
-    }, 200);
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: (index) => {
+      const item = items[index];
+      return item ? estimateItemHeight(item) : DEFAULT_ITEM_HEIGHT;
+    },
+    getItemKey: (index) => items[index]?.key ?? String(index),
+    overscan: OVERSCAN,
+  });
+
+  // Don't adjust scroll when near bottom -- prevents jitter during streaming.
+  // Assigned on the stable virtualizer instance (TanStack Virtual v3 API);
+  // not available as a useVirtualizer option in the current type definitions.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (
+    _item,
+    _delta,
+    instance,
+  ) => {
+    const viewportHeight = instance.scrollRect?.height ?? 0;
+    const scrollOffset = instance.scrollOffset ?? 0;
+    const remaining =
+      instance.getTotalSize() - (scrollOffset + viewportHeight);
+    return remaining > AUTO_SCROLL_THRESHOLD;
+  };
+
+  // Throttled scroll-to-bottom using virtualizer.
+  // Uses refs to avoid stale closures: itemsLengthRef always has the
+  // current count when the timer fires, even if messages arrived after
+  // the timer was scheduled.
+  const scrollToBottom = useCallback(
+    (smooth: boolean) => {
+      if (scrollTimerRef.current) return;
+      scrollTimerRef.current = setTimeout(() => {
+        scrollTimerRef.current = null;
+        const count = itemsLengthRef.current;
+        if (count === 0) return;
+        virtualizer.scrollToIndex(count - 1, {
+          align: "end",
+          behavior: smooth ? "smooth" : "auto",
+        });
+        // Fallback nudge for items whose size is not yet measured.
+        // Only for instant scroll to avoid cancelling smooth animations.
+        if (!smooth) {
+          requestAnimationFrame(() => {
+            const el = containerRef.current;
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+        }
+      }, 200);
+    },
+    [virtualizer],
+  );
+
+  // Clean up pending scroll timer on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
+    };
   }, []);
 
-  // Discrete events (new message, tool call) → smooth scroll
+  // Discrete events (new message, tool call) -> smooth scroll
   useEffect(() => {
     scrollToBottom(true);
   }, [messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
 
-  // Streaming deltas → throttled instant scroll
+  // Streaming deltas -> instant scroll (no animation lag)
   useEffect(() => {
     if (streamingText) scrollToBottom(false);
   }, [streamingText, scrollToBottom]);
 
   return (
-    <ScrollArea className="h-full">
-      <div className="flex flex-col gap-4 p-4">
-        {beforeMessages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-
-        {/* Active tool calls — inline between user message and assistant reply */}
-        {hasActiveToolCalls && (
-          <ToolCallCard toolCalls={toolCalls} />
-        )}
-
-        {/* Fading tool calls — completed calls lingering so user sees final state */}
-        {hasFadingToolCalls && !hasActiveToolCalls && (
-          <div className="animate-fade-out">
-            <ToolCallCard toolCalls={fadingToolCalls} />
-          </div>
-        )}
-
-        {/* The last assistant message renders after tool calls */}
-        {lastAssistantMsg && (
-          <MessageBubble key={lastAssistantMsg.id} message={lastAssistantMsg} />
-        )}
-
-        {/* Live streaming text — renders the response as it arrives */}
-        {hasStreamingText && (
-          <StreamingBubble content={streamingText} />
-        )}
-
-        {/* Streaming indicator with semantic phase labels */}
-        {isAgentRunning && !hasStreamingText && (
-          <StreamingIndicator startTime={agentStartTime} activeToolCalls={toolCalls} />
-        )}
-
-        <div ref={bottomRef} />
+    <div ref={containerRef} className="h-full overflow-y-auto">
+      <div
+        className="relative w-full"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
+        {virtualizer.getVirtualItems().map((vi) => {
+          const item = items[vi.index];
+          return (
+            <div
+              key={vi.key}
+              ref={virtualizer.measureElement}
+              data-index={vi.index}
+              className="absolute left-0 w-full px-4 py-2"
+              style={{ transform: `translateY(${vi.start}px)` }}
+            >
+              <VirtualItemRenderer item={item} />
+            </div>
+          );
+        })}
       </div>
-    </ScrollArea>
+    </div>
   );
 }

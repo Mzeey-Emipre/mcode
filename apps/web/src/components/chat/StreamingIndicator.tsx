@@ -6,10 +6,10 @@ import { TOOL_PHASE_LABELS } from "./tool-renderers/constants";
 
 interface StreamingIndicatorProps {
   startTime?: number;
-  activeToolCalls?: ToolCall[];
+  activeToolCalls?: readonly ToolCall[];
 }
 
-function derivePhaseLabel(toolCalls?: ToolCall[]): string {
+function derivePhaseLabel(toolCalls?: readonly ToolCall[]): string {
   if (!toolCalls || toolCalls.length === 0) return "Thinking...";
 
   const incomplete = toolCalls.filter((tc) => !tc.isComplete);
