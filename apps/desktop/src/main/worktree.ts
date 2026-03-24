@@ -307,3 +307,35 @@ export function branchExists(repoPath: string, branch: string): boolean {
     return false;
   }
 }
+
+/**
+ * Fetch a remote branch from origin and create a local tracking branch.
+ * If the local branch already exists, updates it with the latest remote.
+ * Throws on failure (e.g. branch not found on remote).
+ */
+export function fetchBranch(repoPath: string, branch: string): void {
+  // Fetch the specific branch from origin
+  execFileSync(
+    "git",
+    ["-C", repoPath, "fetch", "origin", branch],
+    { stdio: "pipe" },
+  );
+
+  // Create or update local branch to track remote
+  const localExists = branchExists(repoPath, branch);
+  if (localExists) {
+    // Update existing local branch to match remote
+    execFileSync(
+      "git",
+      ["-C", repoPath, "branch", "-f", branch, `origin/${branch}`],
+      { stdio: "pipe" },
+    );
+  } else {
+    // Create local branch tracking remote
+    execFileSync(
+      "git",
+      ["-C", repoPath, "branch", "--track", branch, `origin/${branch}`],
+      { stdio: "pipe" },
+    );
+  }
+}
