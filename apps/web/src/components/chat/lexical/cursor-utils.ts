@@ -1,4 +1,4 @@
-import { $getRoot, type LexicalEditor } from "lexical";
+import { $getRoot, $isElementNode, type LexicalEditor } from "lexical";
 import { $isMentionNode } from "./MentionNode";
 import { $isSlashCommandNode } from "./SlashCommandNode";
 
@@ -15,6 +15,10 @@ export function getPlainTextFromEditor(editor: LexicalEditor): string {
     for (let i = 0; i < paragraphs.length; i++) {
       if (i > 0) text += "\n";
       const paragraph = paragraphs[i];
+      if (!$isElementNode(paragraph)) {
+        text += paragraph.getTextContent();
+        continue;
+      }
       const children = paragraph.getChildren();
       for (const child of children) {
         if ($isMentionNode(child)) {
@@ -40,6 +44,7 @@ export function extractMentionPaths(editor: LexicalEditor): string[] {
     const root = $getRoot();
     const paragraphs = root.getChildren();
     for (const paragraph of paragraphs) {
+      if (!$isElementNode(paragraph)) continue;
       for (const child of paragraph.getChildren()) {
         if ($isMentionNode(child)) {
           paths.push(child.getFilePath());
