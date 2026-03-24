@@ -134,8 +134,8 @@ export function createElectronTransport(): McodeTransport {
       return api.invoke("get-branch-pr", branch, cwd) as Promise<PrInfo | null>
     },
 
-    async listSkills() {
-      return api.invoke("list-skills") as Promise<SkillInfo[]>;
+    async listSkills(cwd?: string) {
+      return api.invoke("list-skills", cwd) as Promise<SkillInfo[]>;
     },
   };
 }
