@@ -1,7 +1,7 @@
 // apps/web/src/components/chat/FileTagPopup.tsx
 import { useRef, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import { getFileIcon } from "@/lib/file-icons";
+import { getFileIcon, getFileIconColor } from "@/lib/file-icons";
 
 interface FileTagPopupOptions {
   files: string[];
@@ -129,7 +129,7 @@ export function FileTagPopup({ files, isOpen, onSelect, listRef }: FileTagPopupP
                 "data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground",
               )}
             >
-              <Icon size={14} className="shrink-0 text-muted-foreground" />
+              <Icon size={14} className={cn("shrink-0", getFileIconColor(filePath))} />
               <span className="truncate">
                 <span className="text-muted-foreground">{dir}</span>
                 <span className="font-medium">{name}</span>

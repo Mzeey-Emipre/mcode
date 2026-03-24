@@ -19,24 +19,22 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-function makeTextarea(value = "", selectionStart = value.length) {
+function makeAnchor() {
   return {
     current: {
-      value,
-      selectionStart,
       getBoundingClientRect: () => ({
         top: 100, left: 0, bottom: 130, right: 400,
         width: 400, height: 30,
       } as DOMRect),
     },
-  } as React.RefObject<HTMLTextAreaElement>;
+  } as React.RefObject<HTMLElement>;
 }
 
 describe("trigger detection", () => {
   it("opens on '/' at the start", async () => {
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => {
       result.current.onInputChange("/");
@@ -45,9 +43,9 @@ describe("trigger detection", () => {
   });
 
   it("opens on '/' after whitespace", async () => {
-    const ref = makeTextarea("hello /");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => {
       result.current.onInputChange("hello /");
@@ -56,9 +54,9 @@ describe("trigger detection", () => {
   });
 
   it("does NOT open on '/' mid-word", async () => {
-    const ref = makeTextarea("abc/def");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => {
       result.current.onInputChange("abc/def");
@@ -67,17 +65,15 @@ describe("trigger detection", () => {
   });
 
   it("closes when trigger text is deleted", async () => {
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => {
       result.current.onInputChange("/");
     });
     expect(result.current.isOpen).toBe(true);
 
-    ref.current!.value = "";
-    ref.current!.selectionStart = 0;
     await act(async () => {
       result.current.onInputChange("");
     });
@@ -87,9 +83,9 @@ describe("trigger detection", () => {
 
 describe("filter logic", () => {
   it("shows all items on bare '/'", async () => {
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => {
       result.current.onInputChange("/");
@@ -101,9 +97,9 @@ describe("filter logic", () => {
   });
 
   it("filters case-insensitively by substring", async () => {
-    const ref = makeTextarea("/REV");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => {
       result.current.onInputChange("/REV");
@@ -115,9 +111,9 @@ describe("filter logic", () => {
   });
 
   it("matches mcode commands by name without 'm:' prefix in filter", async () => {
-    const ref = makeTextarea("/pla");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => {
       result.current.onInputChange("/pla");
@@ -130,9 +126,9 @@ describe("filter logic", () => {
 
 describe("keyboard navigation", () => {
   it("ArrowDown increments selectedIndex", async () => {
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {}); // flush skill load
@@ -143,15 +139,15 @@ describe("keyboard navigation", () => {
         key: "ArrowDown",
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
-      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+      } as unknown as React.KeyboardEvent);
     });
     expect(result.current.selectedIndex).toBe(1);
   });
 
   it("ArrowUp decrements selectedIndex", async () => {
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {}); // flush skill load
@@ -162,7 +158,7 @@ describe("keyboard navigation", () => {
         key: "ArrowDown",
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
-      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+      } as unknown as React.KeyboardEvent);
     });
     expect(result.current.selectedIndex).toBe(1);
 
@@ -171,15 +167,15 @@ describe("keyboard navigation", () => {
         key: "ArrowUp",
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
-      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+      } as unknown as React.KeyboardEvent);
     });
     expect(result.current.selectedIndex).toBe(0);
   });
 
   it("ArrowUp clamps at 0 and does not go negative", async () => {
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {});
@@ -190,15 +186,15 @@ describe("keyboard navigation", () => {
         key: "ArrowUp",
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
-      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+      } as unknown as React.KeyboardEvent);
     });
     expect(result.current.selectedIndex).toBe(0);
   });
 
   it("Escape closes the popup", async () => {
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => { result.current.onInputChange("/"); });
     expect(result.current.isOpen).toBe(true);
@@ -208,7 +204,7 @@ describe("keyboard navigation", () => {
         key: "Escape",
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
-      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+      } as unknown as React.KeyboardEvent);
     });
     expect(result.current.isOpen).toBe(false);
   });
@@ -216,9 +212,9 @@ describe("keyboard navigation", () => {
 
 describe("selection + text replacement", () => {
   it("onSelect replaces the trigger text in the input", async () => {
-    const ref = makeTextarea("/com");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
     await act(async () => { result.current.onInputChange("/com"); });
     await act(async () => {});
@@ -237,10 +233,10 @@ describe("selection + text replacement", () => {
 
 describe("mcode side-effect dispatch", () => {
   it("calls onMcodeCommand with the action when an mcode command is selected", async () => {
-    const ref = makeTextarea("/m:pla");
+    const ref = makeAnchor();
     const onMcodeCommand = vi.fn();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref, onMcodeCommand })
+      useSlashCommand({ anchorRef: ref, onMcodeCommand })
     );
     await act(async () => { result.current.onInputChange("/m:pla"); });
     await act(async () => {});
@@ -260,9 +256,9 @@ describe("IPC cache", () => {
     const mockListSkills = vi.fn().mockResolvedValue([{ name: "commit", description: "Create a git commit" }]);
     vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
 
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
 
     // Open popup twice
@@ -281,9 +277,9 @@ describe("cwd passthrough", () => {
     const mockListSkills = vi.fn().mockResolvedValue([]);
     vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
 
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref, cwd: "/my/project" })
+      useSlashCommand({ anchorRef: ref, cwd: "/my/project" })
     );
 
     await act(async () => { result.current.onInputChange("/"); });
@@ -301,9 +297,9 @@ describe("plugin namespace detection", () => {
     ]);
     vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
 
-    const ref = makeTextarea("/");
+    const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ textareaRef: ref })
+      useSlashCommand({ anchorRef: ref })
     );
 
     await act(async () => { result.current.onInputChange("/"); });

@@ -1,10 +1,12 @@
 import { useState, useRef, useCallback } from "react";
 import { getTransport, type SkillInfo } from "@/transport";
 
+/** A slash command entry shown in the popup. */
 export interface Command {
   name: string;
   description: string;
   namespace: "skill" | "mcode" | "plugin";
+  /** For mcode-namespace commands, the action string dispatched on selection. */
   action?: string;
 }
 
@@ -18,16 +20,18 @@ const MCODE_COMMANDS: Command[] = [
 ];
 
 /** Regex: matches `/` at start of line or after whitespace, followed by non-space chars. */
-const TRIGGER_RE = /(^|\s)(\/\S*)$/;
+export const SLASH_TRIGGER_RE = /(^|\s)(\/\S*)$/;
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/** Options for the useSlashCommand hook. */
 interface UseSlashCommandOptions {
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  anchorRef: React.RefObject<HTMLElement | null>;
   onMcodeCommand?: (action: string) => void;
   cwd?: string;
 }
 
+/** Return value of the useSlashCommand hook. */
 export interface UseSlashCommandReturn {
   isOpen: boolean;
   isLoading: boolean;
@@ -36,13 +40,14 @@ export interface UseSlashCommandReturn {
   selectedIndex: number;
   anchorRect: DOMRect | null;
   onInputChange: (value: string) => void;
-  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
-  onSelect: (cmd: Command, setInput: (v: string) => void) => void;
+  onKeyDown: (e: React.KeyboardEvent) => void;
+  onSelect: (cmd: Command, replaceText: (v: string) => void) => void;
   onDismiss: () => void;
 }
 
+/** Manages slash command detection, skill loading, and popup state. */
 export function useSlashCommand({
-  textareaRef,
+  anchorRef,
   onMcodeCommand,
   cwd,
 }: UseSlashCommandOptions): UseSlashCommandReturn {
@@ -52,6 +57,12 @@ export function useSlashCommand({
   const [allCommands, setAllCommands] = useState<Command[]>(MCODE_COMMANDS);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+
+  // Store the last input text so onSelect can read it without a textarea ref.
+  const lastInputRef = useRef("");
+
+  // Abort controller for cancelling stale skill-loading requests
+  const abortRef = useRef<AbortController | null>(null);
 
   // Cache: loaded skills + timestamp for TTL.
   // Also track which cwd the cache was built for — invalidate on workspace switch.
@@ -83,10 +94,10 @@ export function useSlashCommand({
 
   const onInputChange = useCallback(
     (value: string) => {
-      const textarea = textareaRef.current;
-      const cursor = textarea?.selectionStart ?? value.length;
+      lastInputRef.current = value;
+      const cursor = value.length;
       const before = value.slice(0, cursor);
-      const match = TRIGGER_RE.exec(before);
+      const match = SLASH_TRIGGER_RE.exec(before);
 
       if (!match) {
         setIsOpen(false);
@@ -94,8 +105,9 @@ export function useSlashCommand({
       }
 
       // Update anchor on every change while popup is open
-      if (textarea) {
-        setAnchorRect(textarea.getBoundingClientRect());
+      const anchor = anchorRef.current;
+      if (anchor) {
+        setAnchorRect(anchor.getBoundingClientRect());
       }
 
       // Filter text is the matched group minus the leading '/'
@@ -105,41 +117,42 @@ export function useSlashCommand({
       setIsOpen(true);
       setSelectedIndex(0);
 
+      // Abort any previous in-flight skill load
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       if (!skillsCache.current) {
         setIsLoading(true);
-        let cancelled = false;
         loadSkills()
           .then((skills) => {
-            if (!cancelled) {
+            if (!controller.signal.aborted) {
               setIsLoading(false);
               setItems(buildItems(skills, filter));
             }
           })
           .catch(() => {
-            if (!cancelled) setIsLoading(false);
+            if (!controller.signal.aborted) setIsLoading(false);
           });
-        return () => { cancelled = true; };
       } else {
         setItems(buildItems(skillsCache.current.skills, filter));
         // Background refresh if TTL expired
         if (Date.now() - skillsCache.current.fetchedAt >= CACHE_TTL_MS) {
-          let cancelled = false;
           loadSkills()
             .then((skills) => {
-              if (!cancelled) setItems(buildItems(skills, filter));
+              if (!controller.signal.aborted) setItems(buildItems(skills, filter));
             })
             .catch(() => {
               // Background refresh failed silently; existing cache remains
             });
-          return () => { cancelled = true; };
         }
       }
     },
-    [textareaRef, loadSkills, buildItems],
+    [anchorRef, loadSkills, buildItems],
   );
 
   const onKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    (e: React.KeyboardEvent) => {
       if (!isOpen) return;
 
       // Enter and Tab are handled by the Composer (it calls onSelect directly).
@@ -166,14 +179,11 @@ export function useSlashCommand({
   );
 
   const onSelect = useCallback(
-    (cmd: Command, setInput: (v: string) => void) => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-
-      const value = textarea.value;
-      const cursor = textarea.selectionStart ?? value.length;
+    (cmd: Command, replaceText: (v: string) => void) => {
+      const value = lastInputRef.current;
+      const cursor = value.length;
       const before = value.slice(0, cursor);
-      const match = TRIGGER_RE.exec(before);
+      const match = SLASH_TRIGGER_RE.exec(before);
 
       if (match) {
         // Use match.index + leading group length to anchor to the exact regex match
@@ -182,7 +192,7 @@ export function useSlashCommand({
         const triggerStart = match.index + match[1].length;
         const newValue =
           value.slice(0, triggerStart) + `/${cmd.name} ` + value.slice(cursor);
-        setInput(newValue);
+        replaceText(newValue);
       }
 
       if (cmd.action && onMcodeCommand) {
@@ -191,7 +201,7 @@ export function useSlashCommand({
 
       setIsOpen(false);
     },
-    [textareaRef, onMcodeCommand],
+    [onMcodeCommand],
   );
 
   const onDismiss = useCallback(() => setIsOpen(false), []);
