@@ -16,6 +16,7 @@ import type { ToolCall } from "@/transport/types";
 const EMPTY_TOOL_CALLS: ToolCall[] = [];
 const AUTO_SCROLL_THRESHOLD = 64;
 const OVERSCAN = 8;
+const DEFAULT_ITEM_HEIGHT = 80;
 
 function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
   switch (item.type) {
@@ -38,17 +39,13 @@ function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
           activeToolCalls={item.activeToolCalls}
         />
       );
-    default: {
-      // @ts-expect-error exhaustive check: fails if a ChatVirtualItem variant is unhandled
-      const _exhaustive: never = item;
-      return null;
-    }
   }
 }
 
 export function MessageList() {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const itemsLengthRef = useRef(0);
 
   const messages = useThreadStore((s) => s.messages);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -92,17 +89,22 @@ export function MessageList() {
     ],
   );
 
+  itemsLengthRef.current = items.length;
+
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => containerRef.current,
-    estimateSize: (index) => estimateItemHeight(items[index]),
+    estimateSize: (index) => {
+      const item = items[index];
+      return item ? estimateItemHeight(item) : DEFAULT_ITEM_HEIGHT;
+    },
     getItemKey: (index) => items[index]?.key ?? String(index),
     overscan: OVERSCAN,
   });
 
-  // Don't adjust scroll when near bottom -- prevents jitter during streaming
-  // Safe to assign in render body: useVirtualizer returns a stable instance
-  // (TanStack Virtual v3) so the property is set before the next measurement.
+  // Don't adjust scroll when near bottom -- prevents jitter during streaming.
+  // Assigned on the stable virtualizer instance (TanStack Virtual v3 API);
+  // not available as a useVirtualizer option in the current type definitions.
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (
     _item,
     _delta,
@@ -115,26 +117,43 @@ export function MessageList() {
     return remaining > AUTO_SCROLL_THRESHOLD;
   };
 
-  // Throttled scroll-to-bottom using virtualizer
+  // Throttled scroll-to-bottom using virtualizer.
+  // Uses refs to avoid stale closures: itemsLengthRef always has the
+  // current count when the timer fires, even if messages arrived after
+  // the timer was scheduled.
   const scrollToBottom = useCallback(
     (smooth: boolean) => {
       if (scrollTimerRef.current) return;
       scrollTimerRef.current = setTimeout(() => {
         scrollTimerRef.current = null;
-        if (items.length === 0) return;
-        virtualizer.scrollToIndex(items.length - 1, {
+        const count = itemsLengthRef.current;
+        if (count === 0) return;
+        virtualizer.scrollToIndex(count - 1, {
           align: "end",
           behavior: smooth ? "smooth" : "auto",
         });
-        // Fallback nudge for items whose size is not yet measured
-        requestAnimationFrame(() => {
-          const el = containerRef.current;
-          if (el) el.scrollTop = el.scrollHeight;
-        });
+        // Fallback nudge for items whose size is not yet measured.
+        // Only for instant scroll to avoid cancelling smooth animations.
+        if (!smooth) {
+          requestAnimationFrame(() => {
+            const el = containerRef.current;
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+        }
       }, 200);
     },
-    [items.length, virtualizer],
+    [virtualizer],
   );
+
+  // Clean up pending scroll timer on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Discrete events (new message, tool call) -> smooth scroll
   useEffect(() => {
