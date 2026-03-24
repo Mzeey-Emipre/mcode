@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo, AttachmentMeta } from "@/transport";
+import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo, AttachmentMeta, PrDetail } from "@/transport";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { useTerminalStore } from "./terminalStore";
@@ -29,6 +29,9 @@ interface WorkspaceState {
   customBranchName: string;
   autoPreviewBranch: string;
   selectedWorktree: WorktreeInfo | null;
+  openPrs: PrDetail[];
+  openPrsLoading: boolean;
+  fetchingBranch: string | null;
 
   // Workspace actions
   loadWorkspaces: () => Promise<void>;
@@ -62,6 +65,9 @@ interface WorkspaceState {
   setCustomBranchName: (name: string) => void;
   setSelectedWorktree: (worktree: WorktreeInfo | null) => void;
   regenerateAutoPreview: () => void;
+
+  loadOpenPrs: (workspaceId: string) => Promise<void>;
+  fetchBranch: (workspaceId: string, branch: string, prNumber?: number) => Promise<void>;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -82,6 +88,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   customBranchName: "",
   autoPreviewBranch: generateBranchId(),
   selectedWorktree: null,
+  openPrs: [],
+  openPrsLoading: false,
+  fetchingBranch: null,
 
   loadWorkspaces: async () => {
     set({ loading: true, error: null });
@@ -147,6 +156,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       worktrees: [],
       worktreesLoading: false,
       selectedWorktree: null,
+      openPrs: [],
+      openPrsLoading: false,
+      fetchingBranch: null,
     });
     if (id) {
       get().loadThreads(id);
@@ -362,4 +374,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setCustomBranchName: (name) => set({ customBranchName: name }),
   setSelectedWorktree: (worktree) => set({ selectedWorktree: worktree }),
   regenerateAutoPreview: () => set({ autoPreviewBranch: generateBranchId() }),
+
+  loadOpenPrs: async (workspaceId) => {
+    set({ openPrsLoading: true });
+    try {
+      const openPrs = await getTransport().listOpenPrs(workspaceId);
+      if (get().activeWorkspaceId !== workspaceId) return;
+      set({ openPrs, openPrsLoading: false });
+    } catch (e) {
+      if (get().activeWorkspaceId !== workspaceId) return;
+      set({ openPrsLoading: false, error: String(e) });
+    }
+  },
+
+  fetchBranch: async (workspaceId, branch, prNumber?) => {
+    set({ fetchingBranch: branch });
+    try {
+      await getTransport().fetchBranch(workspaceId, branch, prNumber);
+      // Refresh branches so the newly fetched branch appears as local
+      await get().loadBranches(workspaceId);
+    } finally {
+      set({ fetchingBranch: null });
+    }
+  },
 }));
