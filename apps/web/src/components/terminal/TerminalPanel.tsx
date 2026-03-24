@@ -83,7 +83,10 @@ export function TerminalPanel() {
     removeAllTerminals(activeThreadId);
   }, [activeThreadId, removeAllTerminals]);
 
-  // Sync activeTerminalId when the active thread changes
+  // Sync activeTerminalId to the current thread on every switch.
+  // Must run before the auto-create effect below so that
+  // activeTerminalId is correct before auto-create checks
+  // whether to spawn a new terminal.
   useEffect(() => {
     syncToThread(activeThreadId);
   }, [activeThreadId, syncToThread]);

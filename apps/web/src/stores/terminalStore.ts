@@ -144,10 +144,15 @@ export const useTerminalStore = create<TerminalState>((set) => ({
     set((state) => ({ splitMode: !state.splitMode }));
   },
 
+  /**
+   * Align activeTerminalId to the given thread. Called on every thread
+   * switch so the terminal panel shows a terminal belonging to the
+   * current thread instead of going blank.
+   */
   syncToThread: (threadId) => {
     set((state) => {
       if (!threadId) {
-        return { activeTerminalId: null };
+        return state.activeTerminalId === null ? {} : { activeTerminalId: null };
       }
 
       const threadTerminals = state.terminals[threadId] ?? [];
@@ -155,7 +160,7 @@ export const useTerminalStore = create<TerminalState>((set) => ({
 
       // If current active terminal already belongs to this thread, keep it
       if (currentActive && threadTerminals.some((t) => t.id === currentActive)) {
-        return state;
+        return {};
       }
 
       // Pick first terminal in the thread, or null
