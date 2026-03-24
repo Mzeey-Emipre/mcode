@@ -39,6 +39,7 @@ interface ThreadState {
 /** Pending fade-out timers per thread, so we can cancel on new turns. */
 const fadingTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
 
+/** Cancel and remove all pending fade-out timers for a thread. */
 function clearFadingTimers(threadId: string) {
   const timers = fadingTimers.get(threadId);
   if (timers) {
@@ -64,6 +65,13 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   agentStartTimes: {},
   settingsByThread: {},
 
+  /**
+   * Fetch persisted messages for a thread from the database.
+   * For non-running threads, clears stale real-time state (tool calls,
+   * streaming text, fading tool calls, agent start times) so artifacts
+   * from a previous visit don't linger. Running threads keep their
+   * real-time state intact to avoid disrupting live tool call rendering.
+   */
   loadMessages: async (threadId) => {
     // Clear stale real-time state for non-running threads so tool calls
     // from a previous visit don't linger when switching back.
@@ -105,6 +113,11 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
   },
 
+  /**
+   * Send a user message and start the agent. Optimistically appends the
+   * message to local state, marks the thread as running, then dispatches
+   * to the transport layer. On failure, rolls back the running state.
+   */
   sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent) => {
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
@@ -147,6 +160,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
   },
 
+  /** Request the agent to stop on a thread. Always marks the thread as not running, even on error. */
   stopAgent: async (threadId) => {
     try {
       await getTransport().stopAgent(threadId);
@@ -161,12 +175,18 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     });
   },
 
+  /** Append a single message to the current thread's message list. */
   addMessage: (message) => {
     set((state) => ({
       messages: [...state.messages, message],
     }));
   },
 
+  /**
+   * Reset the shared message list and all ephemeral streaming/fading state.
+   * Cancels pending fade-out timers to prevent stale writes.
+   * Does NOT reset runningThreadIds since agents may still be executing.
+   */
   clearMessages: () => {
     // Cancel all pending fade-out timers to prevent stale writes
     for (const threadId of fadingTimers.keys()) {
@@ -176,14 +196,17 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     // Note: does NOT reset runningThreadIds - agents may still be running
   },
 
+  /** Check whether an agent is currently executing on the given thread. */
   isThreadRunning: (threadId) => {
     return get().runningThreadIds.has(threadId);
   },
 
+  /** Return per-thread settings (permission mode, interaction mode), falling back to defaults. */
   getThreadSettings: (threadId) => {
     return get().settingsByThread[threadId] ?? DEFAULT_THREAD_SETTINGS;
   },
 
+  /** Merge partial settings into the per-thread settings record. */
   setThreadSettings: (threadId, settings) => {
     set((state) => ({
       settingsByThread: {
@@ -193,6 +216,12 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }));
   },
 
+  /**
+   * Process a real-time agent event (sidecar or legacy CLI format).
+   * Updates per-thread streaming text, tool calls, and running state.
+   * On turn completion, commits any buffered streaming content as a
+   * message and schedules tool call fade-out animations.
+   */
   handleAgentEvent: (threadId, event) => {
     // Support both old CLI format (event.type) and new sidecar format (event.method)
     const method = (event.method as string) || "";
