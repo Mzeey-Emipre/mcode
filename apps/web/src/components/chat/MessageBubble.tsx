@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import type { Message, StoredAttachment } from "@/transport";
 import { Bot, FileText, File, RotateCcw } from "lucide-react";
 import { MarkdownContent } from "./MarkdownContent";
@@ -19,9 +20,15 @@ function extFromMime(mimeType: string): string {
   return map[mimeType] ?? "";
 }
 
-function AttachmentDisplay({ attachments, threadId }: { attachments: StoredAttachment[]; threadId: string }) {
-  const images = attachments.filter((a) => a.mimeType.startsWith("image/"));
-  const files = attachments.filter((a) => !a.mimeType.startsWith("image/"));
+const AttachmentDisplay = memo(function AttachmentDisplay({
+  attachments,
+  threadId,
+}: {
+  attachments: StoredAttachment[];
+  threadId: string;
+}) {
+  const images = useMemo(() => attachments.filter((a) => a.mimeType.startsWith("image/")), [attachments]);
+  const files = useMemo(() => attachments.filter((a) => !a.mimeType.startsWith("image/")), [attachments]);
 
   return (
     <div className="space-y-2">
@@ -51,9 +58,9 @@ function AttachmentDisplay({ attachments, threadId }: { attachments: StoredAttac
       ))}
     </div>
   );
-}
+});
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
   if (message.role === "system") {
     return (
       <div className="flex items-center gap-3 py-2">
@@ -85,6 +92,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   }
 
   // Assistant message
+  const formattedTime = useMemo(
+    () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    [message.timestamp],
+  );
+
   return (
     <div className="flex gap-3">
       <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted">
@@ -106,10 +118,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             </span>
           )}
           <span className="text-[10px] text-muted-foreground">
-            {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            {formattedTime}
           </span>
         </div>
       </div>
     </div>
   );
-}
+});
