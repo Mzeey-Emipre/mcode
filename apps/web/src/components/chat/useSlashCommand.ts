@@ -23,7 +23,7 @@ const TRIGGER_RE = /(^|\s)(\/\S*)$/;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 interface UseSlashCommandOptions {
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  anchorRef: React.RefObject<HTMLElement | null>;
   onMcodeCommand?: (action: string) => void;
   cwd?: string;
 }
@@ -36,13 +36,13 @@ export interface UseSlashCommandReturn {
   selectedIndex: number;
   anchorRect: DOMRect | null;
   onInputChange: (value: string) => void;
-  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
-  onSelect: (cmd: Command, setInput: (v: string) => void) => void;
+  onKeyDown: (e: React.KeyboardEvent) => void;
+  onSelect: (cmd: Command, replaceText: (v: string) => void) => void;
   onDismiss: () => void;
 }
 
 export function useSlashCommand({
-  textareaRef,
+  anchorRef,
   onMcodeCommand,
   cwd,
 }: UseSlashCommandOptions): UseSlashCommandReturn {
@@ -52,6 +52,9 @@ export function useSlashCommand({
   const [allCommands, setAllCommands] = useState<Command[]>(MCODE_COMMANDS);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+
+  // Store the last input text so onSelect can read it without a textarea ref.
+  const lastInputRef = useRef("");
 
   // Cache: loaded skills + timestamp for TTL.
   // Also track which cwd the cache was built for — invalidate on workspace switch.
@@ -83,8 +86,8 @@ export function useSlashCommand({
 
   const onInputChange = useCallback(
     (value: string) => {
-      const textarea = textareaRef.current;
-      const cursor = textarea?.selectionStart ?? value.length;
+      lastInputRef.current = value;
+      const cursor = value.length;
       const before = value.slice(0, cursor);
       const match = TRIGGER_RE.exec(before);
 
@@ -94,8 +97,9 @@ export function useSlashCommand({
       }
 
       // Update anchor on every change while popup is open
-      if (textarea) {
-        setAnchorRect(textarea.getBoundingClientRect());
+      const anchor = anchorRef.current;
+      if (anchor) {
+        setAnchorRect(anchor.getBoundingClientRect());
       }
 
       // Filter text is the matched group minus the leading '/'
@@ -135,11 +139,11 @@ export function useSlashCommand({
         }
       }
     },
-    [textareaRef, loadSkills, buildItems],
+    [anchorRef, loadSkills, buildItems],
   );
 
   const onKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    (e: React.KeyboardEvent) => {
       if (!isOpen) return;
 
       // Enter and Tab are handled by the Composer (it calls onSelect directly).
@@ -166,12 +170,9 @@ export function useSlashCommand({
   );
 
   const onSelect = useCallback(
-    (cmd: Command, setInput: (v: string) => void) => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-
-      const value = textarea.value;
-      const cursor = textarea.selectionStart ?? value.length;
+    (cmd: Command, replaceText: (v: string) => void) => {
+      const value = lastInputRef.current;
+      const cursor = value.length;
       const before = value.slice(0, cursor);
       const match = TRIGGER_RE.exec(before);
 
@@ -182,7 +183,7 @@ export function useSlashCommand({
         const triggerStart = match.index + match[1].length;
         const newValue =
           value.slice(0, triggerStart) + `/${cmd.name} ` + value.slice(cursor);
-        setInput(newValue);
+        replaceText(newValue);
       }
 
       if (cmd.action && onMcodeCommand) {
@@ -191,7 +192,7 @@ export function useSlashCommand({
 
       setIsOpen(false);
     },
-    [textareaRef, onMcodeCommand],
+    [onMcodeCommand],
   );
 
   const onDismiss = useCallback(() => setIsOpen(false), []);
