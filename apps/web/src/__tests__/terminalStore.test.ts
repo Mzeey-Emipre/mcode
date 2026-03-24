@@ -231,4 +231,52 @@ describe("TerminalStore", () => {
       expect(useTerminalStore.getState().splitMode).toBe(false);
     });
   });
+
+  describe("syncToThread", () => {
+    it("selects first terminal when switching to a thread with terminals", () => {
+      useTerminalStore.getState().addTerminal("thread-1", "pty-1");
+      useTerminalStore.getState().addTerminal("thread-2", "pty-2");
+      expect(useTerminalStore.getState().activeTerminalId).toBe("pty-2");
+
+      useTerminalStore.getState().syncToThread("thread-1");
+
+      expect(useTerminalStore.getState().activeTerminalId).toBe("pty-1");
+    });
+
+    it("sets null when switching to a thread with no terminals", () => {
+      useTerminalStore.getState().addTerminal("thread-1", "pty-1");
+
+      useTerminalStore.getState().syncToThread("thread-2");
+
+      expect(useTerminalStore.getState().activeTerminalId).toBeNull();
+    });
+
+    it("sets null when switching to null thread", () => {
+      useTerminalStore.getState().addTerminal("thread-1", "pty-1");
+
+      useTerminalStore.getState().syncToThread(null);
+
+      expect(useTerminalStore.getState().activeTerminalId).toBeNull();
+    });
+
+    it("keeps activeTerminalId if it already belongs to the target thread", () => {
+      useTerminalStore.getState().addTerminal("thread-1", "pty-1");
+      useTerminalStore.getState().addTerminal("thread-1", "pty-2");
+      useTerminalStore.getState().setActiveTerminal("pty-2");
+
+      useTerminalStore.getState().syncToThread("thread-1");
+
+      expect(useTerminalStore.getState().activeTerminalId).toBe("pty-2");
+    });
+
+    it("resets when active terminal belongs to a different thread", () => {
+      useTerminalStore.getState().addTerminal("thread-1", "pty-1");
+      useTerminalStore.getState().addTerminal("thread-2", "pty-2");
+      useTerminalStore.getState().setActiveTerminal("pty-1");
+
+      useTerminalStore.getState().syncToThread("thread-2");
+
+      expect(useTerminalStore.getState().activeTerminalId).toBe("pty-2");
+    });
+  });
 });

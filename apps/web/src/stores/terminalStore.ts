@@ -20,6 +20,7 @@ interface TerminalState {
   showPanel: () => void;
   hidePanel: () => void;
   toggleSplit: () => void;
+  syncToThread: (threadId: string | null) => void;
 }
 
 function generateLabel(existing: readonly TerminalInstance[]): string {
@@ -141,5 +142,31 @@ export const useTerminalStore = create<TerminalState>((set) => ({
 
   toggleSplit: () => {
     set((state) => ({ splitMode: !state.splitMode }));
+  },
+
+  /**
+   * Align activeTerminalId to the given thread. Called on every thread
+   * switch so the terminal panel shows a terminal belonging to the
+   * current thread instead of going blank.
+   */
+  syncToThread: (threadId) => {
+    set((state) => {
+      if (!threadId) {
+        return state.activeTerminalId === null ? {} : { activeTerminalId: null };
+      }
+
+      const threadTerminals = state.terminals[threadId] ?? [];
+      const currentActive = state.activeTerminalId;
+
+      // If current active terminal already belongs to this thread, keep it
+      if (currentActive && threadTerminals.some((t) => t.id === currentActive)) {
+        return {};
+      }
+
+      // Pick first terminal in the thread, or null
+      return {
+        activeTerminalId: threadTerminals.length > 0 ? threadTerminals[0].id : null,
+      };
+    });
   },
 }));
