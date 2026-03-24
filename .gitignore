@@ -45,5 +45,9 @@ apps/web/e2e/screenshots/
 # Plans (local working docs)
 docs/plans/
 
+# Build cache artifacts
+*.timestamp-*.mjs
+*.tsbuildinfo
+
 # Logs
 *.log

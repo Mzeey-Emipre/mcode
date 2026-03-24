@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
+import { useQueueStore } from "./queueStore";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -39,11 +40,23 @@ interface ThreadState {
 /** Pending fade-out timers per thread, so we can cancel on new turns. */
 const fadingTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
 
+/** Cancel and remove all pending fade-out timers for a thread. */
 function clearFadingTimers(threadId: string) {
   const timers = fadingTimers.get(threadId);
   if (timers) {
     timers.forEach(clearTimeout);
     fadingTimers.delete(threadId);
+  }
+}
+
+/** Pending dequeue timers per thread, so duplicate turnComplete events don't double-dequeue. */
+const dequeueTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearDequeueTimer(threadId: string) {
+  const timer = dequeueTimers.get(threadId);
+  if (timer) {
+    clearTimeout(timer);
+    dequeueTimers.delete(threadId);
   }
 }
 
@@ -64,8 +77,41 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   agentStartTimes: {},
   settingsByThread: {},
 
+  /**
+   * Fetch persisted messages for a thread from the database.
+   * For non-running threads, clears stale real-time state (tool calls,
+   * streaming text, fading tool calls, agent start times) so artifacts
+   * from a previous visit don't linger. Running threads keep their
+   * real-time state intact to avoid disrupting live tool call rendering.
+   */
   loadMessages: async (threadId) => {
-    set({ loading: true, error: null, currentThreadId: threadId });
+    // Clear stale real-time state for non-running threads so tool calls
+    // from a previous visit don't linger when switching back.
+    const isRunning = get().runningThreadIds.has(threadId);
+    if (!isRunning) {
+      clearFadingTimers(threadId);
+      set((state) => {
+        const nextToolCalls = { ...state.toolCallsByThread };
+        delete nextToolCalls[threadId];
+        const nextFading = { ...state.fadingToolCallsByThread };
+        delete nextFading[threadId];
+        const nextStreaming = { ...state.streamingByThread };
+        delete nextStreaming[threadId];
+        const nextStartTimes = { ...state.agentStartTimes };
+        delete nextStartTimes[threadId];
+        return {
+          loading: true,
+          error: null,
+          currentThreadId: threadId,
+          toolCallsByThread: nextToolCalls,
+          fadingToolCallsByThread: nextFading,
+          streamingByThread: nextStreaming,
+          agentStartTimes: nextStartTimes,
+        };
+      });
+    } else {
+      set({ loading: true, error: null, currentThreadId: threadId });
+    }
     try {
       const messages = await getTransport().getMessages(threadId, 100);
       // Only commit if this thread is still current
@@ -79,6 +125,11 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
   },
 
+  /**
+   * Send a user message and start the agent. Optimistically appends the
+   * message to local state, marks the thread as running, then dispatches
+   * to the transport layer. On failure, rolls back the running state.
+   */
   sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent) => {
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
@@ -121,6 +172,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
   },
 
+  /** Request the agent to stop on a thread. Always marks the thread as not running, even on error. */
   stopAgent: async (threadId) => {
     try {
       await getTransport().stopAgent(threadId);
@@ -135,25 +187,38 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     });
   },
 
+  /** Append a single message to the current thread's message list. */
   addMessage: (message) => {
     set((state) => ({
       messages: [...state.messages, message],
     }));
   },
 
+  /**
+   * Reset the shared message list and all ephemeral streaming/fading state.
+   * Cancels pending fade-out timers to prevent stale writes.
+   * Does NOT reset runningThreadIds since agents may still be executing.
+   */
   clearMessages: () => {
-    set({ messages: [], error: null, streamingByThread: {} });
+    // Cancel all pending fade-out timers to prevent stale writes
+    for (const threadId of fadingTimers.keys()) {
+      clearFadingTimers(threadId);
+    }
+    set({ messages: [], error: null, streamingByThread: {}, fadingToolCallsByThread: {} });
     // Note: does NOT reset runningThreadIds - agents may still be running
   },
 
+  /** Check whether an agent is currently executing on the given thread. */
   isThreadRunning: (threadId) => {
     return get().runningThreadIds.has(threadId);
   },
 
+  /** Return per-thread settings (permission mode, interaction mode), falling back to defaults. */
   getThreadSettings: (threadId) => {
     return get().settingsByThread[threadId] ?? DEFAULT_THREAD_SETTINGS;
   },
 
+  /** Merge partial settings into the per-thread settings record. */
   setThreadSettings: (threadId, settings) => {
     set((state) => ({
       settingsByThread: {
@@ -163,6 +228,12 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }));
   },
 
+  /**
+   * Process a real-time agent event (sidecar or legacy CLI format).
+   * Updates per-thread streaming text, tool calls, and running state.
+   * On turn completion, commits any buffered streaming content as a
+   * message and schedules tool call fade-out animations.
+   */
   handleAgentEvent: (threadId, event) => {
     // Support both old CLI format (event.type) and new sidecar format (event.method)
     const method = (event.method as string) || "";
@@ -191,6 +262,8 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     // -- Sidecar events (new format) --
 
     if (method === "bridge.crashed") {
+      // Cancel all pending dequeue timers to prevent sends after crash
+      for (const tid of dequeueTimers.keys()) clearDequeueTimer(tid);
       set({
         runningThreadIds: new Set(),
         streamingByThread: {},
@@ -404,6 +477,35 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           t.id === threadId ? { ...t, status: "completed" as const } : t,
         ),
       }));
+
+      // Auto-dequeue: send next queued message after a brief visual pause.
+      // Only on turnComplete (not session.ended) so explicit stops don't drain the queue.
+      // Uses tracked timers to prevent double-dequeue from duplicate events.
+      if (method === "session.turnComplete") {
+        clearDequeueTimer(threadId);
+        const timer = setTimeout(() => {
+          dequeueTimers.delete(threadId);
+          // Guard: verify the thread still exists and isn't already running
+          const threadExists = useWorkspaceStore.getState().threads.some(
+            (t) => t.id === threadId && t.deleted_at == null,
+          );
+          if (!threadExists) return;
+          if (get().runningThreadIds.has(threadId)) return;
+
+          const next = useQueueStore.getState().dequeueNext(threadId);
+          if (next) {
+            get().sendMessage(
+              threadId,
+              next.content,
+              next.model,
+              next.permissionMode,
+              next.attachments.length > 0 ? next.attachments : undefined,
+              next.displayContent,
+            );
+          }
+        }, 400);
+        dequeueTimers.set(threadId, timer);
+      }
       return;
     }
 
@@ -426,6 +528,10 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           toolCallsByThread: nextToolCalls,
         };
       });
+
+      // Clear any pending dequeue timer and queue for this thread on error
+      clearDequeueTimer(threadId);
+      useQueueStore.getState().clearQueue(threadId);
 
       // Sync the thread's status in workspaceStore so the sidebar shows
       // the red "Errored" badge without waiting for a full thread reload.

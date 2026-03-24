@@ -1,12 +1,16 @@
+import { memo, useMemo } from "react";
 import type { Message, StoredAttachment } from "@/transport";
 import { Bot, FileText, File, RotateCcw } from "lucide-react";
 import { MarkdownContent } from "./MarkdownContent";
 import { stripInjectedFiles } from "@/lib/file-tags";
 
+/** Props for {@link MessageBubble}. */
 interface MessageBubbleProps {
+  /** The message object to render. */
   message: Message;
 }
 
+/** Maps a MIME type to a file extension for attachment URLs. */
 function extFromMime(mimeType: string): string {
   const map: Record<string, string> = {
     "image/jpeg": ".jpg",
@@ -19,9 +23,16 @@ function extFromMime(mimeType: string): string {
   return map[mimeType] ?? "";
 }
 
-function AttachmentDisplay({ attachments, threadId }: { attachments: StoredAttachment[]; threadId: string }) {
-  const images = attachments.filter((a) => a.mimeType.startsWith("image/"));
-  const files = attachments.filter((a) => !a.mimeType.startsWith("image/"));
+/** Renders image thumbnails and file badges for message attachments. */
+const AttachmentDisplay = memo(function AttachmentDisplay({
+  attachments,
+  threadId,
+}: {
+  attachments: StoredAttachment[];
+  threadId: string;
+}) {
+  const images = useMemo(() => attachments.filter((a) => a.mimeType.startsWith("image/")), [attachments]);
+  const files = useMemo(() => attachments.filter((a) => !a.mimeType.startsWith("image/")), [attachments]);
 
   return (
     <div className="space-y-2">
@@ -51,9 +62,15 @@ function AttachmentDisplay({ attachments, threadId }: { attachments: StoredAttac
       ))}
     </div>
   );
-}
+});
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+/** Renders a single chat message (system, user, or assistant). Memoized to prevent re-renders when the message ref is unchanged. */
+export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
+  const formattedTime = useMemo(
+    () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    [message.timestamp],
+  );
+
   if (message.role === "system") {
     return (
       <div className="flex items-center gap-3 py-2">
@@ -106,10 +123,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             </span>
           )}
           <span className="text-[10px] text-muted-foreground">
-            {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            {formattedTime}
           </span>
         </div>
       </div>
     </div>
   );
-}
+});

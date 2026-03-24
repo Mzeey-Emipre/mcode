@@ -12,6 +12,7 @@ import {
   Unlock,
   ChevronDown,
   Loader2,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getDefaultModel } from "@/lib/model-registry";
@@ -32,6 +33,8 @@ import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
 import { SlashCommandPopup } from "./SlashCommandPopup";
 import { type LexicalEditor, $getRoot, $createParagraphNode } from "lexical";
+import { QueuePopover } from "./QueuePopover";
+import { useQueueStore } from "@/stores/queueStore";
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const SUPPORTED_FILE_TYPES = new Set(["application/pdf", "text/plain"]);
@@ -196,6 +199,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [isNewThread, newThreadBranch, branches, setNewThreadBranch]);
 
+  const hasContent = input.trim().length > 0 || attachments.length > 0;
+
   // Full lock when agent running, provider lock when thread has a model
   const isModelFullyLocked = isAgentRunning;
   const isProviderLocked = !isNewThread && activeThread?.model != null;
@@ -358,13 +363,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     editorRef.current?.focus();
   }, [addFiles]);
 
-  const handleSend = useCallback(async () => {
-    const trimmed = input.trim();
-    if (!trimmed && attachments.length === 0) return;
-    if (isAgentRunning) return;
-
-    // Content injection: read tagged files and build injected message
-    let messageContent = trimmed;
+  /** Resolve @file tags into injected content. */
+  const injectFileContent = useCallback(async (trimmed: string): Promise<{ content: string; display?: string }> => {
     const refs = extractFileRefs(trimmed);
     if (refs.length > 0 && workspaceId) {
       try {
@@ -374,19 +374,68 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             try {
               const content = await transport.readFileContent(workspaceId, path, threadId);
               return { path, content };
-            } catch {
-              return null;
-            }
+            } catch { return null; }
           }),
         );
         const validFiles = fileContents.filter(
           (f): f is { path: string; content: string } => f !== null,
         );
-        messageContent = buildInjectedMessage(trimmed, validFiles);
-      } catch {
-        // If file reading fails entirely, send without injection
-      }
+        const injected = buildInjectedMessage(trimmed, validFiles);
+        return { content: injected, display: injected !== trimmed ? trimmed : undefined };
+      } catch { /* fall through */ }
     }
+    return { content: trimmed };
+  }, [workspaceId, threadId]);
+
+  /** Collect attachment metadata and revoke preview URLs. */
+  const collectAndClearAttachments = useCallback((): AttachmentMeta[] => {
+    const metas: AttachmentMeta[] = attachments
+      .filter((a) => a.filePath != null)
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+        sourcePath: a.filePath!,
+      }));
+    for (const att of attachments) {
+      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+    }
+    setAttachments([]);
+    return metas;
+  }, [attachments]);
+
+  const handleSend = useCallback(async () => {
+    if (!hasContent) return;
+    const trimmed = input.trim();
+
+    // ---- Queue path: agent is running on this thread ----
+    if (isAgentRunning && threadId) {
+      const { content, display } = await injectFileContent(trimmed);
+      const currentAttachments = collectAndClearAttachments();
+
+      useQueueStore.getState().enqueue(threadId, {
+        content,
+        displayContent: display,
+        attachments: currentAttachments,
+        model: modelId,
+        permissionMode: access,
+      });
+
+      setInput("");
+      if (editorRef.current) {
+        editorRef.current.update(() => {
+          const root = $getRoot();
+          root.clear();
+          root.append($createParagraphNode());
+        });
+      }
+      editorRef.current?.focus();
+      return;
+    }
+
+    // ---- Normal send path ----
+    const { content: messageContent, display: displayContent } = await injectFileContent(trimmed);
 
     // Validate worktree mode requirements
     if (isNewThread && newThreadMode === "worktree" && namingMode === "custom" && !customBranchName.trim()) {
@@ -417,20 +466,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         root.append($createParagraphNode());
       });
     }
-    const currentAttachments: AttachmentMeta[] = attachments
-      .filter((a) => a.filePath != null)
-      .map((a) => ({
-        id: a.id,
-        name: a.name,
-        mimeType: a.mimeType,
-        sizeBytes: a.sizeBytes,
-        sourcePath: a.filePath!,
-      }));
-
-    for (const att of attachments) {
-      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-    }
-    setAttachments([]);
+    const currentAttachments = collectAndClearAttachments();
 
     if (isNewThread && workspaceId) {
       if (newThreadMode === "worktree" || newThreadMode === "existing-worktree") {
@@ -442,11 +478,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setPreparingWorktree(false);
       }
     } else if (threadId) {
-      const display = messageContent !== trimmed ? trimmed : undefined;
-      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, display);
+      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent);
     }
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments]);
 
   const handleEditorChange = useCallback((text: string, _mentionPaths: string[]) => {
     setInput(text);
@@ -492,8 +527,18 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     return false;
   }, [fileAutocomplete.isOpen, filePopup, slashCommand, handleSlashSelect]);
 
+  const toast = useQueueStore((s) => s.toast);
+
   return (
-    <div className="border-t border-border px-4 py-3">
+    <div className="relative border-t border-border px-4 py-3">
+      {/* Queue toast */}
+      {toast && (
+        <div className="pointer-events-none absolute -top-8 right-4 z-20 flex items-center gap-1.5 rounded-full bg-card/90 px-3 py-1 text-[11px] text-muted-foreground shadow-sm ring-1 ring-border/50 backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-150">
+          <Check size={10} className="text-primary" />
+          {toast}
+        </div>
+      )}
+
       {/* Main composer container - dark bg, rounded */}
       <div
         className={cn(
@@ -517,9 +562,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             onSlashDismiss={slashCommand.onDismiss}
             isSlashPopupOpen={slashCommand.isOpen}
             editorRef={editorRef}
-            disabled={isAgentRunning}
+            disabled={false}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
+            placeholder={isAgentRunning ? "Queue a follow-up..." : "Ask for follow-up changes or attach images"}
           />
           <FileTagPopup
             files={fileAutocomplete.filteredFiles}
@@ -564,7 +610,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
               <ChevronDown size={10} />
             </button>
             {showReasoningPicker && (
-              <div className="absolute bottom-full left-0 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
+              <div className="absolute bottom-full left-0 z-20 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
                 {(["low", "medium", "high"] as const).map((level) => (
                   <button
                     key={level}
@@ -645,22 +691,76 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             </span>
           )}
 
-          {/* Send / Stop toggle */}
+          {/* Inline stop button: visible when agent running AND user has input */}
+          {isAgentRunning && hasContent && (
+            <button
+              onClick={handleStop}
+              className="rounded-md p-1.5 text-destructive/60 transition-colors hover:bg-destructive/10 hover:text-destructive"
+              title="Stop agent"
+            >
+              <Square size={11} />
+            </button>
+          )}
+
+          {/* Queue badge + popover */}
+          {threadId && (
+            <QueuePopover
+              threadId={threadId}
+              isAgentRunning={isAgentRunning}
+              onResume={() => {
+                const next = useQueueStore.getState().dequeueNext(threadId);
+                if (next) {
+                  sendMessage(threadId, next.content, next.model, next.permissionMode,
+                    next.attachments.length > 0 ? next.attachments : undefined, next.displayContent);
+                }
+              }}
+            />
+          )}
+
+          {/* Send / Queue / Stop button */}
           <button
-            onClick={isAgentRunning ? handleStop : handleSend}
-            disabled={preparingWorktree || (!isAgentRunning && !input.trim() && attachments.length === 0)}
+            onClick={
+              preparingWorktree
+                ? undefined
+                : isAgentRunning && hasContent
+                  ? handleSend
+                  : isAgentRunning
+                    ? handleStop
+                    : handleSend
+            }
+            disabled={
+              preparingWorktree ||
+              (!isAgentRunning && !hasContent)
+            }
             className={cn(
               "rounded-full p-2 transition-colors",
               preparingWorktree
                 ? "bg-primary text-primary-foreground animate-spin"
-                : isAgentRunning
-                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  : (input.trim() || attachments.length > 0)
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                    : "bg-muted text-muted-foreground opacity-40"
+                : isAgentRunning && hasContent
+                  ? "bg-primary/60 text-primary-foreground hover:bg-primary/75"
+                  : isAgentRunning
+                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    : hasContent
+                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                      : "bg-muted text-muted-foreground opacity-40"
             )}
+            title={
+              isAgentRunning && hasContent
+                ? "Queue message"
+                : isAgentRunning
+                  ? "Stop agent"
+                  : "Send message"
+            }
           >
-            {preparingWorktree ? <Loader2 size={14} /> : isAgentRunning ? <Square size={14} /> : <ArrowUp size={14} />}
+            {preparingWorktree ? (
+              <Loader2 size={14} />
+            ) : isAgentRunning && hasContent ? (
+              <ArrowUp size={14} />
+            ) : isAgentRunning ? (
+              <Square size={14} />
+            ) : (
+              <ArrowUp size={14} />
+            )}
           </button>
         </div>
       </div>

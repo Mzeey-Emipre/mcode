@@ -130,7 +130,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 mb-1 min-w-[180px] rounded-md border border-border bg-popover p-1 shadow-lg">
+        <div className="absolute bottom-full left-0 z-20 mb-1 min-w-[180px] rounded-md border border-border bg-popover p-1 shadow-lg">
           {/* When provider is locked, show only that provider's models directly */}
           {providerLocked && provider ? (
             provider.models.map((m) => (

@@ -49,6 +49,10 @@ Key components:
 - **`BranchNameInput`** – shows auto-generated or editable branch name
 - **`WorktreePicker`** – searchable dropdown for existing worktrees
 
+## Code Style
+
+Always add JSDoc/TSDoc docstrings to all exported functions, components, types, and interfaces. AI-powered code reviews depend on these for context. At minimum include a one-line summary of what the symbol does.
+
 ## Commit Guidelines
 
 Use [Conventional Commits](https://www.conventionalcommits.org/).
