@@ -93,6 +93,83 @@ const NAME_ICON: Record<string, LucideIcon> = {
 };
 
 /**
+ * Extension-based icon color map.
+ * Returns a Tailwind text-color class for the file type.
+ */
+const EXT_COLOR: Record<string, string> = {
+  // JavaScript / TypeScript
+  js: "text-yellow-400", jsx: "text-yellow-400", mjs: "text-yellow-400", cjs: "text-yellow-400",
+  ts: "text-blue-400", tsx: "text-blue-400", mts: "text-blue-400", cts: "text-blue-400",
+  // Web
+  html: "text-orange-400", htm: "text-orange-400",
+  vue: "text-emerald-400", svelte: "text-orange-500",
+  // Styles
+  css: "text-blue-300", scss: "text-pink-400", sass: "text-pink-400", less: "text-indigo-400",
+  // Data / Config (JSON-like)
+  json: "text-yellow-300", jsonc: "text-yellow-300", json5: "text-yellow-300",
+  // Data / Config (YAML/TOML)
+  yaml: "text-red-300", yml: "text-red-300", toml: "text-gray-400",
+  // Markdown / Text
+  md: "text-sky-300", mdx: "text-sky-300", txt: "text-gray-400", rst: "text-gray-400",
+  // Python
+  py: "text-yellow-300", pyi: "text-yellow-300", pyx: "text-yellow-300",
+  // Rust
+  rs: "text-orange-400",
+  // Go
+  go: "text-cyan-400",
+  // C / C++
+  c: "text-blue-300", h: "text-purple-300", cpp: "text-blue-400", hpp: "text-purple-400", cc: "text-blue-400",
+  // Java / Kotlin
+  java: "text-red-400", kt: "text-purple-400", kts: "text-purple-400",
+  // Ruby
+  rb: "text-red-400", rake: "text-red-400",
+  // Shell
+  sh: "text-emerald-400", bash: "text-emerald-400", zsh: "text-emerald-400",
+  fish: "text-emerald-400", ps1: "text-blue-300", bat: "text-green-400", cmd: "text-green-400",
+  // SQL / Database
+  sql: "text-blue-300", sqlite: "text-blue-300", db: "text-blue-300",
+  // Config
+  env: "text-yellow-300", ini: "text-gray-400", cfg: "text-gray-400", conf: "text-gray-400",
+  lock: "text-gray-500", editorconfig: "text-gray-400", gitignore: "text-gray-400",
+  // Images
+  png: "text-emerald-300", jpg: "text-emerald-300", jpeg: "text-emerald-300",
+  gif: "text-emerald-300", svg: "text-orange-300", webp: "text-emerald-300",
+  ico: "text-emerald-300", bmp: "text-emerald-300", avif: "text-emerald-300",
+  // Video
+  mp4: "text-purple-300", webm: "text-purple-300", avi: "text-purple-300", mov: "text-purple-300",
+  // Audio
+  mp3: "text-pink-300", wav: "text-pink-300", ogg: "text-pink-300", flac: "text-pink-300",
+};
+
+const NAME_COLOR: Record<string, string> = {
+  dockerfile: "text-blue-400",
+  makefile: "text-orange-400",
+  ".gitignore": "text-gray-400",
+  ".env": "text-yellow-300",
+  ".env.local": "text-yellow-300",
+  "tsconfig.json": "text-blue-400",
+  "package.json": "text-emerald-400",
+};
+
+/**
+ * Get a Tailwind text-color class for a file path based on its extension.
+ */
+export function getFileIconColor(filePath: string): string {
+  const fileName = filePath.slice(filePath.lastIndexOf("/") + 1).toLowerCase();
+  const nameMatch = NAME_COLOR[fileName];
+  if (nameMatch) return nameMatch;
+
+  const dotIdx = fileName.lastIndexOf(".");
+  if (dotIdx !== -1) {
+    const ext = fileName.slice(dotIdx + 1);
+    const extMatch = EXT_COLOR[ext];
+    if (extMatch) return extMatch;
+  }
+
+  return "text-muted-foreground";
+}
+
+/**
  * Get the icon component for a file path based on its extension or filename.
  */
 export function getFileIcon(filePath: string): LucideIcon {
