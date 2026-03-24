@@ -580,7 +580,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
               <ChevronDown size={10} />
             </button>
             {showReasoningPicker && (
-              <div className="absolute bottom-full left-0 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
+              <div className="absolute bottom-full left-0 z-20 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
                 {(["low", "medium", "high"] as const).map((level) => (
                   <button
                     key={level}
