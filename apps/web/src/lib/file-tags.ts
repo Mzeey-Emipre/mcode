@@ -1,8 +1,8 @@
 /**
  * Utilities for @ file tagging: pattern matching, content injection, and display stripping.
  *
- * Used by the Composer (trigger detection, content injection on send),
- * TextOverlay (highlight rendering), and MessageBubble (stripping injected blocks).
+ * Used by the Composer (content injection on send) and
+ * MessageBubble (stripping injected blocks).
  */
 
 /**
@@ -17,27 +17,6 @@ export const FILE_PATH_PATTERN = String.raw`[\w./-][\w./-]*(?:[/.][\w./-]+)+`;
  */
 const EXTRACT_REFS_RE = new RegExp(
   String.raw`(?:^|(?<=\s))@(${FILE_PATH_PATTERN})`,
-  "g",
-);
-
-/**
- * Pre-compiled regex for matching @path tokens including the @ prefix.
- * Used by TextOverlay to locate highlight positions.
- */
-export const HIGHLIGHT_RE = new RegExp(
-  String.raw`(?:^|(?<=\s))(@${FILE_PATH_PATTERN})`,
-  "g",
-);
-
-/**
- * Combined regex matching both @file/path and /command tokens in a single pass.
- * Group 1: @file/path token (including the @).
- * Group 2: /command-name token (allows word chars, colons for namespaced
- *          commands like `superpowers:project-manager`, and hyphens).
- * Used by TextOverlay for unified multi-token highlighting.
- */
-export const COMBINED_TOKEN_RE = new RegExp(
-  String.raw`(?:^|(?<=\s))(?:(@${FILE_PATH_PATTERN})|(\/[\w:][\w:-]*))`,
   "g",
 );
 
