@@ -39,7 +39,7 @@ function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
         />
       );
     default: {
-      // @ts-ignore - exhaustive check for all ChatVirtualItem types
+      // @ts-expect-error exhaustive check: fails if a ChatVirtualItem variant is unhandled
       const _exhaustive: never = item;
       return null;
     }
