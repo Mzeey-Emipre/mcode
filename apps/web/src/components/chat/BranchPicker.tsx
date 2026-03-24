@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { GitBranch, ChevronDown, Loader2 } from "lucide-react";
+import { GitBranch, ChevronDown, Loader2, GitPullRequest } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { GitBranch as GitBranchType } from "@/transport/types";
+import type { GitBranch as GitBranchType, PrDetail } from "@/transport/types";
 
 interface BranchPickerProps {
   branches: GitBranchType[];
@@ -9,6 +9,10 @@ interface BranchPickerProps {
   onSelect: (branchName: string) => void;
   loading: boolean;
   locked: boolean;
+  pullRequests?: PrDetail[];
+  prsLoading?: boolean;
+  fetchingBranch?: string | null;
+  onFetchAndSelect?: (branch: string) => void;
 }
 
 /**
@@ -17,7 +21,7 @@ interface BranchPickerProps {
  * for choosing the base branch to create the worktree from ("From main").
  * When `locked` is true, renders a read-only badge instead of a dropdown.
  */
-export function BranchPicker({ branches, selectedBranch, onSelect, loading, locked }: BranchPickerProps) {
+export function BranchPicker({ branches, selectedBranch, onSelect, loading, locked, pullRequests, prsLoading, fetchingBranch, onFetchAndSelect }: BranchPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -98,7 +102,13 @@ export function BranchPicker({ branches, selectedBranch, onSelect, loading, lock
             <p className="px-2 py-3 text-center text-xs text-muted-foreground">No branches match</p>
           ) : (
             <div className="max-h-[300px] overflow-y-auto">
-              {filtered.map((b) => {
+              {/* Local / worktree branches */}
+              {filtered.filter((b) => b.type !== "remote").length > 0 && (
+                <div className="px-3 pt-1 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                  Local
+                </div>
+              )}
+              {filtered.filter((b) => b.type !== "remote").map((b) => {
                 const badge = badgeFor(b);
                 return (
                   <button
@@ -120,6 +130,94 @@ export function BranchPicker({ branches, selectedBranch, onSelect, loading, lock
                   </button>
                 );
               })}
+
+              {/* Remote branches */}
+              {filtered.filter((b) => b.type === "remote").length > 0 && (
+                <div className="px-3 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                  Remote
+                </div>
+              )}
+              {filtered.filter((b) => b.type === "remote").map((b) => {
+                const badge = badgeFor(b);
+                return (
+                  <button
+                    key={`${b.type}-${b.name}`}
+                    onClick={() => handleSelect(b.name)}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs",
+                      b.name === selectedBranch
+                        ? "bg-accent text-foreground"
+                        : "text-popover-foreground hover:bg-accent/50 hover:text-foreground",
+                    )}
+                  >
+                    <span className="truncate">{b.name}</span>
+                    {badge && (
+                      <span className="ml-2 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
+                        {badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              {/* Pull Requests section */}
+              {pullRequests && pullRequests.length > 0 && (
+                <>
+                  <div className="px-3 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                    Pull Requests
+                  </div>
+                  {pullRequests
+                    .filter((pr) => {
+                      const q = search.toLowerCase();
+                      if (!q) return true;
+                      return (
+                        pr.title.toLowerCase().includes(q) ||
+                        pr.branch.toLowerCase().includes(q) ||
+                        String(pr.number).includes(q) ||
+                        pr.author.toLowerCase().includes(q)
+                      );
+                    })
+                    .map((pr) => {
+                      const isFetching = fetchingBranch === pr.branch;
+                      return (
+                        <button
+                          key={`pr-${pr.number}`}
+                          onClick={() => {
+                            if (isFetching) return;
+                            if (onFetchAndSelect) {
+                              onFetchAndSelect(pr.branch);
+                            } else {
+                              handleSelect(pr.branch);
+                            }
+                          }}
+                          disabled={isFetching}
+                          className={cn(
+                            "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs",
+                            pr.branch === selectedBranch
+                              ? "bg-accent text-foreground"
+                              : "text-popover-foreground hover:bg-accent/50 hover:text-foreground",
+                          )}
+                        >
+                          <div className="flex flex-col items-start gap-0.5 truncate">
+                            <span className="flex items-center gap-1">
+                              <GitPullRequest size={10} />
+                              #{pr.number} {pr.title}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {pr.branch} &middot; {pr.author}
+                            </span>
+                          </div>
+                          {isFetching && <Loader2 size={12} className="animate-spin shrink-0 text-muted-foreground" />}
+                        </button>
+                      );
+                    })}
+                </>
+              )}
+              {prsLoading && (
+                <div className="flex items-center justify-center py-2">
+                  <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                </div>
+              )}
             </div>
           )}
         </div>

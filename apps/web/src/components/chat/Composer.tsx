@@ -154,6 +154,11 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const setNamingMode = useWorkspaceStore((s) => s.setNamingMode);
   const setCustomBranchName = useWorkspaceStore((s) => s.setCustomBranchName);
   const setSelectedWorktree = useWorkspaceStore((s) => s.setSelectedWorktree);
+  const openPrs = useWorkspaceStore((s) => s.openPrs);
+  const openPrsLoading = useWorkspaceStore((s) => s.openPrsLoading);
+  const fetchingBranch = useWorkspaceStore((s) => s.fetchingBranch);
+  const loadOpenPrs = useWorkspaceStore((s) => s.loadOpenPrs);
+  const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
 
   // Sync modelId with the active thread's locked model when switching threads
   useEffect(() => {
@@ -205,6 +210,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [isNewThread, newThreadBranch, branches, setNewThreadBranch]);
 
+  // Load open PRs when in worktree mode
+  useEffect(() => {
+    if (isNewThread && workspaceId && composerMode === "worktree") {
+      loadOpenPrs(workspaceId);
+    }
+  }, [isNewThread, workspaceId, composerMode, loadOpenPrs]);
+
   // Full lock when agent running, provider lock when thread has a model
   const isModelFullyLocked = isAgentRunning;
   const isProviderLocked = !isNewThread && activeThread?.model != null;
@@ -223,6 +235,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       stopAgent(threadId);
     }
   }, [threadId, stopAgent]);
+
+  const handleFetchAndSelect = useCallback(async (branch: string) => {
+    if (!workspaceId) return;
+    await fetchBranch(workspaceId, branch);
+    setNewThreadBranch(branch);
+  }, [workspaceId, fetchBranch, setNewThreadBranch]);
 
   const getMaxSize = (mimeType: string): number => {
     if (SUPPORTED_IMAGE_TYPES.has(mimeType)) return MAX_IMAGE_SIZE;
@@ -706,6 +724,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                   onSelect={setNewThreadBranch}
                   loading={branchesLoading}
                   locked={false}
+                  pullRequests={openPrs}
+                  prsLoading={openPrsLoading}
+                  fetchingBranch={fetchingBranch}
+                  onFetchAndSelect={handleFetchAndSelect}
                 />
                 <NamingModeSelector mode={namingMode} onModeChange={setNamingMode} />
                 <BranchNameInput
