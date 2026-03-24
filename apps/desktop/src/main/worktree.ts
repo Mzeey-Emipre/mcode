@@ -318,34 +318,42 @@ export function branchExists(repoPath: string, branch: string): boolean {
 
 /**
  * Fetch a remote branch from origin and create a local tracking branch.
- * If the local branch already exists, updates it with the latest remote.
- * Throws on failure (e.g. branch not found on remote).
+ * If the local branch already exists and the remote fetch fails (e.g.
+ * branch only exists locally), the local branch is left as-is.
+ * Only throws if the branch cannot be found locally or remotely.
  */
 export function fetchBranch(repoPath: string, branch: string): void {
   validateBranchName(branch);
 
-  // Fetch the specific branch from origin
-  execFileSync(
-    "git",
-    ["-C", repoPath, "fetch", "origin", branch],
-    { stdio: "pipe" },
-  );
-
-  // Create or update local branch to track remote
-  const localExists = branchExists(repoPath, branch);
-  if (localExists) {
-    // Update existing local branch to match remote
+  let fetchOk = true;
+  try {
     execFileSync(
       "git",
-      ["-C", repoPath, "branch", "-f", branch, `origin/${branch}`],
+      ["-C", repoPath, "fetch", "origin", branch],
       { stdio: "pipe" },
     );
-  } else {
-    // Create local branch tracking remote
-    execFileSync(
-      "git",
-      ["-C", repoPath, "branch", "--track", branch, `origin/${branch}`],
-      { stdio: "pipe" },
-    );
+  } catch {
+    fetchOk = false;
   }
+
+  if (fetchOk) {
+    // Create or update local branch to track remote
+    const localExists = branchExists(repoPath, branch);
+    if (localExists) {
+      execFileSync(
+        "git",
+        ["-C", repoPath, "branch", "-f", branch, `origin/${branch}`],
+        { stdio: "pipe" },
+      );
+    } else {
+      execFileSync(
+        "git",
+        ["-C", repoPath, "branch", "--track", branch, `origin/${branch}`],
+        { stdio: "pipe" },
+      );
+    }
+  } else if (!branchExists(repoPath, branch)) {
+    throw new Error(`Branch "${branch}" not found locally or on origin`);
+  }
+  // If fetch failed but branch exists locally, silently succeed
 }
