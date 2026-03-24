@@ -16,6 +16,8 @@ interface ThreadState {
   currentThreadId: string | null;
   streamingByThread: Record<string, string>;
   toolCallsByThread: Record<string, ToolCall[]>;
+  /** Tool calls kept briefly after turn complete so the user can see the final state. */
+  fadingToolCallsByThread: Record<string, ToolCall[]>;
   agentStartTimes: Record<string, number>;
   /** Per-thread permission mode and interaction mode. */
   settingsByThread: Record<string, ThreadSettings>;
@@ -34,6 +36,17 @@ interface ThreadState {
   setThreadSettings: (threadId: string, settings: Partial<ThreadSettings>) => void;
 }
 
+/** Pending fade-out timers per thread, so we can cancel on new turns. */
+const fadingTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
+
+function clearFadingTimers(threadId: string) {
+  const timers = fadingTimers.get(threadId);
+  if (timers) {
+    timers.forEach(clearTimeout);
+    fadingTimers.delete(threadId);
+  }
+}
+
 const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
   permissionMode: PERMISSION_MODES.FULL,
   interactionMode: INTERACTION_MODES.CHAT,
@@ -47,6 +60,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   currentThreadId: null,
   streamingByThread: {},
   toolCallsByThread: {},
+  fadingToolCallsByThread: {},
   agentStartTimes: {},
   settingsByThread: {},
 
@@ -155,6 +169,25 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     const eventType = (event.type as string) || "";
     const params = (event.params as Record<string, unknown>) || event;
 
+    // Helper: mark all prior incomplete tool calls as complete.
+    // The Claude Agent SDK handles tool execution internally and does not
+    // emit standalone "session.toolResult" events. So when a new event
+    // arrives that implies previous tools finished (new toolUse, message,
+    // delta, or turnComplete), we mark prior calls as done.
+    const markPriorToolCallsComplete = () => {
+      const calls = get().toolCallsByThread[threadId];
+      if (!calls || !calls.some((tc) => !tc.isComplete)) return;
+      set((state) => {
+        const current = state.toolCallsByThread[threadId] ?? [];
+        const updated = current.map((tc) =>
+          tc.isComplete ? tc : { ...tc, isComplete: true }
+        );
+        return {
+          toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
+        };
+      });
+    };
+
     // -- Sidecar events (new format) --
 
     if (method === "bridge.crashed") {
@@ -192,6 +225,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
 
     if (method === "session.message" || (eventType === "session.message")) {
+      markPriorToolCallsComplete();
       const content = (params.content as string) || "";
       if (content) {
         const message: Message = {
@@ -217,6 +251,10 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
 
     if (method === "session.toolUse") {
+      // New tool call arriving means any previous ones have finished
+      markPriorToolCallsComplete();
+      // Cancel any pending fade-out from a previous turn on this thread
+      clearFadingTimers(threadId);
       const toolCall: ToolCall = {
         id: (params.toolCallId as string) || crypto.randomUUID(),
         toolName: (params.toolName as string) || "unknown",
@@ -267,8 +305,11 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       const tokensIn = (params.totalTokensIn as number) ?? 0;
       const tokensOut = (params.totalTokensOut as number) ?? 0;
 
-      // Commit any remaining streaming content
+      // Commit any remaining streaming content and stop the agent,
+      // but keep tool calls in their active slot briefly before fading out.
       const streamContent = get().streamingByThread[threadId] ?? "";
+
+      // First: mark all tool calls as complete (in place) and commit the message
       if (streamContent) {
         const message: Message = {
           id: crypto.randomUUID(),
@@ -290,8 +331,11 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           nextRunning.delete(threadId);
           const nextStartTimes = { ...state.agentStartTimes };
           delete nextStartTimes[threadId];
-          const nextToolCalls = { ...state.toolCallsByThread };
-          delete nextToolCalls[threadId];
+          // Mark all tool calls as complete and keep in active slot briefly
+          const currentCalls = state.toolCallsByThread[threadId] ?? [];
+          const completedCalls = currentCalls.map((tc) =>
+            tc.isComplete ? tc : { ...tc, isComplete: true }
+          );
           return {
             messages: state.currentThreadId === threadId
               ? [...state.messages, message]
@@ -299,7 +343,9 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
             streamingByThread: nextStreaming,
             runningThreadIds: nextRunning,
             agentStartTimes: nextStartTimes,
-            toolCallsByThread: nextToolCalls,
+            toolCallsByThread: completedCalls.length > 0
+              ? { ...state.toolCallsByThread, [threadId]: completedCalls }
+              : state.toolCallsByThread,
           };
         });
       } else {
@@ -310,16 +356,46 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           delete nextStreaming[threadId];
           const nextStartTimes = { ...state.agentStartTimes };
           delete nextStartTimes[threadId];
-          const nextToolCalls = { ...state.toolCallsByThread };
-          delete nextToolCalls[threadId];
+          const currentCalls = state.toolCallsByThread[threadId] ?? [];
+          const completedCalls = currentCalls.map((tc) =>
+            tc.isComplete ? tc : { ...tc, isComplete: true }
+          );
           return {
             runningThreadIds: nextRunning,
             streamingByThread: nextStreaming,
             agentStartTimes: nextStartTimes,
-            toolCallsByThread: nextToolCalls,
+            toolCallsByThread: completedCalls.length > 0
+              ? { ...state.toolCallsByThread, [threadId]: completedCalls }
+              : state.toolCallsByThread,
           };
         });
       }
+
+      // After a brief pause, move tool calls to fading state for exit animation.
+      // Store timer IDs so they can be cancelled if a new turn starts.
+      clearFadingTimers(threadId);
+      const timers: ReturnType<typeof setTimeout>[] = [];
+      timers.push(setTimeout(() => {
+        set((state) => {
+          const calls = state.toolCallsByThread[threadId];
+          if (!calls || calls.length === 0) return {};
+          const nextToolCalls = { ...state.toolCallsByThread };
+          delete nextToolCalls[threadId];
+          return {
+            toolCallsByThread: nextToolCalls,
+            fadingToolCallsByThread: { ...state.fadingToolCallsByThread, [threadId]: calls },
+          };
+        });
+      }, 800));
+      timers.push(setTimeout(() => {
+        set((state) => {
+          const next = { ...state.fadingToolCallsByThread };
+          delete next[threadId];
+          return { fadingToolCallsByThread: next };
+        });
+        fadingTimers.delete(threadId);
+      }, 3500));
+      fadingTimers.set(threadId, timers);
 
       // Sync the thread's status in workspaceStore so the sidebar shows
       // the green "Completed" badge without waiting for a full thread reload.
@@ -362,6 +438,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     }
 
     if (method === "session.delta") {
+      markPriorToolCallsComplete();
       const text = (params.text as string) || "";
       if (text) {
         set((state) => ({
