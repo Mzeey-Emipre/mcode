@@ -92,6 +92,7 @@ export function buildVirtualItems(
 const LINE_HEIGHT = 22;
 const CHARS_PER_LINE = 65;
 
+/** Estimate pixel height for a virtual item before `measureElement` fires. */
 export function estimateItemHeight(item: ChatVirtualItem): number {
   switch (item.type) {
     case "message": {
