@@ -66,7 +66,8 @@ export function buildInjectedMessage(
   const fileBlocks = files
     .map((f) => {
       const escaped = f.content.replace(/<\/file>/gi, "<\\/file>");
-      return `<file path="${f.path}">\n${escaped}\n</file>`;
+      const escapedPath = f.path.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+      return `<file path="${escapedPath}">\n${escaped}\n</file>`;
     })
     .join("\n");
 
