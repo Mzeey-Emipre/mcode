@@ -8,7 +8,7 @@ import { getIconForFile } from "vscode-icons-js";
 import { getFileIcon } from "./file-icons";
 import type { LucideIcon } from "lucide-react";
 
-const CDN_BASE = "https://cdn.jsdelivr.net/npm/vscode-icons-js@latest/icons";
+const CDN_BASE = "https://cdn.jsdelivr.net/gh/vscode-icons/vscode-icons/icons";
 
 /** Icon name returned by vscode-icons-js for unrecognized files. */
 const DEFAULT_ICON = "default_file.svg";

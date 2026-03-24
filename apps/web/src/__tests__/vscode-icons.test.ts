@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getIconUrl, resolveIcon, clearIconCache } from "@/lib/vscode-icons";
 
 // jsdom doesn't provide URL.createObjectURL
-global.URL.createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
+globalThis.URL.createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
 
 beforeEach(() => {
   clearIconCache();
   vi.restoreAllMocks();
-  global.URL.createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
+  globalThis.URL.createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
 });
 
 describe("getIconUrl", () => {
@@ -36,7 +36,7 @@ describe("getIconUrl", () => {
 
 describe("resolveIcon", () => {
   it("returns 'vscode' type with URL for known extension", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       blob: () =>
         Promise.resolve(new Blob(["<svg/>"], { type: "image/svg+xml" })),
@@ -50,7 +50,7 @@ describe("resolveIcon", () => {
   });
 
   it("falls back to 'lucide' type on fetch error", async () => {
-    global.fetch = vi.fn().mockRejectedValue(new Error("network error"));
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network error"));
 
     const result = await resolveIcon("utils.ts");
     expect(result.type).toBe("lucide");
@@ -62,7 +62,7 @@ describe("resolveIcon", () => {
   });
 
   it("caches resolved icons", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       blob: () =>
         Promise.resolve(new Blob(["<svg/>"], { type: "image/svg+xml" })),
@@ -70,6 +70,6 @@ describe("resolveIcon", () => {
 
     await resolveIcon("utils.ts");
     await resolveIcon("utils.ts");
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 });
