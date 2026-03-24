@@ -191,7 +191,7 @@ export interface McodeTransport {
 
   // PR review
   listOpenPrs(workspaceId: string): Promise<PrDetail[]>;
-  fetchBranch(workspaceId: string, branch: string): Promise<void>;
+  fetchBranch(workspaceId: string, branch: string, prNumber?: number): Promise<void>;
   getPrByUrl(url: string): Promise<PrDetail | null>;
 
   // Skills

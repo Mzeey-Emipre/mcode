@@ -111,10 +111,10 @@ export class AppState {
   }
 
   /** Fetch a remote branch from origin into the workspace's repository. */
-  fetchBranch(workspaceId: string, branch: string): void {
+  fetchBranch(workspaceId: string, branch: string, prNumber?: number): void {
     const workspace = WorkspaceRepo.findById(this.db, workspaceId);
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-    fetchBranch(workspace.path, branch);
+    fetchBranch(workspace.path, branch, prNumber);
   }
 
   /** Look up a PR by its GitHub URL. */

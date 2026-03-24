@@ -138,8 +138,8 @@ export function createElectronTransport(): McodeTransport {
       return api.invoke("list-open-prs", workspaceId) as Promise<PrDetail[]>;
     },
 
-    async fetchBranch(workspaceId, branch) {
-      await api.invoke("fetch-branch", workspaceId, branch);
+    async fetchBranch(workspaceId, branch, prNumber?) {
+      await api.invoke("fetch-branch", workspaceId, branch, prNumber);
     },
 
     async getPrByUrl(url) {

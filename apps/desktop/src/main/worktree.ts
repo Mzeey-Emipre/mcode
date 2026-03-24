@@ -318,26 +318,37 @@ export function branchExists(repoPath: string, branch: string): boolean {
 
 /**
  * Fetch a remote branch from origin and create a local tracking branch.
+ * When `prNumber` is provided, fetches via the `refs/pull/<n>/head` refspec
+ * which works for both same-repo and forked PR branches.
  * If the local branch already exists and the remote fetch fails (e.g.
  * branch only exists locally), the local branch is left as-is.
  * Only throws if the branch cannot be found locally or remotely.
  */
-export function fetchBranch(repoPath: string, branch: string): void {
+export function fetchBranch(repoPath: string, branch: string, prNumber?: number): void {
   validateBranchName(branch);
 
   let fetchOk = true;
   try {
-    execFileSync(
-      "git",
-      ["-C", repoPath, "fetch", "origin", branch],
-      { stdio: "pipe" },
-    );
+    if (prNumber != null) {
+      // Use PR refspec with force (+) to handle re-fetches of updated PRs
+      execFileSync(
+        "git",
+        ["-C", repoPath, "fetch", "origin", `+pull/${prNumber}/head:${branch}`],
+        { stdio: "pipe" },
+      );
+    } else {
+      execFileSync(
+        "git",
+        ["-C", repoPath, "fetch", "origin", branch],
+        { stdio: "pipe" },
+      );
+    }
   } catch {
     fetchOk = false;
   }
 
-  if (fetchOk) {
-    // Create or update local branch to track remote
+  if (fetchOk && prNumber == null) {
+    // Create or update local branch to track remote (skip for PR refspec -- already created)
     const localExists = branchExists(repoPath, branch);
     if (localExists) {
       execFileSync(
@@ -352,7 +363,7 @@ export function fetchBranch(repoPath: string, branch: string): void {
         { stdio: "pipe" },
       );
     }
-  } else if (!branchExists(repoPath, branch)) {
+  } else if (!fetchOk && !branchExists(repoPath, branch)) {
     throw new Error(`Branch "${branch}" not found locally or on origin`);
   }
   // If fetch failed but branch exists locally, silently succeed

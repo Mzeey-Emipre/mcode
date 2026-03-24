@@ -14,7 +14,7 @@ interface BranchPickerProps {
   pullRequests?: PrDetail[];
   prsLoading?: boolean;
   fetchingBranch?: string | null;
-  onFetchAndSelect?: (branch: string) => void;
+  onFetchAndSelect?: (branch: string, prNumber: number) => void;
 }
 
 /**
@@ -52,6 +52,7 @@ export function BranchPicker({
   useEffect(() => {
     if (open) {
       setSearch("");
+      setActiveTab("local");
       requestAnimationFrame(() => searchRef.current?.focus());
     }
   }, [open]);
@@ -142,7 +143,7 @@ export function BranchPicker({
           if (isFetching) return;
           setOpen(false);
           if (onFetchAndSelect) {
-            onFetchAndSelect(pr.branch);
+            onFetchAndSelect(pr.branch, pr.number);
           } else {
             handleSelect(pr.branch);
           }

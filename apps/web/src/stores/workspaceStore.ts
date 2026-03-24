@@ -66,7 +66,7 @@ interface WorkspaceState {
   regenerateAutoPreview: () => void;
 
   loadOpenPrs: (workspaceId: string) => Promise<void>;
-  fetchBranch: (workspaceId: string, branch: string) => Promise<void>;
+  fetchBranch: (workspaceId: string, branch: string, prNumber?: number) => Promise<void>;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -379,16 +379,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const openPrs = await getTransport().listOpenPrs(workspaceId);
       if (get().activeWorkspaceId !== workspaceId) return;
       set({ openPrs, openPrsLoading: false });
-    } catch {
+    } catch (e) {
       if (get().activeWorkspaceId !== workspaceId) return;
-      set({ openPrsLoading: false });
+      set({ openPrsLoading: false, error: String(e) });
     }
   },
 
-  fetchBranch: async (workspaceId, branch) => {
+  fetchBranch: async (workspaceId, branch, prNumber?) => {
     set({ fetchingBranch: branch });
     try {
-      await getTransport().fetchBranch(workspaceId, branch);
+      await getTransport().fetchBranch(workspaceId, branch, prNumber);
       // Refresh branches so the newly fetched branch appears as local
       await get().loadBranches(workspaceId);
     } finally {

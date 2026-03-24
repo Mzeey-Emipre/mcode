@@ -274,9 +274,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [threadId, stopAgent]);
 
-  const handleFetchAndSelect = useCallback(async (branch: string) => {
+  const handleFetchAndSelect = useCallback(async (branch: string, prNumber: number) => {
     if (!workspaceId) return;
-    await fetchBranch(workspaceId, branch);
+    await fetchBranch(workspaceId, branch, prNumber);
     setNewThreadBranch(branch);
     // Use the PR branch name directly as the worktree branch
     setNamingMode("custom");
@@ -286,7 +286,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const handlePrReview = useCallback(async () => {
     if (!detectedPr || !workspaceId) return;
     setComposerMode("worktree");
-    await fetchBranch(workspaceId, detectedPr.branch);
+    await fetchBranch(workspaceId, detectedPr.branch, detectedPr.number);
     setNewThreadBranch(detectedPr.branch);
     // Use the PR branch name directly as the worktree branch
     setNamingMode("custom");

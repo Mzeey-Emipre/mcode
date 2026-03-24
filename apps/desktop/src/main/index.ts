@@ -491,11 +491,14 @@ function registerIpcHandlers(state: AppState): void {
 
   ipcMain.handle(
     "fetch-branch",
-    (_event, workspaceId: string, branch: string) => {
+    (_event, workspaceId: string, branch: string, prNumber?: number) => {
       if (!branch || typeof branch !== "string") {
         throw new Error("Branch name is required");
       }
-      state.fetchBranch(workspaceId, branch);
+      if (prNumber !== undefined && (!Number.isInteger(prNumber) || prNumber < 1)) {
+        throw new Error("prNumber must be a positive integer");
+      }
+      state.fetchBranch(workspaceId, branch, prNumber);
     },
   );
 
