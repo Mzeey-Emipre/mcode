@@ -63,24 +63,33 @@ async function mockWebSocketServer(
   });
 }
 
+/**
+ * Intercept the Vite-bundled zustand.js to inject a store registry on
+ * `window.__mcodeStores`. Uses a regex to locate the `const api = { ... subscribe ... };`
+ * block so the patch survives formatting or whitespace changes.
+ */
 async function interceptZustandStores(page: Page): Promise<void> {
   await page.route("**/zustand.js*", async (route) => {
     const response = await route.fetch();
     const originalBody = await response.text();
 
-    const patchedBody = originalBody.replace(
-      'const api = {\n\t\tsetState,\n\t\tgetState,\n\t\tgetInitialState,\n\t\tsubscribe\n\t};',
-      `const api = {
-		setState,
-		getState,
-		getInitialState,
-		subscribe
-	};
-	if (typeof window !== "undefined") {
-		window.__mcodeStores = window.__mcodeStores || [];
-		window.__mcodeStores.push(api);
-	}`,
-    );
+    const apiBlockPattern = /const api\s*=\s*\{[\s\S]*?subscribe[\s\S]*?\};/m;
+    const match = apiBlockPattern.exec(originalBody);
+    if (!match) {
+      throw new Error(
+        "[E2E] Could not find zustand `const api = { ... subscribe ... }` block to patch",
+      );
+    }
+
+    const injection = `\n\tif (typeof window !== "undefined") {
+\t\twindow.__mcodeStores = window.__mcodeStores || [];
+\t\twindow.__mcodeStores.push(api);
+\t}`;
+
+    const patchedBody =
+      originalBody.slice(0, match.index + match[0].length) +
+      injection +
+      originalBody.slice(match.index + match[0].length);
 
     await route.fulfill({
       status: response.status(),
