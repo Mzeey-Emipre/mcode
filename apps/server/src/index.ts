@@ -70,6 +70,7 @@ for (const provider of providerRegistry.resolveAll()) {
     broadcast("agent.event", event);
 
     if (event.type === "turnComplete") {
+      threadRepo.updateStatus(event.threadId, "completed");
       broadcast("thread.status", {
         threadId: event.threadId,
         status: "completed",
@@ -82,6 +83,7 @@ for (const provider of providerRegistry.resolveAll()) {
         });
       }
     } else if (event.type === "error") {
+      threadRepo.updateStatus(event.threadId, "errored");
       broadcast("thread.status", {
         threadId: event.threadId,
         status: "errored",
@@ -116,26 +118,29 @@ httpServer.listen(PORT, HOST, () => {
 async function shutdown(): Promise<void> {
   logger.info("Shutting down...");
 
-  // 1. Stop all agent sessions
+  // 1. Capture active thread IDs before stopAll() clears them
+  const activeThreadIds = agentService.activeThreadIds();
+
+  // 2. Stop all agent sessions
   agentService.stopAll();
 
-  // 2. Shutdown provider registry
+  // 3. Shutdown provider registry
   providerRegistry.shutdown();
 
-  // 3. Mark active threads as interrupted
-  threadService.markActiveThreadsInterrupted(agentService.activeThreadIds());
+  // 4. Mark active threads as interrupted
+  threadService.markActiveThreadsInterrupted(activeThreadIds);
 
-  // 4. Shutdown terminal service
+  // 5. Shutdown terminal service
   terminalService.shutdown();
 
-  // 5. Close all WebSocket clients and shut down the WS server
+  // 6. Close all WebSocket clients and shut down the WS server
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) {
       client.close(1001, "Server shutting down");
     }
   }
 
-  // 6. Await WS and HTTP server close so pending handshakes can finish
+  // 7. Await WS and HTTP server close so pending handshakes can finish
   const wssClose = new Promise<void>((res, rej) => {
     wss.close((err) => (err ? rej(err) : res()));
   });
@@ -145,7 +150,7 @@ async function shutdown(): Promise<void> {
 
   await Promise.allSettled([wssClose, httpClose]);
 
-  // 7. Close database
+  // 8. Close database
   try {
     db.close();
   } catch {
