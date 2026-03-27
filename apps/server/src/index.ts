@@ -111,8 +111,9 @@ httpServer.listen(PORT, HOST, () => {
 /**
  * Gracefully shut down all services, close WebSocket connections,
  * and stop the HTTP server before exiting the process.
+ * Awaits server close handshakes so in-flight connections drain cleanly.
  */
-function shutdown(): void {
+async function shutdown(): Promise<void> {
   logger.info("Shutting down...");
 
   // 1. Stop all agent sessions
@@ -133,10 +134,16 @@ function shutdown(): void {
       client.close(1001, "Server shutting down");
     }
   }
-  wss.close();
 
-  // 6. Close the HTTP server to stop accepting new connections
-  httpServer.close();
+  // 6. Await WS and HTTP server close so pending handshakes can finish
+  const wssClose = new Promise<void>((res, rej) => {
+    wss.close((err) => (err ? rej(err) : res()));
+  });
+  const httpClose = new Promise<void>((res, rej) => {
+    httpServer.close((err) => (err ? rej(err) : res()));
+  });
+
+  await Promise.allSettled([wssClose, httpClose]);
 
   // 7. Close database
   try {
@@ -149,5 +156,15 @@ function shutdown(): void {
   process.exit(0);
 }
 
-process.once("SIGTERM", shutdown);
-process.once("SIGINT", shutdown);
+process.once("SIGTERM", () => {
+  shutdown().catch((err) => {
+    logger.error("Shutdown error", { error: String(err) });
+    process.exit(1);
+  });
+});
+process.once("SIGINT", () => {
+  shutdown().catch((err) => {
+    logger.error("Shutdown error", { error: String(err) });
+    process.exit(1);
+  });
+});
