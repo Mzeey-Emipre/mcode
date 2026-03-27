@@ -125,7 +125,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
 
   /** Start or continue a session by sending a message via the SDK. */
-  sendMessage(params: {
+  async sendMessage(params: {
     sessionId: string;
     message: string;
     cwd: string;
@@ -133,13 +133,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     resume: boolean;
     permissionMode: string;
     attachments?: AttachmentMeta[];
-  }): void {
-    this.doSendMessage(params).catch((e: unknown) => {
-      logger.error("Unexpected sendMessage error", {
+  }): Promise<void> {
+    try {
+      await this.doSendMessage(params);
+    } catch (e: unknown) {
+      logger.error("sendMessage error", {
         sessionId: params.sessionId,
         error: String(e),
       });
-    });
+      throw e;
+    }
   }
 
   private async doSendMessage(params: {
@@ -325,6 +328,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       : sessionId;
 
     (async () => {
+      let suppressEnded = false;
       try {
         let lastAssistantText = "";
         let sessionInitialized = false;
@@ -382,6 +386,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 subtype: "session_restarted",
               } satisfies AgentEvent);
               this.emit(`_resumeFailed:${sessionId}`);
+              suppressEnded = true;
               return;
             }
           }
@@ -534,7 +539,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         }
         logger.info("Session stream ended", { sessionId });
         this.emit(`_streamDone:${sessionId}`);
-        if (!current || current.query === q) {
+        if (!suppressEnded && (!current || current.query === q)) {
           this.emit("event", {
             type: "ended",
             threadId,

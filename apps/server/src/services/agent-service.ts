@@ -134,7 +134,7 @@ export class AgentService {
 
     try {
       const provider = this.providerRegistry.resolve("claude");
-      provider.sendMessage({
+      await provider.sendMessage({
         sessionId: sessionName,
         message: content,
         cwd,
