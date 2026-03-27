@@ -107,6 +107,11 @@ export class FileService {
     return readFileSync(canonicalPath, "utf-8");
   }
 
+  /**
+   * Resolve the working directory for a workspace, optionally scoped to a thread.
+   * Validates that the thread exists and belongs to the given workspace to prevent
+   * cross-workspace file access.
+   */
   private resolveWorkingDir(
     workspaceId: string,
     threadId?: string,
@@ -114,9 +119,18 @@ export class FileService {
     const workspace = this.workspaceRepo.findById(workspaceId);
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
 
-    const thread = threadId
-      ? this.threadRepo.findById(threadId)
-      : null;
+    let thread = null;
+    if (threadId) {
+      thread = this.threadRepo.findById(threadId);
+      if (!thread) {
+        throw new Error(`Thread not found: ${threadId}`);
+      }
+      if (thread.workspace_id !== workspaceId) {
+        throw new Error(
+          `Thread ${threadId} does not belong to workspace ${workspaceId}`,
+        );
+      }
+    }
 
     return this.gitService.resolveWorkingDir(
       workspace.path,
