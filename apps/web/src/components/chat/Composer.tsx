@@ -351,20 +351,20 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
     if (imageFiles.length > 0) {
       e.preventDefault();
-      const api = window.electronAPI;
-      if (api?.getPathForFile) {
+      const bridge = window.desktopBridge;
+      if (bridge?.getPathForFile) {
         // getPathForFile returns "" for clipboard blobs (no real file on disk).
         // Use || to treat empty strings as null, falling through to readClipboardImage.
         const paths = imageFiles.map((f) => {
-          try { return api.getPathForFile(f) || null; } catch { return null; }
+          try { return bridge.getPathForFile(f) || null; } catch { return null; }
         });
         const hasRealPaths = paths.some((p) => p !== null);
         if (hasRealPaths) {
           addFiles(imageFiles, paths);
         } else {
-          // Clipboard images have no file path; use main process clipboard reader
+          // Clipboard images have no file path; use desktop bridge clipboard reader
           try {
-            const meta = await getTransport().readClipboardImage();
+            const meta = await bridge.readClipboardImage();
             if (meta) {
               setAttachments((prev) => {
                 if (prev.length >= MAX_ATTACHMENTS) return prev;
@@ -384,6 +384,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           }
         }
       } else {
+        // No desktop bridge available; attempt clipboard image read via transport
         try {
           const meta = await getTransport().readClipboardImage();
           if (meta) {
@@ -436,9 +437,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     const files = Array.from(e.dataTransfer.files);
     const supported = files.filter((f) => ALL_SUPPORTED_TYPES.has(f.type));
     if (supported.length === 0) return;
-    const api = window.electronAPI;
+    const bridge = window.desktopBridge;
     const paths = supported.map((f) => {
-      try { return api?.getPathForFile?.(f) ?? null; } catch { return null; }
+      try { return bridge?.getPathForFile?.(f) ?? null; } catch { return null; }
     });
     addFiles(supported, paths);
     editorRef.current?.focus();

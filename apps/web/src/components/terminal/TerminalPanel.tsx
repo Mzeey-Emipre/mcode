@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalStore, type TerminalInstance } from "@/stores/terminalStore";
+import { getTransport } from "@/transport";
 import { TerminalToolbar } from "./TerminalToolbar";
 import { TerminalList } from "./TerminalList";
 import { TerminalView } from "./TerminalView";
@@ -61,25 +62,24 @@ export function TerminalPanel() {
   // Create a new terminal for the active thread
   const createTerminal = useCallback(async () => {
     if (!activeThreadId) return;
-    const api = window.electronAPI;
-    if (!api) return;
-    const ptyId = (await api.invoke("pty:create", activeThreadId)) as string;
+    const transport = getTransport();
+    const ptyId = await transport.terminalCreate(activeThreadId);
     addTerminal(activeThreadId, ptyId);
   }, [activeThreadId, addTerminal]);
 
   // Close a single terminal
   const closeTerminal = useCallback(
     (ptyId: string) => {
-      window.electronAPI?.invoke("pty:kill", ptyId);
+      getTransport().terminalKill(ptyId).catch(() => {});
       removeTerminal(ptyId);
     },
     [removeTerminal],
   );
 
-  // Close all terminals for the active thread (single IPC call)
+  // Close all terminals for the active thread (single RPC call)
   const closeAllTerminals = useCallback(() => {
     if (!activeThreadId) return;
-    window.electronAPI?.invoke("pty:kill-by-thread", activeThreadId);
+    getTransport().terminalKillByThread(activeThreadId).catch(() => {});
     removeAllTerminals(activeThreadId);
   }, [activeThreadId, removeAllTerminals]);
 
