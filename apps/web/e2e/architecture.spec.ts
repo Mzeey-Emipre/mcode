@@ -51,7 +51,7 @@ async function mockWebSocketServer(
         return;
       }
       // Default responses
-      let result: unknown = null;
+      let result: unknown;
       if (method?.endsWith(".list")) result = [];
       else if (method === "git.currentBranch") result = "main";
       else if (method === "agent.activeCount") result = 0;
@@ -728,7 +728,6 @@ test.describe("Architecture: Terminal panel", () => {
 
   test("terminal panel is hidden by default", async ({ page }) => {
     // The terminal panel should not be visible initially
-    const terminalPanel = page.locator("[data-testid='terminal-panel']");
     // Terminal panel might not have a test id, check for xterm container
     const xtermElements = page.locator(".xterm");
     await expect(xtermElements).toHaveCount(0);
