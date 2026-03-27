@@ -1,4 +1,9 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import type { Thread } from "@mcode/contracts";
+import {
+  mockWebSocketServer,
+  interceptZustandStores,
+} from "./helpers/e2e-helpers";
 
 /**
  * Visual verification tests for the "session restarted" divider in the chat UI.
@@ -13,73 +18,6 @@ import { test, expect, type Page } from "@playwright/test";
  * messages AFTER loadMessages completes (loading becomes false).
  */
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Mock the WebSocket server so the WS transport connects and RPC calls
- * resolve instead of hanging forever.
- */
-async function mockWebSocketServer(page: Page): Promise<void> {
-  await page.routeWebSocket(/ws:\/\/localhost:3100/, (ws) => {
-    ws.onMessage((data) => {
-      let msg: Record<string, unknown>;
-      try {
-        msg = JSON.parse(data.toString());
-      } catch {
-        return;
-      }
-      const method = msg.method as string;
-      let result: unknown = null;
-      if (method?.endsWith(".list")) result = [];
-      else if (method === "git.currentBranch") result = "main";
-      else if (method === "agent.activeCount") result = 0;
-      else if (method === "app.version") result = "0.0.1-test";
-      else if (method === "config.discover") result = {};
-      ws.send(JSON.stringify({ id: msg.id, result }));
-    });
-  });
-}
-
-/**
- * Intercept the Vite-bundled zustand.js to inject a store registry on
- * `window.__mcodeStores`. Uses a regex to locate the `const api = { ... subscribe ... };`
- * block so the patch survives formatting or whitespace changes.
- */
-async function interceptZustandStores(
-  page: import("@playwright/test").Page
-): Promise<void> {
-  await page.route("**/zustand.js*", async (route) => {
-    const response = await route.fetch();
-    const originalBody = await response.text();
-
-    const apiBlockPattern = /const api\s*=\s*\{[\s\S]*?subscribe[\s\S]*?\};/m;
-    const match = apiBlockPattern.exec(originalBody);
-    if (!match) {
-      throw new Error(
-        "[E2E] Could not find zustand `const api = { ... subscribe ... }` block to patch"
-      );
-    }
-
-    const injection = `\n\tif (typeof window !== "undefined") {
-\t\twindow.__mcodeStores = window.__mcodeStores || [];
-\t\twindow.__mcodeStores.push(api);
-\t}`;
-
-    const patchedBody =
-      originalBody.slice(0, match.index + match[0].length) +
-      injection +
-      originalBody.slice(match.index + match[0].length);
-
-    await route.fulfill({
-      status: response.status(),
-      headers: Object.fromEntries(
-        response.headersArray().map((h) => [h.name, h.value])
-      ),
-      body: patchedBody,
-    });
-  });
-}
-
 // ─── Test data ────────────────────────────────────────────────────────────────
 
 const THREAD_ID = "test-thread-e2e-session";
@@ -93,7 +31,7 @@ const FAKE_WORKSPACE = {
   updated_at: new Date().toISOString(),
 };
 
-const FAKE_THREAD = {
+const FAKE_THREAD: Thread = {
   id: THREAD_ID,
   workspace_id: "ws-test-1",
   title: "Session Restart Test",
