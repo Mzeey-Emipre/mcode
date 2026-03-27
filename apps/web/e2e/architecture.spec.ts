@@ -140,12 +140,19 @@ function makeMessage(
   };
 }
 
+/** Thread fixture shape shared by all test thread constants. */
+type ThreadFixture = {
+  id: string;
+  workspace_id: string;
+  [key: string]: unknown;
+};
+
 /** Inject workspaces, threads, and activate a thread. */
 async function setupWorkspaceState(
   page: Page,
   opts: {
     workspaces: typeof WORKSPACE_A[];
-    threads: (typeof THREAD_DIRECT)[];
+    threads: ThreadFixture[];
     activeWorkspaceId: string;
     activeThreadId?: string | null;
   },
@@ -173,18 +180,46 @@ async function setupWorkspaceState(
   );
 }
 
-/** Wait for thread store to be ready (loading: false). */
+/**
+ * Wait for the thread store's loadMessages cycle to complete.
+ *
+ * The store starts with `loading: false`, so a naive check resolves
+ * immediately before `loadMessages` (triggered by activeThreadId change)
+ * fires. This helper first waits for `loading` to become `true` (the start
+ * of loadMessages), then waits for it to return to `false` (completion).
+ */
 async function waitForThreadStoreReady(page: Page): Promise<void> {
+  // Wait for loadMessages to start (loading becomes true).
+  // It may have already completed before we start watching, so swallow the timeout.
+  await page
+    .waitForFunction(
+      () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const stores: any[] = (window as any).__mcodeStores ?? [];
+        const ts = stores.find(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (s: any) =>
+            "messages" in s.getState() && "loadMessages" in s.getState(),
+        );
+        return ts?.getState().loading === true;
+      },
+      { timeout: 2000 },
+    )
+    .catch(() => {
+      // loading may have already transitioned back to false before we polled
+    });
+
+  // Wait for loadMessages to finish (loading: false).
   await page.waitForFunction(
     () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stores: any[] = (window as any).__mcodeStores ?? [];
-      const threadStore = stores.find(
+      const ts = stores.find(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (s: any) => "messages" in s.getState() && "loadMessages" in s.getState(),
+        (s: any) =>
+          "messages" in s.getState() && "loadMessages" in s.getState(),
       );
-      if (!threadStore) return false;
-      return threadStore.getState().loading === false;
+      return ts && ts.getState().loading === false;
     },
     { timeout: 5000 },
   );

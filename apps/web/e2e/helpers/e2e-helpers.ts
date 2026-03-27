@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, WebSocketRoute } from "@playwright/test";
 
 /**
  * Optional overrides for RPC responses. Keyed by method name.
@@ -7,15 +7,33 @@ import type { Page } from "@playwright/test";
 export type RpcOverrides = Record<string, unknown>;
 
 /**
+ * Controller returned by {@link mockWebSocketServer} to send server-initiated
+ * push notifications to the client.
+ */
+export interface WsController {
+  /** Send a JSON-RPC notification (no `id`) to the connected client. */
+  sendNotification(method: string, params?: unknown): Promise<void>;
+}
+
+/**
  * Mock the WebSocket server so the WS transport connects and RPC calls
  * resolve instead of hanging forever. Returns proper JSON-RPC error
  * responses for parse failures and unknown methods.
+ *
+ * Returns a {@link WsController} that can push server-initiated notifications.
  */
 export async function mockWebSocketServer(
   page: Page,
   overrides: RpcOverrides = {},
-): Promise<void> {
+): Promise<WsController> {
+  let resolveWs: (ws: WebSocketRoute) => void;
+  const wsReady = new Promise<WebSocketRoute>((r) => {
+    resolveWs = r;
+  });
+
   await page.routeWebSocket(/ws:\/\/localhost:3100/, (ws) => {
+    resolveWs(ws);
+
     ws.onMessage((data) => {
       let msg: Record<string, unknown>;
       try {
@@ -54,6 +72,13 @@ export async function mockWebSocketServer(
       ws.send(JSON.stringify({ id: msg.id, result }));
     });
   });
+
+  return {
+    async sendNotification(method: string, params?: unknown): Promise<void> {
+      const ws = await wsReady;
+      ws.send(JSON.stringify({ jsonrpc: "2.0", method, params }));
+    },
+  };
 }
 
 /**
