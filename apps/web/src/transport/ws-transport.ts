@@ -1,0 +1,286 @@
+import type {
+  McodeTransport,
+  Workspace,
+  Thread,
+  Message,
+  GitBranch,
+  WorktreeInfo,
+  AttachmentMeta,
+  SkillInfo,
+  PrInfo,
+  PrDetail,
+  PermissionMode,
+} from "./types";
+
+/** Minimum reconnect delay in milliseconds. */
+const MIN_RECONNECT_MS = 1000;
+/** Maximum reconnect delay in milliseconds. */
+const MAX_RECONNECT_MS = 30_000;
+
+type Listener = (data: unknown) => void;
+
+/**
+ * Minimal event emitter for push channel subscriptions.
+ * Components subscribe via `on()` and receive server-pushed payloads.
+ */
+export class PushEmitter {
+  private listeners = new Map<string, Set<Listener>>();
+
+  /** Subscribe to a push channel. Returns an unsubscribe function. */
+  on(channel: string, fn: Listener): () => void {
+    let set = this.listeners.get(channel);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(channel, set);
+    }
+    set.add(fn);
+    return () => {
+      set!.delete(fn);
+      if (set!.size === 0) this.listeners.delete(channel);
+    };
+  }
+
+  /** Emit a payload to all listeners on a channel. */
+  emit(channel: string, data: unknown): void {
+    const set = this.listeners.get(channel);
+    if (set) {
+      for (const fn of set) {
+        try {
+          fn(data);
+        } catch (err) {
+          console.error(`[PushEmitter] Error in listener for "${channel}":`, err);
+        }
+      }
+    }
+  }
+
+  /** Return the set of channels that have at least one listener. */
+  channels(): string[] {
+    return [...this.listeners.keys()];
+  }
+}
+
+/** Singleton push emitter shared between ws-transport and ws-events. */
+export const pushEmitter = new PushEmitter();
+
+interface PendingCall {
+  resolve: (value: unknown) => void;
+  reject: (reason: Error) => void;
+}
+
+/**
+ * Create a WebSocket-based transport that implements `McodeTransport`.
+ *
+ * Every method maps to a single JSON-RPC call matching the server's
+ * `WS_METHODS` names. Server push messages are forwarded to `pushEmitter`.
+ *
+ * Includes automatic reconnection with exponential backoff and
+ * re-subscription to push channels on reconnect.
+ */
+export function createWsTransport(url: string): McodeTransport & { close(): void } {
+  let ws: WebSocket;
+  let idCounter = 0;
+  let pending = new Map<string, PendingCall>();
+  let closed = false;
+  let reconnectDelay = MIN_RECONNECT_MS;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Resolves when the current WebSocket connection is open. */
+  let ready: Promise<void>;
+  let resolveReady: () => void;
+
+  function resetReady() {
+    ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+  }
+
+  function connect() {
+    resetReady();
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      reconnectDelay = MIN_RECONNECT_MS;
+      resolveReady();
+    };
+
+    ws.onmessage = (event) => {
+      let msg: Record<string, unknown>;
+      try {
+        msg = JSON.parse(event.data as string);
+      } catch {
+        return;
+      }
+
+      // RPC response
+      if (msg.id && pending.has(msg.id as string)) {
+        const { resolve, reject } = pending.get(msg.id as string)!;
+        pending.delete(msg.id as string);
+        if (msg.error) {
+          const err = msg.error as { message?: string };
+          reject(new Error(err.message ?? "RPC error"));
+        } else {
+          resolve(msg.result);
+        }
+        return;
+      }
+
+      // Push message
+      if (msg.type === "push") {
+        pushEmitter.emit(msg.channel as string, msg.data);
+      }
+    };
+
+    ws.onclose = () => {
+      rejectPending("WebSocket disconnected");
+      if (!closed) {
+        scheduleReconnect();
+      }
+    };
+
+    ws.onerror = () => {
+      // onclose will fire after onerror; no extra handling needed.
+    };
+  }
+
+  function rejectPending(reason: string) {
+    for (const { reject } of pending.values()) {
+      reject(new Error(reason));
+    }
+    pending = new Map();
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
+      connect();
+    }, reconnectDelay);
+  }
+
+  /** Send a JSON-RPC request and return the result. */
+  async function rpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
+    await ready;
+    return new Promise<T>((resolve, reject) => {
+      const id = `req_${++idCounter}`;
+      pending.set(id, {
+        resolve: resolve as (v: unknown) => void,
+        reject,
+      });
+      try {
+        ws.send(JSON.stringify({ id, method, params }));
+      } catch (err) {
+        pending.delete(id);
+        reject(err);
+      }
+    });
+  }
+
+  // Kick off the first connection.
+  connect();
+
+  return {
+    // Workspace
+    listWorkspaces: () => rpc<Workspace[]>("workspace.list", {}),
+    createWorkspace: (name, path) => rpc<Workspace>("workspace.create", { name, path }),
+    deleteWorkspace: (id) => rpc<boolean>("workspace.delete", { id }),
+
+    // Thread
+    createThread: (workspaceId, title, mode, branch) =>
+      rpc<Thread>("thread.create", { workspaceId, title, mode, branch }),
+    listThreads: (workspaceId) => rpc<Thread[]>("thread.list", { workspaceId }),
+    deleteThread: (threadId, cleanupWorktree) =>
+      rpc<boolean>("thread.delete", { threadId, cleanupWorktree }),
+    updateThreadTitle: (threadId, title) =>
+      rpc<boolean>("thread.updateTitle", { threadId, title }),
+    markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
+
+    // Git
+    listBranches: (workspaceId) => rpc<GitBranch[]>("git.listBranches", { workspaceId }),
+    getCurrentBranch: (workspaceId) => rpc<string>("git.currentBranch", { workspaceId }),
+    checkoutBranch: (workspaceId, branch) =>
+      rpc<void>("git.checkout", { workspaceId, branch }),
+    listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
+
+    // Agent
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]) =>
+      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments }),
+    createAndSendMessage: (
+      workspaceId,
+      content,
+      model,
+      permissionMode?,
+      mode?,
+      branch?,
+      existingWorktreePath?,
+      attachments?,
+    ) =>
+      rpc<Thread>("agent.createAndSend", {
+        workspaceId,
+        content,
+        model,
+        permissionMode,
+        mode,
+        branch,
+        existingWorktreePath,
+        attachments,
+      }),
+    stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
+    readClipboardImage: () =>
+      Promise.resolve(null as AttachmentMeta | null),
+    getActiveAgentCount: () => rpc<number>("agent.activeCount", {}),
+
+    // Messages
+    getMessages: (threadId, limit) => rpc<Message[]>("message.list", { threadId, limit }),
+
+    // Config
+    discoverConfig: (workspacePath) =>
+      rpc<Record<string, unknown>>("config.discover", { workspacePath }),
+
+    // Meta
+    getVersion: () => rpc<string>("app.version", {}),
+
+    // Files
+    listWorkspaceFiles: (workspaceId, threadId?) =>
+      rpc<string[]>("file.list", { workspaceId, threadId }),
+    readFileContent: (workspaceId, relativePath, threadId?) =>
+      rpc<string>("file.read", { workspaceId, relativePath, threadId }),
+
+    // Editor (delegated to desktopBridge; no-op over WS)
+    detectEditors: async () => window.desktopBridge?.detectEditors() ?? [],
+    openInEditor: async (editor, dirPath) => window.desktopBridge?.openInEditor(editor, dirPath),
+    openInExplorer: async (dirPath) => window.desktopBridge?.openInExplorer(dirPath),
+
+    // GitHub
+    getBranchPr: (branch, cwd) =>
+      rpc<PrInfo | null>("github.branchPr", { branch, cwd }),
+    listOpenPrs: (workspaceId) => rpc<PrDetail[]>("github.listOpenPrs", { workspaceId }),
+    fetchBranch: (workspaceId, branch, prNumber?) =>
+      rpc<void>("git.fetchBranch", { workspaceId, branch, prNumber }),
+    getPrByUrl: (url) => rpc<PrDetail | null>("github.prByUrl", { url }),
+
+    // Skills
+    listSkills: (cwd?) => rpc<SkillInfo[]>("skill.list", { cwd }),
+
+    // Terminal (PTY)
+    terminalCreate: (threadId) => rpc<string>("terminal.create", { threadId }),
+    terminalWrite: (ptyId, data) => rpc<void>("terminal.write", { ptyId, data }),
+    terminalResize: (ptyId, cols, rows) =>
+      rpc<void>("terminal.resize", { ptyId, cols, rows }),
+    terminalKill: (ptyId) => rpc<void>("terminal.kill", { ptyId }),
+    terminalKillByThread: (threadId) =>
+      rpc<void>("terminal.killByThread", { threadId }),
+
+    // Lifecycle
+    close: () => {
+      closed = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      rejectPending("Transport closed");
+      ws.close();
+    },
+  };
+}
