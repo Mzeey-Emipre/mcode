@@ -7,9 +7,9 @@
 import { injectable, inject } from "tsyringe";
 import { validateBranchName } from "@mcode/shared";
 import type { Thread, ThreadMode } from "@mcode/contracts";
-import { ThreadRepo } from "../repositories/thread-repo.js";
-import { WorkspaceRepo } from "../repositories/workspace-repo.js";
-import { GitService } from "./git-service.js";
+import { ThreadRepo } from "../repositories/thread-repo";
+import { WorkspaceRepo } from "../repositories/workspace-repo";
+import { GitService } from "./git-service";
 
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()

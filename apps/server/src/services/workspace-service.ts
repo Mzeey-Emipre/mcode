@@ -5,7 +5,7 @@
 
 import { injectable, inject } from "tsyringe";
 import type { Workspace } from "@mcode/contracts";
-import { WorkspaceRepo } from "../repositories/workspace-repo.js";
+import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 /** Handles workspace creation, listing, and deletion. */
 @injectable()
