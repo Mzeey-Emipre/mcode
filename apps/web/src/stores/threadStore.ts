@@ -259,7 +259,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
 
     // -- Sidecar events (new format) --
 
-if (method === "session.system") {
+    if (method === "session.system") {
       const subtype = params.subtype as string;
       if (subtype === "session_restarted") {
         const message: Message = {
