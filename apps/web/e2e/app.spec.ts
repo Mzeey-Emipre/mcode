@@ -1,13 +1,43 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+
+/**
+ * Mock the WebSocket server so the WS transport connects and RPC calls
+ * resolve instead of hanging. Required since App.tsx gates rendering on
+ * transport readiness (shows "Connecting..." until WS opens).
+ */
+async function mockWebSocketServer(page: Page): Promise<void> {
+  await page.routeWebSocket(/ws:\/\/localhost:3100/, (ws) => {
+    ws.onMessage((data) => {
+      let msg: Record<string, unknown>;
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+      const method = msg.method as string;
+      let result: unknown = null;
+      if (method?.endsWith(".list")) result = [];
+      else if (method === "git.currentBranch") result = "main";
+      else if (method === "agent.activeCount") result = 0;
+      else if (method === "app.version") result = "0.0.1-test";
+      else if (method === "config.discover") result = {};
+      ws.send(JSON.stringify({ id: msg.id, result }));
+    });
+  });
+}
 
 // ---------------------------------------------------------------------------
 // App shell
 // ---------------------------------------------------------------------------
 
 test.describe("App shell", () => {
-  test("loads with dark theme applied to root", async ({ page }) => {
+  test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
+  });
+
+  test("loads with dark theme applied to root", async ({ page }) => {
 
     // The App component toggles the "dark" class on <html> based on theme store
     const html = page.locator("html");
@@ -20,9 +50,6 @@ test.describe("App shell", () => {
   });
 
   test("layout has sidebar and main content area", async ({ page }) => {
-    await page.goto("/");
-    await page.waitForLoadState("networkidle");
-
     // Sidebar header contains the brand name
     await expect(page.locator("text=Mcode")).toBeVisible();
 
@@ -39,6 +66,7 @@ test.describe("App shell", () => {
 
 test.describe("Sidebar", () => {
   test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
   });
@@ -115,6 +143,7 @@ test.describe("Sidebar", () => {
 
 test.describe("Chat empty state", () => {
   test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
   });
@@ -153,6 +182,7 @@ test.describe("Chat empty state", () => {
 
 test.describe("Settings dialog", () => {
   test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
   });
@@ -257,6 +287,7 @@ test.describe("Settings dialog", () => {
 
 test.describe("Keyboard shortcuts", () => {
   test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
   });
@@ -279,6 +310,7 @@ test.describe("Keyboard shortcuts", () => {
 
 test.describe("Accessibility", () => {
   test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
   });

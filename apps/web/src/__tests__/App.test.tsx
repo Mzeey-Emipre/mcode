@@ -1,10 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { App } from "../app/App";
 
-// Mock the transport module to prevent Tauri initialization errors
+// Mock the transport module to prevent WebSocket initialization during tests
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
+  initTransport: vi.fn().mockResolvedValue({}),
   getTransport: () => ({
     listWorkspaces: vi.fn().mockResolvedValue([]),
     listThreads: vi.fn().mockResolvedValue([]),
@@ -32,13 +33,13 @@ vi.mock("@/components/ui/scroll-area", () => ({
 }));
 
 describe("App", () => {
-  it("renders the sidebar with app title", () => {
+  it("renders the sidebar with app title", async () => {
     render(<App />);
-    expect(screen.getByText("Mcode")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Mcode")).toBeInTheDocument());
   });
 
-  it("renders the empty thread state", () => {
+  it("renders the empty thread state", async () => {
     render(<App />);
-    expect(screen.getByText("Select a thread")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Select a thread")).toBeInTheDocument());
   });
 });

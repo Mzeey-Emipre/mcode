@@ -235,9 +235,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
    * message and schedules tool call fade-out animations.
    */
   handleAgentEvent: (threadId, event) => {
-    // Support both old CLI format (event.type) and new sidecar format (event.method)
     const method = (event.method as string) || "";
-    const eventType = (event.type as string) || "";
     const params = (event.params as Record<string, unknown>) || event;
 
     // Helper: mark all prior incomplete tool calls as complete.
@@ -260,17 +258,6 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     };
 
     // -- Sidecar events (new format) --
-
-    if (method === "bridge.crashed") {
-      // Cancel all pending dequeue timers to prevent sends after crash
-      for (const tid of dequeueTimers.keys()) clearDequeueTimer(tid);
-      set({
-        runningThreadIds: new Set(),
-        streamingByThread: {},
-        error: "Agent bridge crashed. Please restart the app.",
-      });
-      return;
-    }
 
     if (method === "session.system") {
       const subtype = params.subtype as string;
@@ -297,7 +284,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       return;
     }
 
-    if (method === "session.message" || (eventType === "session.message")) {
+    if (method === "session.message") {
       markPriorToolCallsComplete();
       const content = (params.content as string) || "";
       if (content) {
@@ -375,8 +362,8 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
 
     if (method === "session.turnComplete" || method === "session.ended") {
       const costUsd = (params.costUsd as number) ?? null;
-      const tokensIn = (params.totalTokensIn as number) ?? 0;
-      const tokensOut = (params.totalTokensOut as number) ?? 0;
+      const tokensIn = ((params.tokensIn as number) ?? (params.totalTokensIn as number)) ?? 0;
+      const tokensOut = ((params.tokensOut as number) ?? (params.totalTokensOut as number)) ?? 0;
 
       // Commit any remaining streaming content and stop the agent,
       // but keep tool calls in their active slot briefly before fading out.
@@ -543,102 +530,5 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       return;
     }
 
-    if (method === "session.delta") {
-      markPriorToolCallsComplete();
-      const text = (params.text as string) || "";
-      if (text) {
-        set((state) => ({
-          streamingByThread: {
-            ...state.streamingByThread,
-            [threadId]: (state.streamingByThread[threadId] ?? "") + text,
-          },
-        }));
-      }
-      return;
-    }
-
-    // -- Legacy CLI events (backward compatibility) --
-
-    if (eventType === "assistant") {
-      const msg = event.message as Record<string, unknown> | undefined;
-      if (msg) {
-        const contentArr = msg.content as Array<Record<string, unknown>> | undefined;
-        if (contentArr && Array.isArray(contentArr)) {
-          const textParts = contentArr
-            .filter((c) => c.type === "text")
-            .map((c) => (c.text as string) || "")
-            .join("");
-
-          if (textParts) {
-            const usage = msg.usage as Record<string, unknown> | undefined;
-            const message: Message = {
-              id: (msg.id as string) || crypto.randomUUID(),
-              thread_id: threadId,
-              role: "assistant",
-              content: textParts,
-              tool_calls: null,
-              files_changed: null,
-              cost_usd: null,
-              tokens_used: (usage?.output_tokens as number) ?? null,
-              timestamp: new Date().toISOString(),
-              sequence: get().messages.length + 1,
-              attachments: null,
-            };
-            set((state) => ({
-              messages: state.currentThreadId === threadId
-                ? [...state.messages, message]
-                : state.messages,
-            }));
-          }
-        }
-      }
-    } else if (eventType === "content_block_delta") {
-      const delta = event.delta as Record<string, unknown> | undefined;
-      if (delta && delta.type === "text_delta") {
-        const text = (delta.text as string) || "";
-        set((state) => ({
-          streamingByThread: {
-            ...state.streamingByThread,
-            [threadId]: (state.streamingByThread[threadId] ?? "") + text,
-          },
-        }));
-      }
-    } else if (eventType === "result") {
-      const content = get().streamingByThread[threadId] ?? "";
-      if (content) {
-        const resultData = (event.result as Record<string, unknown>) ?? {};
-        const message: Message = {
-          id: crypto.randomUUID(),
-          thread_id: threadId,
-          role: "assistant",
-          content,
-          tool_calls: null,
-          files_changed: null,
-          cost_usd: (resultData.cost_usd as number) ?? null,
-          tokens_used: (resultData.tokens_used as number) ?? null,
-          timestamp: new Date().toISOString(),
-          sequence: get().messages.length + 1,
-          attachments: null,
-        };
-        set((state) => {
-          const next = { ...state.streamingByThread };
-          delete next[threadId];
-          return {
-            messages: state.currentThreadId === threadId
-              ? [...state.messages, message]
-              : state.messages,
-            streamingByThread: next,
-          };
-        });
-      }
-    } else if (eventType === "agent_finished") {
-      set((state) => {
-        const nextRunning = new Set(state.runningThreadIds);
-        nextRunning.delete(threadId);
-        const nextStreaming = { ...state.streamingByThread };
-        delete nextStreaming[threadId];
-        return { runningThreadIds: nextRunning, streamingByThread: nextStreaming };
-      });
-    }
   },
 }));

@@ -7,28 +7,50 @@ For system architecture, data model, IPC flow, and diagrams, see **[ARCHITECTURE
 ## Directory Structure
 
 ```text
+packages/
+├── contracts/                  # Shared types and Zod schemas (zero runtime deps)
+│   └── src/
+│       ├── models/             # Workspace, Thread, Message, Attachment, enums
+│       ├── events/             # AgentEvent discriminated union
+│       ├── ws/                 # WebSocket RPC methods, push channels, protocol types
+│       ├── providers/          # IAgentProvider, IProviderRegistry, ProviderId
+│       ├── git.ts              # GitBranch, WorktreeInfo schemas
+│       ├── github.ts           # PrInfo, PrDetail schemas
+│       └── skills.ts           # SkillInfo schema
+├── shared/                     # Runtime utilities shared across packages
+│   └── src/
+│       ├── logging/            # Winston logger with daily rotation
+│       ├── paths/              # Mcode data directory resolution
+│       └── git/                # Branch name sanitization, validation
+
 apps/
-├── desktop/                  # Electron app (TypeScript)
+├── server/                     # Standalone Node.js HTTP + WebSocket server
 │   └── src/
-│       ├── main/             # Main process
-│       │   ├── index.ts      # Entry, IPC handlers, lifecycle
-│       │   ├── app-state.ts  # Central orchestrator
-│       │   ├── models.ts     # Shared types (Workspace, Thread, Message)
-│       │   ├── sidecar/      # Claude Agent SDK client (direct import)
-│       │   ├── store/        # SQLite (better-sqlite3) + migrations
-│       │   ├── repositories/ # Workspace, Thread, Message repos
-│       │   ├── worktree.ts   # Git worktree via shell commands
-│       │   ├── config.ts     # Claude config discovery
-│       │   └── logger.ts     # Rotating file logger
-│       └── preload/          # contextBridge IPC exposure
-├── web/                      # React frontend (shared)
+│       ├── index.ts            # HTTP + WS server entry point
+│       ├── container.ts        # tsyringe DI composition root
+│       ├── services/           # Business logic (agent, thread, git, terminal, etc.)
+│       ├── providers/          # AI provider adapters
+│       │   ├── claude/         # Claude Agent SDK adapter
+│       │   └── provider-registry.ts
+│       ├── repositories/       # Data access (workspace, thread, message)
+│       ├── store/              # SQLite setup and migrations
+│       └── transport/          # WebSocket server, RPC router, push broadcasting
+├── desktop/                    # Thin Electron shell (~500 lines)
+│   └── src/main/
+│       ├── main.ts             # Window, native IPC, lifecycle
+│       ├── preload.ts          # contextBridge: desktopBridge + getPathForFile
+│       └── server-manager.ts   # Server child process lifecycle
+├── web/                        # React SPA (connects via WebSocket)
 │   └── src/
-│       ├── app/              # Routes and providers
-│       ├── components/       # UI components (sidebar, chat, terminal, diff)
-│       ├── stores/           # Zustand state management
-│       ├── transport/        # Electron IPC / Tauri IPC adapter
-│       └── lib/              # Utilities and types
-docs/plans/                   # Design and planning docs (gitignored)
+│       ├── app/                # Routes and providers
+│       ├── components/         # UI components (sidebar, chat, terminal, diff)
+│       ├── stores/             # Zustand state management
+│       ├── transport/          # WebSocket RPC client + push events
+│       │   ├── ws-transport.ts # WebSocket RPC client + reconnection
+│       │   ├── ws-events.ts    # Push channel listeners
+│       │   └── desktop-bridge.d.ts # Type declarations for native bridge
+│       └── lib/                # Utilities and types
+docs/plans/                     # Design and planning docs (gitignored)
 ```
 
 ## Composer Status Bar
@@ -66,6 +88,7 @@ Keep commits atomic. Each commit represents one logical change.
 - **Electron docs:** https://www.electronjs.org/docs
 - **electron-vite docs:** https://electron-vite.org/
 - **better-sqlite3 docs:** https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
+- **tsyringe docs:** https://github.com/microsoft/tsyringe
 - **shadcn/ui docs:** https://ui.shadcn.com/
 - **Tailwind CSS 4:** https://tailwindcss.com/docs
 

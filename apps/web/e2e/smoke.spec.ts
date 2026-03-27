@@ -1,6 +1,35 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+
+/**
+ * Mock the WebSocket server so the WS transport connects and RPC calls
+ * resolve instead of hanging. Required since App.tsx gates rendering on
+ * transport readiness (shows "Connecting..." until WS opens).
+ */
+async function mockWebSocketServer(page: Page): Promise<void> {
+  await page.routeWebSocket(/ws:\/\/localhost:3100/, (ws) => {
+    ws.onMessage((data) => {
+      let msg: Record<string, unknown>;
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+      const method = msg.method as string;
+      let result: unknown = null;
+      if (method?.endsWith(".list")) result = [];
+      else if (method === "git.currentBranch") result = "main";
+      else if (method === "agent.activeCount") result = 0;
+      else if (method === "app.version") result = "0.0.1-test";
+      else if (method === "config.discover") result = {};
+      ws.send(JSON.stringify({ id: msg.id, result }));
+    });
+  });
+}
 
 test.describe("Mcode App", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
+  });
   test("loads with dark theme", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");

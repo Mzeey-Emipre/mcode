@@ -9,10 +9,14 @@ export default defineConfig({
     build: {
       outDir: "dist/main",
       lib: {
-        entry: resolve(__dirname, "src/main/index.ts"),
+        entry: resolve(__dirname, "src/main/main.ts"),
       },
       rollupOptions: {
-        external: ["electron", "better-sqlite3", "node-pty", "winston", "winston-daily-rotate-file", "@anthropic-ai/claude-agent-sdk"],
+        external: [
+          "electron",
+          "winston",
+          "winston-daily-rotate-file",
+        ],
       },
     },
   },
@@ -21,7 +25,7 @@ export default defineConfig({
     build: {
       outDir: "dist/preload",
       lib: {
-        entry: resolve(__dirname, "src/preload/index.ts"),
+        entry: resolve(__dirname, "src/main/preload.ts"),
         formats: ["cjs"],
       },
       rollupOptions: {

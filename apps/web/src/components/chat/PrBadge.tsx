@@ -5,15 +5,14 @@ interface PrBadgeProps {
   pr: PrInfo;
 }
 
-/** Small clickable badge showing PR number. Opens in default browser via Electron shell. */
+/** Small clickable badge showing PR number. Opens in default browser via the desktop bridge. */
 export function PrBadge({ pr }: PrBadgeProps) {
   const handleClick = () => {
     // Validate URL scheme before opening
     try {
       const parsed = new URL(pr.url);
       if (parsed.protocol === "https:") {
-        // Use Electron's shell.openExternal via the preload bridge
-        window.electronAPI?.invoke("open-external-url", pr.url);
+        window.desktopBridge?.openExternalUrl(pr.url);
       }
     } catch {
       // Invalid URL, ignore

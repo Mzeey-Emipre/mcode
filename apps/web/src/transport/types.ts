@@ -1,36 +1,36 @@
-export interface SkillInfo {
-  name: string;
-  description: string;
-}
+// Import shared types for local use in the McodeTransport interface.
+import type {
+  Workspace,
+  Thread,
+  Message,
+  AttachmentMeta,
+  GitBranch,
+  WorktreeInfo,
+  PrInfo,
+  PrDetail,
+  SkillInfo,
+  PermissionMode,
+} from "@mcode/contracts";
 
-export interface Workspace {
-  id: string;
-  name: string;
-  path: string;
-  provider_config: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-}
+// Re-export shared types from the contracts package (single source of truth).
+export type {
+  Workspace,
+  Thread,
+  Message,
+  AttachmentMeta,
+  StoredAttachment,
+  GitBranch,
+  WorktreeInfo,
+  PrInfo,
+  PrDetail,
+  SkillInfo,
+  PermissionMode,
+  InteractionMode,
+} from "@mcode/contracts";
 
-export interface Thread {
-  id: string;
-  workspace_id: string;
-  title: string;
-  status: "active" | "paused" | "interrupted" | "errored" | "archived" | "completed" | "deleted";
-  mode: "direct" | "worktree";
-  worktree_path: string | null;
-  branch: string;
-  issue_number: number | null;
-  pr_number: number | null;
-  pr_status: string | null;
-  session_name: string;
-  pid: number | null;
-  created_at: string;
-  updated_at: string;
-  model: string | null;
-  deleted_at: string | null;
-}
+export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
+/** In-progress tool call tracked by the frontend streaming layer. */
 export interface ToolCall {
   id: string;
   toolName: string;
@@ -40,91 +40,7 @@ export interface ToolCall {
   isComplete: boolean;
 }
 
-export interface Message {
-  id: string;
-  thread_id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  tool_calls: unknown | null;
-  files_changed: unknown | null;
-  cost_usd: number | null;
-  tokens_used: number | null;
-  timestamp: string;
-  sequence: number;
-  attachments: StoredAttachment[] | null;
-}
-
-export interface AttachmentMeta {
-  id: string;
-  name: string;
-  mimeType: string;
-  sizeBytes: number;
-  sourcePath: string;
-}
-
-export interface StoredAttachment {
-  id: string;
-  name: string;
-  mimeType: string;
-  sizeBytes: number;
-}
-
-export interface GitBranch {
-  name: string;
-  shortSha: string;
-  type: "local" | "remote" | "worktree";
-  isCurrent: boolean;
-}
-
-/** A git worktree registered in the repository. */
-export interface WorktreeInfo {
-  name: string;
-  path: string;
-  branch: string;
-  managed: boolean;
-}
-
-/** PR metadata returned by the main process. */
-export interface PrInfo {
-  number: number;
-  url: string;
-  state: string;
-}
-
-/** Detailed PR metadata for branch picker and URL detection. */
-export interface PrDetail {
-  number: number;
-  title: string;
-  branch: string;
-  author: string;
-  url: string;
-  state: string;
-}
-
-/**
- * Permission mode for Claude agent sessions.
- * - "full": maps to SDK bypassPermissions (no prompts, unrestricted access)
- * - "supervised": maps to SDK default mode (prompts for dangerous operations)
- */
-export type PermissionMode = "full" | "supervised";
-
-export const PERMISSION_MODES = {
-  FULL: "full" as const,
-  SUPERVISED: "supervised" as const,
-} satisfies Record<string, PermissionMode>;
-
-/**
- * Interaction mode for agent sessions.
- * - "chat": normal conversation with full tool access
- * - "plan": read-only planning mode (no writes or execution)
- */
-export type InteractionMode = "chat" | "plan";
-
-export const INTERACTION_MODES = {
-  CHAT: "chat" as const,
-  PLAN: "plan" as const,
-} satisfies Record<string, InteractionMode>;
-
+/** Transport interface consumed by the web app to communicate with the backend. */
 export interface McodeTransport {
   // Workspace commands
   createWorkspace(name: string, path: string): Promise<Workspace>;
@@ -196,4 +112,16 @@ export interface McodeTransport {
 
   // Skills
   listSkills(cwd?: string): Promise<SkillInfo[]>;
+
+  // Terminal (PTY)
+  /** Create a new PTY attached to a thread's working directory. Returns the pty ID. */
+  terminalCreate(threadId: string): Promise<string>;
+  /** Write data (keystrokes) to a PTY. */
+  terminalWrite(ptyId: string, data: string): Promise<void>;
+  /** Resize a PTY to the given dimensions. */
+  terminalResize(ptyId: string, cols: number, rows: number): Promise<void>;
+  /** Kill a single PTY by ID. */
+  terminalKill(ptyId: string): Promise<void>;
+  /** Kill all PTYs attached to a thread. */
+  terminalKillByThread(threadId: string): Promise<void>;
 }

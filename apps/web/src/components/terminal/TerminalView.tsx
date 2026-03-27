@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
+import { getTransport } from "@/transport";
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
 
@@ -9,6 +10,7 @@ interface TerminalViewProps {
   readonly visible: boolean;
 }
 
+/** Renders a single xterm.js terminal backed by a server-side PTY via WS transport. */
 export function TerminalView({ ptyId, visible }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -50,34 +52,38 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       termRef.current = term;
       fitAddonRef.current = fitAddon;
 
-      // Forward keystrokes to the backend
+      const transport = getTransport();
+
+      // Forward keystrokes to the backend via WS RPC
       const dataDisposable = term.onData((data) => {
-        window.electronAPI?.invoke("pty:write", ptyId, data);
+        transport.terminalWrite(ptyId, data).catch(() => {});
       });
 
-      // Listen for pty output
-      const removePtyData = window.electronAPI?.on(
-        "pty:data",
-        (...args: unknown[]) => {
-          const payload = args[0] as { ptyId: string; data: string };
-          if (payload.ptyId === ptyId && typeof payload.data === "string") {
-            term.write(payload.data);
-          }
-        },
-      );
+      // Listen for PTY output via push channel (CustomEvent dispatched by ws-events)
+      const handlePtyData = (e: Event) => {
+        const detail = (e as CustomEvent).detail as {
+          ptyId: string;
+          data: string;
+        };
+        if (detail.ptyId === ptyId && typeof detail.data === "string") {
+          term.write(detail.data);
+        }
+      };
+      window.addEventListener("mcode:pty-data", handlePtyData);
 
-      // Listen for pty exit
-      const removePtyExit = window.electronAPI?.on(
-        "pty:exit",
-        (...args: unknown[]) => {
-          const payload = args[0] as { ptyId: string; exitCode: number };
-          if (payload.ptyId === ptyId) {
-            term.write(
-              `\r\n\x1b[90m[Process exited with code ${payload.exitCode}]\x1b[0m\r\n`,
-            );
-          }
-        },
-      );
+      // Listen for PTY exit via push channel
+      const handlePtyExit = (e: Event) => {
+        const detail = (e as CustomEvent).detail as {
+          ptyId: string;
+          code: number;
+        };
+        if (detail.ptyId === ptyId) {
+          term.write(
+            `\r\n\x1b[90m[Process exited with code ${detail.code}]\x1b[0m\r\n`,
+          );
+        }
+      };
+      window.addEventListener("mcode:pty-exit", handlePtyExit);
 
       // Auto-fit on resize
       const observer = new ResizeObserver(() => {
@@ -85,12 +91,7 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
           fitAddonRef.current.fit();
           const dims = fitAddonRef.current.proposeDimensions();
           if (dims && dims.cols > 0 && dims.rows > 0) {
-            window.electronAPI?.invoke(
-              "pty:resize",
-              ptyId,
-              dims.cols,
-              dims.rows,
-            );
+            transport.terminalResize(ptyId, dims.cols, dims.rows).catch(() => {});
           }
         }
       });
@@ -98,8 +99,8 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
 
       const cleanup = () => {
         dataDisposable.dispose();
-        removePtyData?.();
-        removePtyExit?.();
+        window.removeEventListener("mcode:pty-data", handlePtyData);
+        window.removeEventListener("mcode:pty-exit", handlePtyExit);
         observer.disconnect();
         term.dispose();
       };

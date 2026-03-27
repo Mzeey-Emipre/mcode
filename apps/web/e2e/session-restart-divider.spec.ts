@@ -1,4 +1,9 @@
 import { test, expect } from "@playwright/test";
+import type { Thread } from "@mcode/contracts";
+import {
+  mockWebSocketServer,
+  interceptZustandStores,
+} from "./helpers/e2e-helpers";
 
 /**
  * Visual verification tests for the "session restarted" divider in the chat UI.
@@ -13,39 +18,6 @@ import { test, expect } from "@playwright/test";
  * messages AFTER loadMessages completes (loading becomes false).
  */
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-async function interceptZustandStores(
-  page: import("@playwright/test").Page
-): Promise<void> {
-  await page.route("**/zustand.js*", async (route) => {
-    const response = await route.fetch();
-    const originalBody = await response.text();
-
-    const patchedBody = originalBody.replace(
-      'const api = {\n\t\tsetState,\n\t\tgetState,\n\t\tgetInitialState,\n\t\tsubscribe\n\t};',
-      `const api = {
-		setState,
-		getState,
-		getInitialState,
-		subscribe
-	};
-	if (typeof window !== "undefined") {
-		window.__mcodeStores = window.__mcodeStores || [];
-		window.__mcodeStores.push(api);
-	}`
-    );
-
-    await route.fulfill({
-      status: response.status(),
-      headers: Object.fromEntries(
-        response.headersArray().map((h) => [h.name, h.value])
-      ),
-      body: patchedBody,
-    });
-  });
-}
-
 // ─── Test data ────────────────────────────────────────────────────────────────
 
 const THREAD_ID = "test-thread-e2e-session";
@@ -59,7 +31,7 @@ const FAKE_WORKSPACE = {
   updated_at: new Date().toISOString(),
 };
 
-const FAKE_THREAD = {
+const FAKE_THREAD: Thread = {
   id: THREAD_ID,
   workspace_id: "ws-test-1",
   title: "Session Restart Test",
@@ -70,12 +42,12 @@ const FAKE_THREAD = {
   issue_number: null,
   pr_number: null,
   pr_status: null,
-  session_name: "test",
-  pid: null,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
   model: null,
   deleted_at: null,
+  worktree_managed: false,
+  sdk_session_id: null,
 };
 
 function makeMessage(
@@ -175,6 +147,7 @@ async function activateThreadAndInjectMessages(
 
 test.describe("Session Restart Divider", () => {
   test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
     await interceptZustandStores(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");

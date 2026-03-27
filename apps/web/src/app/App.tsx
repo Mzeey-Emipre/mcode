@@ -4,13 +4,18 @@ import { ChatView } from "@/components/chat/ChatView";
 import { TerminalPanel } from "@/components/terminal";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useThreadStore } from "@/stores/threadStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
-import { startListening, stopListening } from "@/transport/events";
+import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 
+/** Root application component. Initializes WS transport and push listeners. */
 export function App() {
   const theme = useSettingsStore((s) => s.theme);
+
+  useEffect(() => {
+    startPushListeners();
+    return () => stopPushListeners();
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -44,15 +49,6 @@ export function App() {
       unregEscape();
       unregCtrlJ();
     };
-  }, []);
-
-  // Agent event streaming
-  useEffect(() => {
-    const handleEvent = useThreadStore.getState().handleAgentEvent;
-    startListening((event) => {
-      handleEvent(event.thread_id, event.event);
-    });
-    return () => stopListening();
   }, []);
 
   // Apply theme

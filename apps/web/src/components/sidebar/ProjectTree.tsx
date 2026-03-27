@@ -1,15 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
-import { isTauri } from "@/transport/tauri";
-
-function isElectron(): boolean {
-  return typeof window !== "undefined" && "electronAPI" in window;
-}
-
-function isDesktop(): boolean {
-  return isTauri() || isElectron();
-}
 import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -153,25 +144,12 @@ export function ProjectTree() {
   }, [loadThreads]);
 
   const handleOpenFolder = useCallback(async () => {
-    if (!isDesktop() || isCreating) return;
+    if (!window.desktopBridge || isCreating) return;
     setIsCreating(true);
     try {
-      let selected: string | null = null;
-
-      if (isElectron()) {
-        selected = await window.electronAPI!.invoke(
-          "show-open-dialog",
-          { title: "Select a project folder" },
-        ) as string | null;
-      } else {
-        const { open } = await import("@tauri-apps/plugin-dialog");
-        const result = await open({
-          directory: true,
-          multiple: false,
-          title: "Select a project folder",
-        });
-        selected = typeof result === "string" ? result : null;
-      }
+      const selected = await window.desktopBridge.showOpenDialog({
+        title: "Select a project folder",
+      });
 
       if (selected && typeof selected === "string") {
         const existing = workspaces.find((ws) => ws.path === selected);
