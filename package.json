@@ -3,8 +3,10 @@
   "version": "0.0.1",
   "private": true,
   "workspaces": [
+    "packages/*",
     "apps/desktop",
-    "apps/web"
+    "apps/web",
+    "apps/server"
   ],
   "scripts": {
     "postinstall": "cd apps/desktop && node -e \"require('@electron/rebuild').rebuild({buildPath:process.cwd(),electronVersion:require('electron/package.json').version,force:true,onlyModules:['better-sqlite3']}).then(()=>console.log('Rebuild OK')).catch(e=>{console.error(e.message);process.exit(1)});\"",
