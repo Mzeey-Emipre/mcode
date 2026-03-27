@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 /**
  * Visual verification tests for the "session restarted" divider in the chat UI.
@@ -14,6 +14,31 @@ import { test, expect } from "@playwright/test";
  */
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Mock the WebSocket server so the WS transport connects and RPC calls
+ * resolve instead of hanging forever.
+ */
+async function mockWebSocketServer(page: Page): Promise<void> {
+  await page.routeWebSocket(/ws:\/\/localhost:3100/, (ws) => {
+    ws.onMessage((data) => {
+      let msg: Record<string, unknown>;
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+      const method = msg.method as string;
+      let result: unknown = null;
+      if (method?.endsWith(".list")) result = [];
+      else if (method === "git.currentBranch") result = "main";
+      else if (method === "agent.activeCount") result = 0;
+      else if (method === "app.version") result = "0.0.1-test";
+      else if (method === "config.discover") result = {};
+      ws.send(JSON.stringify({ id: msg.id, result }));
+    });
+  });
+}
 
 async function interceptZustandStores(
   page: import("@playwright/test").Page
@@ -70,8 +95,6 @@ const FAKE_THREAD = {
   issue_number: null,
   pr_number: null,
   pr_status: null,
-  session_name: "test",
-  pid: null,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
   model: null,
@@ -175,6 +198,7 @@ async function activateThreadAndInjectMessages(
 
 test.describe("Session Restart Divider", () => {
   test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
     await interceptZustandStores(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
