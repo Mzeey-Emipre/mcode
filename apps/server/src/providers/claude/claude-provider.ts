@@ -55,10 +55,9 @@ function createPromptQueue(): {
       resolve({ value: msg, done: false });
     } else {
       if (pending.length >= MAX_QUEUE_DEPTH) {
-        logger.warn("Prompt queue full, dropping message", {
-          depth: pending.length,
-        });
-        return;
+        throw new Error(
+          `Prompt queue full (depth=${pending.length}), cannot enqueue message`,
+        );
       }
       pending.push(msg);
     }

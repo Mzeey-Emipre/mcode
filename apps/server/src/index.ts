@@ -21,10 +21,18 @@ import { TerminalService } from "./services/terminal-service.js";
 import { MessageRepo } from "./repositories/message-repo.js";
 import { ThreadRepo } from "./repositories/thread-repo.js";
 import { ProviderRegistry } from "./providers/provider-registry.js";
+import { WebSocket } from "ws";
 import type { AgentEvent } from "@mcode/contracts";
 import type Database from "better-sqlite3";
 
 const PORT = parseInt(process.env.MCODE_PORT ?? "19400", 10);
+
+/**
+ * Host address to bind the server to.
+ * Defaults to 127.0.0.1 (loopback only) for security. Set MCODE_HOST to
+ * "0.0.0.0" or "::" to expose the server on all network interfaces.
+ */
+const HOST = process.env.MCODE_HOST ?? "127.0.0.1";
 
 // Initialize DI container
 const container = setupContainer();
@@ -69,7 +77,7 @@ for (const provider of providerRegistry.resolveAll()) {
       const thread = threadRepo.findById(event.threadId);
       if (thread) {
         broadcast("files.changed", {
-          workspaceId: thread.workspaceId,
+          workspaceId: thread.workspace_id,
           threadId: thread.id,
         });
       }
@@ -83,7 +91,7 @@ for (const provider of providerRegistry.resolveAll()) {
 }
 
 // Create and start HTTP + WS server
-const { httpServer } = createWsServer({
+const { httpServer, wss } = createWsServer({
   workspaceService,
   threadService,
   agentService,
@@ -96,11 +104,14 @@ const { httpServer } = createWsServer({
   messageRepo,
 });
 
-httpServer.listen(PORT, () => {
-  logger.info(`Mcode server listening on port ${PORT}`);
+httpServer.listen(PORT, HOST, () => {
+  logger.info(`Mcode server listening on ${HOST}:${PORT}`);
 });
 
-// Graceful shutdown
+/**
+ * Gracefully shut down all services, close WebSocket connections,
+ * and stop the HTTP server before exiting the process.
+ */
 function shutdown(): void {
   logger.info("Shutting down...");
 
@@ -116,7 +127,18 @@ function shutdown(): void {
   // 4. Shutdown terminal service
   terminalService.shutdown();
 
-  // 5. Close database
+  // 5. Close all WebSocket clients and shut down the WS server
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.close(1001, "Server shutting down");
+    }
+  }
+  wss.close();
+
+  // 6. Close the HTTP server to stop accepting new connections
+  httpServer.close();
+
+  // 7. Close database
   try {
     db.close();
   } catch {
@@ -127,5 +149,5 @@ function shutdown(): void {
   process.exit(0);
 }
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
