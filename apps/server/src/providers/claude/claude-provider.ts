@@ -30,6 +30,8 @@ interface SessionEntry {
   closeQueue: () => void;
   model: string;
   lastUsedAt: number;
+  /** When true, the finally block in startStreamLoop should not emit an "ended" event. */
+  suppressEnded?: boolean;
 }
 
 /**
@@ -211,6 +213,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 err instanceof Error ? err.message : String(err),
             },
           );
+          existing.suppressEnded = true;
           existing.closeQueue();
           existing.query.close();
           this.sessions.delete(sessionId);
@@ -539,7 +542,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         }
         logger.info("Session stream ended", { sessionId });
         this.emit(`_streamDone:${sessionId}`);
-        if (!suppressEnded && (!current || current.query === q)) {
+        if (!suppressEnded && !current?.suppressEnded && (!current || current.query === q)) {
           this.emit("event", {
             type: "ended",
             threadId,
