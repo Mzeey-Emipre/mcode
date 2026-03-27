@@ -89,6 +89,15 @@ export class AgentService {
       thread.worktree_path,
     );
 
+    // Validate cwd before persisting anything
+    if (
+      !isAbsolute(cwd) ||
+      !existsSync(cwd) ||
+      !statSync(cwd).isDirectory()
+    ) {
+      throw new Error(`cwd is not a valid absolute directory: ${cwd}`);
+    }
+
     // Compute next sequence number and persist user message
     const existingMessages = this.messageRepo.listByThread(threadId, 1);
     const nextSeq =
@@ -112,16 +121,6 @@ export class AgentService {
 
     const resolvedModel = model;
     this.threadRepo.updateModel(threadId, resolvedModel);
-
-    // Validate cwd
-    if (
-      !isAbsolute(cwd) ||
-      !existsSync(cwd) ||
-      !statSync(cwd).isDirectory()
-    ) {
-      this.threadRepo.updateStatus(threadId, "paused");
-      throw new Error(`cwd is not a valid absolute directory: ${cwd}`);
-    }
 
     const sessionName = `mcode-${threadId}`;
     const isResume = nextSeq > 1;
