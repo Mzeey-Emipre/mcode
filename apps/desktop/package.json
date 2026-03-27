@@ -2,7 +2,7 @@
   "name": "mcode-desktop",
   "version": "0.0.1",
   "description": "Mcode AI agent orchestration desktop app",
-  "main": "dist/main/index.js",
+  "main": "dist/main/main.js",
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
@@ -10,23 +10,18 @@
     "preview": "electron-vite preview",
     "prod": "electron-vite build && electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "rebuild": "electron-rebuild -f -w better-sqlite3,node-pty",
+    "rebuild": "electron-rebuild -f",
     "dist": "electron-builder --publish never",
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.81",
-    "better-sqlite3": "^11.7.0",
+    "@mcode/shared": "workspace:*",
     "@electron/rebuild": "^3.7.1",
     "uuid": "^11.1.0",
-    "node-pty": "^1.1.0",
-    "which": "^5.0.0",
-    "winston": "^3.17.0",
-    "winston-daily-rotate-file": "^5.0.0"
+    "which": "^5.0.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/uuid": "^10.0.0",
     "@types/which": "^3.0.4",
     "@vitejs/plugin-react": "^6.0.1",

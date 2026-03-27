@@ -19,6 +19,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/main/**/*"],
+  "exclude": ["node_modules", "dist", "src/main/__tests__"]
 }
