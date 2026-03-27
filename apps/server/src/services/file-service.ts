@@ -6,7 +6,7 @@
 
 import { injectable, inject } from "tsyringe";
 import { execFileSync } from "child_process";
-import { readFileSync, existsSync, statSync } from "fs";
+import { readFileSync, existsSync, statSync, realpathSync } from "fs";
 import { resolve, isAbsolute, sep } from "path";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { ThreadRepo } from "../repositories/thread-repo.js";
@@ -65,17 +65,35 @@ export class FileService {
     }
 
     const fullPath = resolve(rootDir, relativePath);
-    const normalizedRoot = resolve(rootDir);
-    const rootWithSep = normalizedRoot.endsWith(sep)
-      ? normalizedRoot
-      : normalizedRoot + sep;
-
-    if (!fullPath.startsWith(rootWithSep) && fullPath !== normalizedRoot) {
-      throw new Error(`File path escapes workspace root: ${relativePath}`);
-    }
 
     if (!existsSync(fullPath)) {
       throw new Error(`File not found: ${relativePath}`);
+    }
+
+    // Use realpathSync to resolve symlinks before boundary check.
+    // This prevents symlink escape where a link inside the workspace
+    // points to a file outside the root (e.g., notes -> /etc/passwd).
+    const canonicalRoot = realpathSync(rootDir);
+    const canonicalPath = realpathSync(fullPath);
+
+    // On Windows, realpathSync and resolve may return paths with different
+    // drive letter casing (e.g., "C:" vs "c:"), so compare case-insensitively.
+    const compareRoot = process.platform === "win32"
+      ? canonicalRoot.toLowerCase()
+      : canonicalRoot;
+    const comparePath = process.platform === "win32"
+      ? canonicalPath.toLowerCase()
+      : canonicalPath;
+
+    const rootWithSep = compareRoot.endsWith(sep)
+      ? compareRoot
+      : compareRoot + sep;
+
+    if (
+      !comparePath.startsWith(rootWithSep) &&
+      comparePath !== compareRoot
+    ) {
+      throw new Error(`File path escapes workspace root: ${relativePath}`);
     }
 
     const MAX_FILE_SIZE = 256 * 1024; // 256 KB
@@ -86,7 +104,7 @@ export class FileService {
       );
     }
 
-    return readFileSync(fullPath, "utf-8");
+    return readFileSync(canonicalPath, "utf-8");
   }
 
   private resolveWorkingDir(

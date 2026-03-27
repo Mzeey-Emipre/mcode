@@ -7,13 +7,19 @@
 import { injectable } from "tsyringe";
 import { existsSync, statSync, rmSync } from "fs";
 import { copyFile, mkdir, unlink } from "fs/promises";
-import { join } from "path";
+import { join, resolve, relative } from "path";
 import { getMcodeDir } from "@mcode/shared";
 import type { AttachmentMeta, StoredAttachment } from "@mcode/contracts";
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const MAX_PDF_SIZE = 32 * 1024 * 1024;
 const MAX_TEXT_SIZE = 1 * 1024 * 1024;
+
+/**
+ * Pattern matching safe attachment IDs: alphanumerics, hyphens, and underscores only.
+ * Prevents path traversal via crafted IDs containing `../` or other special characters.
+ */
+const SAFE_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 function getMaxSizeForMime(mimeType: string): number {
   if (mimeType.startsWith("image/")) return MAX_IMAGE_SIZE;
@@ -72,14 +78,29 @@ export class AttachmentService {
           );
         }
 
+        // Validate attachment ID to prevent path traversal
+        if (!SAFE_ID_PATTERN.test(att.id)) {
+          throw new Error(
+            `Invalid attachment ID: ${att.id}. Only alphanumerics, hyphens, and underscores are allowed.`,
+          );
+        }
+
         const ext = mimeToExt(att.mimeType);
-        const destPath = join(baseDir, `${att.id}${ext}`);
+        const destPath = resolve(baseDir, `${att.id}${ext}`);
+
+        // Verify destination stays within the thread attachment directory
+        const rel = relative(baseDir, destPath);
+        if (rel.startsWith("..") || resolve(baseDir, rel) !== destPath) {
+          throw new Error(`Attachment path escapes thread directory: ${att.id}`);
+        }
 
         await copyFile(att.sourcePath, destPath);
 
         // Clean up temp file if it came from a known temp location
-        const tempDir = join(getMcodeDir(), "temp", "attachments");
-        if (att.sourcePath.startsWith(tempDir)) {
+        const tempDir = resolve(getMcodeDir(), "temp", "attachments");
+        const resolvedSource = resolve(att.sourcePath);
+        const tempRel = relative(tempDir, resolvedSource);
+        if (!tempRel.startsWith("..") && !resolve(tempDir, tempRel).includes("..")) {
           try {
             await unlink(att.sourcePath);
           } catch {
@@ -111,7 +132,22 @@ export class AttachmentService {
 
   /** Remove all attachments for a thread from disk. */
   removeForThread(threadId: string): void {
-    const dir = join(getAttachmentsDir(), threadId);
+    // Validate threadId to prevent path traversal via crafted IDs like "../"
+    if (!SAFE_ID_PATTERN.test(threadId)) {
+      throw new Error(
+        `Invalid thread ID: ${threadId}. Only alphanumerics, hyphens, and underscores are allowed.`,
+      );
+    }
+
+    const attachmentsBase = getAttachmentsDir();
+    const dir = resolve(attachmentsBase, threadId);
+
+    // Verify the resolved path stays within the attachments directory
+    const rel = relative(attachmentsBase, dir);
+    if (rel.startsWith("..") || resolve(attachmentsBase, rel) !== dir) {
+      throw new Error(`Thread attachment path escapes attachments directory: ${threadId}`);
+    }
+
     if (existsSync(dir)) {
       try {
         rmSync(dir, { recursive: true, force: true });
