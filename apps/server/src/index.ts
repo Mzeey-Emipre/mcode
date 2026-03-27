@@ -19,6 +19,7 @@ import { ConfigService } from "./services/config-service.js";
 import { SkillService } from "./services/skill-service.js";
 import { TerminalService } from "./services/terminal-service.js";
 import { MessageRepo } from "./repositories/message-repo.js";
+import { ThreadRepo } from "./repositories/thread-repo.js";
 import { ProviderRegistry } from "./providers/provider-registry.js";
 import type { AgentEvent } from "@mcode/contracts";
 import type Database from "better-sqlite3";
@@ -39,6 +40,7 @@ const configService = container.resolve(ConfigService);
 const skillService = container.resolve(SkillService);
 const terminalService = container.resolve(TerminalService);
 const messageRepo = container.resolve(MessageRepo);
+const threadRepo = container.resolve(ThreadRepo);
 const providerRegistry = container.resolve(ProviderRegistry);
 const db = container.resolve<Database.Database>("Database");
 
@@ -64,6 +66,13 @@ for (const provider of providerRegistry.resolveAll()) {
         threadId: event.threadId,
         status: "completed",
       });
+      const thread = threadRepo.findById(event.threadId);
+      if (thread) {
+        broadcast("files.changed", {
+          workspaceId: thread.workspaceId,
+          threadId: thread.id,
+        });
+      }
     } else if (event.type === "error") {
       broadcast("thread.status", {
         threadId: event.threadId,
