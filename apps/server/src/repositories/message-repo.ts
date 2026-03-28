@@ -24,6 +24,7 @@ interface MessageRow {
   timestamp: string;
   sequence: number;
   attachments: string | null;
+  tool_call_count?: number;
 }
 
 function parseJsonField(value: string | null): unknown | null {
@@ -38,7 +39,7 @@ function parseJsonField(value: string | null): unknown | null {
 }
 
 function rowToMessage(row: MessageRow): Message {
-  return {
+  const msg: Message = {
     id: row.id,
     thread_id: row.thread_id,
     role: row.role as MessageRole,
@@ -53,10 +54,19 @@ function rowToMessage(row: MessageRow): Message {
       | StoredAttachment[]
       | null,
   };
+
+  if (row.tool_call_count && row.tool_call_count > 0) {
+    msg.tool_call_count = row.tool_call_count;
+  }
+
+  return msg;
 }
 
 const MESSAGE_COLUMNS =
   "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments";
+
+const MESSAGE_COLUMNS_PREFIXED =
+  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments";
 
 /** Repository for message creation and retrieval against SQLite. */
 @injectable()
@@ -110,7 +120,20 @@ export class MessageRepo {
 
     const rows = this.db
       .prepare(
-        `SELECT ${MESSAGE_COLUMNS} FROM (SELECT ${MESSAGE_COLUMNS} FROM messages WHERE thread_id = ? ORDER BY sequence DESC LIMIT ?) ORDER BY sequence ASC`,
+        `SELECT ${MESSAGE_COLUMNS}, tc_count.cnt as tool_call_count
+FROM (
+  SELECT ${MESSAGE_COLUMNS_PREFIXED}
+  FROM messages m
+  WHERE m.thread_id = ?
+  ORDER BY m.sequence DESC
+  LIMIT ?
+) m
+LEFT JOIN (
+  SELECT message_id, COUNT(*) as cnt
+  FROM tool_call_records
+  GROUP BY message_id
+) tc_count ON tc_count.message_id = m.id
+ORDER BY m.sequence ASC`,
       )
       .all(threadId, clampedLimit) as MessageRow[];
 

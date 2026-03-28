@@ -12,6 +12,8 @@ import { openDatabase } from "./store/database";
 import { WorkspaceRepo } from "./repositories/workspace-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
 import { MessageRepo } from "./repositories/message-repo";
+import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
+import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
 
 // Providers
 import { ClaudeProvider } from "./providers/claude/claude-provider";
@@ -28,6 +30,7 @@ import { ConfigService } from "./services/config-service";
 import { SkillService } from "./services/skill-service";
 import { TerminalService } from "./services/terminal-service";
 import { AttachmentService } from "./services/attachment-service";
+import { SnapshotService } from "./services/snapshot-service";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(): typeof container {
@@ -61,6 +64,22 @@ export function setupContainer(): typeof container {
   });
   container.register("MessageRepo", {
     useFactory: (c) => c.resolve(MessageRepo),
+  });
+  container.register(
+    ToolCallRecordRepo,
+    { useClass: ToolCallRecordRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    TurnSnapshotRepo,
+    { useClass: TurnSnapshotRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("ToolCallRecordRepo", {
+    useFactory: (c) => c.resolve(ToolCallRecordRepo),
+  });
+  container.register("TurnSnapshotRepo", {
+    useFactory: (c) => c.resolve(TurnSnapshotRepo),
   });
 
   // Providers
@@ -135,6 +154,11 @@ export function setupContainer(): typeof container {
   container.register(
     TerminalService,
     { useClass: TerminalService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    SnapshotService,
+    { useClass: SnapshotService },
     { lifecycle: Lifecycle.Singleton },
   );
 
