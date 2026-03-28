@@ -57,6 +57,7 @@ interface InlineEditState {
   originalTitle: string;
 }
 
+/** Sidebar tree listing workspaces and their threads with CRUD actions. */
 export function ProjectTree() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -386,7 +387,11 @@ export function ProjectTree() {
               </div>
               <Switch
                 checked={deleteWorktree}
-                onCheckedChange={(checked) => setDeleteWorktree(checked)}
+                onCheckedChange={(checked) => {
+                  if (isDeleting) return;
+                  setDeleteWorktree(checked);
+                }}
+                disabled={isDeleting}
                 className="data-[checked]:bg-destructive"
                 aria-label="Delete worktree"
               />
