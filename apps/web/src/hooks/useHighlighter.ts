@@ -10,7 +10,7 @@ interface HighlightResponse {
 
 let sharedWorker: Worker | null = null;
 let workerGeneration = 0;
-const pending = new Map<string, (html: string) => void>();
+const pending = new Map<string, (html: string | null) => void>();
 
 /** Creates and configures a new Worker instance. */
 function createWorkerInstance(): Worker {
@@ -26,7 +26,7 @@ function createWorkerInstance(): Worker {
     const resolve = pending.get(id);
     if (resolve) {
       pending.delete(id);
-      resolve(html);
+      resolve(error ? null : html);
     }
   };
   worker.onerror = () => {
@@ -34,9 +34,9 @@ function createWorkerInstance(): Worker {
     sharedWorker = null;
     workerGeneration++;
 
-    // Resolve all pending requests with empty string so hooks fall back to plain rendering
+    // Resolve all pending requests with null so hooks fall back to plain rendering
     for (const resolve of pending.values()) {
-      resolve("");
+      resolve(null);
     }
     pending.clear();
   };
@@ -53,16 +53,6 @@ function getWorker(): Worker {
     sharedWorker = createWorkerInstance();
   }
   return sharedWorker;
-}
-
-/** Resets module-level singleton state. Only for use in tests. */
-export function __resetForTesting(): void {
-  if (sharedWorker) {
-    sharedWorker.terminate();
-    sharedWorker = null;
-  }
-  workerGeneration = 0;
-  pending.clear();
 }
 
 let nextId = 0;

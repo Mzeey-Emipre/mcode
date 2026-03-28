@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { useHighlighter, __resetForTesting } from "../hooks/useHighlighter";
 import type { ShikiTheme } from "../hooks/useTheme";
 
 // Mock the Worker since jsdom doesn't support real Workers
@@ -16,8 +15,9 @@ class MockWorker {
 }
 
 let mockWorkerInstance: MockWorker;
+let useHighlighter: typeof import("../hooks/useHighlighter")["useHighlighter"];
 
-beforeEach(() => {
+beforeEach(async () => {
   mockWorkerInstance = new MockWorker();
   vi.stubGlobal("Worker", class {
     onmessage: ((e: MessageEvent) => void) | null = null;
@@ -35,11 +35,16 @@ beforeEach(() => {
       this.terminate = vi.fn();
     }
   });
+
+  // Fresh module import so each test gets its own singleton state
+  vi.resetModules();
+  const mod = await import("../hooks/useHighlighter");
+  useHighlighter = mod.useHighlighter;
 });
 
 afterEach(() => {
-  __resetForTesting();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("useHighlighter", () => {

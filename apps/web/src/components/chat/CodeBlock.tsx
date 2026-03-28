@@ -1,4 +1,4 @@
-import { memo, useState, useCallback } from "react";
+import { memo, useState, useCallback, useRef, useEffect } from "react";
 import { Copy, Check } from "lucide-react";
 import { useHighlighter } from "@/hooks/useHighlighter";
 import { useShikiTheme } from "@/hooks/useTheme";
@@ -24,19 +24,27 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }
   const { html } = useHighlighter(code, language || "text", theme, !isStreaming);
 
   const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
 
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+      copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard write can fail (e.g. permissions denied, insecure context).
       // Silently ignore so the UI doesn't show a false "copied" checkmark.
     }
   }, [code]);
 
-  const isReady = html !== null;
+  const isReady = html !== null && html !== "";
 
   return (
     <div className="my-2 rounded-lg overflow-hidden border border-border">

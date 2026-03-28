@@ -68,13 +68,18 @@ describe("CodeBlock", () => {
 
   it("copies code to clipboard on button click", async () => {
     mockUseHighlighter.mockReturnValue({ html: null });
+    const originalClipboard = navigator.clipboard;
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
-    render(<CodeBlock code="const x = 1;" language="typescript" isStreaming={false} />);
-    fireEvent.click(screen.getByRole("button", { name: /copy/i }));
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith("const x = 1;");
-    });
+    try {
+      render(<CodeBlock code="const x = 1;" language="typescript" isStreaming={false} />);
+      fireEvent.click(screen.getByRole("button", { name: /copy/i }));
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalledWith("const x = 1;");
+      });
+    } finally {
+      Object.assign(navigator, { clipboard: originalClipboard });
+    }
   });
 
   it("adds ready class when highlighted html is available", () => {
