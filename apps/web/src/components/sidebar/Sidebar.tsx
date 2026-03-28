@@ -4,6 +4,7 @@ import { PanelLeftClose, PanelLeft } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
+/** Sidebar component that renders app navigation and the project tree. */
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
 
