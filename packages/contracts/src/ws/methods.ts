@@ -202,6 +202,24 @@ export const WS_METHODS = {
     params: z.object({}),
     result: z.object({ removed: z.number() }),
   },
+  "clipboard.saveFile": {
+    params: z.object({
+      /** Base64-encoded file content (1 byte to ~45 MB). */
+      data: z.string().min(1).max(45_000_000),
+      /** MIME type of the file. Only PDF and plain text are accepted via this RPC. */
+      mimeType: z.enum(["application/pdf", "text/plain"]),
+      /** Display name for the file (e.g. "document.pdf"). No path separators allowed. */
+      fileName: z
+        .string()
+        .min(1)
+        .max(255)
+        .refine(
+          (v) => !/[/\\\0]/.test(v),
+          "fileName must not contain path separators or null bytes",
+        ),
+    }),
+    result: AttachmentMetaSchema,
+  },
 } as const;
 
 /** Union of all RPC method names. */
