@@ -199,7 +199,8 @@ export function createWsTransport(
   function waitForConnection(timeoutMs: number): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error(`Could not connect to server at ${url}`));
+        const displayUrl = url.split("?")[0];
+        reject(new Error(`Could not connect to server at ${displayUrl}`));
       }, timeoutMs);
 
       ready.then(() => {
