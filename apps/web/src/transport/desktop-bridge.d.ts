@@ -20,6 +20,8 @@ interface DesktopBridge {
   detectEditors(): Promise<string[]>;
   /** Read an image from the system clipboard. Returns metadata or null. */
   readClipboardImage(): Promise<AttachmentMeta | null>;
+  /** Save a clipboard file blob to disk. Returns metadata or null. */
+  saveClipboardFile(buffer: Uint8Array, mimeType: string, fileName: string): Promise<AttachmentMeta | null>;
   /** Return the file path for logging output. */
   getLogPath(): string;
   /** Return recent log lines. */

@@ -295,6 +295,28 @@ function registerIpcHandlers(): void {
     };
   });
 
+  // Save a clipboard file blob to a temp location and return metadata
+  ipcMain.handle(
+    "save-clipboard-file",
+    async (_event, buffer: Uint8Array, mimeType: string, fileName: string) => {
+      const id = randomUUID();
+      const ext = mimeType === "application/pdf" ? ".pdf"
+        : mimeType === "text/plain" ? ".txt"
+        : "";
+      const tempDir = join(app.getPath("temp"), "mcode-attachments");
+      await mkdir(tempDir, { recursive: true });
+      const tempPath = join(tempDir, `${id}${ext}`);
+      await writeFile(tempPath, Buffer.from(buffer));
+      return {
+        id,
+        name: fileName,
+        mimeType,
+        sizeBytes: buffer.byteLength,
+        sourcePath: tempPath,
+      };
+    },
+  );
+
   // Log path
   ipcMain.handle("get-log-path", () => {
     return getLogPath();
