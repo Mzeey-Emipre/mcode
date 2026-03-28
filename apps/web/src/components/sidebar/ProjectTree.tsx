@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
-import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch } from "lucide-react";
+import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ContextMenu } from "@/components/ui/context-menu";
@@ -81,6 +81,7 @@ export function ProjectTree() {
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
   const [deleteWorktree, setDeleteWorktree] = useState(false);
   const [wsDeleteDialog, setWsDeleteDialog] = useState<WorkspaceDeleteDialogState | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     loadWorkspaces();
@@ -213,15 +214,18 @@ export function ProjectTree() {
   }, [inlineEdit, updateThreadTitle]);
 
   const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteDialog) return;
+    if (!deleteDialog || isDeleting) return;
+    setIsDeleting(true);
     try {
       await deleteThread(deleteDialog.threadId, deleteWorktree);
       setDeleteDialog(null);
       setDeleteWorktree(false);
     } catch {
       // Error shown via store.error; keep dialog open so user can retry
+    } finally {
+      setIsDeleting(false);
     }
-  }, [deleteDialog, deleteWorktree, deleteThread]);
+  }, [deleteDialog, deleteWorktree, deleteThread, isDeleting]);
 
   const handleWorkspaceDeleteConfirm = useCallback(async () => {
     if (!wsDeleteDialog) return;
@@ -357,7 +361,7 @@ export function ProjectTree() {
       <Dialog
         open={deleteDialog !== null}
         onOpenChange={(open) => {
-          if (!open) {
+          if (!open && !isDeleting) {
             setDeleteDialog(null);
             setDeleteWorktree(false);
           }
@@ -391,6 +395,8 @@ export function ProjectTree() {
           <div className="flex justify-end gap-2 pt-2">
             <Button
               variant="outline"
+              className="cursor-pointer"
+              disabled={isDeleting}
               onClick={() => {
                 setDeleteDialog(null);
                 setDeleteWorktree(false);
@@ -398,8 +404,14 @@ export function ProjectTree() {
             >
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleDeleteConfirm}>
-              Delete
+            <Button
+              variant="destructive"
+              className="cursor-pointer"
+              disabled={isDeleting}
+              onClick={handleDeleteConfirm}
+            >
+              {isDeleting && <Loader2 size={14} className="animate-spin" />}
+              {isDeleting ? "Deleting..." : "Delete"}
             </Button>
           </div>
         </DialogContent>
