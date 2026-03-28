@@ -38,15 +38,27 @@ import { PrDetectedCard } from "./PrDetectedCard";
 import type { PrDetail } from "@/transport/types";
 import { QueuePopover } from "./QueuePopover";
 import { useQueueStore } from "@/stores/queueStore";
+import {
+  classifyFile,
+  isFileSupported,
+  getMaxFileSize,
+  inferMimeType,
+  MAX_ATTACHMENTS,
+} from "@mcode/contracts";
 import { useComposerDraftStore, type ReasoningLevel } from "@/stores/composerDraftStore";
 
-const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-const SUPPORTED_FILE_TYPES = new Set(["application/pdf", "text/plain"]);
-const ALL_SUPPORTED_TYPES = new Set([...SUPPORTED_IMAGE_TYPES, ...SUPPORTED_FILE_TYPES]);
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
-const MAX_PDF_SIZE = 32 * 1024 * 1024;
-const MAX_TEXT_SIZE = 1 * 1024 * 1024;
-const MAX_ATTACHMENTS = 5;
+/** Convert a Blob to a base64 string using the native FileReader API. */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
 
 interface ComposerProps {
   threadId?: string;
@@ -388,13 +400,6 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     setPrDismissed(false);
   }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranch, setNamingMode, setCustomBranchName]);
 
-  const getMaxSize = (mimeType: string): number => {
-    if (SUPPORTED_IMAGE_TYPES.has(mimeType)) return MAX_IMAGE_SIZE;
-    if (mimeType === "application/pdf") return MAX_PDF_SIZE;
-    if (mimeType === "text/plain") return MAX_TEXT_SIZE;
-    return 0;
-  };
-
   const addFiles = useCallback((files: File[], filePaths?: (string | null)[]) => {
     setAttachments((prev) => {
       const remaining = MAX_ATTACHMENTS - prev.length;
@@ -403,17 +408,18 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       const newAttachments: PendingAttachment[] = [];
       for (let i = 0; i < Math.min(files.length, remaining); i++) {
         const file = files[i];
-        if (!ALL_SUPPORTED_TYPES.has(file.type)) continue;
-        if (file.size > getMaxSize(file.type)) continue;
+        if (!isFileSupported(file.name)) continue;
+        if (file.size > getMaxFileSize(file.name)) continue;
 
-        const previewUrl = file.type.startsWith("image/")
+        const mimeType = file.type || inferMimeType(file.name);
+        const previewUrl = classifyFile(file.name) === "image"
           ? URL.createObjectURL(file)
           : "";
 
         newAttachments.push({
           id: crypto.randomUUID(),
           name: file.name,
-          mimeType: file.type,
+          mimeType,
           sizeBytes: file.size,
           previewUrl,
           filePath: filePaths?.[i] || null,
@@ -434,50 +440,49 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     const files = Array.from(e.clipboardData.files);
-    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    const supported = files.filter((f) => isFileSupported(f.name));
+    if (supported.length === 0) return;
 
-    if (imageFiles.length > 0) {
-      e.preventDefault();
-      const bridge = window.desktopBridge;
-      if (bridge?.getPathForFile) {
-        // getPathForFile returns "" for clipboard blobs (no real file on disk).
-        // Use || to treat empty strings as null, falling through to readClipboardImage.
-        const paths = imageFiles.map((f) => {
-          try { return bridge.getPathForFile(f) || null; } catch { return null; }
-        });
-        const hasRealPaths = paths.some((p) => p !== null);
-        if (hasRealPaths) {
-          addFiles(imageFiles, paths);
-        } else {
-          // Clipboard images have no file path; use desktop bridge clipboard reader
-          try {
-            const meta = await bridge.readClipboardImage();
-            if (meta) {
-              setAttachments((prev) => {
-                if (prev.length >= MAX_ATTACHMENTS) return prev;
-                const previewUrl = imageFiles[0] ? URL.createObjectURL(imageFiles[0]) : "";
-                return [...prev, {
-                  id: meta.id,
-                  name: meta.name,
-                  mimeType: meta.mimeType,
-                  sizeBytes: meta.sizeBytes,
-                  previewUrl,
-                  filePath: meta.sourcePath,
-                }];
-              });
-            }
-          } catch {
-            addFiles(imageFiles);
-          }
-        }
+    e.preventDefault();
+
+    const bridge = window.desktopBridge;
+
+    // Attempt to resolve real file paths for all supported files
+    const paths = supported.map((f) => {
+      try { return bridge?.getPathForFile?.(f) || null; } catch { return null; }
+    });
+
+    // Partition into files with and without real paths
+    const withPaths: File[] = [];
+    const withPathPaths: (string | null)[] = [];
+    const withoutPaths: File[] = [];
+
+    for (let i = 0; i < supported.length; i++) {
+      if (paths[i]) {
+        withPaths.push(supported[i]);
+        withPathPaths.push(paths[i]);
       } else {
-        // No desktop bridge available; attempt clipboard image read via transport
+        withoutPaths.push(supported[i]);
+      }
+    }
+
+    // Files with real paths go straight to addFiles
+    if (withPaths.length > 0) {
+      addFiles(withPaths, withPathPaths);
+    }
+
+    // Files without paths need fallback handling
+    for (const file of withoutPaths) {
+      if (classifyFile(file.name) === "image") {
+        // Images: use existing clipboard image reader
         try {
-          const meta = await getTransport().readClipboardImage();
+          const meta = bridge?.readClipboardImage
+            ? await bridge.readClipboardImage()
+            : await getTransport().readClipboardImage();
           if (meta) {
             setAttachments((prev) => {
               if (prev.length >= MAX_ATTACHMENTS) return prev;
-              const previewUrl = imageFiles[0] ? URL.createObjectURL(imageFiles[0]) : "";
+              const previewUrl = URL.createObjectURL(file);
               return [...prev, {
                 id: meta.id,
                 name: meta.name,
@@ -489,7 +494,42 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             });
           }
         } catch {
-          addFiles(imageFiles);
+          addFiles([file]);
+        }
+      } else {
+        // Non-images (PDF, text): read blob and save via bridge or transport
+        if (file.size > getMaxFileSize(file.name)) continue;
+        const mimeType = file.type || inferMimeType(file.name);
+        try {
+          let meta: AttachmentMeta | null = null;
+          if (bridge?.saveClipboardFile) {
+            const arrayBuffer = await file.arrayBuffer();
+            meta = await bridge.saveClipboardFile(
+              new Uint8Array(arrayBuffer),
+              mimeType,
+              file.name,
+            );
+          } else {
+            // Encode as base64 using native FileReader (async, no UI blocking)
+            const base64 = await blobToBase64(file);
+            meta = await getTransport().saveClipboardFile(base64, mimeType, file.name);
+          }
+          if (meta) {
+            const resolved = meta;
+            setAttachments((prev) => {
+              if (prev.length >= MAX_ATTACHMENTS) return prev;
+              return [...prev, {
+                id: resolved.id,
+                name: resolved.name,
+                mimeType: resolved.mimeType,
+                sizeBytes: resolved.sizeBytes,
+                previewUrl: "",
+                filePath: resolved.sourcePath,
+              }];
+            });
+          }
+        } catch {
+          addFiles([file]);
         }
       }
     }
@@ -522,7 +562,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     dragDepthRef.current = 0;
     setIsDragOver(false);
     const files = Array.from(e.dataTransfer.files);
-    const supported = files.filter((f) => ALL_SUPPORTED_TYPES.has(f.type));
+    const supported = files.filter((f) => isFileSupported(f.name));
     if (supported.length === 0) return;
     const bridge = window.desktopBridge;
     const paths = supported.map((f) => {

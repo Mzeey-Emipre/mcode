@@ -13,6 +13,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@electron/rebuild": "^3.7.1",
+        "@mcode/contracts": "workspace:*",
         "@mcode/shared": "workspace:*",
         "uuid": "^11.1.0",
         "which": "^5.0.0",

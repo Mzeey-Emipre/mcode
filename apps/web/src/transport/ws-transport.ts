@@ -230,6 +230,8 @@ export function createWsTransport(url: string): McodeTransport & { close(): void
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
     readClipboardImage: () =>
       Promise.resolve(null as AttachmentMeta | null),
+    saveClipboardFile: (data, mimeType, fileName) =>
+      rpc<AttachmentMeta | null>("clipboard.saveFile", { data, mimeType, fileName }),
     getActiveAgentCount: () => rpc<number>("agent.activeCount", {}),
 
     // Messages

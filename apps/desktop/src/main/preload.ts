@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   readClipboardImage: (): Promise<unknown> =>
     ipcRenderer.invoke("read-clipboard-image"),
 
+  /** Save a file blob from the clipboard to a temp location. */
+  saveClipboardFile: (buffer: Uint8Array, mimeType: string, fileName: string): Promise<unknown> =>
+    ipcRenderer.invoke("save-clipboard-file", buffer, mimeType, fileName),
+
   /** Get the absolute path to the log directory. */
   getLogPath: (): Promise<string> => ipcRenderer.invoke("get-log-path"),
 

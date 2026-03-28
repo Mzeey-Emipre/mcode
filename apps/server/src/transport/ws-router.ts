@@ -4,12 +4,18 @@
  * dispatches to the appropriate service, validates results, and returns responses.
  */
 
+import { randomUUID } from "crypto";
+import { mkdir, writeFile } from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
+
 import {
   WS_METHODS,
   WebSocketRequestSchema,
   type WebSocketRequest,
   type WebSocketResponse,
   type WsMethodName,
+  getExtension,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import type { WorkspaceService } from "../services/workspace-service";
@@ -297,6 +303,25 @@ async function dispatch(
       return { removed: deps.turnSnapshotRepo.deleteExpired(
         parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10),
       ) };
+
+    // Clipboard
+    case "clipboard.saveFile": {
+      const buffer = Buffer.from(params.data, "base64");
+      const id = randomUUID();
+      const ext = getExtension(params.fileName);
+      const suffix = ext ? `.${ext}` : "";
+      const tempDir = join(tmpdir(), "mcode-attachments");
+      await mkdir(tempDir, { recursive: true });
+      const tempPath = join(tempDir, `${id}${suffix}`);
+      await writeFile(tempPath, buffer);
+      return {
+        id,
+        name: params.fileName,
+        mimeType: params.mimeType,
+        sizeBytes: buffer.byteLength,
+        sourcePath: tempPath,
+      };
+    }
 
     // App
     case "app.version":

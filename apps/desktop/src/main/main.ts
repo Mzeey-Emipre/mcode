@@ -21,6 +21,7 @@ import { isAbsolute, join } from "path";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import { getLogPath, getMcodeDir, getRecentLogs } from "@mcode/shared";
+import { getExtension } from "@mcode/contracts";
 import { ServerManager } from "./server-manager.js";
 
 // ---------------------------------------------------------------------------
@@ -294,6 +295,27 @@ function registerIpcHandlers(): void {
       sourcePath: tempPath,
     };
   });
+
+  // Save a clipboard file blob to a temp location and return metadata
+  ipcMain.handle(
+    "save-clipboard-file",
+    async (_event, buffer: Uint8Array, mimeType: string, fileName: string) => {
+      const id = randomUUID();
+      const ext = getExtension(fileName);
+      const suffix = ext ? `.${ext}` : "";
+      const tempDir = join(app.getPath("temp"), "mcode-attachments");
+      await mkdir(tempDir, { recursive: true });
+      const tempPath = join(tempDir, `${id}${suffix}`);
+      await writeFile(tempPath, Buffer.from(buffer));
+      return {
+        id,
+        name: fileName,
+        mimeType,
+        sizeBytes: buffer.byteLength,
+        sourcePath: tempPath,
+      };
+    },
+  );
 
   // Log path
   ipcMain.handle("get-log-path", () => {
