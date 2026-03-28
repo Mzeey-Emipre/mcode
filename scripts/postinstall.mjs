@@ -10,7 +10,7 @@
  */
 
 import { execSync } from "child_process";
-import { copyFileSync, mkdirSync, readFileSync, unlinkSync } from "fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, unlinkSync } from "fs";
 import { createRequire } from "module";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -75,18 +75,22 @@ console.log(`Downloading Electron prebuild: ${tarName}`);
 // Download and extract to OS temp dir first (bun's .bun/@version paths
 // contain special characters that break Git Bash's tar on Windows).
 const tmpDir = resolve(tmpdir(), "mcode-postinstall");
-const tmpTarUnix = resolve(tmpDir, tarName).replace(/\\/g, "/");
-const tmpDirUnix = tmpDir.replace(/\\/g, "/");
+const tmpTarPath = resolve(tmpDir, tarName).replace(/\\/g, "/");
 
 mkdirSync(tmpDir, { recursive: true });
 
-execSync(`curl -fsSL -o "${tmpTarUnix}" "${url}"`, {
+execSync(`curl -fsSL -o "${tmpTarPath}" "${url}"`, {
   stdio: "inherit",
   timeout: 60_000,
 });
 
-execSync(`tar --force-local -xzf "${tmpTarUnix}" -C "${tmpDirUnix}"`, {
+// Extract using tar. Avoid --force-local (unsupported by Windows' bsdtar)
+// and avoid absolute paths with drive letters (the colon in "C:" is
+// misinterpreted as a remote host prefix by some tar implementations).
+// Using cwd + relative filename sidesteps both issues.
+execSync(`tar -xzf "${tarName}"`, {
   stdio: "inherit",
+  cwd: tmpDir,
 });
 
 // Copy the extracted binary to better-sqlite3's build directory
@@ -100,7 +104,7 @@ mkdirSync(dirname(nativeBinary), { recursive: true });
 copyFileSync(extractedBinary, nativeBinary);
 
 // Clean up temp files
-execSync(`rm -rf "${tmpDirUnix}"`, { stdio: "ignore" });
+rmSync(tmpDir, { recursive: true, force: true });
 
 console.log(
   `better-sqlite3 v${bsqlVersion} ready for Electron ABI ${electronABI}`,
