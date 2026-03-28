@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport } from "./mocks/transport";
 
@@ -9,6 +9,7 @@ vi.mock("@/transport", async () => ({
 
 describe("Tool Call Matching", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(),
@@ -19,6 +20,10 @@ describe("Tool Call Matching", () => {
       agentStartTimes: {},
       currentThreadId: "thread-1",
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("tool result with matching ID completes the correct tool call", () => {
@@ -36,6 +41,7 @@ describe("Tool Call Matching", () => {
       method: "session.toolResult",
       params: { toolCallId: "tc2", output: "done", isError: false },
     });
+    vi.runAllTimers();
 
     const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
     expect(calls[0].isComplete).toBe(false); // tc1 untouched
@@ -57,6 +63,7 @@ describe("Tool Call Matching", () => {
       method: "session.toolResult",
       params: { toolCallId: "unknown-id", output: "result", isError: false },
     });
+    vi.runAllTimers();
 
     const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
     expect(calls[0].isComplete).toBe(true);
@@ -86,6 +93,7 @@ describe("Tool Call Matching", () => {
       method: "session.toolResult",
       params: { toolCallId: "tc1", output: "first", isError: false },
     });
+    vi.runAllTimers();
 
     const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
     expect(calls[0].output).toBe("first");
@@ -106,6 +114,7 @@ describe("Tool Call Matching", () => {
       method: "session.toolResult",
       params: { toolCallId: "unknown", output: "extra", isError: false },
     });
+    vi.runAllTimers();
 
     const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
     // Original output preserved
@@ -126,6 +135,7 @@ describe("Tool Call Matching", () => {
       method: "session.toolResult",
       params: { toolCallId: "tc2", output: "second-result", isError: false },
     });
+    vi.runAllTimers();
 
     const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
     expect(calls[0].output).toBe("first-result"); // preserved
