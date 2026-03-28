@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "bun scripts/dev-electron.mjs",
     "build": "bun scripts/build-main.mjs",
-    "prod": "bun run build && npx electron .",
+    "prod": "NODE_ENV=production bun run build && NODE_ENV=production npx electron .",
     "typecheck": "tsc --noEmit",
     "rebuild": "electron-rebuild -f",
     "dist": "bun run build && electron-builder --publish never",
