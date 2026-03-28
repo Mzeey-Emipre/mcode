@@ -4,6 +4,7 @@ import { PanelLeftClose, PanelLeft } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
+/** Sidebar component that renders app navigation and the project tree. */
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -15,7 +16,7 @@ export function Sidebar() {
       )}
     >
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border p-3">
+      <div className="flex h-11 items-center justify-between border-b border-border px-3">
         {!collapsed && (
           <span className="text-sm font-semibold text-foreground">Mcode</span>
         )}

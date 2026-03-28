@@ -20,7 +20,7 @@ import { mkdir, writeFile } from "fs/promises";
 import { isAbsolute, join } from "path";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
-import { getLogPath, getRecentLogs } from "@mcode/shared";
+import { getLogPath, getMcodeDir, getRecentLogs } from "@mcode/shared";
 import { getExtension } from "@mcode/contracts";
 import { ServerManager } from "./server-manager.js";
 
@@ -347,7 +347,7 @@ function registerAttachmentProtocol(): void {
     }
 
     const filePath = join(
-      app.getPath("userData"),
+      getMcodeDir(),
       "attachments",
       threadId,
       filename,

@@ -4,6 +4,7 @@ import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
+import { useComposerDraftStore } from "./composerDraftStore";
 import { getSetting, type NamingMode } from "@/lib/settings";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
@@ -118,21 +119,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
     try {
       await getTransport().deleteWorkspace(id);
-      set((state) => {
-        const deletedThreadIds = new Set(
-          state.threads.filter((t) => t.workspace_id === id).map((t) => t.id),
-        );
-        return {
-          workspaces: state.workspaces.filter((w) => w.id !== id),
-          activeWorkspaceId:
-            state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
-          threads: state.threads.filter((t) => t.workspace_id !== id),
-          activeThreadId:
-            state.activeThreadId && deletedThreadIds.has(state.activeThreadId)
-              ? null
-              : state.activeThreadId,
-        };
-      });
+      const deletedThreadIds = get()
+        .threads.filter((t) => t.workspace_id === id)
+        .map((t) => t.id);
+      const draftStore = useComposerDraftStore.getState();
+      for (const tid of deletedThreadIds) {
+        draftStore.clearDraft(tid);
+      }
+      set((state) => ({
+        workspaces: state.workspaces.filter((w) => w.id !== id),
+        activeWorkspaceId:
+          state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
+        threads: state.threads.filter((t) => t.workspace_id !== id),
+        activeThreadId:
+          state.activeThreadId &&
+          deletedThreadIds.includes(state.activeThreadId)
+            ? null
+            : state.activeThreadId,
+      }));
     } catch (e) {
       set({ error: String(e) });
       throw e;
@@ -263,6 +267,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       await getTransport().deleteThread(threadId, cleanupWorktree);
       useTerminalStore.getState().removeAllTerminals(threadId);
       useQueueStore.getState().clearQueue(threadId);
+      useComposerDraftStore.getState().clearDraft(threadId);
       set((state) => ({
         threads: state.threads.filter((t) => t.id !== threadId),
         activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
