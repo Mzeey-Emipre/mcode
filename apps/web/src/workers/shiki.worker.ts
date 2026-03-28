@@ -33,18 +33,31 @@ function getHighlighter() {
   return highlighterPromise;
 }
 
-/** Dynamically imports a Shiki language grammar by name. */
+/** In-progress language loads, keyed by language name. Prevents duplicate concurrent imports. */
+const languageLoadPromises = new Map<string, Promise<boolean>>();
+
+/** Dynamically imports a Shiki language grammar by name. Concurrent calls for the same language coalesce. */
 async function loadLanguage(highlighter: Awaited<ReturnType<typeof createHighlighterCore>>, lang: string) {
   const loaded = highlighter.getLoadedLanguages();
   if (loaded.includes(lang)) return true;
 
-  try {
-    const mod = await import(`shiki/langs/${lang}.mjs`);
-    await highlighter.loadLanguage(mod.default ?? mod);
-    return true;
-  } catch {
-    return false;
-  }
+  const existing = languageLoadPromises.get(lang);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    try {
+      const mod = await import(`shiki/langs/${lang}.mjs`);
+      await highlighter.loadLanguage(mod.default ?? mod);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      languageLoadPromises.delete(lang);
+    }
+  })();
+
+  languageLoadPromises.set(lang, promise);
+  return promise;
 }
 
 self.onmessage = async (e: MessageEvent<HighlightRequest>) => {

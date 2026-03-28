@@ -10,6 +10,7 @@ interface HighlightResponse {
 
 let sharedWorker: Worker | null = null;
 let listenerCount = 0;
+let workerGeneration = 0;
 const pending = new Map<string, (html: string) => void>();
 
 /** Creates and configures a new Worker instance. */
@@ -27,21 +28,36 @@ function createWorkerInstance(): Worker {
     }
   };
   worker.onerror = () => {
-    // Worker crashed: clear it so getWorker() recreates on next request
+    // Worker crashed: bump generation, null the worker, reset listener count
     sharedWorker = null;
-    // Reject all pending requests so hooks fall back to plain rendering
+    listenerCount = 0;
+    workerGeneration++;
+
+    // Resolve all pending requests with empty string so hooks fall back to plain rendering
+    for (const resolve of pending.values()) {
+      resolve("");
+    }
     pending.clear();
   };
   return worker;
 }
 
-/** Returns the shared singleton Worker, creating it on first call or after a crash. */
+/**
+ * Returns the shared singleton Worker, creating it on first call or after a crash.
+ * Does NOT increment listenerCount; callers must manage that separately.
+ */
 function getWorker(): Worker {
   if (!sharedWorker) {
     sharedWorker = createWorkerInstance();
   }
-  listenerCount++;
   return sharedWorker;
+}
+
+/** Increments listener count and returns the current Worker. */
+function acquireWorker(): Worker {
+  const worker = getWorker();
+  listenerCount++;
+  return worker;
 }
 
 /** Decrements listener count; terminates Worker when no components use it. */
@@ -66,27 +82,42 @@ export function useHighlighter(
 ): { html: string | null } {
   const [html, setHtml] = useState<string | null>(null);
   const currentRequestId = useRef<string | null>(null);
-  const workerRef = useRef<Worker | null>(null);
+  const mountGeneration = useRef<number>(-1);
 
   // Acquire the shared worker on mount, release on unmount.
   useEffect(() => {
-    workerRef.current = getWorker();
+    acquireWorker();
+    mountGeneration.current = workerGeneration;
     return () => {
-      workerRef.current = null;
+      mountGeneration.current = -1;
       releaseWorker();
     };
   }, []);
 
   // Send a highlight request whenever code, language, or theme changes.
   useEffect(() => {
-    const worker = workerRef.current;
-    if (!worker) return;
+    // Reset html so we don't flash stale content while the new request is in flight
+    setHtml(null);
+
+    // Always call getWorker() to get a fresh reference (never use a stale ref)
+    // If the worker crashed and was recreated, this picks up the new instance
+    let worker: Worker;
+    try {
+      worker = getWorker();
+    } catch {
+      return;
+    }
 
     const id = `hl-${nextId++}`;
+    const generationAtRequest = workerGeneration;
     currentRequestId.current = id;
 
     pending.set(id, (result) => {
-      if (currentRequestId.current === id) {
+      // Only apply if this request is still current and the worker hasn't crashed since
+      if (
+        currentRequestId.current === id &&
+        workerGeneration === generationAtRequest
+      ) {
         setHtml(result);
       }
     });
