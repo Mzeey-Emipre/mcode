@@ -148,8 +148,13 @@ function spawnElectron() {
   // plain Node.js, making the `electron` module API unavailable.
   const desktopRequire = createRequire(resolve(projectRoot, "package.json"));
   const electronBin = desktopRequire("electron");
-  const electronEnv = { ...process.env, ELECTRON_RENDERER_URL: devServerUrl };
+  const electronEnv = {
+    ...process.env,
+    ELECTRON_RENDERER_URL: devServerUrl,
+    NODE_ENV: "development",
+  };
   delete electronEnv.ELECTRON_RUN_AS_NODE;
+  delete electronEnv.MCODE_DATA_DIR;
   electronProcess = spawn(electronBin, ["."], {
     cwd: projectRoot,
     stdio: "inherit",
