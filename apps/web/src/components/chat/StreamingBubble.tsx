@@ -1,10 +1,13 @@
 import { Bot } from "lucide-react";
 import { MarkdownContent } from "./MarkdownContent";
 
+/** Props for {@link StreamingBubble}. */
 interface StreamingBubbleProps {
+  /** Partial markdown content accumulated so far during streaming. */
   content: string;
 }
 
+/** Renders an assistant message bubble during active streaming, with a bot icon and markdown. */
 export function StreamingBubble({ content }: StreamingBubbleProps) {
   if (!content) return null;
 
