@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { useHighlighter } from "../hooks/useHighlighter";
+import { useHighlighter, __resetForTesting } from "../hooks/useHighlighter";
 import type { ShikiTheme } from "../hooks/useTheme";
 
 // Mock the Worker since jsdom doesn't support real Workers
@@ -38,6 +38,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __resetForTesting();
   vi.restoreAllMocks();
 });
 

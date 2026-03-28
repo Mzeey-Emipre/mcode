@@ -55,6 +55,16 @@ function getWorker(): Worker {
   return sharedWorker;
 }
 
+/** Resets module-level singleton state. Only for use in tests. */
+export function __resetForTesting(): void {
+  if (sharedWorker) {
+    sharedWorker.terminate();
+    sharedWorker = null;
+  }
+  workerGeneration = 0;
+  pending.clear();
+}
+
 let nextId = 0;
 
 /**
