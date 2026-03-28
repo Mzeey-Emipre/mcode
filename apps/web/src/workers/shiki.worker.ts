@@ -19,6 +19,9 @@ interface HighlightResponse {
 /** Shiki language parameter type extracted from the bundle's loadLanguage signature. */
 type ShikiLang = Parameters<Awaited<ReturnType<typeof createHighlighter>>["loadLanguage"]>[0];
 
+/** In-flight language load promises, keyed by language name. Coalesces concurrent loads for the same language. */
+const languageLoading = new Map<string, Promise<void>>();
+
 let highlighterPromise: ReturnType<typeof createHighlighter> | null = null;
 
 /**
@@ -53,8 +56,16 @@ self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
     let lang = language;
 
     if (!loadedLangs.includes(language)) {
+      // Coalesce concurrent loads for the same language via shared promise
+      let loadPromise = languageLoading.get(language);
+      if (!loadPromise) {
+        loadPromise = highlighter
+          .loadLanguage(language as ShikiLang)
+          .finally(() => languageLoading.delete(language));
+        languageLoading.set(language, loadPromise);
+      }
       try {
-        await highlighter.loadLanguage(language as ShikiLang);
+        await loadPromise;
       } catch {
         lang = "text";
         if (!highlighter.getLoadedLanguages().includes("text")) {
