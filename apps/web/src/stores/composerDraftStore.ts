@@ -38,9 +38,20 @@ export const useComposerDraftStore = create<ComposerDraftState>((set, get) => ({
       for (const att of existing.attachments) {
         if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
       }
-      const { [threadId]: _, ...rest } = get().drafts;
+      const rest = { ...get().drafts };
+      delete rest[threadId];
       set({ drafts: rest });
       return;
+    }
+    // Revoke blob URLs from the previous draft that are not reused in the new one
+    const existing = get().drafts[threadId];
+    if (existing) {
+      const newUrls = new Set(draft.attachments.map((a) => a.previewUrl));
+      for (const att of existing.attachments) {
+        if (att.previewUrl && !newUrls.has(att.previewUrl)) {
+          URL.revokeObjectURL(att.previewUrl);
+        }
+      }
     }
     set({ drafts: { ...get().drafts, [threadId]: draft } });
   },
@@ -55,7 +66,8 @@ export const useComposerDraftStore = create<ComposerDraftState>((set, get) => ({
     for (const att of draft.attachments) {
       if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
     }
-    const { [threadId]: _, ...rest } = get().drafts;
+    const rest = { ...get().drafts };
+    delete rest[threadId];
     set({ drafts: rest });
   },
 }));

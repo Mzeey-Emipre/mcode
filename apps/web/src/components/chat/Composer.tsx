@@ -158,7 +158,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
 
     prevThreadIdRef.current = threadId;
-  }, [threadId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [threadId]); // saveDraft/getDraft are stable store refs; setters are stable useState refs
   // Intentionally exclude saveDraft/getDraft (stable store refs) and setters (stable useState refs)
 
   const fileAutocomplete = useFileAutocomplete({

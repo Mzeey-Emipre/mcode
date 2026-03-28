@@ -119,21 +119,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
     try {
       await getTransport().deleteWorkspace(id);
-      set((state) => {
-        const deletedThreadIds = new Set(
-          state.threads.filter((t) => t.workspace_id === id).map((t) => t.id),
-        );
-        return {
-          workspaces: state.workspaces.filter((w) => w.id !== id),
-          activeWorkspaceId:
-            state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
-          threads: state.threads.filter((t) => t.workspace_id !== id),
-          activeThreadId:
-            state.activeThreadId && deletedThreadIds.has(state.activeThreadId)
-              ? null
-              : state.activeThreadId,
-        };
-      });
+      const deletedThreadIds = get()
+        .threads.filter((t) => t.workspace_id === id)
+        .map((t) => t.id);
+      const draftStore = useComposerDraftStore.getState();
+      for (const tid of deletedThreadIds) {
+        draftStore.clearDraft(tid);
+      }
+      set((state) => ({
+        workspaces: state.workspaces.filter((w) => w.id !== id),
+        activeWorkspaceId:
+          state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
+        threads: state.threads.filter((t) => t.workspace_id !== id),
+        activeThreadId:
+          state.activeThreadId &&
+          deletedThreadIds.includes(state.activeThreadId)
+            ? null
+            : state.activeThreadId,
+      }));
     } catch (e) {
       set({ error: String(e) });
       throw e;
