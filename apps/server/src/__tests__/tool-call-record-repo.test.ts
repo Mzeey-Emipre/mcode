@@ -81,7 +81,7 @@ describe("ToolCallRecordRepo", () => {
     expect(record.status).toBe("completed");
     expect(record.sort_order).toBe(0);
     expect(record.parent_tool_call_id).toBeNull();
-    expect(record.completed_at).toBeNull();
+    expect(record.completed_at).toBeDefined();
 
     const records = repo.listByMessage(messageId);
     expect(records).toHaveLength(1);
