@@ -43,6 +43,17 @@ export type {
 export { TurnSnapshotSchema } from "./models/turn-snapshot.js";
 export type { TurnSnapshot } from "./models/turn-snapshot.js";
 
+export {
+  classifyFile,
+  isFileSupported,
+  getMaxFileSize,
+  getExtension,
+  inferMimeType,
+  MAX_ATTACHMENTS,
+  SUPPORTED_EXTENSIONS,
+} from "./models/file-types.js";
+export type { FileCategory } from "./models/file-types.js";
+
 // Events
 export { AgentEventSchema } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";
