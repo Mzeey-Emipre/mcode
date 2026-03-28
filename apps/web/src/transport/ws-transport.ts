@@ -10,6 +10,7 @@ import type {
   PrInfo,
   PrDetail,
   PermissionMode,
+  ToolCallRecord,
 } from "./types";
 
 /** Minimum reconnect delay in milliseconds. */
@@ -271,6 +272,18 @@ export function createWsTransport(url: string): McodeTransport & { close(): void
     terminalKill: (ptyId) => rpc<void>("terminal.kill", { ptyId }),
     terminalKillByThread: (threadId) =>
       rpc<void>("terminal.killByThread", { threadId }),
+
+    // Tool call records
+    listToolCallRecords: (messageId) =>
+      rpc<ToolCallRecord[]>("toolCallRecord.list", { messageId }),
+    listToolCallRecordsByParent: (parentToolCallId) =>
+      rpc<ToolCallRecord[]>("toolCallRecord.listByParent", { parentToolCallId }),
+
+    // Snapshots
+    getSnapshotDiff: (snapshotId, filePath?, maxLines?) =>
+      rpc<string>("snapshot.getDiff", { snapshotId, filePath, maxLines }),
+    cleanupSnapshots: () =>
+      rpc<{ removed: number }>("snapshot.cleanup", {}),
 
     // Lifecycle
     close: () => {

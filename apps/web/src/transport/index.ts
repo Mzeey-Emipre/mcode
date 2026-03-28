@@ -1,12 +1,12 @@
 import type { McodeTransport } from "./types";
 import { createWsTransport } from "./ws-transport";
 
-export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo, PrDetail } from "./types";
+export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo, PrDetail, ToolCallRecord } from "./types";
 export { PERMISSION_MODES, INTERACTION_MODES } from "./types";
 export { pushEmitter } from "./ws-transport";
 
 /** Default server URL when running standalone (no Electron shell). */
-const DEFAULT_SERVER_URL = "ws://localhost:3100";
+const DEFAULT_SERVER_URL = "ws://localhost:19400";
 
 let transport: (McodeTransport & { close(): void }) | null = null;
 
