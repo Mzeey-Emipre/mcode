@@ -69,6 +69,15 @@ interface PendingCall {
   reject: (reason: Error) => void;
 }
 
+/** Describes the current state of the WebSocket connection. */
+export type ConnectionStatus = "connecting" | "connected" | "reconnecting";
+
+/** Options for configuring `createWsTransport` behavior. */
+export interface WsTransportOptions {
+  /** Called whenever the connection status changes. */
+  onStatusChange?: (status: ConnectionStatus) => void;
+}
+
 /**
  * Create a WebSocket-based transport that implements `McodeTransport`.
  *
@@ -78,7 +87,10 @@ interface PendingCall {
  * Includes automatic reconnection with exponential backoff and
  * re-subscription to push channels on reconnect.
  */
-export function createWsTransport(url: string): McodeTransport & { close(): void } {
+export function createWsTransport(
+  url: string,
+  options?: WsTransportOptions,
+): McodeTransport & { close(): void; waitForConnection(timeoutMs: number): Promise<void> } {
   let ws: WebSocket;
   let idCounter = 0;
   let pending = new Map<string, PendingCall>();
@@ -103,6 +115,7 @@ export function createWsTransport(url: string): McodeTransport & { close(): void
     ws.onopen = () => {
       reconnectDelay = MIN_RECONNECT_MS;
       resolveReady();
+      options?.onStatusChange?.("connected");
     };
 
     ws.onmessage = (event) => {
@@ -135,6 +148,7 @@ export function createWsTransport(url: string): McodeTransport & { close(): void
     ws.onclose = () => {
       rejectPending("WebSocket disconnected");
       if (!closed) {
+        options?.onStatusChange?.("reconnecting");
         scheduleReconnect();
       }
     };
@@ -178,10 +192,28 @@ export function createWsTransport(url: string): McodeTransport & { close(): void
     });
   }
 
+  /**
+   * Wait for the WebSocket to establish a connection, or reject if
+   * the timeout elapses first.
+   */
+  function waitForConnection(timeoutMs: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Could not connect to server at ${url}`));
+      }, timeoutMs);
+
+      ready.then(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
   // Kick off the first connection.
   connect();
 
   return {
+    waitForConnection,
     // Workspace
     listWorkspaces: () => rpc<Workspace[]>("workspace.list", {}),
     createWorkspace: (name, path) => rpc<Workspace>("workspace.create", { name, path }),
