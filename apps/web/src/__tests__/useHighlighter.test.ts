@@ -109,4 +109,28 @@ describe("useHighlighter", () => {
       expect.objectContaining({ theme: "github-light" }),
     );
   });
+
+  it("does not post to the worker when enabled is false", () => {
+    const { result } = renderHook(() =>
+      useHighlighter("const x = 1;", "typescript", "github-dark", false),
+    );
+    expect(mockWorkerInstance.postMessage).not.toHaveBeenCalled();
+    expect(result.current.html).toBeNull();
+  });
+
+  it("posts to the worker when enabled switches from false to true", () => {
+    const { rerender } = renderHook(
+      ({ enabled }) => useHighlighter("const x = 1;", "typescript", "github-dark", enabled),
+      { initialProps: { enabled: false } },
+    );
+
+    expect(mockWorkerInstance.postMessage).not.toHaveBeenCalled();
+
+    rerender({ enabled: true });
+
+    expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(1);
+    expect(mockWorkerInstance.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "const x = 1;" }),
+    );
+  });
 });

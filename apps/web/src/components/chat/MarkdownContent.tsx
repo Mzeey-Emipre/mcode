@@ -1,5 +1,4 @@
 import { memo, useMemo } from "react";
-import type { Element } from "hast";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
@@ -49,9 +48,14 @@ function makeComponents(isStreaming: boolean) {
       </blockquote>
     ),
     pre: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    code: ({ children, className, node }: { children?: React.ReactNode; className?: string; node?: Element }) => {
-      // Detect inline code: if parent is not <pre>, it's inline
-      const isInline = node?.position ? !className : true;
+    code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
+      // Detect inline vs block code. In react-markdown's HAST, fenced code
+      // blocks are wrapped in a <pre> parent (even without a language tag).
+      // Inline code has a language class OR the raw content contains a trailing
+      // newline from the code fence. Check BEFORE stripping the trailing newline
+      // so even single-line fenced blocks without a language are detected.
+      const rawContent = String(children);
+      const isInline = !className && !rawContent.includes("\n");
 
       if (isInline) {
         return (

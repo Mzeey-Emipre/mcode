@@ -74,11 +74,19 @@ let nextId = 0;
 /**
  * Sends code to the Shiki Web Worker for highlighting.
  * Returns `{ html }` where `html` is `null` until the Worker responds.
+ *
+ * @param code - Source code to highlight.
+ * @param language - Language identifier (e.g. "typescript").
+ * @param theme - Shiki theme name.
+ * @param enabled - When `false`, the hook skips posting to the Worker entirely.
+ *   The hook is still called unconditionally (rules of hooks satisfied) but the
+ *   side effect is suppressed. Defaults to `true`.
  */
 export function useHighlighter(
   code: string,
   language: string,
   theme: ShikiTheme,
+  enabled: boolean = true,
 ): { html: string | null } {
   const [html, setHtml] = useState<string | null>(null);
   const currentRequestId = useRef<string | null>(null);
@@ -96,6 +104,12 @@ export function useHighlighter(
 
   // Send a highlight request whenever code, language, or theme changes.
   useEffect(() => {
+    // When disabled, skip posting to the Worker entirely and clear any stale result.
+    if (!enabled) {
+      setHtml(null);
+      return;
+    }
+
     // Reset html so we don't flash stale content while the new request is in flight
     setHtml(null);
 
@@ -128,7 +142,7 @@ export function useHighlighter(
       pending.delete(id);
       currentRequestId.current = null;
     };
-  }, [code, language, theme]);
+  }, [code, language, theme, enabled]);
 
   return { html };
 }

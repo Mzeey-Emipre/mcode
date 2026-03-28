@@ -40,16 +40,18 @@ describe("CodeBlock", () => {
     expect(highlighted).toBeInTheDocument();
   });
 
-  it("ignores useHighlighter result when streaming", () => {
-    mockUseHighlighter.mockReturnValue({
-      html: '<pre class="shiki"><code>highlighted</code></pre>',
-    });
-    const { container } = render(
+  it("passes enabled=false to useHighlighter when streaming", () => {
+    mockUseHighlighter.mockReturnValue({ html: null });
+    render(
       <CodeBlock code="const x = 1;" language="typescript" isStreaming={true} />,
     );
-    // The hook is still called (rules of hooks), but its result is ignored
-    const highlighted = container.querySelector(".shiki");
-    expect(highlighted).not.toBeInTheDocument();
+    // The hook is called with enabled=false so the Worker is not fired
+    expect(mockUseHighlighter).toHaveBeenCalledWith(
+      "const x = 1;",
+      "typescript",
+      "github-dark",
+      false,
+    );
   });
 
   it("shows a copy button when not streaming", () => {

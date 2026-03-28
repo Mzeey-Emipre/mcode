@@ -19,17 +19,21 @@ interface CodeBlockProps {
  */
 export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }: CodeBlockProps) {
   const theme = useShikiTheme();
-  // Always call the hook unconditionally (rules of hooks), but ignore the
-  // result when streaming so the Worker output is never rendered mid-stream.
-  const { html: highlightedHtml } = useHighlighter(code, language || "text", theme);
-  const html = isStreaming ? null : highlightedHtml;
+  // The hook is always called unconditionally (rules of hooks), but `enabled`
+  // suppresses the Worker postMessage during streaming so no requests are wasted.
+  const { html } = useHighlighter(code, language || "text", theme, !isStreaming);
 
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard write can fail (e.g. permissions denied, insecure context).
+      // Silently ignore so the UI doesn't show a false "copied" checkmark.
+    }
   }, [code]);
 
   const isReady = html !== null;
