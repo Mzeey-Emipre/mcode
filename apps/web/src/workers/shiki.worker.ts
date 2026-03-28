@@ -1,4 +1,4 @@
-import { createHighlighterCore } from "shiki/core";
+import { createHighlighter } from "shiki/bundle/full";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
 /** Message sent from main thread to request highlighting. */
@@ -16,48 +16,29 @@ interface HighlightResponse {
   error?: string;
 }
 
-let highlighterPromise: ReturnType<typeof createHighlighterCore> | null = null;
+/** Shiki language parameter type extracted from the bundle's loadLanguage signature. */
+type ShikiLang = Parameters<Awaited<ReturnType<typeof createHighlighter>>["loadLanguage"]>[0];
 
-/** Returns the singleton highlighter, creating it on first call. */
+let highlighterPromise: ReturnType<typeof createHighlighter> | null = null;
+
+/**
+ * Returns the singleton highlighter, creating it on first call.
+ * Uses shiki/bundle/full for broad language coverage (~200 languages) with the
+ * JS RegExp engine (no WASM binary, ~4% the size of Oniguruma).
+ * If creation fails, the cached promise is cleared so the next request retries.
+ */
 function getHighlighter() {
   if (!highlighterPromise) {
-    highlighterPromise = createHighlighterCore({
+    highlighterPromise = createHighlighter({
       engine: createJavaScriptRegexEngine(),
-      themes: [
-        import("shiki/themes/github-dark.mjs"),
-        import("shiki/themes/github-light.mjs"),
-      ],
+      themes: ["github-dark", "github-light"],
       langs: [],
+    }).catch((err) => {
+      highlighterPromise = null;
+      throw err;
     });
   }
   return highlighterPromise;
-}
-
-/** In-progress language loads, keyed by language name. Prevents duplicate concurrent imports. */
-const languageLoadPromises = new Map<string, Promise<boolean>>();
-
-/** Dynamically imports a Shiki language grammar by name. Concurrent calls for the same language coalesce. */
-async function loadLanguage(highlighter: Awaited<ReturnType<typeof createHighlighterCore>>, lang: string) {
-  const loaded = highlighter.getLoadedLanguages();
-  if (loaded.includes(lang)) return true;
-
-  const existing = languageLoadPromises.get(lang);
-  if (existing) return existing;
-
-  const promise = (async () => {
-    try {
-      const mod = await import(`shiki/langs/${lang}.mjs`);
-      await highlighter.loadLanguage(mod.default ?? mod);
-      return true;
-    } catch {
-      return false;
-    } finally {
-      languageLoadPromises.delete(lang);
-    }
-  })();
-
-  languageLoadPromises.set(lang, promise);
-  return promise;
 }
 
 self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
@@ -65,12 +46,21 @@ self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
 
   try {
     const highlighter = await getHighlighter();
-    const langLoaded = await loadLanguage(highlighter, language);
-    const lang = langLoaded ? language : "text";
 
-    // Load "text" as fallback if needed
-    if (!langLoaded) {
-      await loadLanguage(highlighter, "text");
+    // Load language on demand. shiki/bundle/full resolves these via static
+    // imports so Vite can bundle them. Unknown languages throw and we fall back.
+    const loadedLangs = highlighter.getLoadedLanguages();
+    let lang = language;
+
+    if (!loadedLangs.includes(language)) {
+      try {
+        await highlighter.loadLanguage(language as ShikiLang);
+      } catch {
+        lang = "text";
+        if (!highlighter.getLoadedLanguages().includes("text")) {
+          await highlighter.loadLanguage("text" as ShikiLang);
+        }
+      }
     }
 
     const html = highlighter.codeToHtml(code, { lang, theme });
