@@ -108,6 +108,12 @@ describe("classifyFile", () => {
     expect(classifyFile("Justfile")).toBe("text");
     expect(classifyFile("Containerfile")).toBe("text");
   });
+
+  it("matches well-known filenames case-insensitively", () => {
+    expect(classifyFile("dockerfile")).toBe("text");
+    expect(classifyFile("MAKEFILE")).toBe("text");
+    expect(classifyFile("DOCKERFILE")).toBe("text");
+  });
 });
 
 describe("isFileSupported", () => {

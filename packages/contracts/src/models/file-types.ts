@@ -54,10 +54,10 @@ const TEXT_EXTENSIONS = new Set([
   "eslintrc", "prettierrc", "dockerignore",
 ]);
 
-/** Well-known filenames without extensions that are text files. */
+/** Well-known filenames without extensions that are text files (lowercase). */
 const KNOWN_TEXT_FILENAMES = new Set([
-  "Dockerfile", "Containerfile", "Makefile", "CMakeLists.txt",
-  "Rakefile", "Justfile", "Gemfile", "Pipfile",
+  "dockerfile", "containerfile", "makefile", "cmakelists.txt",
+  "rakefile", "justfile", "gemfile", "pipfile",
 ]);
 
 /**
@@ -81,12 +81,12 @@ export function getExtension(fileName: string): string {
 export function classifyFile(fileName: string): FileCategory | null {
   const ext = getExtension(fileName);
 
-  if (ext && ext in IMAGE_EXTENSIONS) return "image";
+  if (ext && Object.hasOwn(IMAGE_EXTENSIONS, ext)) return "image";
   if (ext === "pdf") return "pdf";
   if (ext && TEXT_EXTENSIONS.has(ext)) return "text";
 
-  // Check well-known extensionless filenames
-  if (KNOWN_TEXT_FILENAMES.has(fileName)) return "text";
+  // Check well-known extensionless filenames (case-insensitive)
+  if (KNOWN_TEXT_FILENAMES.has(fileName.toLowerCase())) return "text";
 
   return null;
 }
@@ -120,11 +120,11 @@ export function getMaxFileSize(fileName: string): number {
 export function inferMimeType(fileName: string): string {
   const ext = getExtension(fileName);
 
-  if (ext && ext in IMAGE_EXTENSIONS) return IMAGE_EXTENSIONS[ext];
+  if (ext && Object.hasOwn(IMAGE_EXTENSIONS, ext)) return IMAGE_EXTENSIONS[ext];
   if (ext === "pdf") return "application/pdf";
 
   // All recognized text-based extensions
-  if ((ext && TEXT_EXTENSIONS.has(ext)) || KNOWN_TEXT_FILENAMES.has(fileName)) {
+  if ((ext && TEXT_EXTENSIONS.has(ext)) || KNOWN_TEXT_FILENAMES.has(fileName.toLowerCase())) {
     return "text/plain";
   }
 

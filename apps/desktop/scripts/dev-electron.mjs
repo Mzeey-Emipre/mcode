@@ -154,6 +154,8 @@ function spawnElectron() {
     NODE_ENV: "development",
   };
   delete electronEnv.ELECTRON_RUN_AS_NODE;
+  // Remove inherited MCODE_DATA_DIR so the dev instance falls back to
+  // ~/.mcode-dev, isolating dev data from the production directory.
   delete electronEnv.MCODE_DATA_DIR;
   electronProcess = spawn(electronBin, ["."], {
     cwd: projectRoot,
