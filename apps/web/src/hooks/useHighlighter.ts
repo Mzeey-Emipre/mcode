@@ -9,7 +9,6 @@ interface HighlightResponse {
 }
 
 let sharedWorker: Worker | null = null;
-let listenerCount = 0;
 let workerGeneration = 0;
 const pending = new Map<string, (html: string) => void>();
 
@@ -20,7 +19,10 @@ function createWorkerInstance(): Worker {
     { type: "module" },
   );
   worker.onmessage = (e: MessageEvent<HighlightResponse>) => {
-    const { id, html } = e.data;
+    const { id, html, error } = e.data;
+    if (error) {
+      console.warn("[shiki-worker]", error);
+    }
     const resolve = pending.get(id);
     if (resolve) {
       pending.delete(id);
@@ -28,9 +30,8 @@ function createWorkerInstance(): Worker {
     }
   };
   worker.onerror = () => {
-    // Worker crashed: bump generation, null the worker, reset listener count
+    // Worker crashed: bump generation so stale responses are ignored
     sharedWorker = null;
-    listenerCount = 0;
     workerGeneration++;
 
     // Resolve all pending requests with empty string so hooks fall back to plain rendering
@@ -44,29 +45,14 @@ function createWorkerInstance(): Worker {
 
 /**
  * Returns the shared singleton Worker, creating it on first call or after a crash.
- * Does NOT increment listenerCount; callers must manage that separately.
+ * The Worker is never terminated during normal operation. It persists across thread
+ * switches so loaded language grammars and themes stay in memory (bounded at ~4-8 MB).
  */
 function getWorker(): Worker {
   if (!sharedWorker) {
     sharedWorker = createWorkerInstance();
   }
   return sharedWorker;
-}
-
-/** Increments listener count and returns the current Worker. */
-function acquireWorker(): Worker {
-  const worker = getWorker();
-  listenerCount++;
-  return worker;
-}
-
-/** Decrements listener count; terminates Worker when no components use it. */
-function releaseWorker(): void {
-  listenerCount--;
-  if (listenerCount === 0 && sharedWorker) {
-    sharedWorker.terminate();
-    sharedWorker = null;
-  }
 }
 
 let nextId = 0;
@@ -90,17 +76,8 @@ export function useHighlighter(
 ): { html: string | null } {
   const [html, setHtml] = useState<string | null>(null);
   const currentRequestId = useRef<string | null>(null);
-  const mountGeneration = useRef<number>(-1);
-
-  // Acquire the shared worker on mount, release on unmount.
-  useEffect(() => {
-    acquireWorker();
-    mountGeneration.current = workerGeneration;
-    return () => {
-      mountGeneration.current = -1;
-      releaseWorker();
-    };
-  }, []);
+  const prevCode = useRef(code);
+  const prevLanguage = useRef(language);
 
   // Send a highlight request whenever code, language, or theme changes.
   useEffect(() => {
@@ -110,8 +87,13 @@ export function useHighlighter(
       return;
     }
 
-    // Reset html so we don't flash stale content while the new request is in flight
-    setHtml(null);
+    // Only reset html when content changed (stale HTML would be misleading).
+    // For theme-only changes, keep the old highlighted HTML visible during the transition.
+    if (prevCode.current !== code || prevLanguage.current !== language) {
+      setHtml(null);
+    }
+    prevCode.current = code;
+    prevLanguage.current = language;
 
     // Always call getWorker() to get a fresh reference (never use a stale ref)
     // If the worker crashed and was recreated, this picks up the new instance
