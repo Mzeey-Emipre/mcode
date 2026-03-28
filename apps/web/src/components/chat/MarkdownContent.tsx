@@ -1,19 +1,21 @@
-import { memo } from "react";
-import type { Element } from "hast";
+import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { CodeBlock } from "./CodeBlock";
 
 /** Props for {@link MarkdownContent}. */
 interface MarkdownContentProps {
   /** Raw markdown string to render. */
   content: string;
+  /** When true, code blocks skip syntax highlighting. Defaults to false. */
+  isStreaming?: boolean;
 }
 
 /** Stable remark plugin list, hoisted to avoid re-creating on every render. */
 const plugins = [remarkGfm];
 
-/** Stable custom element renderers for react-markdown, hoisted to module scope. */
-const components = {
+/** Static component overrides that don't depend on props. Hoisted to module scope to avoid re-creation. */
+const staticComponents = {
   h1: ({ children }: { children?: React.ReactNode }) => <h1 className="text-xl font-bold mt-4 mb-2">{children}</h1>,
   h2: ({ children }: { children?: React.ReactNode }) => <h2 className="text-lg font-semibold mt-3 mb-2">{children}</h2>,
   h3: ({ children }: { children?: React.ReactNode }) => <h3 className="text-base font-semibold mt-2 mb-1">{children}</h3>,
@@ -41,32 +43,7 @@ const components = {
       {children}
     </blockquote>
   ),
-  pre: ({ children, node }: { children?: React.ReactNode; node?: Element }) => {
-    const firstChild = node?.children?.[0];
-    const langClass =
-      firstChild?.type === "element"
-        ? (((firstChild as Element).properties?.className as string[] | undefined)?.[0] ?? "")
-        : "";
-    const language = langClass.replace("language-", "");
-
-    return (
-      <div className="my-2 rounded-lg overflow-hidden border border-border">
-        {language && (
-          <div className="bg-muted/50 px-3 py-1 text-xs text-muted-foreground border-b border-border">
-            {language}
-          </div>
-        )}
-        <pre className="bg-muted/30 p-3 overflow-x-auto text-sm font-mono leading-relaxed [&_code]:bg-transparent [&_code]:p-0 [&_code]:rounded-none">
-          {children}
-        </pre>
-      </div>
-    );
-  },
-  code: ({ children }: { children?: React.ReactNode }) => (
-    <code className="bg-muted rounded px-1.5 py-0.5 text-sm font-mono">
-      {children}
-    </code>
-  ),
+  pre: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
   hr: () => <hr className="my-4 border-border" />,
   table: ({ children }: { children?: React.ReactNode }) => (
     <div className="overflow-x-auto my-2">
@@ -83,8 +60,46 @@ const components = {
   ),
 };
 
+/**
+ * Builds the `code` override that depends on `isStreaming`.
+ * Only this component is recreated when `isStreaming` changes; static overrides are reused.
+ */
+function makeComponents(isStreaming: boolean) {
+  return {
+    ...staticComponents,
+    code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
+      // Detect inline vs block code. In react-markdown's HAST, fenced code
+      // blocks are wrapped in a <pre> parent (even without a language tag).
+      // Fenced blocks always have a trailing newline from the code fence.
+      // Check BEFORE stripping the trailing newline so even single-line
+      // fenced blocks without a language are detected.
+      const rawContent = String(children);
+      const isInline = !className && !rawContent.includes("\n");
+
+      if (isInline) {
+        return (
+          <code className="bg-muted rounded px-1.5 py-0.5 text-sm font-mono">
+            {children}
+          </code>
+        );
+      }
+
+      const langMatch = className?.match(/language-(\S+)/);
+      const language = langMatch ? langMatch[1] : "";
+      const code = String(children).replace(/\n$/, "");
+
+      return <CodeBlock code={code} language={language} isStreaming={isStreaming} />;
+    },
+  };
+}
+
 /** Renders a markdown string with GFM support. Memoized to skip re-renders when content is unchanged. */
-export const MarkdownContent = memo(function MarkdownContent({ content }: MarkdownContentProps) {
+export const MarkdownContent = memo(function MarkdownContent({
+  content,
+  isStreaming = false,
+}: MarkdownContentProps) {
+  const components = useMemo(() => makeComponents(isStreaming), [isStreaming]);
+
   return (
     <ReactMarkdown remarkPlugins={plugins} components={components}>
       {content}

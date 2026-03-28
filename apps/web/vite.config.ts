@@ -19,6 +19,9 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  optimizeDeps: {
+    include: ["shiki", "shiki/bundle/full", "shiki/engine/javascript"],
+  },
   clearScreen: false,
   server: {
     port: 5173,
