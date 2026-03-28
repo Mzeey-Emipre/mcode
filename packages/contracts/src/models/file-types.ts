@@ -81,7 +81,7 @@ export function getExtension(fileName: string): string {
 export function classifyFile(fileName: string): FileCategory | null {
   const ext = getExtension(fileName);
 
-  if (ext && Object.hasOwn(IMAGE_EXTENSIONS, ext)) return "image";
+  if (ext && ext in IMAGE_EXTENSIONS) return "image";
   if (ext === "pdf") return "pdf";
   if (ext && TEXT_EXTENSIONS.has(ext)) return "text";
 
@@ -120,7 +120,7 @@ export function getMaxFileSize(fileName: string): number {
 export function inferMimeType(fileName: string): string {
   const ext = getExtension(fileName);
 
-  if (ext && Object.hasOwn(IMAGE_EXTENSIONS, ext)) return IMAGE_EXTENSIONS[ext];
+  if (ext && ext in IMAGE_EXTENSIONS) return IMAGE_EXTENSIONS[ext];
   if (ext === "pdf") return "application/pdf";
 
   // All recognized text-based extensions
