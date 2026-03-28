@@ -5,14 +5,6 @@ import path from "path";
 
 export default defineConfig({
   base: process.env.ELECTRON_BUILD ? "./" : "/",
-  define: {
-    // Provide a default VITE_SERVER_URL so standalone dev:web connects to
-    // the server without extra configuration. Override with the env var
-    // VITE_SERVER_URL to point at a different server instance or port.
-    "import.meta.env.VITE_SERVER_URL": JSON.stringify(
-      process.env.VITE_SERVER_URL ?? "ws://localhost:19400",
-    ),
-  },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
