@@ -109,7 +109,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
       </div>
       <div className="flex-1 space-y-2">
         <div className="rounded-xl bg-muted/50 px-4 py-3 text-sm text-foreground">
-          <MarkdownContent content={message.content} />
+          <MarkdownContent content={message.content} isStreaming={false} />
         </div>
         <div className="flex items-center gap-3 px-1">
           {message.tokens_used != null && (

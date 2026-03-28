@@ -15,7 +15,7 @@ export function StreamingBubble({ content }: StreamingBubbleProps) {
       </div>
       <div className="flex-1">
         <div className="rounded-xl bg-muted/50 px-4 py-3 text-sm text-foreground">
-          <MarkdownContent content={content} />
+          <MarkdownContent content={content} isStreaming />
         </div>
       </div>
     </div>
