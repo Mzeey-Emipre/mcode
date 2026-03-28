@@ -16,7 +16,8 @@ export class WorkspaceService {
 
   /**
    * Create a new workspace, or return the existing one if the path is already registered.
-   * This prevents UNIQUE constraint errors when re-adding a previously deleted (but persisted) workspace.
+   * Handles the case where the workspace still exists in the DB (e.g., after a failed
+   * delete or stale client state) to prevent UNIQUE constraint errors on re-add.
    */
   create(name: string, path: string): Workspace {
     const existing = this.workspaceRepo.findByPath(path);
