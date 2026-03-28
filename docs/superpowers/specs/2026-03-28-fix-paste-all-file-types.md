@@ -142,6 +142,7 @@ Filtered out by `ALL_SUPPORTED_TYPES`. Silently ignored (same as current behavio
 | `apps/web/src/transport/ws-transport.ts` | Implement `saveClipboardFile` RPC call |
 | `packages/contracts/src/ws/methods.ts` | Add `clipboard.saveFile` method schema |
 | `apps/server/src/transport/ws-router.ts` | Add dispatcher case for `clipboard.saveFile` |
+| `apps/web/src/__tests__/mocks/transport.ts` | Add `saveClipboardFile` mock to `mockTransport` |
 
 ## Tests
 
