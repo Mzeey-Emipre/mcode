@@ -100,9 +100,17 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   useEffect(() => {
     const prev = prevThreadIdRef.current;
 
-    // Save current draft for the thread we're leaving
+    // Save current draft for the thread we're leaving (but not if the thread was deleted)
     if (prev && prev !== threadId) {
-      saveDraft(prev, draftRef.current);
+      const threadStillExists = useWorkspaceStore.getState().threads.some((t) => t.id === prev);
+      if (threadStillExists) {
+        saveDraft(prev, draftRef.current);
+      } else {
+        // Thread was deleted; revoke any attachment blob URLs from the outgoing draft
+        for (const att of draftRef.current.attachments) {
+          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+        }
+      }
     }
 
     // Restore draft for the thread we're entering
@@ -132,6 +140,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         // No saved draft: reset to defaults
         setInput("");
         setAttachments([]);
+        setModelId(getDefaultModel().id);
         setReasoning("high");
         // Reset Lexical editor
         if (editorRef.current) {
@@ -141,12 +150,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             root.append($createParagraphNode());
           });
         }
-        // Don't reset modelId here; the existing activeThread?.model sync effect handles it
       }
     } else {
       // Entering "new thread" mode: ensure clean slate
       setInput("");
       setAttachments([]);
+      setModelId(getDefaultModel().id);
       setReasoning("high");
       if (editorRef.current) {
         editorRef.current.update(() => {
