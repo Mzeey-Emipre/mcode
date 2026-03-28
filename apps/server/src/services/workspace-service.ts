@@ -21,6 +21,7 @@ export class WorkspaceService {
    */
   create(name: string, path: string): Workspace {
     const existing = this.workspaceRepo.findByPath(path);
+    // Intentionally returns the existing record without updating its name.
     if (existing) return existing;
     return this.workspaceRepo.create(name, path);
   }
