@@ -5,12 +5,15 @@
  * NODE_MODULE_VERSION (ABI). The server runs inside Electron (forked with
  * ELECTRON_RUN_AS_NODE=1), so it needs Electron's ABI, not the system Node's.
  *
- * Instead, we query the real ABI from the Electron binary and download the
- * matching prebuild directly from better-sqlite3's GitHub releases.
+ * Skips gracefully when:
+ * - Electron binary is not installed (worktrees, CI, server-only dev)
+ * - The correct prebuild is already in place (avoids re-downloading)
+ *
+ * Set SKIP_ELECTRON_REBUILD=1 to force skip.
  */
 
-import { execSync } from "child_process";
-import { copyFileSync, mkdirSync, readFileSync, rmSync, unlinkSync } from "fs";
+import { execSync, execFileSync } from "child_process";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { createRequire } from "module";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -19,6 +22,12 @@ import { tmpdir } from "os";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 const desktopDir = resolve(rootDir, "apps", "desktop");
+
+// Allow explicit skip (useful for CI, worktrees, server-only dev)
+if (process.env.SKIP_ELECTRON_REBUILD === "1") {
+  console.log("Skipping Electron prebuild (SKIP_ELECTRON_REBUILD=1)");
+  process.exit(0);
+}
 
 // Resolve where better-sqlite3 actually lives (follows bun's .bun/ hoisting)
 const serverRequire = createRequire(
@@ -37,48 +46,77 @@ const nativeBinary = resolve(
   "better_sqlite3.node",
 );
 
+// Marker file to track which ABI the current prebuild was built for
+const abiMarker = resolve(betterSqliteDir, "build", "Release", ".electron-abi");
+
 /**
  * Resolve the path to the actual Electron binary from the project's
- * node_modules. Using `npx electron` is unreliable because it can resolve
- * to a globally cached Electron version with a different ABI.
+ * node_modules. Returns null if Electron is not installed or the binary
+ * is missing (e.g. in worktrees before `electron install` runs).
  */
 function getElectronBinary() {
-  const desktopRequire = createRequire(
-    resolve(desktopDir, "package.json"),
-  );
-  return desktopRequire("electron");
+  try {
+    const desktopRequire = createRequire(
+      resolve(desktopDir, "package.json"),
+    );
+    const electronPath = desktopRequire("electron");
+    if (!existsSync(electronPath)) return null;
+    return electronPath;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Query the actual NODE_MODULE_VERSION from the installed Electron binary.
- *
- * ELECTRON_RUN_AS_NODE=1 makes Electron behave as plain Node, so
- * process.versions.modules reflects the real ABI it loads native addons with.
- * We invoke the project's Electron binary directly (not via npx) to ensure
- * we get the correct ABI for the installed version.
+ * Returns null if the binary can't be queried.
  */
-function getElectronABI() {
-  const electronBin = getElectronBinary();
-  const abi = execSync(
-    `"${electronBin}" -e "process.stdout.write(process.versions.modules);process.exit(0)"`,
-    {
-      encoding: "utf-8",
-      timeout: 30_000,
-      cwd: desktopDir,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-      stdio: ["ignore", "pipe", "ignore"],
-    },
-  ).trim();
+function getElectronABI(electronBin) {
+  try {
+    const abi = execFileSync(
+      electronBin,
+      ["-e", "process.stdout.write(process.versions.modules);process.exit(0)"],
+      {
+        encoding: "utf-8",
+        timeout: 30_000,
+        cwd: desktopDir,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
 
-  if (!/^\d+$/.test(abi)) {
-    throw new Error(`Unexpected ABI from Electron binary: ${abi}`);
+    if (!/^\d+$/.test(abi)) return null;
+    return abi;
+  } catch {
+    return null;
   }
-  return abi;
 }
 
 // ---- Main ----
 
-const electronABI = getElectronABI();
+const electronBin = getElectronBinary();
+if (!electronBin) {
+  console.log("Skipping Electron prebuild (Electron binary not found)");
+  process.exit(0);
+}
+
+const electronABI = getElectronABI(electronBin);
+if (!electronABI) {
+  console.log("Skipping Electron prebuild (could not detect Electron ABI)");
+  process.exit(0);
+}
+
+// Check if the correct prebuild is already in place
+if (existsSync(abiMarker)) {
+  const currentABI = readFileSync(abiMarker, "utf-8").trim();
+  if (currentABI === electronABI) {
+    console.log(
+      `better-sqlite3 v${bsqlVersion} already built for Electron ABI ${electronABI}`,
+    );
+    process.exit(0);
+  }
+}
+
 const platform = process.platform;
 const arch = process.arch;
 const tarName = `better-sqlite3-v${bsqlVersion}-electron-v${electronABI}-${platform}-${arch}.tar.gz`;
@@ -116,6 +154,10 @@ const extractedBinary = resolve(
 );
 mkdirSync(dirname(nativeBinary), { recursive: true });
 copyFileSync(extractedBinary, nativeBinary);
+
+// Write marker so we skip on next install
+mkdirSync(dirname(abiMarker), { recursive: true });
+writeFileSync(abiMarker, electronABI);
 
 // Clean up temp files
 rmSync(tmpDir, { recursive: true, force: true });

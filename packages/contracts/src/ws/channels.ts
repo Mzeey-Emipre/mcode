@@ -16,6 +16,12 @@ export const WS_CHANNELS = {
     threadId: z.string().optional(),
   }),
   "skills.changed": z.object({}),
+  "turn.persisted": z.object({
+    threadId: z.string(),
+    messageId: z.string(),
+    toolCallCount: z.number(),
+    filesChanged: z.array(z.string()),
+  }),
 } as const;
 
 /** Union of all push channel names. */

@@ -17,9 +17,14 @@ const SERVER_DIR = resolve(__dirname, "../../../server");
 /** Absolute path to the server entry point. */
 const SERVER_ENTRY = resolve(SERVER_DIR, "src/index.ts");
 
-/** Port range to scan for an available port. */
-const PORT_MIN = 19400;
-const PORT_MAX = 19500;
+/**
+ * Port range to scan for an available port.
+ * Dev mode (ELECTRON_RENDERER_URL set) uses 19500+ to avoid
+ * colliding with a prod instance running on 19400.
+ */
+const isDev = !!process.env.ELECTRON_RENDERER_URL;
+const PORT_MIN = isDev ? 19500 : 19400;
+const PORT_MAX = isDev ? 19600 : 19500;
 
 /** Interval (ms) between health-check polls during startup. */
 const HEALTH_POLL_INTERVAL = 200;

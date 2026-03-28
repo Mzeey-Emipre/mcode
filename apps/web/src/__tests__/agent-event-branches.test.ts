@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport } from "./mocks/transport";
 
@@ -9,6 +9,7 @@ vi.mock("@/transport", async () => ({
 
 describe("handleAgentEvent branches", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(["thread-1"]),
@@ -19,6 +20,10 @@ describe("handleAgentEvent branches", () => {
       agentStartTimes: { "thread-1": new Date("2026-01-01T00:00:00Z").getTime() },
       currentThreadId: "thread-1",
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("session.error clears thread running state and sets error", () => {
@@ -37,6 +42,7 @@ describe("handleAgentEvent branches", () => {
       method: "session.turnComplete",
       params: { sessionId: "mcode-thread-1", reason: "end_turn", costUsd: null, totalTokensIn: 0, totalTokensOut: 0 },
     });
+    vi.runAllTimers();
 
     const state = useThreadStore.getState();
     expect(state.messages).toHaveLength(0);
@@ -48,6 +54,7 @@ describe("handleAgentEvent branches", () => {
       method: "session.toolUse",
       params: { toolCallId: "tc1", toolName: "Read", toolInput: { path: "/foo" } },
     });
+    vi.runAllTimers();
 
     const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
     expect(calls).toHaveLength(1);

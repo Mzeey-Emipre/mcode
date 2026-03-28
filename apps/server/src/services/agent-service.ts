@@ -18,8 +18,12 @@ import type {
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { MessageRepo } from "../repositories/message-repo";
+import { ToolCallRecordRepo, type CreateToolCallRecordInput } from "../repositories/tool-call-record-repo";
+import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import { GitService } from "./git-service";
 import { AttachmentService } from "./attachment-service";
+import { SnapshotService } from "./snapshot-service";
+import { broadcast } from "../transport/push";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
@@ -41,11 +45,26 @@ function truncateTitle(content: string): string {
   return truncated.slice(0, cutPoint) + "...";
 }
 
+/** Buffered tool call with raw input preserved for deferred summarization. */
+interface BufferedToolCall extends CreateToolCallRecordInput {
+  _rawToolInput?: Record<string, unknown>;
+}
+
 /** Orchestrates agent sessions, message sending, and event forwarding. */
 @injectable()
 export class AgentService {
   private readonly activeSessionIds = new Set<string>();
   private initialized = false;
+  /** Per-thread buffer of tool calls accumulated during the current turn. */
+  private turnToolCalls = new Map<string, BufferedToolCall[]>();
+  /** Per-thread ref_before captured at sendMessage time. */
+  private turnRefBefore = new Map<string, { ref: string; cwd: string }>();
+  /** Stack of active Agent tool call IDs per thread (for nesting inference). */
+  private agentCallStack = new Map<string, string[]>();
+  /** Per-thread sort counter for tool calls. */
+  private turnSortCounters = new Map<string, number>();
+  /** Threads currently running persistTurn to prevent concurrent calls. */
+  private persistingThreads = new Set<string>();
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -58,6 +77,9 @@ export class AgentService {
     private readonly providerRegistry: IProviderRegistry,
     @inject(delay(() => ThreadService))
     private readonly threadService: ThreadService,
+    @inject(ToolCallRecordRepo) private readonly toolCallRecordRepo: ToolCallRecordRepo,
+    @inject(TurnSnapshotRepo) private readonly turnSnapshotRepo: TurnSnapshotRepo,
+    @inject(SnapshotService) private readonly snapshotService: SnapshotService,
   ) {}
 
   /**
@@ -118,6 +140,20 @@ export class AgentService {
     );
 
     this.threadRepo.updateStatus(threadId, "active");
+
+    // Capture git snapshot ref_before for this turn
+    try {
+      const refBefore = await this.snapshotService.captureRef(cwd);
+      this.turnRefBefore.set(threadId, { ref: refBefore, cwd });
+    } catch (err) {
+      logger.warn("Failed to capture ref_before", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    this.turnToolCalls.set(threadId, []);
+    this.turnSortCounters.set(threadId, 0);
+    this.agentCallStack.set(threadId, []);
 
     const resolvedModel = model;
     this.threadRepo.updateModel(threadId, resolvedModel);
@@ -229,8 +265,8 @@ export class AgentService {
     return updated ?? thread;
   }
 
-  /** Stop the agent for a given thread. */
-  stopSession(threadId: string): void {
+  /** Stop the agent for a given thread, persisting any buffered tool calls first. */
+  async stopSession(threadId: string): Promise<void> {
     const sessionId = `mcode-${threadId}`;
     try {
       const provider = this.providerRegistry.resolve("claude");
@@ -238,8 +274,18 @@ export class AgentService {
     } catch {
       // Provider may not be available
     }
+    // Persist buffered tool calls before clearing state so the
+    // client receives a turn.persisted event with the correct count.
+    await this.persistTurn(threadId, true);
     this.threadRepo.updateStatus(threadId, "paused");
     this.activeSessionIds.delete(threadId);
+    // clearTurnState already called inside persistTurn
+  }
+
+  /** Get the current parent tool call ID for a thread's active Agent nesting. */
+  getCurrentParentToolCallId(threadId: string): string | undefined {
+    const stack = this.agentCallStack.get(threadId);
+    return stack && stack.length > 0 ? stack[stack.length - 1] : undefined;
   }
 
   /** Number of currently active sessions. */
@@ -291,10 +337,199 @@ export class AgentService {
           }
         }
 
+        if (event.type === "toolUse") {
+          this.bufferToolCall(event.threadId, event);
+        }
+
+        if (event.type === "toolResult") {
+          this.updateBufferedToolCallOutput(event.threadId, event.toolCallId, event.output, event.isError);
+        }
+
+        if (event.type === "turnComplete") {
+          this.persistTurn(event.threadId).catch((err) => {
+            logger.error("persistTurn failed on turnComplete", {
+              threadId: event.threadId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
+
+        if (event.type === "error") {
+          this.persistTurn(event.threadId, true).catch((err) => {
+            logger.error("persistTurn failed on error event", {
+              threadId: event.threadId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
+
         if (event.type === "ended") {
           this.trackSessionEnded(event.threadId);
         }
       });
+    }
+  }
+
+  /** Buffer a tool call event for later persistence. */
+  private bufferToolCall(
+    threadId: string,
+    event: { toolCallId: string; toolName: string; toolInput: Record<string, unknown> },
+  ): void {
+    const buffer = this.turnToolCalls.get(threadId) ?? [];
+    const sortOrder = this.turnSortCounters.get(threadId) ?? 0;
+    this.turnSortCounters.set(threadId, sortOrder + 1);
+
+    const stack = this.agentCallStack.get(threadId) ?? [];
+    const parentToolCallId = event.toolName === "Agent" ? undefined : stack[stack.length - 1];
+    if (event.toolName === "Agent") {
+      stack.push(event.toolCallId);
+      this.agentCallStack.set(threadId, stack);
+    }
+
+    buffer.push({
+      toolCallId: event.toolCallId,
+      messageId: "",
+      toolName: event.toolName,
+      inputSummary: "", // Deferred to persistTurn
+      outputSummary: "",
+      status: "running",
+      sortOrder,
+      parentToolCallId,
+      _rawToolInput: event.toolInput,
+    });
+    this.turnToolCalls.set(threadId, buffer);
+  }
+
+  /** Update a buffered tool call with its output when result arrives. */
+  private updateBufferedToolCallOutput(
+    threadId: string,
+    toolCallId: string,
+    output: string,
+    isError: boolean,
+  ): void {
+    const stack = this.agentCallStack.get(threadId) ?? [];
+    const stackIdx = stack.indexOf(toolCallId);
+    if (stackIdx >= 0) {
+      stack.splice(stackIdx, 1);
+      this.agentCallStack.set(threadId, stack);
+    }
+
+    const buffer = this.turnToolCalls.get(threadId) ?? [];
+    for (let i = buffer.length - 1; i >= 0; i--) {
+      if (buffer[i].toolCallId === toolCallId) {
+        buffer[i].outputSummary = output.slice(0, 500);
+        buffer[i].status = isError ? "failed" : "completed";
+        break;
+      }
+    }
+  }
+
+  /** Persist buffered tool calls and snapshot to DB, then push turn.persisted. */
+  private async persistTurn(threadId: string, isError = false): Promise<void> {
+    if (this.persistingThreads.has(threadId)) return;
+    this.persistingThreads.add(threadId);
+    try {
+      const buffer = this.turnToolCalls.get(threadId) ?? [];
+
+      const messages = this.messageRepo.listByThread(threadId, 1);
+      if (messages.length === 0) {
+        if (buffer.length > 0) {
+          logger.warn("Discarding buffered tool calls: no messages found", {
+            threadId,
+            toolCallCount: buffer.length,
+          });
+        }
+        this.clearTurnState(threadId);
+        return;
+      }
+      const messageId = messages[messages.length - 1].id;
+
+      for (const tc of buffer) {
+        if (tc.status === "running") {
+          tc.status = isError ? "failed" : "completed";
+        }
+        tc.messageId = messageId;
+
+        // Deferred summarization: compute inputSummary from raw tool input
+        if (!tc.inputSummary && tc._rawToolInput) {
+          tc.inputSummary = this.summarizeInput(tc.toolName, tc._rawToolInput);
+          delete tc._rawToolInput;
+        }
+      }
+
+      if (buffer.length > 0) {
+        try {
+          this.toolCallRecordRepo.bulkCreate(buffer);
+        } catch (err) {
+          logger.error("Failed to persist tool call records", {
+            threadId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      let filesChanged: string[] = [];
+      const refData = this.turnRefBefore.get(threadId);
+      if (refData) {
+        try {
+          const refAfter = await this.snapshotService.captureRef(refData.cwd);
+          if (refAfter !== refData.ref) {
+            filesChanged = await this.snapshotService.getFilesChanged(refData.cwd, refData.ref, refAfter);
+            this.turnSnapshotRepo.create({
+              messageId,
+              threadId,
+              refBefore: refData.ref,
+              refAfter,
+              filesChanged,
+              worktreePath: null,
+            });
+          }
+        } catch (err) {
+          logger.warn("Failed to capture turn snapshot", {
+            threadId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      broadcast("turn.persisted", {
+        threadId,
+        messageId,
+        toolCallCount: buffer.length,
+        filesChanged,
+      });
+
+      this.clearTurnState(threadId);
+    } finally {
+      this.persistingThreads.delete(threadId);
+    }
+  }
+
+  /** Clear per-turn buffering state. */
+  private clearTurnState(threadId: string): void {
+    this.turnToolCalls.delete(threadId);
+    this.turnRefBefore.delete(threadId);
+    this.turnSortCounters.delete(threadId);
+    this.agentCallStack.delete(threadId);
+    this.persistingThreads.delete(threadId);
+  }
+
+  /** Generate a human-readable summary of tool input. */
+  private summarizeInput(toolName: string, input: Record<string, unknown>): string {
+    switch (toolName) {
+      case "Read":
+      case "Edit":
+      case "Write":
+        return String(input.file_path ?? input.filePath ?? "");
+      case "Bash":
+        return String(input.command ?? "").slice(0, 200);
+      case "Grep":
+      case "Glob":
+        return String(input.pattern ?? "");
+      case "Agent":
+        return String(input.description ?? "").slice(0, 100);
+      default:
+        return JSON.stringify(input).slice(0, 200);
     }
   }
 

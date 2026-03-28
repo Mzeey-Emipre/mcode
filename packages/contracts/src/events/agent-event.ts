@@ -14,6 +14,7 @@ export const AgentEventSchema = z.discriminatedUnion("type", [
     toolCallId: z.string(),
     toolName: z.string(),
     toolInput: z.record(z.unknown()),
+    parentToolCallId: z.string().optional(),
   }),
   z.object({
     type: z.literal("toolResult"),

@@ -20,12 +20,16 @@ import { SkillService } from "./services/skill-service";
 import { TerminalService } from "./services/terminal-service";
 import { MessageRepo } from "./repositories/message-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
+import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
+import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
+import { SnapshotService } from "./services/snapshot-service";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
 import type { AgentEvent } from "@mcode/contracts";
 import type Database from "better-sqlite3";
 
-const PORT = parseInt(process.env.MCODE_PORT ?? "19400", 10);
+const PREFERRED_PORT = parseInt(process.env.MCODE_PORT ?? "19400", 10);
+const MAX_PORT_ATTEMPTS = 10;
 
 /**
  * Host address to bind the server to.
@@ -50,6 +54,9 @@ const terminalService = container.resolve(TerminalService);
 const messageRepo = container.resolve(MessageRepo);
 const threadRepo = container.resolve(ThreadRepo);
 const providerRegistry = container.resolve(ProviderRegistry);
+const toolCallRecordRepo = container.resolve(ToolCallRecordRepo);
+const turnSnapshotRepo = container.resolve(TurnSnapshotRepo);
+const snapshotService = container.resolve(SnapshotService);
 const db = container.resolve<Database.Database>("Database");
 
 // Wire up PTY sender to broadcast push events
@@ -64,10 +71,31 @@ terminalService.setSender((channel, data) => {
 // AgentService self-wires persistence and session tracking against providers
 agentService.init();
 
-// Wire up push broadcasting for agent events and thread status changes
+// Run snapshot garbage collection on startup
+const maxAge = parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10);
+const removed = turnSnapshotRepo.deleteExpired(maxAge);
+if (removed > 0) {
+  logger.info(`Cleaned up ${removed} expired turn snapshots`);
+}
+
+// Wire up push broadcasting for agent events and thread status changes.
+// AgentService.init() registers its listener first, so bufferToolCall (which
+// maintains the canonical agentCallStack) has already run by the time this
+// listener fires. We read the stack via getCurrentParentToolCallId to enrich
+// non-Agent tool calls with their parent ID.
 for (const provider of providerRegistry.resolveAll()) {
   provider.on("event", (event: AgentEvent) => {
-    broadcast("agent.event", event);
+    let enrichedEvent = event;
+
+    // Enrich non-Agent tool calls with parent ID from the canonical stack in AgentService
+    if (event.type === "toolUse" && event.toolName !== "Agent") {
+      const parentId = agentService.getCurrentParentToolCallId(event.threadId);
+      if (parentId) {
+        enrichedEvent = { ...event, parentToolCallId: parentId };
+      }
+    }
+
+    broadcast("agent.event", enrichedEvent);
 
     if (event.type === "turnComplete") {
       threadRepo.updateStatus(event.threadId, "completed");
@@ -104,11 +132,31 @@ const { httpServer, wss } = createWsServer({
   skillService,
   terminalService,
   messageRepo,
+  toolCallRecordRepo,
+  turnSnapshotRepo,
+  snapshotService,
 });
 
-httpServer.listen(PORT, HOST, () => {
-  logger.info(`Mcode server listening on ${HOST}:${PORT}`);
-});
+/**
+ * Attempt to bind to the preferred port, incrementing on EADDRINUSE.
+ * Logs the actual port so the client can discover it.
+ */
+function listen(port: number, attempt = 1): void {
+  httpServer.once("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE" && attempt < MAX_PORT_ATTEMPTS) {
+      logger.warn(`Port ${port} in use, trying ${port + 1}`);
+      listen(port + 1, attempt + 1);
+    } else {
+      logger.error(`Failed to bind to port ${port}`, { error: String(err) });
+      process.exit(1);
+    }
+  });
+  httpServer.listen(port, HOST, () => {
+    logger.info(`Mcode server listening on ${HOST}:${port}`);
+  });
+}
+
+listen(PREFERRED_PORT);
 
 /**
  * Gracefully shut down all services, close WebSocket connections,

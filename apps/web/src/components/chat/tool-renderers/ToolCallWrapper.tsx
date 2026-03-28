@@ -2,6 +2,9 @@ import { useState, type ReactNode, Component, type ErrorInfo } from "react";
 import type { LucideIcon } from "lucide-react";
 import { ChevronRight } from "lucide-react";
 
+/** Extracted to avoid re-creating inline style objects each render. */
+const SLOW_SPIN_STYLE = { animationDuration: "2s" } as const;
+
 interface ToolCallWrapperProps {
   icon: LucideIcon;
   label: string;
@@ -29,7 +32,7 @@ class ToolCallErrorBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="rounded-lg border border-border/40 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
+        <div className="pl-3 border-l-2 border-red-500/30 py-1 text-xs text-muted-foreground">
           Tool call render error
         </div>
       );
@@ -38,6 +41,7 @@ class ToolCallErrorBoundary extends Component<
   }
 }
 
+/** Cardless tool call row with left-accent gutter. */
 function ToolCallWrapperInner({
   icon: Icon,
   label,
@@ -51,38 +55,54 @@ function ToolCallWrapperInner({
 
   return (
     <div
-      className={`rounded-lg border overflow-hidden ${
+      className={`border-l-2 transition-colors ${
         isActive
-          ? "animate-tool-pulse border-border/60 bg-muted/20"
-          : "border-border/40 bg-muted/15"
+          ? "border-blue-500/60"
+          : "border-border/30 hover:border-border/50"
       }`}
     >
       <button
         type="button"
         onClick={() => hasContent && setExpanded((p) => !p)}
-        className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs ${hasContent ? "cursor-pointer hover:bg-muted/30" : "cursor-default"}`}
+        className={`flex w-full flex-col gap-0.5 pl-3 pr-1 py-1.5 text-left text-xs ${
+          hasContent ? "cursor-pointer hover:bg-muted/15" : "cursor-default"
+        }`}
       >
-        <Icon size={14} className="shrink-0 text-muted-foreground" />
-        <span className="font-medium text-foreground/80">{label}</span>
-
-        <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
-          {badge && (
-            <span className="max-w-[200px] truncate rounded-full bg-secondary px-2 py-0.5 text-[10px] font-normal text-secondary-foreground">
-              {badge}
-            </span>
-          )}
+        <div className="flex w-full items-center gap-2">
+          <Icon
+            size={13}
+            className={`shrink-0 ${
+              isActive ? "animate-spin text-blue-400/80" : "text-muted-foreground/60"
+            }`}
+            style={isActive ? SLOW_SPIN_STYLE : undefined}
+          />
+          <span
+            className={`font-medium ${
+              isActive ? "animate-shimmer-text" : "text-foreground/70"
+            }`}
+          >
+            {label}
+          </span>
 
           {hasContent && (
             <ChevronRight
-              size={12}
-              className={`shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`}
+              size={11}
+              className={`ml-auto shrink-0 text-muted-foreground/40 transition-transform ${
+                expanded ? "rotate-90" : ""
+              }`}
             />
           )}
         </div>
+
+        {badge && (
+          <span className="truncate pl-[21px] text-[11px] text-muted-foreground/50 font-mono">
+            {badge}
+          </span>
+        )}
       </button>
 
       {expanded && children && (
-        <div className="border-t border-border/30 px-3 py-2">
+        <div className="pl-3 pr-1 pb-1.5">
           {children}
         </div>
       )}
@@ -90,6 +110,7 @@ function ToolCallWrapperInner({
   );
 }
 
+/** Cardless tool call row wrapped in an error boundary to prevent chat crashes. */
 export function ToolCallWrapper(props: ToolCallWrapperProps) {
   return (
     <ToolCallErrorBoundary>

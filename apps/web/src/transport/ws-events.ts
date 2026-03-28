@@ -17,6 +17,7 @@ let unsubs: (() => void)[] = [];
  * - `thread.status` -- thread status changes reflected in threadStore
  * - `files.changed` -- invalidates the file autocomplete cache
  * - `skills.changed` -- reserved for future skill cache invalidation
+ * - `turn.persisted` -- tool call persistence confirmation forwarded to threadStore
  */
 export function startPushListeners(): void {
   // Guard against double-init
@@ -98,6 +99,19 @@ export function startPushListeners(): void {
   unsubs.push(
     pushEmitter.on("skills.changed", () => {
       // No-op for now; will invalidate skill cache when implemented.
+    }),
+  );
+
+  // turn.persisted: server has persisted tool calls for a completed turn
+  unsubs.push(
+    pushEmitter.on("turn.persisted", (data) => {
+      const payload = data as {
+        threadId: string;
+        messageId: string;
+        toolCallCount: number;
+        filesChanged: string[];
+      };
+      useThreadStore.getState().handleTurnPersisted(payload);
     }),
   );
 }

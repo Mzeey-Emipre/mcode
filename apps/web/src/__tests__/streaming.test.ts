@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport } from "./mocks/transport";
 
@@ -9,6 +9,7 @@ vi.mock("@/transport", async () => ({
 
 describe("Agent Message Flow", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(),
@@ -17,6 +18,10 @@ describe("Agent Message Flow", () => {
       streamingByThread: {},
       currentThreadId: null,
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("session.message adds an assistant message to the current thread", () => {
@@ -28,6 +33,7 @@ describe("Agent Message Flow", () => {
       method: "session.message",
       params: { content: "Hello world", tokens: 42 },
     });
+    vi.runAllTimers();
 
     const state = useThreadStore.getState();
     expect(state.messages).toHaveLength(1);
@@ -45,6 +51,7 @@ describe("Agent Message Flow", () => {
       method: "session.message",
       params: { content: "Alpha" },
     });
+    vi.runAllTimers();
     expect(useThreadStore.getState().messages).toHaveLength(1);
 
     // Message for a different thread is NOT added to the visible list
@@ -52,6 +59,7 @@ describe("Agent Message Flow", () => {
       method: "session.message",
       params: { content: "Beta" },
     });
+    vi.runAllTimers();
     expect(useThreadStore.getState().messages).toHaveLength(1);
     expect(useThreadStore.getState().messages[0].content).toBe("Alpha");
   });
@@ -66,6 +74,7 @@ describe("Agent Message Flow", () => {
     useThreadStore.getState().handleAgentEvent(threadId, {
       method: "session.ended",
     });
+    vi.runAllTimers();
 
     const state = useThreadStore.getState();
     expect(state.runningThreadIds.has(threadId)).toBe(false);
@@ -83,6 +92,7 @@ describe("Agent Message Flow", () => {
       method: "session.turnComplete",
       params: { costUsd: 0.01, tokensIn: 50, tokensOut: 50 },
     });
+    vi.runAllTimers();
 
     const state = useThreadStore.getState();
     expect(state.runningThreadIds.has(threadId)).toBe(false);
@@ -100,6 +110,7 @@ describe("Agent Message Flow", () => {
       tokensIn: 25,
       tokensOut: 25,
     });
+    vi.runAllTimers();
 
     const state = useThreadStore.getState();
     // Streaming content is cleared even for non-current thread

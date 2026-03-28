@@ -22,6 +22,9 @@ import type { ConfigService } from "../services/config-service";
 import type { SkillService } from "../services/skill-service";
 import type { TerminalService } from "../services/terminal-service";
 import type { MessageRepo } from "../repositories/message-repo";
+import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
+import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
+import type { SnapshotService } from "../services/snapshot-service";
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
@@ -35,6 +38,9 @@ export interface RouterDeps {
   skillService: SkillService;
   terminalService: TerminalService;
   messageRepo: MessageRepo;
+  toolCallRecordRepo: ToolCallRecordRepo;
+  turnSnapshotRepo: TurnSnapshotRepo;
+  snapshotService: SnapshotService;
 }
 
 /**
@@ -201,7 +207,7 @@ async function dispatch(
         params.attachments,
       );
     case "agent.stop":
-      deps.agentService.stopSession(params.threadId);
+      await deps.agentService.stopSession(params.threadId);
       return;
     case "agent.activeCount":
       return deps.agentService.activeCount();
@@ -264,6 +270,33 @@ async function dispatch(
     case "terminal.killByThread":
       deps.terminalService.killByThread(params.threadId);
       return;
+
+    // Tool Call Records
+    case "toolCallRecord.list":
+      return deps.toolCallRecordRepo.listByMessage(params.messageId);
+    case "toolCallRecord.listByParent":
+      return deps.toolCallRecordRepo.listByParent(params.parentToolCallId);
+
+    // Snapshots
+    case "snapshot.getDiff": {
+      const snapshot = deps.turnSnapshotRepo.getById(params.snapshotId);
+      if (!snapshot) throw new Error(`Snapshot not found: ${params.snapshotId}`);
+      let snapshotCwd: string;
+      if (snapshot.worktree_path) {
+        snapshotCwd = snapshot.worktree_path;
+      } else {
+        const snapshotThread = deps.threadService.findById(snapshot.thread_id);
+        if (!snapshotThread) throw new Error(`Thread not found for snapshot: ${snapshot.thread_id}`);
+        const ws = deps.workspaceService.findById(snapshotThread.workspace_id);
+        if (!ws) throw new Error(`Workspace not found: ${snapshotThread.workspace_id}`);
+        snapshotCwd = deps.gitService.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
+      }
+      return await deps.snapshotService.getDiff(snapshotCwd, snapshot.ref_before, snapshot.ref_after, params.filePath, params.maxLines);
+    }
+    case "snapshot.cleanup":
+      return { removed: deps.turnSnapshotRepo.deleteExpired(
+        parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10),
+      ) };
 
     // App
     case "app.version":

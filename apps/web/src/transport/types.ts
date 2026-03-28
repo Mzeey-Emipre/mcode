@@ -10,6 +10,7 @@ import type {
   PrDetail,
   SkillInfo,
   PermissionMode,
+  ToolCallRecord,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -28,6 +29,8 @@ export type {
   InteractionMode,
 } from "@mcode/contracts";
 
+export type { ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
+
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
 /** In-progress tool call tracked by the frontend streaming layer. */
@@ -38,6 +41,8 @@ export interface ToolCall {
   output: string | null;
   isError: boolean;
   isComplete: boolean;
+  /** ID of the parent Agent tool call, if this is a subagent child. */
+  parentToolCallId?: string;
 }
 
 /** Transport interface consumed by the web app to communicate with the backend. */
@@ -124,4 +129,16 @@ export interface McodeTransport {
   terminalKill(ptyId: string): Promise<void>;
   /** Kill all PTYs attached to a thread. */
   terminalKillByThread(threadId: string): Promise<void>;
+
+  // Tool call records
+  /** Fetch persisted tool call records for a message. */
+  listToolCallRecords(messageId: string): Promise<ToolCallRecord[]>;
+  /** Fetch child tool call records for a parent tool call. */
+  listToolCallRecordsByParent(parentToolCallId: string): Promise<ToolCallRecord[]>;
+
+  // Snapshots
+  /** Get a unified diff for a specific file from a turn snapshot. */
+  getSnapshotDiff(snapshotId: string, filePath?: string, maxLines?: number): Promise<string>;
+  /** Run garbage collection on expired snapshot refs. */
+  cleanupSnapshots(): Promise<{ removed: number }>;
 }
