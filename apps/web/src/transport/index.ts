@@ -1,5 +1,6 @@
 import type { McodeTransport } from "./types";
 import { createWsTransport } from "./ws-transport";
+import { useConnectionStore } from "@/stores/connectionStore";
 
 export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo, PrDetail, ToolCallRecord } from "./types";
 export { PERMISSION_MODES, INTERACTION_MODES } from "./types";
@@ -8,7 +9,10 @@ export { pushEmitter } from "./ws-transport";
 /** Default server URL when running standalone (no Electron shell). */
 const DEFAULT_SERVER_URL = "ws://localhost:19400";
 
-let transport: (McodeTransport & { close(): void }) | null = null;
+/** How long to wait for the WebSocket to connect before giving up. */
+const CONNECT_TIMEOUT_MS = 5000;
+
+let transport: (McodeTransport & { close(): void; waitForConnection(timeoutMs: number): Promise<void> }) | null = null;
 
 /**
  * Resolve the WebSocket server URL.
@@ -43,8 +47,18 @@ export async function initTransport(): Promise<McodeTransport> {
   if (transport) return transport;
   if (initPromise) return initPromise;
 
-  initPromise = resolveServerUrl().then((url) => {
-    transport = createWsTransport(url);
+  initPromise = resolveServerUrl().then(async (url) => {
+    transport = createWsTransport(url, {
+      onStatusChange: (status) => useConnectionStore.getState().setStatus(status),
+    });
+    try {
+      await transport.waitForConnection(CONNECT_TIMEOUT_MS);
+    } catch (err) {
+      transport.close();
+      transport = null;
+      initPromise = null;
+      throw err;
+    }
     return transport;
   });
 

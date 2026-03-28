@@ -12,7 +12,7 @@
     "postinstall": "node scripts/postinstall.mjs",
     "dev": "turbo run dev",
     "dev:desktop": "cd apps/desktop && bun run dev",
-    "dev:web": "cd apps/web && bun run dev",
+    "dev:web": "node scripts/dev-web.mjs",
     "dev:server": "cd apps/server && bun run start",
     "prod:desktop": "cd apps/desktop && bun run prod",
     "build": "turbo run build",

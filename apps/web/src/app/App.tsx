@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatView } from "@/components/chat/ChatView";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { TerminalPanel } from "@/components/terminal";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -68,13 +69,16 @@ export function App() {
   }, [theme]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <Sidebar />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <main className="flex-1 overflow-hidden">
-          <ChatView />
-        </main>
-        <TerminalPanel />
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      <ConnectionBanner />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar />
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <main className="flex-1 overflow-hidden">
+            <ChatView />
+          </main>
+          <TerminalPanel />
+        </div>
       </div>
     </div>
   );
