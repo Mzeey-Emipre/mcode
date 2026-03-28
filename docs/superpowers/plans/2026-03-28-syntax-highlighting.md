@@ -381,8 +381,8 @@ interface HighlightResponse {
 }
 
 let sharedWorker: Worker | null = null;
-let workerGeneration = 0;
-const pending = new Map<string, (html: string | null) => void>();
+let listenerCount = 0;
+const pending = new Map<string, (html: string) => void>();
 
 /** Creates and configures a new Worker instance. */
 function createWorkerInstance(): Worker {
@@ -391,23 +391,17 @@ function createWorkerInstance(): Worker {
     { type: "module" },
   );
   worker.onmessage = (e: MessageEvent<HighlightResponse>) => {
-    const { id, html, error } = e.data;
-    if (error) {
-      console.warn("[shiki-worker]", error);
-    }
+    const { id, html } = e.data;
     const resolve = pending.get(id);
     if (resolve) {
       pending.delete(id);
-      resolve(error ? null : html);
+      resolve(html);
     }
   };
   worker.onerror = () => {
+    // Worker crashed: clear it so getWorker() recreates on next request
     sharedWorker = null;
-    workerGeneration++;
-    // Resolve all pending requests with null so hooks fall back to plain rendering
-    for (const resolve of pending.values()) {
-      resolve(null);
-    }
+    // Reject all pending requests so hooks fall back to plain rendering
     pending.clear();
   };
   return worker;
@@ -418,7 +412,17 @@ function getWorker(): Worker {
   if (!sharedWorker) {
     sharedWorker = createWorkerInstance();
   }
+  listenerCount++;
   return sharedWorker;
+}
+
+/** Decrements listener count; terminates Worker when no components use it. */
+function releaseWorker(): void {
+  listenerCount--;
+  if (listenerCount === 0 && sharedWorker) {
+    sharedWorker.terminate();
+    sharedWorker = null;
+  }
 }
 
 let nextId = 0;
@@ -621,27 +625,16 @@ interface CodeBlockProps {
  */
 export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }: CodeBlockProps) {
   const theme = useShikiTheme();
-  // Hook is always called unconditionally (rules of hooks); `enabled` suppresses the Worker request.
-  const { html } = useHighlighter(code, language || "text", theme, !isStreaming);
+  const { html } = isStreaming
+    ? { html: null }
+    : useHighlighter(code, language || "text", theme);
 
   const [copied, setCopied] = useState(false);
-  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
-    };
-  }, []);
 
   const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
-      copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard write can fail in insecure contexts
-    }
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }, [code]);
 
   const isReady = html !== null;
