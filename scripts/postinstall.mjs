@@ -38,15 +38,29 @@ const nativeBinary = resolve(
 );
 
 /**
+ * Resolve the path to the actual Electron binary from the project's
+ * node_modules. Using `npx electron` is unreliable because it can resolve
+ * to a globally cached Electron version with a different ABI.
+ */
+function getElectronBinary() {
+  const desktopRequire = createRequire(
+    resolve(desktopDir, "package.json"),
+  );
+  return desktopRequire("electron");
+}
+
+/**
  * Query the actual NODE_MODULE_VERSION from the installed Electron binary.
  *
  * ELECTRON_RUN_AS_NODE=1 makes Electron behave as plain Node, so
  * process.versions.modules reflects the real ABI it loads native addons with.
- * npx resolves the binary cross-platform (avoids EFTYPE on Windows Git Bash).
+ * We invoke the project's Electron binary directly (not via npx) to ensure
+ * we get the correct ABI for the installed version.
  */
 function getElectronABI() {
+  const electronBin = getElectronBinary();
   const abi = execSync(
-    'npx electron -e "process.stdout.write(process.versions.modules);process.exit(0)"',
+    `"${electronBin}" -e "process.stdout.write(process.versions.modules);process.exit(0)"`,
     {
       encoding: "utf-8",
       timeout: 30_000,
