@@ -4,8 +4,36 @@
  */
 
 import Database from "better-sqlite3";
-import { join } from "path";
+import { existsSync } from "fs";
+import { createRequire } from "module";
+import { dirname, join } from "path";
 import { getMcodeDir } from "@mcode/shared";
+
+/**
+ * Resolve the correct native binding for better-sqlite3 based on runtime.
+ *
+ * When running under Electron, returns the path to the Electron-specific
+ * prebuild (`better_sqlite3.electron.node`). Under plain Node.js (e.g.
+ * vitest), returns `undefined` so better-sqlite3 falls back to its default
+ * `bindings` resolution (the Node.js prebuild).
+ */
+function resolveNativeBinding(): string | undefined {
+  if (!process.versions.electron) return undefined;
+
+  const localRequire = createRequire(import.meta.url);
+  const betterSqliteDir = dirname(
+    localRequire.resolve("better-sqlite3/package.json"),
+  );
+  const bindingPath = join(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node");
+
+  if (!existsSync(bindingPath)) {
+    throw new Error(
+      `Electron prebuild not found at ${bindingPath}. Run 'bun install' to download it.`,
+    );
+  }
+
+  return bindingPath;
+}
 
 const V001_SCHEMA = `
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -62,7 +90,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_sequence ON messages(thread_id, sequence
 export function openDatabase(dbPath?: string): Database.Database {
   const resolvedPath =
     dbPath ?? process.env.MCODE_DB_PATH ?? join(getMcodeDir(), "mcode.db");
-  const db = new Database(resolvedPath);
+  const nativeBinding = resolveNativeBinding();
+  const db = new Database(resolvedPath, { nativeBinding });
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   runMigrations(db);
@@ -74,7 +103,8 @@ export function openDatabase(dbPath?: string): Database.Database {
  * migrations as a file-backed database.
  */
 export function openMemoryDatabase(): Database.Database {
-  const db = new Database(":memory:");
+  const nativeBinding = resolveNativeBinding();
+  const db = new Database(":memory:", { nativeBinding });
   db.pragma("foreign_keys = ON");
   runMigrations(db);
   return db;
