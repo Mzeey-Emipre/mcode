@@ -18,13 +18,17 @@ export class SnapshotService {
    * Returns the SHA of the stash commit, or HEAD if the tree is clean.
    */
   async captureRef(cwd: string): Promise<string> {
-    const { stdout: stashOut } = await execFile(
-      "git",
-      ["-C", cwd, "stash", "create", "-u"],
-      { timeout: 10_000 },
-    );
-
-    const stashSha = stashOut.trim();
+    let stashSha = "";
+    try {
+      const { stdout: stashOut } = await execFile(
+        "git",
+        ["-C", cwd, "stash", "create", "-u"],
+        { timeout: 10_000 },
+      );
+      stashSha = stashOut.trim();
+    } catch {
+      // stash create can fail in bare repos or with corrupt index
+    }
     if (stashSha) {
       return stashSha;
     }

@@ -146,7 +146,7 @@ function spawnElectron() {
   // launched from terminals running inside Electron-based apps (e.g. Claude
   // Code, VS Code), this flag is inherited and forces Electron to run as
   // plain Node.js, making the `electron` module API unavailable.
-  const desktopRequire = createRequire(resolve(projectRoot, "apps/desktop/package.json"));
+  const desktopRequire = createRequire(resolve(projectRoot, "package.json"));
   const electronBin = desktopRequire("electron");
   const electronEnv = { ...process.env, ELECTRON_RENDERER_URL: devServerUrl };
   delete electronEnv.ELECTRON_RUN_AS_NODE;

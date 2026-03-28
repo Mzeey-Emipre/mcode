@@ -64,7 +64,7 @@ export function DiffViewer({ snapshotId, filePath, changeType = "modified" }: Di
   }, [snapshotId, filePath]);
 
   const lines = useMemo(() => (diff ? parseDiffLines(diff) : []), [diff]);
-  const truncated = !showAll && lines.length >= MAX_LINES;
+  const truncated = !showAll && lines.length > MAX_LINES;
   const visibleLines = truncated ? lines.slice(0, MAX_LINES) : lines;
 
   const changeLabel = {

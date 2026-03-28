@@ -122,6 +122,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           toolCallsByThread: nextToolCalls,
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
+          toolCallRecordCache: {},
         };
       });
     } else {
@@ -584,11 +585,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
       // The server's messageId may differ from the client's in-memory UUID
       // (client generates its own via crypto.randomUUID()). Match by finding
-      // the last assistant message for this thread instead.
-      const lastAssistantMsg = [...state.messages]
-        .reverse()
-        .find((m) => m.thread_id === payload.threadId && m.role === "assistant");
-      const localMsgId = lastAssistantMsg?.id ?? payload.messageId;
+      // the last assistant message, but only if messages belong to this thread.
+      let localMsgId = payload.messageId;
+      if (state.currentThreadId === payload.threadId) {
+        const lastAssistantMsg = [...state.messages]
+          .reverse()
+          .find((m) => m.role === "assistant");
+        if (lastAssistantMsg) localMsgId = lastAssistantMsg.id;
+      }
 
       return {
         toolCallsByThread: nextToolCalls,

@@ -30,6 +30,15 @@ export interface CreateTurnSnapshotInput {
   worktreePath: string | null;
 }
 
+/** Safely parse a JSON string array, returning [] on corrupt data. */
+function safeParseArray(json: string): string[] {
+  try {
+    return JSON.parse(json) as string[];
+  } catch {
+    return [];
+  }
+}
+
 function rowToTurnSnapshot(row: TurnSnapshotRow): TurnSnapshot {
   return {
     id: row.id,
@@ -37,7 +46,7 @@ function rowToTurnSnapshot(row: TurnSnapshotRow): TurnSnapshot {
     thread_id: row.thread_id,
     ref_before: row.ref_before,
     ref_after: row.ref_after,
-    files_changed: JSON.parse(row.files_changed) as string[],
+    files_changed: safeParseArray(row.files_changed),
     worktree_path: row.worktree_path,
     created_at: row.created_at,
   };

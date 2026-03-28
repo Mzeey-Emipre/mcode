@@ -433,6 +433,12 @@ export class AgentService {
 
       const messages = this.messageRepo.listByThread(threadId, 1);
       if (messages.length === 0) {
+        if (buffer.length > 0) {
+          logger.warn("Discarding buffered tool calls: no messages found", {
+            threadId,
+            toolCallCount: buffer.length,
+          });
+        }
         this.clearTurnState(threadId);
         return;
       }

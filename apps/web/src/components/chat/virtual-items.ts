@@ -1,7 +1,7 @@
 import type { Message, ToolCall } from "@/transport/types";
 
 /** Compile-time exhaustive check; throws at runtime for unhandled discriminants. */
-function assertNever(value: never): number {
+function assertNever(value: never): never {
   throw new Error(`Unhandled item type: ${(value as { type: string }).type}`);
 }
 

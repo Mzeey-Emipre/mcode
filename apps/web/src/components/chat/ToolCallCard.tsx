@@ -7,10 +7,15 @@ import { TOOL_LABELS, TOOL_ICONS, DEFAULT_ICON } from "./tool-renderers/constant
 const SLOW_SPIN_STYLE = { animationDuration: "2s" } as const;
 
 /** Props for the ToolCallCard component that renders grouped tool call rows. */
+/** Maximum nesting depth for recursive ToolCallCard rendering. */
+const MAX_DEPTH = 10;
+
 interface ToolCallCardProps {
   toolCalls: readonly ToolCall[];
   /** When true, the last tool call renders with active/running styling. Defaults to true. */
   isLive?: boolean;
+  /** @internal Recursion depth counter for nested subagent rendering. */
+  _depth?: number;
 }
 
 interface ToolCallGroup {
@@ -92,10 +97,12 @@ function LiveAgentGroup({
   agentCall,
   children,
   isActive,
+  depth,
 }: {
   agentCall: ToolCall;
   children: readonly ToolCall[];
   isActive: boolean;
+  depth: number;
 }) {
   const [expanded, setExpanded] = useState(true);
   const rawDesc = agentCall.toolInput.description;
@@ -145,7 +152,7 @@ function LiveAgentGroup({
 
       {expanded && hasChildren && (
         <div className="pl-4">
-          <ToolCallCard toolCalls={children} isLive={isActive || hasActiveChild} />
+          <ToolCallCard toolCalls={children} isLive={isActive || hasActiveChild} _depth={depth + 1} />
         </div>
       )}
     </div>
@@ -154,8 +161,8 @@ function LiveAgentGroup({
 
 /** Renders tool calls as compact log lines with left-accent gutters.
  *  When all calls are complete, collapses into a summary view in-place. */
-export function ToolCallCard({ toolCalls, isLive = true }: ToolCallCardProps) {
-  if (toolCalls.length === 0) return null;
+export function ToolCallCard({ toolCalls, isLive = true, _depth = 0 }: ToolCallCardProps) {
+  if (toolCalls.length === 0 || _depth > MAX_DEPTH) return null;
 
   // Build render items: Agent calls become LiveAgentGroup, others group consecutively.
   // Memoized to avoid recalculating grouping on every render.
@@ -219,6 +226,7 @@ export function ToolCallCard({ toolCalls, isLive = true }: ToolCallCardProps) {
               agentCall={item.call}
               children={item.children}
               isActive={isLast && !item.call.isComplete}
+              depth={_depth}
             />
           );
         }
