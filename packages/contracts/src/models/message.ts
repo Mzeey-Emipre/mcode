@@ -15,6 +15,7 @@ export const MessageSchema = z.object({
   timestamp: z.string(),
   sequence: z.number(),
   attachments: z.array(StoredAttachmentSchema).nullable(),
+  tool_call_count: z.number().optional(),
 });
 /** Message record from the database. */
 export type Message = z.infer<typeof MessageSchema>;

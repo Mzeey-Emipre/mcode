@@ -31,6 +31,18 @@ export type { Thread } from "./models/thread.js";
 export { MessageSchema } from "./models/message.js";
 export type { Message } from "./models/message.js";
 
+export {
+  ToolCallRecordSchema,
+  ToolCallStatusSchema,
+} from "./models/tool-call-record.js";
+export type {
+  ToolCallRecord,
+  ToolCallStatus,
+} from "./models/tool-call-record.js";
+
+export { TurnSnapshotSchema } from "./models/turn-snapshot.js";
+export type { TurnSnapshot } from "./models/turn-snapshot.js";
+
 // Events
 export { AgentEventSchema } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";

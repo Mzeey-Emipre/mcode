@@ -4,6 +4,7 @@ import { ThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema } from "../models/enums.js";
 import { MessageSchema } from "../models/message.js";
 import { AttachmentMetaSchema } from "../models/attachment.js";
+import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { GitBranchSchema, WorktreeSchema } from "../git.js";
 import { PrInfoSchema, PrDetailSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
@@ -180,6 +181,26 @@ export const WS_METHODS = {
   "app.version": {
     params: z.object({}),
     result: z.string(),
+  },
+  "toolCallRecord.list": {
+    params: z.object({ messageId: z.string() }),
+    result: z.array(ToolCallRecordSchema),
+  },
+  "toolCallRecord.listByParent": {
+    params: z.object({ parentToolCallId: z.string() }),
+    result: z.array(ToolCallRecordSchema),
+  },
+  "snapshot.getDiff": {
+    params: z.object({
+      snapshotId: z.string(),
+      filePath: z.string().optional(),
+      maxLines: z.number().int().positive().optional(),
+    }),
+    result: z.string(),
+  },
+  "snapshot.cleanup": {
+    params: z.object({}),
+    result: z.object({ removed: z.number() }),
   },
 } as const;
 
