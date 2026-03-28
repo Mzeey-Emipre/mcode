@@ -38,6 +38,7 @@ import { PrDetectedCard } from "./PrDetectedCard";
 import type { PrDetail } from "@/transport/types";
 import { QueuePopover } from "./QueuePopover";
 import { useQueueStore } from "@/stores/queueStore";
+import { useComposerDraftStore, type ReasoningLevel } from "@/stores/composerDraftStore";
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const SUPPORTED_FILE_TYPES = new Set(["application/pdf", "text/plain"]);
@@ -54,7 +55,6 @@ interface ComposerProps {
 }
 
 type AccessMode = PermissionMode;
-type ReasoningLevel = "low" | "medium" | "high";
 
 /**
  * Main message composer with model/mode selectors and branch controls.
@@ -83,6 +83,92 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const editorRef = useRef<LexicalEditor | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
+
+  const prevThreadIdRef = useRef<string | undefined>(threadId);
+  const draftRef = useRef({ input, attachments, modelId, reasoning });
+
+  // Keep draft ref in sync so the thread-switch effect reads current values
+  useEffect(() => {
+    draftRef.current = { input, attachments, modelId, reasoning };
+  });
+
+  const saveDraft = useComposerDraftStore((s) => s.saveDraft);
+  const getDraft = useComposerDraftStore((s) => s.getDraft);
+  const clearDraftFromStore = useComposerDraftStore((s) => s.clearDraft);
+
+  // Save draft for previous thread, restore draft for new thread
+  useEffect(() => {
+    const prev = prevThreadIdRef.current;
+
+    // Save current draft for the thread we're leaving (but not if the thread was deleted)
+    if (prev && prev !== threadId) {
+      const threadStillExists = useWorkspaceStore.getState().threads.some((t) => t.id === prev);
+      if (threadStillExists) {
+        saveDraft(prev, draftRef.current);
+      } else {
+        // Thread was deleted; revoke any attachment blob URLs from the outgoing draft
+        for (const att of draftRef.current.attachments) {
+          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+        }
+      }
+    }
+
+    // Restore draft for the thread we're entering
+    if (threadId) {
+      const saved = getDraft(threadId);
+      if (saved) {
+        setInput(saved.input);
+        setAttachments(saved.attachments);
+        setModelId(saved.modelId);
+        setReasoning(saved.reasoning);
+        // Restore Lexical editor content
+        if (editorRef.current) {
+          const editor = editorRef.current;
+          editor.update(() => {
+            const root = $getRoot();
+            root.clear();
+            if (saved.input) {
+              const para = $createParagraphNode();
+              para.append($createTextNode(saved.input));
+              root.append(para);
+            } else {
+              root.append($createParagraphNode());
+            }
+          });
+        }
+      } else {
+        // No saved draft: reset to defaults
+        setInput("");
+        setAttachments([]);
+        setModelId(getDefaultModel().id);
+        setReasoning("high");
+        // Reset Lexical editor
+        if (editorRef.current) {
+          editorRef.current.update(() => {
+            const root = $getRoot();
+            root.clear();
+            root.append($createParagraphNode());
+          });
+        }
+      }
+    } else {
+      // Entering "new thread" mode: ensure clean slate
+      setInput("");
+      setAttachments([]);
+      setModelId(getDefaultModel().id);
+      setReasoning("high");
+      if (editorRef.current) {
+        editorRef.current.update(() => {
+          const root = $getRoot();
+          root.clear();
+          root.append($createParagraphNode());
+        });
+      }
+    }
+
+    prevThreadIdRef.current = threadId;
+  }, [threadId]); // saveDraft/getDraft are stable store refs; setters are stable useState refs
+  // Intentionally exclude saveDraft/getDraft (stable store refs) and setters (stable useState refs)
 
   const fileAutocomplete = useFileAutocomplete({
     workspaceId,
@@ -506,6 +592,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       });
 
       setInput("");
+      if (threadId) clearDraftFromStore(threadId);
       if (editorRef.current) {
         editorRef.current.update(() => {
           const root = $getRoot();
@@ -552,6 +639,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     setDetectedPr(null);
     setPrDismissed(false);
     const currentAttachments = collectAndClearAttachments();
+    if (threadId) clearDraftFromStore(threadId);
 
     if (isNewThread && workspaceId) {
       if (newThreadMode === "worktree" || newThreadMode === "existing-worktree") {
@@ -566,7 +654,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent);
     }
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
 
   const handleEditorChange = useCallback((text: string) => {
     setInput(text);
