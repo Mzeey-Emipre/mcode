@@ -47,6 +47,19 @@ const MAX_PDF_SIZE = 32 * 1024 * 1024;
 const MAX_TEXT_SIZE = 1 * 1024 * 1024;
 const MAX_ATTACHMENTS = 5;
 
+/** Convert a Blob to a base64 string using the native FileReader API. */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
 interface ComposerProps {
   threadId?: string;
   isNewThread?: boolean;
@@ -348,50 +361,49 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     const files = Array.from(e.clipboardData.files);
-    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    const supported = files.filter((f) => ALL_SUPPORTED_TYPES.has(f.type));
+    if (supported.length === 0) return;
 
-    if (imageFiles.length > 0) {
-      e.preventDefault();
-      const bridge = window.desktopBridge;
-      if (bridge?.getPathForFile) {
-        // getPathForFile returns "" for clipboard blobs (no real file on disk).
-        // Use || to treat empty strings as null, falling through to readClipboardImage.
-        const paths = imageFiles.map((f) => {
-          try { return bridge.getPathForFile(f) || null; } catch { return null; }
-        });
-        const hasRealPaths = paths.some((p) => p !== null);
-        if (hasRealPaths) {
-          addFiles(imageFiles, paths);
-        } else {
-          // Clipboard images have no file path; use desktop bridge clipboard reader
-          try {
-            const meta = await bridge.readClipboardImage();
-            if (meta) {
-              setAttachments((prev) => {
-                if (prev.length >= MAX_ATTACHMENTS) return prev;
-                const previewUrl = imageFiles[0] ? URL.createObjectURL(imageFiles[0]) : "";
-                return [...prev, {
-                  id: meta.id,
-                  name: meta.name,
-                  mimeType: meta.mimeType,
-                  sizeBytes: meta.sizeBytes,
-                  previewUrl,
-                  filePath: meta.sourcePath,
-                }];
-              });
-            }
-          } catch {
-            addFiles(imageFiles);
-          }
-        }
+    e.preventDefault();
+
+    const bridge = window.desktopBridge;
+
+    // Attempt to resolve real file paths for all supported files
+    const paths = supported.map((f) => {
+      try { return bridge?.getPathForFile?.(f) || null; } catch { return null; }
+    });
+
+    // Partition into files with and without real paths
+    const withPaths: File[] = [];
+    const withPathPaths: (string | null)[] = [];
+    const withoutPaths: File[] = [];
+
+    for (let i = 0; i < supported.length; i++) {
+      if (paths[i]) {
+        withPaths.push(supported[i]);
+        withPathPaths.push(paths[i]);
       } else {
-        // No desktop bridge available; attempt clipboard image read via transport
+        withoutPaths.push(supported[i]);
+      }
+    }
+
+    // Files with real paths go straight to addFiles
+    if (withPaths.length > 0) {
+      addFiles(withPaths, withPathPaths);
+    }
+
+    // Files without paths need fallback handling
+    for (const file of withoutPaths) {
+      if (file.type.startsWith("image/")) {
+        // Images: use existing clipboard image reader
         try {
-          const meta = await getTransport().readClipboardImage();
+          const meta = bridge?.readClipboardImage
+            ? await bridge.readClipboardImage()
+            : await getTransport().readClipboardImage();
           if (meta) {
             setAttachments((prev) => {
               if (prev.length >= MAX_ATTACHMENTS) return prev;
-              const previewUrl = imageFiles[0] ? URL.createObjectURL(imageFiles[0]) : "";
+              const previewUrl = URL.createObjectURL(file);
               return [...prev, {
                 id: meta.id,
                 name: meta.name,
@@ -403,7 +415,41 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             });
           }
         } catch {
-          addFiles(imageFiles);
+          addFiles([file]);
+        }
+      } else {
+        // Non-images (PDF, text): read blob and save via bridge or transport
+        if (file.size > getMaxSize(file.type)) continue;
+        try {
+          let meta: AttachmentMeta | null = null;
+          if (bridge?.saveClipboardFile) {
+            const arrayBuffer = await file.arrayBuffer();
+            meta = await bridge.saveClipboardFile(
+              new Uint8Array(arrayBuffer),
+              file.type,
+              file.name,
+            );
+          } else {
+            // Encode as base64 using native FileReader (async, no UI blocking)
+            const base64 = await blobToBase64(file);
+            meta = await getTransport().saveClipboardFile(base64, file.type, file.name);
+          }
+          if (meta) {
+            const resolved = meta;
+            setAttachments((prev) => {
+              if (prev.length >= MAX_ATTACHMENTS) return prev;
+              return [...prev, {
+                id: resolved.id,
+                name: resolved.name,
+                mimeType: resolved.mimeType,
+                sizeBytes: resolved.sizeBytes,
+                previewUrl: "",
+                filePath: resolved.sourcePath,
+              }];
+            });
+          }
+        } catch {
+          addFiles([file]);
         }
       }
     }
