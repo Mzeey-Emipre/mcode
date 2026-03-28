@@ -155,6 +155,31 @@ describe("Workspace Behavior", () => {
     expect(state.loading).toBe(false);
   });
 
+  it("when deleteWorkspace RPC fails, workspace and threads remain in state", async () => {
+    const ws = createMockWorkspace();
+    const thread = createMockThread({ workspace_id: ws.id });
+
+    useWorkspaceStore.setState({
+      workspaces: [ws],
+      activeWorkspaceId: ws.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+    });
+
+    (
+      mockTransport.deleteWorkspace as ReturnType<typeof vi.fn>
+    ).mockRejectedValueOnce(new Error("server error"));
+
+    await expect(
+      useWorkspaceStore.getState().deleteWorkspace(ws.id),
+    ).rejects.toThrow("server error");
+
+    const state = useWorkspaceStore.getState();
+    expect(state.workspaces).toHaveLength(1);
+    expect(state.threads).toHaveLength(1);
+    expect(state.error).toContain("server error");
+  });
+
   it("when the user deletes a thread, it is removed and active selection clears if it was active", async () => {
     const ws = createMockWorkspace();
     const thread1 = createMockThread({
