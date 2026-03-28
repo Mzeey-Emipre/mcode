@@ -5,6 +5,7 @@ import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { HeaderActions } from "./HeaderActions";
 
+/** Renders the main chat UI for sending and receiving messages within a thread. */
 export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -33,7 +34,7 @@ export function ChatView() {
     return (
       <div className="flex h-full flex-col bg-background">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-4 py-2">
+        <div className="flex h-11 items-center justify-between border-b border-border px-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">New thread</span>
             {activeWorkspaceId && (
@@ -78,7 +79,7 @@ export function ChatView() {
   return (
     <div className="flex h-full flex-col bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-2">
+      <div className="flex h-11 items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{activeThread.title}</span>
           <span className="rounded bg-accent px-2 py-0.5 text-xs font-medium text-foreground">
