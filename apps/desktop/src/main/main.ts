@@ -21,6 +21,7 @@ import { isAbsolute, join } from "path";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import { getLogPath, getRecentLogs } from "@mcode/shared";
+import { getExtension } from "@mcode/contracts";
 import { ServerManager } from "./server-manager.js";
 
 // ---------------------------------------------------------------------------
@@ -300,12 +301,11 @@ function registerIpcHandlers(): void {
     "save-clipboard-file",
     async (_event, buffer: Uint8Array, mimeType: string, fileName: string) => {
       const id = randomUUID();
-      const ext = mimeType === "application/pdf" ? ".pdf"
-        : mimeType === "text/plain" ? ".txt"
-        : "";
+      const ext = getExtension(fileName);
+      const suffix = ext ? `.${ext}` : "";
       const tempDir = join(app.getPath("temp"), "mcode-attachments");
       await mkdir(tempDir, { recursive: true });
-      const tempPath = join(tempDir, `${id}${ext}`);
+      const tempPath = join(tempDir, `${id}${suffix}`);
       await writeFile(tempPath, Buffer.from(buffer));
       return {
         id,

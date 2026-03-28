@@ -206,8 +206,8 @@ export const WS_METHODS = {
     params: z.object({
       /** Base64-encoded file content (1 byte to ~45 MB). */
       data: z.string().min(1).max(45_000_000),
-      /** MIME type of the file. Only PDF and plain text are accepted via this RPC. */
-      mimeType: z.enum(["application/pdf", "text/plain"]),
+      /** MIME type of the file (e.g. "application/pdf", "text/plain"). */
+      mimeType: z.string().min(1).max(127),
       /** Display name for the file (e.g. "document.pdf"). No path separators allowed. */
       fileName: z
         .string()

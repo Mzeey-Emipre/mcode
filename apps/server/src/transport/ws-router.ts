@@ -15,6 +15,7 @@ import {
   type WebSocketRequest,
   type WebSocketResponse,
   type WsMethodName,
+  getExtension,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import type { WorkspaceService } from "../services/workspace-service";
@@ -307,12 +308,11 @@ async function dispatch(
     case "clipboard.saveFile": {
       const buffer = Buffer.from(params.data, "base64");
       const id = randomUUID();
-      const ext = params.mimeType === "application/pdf" ? ".pdf"
-        : params.mimeType === "text/plain" ? ".txt"
-        : "";
+      const ext = getExtension(params.fileName);
+      const suffix = ext ? `.${ext}` : "";
       const tempDir = join(tmpdir(), "mcode-attachments");
       await mkdir(tempDir, { recursive: true });
-      const tempPath = join(tempDir, `${id}${ext}`);
+      const tempPath = join(tempDir, `${id}${suffix}`);
       await writeFile(tempPath, buffer);
       return {
         id,
