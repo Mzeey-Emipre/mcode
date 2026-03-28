@@ -13,7 +13,6 @@
     "dev": "turbo run dev",
     "dev:desktop": "cd apps/desktop && bun run dev",
     "dev:web": "node scripts/dev-web.mjs",
-    "dev:web:only": "cd apps/web && bun run dev",
     "dev:server": "cd apps/server && bun run start",
     "prod:desktop": "cd apps/desktop && bun run prod",
     "build": "turbo run build",
