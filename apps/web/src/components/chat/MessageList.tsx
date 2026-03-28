@@ -1,4 +1,5 @@
-import { useRef, useEffect, useMemo, useCallback } from "react";
+import { useRef, useEffect, useMemo, useCallback, memo } from "react";
+import { useShallow } from "zustand/shallow";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
@@ -6,7 +7,10 @@ import { MessageBubble } from "./MessageBubble";
 import { ToolCallCard } from "./ToolCallCard";
 import { StreamingIndicator } from "./StreamingIndicator";
 import { StreamingBubble } from "./StreamingBubble";
+import { ToolCallSummary } from "./ToolCallSummary";
 import {
+  buildStableItems,
+  buildVolatileItems,
   buildVirtualItems,
   estimateItemHeight,
 } from "./virtual-items";
@@ -18,18 +22,13 @@ const AUTO_SCROLL_THRESHOLD = 64;
 const OVERSCAN = 8;
 const DEFAULT_ITEM_HEIGHT = 80;
 
-function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
+/** Renders a single virtual item based on its type discriminant. */
+const VirtualItemRenderer = memo(function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
   switch (item.type) {
     case "message":
       return <MessageBubble message={item.message} />;
     case "active-tools":
       return <ToolCallCard toolCalls={item.toolCalls} />;
-    case "fading-tools":
-      return (
-        <div className="animate-fade-out">
-          <ToolCallCard toolCalls={item.toolCalls} />
-        </div>
-      );
     case "streaming":
       return <StreamingBubble content={item.content} />;
     case "indicator":
@@ -39,9 +38,17 @@ function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
           activeToolCalls={item.activeToolCalls}
         />
       );
+    case "tool-summary":
+      return (
+        <ToolCallSummary
+          messageId={item.serverMessageId}
+          toolCallCount={item.toolCallCount}
+        />
+      );
   }
-}
+}, (prev, next) => prev.item.key === next.item.key && prev.item === next.item);
 
+/** Virtualized list of chat messages, tool calls, and streaming indicators. */
 export function MessageList() {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -49,44 +56,40 @@ export function MessageList() {
 
   const messages = useThreadStore((s) => s.messages);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
-  const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
-  const agentStartTimes = useThreadStore((s) => s.agentStartTimes);
+  const isAgentRunning = useThreadStore((s) =>
+    activeThreadId ? s.runningThreadIds.has(activeThreadId) : false,
+  );
+  const agentStartTime = useThreadStore((s) =>
+    activeThreadId ? s.agentStartTimes[activeThreadId] : undefined,
+  );
   const streamingText = useThreadStore((s) =>
     activeThreadId ? s.streamingByThread[activeThreadId] : undefined,
   );
   const toolCallsRaw = useThreadStore((s) =>
     activeThreadId ? s.toolCallsByThread[activeThreadId] : undefined,
   );
-  const fadingToolCallsRaw = useThreadStore((s) =>
-    activeThreadId ? s.fadingToolCallsByThread[activeThreadId] : undefined,
+  const persistedToolCallCounts = useThreadStore(
+    useShallow((s) => s.persistedToolCallCounts),
+  );
+  const serverMessageIds = useThreadStore(
+    useShallow((s) => s.serverMessageIds),
   );
   const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
-  const fadingToolCalls = fadingToolCallsRaw ?? EMPTY_TOOL_CALLS;
-  const isAgentRunning = activeThreadId
-    ? runningThreadIds.has(activeThreadId)
-    : false;
-  const agentStartTime = activeThreadId
-    ? agentStartTimes[activeThreadId]
-    : undefined;
 
+  const stableItems = useMemo(
+    () => buildStableItems(messages, persistedToolCallCounts, serverMessageIds),
+    [messages, persistedToolCallCounts, serverMessageIds],
+  );
+
+  const volatileItems = useMemo(
+    () => buildVolatileItems(toolCalls, isAgentRunning, agentStartTime, streamingText),
+    [toolCalls, isAgentRunning, agentStartTime, streamingText],
+  );
+
+  const hasToolCalls = toolCalls.length > 0;
   const items = useMemo(
-    () =>
-      buildVirtualItems(
-        messages,
-        toolCalls,
-        fadingToolCalls,
-        streamingText,
-        isAgentRunning,
-        agentStartTime,
-      ),
-    [
-      messages,
-      toolCalls,
-      fadingToolCalls,
-      streamingText,
-      isAgentRunning,
-      agentStartTime,
-    ],
+    () => buildVirtualItems(stableItems, volatileItems, hasToolCalls),
+    [stableItems, volatileItems, hasToolCalls],
   );
 
   itemsLengthRef.current = items.length;
@@ -154,6 +157,12 @@ export function MessageList() {
       }
     };
   }, []);
+
+  // On thread switch, invalidate the virtualizer's cached sizes so
+  // stale heights from the previous thread don't cause overlap.
+  useEffect(() => {
+    virtualizer.measure();
+  }, [activeThreadId, virtualizer]);
 
   // Discrete events (new message, tool call) -> smooth scroll
   useEffect(() => {

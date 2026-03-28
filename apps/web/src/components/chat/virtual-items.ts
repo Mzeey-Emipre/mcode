@@ -1,76 +1,65 @@
 import type { Message, ToolCall } from "@/transport/types";
 
+/** Compile-time exhaustive check; throws at runtime for unhandled discriminants. */
+function assertNever(value: never): number {
+  throw new Error(`Unhandled item type: ${(value as { type: string }).type}`);
+}
+
 export type ChatVirtualItem =
   | { key: string; type: "message"; message: Message }
   | { key: string; type: "active-tools"; toolCalls: readonly ToolCall[] }
-  | { key: string; type: "fading-tools"; toolCalls: readonly ToolCall[] }
   | { key: string; type: "streaming"; content: string }
   | {
       key: string;
       type: "indicator";
       startTime: number | undefined;
       activeToolCalls: readonly ToolCall[];
-    };
+    }
+  | { key: string; type: "tool-summary"; messageId: string; serverMessageId: string; toolCallCount: number };
 
 /**
- * Flatten messages, tool calls, and streaming state into a linear array
- * of typed items suitable for virtualized rendering.
- *
- * Preserves the existing render order: messages before tool calls,
- * active/fading tool calls inserted before the last assistant message,
- * streaming bubble and indicator appended at the end.
+ * Build the stable segment: messages interleaved with persisted tool summaries.
+ * This only changes when messages or persistedToolCallCounts change (infrequent).
  */
-export function buildVirtualItems(
+export function buildStableItems(
   messages: readonly Message[],
-  toolCalls: readonly ToolCall[],
-  fadingToolCalls: readonly ToolCall[],
-  streamingText: string | undefined,
-  isAgentRunning: boolean,
-  agentStartTime: number | undefined,
+  persistedToolCallCounts?: Record<string, number>,
+  serverMessageIds?: Record<string, string>,
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
-  const hasActiveToolCalls = toolCalls.length > 0;
-  const hasFadingToolCalls = fadingToolCalls.length > 0;
-  const showToolCalls = hasActiveToolCalls || hasFadingToolCalls;
-
-  let beforeMessages: readonly Message[] = messages;
-  let lastAssistantMsg: Message | null = null;
-
-  if (showToolCalls && messages.length > 0) {
-    const lastIdx = messages.length - 1;
-    const last = messages[lastIdx];
-    if (last.role === "assistant") {
-      beforeMessages = messages.slice(0, lastIdx);
-      lastAssistantMsg = last;
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role === "assistant") {
+      const count = persistedToolCallCounts?.[msg.id];
+      if (count && count > 0) {
+        items.push({
+          key: `tool-summary-${msg.id}`,
+          type: "tool-summary",
+          messageId: msg.id,
+          serverMessageId: serverMessageIds?.[msg.id] ?? msg.id,
+          toolCallCount: count,
+        });
+      }
     }
-  }
-
-  for (const msg of beforeMessages) {
     items.push({ key: msg.id, type: "message", message: msg });
   }
+  return items;
+}
 
-  if (hasActiveToolCalls) {
-    items.push({
-      key: "active-tools",
-      type: "active-tools",
-      toolCalls,
-    });
-  }
+/**
+ * Build the volatile segment: active tool calls, streaming text, and indicator.
+ * This changes on every tool call event but doesn't depend on messages.
+ */
+export function buildVolatileItems(
+  toolCalls: readonly ToolCall[],
+  isAgentRunning: boolean,
+  agentStartTime: number | undefined,
+  streamingText: string | undefined,
+): ChatVirtualItem[] {
+  const items: ChatVirtualItem[] = [];
 
-  if (hasFadingToolCalls && !hasActiveToolCalls) {
-    items.push({
-      key: "fading-tools",
-      type: "fading-tools",
-      toolCalls: fadingToolCalls,
-    });
-  }
-
-  if (lastAssistantMsg) {
-    items.push({
-      key: lastAssistantMsg.id,
-      type: "message",
-      message: lastAssistantMsg,
-    });
+  if (toolCalls.length > 0) {
+    items.push({ key: "active-tools", type: "active-tools", toolCalls });
   }
 
   if (streamingText) {
@@ -78,19 +67,129 @@ export function buildVirtualItems(
   }
 
   if (isAgentRunning && !streamingText) {
+    const activeOnly = toolCalls.filter((tc) => !tc.isComplete);
     items.push({
       key: "indicator",
       type: "indicator",
       startTime: agentStartTime,
-      activeToolCalls: toolCalls,
+      activeToolCalls: activeOnly,
     });
   }
 
   return items;
 }
 
+/**
+ * Combine stable and volatile segments into the final virtual item array.
+ * When tool calls exist, the active-tools item is placed before the last
+ * assistant message while streaming/indicator items remain after it.
+ */
+export function buildVirtualItems(
+  stableItems: readonly ChatVirtualItem[],
+  volatileItems: readonly ChatVirtualItem[],
+  hasToolCalls: boolean,
+): ChatVirtualItem[] {
+  if (!hasToolCalls || volatileItems.length === 0) {
+    return [...stableItems, ...volatileItems];
+  }
+
+  // Split volatile items: active-tools goes before the last assistant
+  // message; streaming and indicator go after it.
+  const lastItem = stableItems[stableItems.length - 1];
+  if (lastItem?.type === "message" && lastItem.message.role === "assistant") {
+    const toolItems = volatileItems.filter((v) => v.type === "active-tools");
+    const tailItems = volatileItems.filter((v) => v.type !== "active-tools");
+    // Check if the preceding item is a tool-summary for this message
+    const secondLast = stableItems[stableItems.length - 2];
+    const skipSummary =
+      secondLast?.type === "tool-summary" &&
+      secondLast.messageId === lastItem.message.id;
+    const cutAt = skipSummary ? stableItems.length - 2 : stableItems.length - 1;
+    return [
+      ...stableItems.slice(0, cutAt),
+      ...toolItems,
+      ...stableItems.slice(cutAt),
+      ...tailItems,
+    ];
+  }
+
+  return [...stableItems, ...volatileItems];
+}
+
+const LIST_ITEM_RE = /^[-*]\s|^\d+\.\s/;
 const LINE_HEIGHT = 22;
 const CHARS_PER_LINE = 65;
+const TABLE_ROW_HEIGHT = 44;
+const CODE_BLOCK_PADDING = 32;
+const HEADING_EXTRA = 16;
+const LIST_ITEM_HEIGHT = 28;
+
+/**
+ * Estimate rendered height from markdown content.
+ * Accounts for tables, code blocks, headings, and lists that render
+ * much taller than their raw character count suggests.
+ */
+function estimateMarkdownHeight(content: string): number {
+  let height = 0;
+  let inCodeBlock = false;
+  let start = 0;
+
+  while (start <= content.length) {
+    let end = content.indexOf("\n", start);
+    if (end === -1) end = content.length;
+    const line = content.substring(start, end);
+    const trimmed = line.trimStart();
+
+    if (trimmed.startsWith("```")) {
+      height += CODE_BLOCK_PADDING / 2;
+      inCodeBlock = !inCodeBlock;
+      start = end + 1;
+      continue;
+    }
+
+    if (inCodeBlock) {
+      height += LINE_HEIGHT;
+      start = end + 1;
+      continue;
+    }
+
+    // Table rows (| col | col |) and separator rows (|---|---|)
+    if (trimmed.startsWith("|")) {
+      height += trimmed.includes("---") ? 4 : TABLE_ROW_HEIGHT;
+      start = end + 1;
+      continue;
+    }
+
+    // Headings
+    if (trimmed.startsWith("#")) {
+      height += LINE_HEIGHT + HEADING_EXTRA;
+      start = end + 1;
+      continue;
+    }
+
+    // List items
+    if (LIST_ITEM_RE.test(trimmed)) {
+      const wrappedLines = Math.max(1, Math.ceil(trimmed.length / CHARS_PER_LINE));
+      height += LIST_ITEM_HEIGHT + (wrappedLines - 1) * LINE_HEIGHT;
+      start = end + 1;
+      continue;
+    }
+
+    // Empty line = paragraph break
+    if (trimmed.length === 0) {
+      height += 12;
+      start = end + 1;
+      continue;
+    }
+
+    // Regular text, may wrap
+    const wrappedLines = Math.max(1, Math.ceil(trimmed.length / CHARS_PER_LINE));
+    height += wrappedLines * LINE_HEIGHT;
+    start = end + 1;
+  }
+
+  return Math.max(LINE_HEIGHT, height);
+}
 
 /** Estimate pixel height for a virtual item before `measureElement` fires. */
 export function estimateItemHeight(item: ChatVirtualItem): number {
@@ -98,24 +197,19 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
     case "message": {
       const { message } = item;
       if (message.role === "system") return 40;
-      const lines = Math.max(
-        1,
-        Math.ceil(message.content.length / CHARS_PER_LINE),
-      );
-      if (message.role === "user") return 52 + lines * LINE_HEIGHT;
-      return 80 + lines * LINE_HEIGHT;
+      const contentHeight = estimateMarkdownHeight(message.content);
+      if (message.role === "user") return 52 + contentHeight;
+      return 80 + contentHeight;
     }
     case "active-tools":
-    case "fading-tools":
       return Math.min(item.toolCalls.length * 48, 400);
-    case "streaming": {
-      const lines = Math.max(
-        1,
-        Math.ceil(item.content.length / CHARS_PER_LINE),
-      );
-      return 80 + lines * LINE_HEIGHT;
-    }
+    case "streaming":
+      return 80 + estimateMarkdownHeight(item.content);
     case "indicator":
       return 48;
+    case "tool-summary":
+      return 36;
+    default:
+      return assertNever(item);
   }
 }

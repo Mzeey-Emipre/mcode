@@ -28,6 +28,7 @@ import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
+import { AgentStatusBar } from "./AgentStatusBar";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
@@ -620,7 +621,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const toast = useQueueStore((s) => s.toast);
 
   return (
-    <div className="relative border-t border-border px-4 py-3">
+    <div className="relative px-4 py-3">
+      {/* Gradient fade replacing the hard border-t line */}
+      <div className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-background to-transparent" />
       {/* Queue toast */}
       {toast && (
         <div className="pointer-events-none absolute -top-8 right-4 z-20 flex items-center gap-1.5 rounded-full bg-card/90 px-3 py-1 text-[11px] text-muted-foreground shadow-sm ring-1 ring-border/50 backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-150">
@@ -878,6 +881,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           onModeChange={setComposerMode}
           locked={!isNewThread}
         />
+        <AgentStatusBar />
         <div className="ml-auto flex items-center gap-1">
           {isNewThread ? (
             composerMode === "direct" ? (
