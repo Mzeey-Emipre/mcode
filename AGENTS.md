@@ -86,7 +86,7 @@ Keep commits atomic. Each commit represents one logical change.
 
 - **Architecture:** [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Electron docs:** https://www.electronjs.org/docs
-- **electron-vite docs:** https://electron-vite.org/
+- **esbuild docs:** https://esbuild.github.io/
 - **better-sqlite3 docs:** https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
 - **tsyringe docs:** https://github.com/microsoft/tsyringe
 - **shadcn/ui docs:** https://ui.shadcn.com/

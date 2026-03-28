@@ -10,7 +10,7 @@ import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName } from "@mcode/shared";
 import type { GitBranch, WorktreeInfo } from "@mcode/contracts";
-import { WorkspaceRepo } from "../repositories/workspace-repo.js";
+import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 /** Resolve the worktree base directory path under the mcode data dir. */
 function getWorktreeBaseDir(repoPath: string): string {

@@ -6,28 +6,28 @@
 import "reflect-metadata";
 import { container, Lifecycle } from "tsyringe";
 
-import { openDatabase } from "./store/database.js";
+import { openDatabase } from "./store/database";
 
 // Repositories
-import { WorkspaceRepo } from "./repositories/workspace-repo.js";
-import { ThreadRepo } from "./repositories/thread-repo.js";
-import { MessageRepo } from "./repositories/message-repo.js";
+import { WorkspaceRepo } from "./repositories/workspace-repo";
+import { ThreadRepo } from "./repositories/thread-repo";
+import { MessageRepo } from "./repositories/message-repo";
 
 // Providers
-import { ClaudeProvider } from "./providers/claude/claude-provider.js";
-import { ProviderRegistry } from "./providers/provider-registry.js";
+import { ClaudeProvider } from "./providers/claude/claude-provider";
+import { ProviderRegistry } from "./providers/provider-registry";
 
 // Services
-import { WorkspaceService } from "./services/workspace-service.js";
-import { ThreadService } from "./services/thread-service.js";
-import { AgentService } from "./services/agent-service.js";
-import { GitService } from "./services/git-service.js";
-import { GithubService } from "./services/github-service.js";
-import { FileService } from "./services/file-service.js";
-import { ConfigService } from "./services/config-service.js";
-import { SkillService } from "./services/skill-service.js";
-import { TerminalService } from "./services/terminal-service.js";
-import { AttachmentService } from "./services/attachment-service.js";
+import { WorkspaceService } from "./services/workspace-service";
+import { ThreadService } from "./services/thread-service";
+import { AgentService } from "./services/agent-service";
+import { GitService } from "./services/git-service";
+import { GithubService } from "./services/github-service";
+import { FileService } from "./services/file-service";
+import { ConfigService } from "./services/config-service";
+import { SkillService } from "./services/skill-service";
+import { TerminalService } from "./services/terminal-service";
+import { AttachmentService } from "./services/attachment-service";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(): typeof container {

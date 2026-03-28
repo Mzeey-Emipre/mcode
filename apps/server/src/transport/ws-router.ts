@@ -12,16 +12,16 @@ import {
   type WsMethodName,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import type { WorkspaceService } from "../services/workspace-service.js";
-import type { ThreadService } from "../services/thread-service.js";
-import type { AgentService } from "../services/agent-service.js";
-import type { GitService } from "../services/git-service.js";
-import type { GithubService } from "../services/github-service.js";
-import type { FileService } from "../services/file-service.js";
-import type { ConfigService } from "../services/config-service.js";
-import type { SkillService } from "../services/skill-service.js";
-import type { TerminalService } from "../services/terminal-service.js";
-import type { MessageRepo } from "../repositories/message-repo.js";
+import type { WorkspaceService } from "../services/workspace-service";
+import type { ThreadService } from "../services/thread-service";
+import type { AgentService } from "../services/agent-service";
+import type { GitService } from "../services/git-service";
+import type { GithubService } from "../services/github-service";
+import type { FileService } from "../services/file-service";
+import type { ConfigService } from "../services/config-service";
+import type { SkillService } from "../services/skill-service";
+import type { TerminalService } from "../services/terminal-service";
+import type { MessageRepo } from "../repositories/message-repo";
 
 /** Service dependencies for the router. */
 export interface RouterDeps {

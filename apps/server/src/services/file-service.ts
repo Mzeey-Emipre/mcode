@@ -8,9 +8,9 @@ import { injectable, inject } from "tsyringe";
 import { execFileSync } from "child_process";
 import { readFileSync, existsSync, statSync, realpathSync } from "fs";
 import { resolve, isAbsolute, sep } from "path";
-import { WorkspaceRepo } from "../repositories/workspace-repo.js";
-import { ThreadRepo } from "../repositories/thread-repo.js";
-import { GitService } from "./git-service.js";
+import { WorkspaceRepo } from "../repositories/workspace-repo";
+import { ThreadRepo } from "../repositories/thread-repo";
+import { GitService } from "./git-service";
 
 /** Handles file listing and content reading for workspaces and threads. */
 @injectable()

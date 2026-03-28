@@ -3,24 +3,24 @@
  * Starts the HTTP + WebSocket server and registers graceful shutdown handlers.
  */
 
-import { setupContainer } from "./container.js";
-import { createWsServer } from "./transport/ws-server.js";
-import { broadcast } from "./transport/push.js";
+import { setupContainer } from "./container";
+import { createWsServer } from "./transport/ws-server";
+import { broadcast } from "./transport/push";
 import { logger } from "@mcode/shared";
 
 // Services
-import { WorkspaceService } from "./services/workspace-service.js";
-import { ThreadService } from "./services/thread-service.js";
-import { AgentService } from "./services/agent-service.js";
-import { GitService } from "./services/git-service.js";
-import { GithubService } from "./services/github-service.js";
-import { FileService } from "./services/file-service.js";
-import { ConfigService } from "./services/config-service.js";
-import { SkillService } from "./services/skill-service.js";
-import { TerminalService } from "./services/terminal-service.js";
-import { MessageRepo } from "./repositories/message-repo.js";
-import { ThreadRepo } from "./repositories/thread-repo.js";
-import { ProviderRegistry } from "./providers/provider-registry.js";
+import { WorkspaceService } from "./services/workspace-service";
+import { ThreadService } from "./services/thread-service";
+import { AgentService } from "./services/agent-service";
+import { GitService } from "./services/git-service";
+import { GithubService } from "./services/github-service";
+import { FileService } from "./services/file-service";
+import { ConfigService } from "./services/config-service";
+import { SkillService } from "./services/skill-service";
+import { TerminalService } from "./services/terminal-service";
+import { MessageRepo } from "./repositories/message-repo";
+import { ThreadRepo } from "./repositories/thread-repo";
+import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
 import type { AgentEvent } from "@mcode/contracts";
 import type Database from "better-sqlite3";

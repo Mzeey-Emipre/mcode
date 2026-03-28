@@ -11,9 +11,9 @@ import { spawn } from "node-pty";
 import type { IPty, IDisposable } from "node-pty";
 import { v4 as uuid } from "uuid";
 import { logger } from "@mcode/shared";
-import type { ThreadRepo } from "../repositories/thread-repo.js";
-import type { WorkspaceRepo } from "../repositories/workspace-repo.js";
-import type { GitService } from "./git-service.js";
+import type { ThreadRepo } from "../repositories/thread-repo";
+import type { WorkspaceRepo } from "../repositories/workspace-repo";
+import type { GitService } from "./git-service";
 
 const MAX_PTYS_PER_THREAD = 4;
 const DEFAULT_COLS = 80;

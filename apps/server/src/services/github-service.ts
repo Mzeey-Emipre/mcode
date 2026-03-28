@@ -7,7 +7,7 @@
 import { injectable, inject } from "tsyringe";
 import { execFile } from "child_process";
 import type { PrInfo, PrDetail } from "@mcode/contracts";
-import { WorkspaceRepo } from "../repositories/workspace-repo.js";
+import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 /** Handles GitHub PR lookups and listing via the gh CLI. */
 @injectable()

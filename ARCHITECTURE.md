@@ -19,7 +19,7 @@ Key architectural rules:
 |-------|------------|
 | Runtime | Bun (package manager + script runner) |
 | Monorepo | Turborepo |
-| Desktop | Electron 35, electron-vite |
+| Desktop | Electron 35, esbuild (main/preload) + Vite (renderer) |
 | Server | Node.js, tsyringe (DI), better-sqlite3, Claude Agent SDK |
 | Frontend | React 19, Vite, shadcn/ui, Tailwind CSS 4, Zustand |
 | Contracts | Zod (schemas + type inference) |

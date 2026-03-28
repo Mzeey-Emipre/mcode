@@ -15,15 +15,15 @@ import type {
   IProviderRegistry,
   AgentEvent,
 } from "@mcode/contracts";
-import { ThreadRepo } from "../repositories/thread-repo.js";
-import { WorkspaceRepo } from "../repositories/workspace-repo.js";
-import { MessageRepo } from "../repositories/message-repo.js";
-import { GitService } from "./git-service.js";
-import { AttachmentService } from "./attachment-service.js";
+import { ThreadRepo } from "../repositories/thread-repo";
+import { WorkspaceRepo } from "../repositories/workspace-repo";
+import { MessageRepo } from "../repositories/message-repo";
+import { GitService } from "./git-service";
+import { AttachmentService } from "./attachment-service";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
-import { ThreadService } from "./thread-service.js";
+import { ThreadService } from "./thread-service";
 
 /**
  * Generate a thread title from message content: first line, truncated

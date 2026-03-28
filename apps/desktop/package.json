@@ -2,16 +2,15 @@
   "name": "mcode-desktop",
   "version": "0.0.1",
   "description": "Mcode AI agent orchestration desktop app",
-  "main": "dist/main/main.js",
+  "main": "dist/main/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
-    "prod": "electron-vite build && electron-vite preview",
+    "dev": "bun scripts/dev-electron.mjs",
+    "build": "bun scripts/build-main.mjs",
+    "prod": "bun run build && npx electron .",
     "typecheck": "tsc --noEmit",
     "rebuild": "electron-rebuild -f",
-    "dist": "electron-builder --publish never",
+    "dist": "bun run build && electron-builder --publish never",
     "test": "vitest run"
   },
   "dependencies": {
@@ -21,16 +20,12 @@
     "which": "^5.0.0"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.2.2",
     "@types/uuid": "^10.0.0",
     "@types/which": "^3.0.4",
-    "@vitejs/plugin-react": "^6.0.1",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.0",
-    "electron-vite": "^5.0.0",
-    "tailwindcss": "^4.2.2",
+    "esbuild": "^0.27.0",
     "typescript": "^5.8.0",
-    "vite": "^8.0.1",
     "vitest": "^4.1.0",
     "@vitest/coverage-v8": "^4.1.0"
   },

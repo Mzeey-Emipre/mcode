@@ -8,8 +8,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "@mcode/shared";
-import { routeMessage, type RouterDeps } from "./ws-router.js";
-import { addClient, removeClient } from "./push.js";
+import { routeMessage, type RouterDeps } from "./ws-router";
+import { addClient, removeClient } from "./push";
 
 /** Create and configure the HTTP + WebSocket server. */
 export function createWsServer(deps: RouterDeps): {
