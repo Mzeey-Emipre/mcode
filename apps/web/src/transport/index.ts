@@ -1,6 +1,7 @@
 import type { McodeTransport } from "./types";
 import { createWsTransport } from "./ws-transport";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo, PrDetail, ToolCallRecord, Settings, PartialSettings } from "./types";
 export { PERMISSION_MODES, INTERACTION_MODES } from "./types";
@@ -49,7 +50,14 @@ export async function initTransport(): Promise<McodeTransport> {
 
   initPromise = resolveServerUrl().then(async (url) => {
     transport = createWsTransport(url, {
-      onStatusChange: (status) => useConnectionStore.getState().setStatus(status),
+      onStatusChange: (status) => {
+        useConnectionStore.getState().setStatus(status);
+        // Re-fetch settings on reconnect so stale state from a server restart
+        // is replaced with the latest values.
+        if (status === "connected" && useSettingsStore.getState().loaded) {
+          void useSettingsStore.getState().fetch();
+        }
+      },
     });
     try {
       await transport.waitForConnection(CONNECT_TIMEOUT_MS);

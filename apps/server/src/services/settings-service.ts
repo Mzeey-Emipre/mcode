@@ -5,7 +5,7 @@
  */
 
 import { injectable } from "tsyringe";
-import { readFileSync, writeFileSync, mkdirSync, watch, existsSync } from "fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, watch, existsSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 import type { FSWatcher } from "fs";
 
@@ -127,10 +127,20 @@ export class SettingsService {
       this.dirEnsured = true;
     }
 
+    // Atomic write: write to a temp file then rename to avoid partial reads.
+    const tmpPath = this.filePath + ".tmp";
     this.selfWrite = true;
-    writeFileSync(this.filePath, JSON.stringify(validated, null, 2), "utf-8");
-    // Safety: clear selfWrite after a window in case fs.watch never fires
-    setTimeout(() => { this.selfWrite = false; }, 500);
+    try {
+      writeFileSync(tmpPath, JSON.stringify(validated, null, 2), "utf-8");
+      renameSync(tmpPath, this.filePath);
+      // Safety: clear selfWrite after a window in case fs.watch never fires.
+      setTimeout(() => { this.selfWrite = false; }, 500);
+    } catch (err) {
+      // Ensure selfWrite is always cleared and temp file cleaned up on failure.
+      this.selfWrite = false;
+      try { unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
+      throw err;
+    }
 
     // Update cache directly from the validated result — no need for another disk read
     this.cache = validated;
@@ -164,9 +174,12 @@ export class SettingsService {
 
     try {
       this.watcher = watch(watchTarget, (_eventType, filename) => {
-        // When watching the directory, only react to the settings file
+        // When watching the directory, only react to the settings file.
+        // `filename` can be null on some platforms (e.g. Linux inotify edge cases);
+        // treat null as "unknown file" and let it through rather than silently dropping.
         if (
           watchTarget !== this.filePath &&
+          filename !== null &&
           filename !== "settings.json"
         ) {
           return;
@@ -180,6 +193,15 @@ export class SettingsService {
           // Skip events triggered by our own writes
           if (this.selfWrite) {
             this.selfWrite = false;
+            return;
+          }
+
+          // If we were watching the file directly but it no longer exists
+          // (e.g. the user deleted or replaced it), fall back to watching
+          // the parent directory so we can recover when it reappears.
+          if (watchTarget === this.filePath && !existsSync(this.filePath)) {
+            this.dispose();
+            this.startWatching();
             return;
           }
 

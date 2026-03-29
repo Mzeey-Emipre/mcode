@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { DEFAULT_SETTINGS, type Settings, type PartialSettings } from "@mcode/contracts";
+import { DEFAULT_SETTINGS, SettingsSchema, type Settings, type PartialSettings } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 
 /**
@@ -94,9 +94,20 @@ interface SettingsState {
   fetch: () => Promise<void>;
   /** Update settings via server (deep merge). */
   update: (partial: DeepPartial<Settings>) => Promise<void>;
-  /** Apply a server push update. */
-  _applyPush: (settings: Settings) => void;
+  /**
+   * Apply a server push update. Validates the payload with Zod before
+   * applying; invalid data is silently ignored to guard against wire corruption.
+   */
+  _applyPush: (settings: unknown) => void;
 }
+
+/**
+ * Monotonically-increasing counter incremented on each successful `update()`.
+ * `fetch()` captures the value before the async RPC and discards the result if
+ * a newer update landed in the meantime, preventing stale fetch responses from
+ * overwriting fresher data.
+ */
+let updateGeneration = 0;
 
 /**
  * RPC-backed settings store.
@@ -110,10 +121,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   fetch: async () => {
     const wasLoaded = get().loaded;
+    const genAtStart = updateGeneration;
     try {
       const transport = getTransport();
       const settings = await transport.getSettings();
-      set({ settings, loaded: true });
+      // Discard if an update resolved while this fetch was in flight.
+      if (updateGeneration === genAtStart) {
+        set({ settings, loaded: true });
+      }
     } catch {
       // Degrade gracefully to defaults; loaded stays false so a retry can happen.
       return;
@@ -129,11 +144,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const transport = getTransport();
       const settings = await transport.updateSettings(partial as PartialSettings);
+      updateGeneration++;
       set({ settings });
     } catch {
       // Best-effort: server-side state is unchanged, local state stays as-is.
     }
   },
 
-  _applyPush: (settings) => set({ settings }),
+  _applyPush: (raw) => {
+    const result = SettingsSchema.safeParse(raw);
+    if (result.success) {
+      set({ settings: result.data, loaded: true });
+    }
+  },
 }));
