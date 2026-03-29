@@ -2,7 +2,7 @@ import type { McodeTransport } from "./types";
 import { createWsTransport } from "./ws-transport";
 import { useConnectionStore } from "@/stores/connectionStore";
 
-export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo, PrDetail, ToolCallRecord } from "./types";
+export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo, PrDetail, ToolCallRecord, Settings, PartialSettings } from "./types";
 export { PERMISSION_MODES, INTERACTION_MODES } from "./types";
 export { pushEmitter } from "./ws-transport";
 

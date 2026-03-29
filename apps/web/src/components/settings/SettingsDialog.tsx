@@ -8,13 +8,12 @@ import {
 } from "@/components/ui/dialog";
 import { Settings } from "lucide-react";
 
+/** Settings dialog for configuring user preferences. */
 export function SettingsDialog() {
-  const theme = useSettingsStore((s) => s.theme);
-  const setTheme = useSettingsStore((s) => s.setTheme);
-  const notifications = useSettingsStore((s) => s.notificationsEnabled);
-  const setNotifications = useSettingsStore((s) => s.setNotificationsEnabled);
-  const maxAgents = useSettingsStore((s) => s.maxConcurrentAgents);
-  const setMaxAgents = useSettingsStore((s) => s.setMaxConcurrentAgents);
+  const theme = useSettingsStore((s) => s.settings.appearance.theme);
+  const notifications = useSettingsStore((s) => s.settings.notifications.enabled);
+  const maxAgents = useSettingsStore((s) => s.settings.agent.maxConcurrent);
+  const update = useSettingsStore((s) => s.update);
 
   return (
     <Dialog>
@@ -43,7 +42,7 @@ export function SettingsDialog() {
               {(["system", "dark", "light"] as const).map((t) => (
                 <button
                   key={t}
-                  onClick={() => setTheme(t)}
+                  onClick={() => update({ appearance: { theme: t } })}
                   className={`rounded-md px-3 py-1.5 text-sm capitalize ${
                     theme === t
                       ? "bg-primary text-primary-foreground"
@@ -68,7 +67,7 @@ export function SettingsDialog() {
                 min={1}
                 max={10}
                 value={maxAgents}
-                onChange={(e) => setMaxAgents(Number(e.target.value))}
+                onChange={(e) => update({ agent: { maxConcurrent: Number(e.target.value) } })}
                 className="flex-1"
               />
               <span className="w-6 text-center text-sm text-foreground">
@@ -85,7 +84,7 @@ export function SettingsDialog() {
             <button
               role="switch"
               aria-checked={notifications}
-              onClick={() => setNotifications(!notifications)}
+              onClick={() => update({ notifications: { enabled: !notifications } })}
               className={`relative h-5 w-9 rounded-full transition-colors ${
                 notifications ? "bg-primary" : "bg-muted"
               }`}

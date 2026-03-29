@@ -101,4 +101,6 @@ export const mockTransport: McodeTransport = {
   listToolCallRecordsByParent: vi.fn().mockResolvedValue([]),
   getSnapshotDiff: vi.fn().mockResolvedValue(""),
   cleanupSnapshots: vi.fn().mockResolvedValue({ removed: 0 }),
+  getSettings: vi.fn().mockResolvedValue({}),
+  updateSettings: vi.fn().mockResolvedValue({}),
 };
