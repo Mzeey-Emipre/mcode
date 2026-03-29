@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { getTransport } from "@/transport";
+import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
 
@@ -47,6 +48,20 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       const fitAddon = new XFitAddon();
       term.loadAddon(fitAddon);
       term.open(el);
+
+      // Intercept Ctrl/Cmd+C when text is selected — copy to clipboard instead of sending SIGINT.
+      // Returning false prevents xterm from forwarding the raw \x03 byte to the PTY.
+      term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+        if (shouldInterceptKeyEvent(event, term.hasSelection())) {
+          const text = term.getSelection();
+          if (text) {
+            navigator.clipboard.writeText(text).catch(() => {});
+          }
+          return false;
+        }
+        return true;
+      });
+
       fitAddon.fit();
 
       termRef.current = term;
