@@ -3,6 +3,7 @@ import { createWsTransport } from "./ws-transport";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 
+/** Re-exported transport and domain types for use across the web app. */
 export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo, PrDetail, ToolCallRecord, Settings, PartialSettings } from "./types";
 export { PERMISSION_MODES, INTERACTION_MODES } from "./types";
 export { pushEmitter } from "./ws-transport";
@@ -54,7 +55,7 @@ export async function initTransport(): Promise<McodeTransport> {
         useConnectionStore.getState().setStatus(status);
         // Re-fetch settings on reconnect so stale state from a server restart
         // is replaced with the latest values.
-        if (status === "connected" && useSettingsStore.getState().loaded) {
+        if (status === "connected") {
           void useSettingsStore.getState().fetch();
         }
       },

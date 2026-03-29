@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   Dialog,
@@ -14,6 +15,11 @@ export function SettingsDialog() {
   const notifications = useSettingsStore((s) => s.settings.notifications.enabled);
   const maxAgents = useSettingsStore((s) => s.settings.agent.maxConcurrent);
   const update = useSettingsStore((s) => s.update);
+
+  // Local slider state: tracks the in-progress value without triggering RPC on
+  // every pixel. The RPC fires only when the user finishes dragging.
+  const [localMaxAgents, setLocalMaxAgents] = useState<number | null>(null);
+  const displayMaxAgents = localMaxAgents ?? maxAgents;
 
   return (
     <Dialog>
@@ -66,12 +72,27 @@ export function SettingsDialog() {
                 type="range"
                 min={1}
                 max={10}
-                value={maxAgents}
-                onChange={(e) => update({ agent: { maxConcurrent: Number(e.target.value) } })}
+                value={displayMaxAgents}
+                onChange={(e) => setLocalMaxAgents(Number(e.target.value))}
+                onMouseUp={(e) => {
+                  const v = Number((e.target as HTMLInputElement).value);
+                  setLocalMaxAgents(null);
+                  void update({ agent: { maxConcurrent: v } });
+                }}
+                onKeyUp={(e) => {
+                  const v = Number((e.target as HTMLInputElement).value);
+                  setLocalMaxAgents(null);
+                  void update({ agent: { maxConcurrent: v } });
+                }}
+                onTouchEnd={(e) => {
+                  const v = Number((e.target as HTMLInputElement).value);
+                  setLocalMaxAgents(null);
+                  void update({ agent: { maxConcurrent: v } });
+                }}
                 className="flex-1"
               />
               <span className="w-6 text-center text-sm text-foreground">
-                {maxAgents}
+                {displayMaxAgents}
               </span>
             </div>
           </div>

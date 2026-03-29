@@ -125,6 +125,12 @@ export class SettingsService {
     if (!this.dirEnsured) {
       mkdirSync(dirname(this.filePath), { recursive: true });
       this.dirEnsured = true;
+      // If the directory didn't exist at startup, startWatching() will have
+      // failed and left this.watcher null. Now that the directory exists,
+      // arm the watcher so future external edits are observed.
+      if (this.watcher === null) {
+        this.startWatching();
+      }
     }
 
     // Atomic write: write to a temp file then rename to avoid partial reads.
