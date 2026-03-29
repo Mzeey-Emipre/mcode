@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PermissionModeSchema } from "./enums.js";
+import { InteractionModeSchema, PermissionModeSchema } from "./enums.js";
 
 // ---------------------------------------------------------------------------
 // Enum schemas
@@ -16,7 +16,10 @@ export type Theme = z.infer<typeof ThemeSchema>;
  * Extends the base InteractionMode with an "agent" option that grants
  * autonomous multi-step execution capabilities.
  */
-export const AgentDefaultModeSchema = z.enum(["chat", "plan", "agent"]);
+export const AgentDefaultModeSchema = z.enum([
+  ...InteractionModeSchema.options,
+  "agent",
+]);
 /** Default agent interaction mode value. */
 export type AgentDefaultMode = z.infer<typeof AgentDefaultModeSchema>;
 
@@ -118,60 +121,8 @@ export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
 // Partial settings schema (for deep-partial updates)
 // ---------------------------------------------------------------------------
 
-/** Deep-partial settings schema for incremental updates. */
-export const PartialSettingsSchema = z.object({
-  appearance: z
-    .object({
-      theme: ThemeSchema.optional(),
-    })
-    .optional(),
-
-  agent: z
-    .object({
-      maxConcurrent: z.number().int().positive().optional(),
-      defaults: z
-        .object({
-          mode: AgentDefaultModeSchema.optional(),
-          permission: PermissionModeSchema.optional(),
-        })
-        .optional(),
-    })
-    .optional(),
-
-  model: z
-    .object({
-      defaults: z
-        .object({
-          id: z.string().optional(),
-          reasoning: ReasoningLevelSchema.optional(),
-        })
-        .optional(),
-    })
-    .optional(),
-
-  terminal: z
-    .object({
-      scrollback: z.number().int().nonnegative().optional(),
-    })
-    .optional(),
-
-  notifications: z
-    .object({
-      enabled: z.boolean().optional(),
-    })
-    .optional(),
-
-  worktree: z
-    .object({
-      naming: z
-        .object({
-          mode: NamingModeSchema.optional(),
-          aiConfirmation: z.boolean().optional(),
-        })
-        .optional(),
-    })
-    .optional(),
-});
+/** Deep-partial settings schema for incremental updates via `settings.update`. */
+export const PartialSettingsSchema = SettingsSchema.deepPartial();
 
 /** Deep-partial settings for incremental updates. */
 export type PartialSettings = z.infer<typeof PartialSettingsSchema>;
