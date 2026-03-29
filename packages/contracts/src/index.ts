@@ -50,6 +50,7 @@ export {
   ThemeSchema,
   AgentDefaultModeSchema,
   ReasoningLevelSchema,
+  ProviderIdSchema,
   NamingModeSchema,
 } from "./models/settings.js";
 export type {
@@ -58,6 +59,7 @@ export type {
   Theme,
   AgentDefaultMode,
   ReasoningLevel,
+  SettingsProviderId,
   NamingMode,
 } from "./models/settings.js";
 

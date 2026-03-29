@@ -28,6 +28,11 @@ export const ReasoningLevelSchema = z.enum(["low", "medium", "high"]);
 /** Reasoning effort level value. */
 export type ReasoningLevel = z.infer<typeof ReasoningLevelSchema>;
 
+/** Supported AI provider identifier for settings. */
+export const ProviderIdSchema = z.enum(["claude", "codex", "gemini", "copilot"]);
+/** Supported AI provider identifier value. */
+export type SettingsProviderId = z.infer<typeof ProviderIdSchema>;
+
 /** Worktree branch naming strategy. */
 export const NamingModeSchema = z.enum(["auto", "custom", "ai"]);
 /** Worktree branch naming strategy value. */
@@ -70,6 +75,8 @@ export const SettingsSchema = z.object({
       /** Default values for model selection. */
       defaults: z
         .object({
+          /** Default AI provider. */
+          provider: ProviderIdSchema.default("claude"),
           /** Default model identifier. */
           id: z.string().default("claude-sonnet-4-6"),
           /** Default reasoning effort level. */
