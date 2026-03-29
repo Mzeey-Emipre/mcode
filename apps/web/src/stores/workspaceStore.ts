@@ -34,6 +34,8 @@ interface WorkspaceState {
   openPrs: PrDetail[];
   openPrsLoading: boolean;
   fetchingBranch: string | null;
+  /** Whether the user has explicitly picked a branch in BranchPicker. Prevents live updates from overriding the user's selection. */
+  branchManuallySelected: boolean;
 
   // Workspace actions
   loadWorkspaces: () => Promise<void>;
@@ -60,6 +62,8 @@ interface WorkspaceState {
   checkoutBranch: (workspaceId: string, branch: string) => Promise<void>;
   setNewThreadMode: (mode: "direct" | "worktree" | "existing-worktree") => void;
   setNewThreadBranch: (branch: string) => void;
+  /** Set whether the user has explicitly picked a branch, preventing live branch updates from overriding it. */
+  setBranchManuallySelected: (value: boolean) => void;
 
   // Worktree actions
   loadWorktrees: (workspaceId: string) => Promise<void>;
@@ -93,6 +97,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   openPrs: [],
   openPrsLoading: false,
   fetchingBranch: null,
+  branchManuallySelected: false,
 
   loadWorkspaces: async () => {
     set({ loading: true, error: null });
@@ -164,6 +169,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       openPrs: [],
       openPrsLoading: false,
       fetchingBranch: null,
+      branchManuallySelected: false,
     });
     if (id) {
       get().loadThreads(id);
@@ -246,6 +252,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         threads: [thread, ...state.threads],
         activeThreadId: thread.id,
         pendingNewThread: false,
+        branchManuallySelected: false,
       }));
 
       // Mark the new thread as running in the threadStore so the
@@ -316,6 +323,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             customBranchName: "",
             autoPreviewBranch: generateBranchId(),
             selectedWorktree: null,
+            branchManuallySelected: false,
           }
         : {}),
     });
@@ -362,6 +370,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setNewThreadBranch: (branch) => {
     set({ newThreadBranch: branch });
+  },
+
+  setBranchManuallySelected: (value) => {
+    set({ branchManuallySelected: value });
   },
 
   loadWorktrees: async (workspaceId) => {

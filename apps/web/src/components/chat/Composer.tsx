@@ -293,12 +293,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     setNewThreadMode(mode);
   }, [activeThread?.mode, setNewThreadMode]);
 
-  // Load branches when entering worktree mode (or any new thread)
+  // Load branches when entering new thread mode (always refresh to pick up live changes)
   useEffect(() => {
-    if (isNewThread && workspaceId && branches.length === 0) {
+    if (isNewThread && workspaceId) {
       loadBranches(workspaceId);
     }
-  }, [isNewThread, workspaceId, branches.length, loadBranches]);
+  }, [isNewThread, workspaceId, loadBranches]);
 
   // Auto-select current branch if none selected
   useEffect(() => {

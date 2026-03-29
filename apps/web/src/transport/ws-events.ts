@@ -21,6 +21,7 @@ let unsubs: (() => void)[] = [];
  * - `skills.changed` -- reserved for future skill cache invalidation
  * - `turn.persisted` -- tool call persistence confirmation forwarded to threadStore
  * - `settings.changed` -- server-pushed settings updates forwarded to settingsStore
+ * - `branch.changed` -- refreshes branch list and updates current branch if not manually overridden
  */
 export function startPushListeners(): void {
   // Guard against double-init
@@ -123,6 +124,23 @@ export function startPushListeners(): void {
     pushEmitter.on("settings.changed", (data) => {
       const settings = data as Settings;
       useSettingsStore.getState()._applyPush(settings);
+    }),
+  );
+
+  // branch.changed: refresh branch list and update current branch if not manually overridden
+  unsubs.push(
+    pushEmitter.on("branch.changed", (data) => {
+      const { workspaceId, branch } = data as { workspaceId: string; branch: string };
+      import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
+        const state = useWorkspaceStore.getState();
+        // Only refresh if this event is for the active workspace
+        if (state.activeWorkspaceId === workspaceId) {
+          state.loadBranches(workspaceId);
+          if (!state.branchManuallySelected) {
+            state.setNewThreadBranch(branch);
+          }
+        }
+      });
     }),
   );
 }
