@@ -11,10 +11,11 @@ import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
-  const theme = useSettingsStore((s) => s.theme);
+  const theme = useSettingsStore((s) => s.settings.appearance.theme);
 
   useEffect(() => {
     startPushListeners();
+    useSettingsStore.getState().fetch();
     return () => stopPushListeners();
   }, []);
 

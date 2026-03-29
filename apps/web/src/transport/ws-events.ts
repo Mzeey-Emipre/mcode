@@ -1,6 +1,8 @@
+import type { Settings } from "@mcode/contracts";
 import { pushEmitter } from "./ws-transport";
 import { useThreadStore } from "@/stores/threadStore";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { clearFileListCache } from "@/components/chat/useFileAutocomplete";
 
 /** Unsubscribe handles for all push listeners. */
@@ -18,6 +20,7 @@ let unsubs: (() => void)[] = [];
  * - `files.changed` -- invalidates the file autocomplete cache
  * - `skills.changed` -- reserved for future skill cache invalidation
  * - `turn.persisted` -- tool call persistence confirmation forwarded to threadStore
+ * - `settings.changed` -- server-pushed settings updates forwarded to settingsStore
  */
 export function startPushListeners(): void {
   // Guard against double-init
@@ -112,6 +115,14 @@ export function startPushListeners(): void {
         filesChanged: string[];
       };
       useThreadStore.getState().handleTurnPersisted(payload);
+    }),
+  );
+
+  // settings.changed: update settings store with server-pushed changes
+  unsubs.push(
+    pushEmitter.on("settings.changed", (data) => {
+      const settings = data as Settings;
+      useSettingsStore.getState()._applyPush(settings);
     }),
   );
 }

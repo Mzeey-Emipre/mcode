@@ -11,6 +11,8 @@ import type {
   SkillInfo,
   PermissionMode,
   ToolCallRecord,
+  Settings,
+  PartialSettings,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -27,6 +29,8 @@ export type {
   SkillInfo,
   PermissionMode,
   InteractionMode,
+  Settings,
+  PartialSettings,
 } from "@mcode/contracts";
 
 export type { ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
@@ -143,4 +147,10 @@ export interface McodeTransport {
   getSnapshotDiff(snapshotId: string, filePath?: string, maxLines?: number): Promise<string>;
   /** Run garbage collection on expired snapshot refs. */
   cleanupSnapshots(): Promise<{ removed: number }>;
+
+  // Settings
+  /** Fetch the full settings object from the server. */
+  getSettings(): Promise<Settings>;
+  /** Update settings with a deep-partial merge. Returns full merged settings. */
+  updateSettings(partial: PartialSettings): Promise<Settings>;
 }

@@ -44,6 +44,26 @@ export { TurnSnapshotSchema } from "./models/turn-snapshot.js";
 export type { TurnSnapshot } from "./models/turn-snapshot.js";
 
 export {
+  SettingsSchema,
+  PartialSettingsSchema,
+  DEFAULT_SETTINGS,
+  ThemeSchema,
+  AgentDefaultModeSchema,
+  ReasoningLevelSchema,
+  ProviderIdSchema,
+  NamingModeSchema,
+} from "./models/settings.js";
+export type {
+  Settings,
+  PartialSettings,
+  Theme,
+  AgentDefaultMode,
+  ReasoningLevel,
+  SettingsProviderId,
+  NamingMode,
+} from "./models/settings.js";
+
+export {
   classifyFile,
   isFileSupported,
   getMaxFileSize,

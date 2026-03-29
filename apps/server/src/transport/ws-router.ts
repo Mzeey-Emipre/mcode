@@ -31,6 +31,7 @@ import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type { SnapshotService } from "../services/snapshot-service";
+import type { SettingsService } from "../services/settings-service";
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
@@ -47,6 +48,7 @@ export interface RouterDeps {
   toolCallRecordRepo: ToolCallRecordRepo;
   turnSnapshotRepo: TurnSnapshotRepo;
   snapshotService: SnapshotService;
+  settingsService: SettingsService;
 }
 
 /**
@@ -322,6 +324,12 @@ async function dispatch(
         sourcePath: tempPath,
       };
     }
+
+    // Settings
+    case "settings.get":
+      return deps.settingsService.get();
+    case "settings.update":
+      return deps.settingsService.update(params);
 
     // App
     case "app.version":

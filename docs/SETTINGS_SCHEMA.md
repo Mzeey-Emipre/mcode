@@ -110,6 +110,7 @@ When adding a new setting, ask these questions in order:
   },
   "model": {
     "defaults": {
+      "provider": "claude",            // "claude" | "codex" | "gemini" | "copilot"
       "id": "claude-sonnet-4-6",
       "reasoning": "high"              // "low" | "medium" | "high"
     }

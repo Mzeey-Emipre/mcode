@@ -11,6 +11,7 @@ import type {
   PrDetail,
   PermissionMode,
   ToolCallRecord,
+  Settings,
 } from "./types";
 
 /** Minimum reconnect delay in milliseconds. */
@@ -319,6 +320,10 @@ export function createWsTransport(
       rpc<string>("snapshot.getDiff", { snapshotId, filePath, maxLines }),
     cleanupSnapshots: () =>
       rpc<{ removed: number }>("snapshot.cleanup", {}),
+
+    // Settings
+    getSettings: () => rpc<Settings>("settings.get", {}),
+    updateSettings: (partial) => rpc<Settings>("settings.update", partial as Record<string, unknown>),
 
     // Lifecycle
     close: () => {

@@ -1,35 +1,29 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { DEFAULT_SETTINGS } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 describe("SettingsStore", () => {
   beforeEach(() => {
     useSettingsStore.setState({
-      theme: "system",
-      maxConcurrentAgents: 5,
-      notificationsEnabled: true,
+      settings: DEFAULT_SETTINGS,
+      loaded: false,
     });
   });
 
-  it("default theme is system", () => {
-    expect(useSettingsStore.getState().theme).toBe("system");
+  it("defaults to DEFAULT_SETTINGS", () => {
+    expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS);
   });
 
-  it("default maxConcurrentAgents is 5", () => {
-    expect(useSettingsStore.getState().maxConcurrentAgents).toBe(5);
+  it("starts with loaded = false", () => {
+    expect(useSettingsStore.getState().loaded).toBe(false);
   });
 
-  it("setTheme updates state", () => {
-    useSettingsStore.getState().setTheme("dark");
-    expect(useSettingsStore.getState().theme).toBe("dark");
-  });
-
-  it("setMaxConcurrentAgents updates state", () => {
-    useSettingsStore.getState().setMaxConcurrentAgents(3);
-    expect(useSettingsStore.getState().maxConcurrentAgents).toBe(3);
-  });
-
-  it("setNotificationsEnabled updates state", () => {
-    useSettingsStore.getState().setNotificationsEnabled(false);
-    expect(useSettingsStore.getState().notificationsEnabled).toBe(false);
+  it("_applyPush replaces settings", () => {
+    const updated = {
+      ...DEFAULT_SETTINGS,
+      appearance: { theme: "dark" as const },
+    };
+    useSettingsStore.getState()._applyPush(updated);
+    expect(useSettingsStore.getState().settings.appearance.theme).toBe("dark");
   });
 });
