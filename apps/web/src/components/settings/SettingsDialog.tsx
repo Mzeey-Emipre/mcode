@@ -7,6 +7,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Settings } from "lucide-react";
 
 /** Settings dialog for configuring user preferences. */
@@ -25,13 +27,14 @@ export function SettingsDialog() {
     <Dialog>
       <DialogTrigger
         render={
-          <button
+          <Button
+            variant="ghost"
             className="flex w-full items-center gap-2 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label="Settings"
           >
             <Settings size={16} />
             Settings
-          </button>
+          </Button>
         }
       />
       <DialogContent className="sm:max-w-md">
@@ -46,17 +49,15 @@ export function SettingsDialog() {
             </label>
             <div className="flex gap-2">
               {(["system", "dark", "light"] as const).map((t) => (
-                <button
+                <Button
                   key={t}
+                  size="sm"
+                  variant={theme === t ? "default" : "secondary"}
                   onClick={() => update({ appearance: { theme: t } })}
-                  className={`rounded-md px-3 py-1.5 text-sm capitalize ${
-                    theme === t
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-accent"
-                  }`}
+                  className="capitalize"
                 >
                   {t}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -71,7 +72,7 @@ export function SettingsDialog() {
                 id="max-agents"
                 type="range"
                 min={1}
-                max={10}
+                max={Math.max(displayMaxAgents, 10)}
                 value={displayMaxAgents}
                 onChange={(e) => setLocalMaxAgents(Number(e.target.value))}
                 onMouseUp={(e) => {
@@ -102,20 +103,12 @@ export function SettingsDialog() {
             <label className="text-sm font-medium text-foreground">
               Notifications
             </label>
-            <button
-              role="switch"
-              aria-checked={notifications}
-              onClick={() => update({ notifications: { enabled: !notifications } })}
-              className={`relative h-5 w-9 rounded-full transition-colors ${
-                notifications ? "bg-primary" : "bg-muted"
-              }`}
-            >
-              <span
-                className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                  notifications ? "translate-x-4" : ""
-                }`}
-              />
-            </button>
+            <Switch
+              checked={notifications}
+              onCheckedChange={(checked) =>
+                update({ notifications: { enabled: checked } })
+              }
+            />
           </div>
         </div>
       </DialogContent>
