@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeBranchForFolder } from "../index";
+import { sanitizeBranchForFolder } from "../index.js";
 
 describe("sanitizeBranchForFolder", () => {
   it("replaces slashes with hyphens", () => {

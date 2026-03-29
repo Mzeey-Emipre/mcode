@@ -61,9 +61,15 @@ export function validateBranchName(branch: string): void {
 }
 
 /**
- * Sanitize a string into a URL-safe slug suitable for worktree directory names.
- * Lowercases and replaces non-alphanumeric characters (except hyphens) with hyphens.
+ * Sanitize a git branch name into a filesystem-safe folder name.
+ * Replaces slashes, whitespace, and non-alphanumeric characters with hyphens,
+ * collapses consecutive hyphens, and strips leading dots/hyphens and trailing hyphens.
  */
-export function toWorktreeSlug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+export function sanitizeBranchForFolder(branch: string): string {
+  return branch
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[.-]+/, "")
+    .replace(/-+$/, "");
 }
