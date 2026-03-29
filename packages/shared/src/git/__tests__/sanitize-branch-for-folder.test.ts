@@ -52,7 +52,13 @@ describe("sanitizeBranchForFolder", () => {
     );
   });
 
-  it("returns empty string for input that is all special chars", () => {
-    expect(sanitizeBranchForFolder("///...")).toBe("");
+  it("throws when input produces an empty result", () => {
+    expect(() => sanitizeBranchForFolder("///...")).toThrow(
+      "produces an empty folder name",
+    );
+  });
+
+  it("handles numeric-only branch names", () => {
+    expect(sanitizeBranchForFolder("123")).toBe("123");
   });
 });

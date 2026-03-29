@@ -64,12 +64,20 @@ export function validateBranchName(branch: string): void {
  * Sanitize a git branch name into a filesystem-safe folder name.
  * Replaces slashes, whitespace, and non-alphanumeric characters with hyphens,
  * collapses consecutive hyphens, and strips leading dots/hyphens and trailing hyphens.
+ * Throws if the result is empty (i.e. the input contained no alphanumeric characters).
+ * Callers should validate the branch name with {@link validateBranchName} before calling this.
  */
 export function sanitizeBranchForFolder(branch: string): string {
-  return branch
+  const result = branch
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-{2,}/g, "-")
     .replace(/^[.-]+/, "")
     .replace(/-+$/, "");
+  if (!result) {
+    throw new Error(
+      `Branch name "${branch}" produces an empty folder name after sanitization`,
+    );
+  }
+  return result;
 }
