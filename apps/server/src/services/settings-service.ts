@@ -106,14 +106,16 @@ export class SettingsService {
       partial as Record<string, unknown>,
     );
 
+    // Validate and strip unknown keys before writing to disk
+    const validated = SettingsSchema.parse(merged);
+
     // Ensure parent directory exists
     mkdirSync(dirname(this.filePath), { recursive: true });
 
     this.selfWrite = true;
-    writeFileSync(this.filePath, JSON.stringify(merged, null, 2), "utf-8");
-
-    // Re-parse to apply defaults and strip unknown keys
-    const validated = SettingsSchema.parse(merged);
+    writeFileSync(this.filePath, JSON.stringify(validated, null, 2), "utf-8");
+    // Safety: clear selfWrite after a window in case fs.watch never fires
+    setTimeout(() => { this.selfWrite = false; }, 500);
 
     broadcast("settings.changed", validated);
 
