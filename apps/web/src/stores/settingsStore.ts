@@ -69,12 +69,14 @@ async function migrateFromLocalStorage(
     if (Object.keys(patch).length > 0) {
       await update(patch);
     }
+
+    // Only clean up after a successful migration so we can retry on failure.
+    localStorage.removeItem(OLD_SETTINGS_KEY);
+    localStorage.setItem(MIGRATION_FLAG, "1");
   } catch {
     // Non-fatal: migration failure should not block the app.
+    // Old data is preserved for a retry on next startup.
   }
-
-  localStorage.removeItem(OLD_SETTINGS_KEY);
-  localStorage.setItem(MIGRATION_FLAG, "1");
 }
 
 /** Zustand state shape for the settings store. */
