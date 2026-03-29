@@ -23,6 +23,7 @@ import { ThreadRepo } from "./repositories/thread-repo";
 import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
 import { SnapshotService } from "./services/snapshot-service";
+import { SettingsService } from "./services/settings-service";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
 import type { AgentEvent } from "@mcode/contracts";
@@ -57,6 +58,7 @@ const providerRegistry = container.resolve(ProviderRegistry);
 const toolCallRecordRepo = container.resolve(ToolCallRecordRepo);
 const turnSnapshotRepo = container.resolve(TurnSnapshotRepo);
 const snapshotService = container.resolve(SnapshotService);
+const settingsService = container.resolve(SettingsService);
 const db = container.resolve<Database.Database>("Database");
 
 // Wire up PTY sender to broadcast push events
@@ -135,6 +137,7 @@ const { httpServer, wss } = createWsServer({
   toolCallRecordRepo,
   turnSnapshotRepo,
   snapshotService,
+  settingsService,
 });
 
 /**
@@ -178,17 +181,20 @@ async function shutdown(): Promise<void> {
   // 4. Mark active threads as interrupted
   threadService.markActiveThreadsInterrupted(activeThreadIds);
 
-  // 5. Shutdown terminal service
+  // 5. Dispose settings file watcher
+  settingsService.dispose();
+
+  // 6. Shutdown terminal service
   terminalService.shutdown();
 
-  // 6. Close all WebSocket clients and shut down the WS server
+  // 7. Close all WebSocket clients and shut down the WS server
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) {
       client.close(1001, "Server shutting down");
     }
   }
 
-  // 7. Await WS and HTTP server close so pending handshakes can finish
+  // 8. Await WS and HTTP server close so pending handshakes can finish
   const wssClose = new Promise<void>((res, rej) => {
     wss.close((err) => (err ? rej(err) : res()));
   });
@@ -198,7 +204,7 @@ async function shutdown(): Promise<void> {
 
   await Promise.allSettled([wssClose, httpClose]);
 
-  // 8. Close database
+  // 9. Close database
   try {
     db.close();
   } catch {

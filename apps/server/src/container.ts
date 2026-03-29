@@ -31,6 +31,7 @@ import { SkillService } from "./services/skill-service";
 import { TerminalService } from "./services/terminal-service";
 import { AttachmentService } from "./services/attachment-service";
 import { SnapshotService } from "./services/snapshot-service";
+import { SettingsService } from "./services/settings-service";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(): typeof container {
@@ -159,6 +160,11 @@ export function setupContainer(): typeof container {
   container.register(
     SnapshotService,
     { useClass: SnapshotService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    SettingsService,
+    { useClass: SettingsService },
     { lifecycle: Lifecycle.Singleton },
   );
 
