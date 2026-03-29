@@ -151,7 +151,14 @@ async function dispatch(
       return deps.workspaceService.list();
     case "workspace.create": {
       const workspace = deps.workspaceService.create(params.name, params.path);
-      deps.gitWatcherService.watchWorkspace(workspace.id, workspace.path);
+      try {
+        deps.gitWatcherService.watchWorkspace(workspace.id, workspace.path);
+      } catch (err) {
+        logger.warn("Failed to start branch watcher for workspace", {
+          workspaceId: workspace.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       return workspace;
     }
     case "workspace.delete": {

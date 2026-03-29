@@ -7,7 +7,7 @@
 import { injectable } from "tsyringe";
 import { watch, existsSync, type FSWatcher } from "fs";
 import { execFileSync } from "child_process";
-import { join } from "path";
+import { join, dirname, basename } from "path";
 import { logger } from "@mcode/shared";
 import { broadcast } from "../transport/push";
 import { getCurrentBranchForPath } from "./git-service";
@@ -83,9 +83,18 @@ export class GitWatcherService {
       return;
     }
 
+    // Watch the parent directory rather than the HEAD file inode directly.
+    // Git may atomically replace HEAD via rename(), which would create a new
+    // inode and silently drop a file-level watcher on some platforms.
+    const headDir = dirname(headFile);
+    const headName = basename(headFile);
+
     let fsWatcher: FSWatcher;
     try {
-      fsWatcher = watch(headFile, () => {
+      fsWatcher = watch(headDir, (_, filename) => {
+        // Ignore events for other files in the .git directory
+        if ((filename ?? headName) !== headName) return;
+
         const entry = this.watchers.get(workspaceId);
         if (!entry) return;
 
@@ -103,17 +112,26 @@ export class GitWatcherService {
           broadcast("branch.changed", { workspaceId, branch });
         }, DEBOUNCE_MS);
       });
+
+      fsWatcher.on("error", (err) => {
+        logger.warn("GitWatcherService: watcher error, stopping watch", {
+          workspaceId,
+          headDir,
+          error: err.message,
+        });
+        this.unwatchWorkspace(workspaceId);
+      });
     } catch (err) {
       logger.warn("GitWatcherService: fs.watch failed, degrading gracefully", {
         workspaceId,
-        headFile,
+        headDir,
         error: err instanceof Error ? err.message : String(err),
       });
       return;
     }
 
     this.watchers.set(workspaceId, { watcher: fsWatcher, timer: null });
-    logger.info("GitWatcherService: watching HEAD", { workspaceId, headFile });
+    logger.info("GitWatcherService: watching HEAD", { workspaceId, headDir, headName });
   }
 
   /**

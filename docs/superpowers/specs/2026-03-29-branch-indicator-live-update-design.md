@@ -20,7 +20,7 @@ Use Node's built-in `fs.watch` on the workspace's HEAD file. When the HEAD chang
 
 ## Architecture
 
-```
+```text
 ┌─ Server ─────────────────────────────────┐
 │ GitWatcherService (new singleton)         │
 │  ├─ watchWorkspace(id, path)              │
@@ -128,7 +128,7 @@ This ensures the branch list is always fresh when entering new-thread mode, even
 
 ## Data Flow
 
-```
+```text
 User runs: git checkout main (external terminal)
     ↓
 .git/HEAD file changes on disk
