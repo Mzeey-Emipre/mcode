@@ -86,6 +86,10 @@ Types: feat, fix, refactor, docs, test, chore, perf, ci
 
 Keep commits atomic. Each commit represents one logical change.
 
+## Settings
+
+When adding or modifying user-facing settings, follow the schema conventions in **[docs/SETTINGS_SCHEMA.md](docs/SETTINGS_SCHEMA.md)**. All settings use nested JSON with a max depth of 3 levels.
+
 ## Key Documentation
 
 - **Architecture:** [ARCHITECTURE.md](ARCHITECTURE.md)
