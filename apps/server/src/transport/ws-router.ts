@@ -32,6 +32,7 @@ import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type { SnapshotService } from "../services/snapshot-service";
 import type { SettingsService } from "../services/settings-service";
+import type { GitWatcherService } from "../services/git-watcher-service";
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
@@ -49,6 +50,8 @@ export interface RouterDeps {
   turnSnapshotRepo: TurnSnapshotRepo;
   snapshotService: SnapshotService;
   settingsService: SettingsService;
+  /** Watcher service for tracking per-workspace HEAD file changes. */
+  gitWatcherService: GitWatcherService;
 }
 
 /**
@@ -146,10 +149,23 @@ async function dispatch(
     // Workspace
     case "workspace.list":
       return deps.workspaceService.list();
-    case "workspace.create":
-      return deps.workspaceService.create(params.name, params.path);
-    case "workspace.delete":
-      return deps.workspaceService.delete(params.id);
+    case "workspace.create": {
+      const workspace = deps.workspaceService.create(params.name, params.path);
+      try {
+        deps.gitWatcherService.watchWorkspace(workspace.id, workspace.path);
+      } catch (err) {
+        logger.warn("Failed to start branch watcher for workspace", {
+          workspaceId: workspace.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return workspace;
+    }
+    case "workspace.delete": {
+      const result = deps.workspaceService.delete(params.id);
+      deps.gitWatcherService.unwatchWorkspace(params.id);
+      return result;
+    }
 
     // Thread
     case "thread.list":

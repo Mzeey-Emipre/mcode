@@ -248,7 +248,7 @@ function listBranchesForPath(repoPath: string): GitBranch[] {
 }
 
 /** Get the current branch name for a repository path. */
-function getCurrentBranchForPath(repoPath: string): string {
+export function getCurrentBranchForPath(repoPath: string): string {
   try {
     const output = execFileSync(
       "git",

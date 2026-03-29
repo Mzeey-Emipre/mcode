@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { GitBranch, ChevronDown, Loader2, GitPullRequest } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GitBranch as GitBranchType, PrDetail } from "@/transport/types";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 type TabId = "local" | "remote" | "prs";
 
@@ -95,6 +96,7 @@ export function BranchPicker({
   }
 
   const handleSelect = (name: string) => {
+    useWorkspaceStore.getState().setBranchManuallySelected(true);
     onSelect(name);
     setOpen(false);
   };
@@ -143,6 +145,7 @@ export function BranchPicker({
           if (isFetching) return;
           setOpen(false);
           if (onFetchAndSelect) {
+            useWorkspaceStore.getState().setBranchManuallySelected(true);
             onFetchAndSelect(pr.branch, pr.number);
           } else {
             handleSelect(pr.branch);

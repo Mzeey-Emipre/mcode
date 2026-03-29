@@ -24,6 +24,8 @@ import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
+import { GitWatcherService } from "./services/git-watcher-service";
+import { WorkspaceRepo } from "./repositories/workspace-repo";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
 import type { AgentEvent } from "@mcode/contracts";
@@ -59,6 +61,8 @@ const toolCallRecordRepo = container.resolve(ToolCallRecordRepo);
 const turnSnapshotRepo = container.resolve(TurnSnapshotRepo);
 const snapshotService = container.resolve(SnapshotService);
 const settingsService = container.resolve(SettingsService);
+const gitWatcherService = container.resolve(GitWatcherService);
+const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup watcher initialization
 const db = container.resolve<Database.Database>("Database");
 
 // Wire up PTY sender to broadcast push events
@@ -78,6 +82,12 @@ const maxAge = parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10);
 const removed = turnSnapshotRepo.deleteExpired(maxAge);
 if (removed > 0) {
   logger.info(`Cleaned up ${removed} expired turn snapshots`);
+}
+
+// Initialize HEAD file watchers for all existing workspaces so branch changes
+// are detected after a server restart.
+for (const ws of workspaceRepo.listAll()) {
+  gitWatcherService.watchWorkspace(ws.id, ws.path);
 }
 
 // Wire up push broadcasting for agent events and thread status changes.
@@ -138,6 +148,7 @@ const { httpServer, wss } = createWsServer({
   turnSnapshotRepo,
   snapshotService,
   settingsService,
+  gitWatcherService,
 });
 
 /**
@@ -187,14 +198,17 @@ async function shutdown(): Promise<void> {
   // 6. Shutdown terminal service
   terminalService.shutdown();
 
-  // 7. Close all WebSocket clients and shut down the WS server
+  // 7. Dispose all git HEAD file watchers
+  gitWatcherService.dispose();
+
+  // 8. Close all WebSocket clients and shut down the WS server
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) {
       client.close(1001, "Server shutting down");
     }
   }
 
-  // 8. Await WS and HTTP server close so pending handshakes can finish
+  // 9. Await WS and HTTP server close so pending handshakes can finish
   const wssClose = new Promise<void>((res, rej) => {
     wss.close((err) => (err ? rej(err) : res()));
   });
@@ -204,7 +218,7 @@ async function shutdown(): Promise<void> {
 
   await Promise.allSettled([wssClose, httpClose]);
 
-  // 9. Close database
+  // 10. Close database
   try {
     db.close();
   } catch {
