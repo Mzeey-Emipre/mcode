@@ -2,11 +2,15 @@ import { useEffect, useRef } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { getTransport } from "@/transport";
+import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
 
+/** Props for {@link TerminalView}. */
 interface TerminalViewProps {
+  /** The PTY session ID this view is bound to. */
   readonly ptyId: string;
+  /** Whether the terminal panel is currently visible. Controls display style. */
   readonly visible: boolean;
 }
 
@@ -47,12 +51,43 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       const fitAddon = new XFitAddon();
       term.loadAddon(fitAddon);
       term.open(el);
+
+      // Intercept Ctrl/Cmd+C when text is selected — copy to clipboard instead of sending SIGINT.
+      // Returning false prevents xterm from forwarding the raw \x03 byte to the PTY.
+      // getSelection() is called first to avoid a TOCTOU race with hasSelection().
+      term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+        const selection = term.getSelection();
+        if (shouldInterceptKeyEvent(event, selection.length > 0)) {
+          if (selection) {
+            navigator.clipboard.writeText(selection).catch(() => {});
+          }
+          return false;
+        }
+        return true;
+      });
+
       fitAddon.fit();
 
       termRef.current = term;
       fitAddonRef.current = fitAddon;
 
       const transport = getTransport();
+
+      // Right-click pastes clipboard text into the PTY (native terminal convention — no context menu).
+      // term.paste() is used instead of transport.terminalWrite() so that xterm applies bracketed
+      // paste mode when the shell requests it, preventing embedded newlines from auto-executing commands.
+      const handleContextMenu = (e: MouseEvent) => {
+        e.preventDefault();
+        navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) {
+              term.paste(text);
+            }
+          })
+          .catch(() => {});
+      };
+      el.addEventListener("contextmenu", handleContextMenu);
 
       // Forward keystrokes to the backend via WS RPC
       const dataDisposable = term.onData((data) => {
@@ -99,6 +134,7 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
 
       const cleanup = () => {
         dataDisposable.dispose();
+        el.removeEventListener("contextmenu", handleContextMenu);
         window.removeEventListener("mcode:pty-data", handlePtyData);
         window.removeEventListener("mcode:pty-exit", handlePtyExit);
         observer.disconnect();
