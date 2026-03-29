@@ -10,6 +10,8 @@ import {
   Diamond,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   MODEL_PROVIDERS,
   findModelById,
@@ -79,7 +81,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
 
   if (locked) {
     return (
-      <span className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground">
+      <span className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
         <Icon size={12} className={iconClass} />
         {shortLabel}
         <Lock size={10} className="ml-0.5 opacity-60" />
@@ -120,14 +122,11 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
 
   return (
     <div ref={containerRef} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
+      <Button variant="ghost" size="xs" onClick={() => setOpen(!open)} className="text-muted-foreground">
         <Icon size={12} className={iconClass} />
         {shortLabel}
         <ChevronDown size={10} />
-      </button>
+      </Button>
 
       {open && (
         <div className="absolute bottom-full left-0 z-20 mb-1 min-w-[180px] rounded-md border border-border bg-popover p-1 shadow-lg">
@@ -177,9 +176,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
                   <ProvIcon size={12} className={p.comingSoon ? "opacity-40" : provIconClass} />
                   <span className="flex-1 text-left">{p.name}</span>
                   {p.comingSoon && (
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
-                      SOON
-                    </span>
+                    <Badge variant="secondary" size="sm">SOON</Badge>
                   )}
                   {!p.comingSoon && hasModels && p.models.length > 1 && (
                     <ChevronRight size={10} className="text-muted-foreground" />

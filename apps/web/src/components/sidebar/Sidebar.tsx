@@ -3,6 +3,7 @@ import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PanelLeftClose, PanelLeft } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 /** Sidebar component that renders app navigation and the project tree. */
 export function Sidebar() {
@@ -20,12 +21,9 @@ export function Sidebar() {
         {!collapsed && (
           <span className="text-sm font-semibold text-foreground">Mcode</span>
         )}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
+        <Button variant="ghost" size="icon-sm" onClick={() => setCollapsed(!collapsed)} className="text-muted-foreground">
           {collapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
-        </button>
+        </Button>
       </div>
 
       {/* Project tree */}

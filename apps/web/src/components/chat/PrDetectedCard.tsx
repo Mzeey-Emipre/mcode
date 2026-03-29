@@ -1,4 +1,5 @@
 import { GitPullRequest, X, GitFork } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface PrDetectedCardProps {
   number: number;
@@ -34,20 +35,13 @@ export function PrDetectedCard({
         </div>
       </div>
       <div className="flex items-center gap-1 shrink-0 ml-2">
-        <button
-          onClick={onReview}
-          disabled={loading}
-          className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
+        <Button size="xs" onClick={onReview} disabled={loading}>
           <GitFork size={10} />
           Review in worktree
-        </button>
-        <button
-          onClick={onDismiss}
-          className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
+        </Button>
+        <Button variant="ghost" size="icon-xs" onClick={onDismiss} className="text-muted-foreground">
           <X size={12} />
-        </button>
+        </Button>
       </div>
     </div>
   );

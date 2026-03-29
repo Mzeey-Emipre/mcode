@@ -12,6 +12,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay } from "@/lib/thread-status";
@@ -244,14 +245,9 @@ export function ProjectTree() {
         <span className="text-xs font-medium uppercase text-muted-foreground">
           Projects
         </span>
-        <button
-          disabled={isCreating}
-          onClick={handleOpenFolder}
-          aria-label="Open project folder"
-          className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-        >
+        <Button variant="ghost" size="icon-xs" disabled={isCreating} onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground">
           <Plus size={14} />
-        </button>
+        </Button>
       </div>
 
       <ScrollArea className="flex-1">
@@ -296,14 +292,10 @@ export function ProjectTree() {
           {workspaces.length === 0 && (
             <div className="px-2 py-4 text-center">
               <p className="text-xs text-muted-foreground">No projects yet.</p>
-              <button
-                disabled={isCreating}
-                onClick={handleOpenFolder}
-                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50"
-              >
+              <Button variant="outline" size="sm" disabled={isCreating} onClick={handleOpenFolder} className="mt-2 w-full border-dashed text-muted-foreground hover:border-primary hover:text-primary">
                 <FolderOpen size={12} />
                 Open a folder
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -519,16 +511,12 @@ function ProjectNode({
         )}
         <FolderOpen size={14} className="shrink-0" />
         <span className="truncate flex-1 font-medium">{workspace.name}</span>
-        <button
-          aria-label={`Delete ${workspace.name}`}
-          onClick={(e) => {
+        <Button variant="ghost" size="icon-xs" aria-label={`Delete ${workspace.name}`} onClick={(e) => {
             e.stopPropagation();
             onDelete();
-          }}
-          className="opacity-0 rounded p-0.5 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
-        >
+          }} className="opacity-0 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100">
           <Trash2 size={12} />
-        </button>
+        </Button>
       </div>
 
       {/* Threads (when expanded) */}
@@ -567,8 +555,9 @@ function ProjectNode({
                   </span>
                 )}
                 {isEditing ? (
-                  <input
+                  <Input
                     type="text"
+                    size="xs"
                     value={inlineEdit.title}
                     onChange={(e) => onInlineEditChange(e.target.value)}
                     onKeyDown={(e) => {
@@ -581,7 +570,7 @@ function ProjectNode({
                     onBlur={onInlineEditCommit}
                     autoFocus
                     onClick={(e) => e.stopPropagation()}
-                    className="flex-1 rounded border border-ring bg-background px-1 py-0 text-xs text-foreground outline-none"
+                    className="flex-1 border-ring"
                   />
                 ) : (
                   <span className="truncate flex-1 text-xs">
@@ -589,7 +578,7 @@ function ProjectNode({
                   </span>
                 )}
                 {!isEditing && (
-                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                  <span className="shrink-0 text-xs text-muted-foreground">
                     {relativeTime(thread.updated_at)}
                   </span>
                 )}
@@ -598,20 +587,17 @@ function ProjectNode({
           })}
 
           {threads.length === 0 && (
-            <p className="px-2 py-1 text-[11px] text-muted-foreground italic">
+            <p className="px-2 py-1 text-xs text-muted-foreground italic">
               No threads
             </p>
           )}
 
           {/* New thread button inside expanded project */}
           <div className="mt-0.5 px-1">
-            <button
-              onClick={onCreateThread}
-              className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-            >
-              <Plus size={11} />
+            <Button variant="ghost" size="xs" onClick={onCreateThread} className="w-full justify-start text-muted-foreground">
+              <Plus size={12} />
               New thread
-            </button>
+            </Button>
           </div>
         </div>
       )}

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { Badge } from "@/components/ui/badge";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { HeaderActions } from "./HeaderActions";
@@ -38,9 +39,9 @@ export function ChatView() {
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">New thread</span>
             {activeWorkspaceId && (
-              <span className="rounded bg-accent px-2 py-0.5 text-xs font-medium text-foreground">
+              <Badge variant="secondary">
                 {workspaces.find((w) => w.id === activeWorkspaceId)?.name ?? ""}
-              </span>
+              </Badge>
             )}
           </div>
         </div>
@@ -82,9 +83,9 @@ export function ChatView() {
       <div className="flex h-11 items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{activeThread.title}</span>
-          <span className="rounded bg-accent px-2 py-0.5 text-xs font-medium text-foreground">
+          <Badge variant="secondary">
             {workspaces.find((w) => w.id === activeThread.workspace_id)?.name ?? ""}
-          </span>
+          </Badge>
         </div>
         <HeaderActions thread={activeThread} />
       </div>
