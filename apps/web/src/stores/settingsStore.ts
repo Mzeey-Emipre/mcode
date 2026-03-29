@@ -40,18 +40,23 @@ async function migrateFromLocalStorage(
     const parsed = JSON.parse(raw);
     const patch: DeepPartial<Settings> = {};
 
-    // Old flat format: { theme: "dark", maxConcurrentAgents: 3, ... }
-    if (typeof parsed.theme === "string") {
-      patch.appearance = { theme: parsed.theme };
+    // Zustand persist wraps state under a "state" key: { state: {...}, version: 0 }
+    // lib/settings.ts stored flat: { global: {...}, workspaces: {...} }
+    // Handle both formats defensively.
+    const zustandState =
+      parsed.state && typeof parsed.state === "object" ? parsed.state : parsed;
+
+    if (typeof zustandState.theme === "string") {
+      patch.appearance = { theme: zustandState.theme };
     }
-    if (typeof parsed.maxConcurrentAgents === "number") {
-      patch.agent = { maxConcurrent: parsed.maxConcurrentAgents };
+    if (typeof zustandState.maxConcurrentAgents === "number") {
+      patch.agent = { maxConcurrent: zustandState.maxConcurrentAgents };
     }
-    if (typeof parsed.notificationsEnabled === "boolean") {
-      patch.notifications = { enabled: parsed.notificationsEnabled };
+    if (typeof zustandState.notificationsEnabled === "boolean") {
+      patch.notifications = { enabled: zustandState.notificationsEnabled };
     }
 
-    // Nested global worktree settings
+    // Nested global worktree settings come from the lib/settings.ts format
     const global = parsed.global;
     if (global && typeof global === "object") {
       const naming: DeepPartial<Settings["worktree"]["naming"]> = {};

@@ -66,6 +66,12 @@ export class SettingsService {
   /** Whether the last write originated from this process (used to skip self-triggered watch events). */
   private selfWrite = false;
 
+  /** In-memory cache of the last validated settings. Populated on first read, invalidated on external change. */
+  private cache: Settings | null = null;
+
+  /** Whether the parent directory has already been created, to avoid redundant mkdirSync calls. */
+  private dirEnsured = false;
+
   constructor() {
     this.filePath = join(getMcodeDir(), "settings.json");
     this.startWatching();
@@ -73,16 +79,22 @@ export class SettingsService {
 
   /**
    * Read the current settings from disk.
-   * Returns full settings with defaults applied. Never throws; returns
+   * Returns the cached value if available. On cache miss, reads from disk,
+   * validates, and populates the cache. Never throws; returns
    * DEFAULT_SETTINGS if the file is missing or contains invalid JSON.
    */
   get(): Settings {
+    if (this.cache !== null) {
+      return this.cache;
+    }
+
     try {
       const raw = readFileSync(this.filePath, "utf-8");
       const parsed = JSON.parse(raw) as unknown;
       const result = SettingsSchema.safeParse(parsed);
       if (result.success) {
-        return result.data;
+        this.cache = result.data;
+        return this.cache;
       }
       logger.warn("Settings file failed validation, returning defaults", {
         error: result.error.message,
@@ -109,13 +121,19 @@ export class SettingsService {
     // Validate and strip unknown keys before writing to disk
     const validated = SettingsSchema.parse(merged);
 
-    // Ensure parent directory exists
-    mkdirSync(dirname(this.filePath), { recursive: true });
+    // Ensure parent directory exists (only on first write)
+    if (!this.dirEnsured) {
+      mkdirSync(dirname(this.filePath), { recursive: true });
+      this.dirEnsured = true;
+    }
 
     this.selfWrite = true;
     writeFileSync(this.filePath, JSON.stringify(validated, null, 2), "utf-8");
     // Safety: clear selfWrite after a window in case fs.watch never fires
     setTimeout(() => { this.selfWrite = false; }, 500);
+
+    // Update cache directly from the validated result — no need for another disk read
+    this.cache = validated;
 
     broadcast("settings.changed", validated);
 
@@ -165,6 +183,8 @@ export class SettingsService {
             return;
           }
 
+          // Invalidate cache so the next get() re-reads from disk
+          this.cache = null;
           const settings = this.get();
           broadcast("settings.changed", settings);
 
