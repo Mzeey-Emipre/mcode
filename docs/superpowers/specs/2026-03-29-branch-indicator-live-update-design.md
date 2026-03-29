@@ -58,7 +58,7 @@ Responsibilities:
   - Returns `.git` → main repo → watch `<workspacePath>/.git/HEAD`
   - Returns absolute path → worktree → watch `<absolute-git-dir>/HEAD`
 - Use `fs.watch` with a 200ms debounce to avoid rapid-fire events during rebase/merge
-- On HEAD change: call `getCurrentBranchForPath(workspacePath)` and broadcast `branch.changed` with `{ workspaceId, branch }`
+- On HEAD change: call `getCurrentBranchForPath(workspacePath)` (exported from `git-service.ts`) and broadcast `branch.changed` with `{ workspaceId, branch }`
 - `watchWorkspace(workspaceId: string, workspacePath: string): void`
 - `unwatchWorkspace(workspaceId: string): void`
 - `dispose(): void` — closes all active watchers (called on server shutdown)
@@ -79,9 +79,9 @@ Register `GitWatcherService` as a singleton.
 
 ### 4. Server — WebSocket Router (`ws-router.ts`)
 
-The WebSocket router already calls `WorkspaceService.create()` and `WorkspaceService.delete()`. After each:
-- `create` → call `gitWatcherService.watchWorkspace(workspace.id, workspace.path)`
-- `delete` → call `gitWatcherService.unwatchWorkspace(workspaceId)`
+Add `gitWatcherService: GitWatcherService` to the `RouterDeps` interface. The WebSocket router already calls `WorkspaceService.create()` and `WorkspaceService.delete()`. After each:
+- `create` → call `deps.gitWatcherService.watchWorkspace(workspace.id, workspace.path)`
+- `delete` → call `deps.gitWatcherService.unwatchWorkspace(workspaceId)`
 
 Also, on server startup, call `watchWorkspace` for all existing workspaces from `WorkspaceRepo.listAll()` so watchers are active after a server restart.
 
@@ -155,9 +155,10 @@ BranchPicker re-renders with updated isCurrent flags
 | File | Change |
 |------|--------|
 | `packages/contracts/src/ws/channels.ts` | Add `branch.changed` channel |
+| `apps/server/src/services/git-service.ts` | Export `getCurrentBranchForPath` helper |
 | `apps/server/src/services/git-watcher-service.ts` | **New** — HEAD watcher service |
 | `apps/server/src/container.ts` | Register `GitWatcherService` as singleton |
-| `apps/server/src/transport/ws-router.ts` | Call watch/unwatch on workspace create/delete |
+| `apps/server/src/transport/ws-router.ts` | Add `gitWatcherService` to `RouterDeps`; call watch/unwatch on workspace create/delete |
 | `apps/server/src/index.ts` | Init watchers for existing workspaces on startup; call `dispose()` on shutdown |
 | `apps/web/src/transport/ws-events.ts` | Add `branch.changed` listener |
 | `apps/web/src/stores/workspaceStore.ts` | Add `branchManuallySelected` flag |
