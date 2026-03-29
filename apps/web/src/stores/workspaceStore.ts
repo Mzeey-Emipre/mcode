@@ -5,7 +5,8 @@ import { useThreadStore } from "./threadStore";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useComposerDraftStore } from "./composerDraftStore";
-import { getSetting, type NamingMode } from "@/lib/settings";
+import type { NamingMode } from "@mcode/contracts";
+import { useSettingsStore } from "./settingsStore";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
 function generateBranchId(): string {
@@ -311,7 +312,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ? {
             newThreadMode: "direct" as const,
             newThreadBranch: "",
-            namingMode: getSetting("worktree.defaultNamingMode"),
+            namingMode: useSettingsStore.getState().settings.worktree.naming.mode,
             customBranchName: "",
             autoPreviewBranch: generateBranchId(),
             selectedWorktree: null,

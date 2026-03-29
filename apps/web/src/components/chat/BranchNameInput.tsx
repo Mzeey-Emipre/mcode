@@ -1,6 +1,6 @@
 import { useRef, useEffect } from "react";
 import { GitBranch } from "lucide-react";
-import type { NamingMode } from "@/lib/settings";
+import type { NamingMode } from "@mcode/contracts";
 import { Input } from "@/components/ui/input";
 
 interface BranchNameInputProps {

@@ -1,6 +1,6 @@
 import { ChevronDown, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { NamingMode } from "@/lib/settings";
+import type { NamingMode } from "@mcode/contracts";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
