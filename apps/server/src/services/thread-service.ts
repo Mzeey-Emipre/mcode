@@ -5,7 +5,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { validateBranchName } from "@mcode/shared";
+import { validateBranchName, sanitizeBranchForFolder } from "@mcode/shared";
 import type { Thread, ThreadMode } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -54,13 +54,8 @@ export class ThreadService {
         throw new Error(`Workspace not found: ${workspaceId}`);
       }
 
-      const sanitizedTitle = title
-        .split("")
-        .map((c) => (/[a-zA-Z0-9-]/.test(c) ? c : "-"))
-        .join("")
-        .toLowerCase();
       const shortId = thread.id.slice(0, 8);
-      const worktreeName = `${sanitizedTitle}-${shortId}`;
+      const worktreeName = `${sanitizeBranchForFolder(branch)}-${shortId}`;
 
       try {
         const info = this.gitService.createWorktree(
