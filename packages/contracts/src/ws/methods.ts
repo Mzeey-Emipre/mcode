@@ -8,6 +8,10 @@ import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { GitBranchSchema, WorktreeSchema } from "../git.js";
 import { PrInfoSchema, PrDetailSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
+import {
+  SettingsSchema,
+  PartialSettingsSchema,
+} from "../models/settings.js";
 
 /** Schema for creating a new thread. */
 export const CreateThreadSchema = z.object({
@@ -219,6 +223,14 @@ export const WS_METHODS = {
         ),
     }),
     result: AttachmentMetaSchema,
+  },
+  "settings.get": {
+    params: z.object({}),
+    result: SettingsSchema,
+  },
+  "settings.update": {
+    params: PartialSettingsSchema,
+    result: SettingsSchema,
   },
 } as const;
 

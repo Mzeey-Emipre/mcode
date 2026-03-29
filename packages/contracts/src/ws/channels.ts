@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentEventSchema } from "../events/agent-event.js";
 import { ThreadStatusSchema } from "../models/enums.js";
+import { SettingsSchema } from "../models/settings.js";
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
@@ -15,6 +16,7 @@ export const WS_CHANNELS = {
     workspaceId: z.string(),
     threadId: z.string().optional(),
   }),
+  "settings.changed": SettingsSchema,
   "skills.changed": z.object({}),
   "turn.persisted": z.object({
     threadId: z.string(),
