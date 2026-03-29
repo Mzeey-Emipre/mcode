@@ -71,6 +71,10 @@ Key components:
 - **`BranchNameInput`** – shows auto-generated or editable branch name
 - **`WorktreePicker`** – searchable dropdown for existing worktrees
 
+## UI Components
+
+When working on frontend code, follow the component registry and rules in **[docs/UI_COMPONENTS.md](docs/UI_COMPONENTS.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.
+
 ## Code Style
 
 Always add JSDoc/TSDoc docstrings to all exported functions, components, types, and interfaces. AI-powered code reviews depend on these for context. At minimum include a one-line summary of what the symbol does.
