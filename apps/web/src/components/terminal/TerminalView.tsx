@@ -6,8 +6,11 @@ import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
 
+/** Props for {@link TerminalView}. */
 interface TerminalViewProps {
+  /** The PTY session ID this view is bound to. */
   readonly ptyId: string;
+  /** Whether the terminal panel is currently visible. Controls display style. */
   readonly visible: boolean;
 }
 
@@ -51,11 +54,12 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
 
       // Intercept Ctrl/Cmd+C when text is selected — copy to clipboard instead of sending SIGINT.
       // Returning false prevents xterm from forwarding the raw \x03 byte to the PTY.
+      // getSelection() is called first to avoid a TOCTOU race with hasSelection().
       term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-        if (shouldInterceptKeyEvent(event, term.hasSelection())) {
-          const text = term.getSelection();
-          if (text) {
-            navigator.clipboard.writeText(text).catch(() => {});
+        const selection = term.getSelection();
+        if (shouldInterceptKeyEvent(event, selection.length > 0)) {
+          if (selection) {
+            navigator.clipboard.writeText(selection).catch(() => {});
           }
           return false;
         }
@@ -70,13 +74,15 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       const transport = getTransport();
 
       // Right-click pastes clipboard text into the PTY (native terminal convention — no context menu).
+      // term.paste() is used instead of transport.terminalWrite() so that xterm applies bracketed
+      // paste mode when the shell requests it, preventing embedded newlines from auto-executing commands.
       const handleContextMenu = (e: MouseEvent) => {
         e.preventDefault();
         navigator.clipboard
           .readText()
           .then((text) => {
             if (text) {
-              transport.terminalWrite(ptyId, text).catch(() => {});
+              term.paste(text);
             }
           })
           .catch(() => {});

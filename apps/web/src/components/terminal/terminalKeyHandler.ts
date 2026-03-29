@@ -7,6 +7,10 @@
  * - Ctrl+C / Cmd+C with a selection: intercept and copy selected text
  * - Ctrl+C / Cmd+C without a selection: do NOT intercept (let SIGINT through to PTY)
  * - Everything else: do NOT intercept
+ *
+ * @param event - The keyboard event from xterm's `attachCustomKeyEventHandler` callback.
+ * @param hasSelection - Whether the terminal currently has selected text.
+ * @returns `true` to intercept (copy to clipboard; xterm will not forward to PTY), `false` to let xterm handle normally.
  */
 export function shouldInterceptKeyEvent(
   event: KeyboardEvent,
