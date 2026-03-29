@@ -18,6 +18,7 @@ export const WS_CHANNELS = {
   }),
   "settings.changed": SettingsSchema,
   "skills.changed": z.object({}),
+  "branch.changed": z.object({ workspaceId: z.string(), branch: z.string() }),
   "turn.persisted": z.object({
     threadId: z.string(),
     messageId: z.string(),
