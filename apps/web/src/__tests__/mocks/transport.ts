@@ -5,6 +5,7 @@ import type {
   Message,
   SkillInfo,
 } from "@/transport/types";
+import { DEFAULT_SETTINGS } from "@mcode/contracts";
 import { vi } from "vitest";
 
 export function createMockWorkspace(
@@ -101,6 +102,6 @@ export const mockTransport: McodeTransport = {
   listToolCallRecordsByParent: vi.fn().mockResolvedValue([]),
   getSnapshotDiff: vi.fn().mockResolvedValue(""),
   cleanupSnapshots: vi.fn().mockResolvedValue({ removed: 0 }),
-  getSettings: vi.fn().mockResolvedValue({}),
-  updateSettings: vi.fn().mockResolvedValue({}),
+  getSettings: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
+  updateSettings: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
 };

@@ -38,15 +38,23 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   loaded: false,
 
   fetch: async () => {
-    const transport = getTransport();
-    const settings = await transport.getSettings();
-    set({ settings, loaded: true });
+    try {
+      const transport = getTransport();
+      const settings = await transport.getSettings();
+      set({ settings, loaded: true });
+    } catch {
+      // Degrade gracefully to defaults; loaded stays false so a retry can happen.
+    }
   },
 
   update: async (partial) => {
-    const transport = getTransport();
-    const settings = await transport.updateSettings(partial as PartialSettings);
-    set({ settings });
+    try {
+      const transport = getTransport();
+      const settings = await transport.updateSettings(partial as PartialSettings);
+      set({ settings });
+    } catch {
+      // Best-effort: server-side state is unchanged, local state stays as-is.
+    }
   },
 
   _applyPush: (settings) => set({ settings }),

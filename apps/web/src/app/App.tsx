@@ -15,6 +15,7 @@ export function App() {
 
   useEffect(() => {
     startPushListeners();
+    useSettingsStore.getState().fetch();
     return () => stopPushListeners();
   }, []);
 
