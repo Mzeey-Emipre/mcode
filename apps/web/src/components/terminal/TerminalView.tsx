@@ -69,6 +69,20 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
 
       const transport = getTransport();
 
+      // Right-click pastes clipboard text into the PTY (native terminal convention — no context menu).
+      const handleContextMenu = (e: MouseEvent) => {
+        e.preventDefault();
+        navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) {
+              transport.terminalWrite(ptyId, text).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      };
+      el.addEventListener("contextmenu", handleContextMenu);
+
       // Forward keystrokes to the backend via WS RPC
       const dataDisposable = term.onData((data) => {
         transport.terminalWrite(ptyId, data).catch(() => {});
@@ -114,6 +128,7 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
 
       const cleanup = () => {
         dataDisposable.dispose();
+        el.removeEventListener("contextmenu", handleContextMenu);
         window.removeEventListener("mcode:pty-data", handlePtyData);
         window.removeEventListener("mcode:pty-exit", handlePtyExit);
         observer.disconnect();
