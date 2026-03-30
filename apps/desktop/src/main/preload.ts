@@ -6,9 +6,6 @@
  */
 
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
-// webFrame is used for clearRendererCache below (clearCache is synchronous in
-// the preload context). getResourceUsage is not exposed yet - add it when an
-// in-product consumer exists to avoid unnecessary attack surface.
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Get the WebSocket URL (with auth token) for connecting to the server. */
@@ -54,4 +51,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   /** Clear Blink's in-memory resource caches (images, scripts, CSS).
    * Typically called after a thread switch to reclaim memory. */
   clearRendererCache: (): void => webFrame.clearCache(),
+
+  /** Return total bytes held in Blink's resource cache (images, scripts, CSS, fonts). */
+  getRendererCacheBytes: (): number => {
+    const { images, scripts, cssStyleSheets, xslStyleSheets, fonts, other } =
+      webFrame.getResourceUsage();
+    return (
+      images.size + scripts.size + cssStyleSheets.size +
+      xslStyleSheets.size + fonts.size + other.size
+    );
+  },
 });

@@ -11,11 +11,11 @@ interface DesktopBridge {
   /** Open a native folder-picker dialog. Returns the selected path or null. */
   showOpenDialog(options: { title?: string }): Promise<string | null>;
   /** Launch an external editor at the given directory. */
-  openInEditor(editor: string, dirPath: string): void;
+  openInEditor(editor: string, dirPath: string): Promise<void>;
   /** Open the OS file explorer at the given directory. */
-  openInExplorer(dirPath: string): void;
+  openInExplorer(dirPath: string): Promise<void>;
   /** Open a URL in the default browser. */
-  openExternalUrl(url: string): void;
+  openExternalUrl(url: string): Promise<void>;
   /** Return a list of detected editor names on the system. */
   detectEditors(): Promise<string[]>;
   /** Read an image from the system clipboard. Returns metadata or null. */
@@ -23,14 +23,16 @@ interface DesktopBridge {
   /** Save a clipboard file blob to disk. Returns metadata or null. */
   saveClipboardFile(buffer: Uint8Array, mimeType: string, fileName: string): Promise<AttachmentMeta | null>;
   /** Return the file path for logging output. */
-  getLogPath(): string;
+  getLogPath(): Promise<string>;
   /** Return recent log lines. */
-  getRecentLogs(lines: number): string;
+  getRecentLogs(lines: number): Promise<string>;
   /** Map a browser File object to its real filesystem path. */
   getPathForFile(file: File): string;
   /** Clear Blink's in-memory resource caches (images, scripts, CSS).
    * Typically called after a thread switch to reclaim memory. */
   clearRendererCache(): void;
+  /** Return total bytes held in Blink's resource cache. */
+  getRendererCacheBytes(): number;
 }
 
 declare global {

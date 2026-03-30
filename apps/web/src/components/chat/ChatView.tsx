@@ -6,6 +6,9 @@ import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { HeaderActions } from "./HeaderActions";
 
+/** Blink cache threshold (bytes) above which we evict on thread switch. */
+const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024; // 20 MB
+
 /** Renders the main chat UI for sending and receiving messages within a thread. */
 export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -30,11 +33,14 @@ export function ChatView() {
     } else {
       clearMessages();
     }
-    // Release Blink's resource cache (decoded images, scripts, CSS) from the
-    // previous thread. Skip on initial mount to preserve warm-start cache.
+    // Only evict Blink's resource cache when it exceeds the pressure threshold.
+    // Avoids unnecessary re-fetches on routine thread switches.
     // Gracefully no-ops in the web-only dev server.
     if (prevThreadIdRef.current !== null) {
-      window.desktopBridge?.clearRendererCache?.();
+      const cacheBytes = window.desktopBridge?.getRendererCacheBytes?.() ?? 0;
+      if (cacheBytes > CACHE_PRESSURE_BYTES) {
+        window.desktopBridge?.clearRendererCache?.();
+      }
     }
     prevThreadIdRef.current = activeThreadId;
   }, [activeThreadId, loadMessages, clearMessages]);

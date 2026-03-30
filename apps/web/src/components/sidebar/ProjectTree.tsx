@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useLayoutEffect, useCallback, useState, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
@@ -241,6 +241,8 @@ export function ProjectTree() {
     }
   }, [wsDeleteDialog, deleteWorkspace]);
 
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2">
@@ -252,7 +254,7 @@ export function ProjectTree() {
         </Button>
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
         <div className="px-1">
           {workspaces.map((ws) => (
             <ProjectNode
@@ -263,6 +265,7 @@ export function ProjectTree() {
               activeThreadId={activeThreadId}
               threads={threads.filter((t) => t.workspace_id === ws.id)}
               runningThreadIds={runningThreadIds}
+              scrollElementRef={scrollViewportRef}
               inlineEdit={inlineEdit}
               onInlineEditChange={(title) =>
                 setInlineEdit((prev) => prev ? { ...prev, title } : null)
@@ -455,6 +458,7 @@ interface VirtualizedThreadListProps {
   threads: Thread[];
   activeThreadId: string | null;
   runningThreadIds: Set<string>;
+  scrollElementRef: React.RefObject<HTMLDivElement | null>;
   inlineEdit: InlineEditState | null;
   onInlineEditChange: (title: string) => void;
   onInlineEditCommit: () => void;
@@ -468,6 +472,7 @@ function VirtualizedThreadList({
   threads,
   activeThreadId,
   runningThreadIds,
+  scrollElementRef,
   inlineEdit,
   onInlineEditChange,
   onInlineEditCommit,
@@ -475,39 +480,47 @@ function VirtualizedThreadList({
   onSelectThread,
   onThreadContextMenu,
 }: VirtualizedThreadListProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  // Recompute offset from the outer scroll viewport after each layout pass.
+  // Stays in sync when workspaces above expand/collapse.
+  useLayoutEffect(() => {
+    setScrollMargin((prev) => {
+      const next = containerRef.current?.offsetTop ?? 0;
+      return prev === next ? prev : next;
+    });
+  });
 
   const virtualizer = useVirtualizer({
     count: threads.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => scrollElementRef.current,
     estimateSize: () => 28,
-    overscan: 3,
+    overscan: 5,
+    scrollMargin,
   });
 
   return (
     <div
-      ref={scrollRef}
-      className="max-h-64 overflow-y-auto"
+      ref={containerRef}
+      style={{ height: virtualizer.getTotalSize(), position: "relative" }}
     >
-      <div
-        style={{ height: virtualizer.getTotalSize(), position: "relative" }}
-      >
-        {virtualizer.getVirtualItems().map((virtualItem) => {
-          const thread = threads[virtualItem.index];
-          const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
-          const isEditing = inlineEdit?.threadId === thread.id;
-          return (
-            <div
-              key={thread.id}
-              data-index={virtualItem.index}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                transform: `translateY(${virtualItem.start}px)`,
-              }}
-            >
+      {virtualizer.getVirtualItems().map((virtualItem) => {
+        const thread = threads[virtualItem.index];
+        const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
+        const isEditing = inlineEdit?.threadId === thread.id;
+        return (
+          <div
+            key={thread.id}
+            data-index={virtualItem.index}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${virtualItem.start - scrollMargin}px)`,
+            }}
+          >
               <div
                 role="button"
                 tabIndex={0}
@@ -579,7 +592,6 @@ function VirtualizedThreadList({
           );
         })}
       </div>
-    </div>
   );
 }
 
@@ -593,6 +605,7 @@ interface ProjectNodeProps {
   activeThreadId: string | null;
   threads: Thread[];
   runningThreadIds: Set<string>;
+  scrollElementRef: React.RefObject<HTMLDivElement | null>;
   inlineEdit: InlineEditState | null;
   onInlineEditChange: (title: string) => void;
   onInlineEditCommit: () => void;
@@ -612,6 +625,7 @@ function ProjectNode({
   activeThreadId,
   threads,
   runningThreadIds,
+  scrollElementRef,
   inlineEdit,
   onInlineEditChange,
   onInlineEditCommit,
@@ -670,6 +684,7 @@ function ProjectNode({
               threads={threads}
               activeThreadId={activeThreadId}
               runningThreadIds={runningThreadIds}
+              scrollElementRef={scrollElementRef}
               inlineEdit={inlineEdit}
               onInlineEditChange={onInlineEditChange}
               onInlineEditCommit={onInlineEditCommit}
