@@ -23,6 +23,7 @@ import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import { GitService } from "./git-service";
 import { AttachmentService } from "./attachment-service";
 import { SnapshotService } from "./snapshot-service";
+import { MemoryPressureService } from "./memory-pressure-service";
 import { broadcast } from "../transport/push";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
@@ -80,6 +81,8 @@ export class AgentService {
     @inject(ToolCallRecordRepo) private readonly toolCallRecordRepo: ToolCallRecordRepo,
     @inject(TurnSnapshotRepo) private readonly turnSnapshotRepo: TurnSnapshotRepo,
     @inject(SnapshotService) private readonly snapshotService: SnapshotService,
+    @inject(MemoryPressureService)
+    private readonly memoryPressureService: MemoryPressureService,
   ) {}
 
   /**
@@ -167,6 +170,8 @@ export class AgentService {
       provider.setSdkSessionId(sessionName, thread.sdk_session_id);
     }
 
+    this.activeSessionIds.add(threadId);
+    this.memoryPressureService.markActive();
     try {
       const provider = this.providerRegistry.resolve("claude");
       await provider.sendMessage({
@@ -178,13 +183,16 @@ export class AgentService {
         permissionMode,
         attachments: attachments.length > 0 ? attachments : undefined,
       });
-      this.activeSessionIds.add(threadId);
       logger.info("Message sent via provider", {
         threadId,
         session: sessionName,
         model: resolvedModel,
       });
     } catch (err) {
+      this.activeSessionIds.delete(threadId);
+      if (this.activeSessionIds.size === 0) {
+        this.memoryPressureService.markIdle();
+      }
       this.threadRepo.updateStatus(threadId, "paused");
       logger.error("Provider send failed, reverted status", {
         threadId,
@@ -278,7 +286,12 @@ export class AgentService {
     // client receives a turn.persisted event with the correct count.
     await this.persistTurn(threadId, true);
     this.threadRepo.updateStatus(threadId, "paused");
-    this.activeSessionIds.delete(threadId);
+    if (this.activeSessionIds.has(threadId)) {
+      this.activeSessionIds.delete(threadId);
+      if (this.activeSessionIds.size === 0) {
+        this.memoryPressureService.markIdle();
+      }
+    }
     // clearTurnState already called inside persistTurn
   }
 
@@ -298,9 +311,16 @@ export class AgentService {
     return [...this.activeSessionIds];
   }
 
-  /** Track that a session has ended. */
+  /**
+   * Track that a session has ended. No-ops if the session was not active.
+   * If this was the last active session, signals idle to MemoryPressureService.
+   */
   private trackSessionEnded(threadId: string): void {
+    if (!this.activeSessionIds.has(threadId)) return;
     this.activeSessionIds.delete(threadId);
+    if (this.activeSessionIds.size === 0) {
+      this.memoryPressureService.markIdle();
+    }
   }
 
   /**

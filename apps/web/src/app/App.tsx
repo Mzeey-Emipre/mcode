@@ -8,10 +8,12 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
+import { useIdleReclamation } from "@/hooks/useIdleReclamation";
 
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
+  useIdleReclamation();
 
   useEffect(() => {
     startPushListeners();

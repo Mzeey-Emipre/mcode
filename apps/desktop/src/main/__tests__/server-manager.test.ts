@@ -156,13 +156,15 @@ describe("ServerManager", () => {
   // Task 2: --max-old-space-size in execArgv
   // -----------------------------------------------------------------------
 
-  it("passes --max-old-space-size in execArgv with default 512", async () => {
+  it("passes --max-old-space-size in execArgv with default 96", async () => {
     await manager.start();
     const forkCall = vi.mocked(fork).mock.calls[0];
     const execArgv = forkCall[2]?.execArgv as string[];
     expect(execArgv).toContain("--import");
     expect(execArgv).toContain("tsx");
-    expect(execArgv).toContain("--max-old-space-size=512");
+    expect(execArgv).toContain("--max-old-space-size=96");
+    expect(execArgv).toContain("--max-semi-space-size=2");
+    expect(execArgv).toContain("--expose-gc");
   });
 
   it("reads heapMb from settings.json when file exists", async () => {
@@ -193,7 +195,7 @@ describe("ServerManager", () => {
     await manager.start();
     const forkCall = vi.mocked(fork).mock.calls[0];
     const execArgv = forkCall[2]?.execArgv as string[];
-    expect(execArgv).toContain("--max-old-space-size=512");
+    expect(execArgv).toContain("--max-old-space-size=96");
   });
 
   // -----------------------------------------------------------------------

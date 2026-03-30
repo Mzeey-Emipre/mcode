@@ -31,8 +31,8 @@ const PORT_MAX = isDev ? 19600 : 19500;
 /** Interval (ms) between health-check polls during startup. */
 const HEALTH_POLL_INTERVAL = 200;
 
-/** Default V8 max old space size in MB. */
-const DEFAULT_HEAP_MB = 512;
+/** Default V8 max old space size in MB. Tuned for the < 100MB idle target. */
+const DEFAULT_HEAP_MB = 96;
 
 /** Minimum allowed heap size in MB. */
 const MIN_HEAP_MB = 64;
@@ -42,7 +42,7 @@ const MAX_HEAP_MB = 8192;
 
 /**
  * Determine the V8 max old space size for the server child process.
- * Priority: MCODE_SERVER_HEAP_MB env var > settings.json > default (512).
+ * Priority: MCODE_SERVER_HEAP_MB env var > settings.json > default (96).
  */
 function readServerHeapMb(): number {
   // 1. Environment variable takes highest precedence
@@ -132,7 +132,12 @@ export class ServerManager {
 
     const child = fork(SERVER_ENTRY, [], {
       cwd: SERVER_DIR,
-      execArgv: ["--import", "tsx", `--max-old-space-size=${heapMb}`],
+      execArgv: [
+        "--import", "tsx",
+        `--max-old-space-size=${heapMb}`,
+        "--max-semi-space-size=2",
+        "--expose-gc",
+      ],
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",

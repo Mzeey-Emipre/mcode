@@ -123,8 +123,8 @@ export const SettingsSchema = z.object({
       /** Memory settings for the server process. */
       memory: z
         .object({
-          /** V8 max old space size in MB. Valid range: 64-8192. */
-          heapMb: z.number().int().min(64).max(8192).default(512),
+          /** V8 max old space size in MB. Valid range: 64-8192. Default tuned for < 100MB idle. */
+          heapMb: z.number().int().min(64).max(8192).default(96),
         })
         .default({}),
     })
