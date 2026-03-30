@@ -134,6 +134,7 @@ describe("Thread Switching", () => {
     expect(state.streamingByThread["thread-a"]).toBe("partial response...");
     expect(state.toolCallsByThread["thread-a"]).toHaveLength(1);
     expect(state.runningThreadIds.has("thread-a")).toBe(true);
+    expect(state.serverMessageIds).toEqual({ "local-1": "server-1" });
   });
 
   it("sendMessage for a background thread does not inject into the active thread", async () => {
