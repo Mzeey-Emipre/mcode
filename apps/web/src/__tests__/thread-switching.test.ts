@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
+import type { Message } from "@/transport/types";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({
@@ -7,6 +8,7 @@ vi.mock("@/transport", async () => ({
   getTransport: () => mockTransport,
 }));
 
+/** Verifies thread isolation: switching threads must not leak messages across views. */
 describe("Thread Switching", () => {
   beforeEach(() => {
     useThreadStore.setState({
@@ -42,7 +44,7 @@ describe("Thread Switching", () => {
     });
 
     // Use a deferred promise so we can inspect state mid-flight
-    let resolveGetMessages!: (msgs: any[]) => void;
+    let resolveGetMessages!: (msgs: Message[]) => void;
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockReturnValueOnce(
       new Promise((resolve) => {
         resolveGetMessages = resolve;
@@ -88,7 +90,7 @@ describe("Thread Switching", () => {
       runningThreadIds: new Set(["thread-b"]),
     });
 
-    let resolveGetMessages!: (msgs: any[]) => void;
+    let resolveGetMessages!: (msgs: Message[]) => void;
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockReturnValueOnce(
       new Promise((resolve) => {
         resolveGetMessages = resolve;
@@ -155,8 +157,6 @@ describe("Thread Switching", () => {
     // Assert: Thread B's messages are unchanged — no Thread A content injected
     const state = useThreadStore.getState();
     expect(state.messages).toEqual([threadBMsg]);
-    expect(state.messages).toHaveLength(1);
-    expect(state.messages[0].thread_id).toBe("thread-b");
   });
 
   it("switching back to a thread loads its messages from the database", async () => {
@@ -184,7 +184,6 @@ describe("Thread Switching", () => {
     // Assert: all messages shown, including those that arrived while viewing Thread B
     const state = useThreadStore.getState();
     expect(state.messages).toEqual(updatedThreadAMsgs);
-    expect(state.messages).toHaveLength(2);
     expect(state.currentThreadId).toBe("thread-a");
   });
 });

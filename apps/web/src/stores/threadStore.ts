@@ -138,7 +138,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         };
       });
     } else {
-      set({ loading: true, error: null, currentThreadId: threadId, messages: [], persistedToolCallCounts: {} });
+      set({
+        loading: true,
+        error: null,
+        currentThreadId: threadId,
+        messages: [],
+        persistedToolCallCounts: {},
+      });
     }
     try {
       const messages = await getTransport().getMessages(threadId, 100);
