@@ -34,6 +34,8 @@ interface ThreadState {
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
   /** Retrieve cached tool call records, or null if not cached. */
   getCachedToolCallRecords: (key: string) => ToolCallRecord[] | null;
+  /** Evict the entire tool call record cache. Records are re-fetched on next expand. */
+  clearToolCallRecordCache: () => void;
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
@@ -94,6 +96,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
   getCachedToolCallRecords: (key) => {
     return get().toolCallRecordCache[key] ?? null;
+  },
+
+  clearToolCallRecordCache: () => {
+    set({ toolCallRecordCache: {} });
   },
 
   /**

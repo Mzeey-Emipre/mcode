@@ -153,4 +153,8 @@ export interface McodeTransport {
   getSettings(): Promise<Settings>;
   /** Update settings with a deep-partial merge. Returns full merged settings. */
   updateSettings(partial: PartialSettings): Promise<Settings>;
+
+  // Memory pressure
+  /** Notify server of window background/foreground state for memory management. */
+  setBackground(background: boolean): Promise<void>;
 }

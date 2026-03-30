@@ -325,6 +325,9 @@ export function createWsTransport(
     getSettings: () => rpc<Settings>("settings.get", {}),
     updateSettings: (partial) => rpc<Settings>("settings.update", partial as Record<string, unknown>),
 
+    // Memory pressure
+    setBackground: (background) => rpc<void>("memory.setBackground", { background }),
+
     // Lifecycle
     close: () => {
       closed = true;
