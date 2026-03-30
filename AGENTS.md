@@ -88,7 +88,7 @@ Keep commits atomic. Each commit represents one logical change.
 
 ## Settings
 
-When adding or modifying user-facing settings, follow the schema conventions in **[docs/settings/guide.md](docs/settings/guide.md)**. All settings use nested JSON with a max depth of 3 levels. See **[docs/settings/reference.md](docs/settings/reference.md)** for the full settings reference.
+When adding or modifying user-facing settings, follow the schema conventions in **[docs/guides/settings-schema.md](docs/guides/settings-schema.md)**. All settings use nested JSON with a max depth of 3 levels. See **[docs/settings/reference.md](docs/settings/reference.md)** for the full settings reference.
 
 ## Key Documentation
 

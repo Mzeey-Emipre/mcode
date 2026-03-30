@@ -1,6 +1,6 @@
 # Settings Reference
 
-Per-setting reference for Mcode's `settings.json`. For schema conventions and structure rules, see [guide.md](guide.md).
+Per-setting reference for Mcode's `settings.json`. For schema conventions and structure rules, see [settings-schema.md](../guides/settings-schema.md).
 
 **Location:** `~/.mcode/settings.json`
 
