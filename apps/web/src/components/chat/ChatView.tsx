@@ -1,10 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { Badge } from "@/components/ui/badge";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { HeaderActions } from "./HeaderActions";
+
+/** Blink cache threshold (bytes) above which we evict on thread switch. */
+const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024; // 20 MB
 
 /** Renders the main chat UI for sending and receiving messages within a thread. */
 export function ChatView() {
@@ -22,12 +25,24 @@ export function ChatView() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
+  const prevThreadIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (activeThreadId) {
       loadMessages(activeThreadId);
     } else {
       clearMessages();
     }
+    // Only evict Blink's resource cache when it exceeds the pressure threshold.
+    // Avoids unnecessary re-fetches on routine thread switches.
+    // Gracefully no-ops in the web-only dev server.
+    if (prevThreadIdRef.current !== null) {
+      const cacheBytes = window.desktopBridge?.getRendererCacheBytes?.() ?? 0;
+      if (cacheBytes > CACHE_PRESSURE_BYTES) {
+        window.desktopBridge?.clearRendererCache?.();
+      }
+    }
+    prevThreadIdRef.current = activeThreadId;
   }, [activeThreadId, loadMessages, clearMessages]);
 
   // New thread state: show empty composer when pending
