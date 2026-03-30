@@ -130,7 +130,7 @@ export class ServerManager {
     const heapMb = readServerHeapMb();
     console.log(`Starting server with --max-old-space-size=${heapMb}`);
 
-    this.serverProcess = fork(SERVER_ENTRY, [], {
+    const child = fork(SERVER_ENTRY, [], {
       cwd: SERVER_DIR,
       execArgv: ["--import", "tsx", `--max-old-space-size=${heapMb}`],
       env: {
@@ -145,20 +145,20 @@ export class ServerManager {
       },
       stdio: ["pipe", "pipe", "pipe", "ipc"],
     });
+    this.serverProcess = child;
 
     // Forward server stdout/stderr to the main process console
-    this.serverProcess.stdout?.on("data", (data: Buffer) => {
+    child.stdout?.on("data", (data: Buffer) => {
       process.stdout.write(`[server] ${data.toString()}`);
     });
-    this.serverProcess.stderr?.on("data", (data: Buffer) => {
+    child.stderr?.on("data", (data: Buffer) => {
       process.stderr.write(`[server] ${data.toString()}`);
     });
 
-    this.serverProcess.on("exit", (code) => {
-      const unexpected = this.serverProcess !== null;
+    child.on("exit", (code) => {
       console.error(`Server process exited with code ${code}`);
-      this.serverProcess = null;
-      if (unexpected) {
+      if (this.serverProcess === child) {
+        this.serverProcess = null;
         this.onUnexpectedExit?.(code);
       }
     });
