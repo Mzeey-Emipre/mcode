@@ -9,7 +9,7 @@ export interface PrStateVisual {
 
 /** Returns the icon and color for a PR state. Shared by PrBadge and ProjectTree. */
 export function getPrVisual(state: string | null | undefined): PrStateVisual {
-  switch (state) {
+  switch (state?.toLowerCase()) {
     case "merged":
       return { Icon: GitMerge, color: "text-purple-400" };
     case "closed":
