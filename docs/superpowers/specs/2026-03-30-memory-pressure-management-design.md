@@ -120,7 +120,7 @@ The service is registered in the DI container and injected into `AgentService` (
 
 ### Layer 4: Shiki Fine-Grained Bundle (Cold Idle)
 
-Replace the full Shiki bundle with a fine-grained import that loads only the languages Mcode users actually encounter.
+Replace the full Shiki bundle with `shiki/core` plus explicit per-language imports. The full bundle (`shiki/bundle/full`, 6.4MB minified) statically registers all ~200 grammars. With `shiki/core`, only the engine and themes load at startup. Grammars are imported individually via `@shikijs/langs/*` packages.
 
 **File:** `apps/web/src/workers/shiki.worker.ts`
 
@@ -131,15 +131,51 @@ import { createHighlighter } from "shiki/bundle/full";
 
 Proposed:
 ```typescript
-import { createHighlighter } from "shiki/core";
+import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+
+/**
+ * Explicit grammar imports for languages commonly seen in agent output.
+ * Each entry is a lazy import so Vite code-splits grammars into separate chunks.
+ * Languages not in this map fall back to plain text rendering.
+ */
+const LANG_IMPORTS: Record<string, () => Promise<unknown>> = {
+  typescript: () => import("@shikijs/langs/typescript"),
+  javascript: () => import("@shikijs/langs/javascript"),
+  json: () => import("@shikijs/langs/json"),
+  bash: () => import("@shikijs/langs/bash"),
+  shell: () => import("@shikijs/langs/shell"),
+  markdown: () => import("@shikijs/langs/markdown"),
+  python: () => import("@shikijs/langs/python"),
+  dockerfile: () => import("@shikijs/langs/dockerfile"),
+  yaml: () => import("@shikijs/langs/yaml"),
+  css: () => import("@shikijs/langs/css"),
+  html: () => import("@shikijs/langs/html"),
+  sql: () => import("@shikijs/langs/sql"),
+  rust: () => import("@shikijs/langs/rust"),
+  go: () => import("@shikijs/langs/go"),
+  diff: () => import("@shikijs/langs/diff"),
+  toml: () => import("@shikijs/langs/toml"),
+};
 ```
 
-Languages are already loaded on-demand via `highlighter.loadLanguage()`. The change is to stop importing `shiki/bundle/full` which bundles all ~200 language grammars into the worker, even though only a handful are ever used. With `shiki/core`, only the engine and themes are loaded at startup. Individual grammars are fetched when first requested.
+The existing `loadLanguage` call changes from passing a string name (which only works with the full bundle) to passing the resolved grammar module:
 
-The existing on-demand loading logic in the worker (the `languageLoading` Map dedup pattern) already handles lazy grammar loading correctly.
+```typescript
+const importFn = LANG_IMPORTS[language];
+if (importFn) {
+  const grammar = await importFn();
+  await highlighter.loadLanguage(grammar as ShikiLang);
+} else {
+  lang = "text";
+}
+```
 
-**Estimated savings:** 3-6MB of worker heap (grammar objects for unused languages are never allocated).
+**Why not just `shiki/bundle/web`?** The web bundle (3.8MB) still includes grammars we don't need (Vue, Svelte, etc.) and excludes some we do (Dockerfile was the original trigger for switching to `bundle/full`). Explicit imports give us exactly the languages we want with no waste.
+
+**Extending:** Adding a new language is a one-line addition to `LANG_IMPORTS`. No other changes needed.
+
+**Estimated savings:** 3-6MB of worker heap (grammar objects for unused languages are never allocated). Bundle size reduction from 6.4MB to ~1.5MB (engine + themes + 16 grammars).
 
 ### Layer 5: Frontend Idle Reclamation Hook (Background Idle)
 
