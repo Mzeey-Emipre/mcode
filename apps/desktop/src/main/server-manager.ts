@@ -5,11 +5,13 @@
  */
 
 import { fork, type ChildProcess } from "child_process";
+import { readFileSync } from "fs";
 import { createServer, type AddressInfo } from "net";
 import { randomUUID } from "crypto";
-import { resolve } from "path";
+import { resolve, join } from "path";
 import { app } from "electron";
 import { getMcodeDir } from "@mcode/shared";
+import { SettingsSchema } from "@mcode/contracts";
 
 /** Absolute path to the server package directory. */
 const SERVER_DIR = resolve(__dirname, "../../../server");
@@ -28,6 +30,44 @@ const PORT_MAX = isDev ? 19600 : 19500;
 
 /** Interval (ms) between health-check polls during startup. */
 const HEALTH_POLL_INTERVAL = 200;
+
+/** Default V8 max old space size in MB. */
+const DEFAULT_HEAP_MB = 512;
+
+/** Minimum allowed heap size in MB. */
+const MIN_HEAP_MB = 64;
+
+/** Maximum allowed heap size in MB. */
+const MAX_HEAP_MB = 8192;
+
+/**
+ * Determine the V8 max old space size for the server child process.
+ * Priority: MCODE_SERVER_HEAP_MB env var > settings.json > default (512).
+ */
+function readServerHeapMb(): number {
+  // 1. Environment variable takes highest precedence
+  const envVal = process.env.MCODE_SERVER_HEAP_MB;
+  if (envVal !== undefined) {
+    const parsed = Number(envVal);
+    if (Number.isInteger(parsed) && parsed >= MIN_HEAP_MB && parsed <= MAX_HEAP_MB) {
+      return parsed;
+    }
+    return DEFAULT_HEAP_MB;
+  }
+
+  // 2. Read from settings.json via the Zod schema
+  try {
+    const raw = readFileSync(join(getMcodeDir(), "settings.json"), "utf-8");
+    const result = SettingsSchema.safeParse(JSON.parse(raw));
+    if (result.success) {
+      return result.data.server.memory.heapMb;
+    }
+  } catch {
+    // File missing or unreadable, fall through to default
+  }
+
+  return DEFAULT_HEAP_MB;
+}
 
 /**
  * Find an available TCP port in the given range.
@@ -58,6 +98,12 @@ export class ServerManager {
   private _port = 0;
   private _authToken = "";
 
+  /**
+   * Optional callback invoked when the server process exits unexpectedly
+   * (i.e. not via {@link shutdown}). Receives the exit code (or null).
+   */
+  onUnexpectedExit: ((code: number | null) => void) | null = null;
+
   /** The port the server is listening on. */
   get port(): number {
     return this._port;
@@ -76,9 +122,12 @@ export class ServerManager {
     this._port = await findAvailablePort(PORT_MIN, PORT_MAX);
     this._authToken = randomUUID();
 
+    const heapMb = readServerHeapMb();
+    console.log(`Starting server with --max-old-space-size=${heapMb}`);
+
     this.serverProcess = fork(SERVER_ENTRY, [], {
       cwd: SERVER_DIR,
-      execArgv: ["--import", "tsx"],
+      execArgv: ["--import", "tsx", `--max-old-space-size=${heapMb}`],
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
@@ -101,8 +150,12 @@ export class ServerManager {
     });
 
     this.serverProcess.on("exit", (code) => {
+      const unexpected = this.serverProcess !== null;
       console.error(`Server process exited with code ${code}`);
       this.serverProcess = null;
+      if (unexpected) {
+        this.onUnexpectedExit?.(code);
+      }
     });
 
     await this.waitForReady(10_000);

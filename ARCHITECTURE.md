@@ -650,6 +650,7 @@ E2E tests save screenshots to `apps/web/e2e/screenshots/` for visual verificatio
 | First 100 messages load | < 50 ms |
 | App startup to usable | < 2 seconds |
 | Frontend bundle size | < 2 MB gzipped |
+| Server heap limit | 512 MB (configurable via `server.memory.heapMb`) |
 
 ## 16. CI/CD and Release
 
