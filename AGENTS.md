@@ -73,7 +73,7 @@ Key components:
 
 ## UI Components
 
-When working on frontend code, follow the component registry and rules in **[docs/UI_COMPONENTS.md](docs/UI_COMPONENTS.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.
+When working on frontend code, follow the component registry and rules in **[docs/guides/UI_COMPONENTS.md](docs/guides/UI_COMPONENTS.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.
 
 ## Code Style
 
@@ -88,7 +88,7 @@ Keep commits atomic. Each commit represents one logical change.
 
 ## Settings
 
-When adding or modifying user-facing settings, follow the schema conventions in **[docs/SETTINGS_SCHEMA.md](docs/SETTINGS_SCHEMA.md)**. All settings use nested JSON with a max depth of 3 levels.
+When adding or modifying user-facing settings, follow the schema conventions in **[docs/guides/SETTINGS_SCHEMA.md](docs/guides/SETTINGS_SCHEMA.md)**. All settings use nested JSON with a max depth of 3 levels.
 
 ## Key Documentation
 
