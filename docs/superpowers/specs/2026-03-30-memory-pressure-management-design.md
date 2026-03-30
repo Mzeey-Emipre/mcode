@@ -255,11 +255,11 @@ Non-visible terminal instances hold scrollback buffers in memory. Each terminal 
 | `apps/server/src/store/database.ts` | Add `cache_size` and `mmap_size` PRAGMAs |
 | `apps/server/src/container.ts` | Register `MemoryPressureService` |
 | `apps/server/src/services/agent-service.ts` | Call `markActive`/`markIdle` on agent lifecycle |
-| `apps/server/src/transport/ws-server.ts` | Add `memory.setBackground` RPC handler |
+| `apps/server/src/transport/ws-router.ts` | Add `memory.setBackground` RPC handler |
 | `apps/web/src/workers/shiki.worker.ts` | Switch from `shiki/bundle/full` to `shiki/core` |
 | `apps/web/src/app/App.tsx` | Mount `useIdleReclamation` hook |
 | `apps/web/src/stores/threadStore.ts` | Add `clearToolCallRecordCache` action |
-| `apps/web/src/components/terminal/TerminalView.tsx` | Clear scrollback on tab switch |
+| `apps/web/src/components/terminal/TerminalView.tsx` | Clear scrollback after 60s background idle |
 
 ## Estimated Impact
 

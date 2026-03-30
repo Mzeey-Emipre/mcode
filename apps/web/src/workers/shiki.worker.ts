@@ -52,6 +52,24 @@ const LANG_IMPORTS: Record<string, () => Promise<{ default: unknown }>> = {
   kotlin: () => import("@shikijs/langs/kotlin"),
 };
 
+/**
+ * Common markdown fence aliases mapped to their canonical Shiki language names.
+ * Prevents common short-forms (e.g. `ts`, `py`) from silently falling back to plain text.
+ */
+const LANG_ALIASES: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  py: "python",
+  sh: "shell",
+  zsh: "shell",
+  yml: "yaml",
+  cs: "csharp",
+  "c++": "cpp",
+  kt: "kotlin",
+};
+
 /** In-flight language load promises. Coalesces concurrent loads for the same language. */
 const languageLoading = new Map<string, Promise<void>>();
 
@@ -86,20 +104,21 @@ self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
   try {
     const highlighter = await getHighlighter();
     const loadedLangs = highlighter.getLoadedLanguages();
-    let lang = language;
+    // Resolve common markdown aliases (e.g. "ts" -> "typescript") before lookup
+    let lang = LANG_ALIASES[language] ?? language;
 
-    if (!loadedLangs.includes(language)) {
-      const importFn = LANG_IMPORTS[language];
+    if (!loadedLangs.includes(lang)) {
+      const importFn = LANG_IMPORTS[lang];
       if (importFn) {
         // Coalesce concurrent loads for the same language via shared promise
-        let loadPromise = languageLoading.get(language);
+        let loadPromise = languageLoading.get(lang);
         if (!loadPromise) {
           loadPromise = importFn()
             .then((mod) =>
               highlighter.loadLanguage(mod.default as ShikiLang),
             )
-            .finally(() => languageLoading.delete(language));
-          languageLoading.set(language, loadPromise);
+            .finally(() => languageLoading.delete(lang));
+          languageLoading.set(lang, loadPromise);
         }
         try {
           await loadPromise;

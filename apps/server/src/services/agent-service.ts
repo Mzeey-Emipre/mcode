@@ -190,6 +190,9 @@ export class AgentService {
       });
     } catch (err) {
       this.activeSessionIds.delete(threadId);
+      if (this.activeSessionIds.size === 0) {
+        this.memoryPressureService.markIdle();
+      }
       this.threadRepo.updateStatus(threadId, "paused");
       logger.error("Provider send failed, reverted status", {
         threadId,

@@ -207,14 +207,14 @@ async function shutdown(): Promise<void> {
   // 8. Dispose memory pressure timers
   memoryPressureService.dispose();
 
-  // 10. Close all WebSocket clients and shut down the WS server
+  // 9. Close all WebSocket clients and shut down the WS server
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) {
       client.close(1001, "Server shutting down");
     }
   }
 
-  // 11. Await WS and HTTP server close so pending handshakes can finish
+  // 10. Await WS and HTTP server close so pending handshakes can finish
   const wssClose = new Promise<void>((res, rej) => {
     wss.close((err) => (err ? rej(err) : res()));
   });
@@ -224,7 +224,7 @@ async function shutdown(): Promise<void> {
 
   await Promise.allSettled([wssClose, httpClose]);
 
-  // 12. Close database
+  // 11. Close database
   try {
     db.close();
   } catch {
