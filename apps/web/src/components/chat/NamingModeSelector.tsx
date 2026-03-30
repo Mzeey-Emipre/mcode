@@ -28,10 +28,10 @@ export function NamingModeSelector({ mode, onModeChange }: NamingModeSelectorPro
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="Branch naming mode"
-        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
       >
         {selected.label}
-        <ChevronDown size={9} />
+        <ChevronDown size={10} />
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="start" sideOffset={4} className="min-w-[100px]">

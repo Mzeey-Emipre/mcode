@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { GitBranch, ChevronDown, Loader2, GitPullRequest } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import type { GitBranch as GitBranchType, PrDetail } from "@/transport/types";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 
@@ -88,7 +91,7 @@ export function BranchPicker({
 
   if (locked) {
     return (
-      <span className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground">
+      <span className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
         <GitBranch size={12} />
         {selectedBranch}
       </span>
@@ -128,9 +131,7 @@ export function BranchPicker({
       >
         <span className="truncate">{b.name}</span>
         {badge && (
-          <span className="ml-2 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
-            {badge}
-          </span>
+          <Badge variant="secondary" size="sm" className="ml-2 shrink-0">{badge}</Badge>
         )}
       </button>
     );
@@ -164,7 +165,7 @@ export function BranchPicker({
             <GitPullRequest size={10} />
             #{pr.number} {pr.title}
           </span>
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {pr.branch} &middot; {pr.author}
           </span>
         </div>
@@ -175,26 +176,17 @@ export function BranchPicker({
 
   return (
     <div ref={containerRef} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
+      <Button variant="ghost" size="xs" onClick={() => setOpen(!open)} className="text-muted-foreground">
         <GitBranch size={12} />
         <span>From {selectedBranch}</span>
         <ChevronDown size={10} />
-      </button>
+      </Button>
 
       {open && (
         <div className="absolute bottom-full right-0 z-50 mb-1 w-[280px] rounded-md border border-border bg-popover shadow-lg">
           {/* Search */}
           <div className="p-1.5 pb-0">
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search..."
-              className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-popover-foreground focus:border-primary focus:outline-none"
-            />
+            <Input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." size="sm" className="text-popover-foreground" />
           </div>
 
           {/* Tabs */}
@@ -204,19 +196,16 @@ export function BranchPicker({
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "flex items-center gap-1 rounded-t px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  "flex items-center gap-1 rounded-t px-2.5 py-1 text-xs font-medium transition-colors",
                   activeTab === tab.id
                     ? "border-b-2 border-primary text-foreground"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {tab.label}
-                <span className={cn(
-                  "rounded-full px-1.5 py-0.5 text-[9px] leading-none",
-                  activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
-                )}>
+                <Badge size="sm" className={cn("rounded-full", activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
                   {tab.count}
-                </span>
+                </Badge>
               </button>
             ))}
           </div>

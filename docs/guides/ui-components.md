@@ -28,17 +28,28 @@ All UI primitives live in `apps/web/src/components/ui/`. **Always use these inst
 <Button variant="outline" size="icon-xs"><Icon /></Button>
 ```
 
+## Input Sizes
+
+```tsx
+// Sizes: default (h-8), sm (h-7), xs (h-6)
+<Input placeholder="Default input" />
+<Input size="sm" placeholder="Compact search input" />
+<Input size="xs" placeholder="Inline edit input" />
+```
+
 ## Badge Variants
 
 ```tsx
 // Variants: default, secondary, destructive, outline, ghost, link
+// Sizes: default (h-5), sm (h-4)
 <Badge variant="secondary">Status</Badge>
+<Badge variant="secondary" size="sm">Tag</Badge>
 ```
 
 ## Rules
 
 1. **Never use raw `<button>` with Tailwind classes.** Use `<Button>` with the appropriate variant and size.
-2. **Never use raw `<input>` with Tailwind classes.** Use `<Input>` and override via className if needed.
-3. **Never use styled `<span>` for status labels or counts.** Use `<Badge>` with the appropriate variant.
+2. **Never use raw `<input>` with Tailwind classes.** Use `<Input>` with the appropriate size.
+3. **Never use styled `<span>` for status labels or counts.** Use `<Badge>` with the appropriate variant and size.
 4. **If no existing component fits**, create a new one in `components/ui/` with CVA variants following the existing pattern. Then use it wherever needed.
 5. **Stick to the Tailwind text scale** (`text-xs`, `text-sm`, `text-base`). Do not use arbitrary values like `text-[10px]` or `text-[11px]`.

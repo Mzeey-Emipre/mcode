@@ -53,11 +53,20 @@ vi.mock("crypto", () => ({
   randomUUID: vi.fn().mockReturnValue("mock-auth-token"),
 }));
 
+vi.mock("fs", () => ({
+  readFileSync: vi.fn(() => {
+    const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    throw err;
+  }),
+}));
+
 // Mock fetch for health check
 const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
 import { fork } from "child_process";
+import { readFileSync } from "fs";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -71,6 +80,14 @@ describe("ServerManager", () => {
     refs.resetExitCallback();
     manager = new ServerManager();
 
+    // Reset readFileSync fully (clears queued once-returns) then restore
+    // the default throwing implementation so it simulates a missing file.
+    vi.mocked(readFileSync).mockReset().mockImplementation(() => {
+      const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    });
+
     // Mock fetch to simulate server health
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -80,6 +97,7 @@ describe("ServerManager", () => {
   afterEach(() => {
     manager.shutdown();
     globalThis.fetch = originalFetch;
+    delete process.env.MCODE_SERVER_HEAP_MB;
   });
 
   it("starts the server by forking a child process", async () => {
@@ -132,5 +150,72 @@ describe("ServerManager", () => {
     refs.mockChildProcess.kill.mockClear();
     manager.shutdown();
     expect(refs.mockChildProcess.kill).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // Task 2: --max-old-space-size in execArgv
+  // -----------------------------------------------------------------------
+
+  it("passes --max-old-space-size in execArgv with default 512", async () => {
+    await manager.start();
+    const forkCall = vi.mocked(fork).mock.calls[0];
+    const execArgv = forkCall[2]?.execArgv as string[];
+    expect(execArgv).toContain("--import");
+    expect(execArgv).toContain("tsx");
+    expect(execArgv).toContain("--max-old-space-size=512");
+  });
+
+  it("reads heapMb from settings.json when file exists", async () => {
+    vi.mocked(readFileSync).mockReturnValueOnce(
+      JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
+    );
+    await manager.start();
+    const forkCall = vi.mocked(fork).mock.calls[0];
+    const execArgv = forkCall[2]?.execArgv as string[];
+    expect(execArgv).toContain("--max-old-space-size=1024");
+  });
+
+  it("uses MCODE_SERVER_HEAP_MB env var over settings.json", async () => {
+    process.env.MCODE_SERVER_HEAP_MB = "2048";
+    vi.mocked(readFileSync).mockReturnValueOnce(
+      JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
+    );
+    await manager.start();
+    const forkCall = vi.mocked(fork).mock.calls[0];
+    const execArgv = forkCall[2]?.execArgv as string[];
+    expect(execArgv).toContain("--max-old-space-size=2048");
+  });
+
+  it("falls back to default when settings.json has invalid heapMb", async () => {
+    vi.mocked(readFileSync).mockReturnValueOnce(
+      JSON.stringify({ server: { memory: { heapMb: 10 } } }),
+    );
+    await manager.start();
+    const forkCall = vi.mocked(fork).mock.calls[0];
+    const execArgv = forkCall[2]?.execArgv as string[];
+    expect(execArgv).toContain("--max-old-space-size=512");
+  });
+
+  // -----------------------------------------------------------------------
+  // Task 3: onUnexpectedExit callback
+  // -----------------------------------------------------------------------
+
+  it("calls onUnexpectedExit when server exits without shutdown", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCb = refs.getExitCallback();
+    exitCb!(1);
+    expect(onCrash).toHaveBeenCalledWith(1);
+  });
+
+  it("does not call onUnexpectedExit after shutdown", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    manager.shutdown();
+    const exitCb = refs.getExitCallback();
+    exitCb!(0);
+    expect(onCrash).not.toHaveBeenCalled();
   });
 });

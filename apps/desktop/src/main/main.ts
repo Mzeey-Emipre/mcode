@@ -434,6 +434,24 @@ app.whenReady().then(async () => {
   const { port } = await serverManager.start();
   console.log(`Server started on port ${port}`);
 
+  // Show a Restart / Quit dialog if the server crashes unexpectedly
+  serverManager.onUnexpectedExit = async (code) => {
+    if (!mainWindow) return;
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "error",
+      title: "Server crashed",
+      message: `The Mcode server exited unexpectedly (code ${code ?? "unknown"}).`,
+      buttons: ["Restart", "Quit"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response === 0) {
+      await serverManager.restart();
+    } else {
+      app.quit();
+    }
+  };
+
   // Register custom protocol for attachment files
   registerAttachmentProtocol();
 

@@ -3,7 +3,6 @@ import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
-import { createBatchedUpdater } from "./batchMiddleware";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -29,6 +28,8 @@ interface ThreadState {
   activeSubagentsByThread: Record<string, number>;
   /** Cache for tool call records to avoid re-fetching from server. */
   toolCallRecordCache: Record<string, ToolCallRecord[]>;
+  /** Tracks the local message ID for the most recent assistant message per thread, used by handleTurnPersisted to correctly assign tool call counts. */
+  currentTurnMessageIdByThread: Record<string, string>;
 
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
@@ -71,8 +72,6 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
 };
 
 export const useThreadStore = create<ThreadState>((set, get) => {
-  const batchSet = createBatchedUpdater<ThreadState>(set);
-
   return {
   messages: [],
   runningThreadIds: new Set<string>(),
@@ -87,6 +86,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   serverMessageIds: {},
   activeSubagentsByThread: {},
   toolCallRecordCache: {},
+  currentTurnMessageIdByThread: {},
 
   cacheToolCallRecords: (key, records) => {
     set((state) => ({
@@ -122,6 +122,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         delete nextStreaming[threadId];
         const nextStartTimes = { ...state.agentStartTimes };
         delete nextStartTimes[threadId];
+        const nextTurnMsgIds = { ...state.currentTurnMessageIdByThread };
+        delete nextTurnMsgIds[threadId];
         return {
           loading: true,
           error: null,
@@ -129,6 +131,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           toolCallsByThread: nextToolCalls,
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
+          currentTurnMessageIdByThread: nextTurnMsgIds,
           toolCallRecordCache: {},
         };
       });
@@ -235,7 +238,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * Does NOT reset runningThreadIds since agents may still be executing.
    */
   clearMessages: () => {
-    set({ messages: [], error: null, streamingByThread: {}, toolCallsByThread: {}, persistedToolCallCounts: {}, serverMessageIds: {}, toolCallRecordCache: {} });
+    set({ messages: [], error: null, streamingByThread: {}, toolCallsByThread: {}, persistedToolCallCounts: {}, serverMessageIds: {}, toolCallRecordCache: {}, currentTurnMessageIdByThread: {} });
     // Note: does NOT reset runningThreadIds - agents may still be running
   },
 
@@ -336,6 +339,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           messages: state.currentThreadId === threadId
             ? [...state.messages, message]
             : state.messages,
+          currentTurnMessageIdByThread: {
+            ...state.currentTurnMessageIdByThread,
+            [threadId]: message.id,
+          },
         }));
       }
       return;
@@ -369,7 +376,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         isComplete: false,
         parentToolCallId: parentToolCallId || undefined,
       };
-      batchSet((state) => ({
+      set((state) => ({
         toolCallsByThread: {
           ...state.toolCallsByThread,
           [threadId]: [...(state.toolCallsByThread[threadId] ?? []), toolCall],
@@ -382,7 +389,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const toolCallId = (params.toolCallId as string) || "";
       const output = (params.output as string) || "";
       const isError = (params.isError as boolean) || false;
-      batchSet((state) => {
+      set((state) => {
         const calls = state.toolCallsByThread[threadId] ?? [];
         // Try matching by ID first; fall back to the first incomplete tool call
         // when the SDK sends a null or non-matching toolCallId.
@@ -591,16 +598,24 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       delete nextToolCalls[payload.threadId];
 
       // The server's messageId may differ from the client's in-memory UUID
-      // (client generates its own via crypto.randomUUID()). Match by finding
-      // the last assistant message, but only if messages belong to this thread.
+      // (client generates its own via crypto.randomUUID()). Prefer the ID
+      // tracked during the active turn; fall back to the last assistant message
+      // for cases where session.message arrived before tracking was introduced.
       let localMsgId = payload.messageId;
-      if (state.currentThreadId === payload.threadId) {
+      const trackedMsgId = state.currentTurnMessageIdByThread[payload.threadId];
+      if (trackedMsgId) {
+        localMsgId = trackedMsgId;
+      } else if (state.currentThreadId === payload.threadId) {
+        // Fallback: find last assistant message (covers cases where session.message
+        // arrived before we started tracking, e.g. on initial load)
         const lastAssistantMsg = [...state.messages]
           .reverse()
           .find((m) => m.role === "assistant");
         if (lastAssistantMsg) localMsgId = lastAssistantMsg.id;
       }
 
+      const nextTurnMsgIds = { ...state.currentTurnMessageIdByThread };
+      delete nextTurnMsgIds[payload.threadId];
       return {
         toolCallsByThread: nextToolCalls,
         persistedToolCallCounts: {
@@ -611,6 +626,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ...state.serverMessageIds,
           [localMsgId]: payload.messageId,
         },
+        currentTurnMessageIdByThread: nextTurnMsgIds,
       };
     });
   },
