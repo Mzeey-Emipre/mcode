@@ -8,5 +8,5 @@ export { getMcodeDir } from "./paths/index.js";
 export {
   validateWorktreeName,
   validateBranchName,
-  toWorktreeSlug,
+  sanitizeBranchForFolder,
 } from "./git/index.js";
