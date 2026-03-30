@@ -116,6 +116,19 @@ export const SettingsSchema = z.object({
         .default({}),
     })
     .default({}),
+
+  /** Server child process settings. */
+  server: z
+    .object({
+      /** Memory settings for the server process. */
+      memory: z
+        .object({
+          /** V8 max old space size in MB. Valid range: 64-8192. */
+          heapMb: z.number().int().min(64).max(8192).default(512),
+        })
+        .default({}),
+    })
+    .default({}),
 });
 
 /** Full settings object with all defaults applied. */
