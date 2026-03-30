@@ -129,6 +129,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           loading: true,
           error: null,
           currentThreadId: threadId,
+          messages: [],
+          persistedToolCallCounts: {},
           toolCallsByThread: nextToolCalls,
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
@@ -137,7 +139,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         };
       });
     } else {
-      set({ loading: true, error: null, currentThreadId: threadId });
+      set({
+        loading: true,
+        error: null,
+        currentThreadId: threadId,
+        messages: [],
+        persistedToolCallCounts: {},
+      });
     }
     try {
       const messages = await getTransport().getMessages(threadId, 100);
@@ -191,7 +199,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     };
 
     set((state) => ({
-      messages: [...state.messages, userMessage],
+      messages: state.currentThreadId === threadId
+        ? [...state.messages, userMessage]
+        : state.messages,
       runningThreadIds: new Set([...state.runningThreadIds, threadId]),
       agentStartTimes: { ...state.agentStartTimes, [threadId]: Date.now() },
       error: null,
