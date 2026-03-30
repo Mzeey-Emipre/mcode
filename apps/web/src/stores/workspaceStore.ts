@@ -5,7 +5,7 @@ import { useThreadStore } from "./threadStore";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useComposerDraftStore } from "./composerDraftStore";
-import type { NamingMode } from "@mcode/contracts";
+import type { NamingMode, ReasoningLevel } from "@mcode/contracts";
 import { useSettingsStore } from "./settingsStore";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
@@ -50,7 +50,7 @@ interface WorkspaceState {
     mode: "direct" | "worktree",
     branch: string,
   ) => Promise<Thread>;
-  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]) => Promise<Thread>;
+  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel) => Promise<Thread>;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
   setPendingNewThread: (value: boolean) => void;
@@ -213,7 +213,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  createAndSendMessage: async (content, model, permissionMode, attachments) => {
+  createAndSendMessage: async (content, model, permissionMode, attachments, reasoningLevel) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
 
@@ -246,7 +246,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
     try {
       const thread = await getTransport().createAndSendMessage(
-        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments,
+        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments, reasoningLevel,
       );
       set((state) => ({
         threads: [thread, ...state.threads],
