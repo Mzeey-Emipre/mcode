@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -40,37 +41,37 @@
 }
 
 .dark {
-  /* T3Code-inspired dark theme: deep blue-gray tones */
-  --background: oklch(0.16 0.01 260);
+  /* Matte blue-cool dark theme — minimal chroma (0.005) at hue 260 for subtle cool undertone */
+  --background: oklch(0.16 0.005 260);
   --foreground: oklch(0.93 0 0);
-  --card: oklch(0.19 0.012 260);
+  --card: oklch(0.19 0.005 260);
   --card-foreground: oklch(0.93 0 0);
-  --popover: oklch(0.19 0.012 260);
+  --popover: oklch(0.19 0.005 260);
   --popover-foreground: oklch(0.93 0 0);
   --primary: oklch(0.62 0.19 264);
   --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.24 0.012 260);
+  --secondary: oklch(0.24 0.005 260);
   --secondary-foreground: oklch(0.93 0 0);
-  --muted: oklch(0.22 0.012 260);
-  --muted-foreground: oklch(0.55 0.01 260);
-  --accent: oklch(0.24 0.015 260);
+  --muted: oklch(0.22 0.005 260);
+  --muted-foreground: oklch(0.55 0.005 260);
+  --accent: oklch(0.24 0.005 260);
   --accent-foreground: oklch(0.93 0 0);
   --destructive: oklch(0.65 0.2 25);
-  --border: oklch(0.28 0.012 260);
-  --input: oklch(0.24 0.012 260);
+  --border: oklch(0.28 0.005 260);
+  --input: oklch(0.24 0.005 260);
   --ring: oklch(0.62 0.19 264);
   --chart-1: oklch(0.62 0.19 264);
-  --chart-2: oklch(0.55 0.01 260);
-  --chart-3: oklch(0.44 0.01 260);
-  --chart-4: oklch(0.37 0.01 260);
-  --chart-5: oklch(0.27 0.01 260);
-  --sidebar: oklch(0.17 0.012 260);
+  --chart-2: oklch(0.55 0.005 260);
+  --chart-3: oklch(0.44 0.005 260);
+  --chart-4: oklch(0.37 0.005 260);
+  --chart-5: oklch(0.27 0.005 260);
+  --sidebar: oklch(0.17 0.005 260);
   --sidebar-foreground: oklch(0.93 0 0);
   --sidebar-primary: oklch(0.62 0.19 264);
   --sidebar-primary-foreground: oklch(0.93 0 0);
-  --sidebar-accent: oklch(0.24 0.015 260);
+  --sidebar-accent: oklch(0.24 0.005 260);
   --sidebar-accent-foreground: oklch(0.93 0 0);
-  --sidebar-border: oklch(0.28 0.012 260);
+  --sidebar-border: oklch(0.28 0.005 260);
   --sidebar-ring: oklch(0.62 0.19 264);
 }
 
@@ -123,14 +124,27 @@
   100% { background-position: -200% 0; }
 }
 
+@keyframes fade-up-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up-in {
+  animation: fade-up-in 150ms ease-out;
+}
+
+
+.glow-primary {
+  box-shadow: -2px 0 8px -1px oklch(0.62 0.19 264 / 0.35);
+}
+
 .animate-shimmer-text {
   background-image: linear-gradient(
     90deg,
-    oklch(0.55 0.01 260) 0%,
+    oklch(0.55 0.005 260) 0%,
     oklch(0.75 0.15 264) 40%,
     oklch(0.85 0.12 264) 50%,
     oklch(0.75 0.15 264) 60%,
-    oklch(0.55 0.01 260) 100%
+    oklch(0.55 0.005 260) 100%
   );
   background-size: 200% 100%;
   animation: shimmer-text 2.5s ease-in-out infinite;
@@ -152,6 +166,21 @@
   html {
     @apply font-sans;
   }
+  button, [role="button"], a, select, summary, [tabindex]:not([tabindex="-1"]) {
+    cursor: pointer;
+  }
+
+  /* Text selection — light mode: soft indigo tint */
+  ::selection {
+    background: oklch(0.62 0.19 264 / 0.18);
+    color: inherit;
+  }
+
+  /* Text selection — dark mode: slightly brighter tint */
+  .dark ::selection {
+    background: oklch(0.62 0.19 264 / 0.30);
+    color: inherit;
+  }
 
   /* Thin scrollbars matching T3Code */
   ::-webkit-scrollbar {
@@ -162,11 +191,11 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: oklch(0.35 0.01 260);
+    background: oklch(0.35 0.005 260);
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.45 0.01 260);
+    background: oklch(0.45 0.005 260);
   }
 }
 
@@ -179,12 +208,12 @@
 }
 .scrollbar-on-hover:hover {
   scrollbar-width: thin;
-  scrollbar-color: oklch(0.35 0.01 260) transparent;
+  scrollbar-color: oklch(0.35 0.005 260) transparent;
 }
 .scrollbar-on-hover:hover::-webkit-scrollbar {
   width: 4px;
 }
 .scrollbar-on-hover:hover::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0.01 260);
+  background: oklch(0.35 0.005 260);
   border-radius: 2px;
 }

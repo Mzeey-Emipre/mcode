@@ -24,7 +24,7 @@ export function PrDetectedCard({
   return (
     <div className="mx-4 mt-2 flex items-center justify-between rounded-lg border border-border bg-card p-2.5 text-xs shadow-sm">
       <div className="flex items-center gap-2 truncate">
-        <GitPullRequest size={14} className="shrink-0 text-green-500" />
+        <GitPullRequest size={14} className="shrink-0 text-primary/70" />
         <div className="truncate">
           <span className="font-medium">
             #{number} {title}

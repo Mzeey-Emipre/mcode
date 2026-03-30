@@ -4,7 +4,6 @@ import { useThreadStore } from "@/stores/threadStore";
 import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { getPrVisual } from "@/lib/pr-status";
 import { cn } from "@/lib/utils";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ContextMenu } from "@/components/ui/context-menu";
 import {
   Dialog,
@@ -241,17 +240,17 @@ export function ProjectTree() {
   }, [wsDeleteDialog, deleteWorkspace]);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-medium uppercase text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 mb-0.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
           Projects
         </span>
-        <Button variant="ghost" size="icon-xs" disabled={isCreating} onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground">
+        <Button variant="ghost" size="icon-xs" disabled={isCreating} onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground/60 hover:text-foreground">
           <Plus size={14} />
         </Button>
       </div>
 
-      <ScrollArea className="flex-1">
+      <div className="scrollbar-on-hover flex-1 overflow-y-auto">
         <div className="px-1">
           {workspaces.map((ws) => (
             <ProjectNode
@@ -300,7 +299,7 @@ export function ProjectTree() {
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
 
       {error && (
         <p className="px-3 py-1 text-xs text-destructive">{error}</p>
@@ -543,13 +542,13 @@ function ProjectNode({
                 }}
                 onContextMenu={(e) => onThreadContextMenu(e, thread)}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer",
+                  "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer transition-colors",
                   activeThreadId === thread.id
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                 )}
               >
-                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotClass)} />
+                <span className={cn("h-2 w-2 shrink-0 rounded-full", status.dotClass)} />
                 {thread.pr_number != null && (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
                   return (
@@ -585,7 +584,7 @@ function ProjectNode({
                     className="flex-1 border-ring"
                   />
                 ) : (
-                  <span className="truncate flex-1 text-xs">
+                  <span className="truncate flex-1 text-sm">
                     {thread.title}
                   </span>
                 )}

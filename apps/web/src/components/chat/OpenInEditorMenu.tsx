@@ -1,9 +1,10 @@
 import { useEffect, useCallback } from "react";
-import { ChevronDown, FolderOpen } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { getTransport } from "@/transport";
 import { useInstalledEditors } from "@/hooks/useInstalledEditors";
 import { registerShortcut } from "@/lib/shortcuts";
 import { VsCodeIcon, ZedIcon, CursorIcon } from "./EditorIcons";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -37,7 +38,7 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
     .map((id) => ({
       id,
       label: EDITOR_CONFIG[id].label,
-      icon: EDITOR_CONFIG[id].icon(14),
+      icon: EDITOR_CONFIG[id].icon(16),
     }));
 
   const handleOpenEditor = (editorId: string) => {
@@ -60,10 +61,11 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
-        <FolderOpen size={12} />
-        Open
-        <ChevronDown size={10} />
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="xs" className="gap-1.5 text-muted-foreground hover:text-foreground">
+          <FolderOpen size={13} />
+          <span>Open</span>
+        </Button>
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="end" sideOffset={4} className="min-w-[160px]">

@@ -14,8 +14,8 @@ export function getStatusDisplay(
   if (isActuallyRunning) {
     return {
       label: "Working",
-      color: "text-yellow-500",
-      dotClass: "bg-yellow-500",
+      color: "text-yellow-500/60",
+      dotClass: "bg-yellow-500/60",
     };
   }
 
@@ -24,14 +24,14 @@ export function getStatusDisplay(
     case "errored":
       return {
         label: "Errored",
-        color: "text-red-500",
-        dotClass: "bg-red-500",
+        color: "text-destructive/70",
+        dotClass: "bg-destructive/70",
       };
     case "completed":
       return {
         label: "Completed",
-        color: "text-green-500",
-        dotClass: "bg-green-500",
+        color: "text-green-500/60",
+        dotClass: "bg-green-500/60",
       };
     default:
       // No agent running, not completed, not errored = idle / ready for input
