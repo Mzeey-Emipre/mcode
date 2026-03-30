@@ -223,22 +223,21 @@ The tool call record cache is currently cleared as a side effect of `loadThread`
 
 This hook is mounted once in the root `App` component.
 
-### Layer 6: Terminal Buffer Management (Warm Idle)
+### Layer 6: Terminal Buffer Management (Background Idle)
 
-Non-visible terminal instances hold scrollback buffers in memory. When a terminal tab is not active, clear its buffer.
+Non-visible terminal instances hold scrollback buffers in memory. Each terminal instance uses approximately 1-3MB depending on content.
 
-**File:** `apps/web/src/components/terminal/TerminalView.tsx`
+**Implementation:** Terminal buffer clearing is handled inside `useIdleReclamation` as part of the background idle sequence. After 60 seconds of window blur, the hook dispatches a `mcode:clear-terminal-buffers` CustomEvent. Each `TerminalView` instance listens for this event and calls `terminal.clear()` to release its scrollback buffer.
 
-Current scrollback is set to 500 lines. Each terminal instance uses approximately 1-3MB depending on content.
+**Why background idle, not tab switch:** Per-terminal savings (1-3MB) do not justify degrading tab-switch UX. Clearing on tab switch loses scrollback that the user may want to review when switching back during an active session. Background idle clearing aligns with the "reclaim when nobody's looking" philosophy: the user is not present to notice the loss of scrollback, and any relevant output will resume flowing when they return.
 
-On terminal tab switch (when a terminal becomes non-visible):
-- Call `terminal.clear()` on the outgoing terminal to release its scrollback buffer
-- Historical scrollback is lost; only new PTY output appears when the terminal becomes visible again
-- This is an acceptable trade-off: scrollback is 500 lines and terminals are primarily used for real-time agent output, not historical review
+**Behavior:**
+- Clearing fires once per background idle entry, 60s after blur
+- All mounted `TerminalView` instances clear simultaneously via the broadcast CustomEvent
+- Historical scrollback is lost; only new PTY output appears after the user returns
+- The PTY session itself remains alive on the server; only the frontend buffer is cleared
 
-This is implemented in the terminal tab switching logic, not as a timer-based approach, so there is no delay.
-
-**Estimated savings:** 1-3MB per hidden terminal instance.
+**Estimated savings:** 1-3MB per terminal instance during background idle.
 
 ## New Files
 
