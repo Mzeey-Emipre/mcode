@@ -13,6 +13,7 @@ import type {
   ToolCallRecord,
   Settings,
 } from "./types";
+import type { ReasoningLevel } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
@@ -239,7 +240,7 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: string) =>
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel) =>
       rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments, reasoningLevel }),
     createAndSendMessage: (
       workspaceId,

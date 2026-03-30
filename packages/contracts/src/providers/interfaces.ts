@@ -1,5 +1,6 @@
 import type { AgentEvent } from "../events/agent-event.js";
 import type { AttachmentMeta } from "../models/attachment.js";
+import type { ReasoningLevel } from "../models/settings.js";
 
 /** Identifier for a supported AI provider. */
 export type ProviderId = "claude" | "codex" | "gemini" | "copilot";
@@ -17,7 +18,7 @@ export interface IAgentProvider {
     resume: boolean;
     permissionMode: string;
     attachments?: AttachmentMeta[];
-    reasoningLevel?: string;
+    reasoningLevel?: ReasoningLevel;
   }): void | Promise<void>;
 
   /** Abort a running session. */

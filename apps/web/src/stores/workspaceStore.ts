@@ -5,7 +5,7 @@ import { useThreadStore } from "./threadStore";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useComposerDraftStore } from "./composerDraftStore";
-import type { NamingMode } from "@mcode/contracts";
+import type { NamingMode, ReasoningLevel } from "@mcode/contracts";
 import { useSettingsStore } from "./settingsStore";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
@@ -50,7 +50,7 @@ interface WorkspaceState {
     mode: "direct" | "worktree",
     branch: string,
   ) => Promise<Thread>;
-  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: string) => Promise<Thread>;
+  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel) => Promise<Thread>;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
   setPendingNewThread: (value: boolean) => void;

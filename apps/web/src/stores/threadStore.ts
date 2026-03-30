@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
+import type { ReasoningLevel } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
@@ -40,7 +41,7 @@ interface ThreadState {
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: string) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;

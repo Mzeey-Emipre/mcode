@@ -10,6 +10,7 @@ import type {
   PrDetail,
   SkillInfo,
   PermissionMode,
+  ReasoningLevel,
   ToolCallRecord,
   Settings,
   PartialSettings,
@@ -73,7 +74,7 @@ export interface McodeTransport {
   listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: string): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
     content: string,
@@ -83,7 +84,7 @@ export interface McodeTransport {
     branch?: string,
     existingWorktreePath?: string,
     attachments?: AttachmentMeta[],
-    reasoningLevel?: string,
+    reasoningLevel?: ReasoningLevel,
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
   readClipboardImage(): Promise<AttachmentMeta | null>;

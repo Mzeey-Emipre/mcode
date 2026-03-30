@@ -13,6 +13,7 @@ import { logger } from "@mcode/shared";
 import type {
   IAgentProvider,
   ProviderId,
+  ReasoningLevel,
   AgentEvent,
   AttachmentMeta,
 } from "@mcode/contracts";
@@ -142,7 +143,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     resume: boolean;
     permissionMode: string;
     attachments?: AttachmentMeta[];
-    reasoningLevel?: string;
+    reasoningLevel?: ReasoningLevel;
   }): Promise<void> {
     try {
       await this.doSendMessage(params);
@@ -163,7 +164,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     resume: boolean;
     permissionMode: string;
     attachments?: AttachmentMeta[];
-    reasoningLevel?: string;
+    reasoningLevel?: ReasoningLevel;
   }): Promise<void> {
     const {
       sessionId,
