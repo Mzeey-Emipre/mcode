@@ -1,7 +1,8 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
-import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, GitPullRequest, GitMerge, Loader2 } from "lucide-react";
+import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2 } from "lucide-react";
+import { getPrVisual } from "@/lib/pr-status";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ContextMenu } from "@/components/ui/context-menu";
@@ -561,21 +562,17 @@ function ProjectNode({
                 )}
               >
                 <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotClass)} />
-                {thread.pr_number != null && (
-                  <span
-                    title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
-                    className="shrink-0"
-                  >
-                    {thread.pr_status === "merged" ? (
-                      <GitMerge size={11} className="text-purple-400" />
-                    ) : (
-                      <GitPullRequest
-                        size={11}
-                        className={thread.pr_status === "closed" ? "text-muted-foreground" : "text-green-400"}
-                      />
-                    )}
-                  </span>
-                )}
+                {thread.pr_number != null && (() => {
+                  const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
+                  return (
+                    <span
+                      title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
+                      className="shrink-0"
+                    >
+                      <PrIcon size={11} className={prColor} />
+                    </span>
+                  );
+                })()}
                 {status.label && (
                   <span className={cn("shrink-0 text-xs", status.color)}>
                     {status.label}

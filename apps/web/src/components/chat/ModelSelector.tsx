@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ComponentType } from "react";
 import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -15,7 +15,7 @@ import {
   GeminiIcon,
 } from "./ProviderIcons";
 
-type IconComponent = React.ComponentType<{ size?: number; className?: string }>;
+type IconComponent = ComponentType<{ size?: number; className?: string }>;
 
 const PROVIDER_META: Record<string, { icon: IconComponent; color: string }> = {
   claude: { icon: ClaudeIcon, color: "text-orange-400" },
