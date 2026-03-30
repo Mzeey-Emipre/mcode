@@ -101,8 +101,10 @@ export function openDatabase(dbPath?: string): Database.Database {
 }
 
 /**
- * Open an in-memory database for testing. Applies the same pragmas and
- * migrations as a file-backed database.
+ * Open an in-memory database for testing. Applies the same WAL mode, foreign
+ * keys, and migrations as a file-backed database. Memory-tuning pragmas
+ * (cache_size, mmap_size) are omitted as they are not meaningful for
+ * in-memory databases.
  */
 export function openMemoryDatabase(): Database.Database {
   const nativeBinding = resolveNativeBinding();
