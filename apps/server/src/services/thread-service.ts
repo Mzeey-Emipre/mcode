@@ -54,13 +54,12 @@ export class ThreadService {
         throw new Error(`Workspace not found: ${workspaceId}`);
       }
 
-      const shortId = thread.id.slice(0, 8);
-      // Truncate to 91 chars so the full name (prefix + "-" + 8-char id) stays within
-      // the 100-character limit enforced by validateWorktreeName.
-      const sanitized = sanitizeBranchForFolder(branch).slice(0, 91);
-      const worktreeName = `${sanitized}-${shortId}`;
-
       try {
+        const shortId = thread.id.slice(0, 8);
+        // Truncate to 91 chars so the full name (prefix + "-" + 8-char id) stays within
+        // the 100-character limit enforced by validateWorktreeName.
+        const sanitized = sanitizeBranchForFolder(branch).slice(0, 91);
+        const worktreeName = `${sanitized}-${shortId}`;
         const info = this.gitService.createWorktree(
           workspace.path,
           worktreeName,

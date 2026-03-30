@@ -136,8 +136,10 @@ describe("sanitizeBranchForFolder", () => {
     );
   });
 
-  it("returns empty string for input that is all special chars", () => {
-    expect(sanitizeBranchForFolder("///...")).toBe("");
+  it("throws for input that is all special chars (empty result)", () => {
+    expect(() => sanitizeBranchForFolder("///...")).toThrow(
+      "produces an empty folder name",
+    );
   });
 });
 ```
@@ -171,14 +173,22 @@ Replace the existing `toWorktreeSlug` function (lines 63-69) with:
  * Sanitize a git branch name into a filesystem-safe folder name.
  * Replaces slashes, whitespace, and non-alphanumeric characters with hyphens,
  * collapses consecutive hyphens, and strips leading dots/hyphens and trailing hyphens.
+ * Throws if the result is empty (i.e. the input contained no alphanumeric characters).
+ * Callers should validate the branch name with {@link validateBranchName} before calling this.
  */
 export function sanitizeBranchForFolder(branch: string): string {
-  return branch
+  const result = branch
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-{2,}/g, "-")
     .replace(/^[.-]+/, "")
     .replace(/-+$/, "");
+  if (!result) {
+    throw new Error(
+      `Branch name "${branch}" produces an empty folder name after sanitization`,
+    );
+  }
+  return result;
 }
 ```
 
