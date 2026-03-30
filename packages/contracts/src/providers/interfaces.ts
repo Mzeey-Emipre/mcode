@@ -17,6 +17,7 @@ export interface IAgentProvider {
     resume: boolean;
     permissionMode: string;
     attachments?: AttachmentMeta[];
+    reasoningLevel?: string;
   }): void | Promise<void>;
 
   /** Abort a running session. */

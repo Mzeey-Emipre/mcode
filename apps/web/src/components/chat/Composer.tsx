@@ -15,7 +15,7 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getDefaultModel } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -46,6 +46,8 @@ import {
   MAX_ATTACHMENTS,
 } from "@mcode/contracts";
 import { useComposerDraftStore, type ReasoningLevel } from "@/stores/composerDraftStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { findProviderForModel } from "@/lib/model-registry";
 
 /** Convert a Blob to a base64 string using the native FileReader API. */
 function blobToBase64(blob: Blob): Promise<string> {
@@ -79,8 +81,8 @@ type AccessMode = PermissionMode;
  */
 export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) {
   const [input, setInput] = useState("");
-  const [modelId, setModelId] = useState(getDefaultModel().id);
-  const [reasoning, setReasoning] = useState<ReasoningLevel>("high");
+  const [modelId, setModelId] = useState(getDefaultModelId());
+  const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
   const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.CHAT);
   const [access, setAccess] = useState<AccessMode>(PERMISSION_MODES.FULL);
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
@@ -152,8 +154,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         // No saved draft: reset to defaults
         setInput("");
         setAttachments([]);
-        setModelId(getDefaultModel().id);
-        setReasoning("high");
+        setModelId(getDefaultModelId());
+        setReasoning(getDefaultReasoningLevel());
         // Reset Lexical editor
         if (editorRef.current) {
           editorRef.current.update(() => {
@@ -167,8 +169,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       // Entering "new thread" mode: ensure clean slate
       setInput("");
       setAttachments([]);
-      setModelId(getDefaultModel().id);
-      setReasoning("high");
+      setModelId(getDefaultModelId());
+      setReasoning(getDefaultReasoningLevel());
       if (editorRef.current) {
         editorRef.current.update(() => {
           const root = $getRoot();
@@ -629,6 +631,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         attachments: currentAttachments,
         model: modelId,
         permissionMode: access,
+        reasoningLevel: reasoning,
       });
 
       setInput("");
@@ -686,13 +689,29 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined);
+        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning);
       } finally {
         setPreparingWorktree(false);
       }
     } else if (threadId) {
-      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent);
+      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning);
     }
+
+    // Auto-save "last used" model and reasoning as the new default
+    const defaults = useSettingsStore.getState().settings.model.defaults;
+    if (modelId !== defaults.id || reasoning !== defaults.reasoning) {
+      const provider = findProviderForModel(modelId);
+      void useSettingsStore.getState().update({
+        model: {
+          defaults: {
+            id: modelId,
+            reasoning,
+            ...(provider && { provider: provider.id as "claude" | "codex" | "gemini" | "copilot" }),
+          },
+        },
+      });
+    }
+
     editorRef.current?.focus();
   }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
 

@@ -73,7 +73,7 @@ export interface McodeTransport {
   listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: string): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
     content: string,
@@ -83,6 +83,7 @@ export interface McodeTransport {
     branch?: string,
     existingWorktreePath?: string,
     attachments?: AttachmentMeta[],
+    reasoningLevel?: string,
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
   readClipboardImage(): Promise<AttachmentMeta | null>;

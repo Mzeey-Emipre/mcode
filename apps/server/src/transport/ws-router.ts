@@ -220,6 +220,7 @@ async function dispatch(
         params.permissionMode ?? "default",
         params.model,
         params.attachments,
+        params.reasoningLevel,
       );
       return;
     case "agent.createAndSend":
@@ -232,6 +233,7 @@ async function dispatch(
         params.branch,
         params.existingWorktreePath,
         params.attachments,
+        params.reasoningLevel,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);

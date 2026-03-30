@@ -8,6 +8,7 @@ export interface QueuedMessage {
   attachments: AttachmentMeta[];
   model: string;
   permissionMode: PermissionMode;
+  reasoningLevel?: string;
   queuedAt: number;
 }
 

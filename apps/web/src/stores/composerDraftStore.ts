@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
+import type { ReasoningLevel } from "@mcode/contracts";
 
-/** Reasoning intensity level for the AI model. */
-export type ReasoningLevel = "low" | "medium" | "high";
+export type { ReasoningLevel } from "@mcode/contracts";
 
 /** Draft state for a single composer instance, keyed by thread ID. */
 export interface ComposerDraft {

@@ -11,6 +11,7 @@ import { SkillInfoSchema } from "../skills.js";
 import {
   SettingsSchema,
   PartialSettingsSchema,
+  ReasoningLevelSchema,
 } from "../models/settings.js";
 
 /** Schema for creating a new thread. */
@@ -28,6 +29,7 @@ export const SendMessageSchema = z.object({
   model: z.string().optional(),
   permissionMode: PermissionModeSchema.optional(),
   attachments: z.array(AttachmentMetaSchema).optional(),
+  reasoningLevel: ReasoningLevelSchema.optional(),
 });
 
 /** Schema for creating a thread and sending a message in one call. */
@@ -40,6 +42,7 @@ export const CreateAndSendSchema = z.object({
   branch: z.string().optional(),
   existingWorktreePath: z.string().optional(),
   attachments: z.array(AttachmentMetaSchema).optional(),
+  reasoningLevel: ReasoningLevelSchema.optional(),
 });
 
 /** All RPC method definitions keyed by method name with params and result schemas. */

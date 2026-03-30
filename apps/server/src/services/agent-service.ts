@@ -96,6 +96,7 @@ export class AgentService {
     permissionMode: string,
     model = "claude-sonnet-4-6",
     attachments: AttachmentMeta[] = [],
+    reasoningLevel?: string,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -182,6 +183,7 @@ export class AgentService {
         resume: isResume,
         permissionMode,
         attachments: attachments.length > 0 ? attachments : undefined,
+        reasoningLevel,
       });
       logger.info("Message sent via provider", {
         threadId,
@@ -216,6 +218,7 @@ export class AgentService {
     branch = "main",
     existingWorktreePath?: string,
     attachments: AttachmentMeta[] = [],
+    reasoningLevel?: string,
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
@@ -266,6 +269,7 @@ export class AgentService {
       permissionMode,
       model,
       attachments,
+      reasoningLevel,
     );
 
     // Re-read from DB to pick up model update applied by sendMessage

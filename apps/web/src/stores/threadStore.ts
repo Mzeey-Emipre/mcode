@@ -40,7 +40,7 @@ interface ThreadState {
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: string) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
@@ -167,7 +167,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * message to local state, marks the thread as running, then dispatches
    * to the transport layer. On failure, rolls back the running state.
    */
-  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent) => {
+  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel) => {
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
     const userMessage: Message = {
@@ -197,7 +197,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }));
 
     try {
-      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments);
+      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments, reasoningLevel);
     } catch (e) {
       set((state) => {
         const next = new Set(state.runningThreadIds);
@@ -544,6 +544,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               next.permissionMode,
               next.attachments.length > 0 ? next.attachments : undefined,
               next.displayContent,
+              next.reasoningLevel,
             );
           }
         }, 400);
