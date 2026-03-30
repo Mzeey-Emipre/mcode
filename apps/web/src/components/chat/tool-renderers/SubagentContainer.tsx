@@ -8,7 +8,7 @@ import type { ToolCallRecord } from "@/transport/types";
 const STATUS_COLORS = {
   completed: "text-primary/60",
   failed: "text-destructive/70",
-  running: "text-muted-foreground/60",
+  running: "text-yellow-500/60",
 } as const;
 
 /** Props for the SubagentContainer component. */

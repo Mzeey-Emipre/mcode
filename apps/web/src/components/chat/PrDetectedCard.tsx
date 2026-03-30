@@ -1,6 +1,7 @@
 import { GitPullRequest, X, GitFork } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+/** Props for {@link PrDetectedCard}, describing a detected GitHub PR. */
 interface PrDetectedCardProps {
   number: number;
   title: string;

@@ -137,6 +137,7 @@ export function ToolCallSummary({ messageId, toolCallCount }: ToolCallSummaryPro
   const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
@@ -186,7 +187,8 @@ export function ToolCallSummary({ messageId, toolCallCount }: ToolCallSummaryPro
       <button
         type="button"
         onClick={handleToggle}
-        className="group flex items-center gap-1.5 py-1 text-xs text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors cursor-pointer focus-visible:outline-none"
+        aria-expanded={expanded}
+        className="group flex items-center gap-1.5 py-1 text-xs text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary rounded-sm"
       >
         <ChevronDown
           size={12}

@@ -1,5 +1,6 @@
 import { useRef, useEffect, useMemo, useCallback, memo, useState } from "react";
 import { ArrowDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useShallow } from "zustand/shallow";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -212,14 +213,16 @@ export function MessageList() {
 
       {/* Scroll-to-bottom floating button */}
       {showScrollBtn && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={() => scrollToBottom(true)}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-muted/80 text-muted-foreground shadow-md ring-1 ring-border/40 backdrop-blur-sm transition-all hover:bg-muted hover:text-foreground"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 h-8 w-8 rounded-full bg-muted/80 text-muted-foreground shadow-md ring-1 ring-border/40 backdrop-blur-sm transition-all hover:bg-muted hover:text-foreground"
           aria-label="Scroll to bottom"
         >
           <ArrowDown size={14} />
-        </button>
+        </Button>
       )}
     </div>
   );

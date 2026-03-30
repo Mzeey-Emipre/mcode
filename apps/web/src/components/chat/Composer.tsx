@@ -956,6 +956,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
               onClick={handleStop}
               className="text-destructive/60 hover:bg-destructive/10 hover:text-destructive"
               title="Stop agent"
+              aria-label="Stop agent"
             >
               <div className="h-2.5 w-2.5 rounded-sm bg-current" />
             </Button>

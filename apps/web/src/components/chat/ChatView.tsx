@@ -4,6 +4,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { GitBranch } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { HeaderActions } from "./HeaderActions";
@@ -32,14 +33,16 @@ function EmptyState({ onPromptSelect }: EmptyStateProps) {
       </div>
       <div className="flex flex-wrap justify-center gap-2">
         {PROMPT_CHIPS.map((chip) => (
-          <button
+          <Button
             key={chip}
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => onPromptSelect(chip)}
-            className="rounded-full border border-border/50 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted/30 hover:text-foreground"
+            className="rounded-full border-border/50 text-xs text-muted-foreground hover:border-border hover:bg-muted/30 hover:text-foreground"
           >
             {chip}
-          </button>
+          </Button>
         ))}
       </div>
     </div>

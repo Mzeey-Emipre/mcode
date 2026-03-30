@@ -1,11 +1,13 @@
 import type { Thread } from "@/transport/types";
 
+/** Visual properties for rendering a thread's current status. */
 export interface StatusDisplay {
   label: string;
   color: string;
   dotClass: string;
 }
 
+/** Returns the display label, text color, and dot class for a thread's status. */
 export function getStatusDisplay(
   thread: Thread,
   isActuallyRunning: boolean,

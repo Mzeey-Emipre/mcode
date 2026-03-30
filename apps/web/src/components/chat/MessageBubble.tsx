@@ -63,10 +63,15 @@ function CopyButton({ content }: { content: string }) {
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(content).catch(() => {});
-    setCopied(true);
-    timerRef.current = setTimeout(() => setCopied(false), 1500);
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard write failed — don't show copied state
+    }
   }, [content]);
 
   return (
@@ -130,6 +135,16 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
     [message.timestamp],
   );
 
+  const imageAttachments = useMemo(
+    () => message.attachments?.filter((a) => a.mimeType.startsWith("image/")) ?? [],
+    [message.attachments],
+  );
+  const fileAttachments = useMemo(
+    () => message.attachments?.filter((a) => !a.mimeType.startsWith("image/")) ?? [],
+    [message.attachments],
+  );
+  const textContent = useMemo(() => stripInjectedFiles(message.content), [message.content]);
+
   if (message.role === "system") {
     return (
       <div className="flex items-center gap-3 py-2">
@@ -144,16 +159,6 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
   }
 
   const isUser = message.role === "user";
-
-  const imageAttachments = useMemo(
-    () => message.attachments?.filter((a) => a.mimeType.startsWith("image/")) ?? [],
-    [message.attachments],
-  );
-  const fileAttachments = useMemo(
-    () => message.attachments?.filter((a) => !a.mimeType.startsWith("image/")) ?? [],
-    [message.attachments],
-  );
-  const textContent = useMemo(() => stripInjectedFiles(message.content), [message.content]);
 
   if (isUser) {
 

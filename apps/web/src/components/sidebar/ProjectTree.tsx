@@ -548,19 +548,20 @@ function ProjectNode({
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                 )}
               >
-                <span className={cn("h-2 w-2 shrink-0 rounded-full", status.dotClass)} />
-                {thread.pr_number != null && (() => {
+                {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
                   return (
                     <span
                       title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
                       className="shrink-0"
                     >
-                      <PrIcon size={11} className={prColor} />
+                      <PrIcon size={12} className={prColor} />
                     </span>
                   );
-                })()}
-                {status.label && (
+                })() : (
+                  <span className={cn("h-2 w-2 shrink-0 rounded-full", status.dotClass)} />
+                )}
+                {!thread.pr_number && status.label && (
                   <span className={cn("shrink-0 text-xs", status.color)}>
                     {status.label}
                   </span>

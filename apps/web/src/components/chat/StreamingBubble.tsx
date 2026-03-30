@@ -12,9 +12,9 @@ export function StreamingBubble({ content }: StreamingBubbleProps) {
 
   return (
     <div className="text-sm text-foreground">
-      <span className="inline">
+      <div>
         <MarkdownContent content={content} isStreaming />
-      </span>
+      </div>
       <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] animate-pulse bg-primary/70" />
     </div>
   );
