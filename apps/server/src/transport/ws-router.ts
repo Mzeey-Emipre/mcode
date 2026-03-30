@@ -53,6 +53,7 @@ export interface RouterDeps {
   settingsService: SettingsService;
   /** Watcher service for tracking per-workspace HEAD file changes. */
   gitWatcherService: GitWatcherService;
+  /** Manages lifecycle-aware memory pressure (idle timers, SQLite cache, GC). */
   memoryPressureService: MemoryPressureService;
 }
 
