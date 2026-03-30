@@ -94,6 +94,8 @@ export function openDatabase(dbPath?: string): Database.Database {
   const db = new Database(resolvedPath, { nativeBinding });
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
+  db.pragma("cache_size = -2000");  // 2MB page cache (negative = KB)
+  db.pragma("mmap_size = 0");       // Disable memory-mapped I/O
   runMigrations(db);
   return db;
 }
