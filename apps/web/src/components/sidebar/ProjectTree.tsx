@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useState, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2 } from "lucide-react";
@@ -447,88 +448,67 @@ export function ProjectTree() {
   );
 }
 
-// --- ProjectNode: a single workspace with its threads ---
+// --- VirtualizedThreadList: only mounts when the workspace is expanded ---
 
-interface ProjectNodeProps {
-  workspace: Workspace;
-  isExpanded: boolean;
-  isActive: boolean;
-  activeThreadId: string | null;
+/** Props for the virtualized thread list rendered inside an expanded workspace. */
+interface VirtualizedThreadListProps {
   threads: Thread[];
+  activeThreadId: string | null;
   runningThreadIds: Set<string>;
   inlineEdit: InlineEditState | null;
   onInlineEditChange: (title: string) => void;
   onInlineEditCommit: () => void;
   onInlineEditCancel: () => void;
-  onToggle: () => void;
   onSelectThread: (id: string) => void;
-  onCreateThread: () => void;
-  onDelete: () => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
 }
 
-function ProjectNode({
-  workspace,
-  isExpanded,
-  isActive,
-  activeThreadId,
+/** Renders a virtualized, scrollable list of threads for a single workspace. */
+function VirtualizedThreadList({
   threads,
+  activeThreadId,
   runningThreadIds,
   inlineEdit,
   onInlineEditChange,
   onInlineEditCommit,
   onInlineEditCancel,
-  onToggle,
   onSelectThread,
-  onCreateThread,
-  onDelete,
   onThreadContextMenu,
-}: ProjectNodeProps) {
-  return (
-    <div className="mb-0.5">
-      {/* Workspace row */}
-      <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={isExpanded}
-        onKeyDown={(e) => {
-          if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
-            e.preventDefault();
-            onToggle();
-          }
-        }}
-        onClick={onToggle}
-        className={cn(
-          "group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm cursor-pointer",
-          isActive
-            ? "text-foreground"
-            : "text-muted-foreground hover:text-foreground"
-        )}
-      >
-        {isExpanded ? (
-          <ChevronDown size={14} className="shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight size={14} className="shrink-0 text-muted-foreground" />
-        )}
-        <FolderOpen size={14} className="shrink-0" />
-        <span className="truncate flex-1 font-medium">{workspace.name}</span>
-        <Button variant="ghost" size="icon-xs" aria-label={`Delete ${workspace.name}`} onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }} className="opacity-0 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100">
-          <Trash2 size={12} />
-        </Button>
-      </div>
+}: VirtualizedThreadListProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-      {/* Threads (when expanded) */}
-      {isExpanded && (
-        <div className="ml-3 border-l border-border/50 pl-2">
-          {threads.map((thread) => {
-            const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
-            const isEditing = inlineEdit?.threadId === thread.id;
-            return (
+  const virtualizer = useVirtualizer({
+    count: threads.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 28,
+    overscan: 3,
+  });
+
+  return (
+    <div
+      ref={scrollRef}
+      className="max-h-64 overflow-y-auto"
+    >
+      <div
+        style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const thread = threads[virtualItem.index];
+          const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
+          const isEditing = inlineEdit?.threadId === thread.id;
+          return (
+            <div
+              key={thread.id}
+              data-index={virtualItem.index}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
               <div
-                key={thread.id}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
@@ -595,13 +575,108 @@ function ProjectNode({
                   </span>
                 )}
               </div>
-            );
-          })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
-          {threads.length === 0 && (
+// --- ProjectNode: a single workspace with its threads ---
+
+/** Props for a single workspace node in the sidebar tree. */
+interface ProjectNodeProps {
+  workspace: Workspace;
+  isExpanded: boolean;
+  isActive: boolean;
+  activeThreadId: string | null;
+  threads: Thread[];
+  runningThreadIds: Set<string>;
+  inlineEdit: InlineEditState | null;
+  onInlineEditChange: (title: string) => void;
+  onInlineEditCommit: () => void;
+  onInlineEditCancel: () => void;
+  onToggle: () => void;
+  onSelectThread: (id: string) => void;
+  onCreateThread: () => void;
+  onDelete: () => void;
+  onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
+}
+
+/** Renders a collapsible workspace row with its virtualized thread list. */
+function ProjectNode({
+  workspace,
+  isExpanded,
+  isActive,
+  activeThreadId,
+  threads,
+  runningThreadIds,
+  inlineEdit,
+  onInlineEditChange,
+  onInlineEditCommit,
+  onInlineEditCancel,
+  onToggle,
+  onSelectThread,
+  onCreateThread,
+  onDelete,
+  onThreadContextMenu,
+}: ProjectNodeProps) {
+  return (
+    <div className="mb-0.5">
+      {/* Workspace row */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        onKeyDown={(e) => {
+          if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        onClick={onToggle}
+        className={cn(
+          "group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm cursor-pointer",
+          isActive
+            ? "text-foreground"
+            : "text-muted-foreground hover:text-foreground"
+        )}
+      >
+        {isExpanded ? (
+          <ChevronDown size={14} className="shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight size={14} className="shrink-0 text-muted-foreground" />
+        )}
+        <FolderOpen size={14} className="shrink-0" />
+        <span className="truncate flex-1 font-medium">{workspace.name}</span>
+        <Button variant="ghost" size="icon-xs" aria-label={`Delete ${workspace.name}`} onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }} className="opacity-0 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100">
+          <Trash2 size={12} />
+        </Button>
+      </div>
+
+      {/* Threads (when expanded) */}
+      {isExpanded && (
+        <div className="ml-3 border-l border-border/50 pl-2">
+          {threads.length === 0 ? (
             <p className="px-2 py-1 text-xs text-muted-foreground italic">
               No threads
             </p>
+          ) : (
+            <VirtualizedThreadList
+              threads={threads}
+              activeThreadId={activeThreadId}
+              runningThreadIds={runningThreadIds}
+              inlineEdit={inlineEdit}
+              onInlineEditChange={onInlineEditChange}
+              onInlineEditCommit={onInlineEditCommit}
+              onInlineEditCancel={onInlineEditCancel}
+              onSelectThread={onSelectThread}
+              onThreadContextMenu={onThreadContextMenu}
+            />
           )}
 
           {/* New thread button inside expanded project */}

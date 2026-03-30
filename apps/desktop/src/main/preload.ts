@@ -5,7 +5,10 @@
  * and the server connection URL.
  */
 
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
+// webFrame is used for clearRendererCache below (clearCache is synchronous in
+// the preload context). getResourceUsage is not exposed yet - add it when an
+// in-product consumer exists to avoid unnecessary attack surface.
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Get the WebSocket URL (with auth token) for connecting to the server. */
@@ -47,4 +50,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
 
   /** Resolve the native file path for a File object (drag-and-drop). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+
+  /** Clear Blink's in-memory resource caches (images, scripts, CSS).
+   * Typically called after a thread switch to reclaim memory. */
+  clearRendererCache: (): void => webFrame.clearCache(),
 });

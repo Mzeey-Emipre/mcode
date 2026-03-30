@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { Badge } from "@/components/ui/badge";
@@ -22,12 +22,21 @@ export function ChatView() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
+  const prevThreadIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (activeThreadId) {
       loadMessages(activeThreadId);
     } else {
       clearMessages();
     }
+    // Release Blink's resource cache (decoded images, scripts, CSS) from the
+    // previous thread. Skip on initial mount to preserve warm-start cache.
+    // Gracefully no-ops in the web-only dev server.
+    if (prevThreadIdRef.current !== null) {
+      window.desktopBridge?.clearRendererCache?.();
+    }
+    prevThreadIdRef.current = activeThreadId;
   }, [activeThreadId, loadMessages, clearMessages]);
 
   // New thread state: show empty composer when pending

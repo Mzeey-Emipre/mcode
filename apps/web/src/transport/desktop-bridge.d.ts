@@ -28,6 +28,9 @@ interface DesktopBridge {
   getRecentLogs(lines: number): string;
   /** Map a browser File object to its real filesystem path. */
   getPathForFile(file: File): string;
+  /** Clear Blink's in-memory resource caches (images, scripts, CSS).
+   * Typically called after a thread switch to reclaim memory. */
+  clearRendererCache(): void;
 }
 
 declare global {
