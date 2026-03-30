@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "@/stores/threadStore";
@@ -65,11 +65,11 @@ function RecordRow({ record }: { record: ToolCallRecord }) {
   const label = TOOL_LABELS[record.tool_name] ?? record.tool_name;
 
   return (
-    <div className="flex items-center gap-2 pl-3 pr-1 py-1.5 text-xs">
+    <div className="flex items-center gap-2 rounded-md pl-3 pr-1 py-1 text-xs transition-colors hover:bg-muted/20">
       <Icon size={13} className="shrink-0 text-muted-foreground/50" />
-      <span className="font-medium text-foreground/60 dark:text-foreground/50">{label}</span>
+      <span className="font-medium text-foreground/60">{label}</span>
       {record.input_summary && (
-        <span className="min-w-0 truncate text-[11px] text-muted-foreground/40 font-mono">
+        <span className="min-w-0 truncate text-xs text-muted-foreground/40 font-mono">
           {record.input_summary}
         </span>
       )}
@@ -105,11 +105,11 @@ function StepRow({ step }: { step: Step }) {
       <button
         type="button"
         onClick={() => setExpanded((p) => !p)}
-        className="flex w-full items-center gap-2 pl-3 pr-1 py-1.5 text-left text-xs cursor-pointer hover:bg-muted/10 transition-colors"
+        className="flex w-full items-center gap-2 rounded-md pl-3 pr-1 py-1 text-left text-xs cursor-pointer hover:bg-muted/20 transition-colors"
       >
         <Icon size={13} className="shrink-0 text-muted-foreground/50" />
         <span className="font-medium text-foreground/60 dark:text-foreground/50">{step.label}</span>
-        <span className="text-[11px] text-muted-foreground/40">({count})</span>
+        <span className="text-xs text-muted-foreground/40">({count})</span>
         <ChevronRight
           size={11}
           className={`ml-auto shrink-0 text-muted-foreground/30 transition-transform ${
@@ -134,6 +134,11 @@ export function ToolCallSummary({ messageId, toolCallCount }: ToolCallSummaryPro
   const [showAll, setShowAll] = useState(false);
   const [records, setRecords] = useState<ToolCallRecord[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const steps = records ? buildSteps(records) : null;
   const stepCount = steps?.length ?? 0;
@@ -154,12 +159,14 @@ export function ToolCallSummary({ messageId, toolCallCount }: ToolCallSummaryPro
         setLoading(true);
         try {
           const loaded = await getTransport().listToolCallRecords(messageId);
+          if (!mountedRef.current) return;
           setRecords(loaded);
           useThreadStore.getState().cacheToolCallRecords(messageId, loaded);
         } catch {
+          if (!mountedRef.current) return;
           setRecords([]);
         } finally {
-          setLoading(false);
+          if (mountedRef.current) setLoading(false);
         }
       }
     }
@@ -175,18 +182,18 @@ export function ToolCallSummary({ messageId, toolCallCount }: ToolCallSummaryPro
     : `Completed ${toolCallCount} action${toolCallCount !== 1 ? "s" : ""}`;
 
   return (
-    <div className="mx-8 my-1">
+    <div className="my-1">
       <button
         type="button"
         onClick={handleToggle}
-        className="group flex items-center gap-1.5 py-1 text-xs text-muted-foreground/50 hover:text-muted-foreground/70 transition-colors cursor-pointer"
+        className="group flex items-center gap-1.5 py-1 text-xs text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors cursor-pointer focus-visible:outline-none"
       >
         <ChevronDown
           size={12}
           className={`shrink-0 transition-transform ${expanded ? "" : "-rotate-90"}`}
         />
         <span>{topLabel}</span>
-        {loading && <span className="text-[10px] opacity-50 ml-1">...</span>}
+        {loading && <span className="text-xs opacity-50 ml-1">...</span>}
       </button>
 
       {expanded && visibleSteps && visibleSteps.length > 0 && (
@@ -195,7 +202,7 @@ export function ToolCallSummary({ messageId, toolCallCount }: ToolCallSummaryPro
           <div className="absolute left-[5px] top-0 bottom-0 w-px bg-gradient-to-b from-border/30 to-transparent" />
           <div className="pl-4">
             {visibleSteps.map((step, i) => (
-              <StepRow key={`step-${i}-${step.toolName}`} step={step} />
+              <StepRow key={step.records[0]?.id ?? `step-${i}`} step={step} />
             ))}
 
             {hasOverflow && (

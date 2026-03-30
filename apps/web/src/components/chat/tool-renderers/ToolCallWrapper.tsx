@@ -32,7 +32,7 @@ class ToolCallErrorBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="pl-3 border-l-2 border-red-500/30 py-1 text-xs text-muted-foreground">
+        <div className="pl-3 border-l-2 border-destructive/30 py-1 text-xs text-muted-foreground">
           Tool call render error
         </div>
       );
@@ -57,7 +57,7 @@ function ToolCallWrapperInner({
     <div
       className={`border-l-2 transition-colors ${
         isActive
-          ? "border-blue-500/60"
+          ? "border-primary/60 glow-primary"
           : "border-border/30 hover:border-border/50"
       }`}
     >
@@ -65,14 +65,14 @@ function ToolCallWrapperInner({
         type="button"
         onClick={() => hasContent && setExpanded((p) => !p)}
         className={`flex w-full flex-col gap-0.5 pl-3 pr-1 py-1.5 text-left text-xs ${
-          hasContent ? "cursor-pointer hover:bg-muted/15" : "cursor-default"
+          hasContent ? "cursor-pointer hover:bg-muted/30" : "cursor-default"
         }`}
       >
         <div className="flex w-full items-center gap-2">
           <Icon
             size={13}
             className={`shrink-0 ${
-              isActive ? "animate-spin text-blue-400/80" : "text-muted-foreground/60"
+              isActive ? "animate-spin text-primary/80" : "text-muted-foreground/60"
             }`}
             style={isActive ? SLOW_SPIN_STYLE : undefined}
           />
@@ -95,7 +95,7 @@ function ToolCallWrapperInner({
         </div>
 
         {badge && (
-          <span className="truncate pl-[21px] text-[11px] text-muted-foreground/50 font-mono">
+          <span className="truncate pl-[21px] text-xs text-muted-foreground/50 font-mono">
             {badge}
           </span>
         )}

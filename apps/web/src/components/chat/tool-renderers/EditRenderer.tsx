@@ -1,14 +1,16 @@
+import { memo, useMemo } from "react";
 import { Pencil } from "lucide-react";
 import type { ToolRendererProps } from "./types";
 import { ToolCallWrapper } from "./ToolCallWrapper";
 import { buildSimpleDiff } from "@/lib/diff";
 import { basename } from "@/lib/path";
 
-export function EditRenderer({ toolCall, isActive }: ToolRendererProps) {
+/** Renders an inline diff for file edit tool calls. */
+export const EditRenderer = memo(function EditRenderer({ toolCall, isActive }: ToolRendererProps) {
   const filePath = String(toolCall.toolInput.file_path ?? "");
   const oldStr = String(toolCall.toolInput.old_string ?? "");
   const newStr = String(toolCall.toolInput.new_string ?? "");
-  const lines = buildSimpleDiff(oldStr, newStr);
+  const lines = useMemo(() => buildSimpleDiff(oldStr, newStr), [oldStr, newStr]);
 
   return (
     <ToolCallWrapper
@@ -25,8 +27,8 @@ export function EditRenderer({ toolCall, isActive }: ToolRendererProps) {
               key={i}
               className={`px-3 py-0.5 ${
                 line.type === "remove"
-                  ? "bg-red-500/10 text-red-400"
-                  : "bg-green-500/10 text-green-400"
+                  ? "bg-destructive/10 text-destructive/70"
+                  : "bg-primary/10 text-primary/70"
               }`}
             >
               <span className="select-none text-muted-foreground/40 mr-2 inline-block w-3 text-right">
@@ -39,4 +41,4 @@ export function EditRenderer({ toolCall, isActive }: ToolRendererProps) {
       )}
     </ToolCallWrapper>
   );
-}
+});

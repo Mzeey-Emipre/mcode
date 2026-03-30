@@ -6,9 +6,9 @@ import { TOOL_LABELS, TOOL_ICONS, DEFAULT_ICON } from "./constants";
 import type { ToolCallRecord } from "@/transport/types";
 
 const STATUS_COLORS = {
-  completed: "text-green-600 dark:text-green-600/50",
-  failed: "text-red-500 dark:text-red-500/50",
-  running: "text-yellow-600 dark:text-yellow-500/50",
+  completed: "text-primary/60",
+  failed: "text-destructive/70",
+  running: "text-muted-foreground/60",
 } as const;
 
 /** Props for the SubagentContainer component. */
@@ -79,7 +79,7 @@ export function SubagentContainer({
         type="button"
         onClick={() => isExpandable && setExpanded((p) => !p)}
         className={`flex w-full items-center gap-2 pl-3 pr-1 py-1.5 text-xs text-muted-foreground transition-colors ${
-          isExpandable ? "cursor-pointer hover:bg-muted/10" : "cursor-default"
+          isExpandable ? "cursor-pointer hover:bg-muted/30" : "cursor-default"
         }`}
       >
         {isExpandable && (
