@@ -23,6 +23,7 @@ describe("Thread Switching", () => {
       currentTurnMessageIdByThread: {},
       agentStartTimes: {},
       settingsByThread: {},
+      activeSubagentsByThread: {},
     });
     vi.clearAllMocks();
   });

@@ -128,6 +128,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           loading: true,
           error: null,
           currentThreadId: threadId,
+          messages: [],
+          persistedToolCallCounts: {},
           toolCallsByThread: nextToolCalls,
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
@@ -136,7 +138,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         };
       });
     } else {
-      set({ loading: true, error: null, currentThreadId: threadId });
+      set({ loading: true, error: null, currentThreadId: threadId, messages: [], persistedToolCallCounts: {} });
     }
     try {
       const messages = await getTransport().getMessages(threadId, 100);
