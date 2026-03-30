@@ -39,7 +39,7 @@ export function PrDetectedCard({
           <GitFork size={10} />
           Review in worktree
         </Button>
-        <Button variant="ghost" size="icon-xs" onClick={onDismiss} className="text-muted-foreground">
+        <Button variant="ghost" size="icon-xs" onClick={onDismiss} aria-label="Dismiss" className="text-muted-foreground">
           <X size={12} />
         </Button>
       </div>

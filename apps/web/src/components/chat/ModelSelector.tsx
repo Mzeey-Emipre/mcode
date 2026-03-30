@@ -35,6 +35,7 @@ interface ModelSelectorProps {
   providerLocked?: boolean;
 }
 
+/** Renders a model selection dropdown and controls selection state. */
 export function ModelSelector({ selectedModelId, onSelect, locked, providerLocked }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);

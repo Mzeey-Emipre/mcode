@@ -12,6 +12,7 @@ interface QueuePopoverProps {
   onResume: () => void;
 }
 
+/** Popover that displays and manages the queued message list for a thread. */
 export function QueuePopover({ threadId, isAgentRunning, onResume }: QueuePopoverProps) {
   const queue = useQueueStore((s) => s.queues[threadId] ?? EMPTY_QUEUE);
   const removeFromQueue = useQueueStore((s) => s.removeFromQueue);

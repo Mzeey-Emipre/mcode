@@ -21,7 +21,7 @@ export function Sidebar() {
         {!collapsed && (
           <span className="text-sm font-semibold text-foreground">Mcode</span>
         )}
-        <Button variant="ghost" size="icon-sm" onClick={() => setCollapsed(!collapsed)} className="text-muted-foreground">
+        <Button variant="ghost" size="icon-sm" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} className="text-muted-foreground">
           {collapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
         </Button>
       </div>
