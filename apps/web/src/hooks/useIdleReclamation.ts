@@ -23,11 +23,24 @@ export const CLEAR_TERMINAL_BUFFERS_EVENT = "mcode:clear-terminal-buffers";
 export function useIdleReclamation(): void {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let didEnterBackground = false;
 
     const onBlur = () => {
+      // Guard against double-blur: cancel any pending timer before creating a new one
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       timer = setTimeout(() => {
+        didEnterBackground = true;
+        timer = null;
+
         // Notify server to enter background idle
-        getTransport().setBackground(true).catch(() => {});
+        try {
+          getTransport().setBackground(true).catch(() => {});
+        } catch {
+          // Transport not initialized yet - skip
+        }
 
         // Evict client-side caches
         useThreadStore.getState().clearToolCallRecordCache();
@@ -42,8 +55,15 @@ export function useIdleReclamation(): void {
         clearTimeout(timer);
         timer = null;
       }
-      // Always notify server on focus to restore normal operation
-      getTransport().setBackground(false).catch(() => {});
+      // Only notify server if we actually entered background idle
+      if (didEnterBackground) {
+        didEnterBackground = false;
+        try {
+          getTransport().setBackground(false).catch(() => {});
+        } catch {
+          // Transport not initialized yet - skip
+        }
+      }
     };
 
     window.addEventListener("blur", onBlur);

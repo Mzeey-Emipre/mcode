@@ -98,6 +98,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     return get().toolCallRecordCache[key] ?? null;
   },
 
+  /** Evict the entire tool call record cache. Records are re-fetched on next expand. */
   clearToolCallRecordCache: () => {
     set({ toolCallRecordCache: {} });
   },
