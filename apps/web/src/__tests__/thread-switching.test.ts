@@ -120,7 +120,7 @@ describe("Thread Switching", () => {
       ],
       runningThreadIds: new Set(["thread-a"]),
       streamingByThread: { "thread-a": "partial response..." },
-      toolCallsByThread: { "thread-a": [{ id: "tc-1", name: "bash", status: "running" }] },
+      toolCallsByThread: { "thread-a": [{ id: "tc-1", toolName: "bash", toolInput: {}, output: null, isError: false, isComplete: false }] },
       serverMessageIds: { "local-1": "server-1" },
     });
 
