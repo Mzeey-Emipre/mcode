@@ -52,6 +52,11 @@ function readServerHeapMb(): number {
     if (Number.isInteger(parsed) && parsed >= MIN_HEAP_MB && parsed <= MAX_HEAP_MB) {
       return parsed;
     }
+    console.warn(
+      `[server-manager] MCODE_SERVER_HEAP_MB="${envVal}" is invalid ` +
+        `(parsed: ${parsed}, allowed: ${MIN_HEAP_MB}-${MAX_HEAP_MB} integer). ` +
+        `Falling back to default ${DEFAULT_HEAP_MB} MB.`,
+    );
     return DEFAULT_HEAP_MB;
   }
 

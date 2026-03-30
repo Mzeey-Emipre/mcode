@@ -97,6 +97,7 @@ describe("ServerManager", () => {
   afterEach(() => {
     manager.shutdown();
     globalThis.fetch = originalFetch;
+    delete process.env.MCODE_SERVER_HEAP_MB;
   });
 
   it("starts the server by forking a child process", async () => {
@@ -183,7 +184,6 @@ describe("ServerManager", () => {
     const forkCall = vi.mocked(fork).mock.calls[0];
     const execArgv = forkCall[2]?.execArgv as string[];
     expect(execArgv).toContain("--max-old-space-size=2048");
-    delete process.env.MCODE_SERVER_HEAP_MB;
   });
 
   it("falls back to default when settings.json has invalid heapMb", async () => {
