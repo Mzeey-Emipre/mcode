@@ -423,6 +423,10 @@ function setupCloseHandler(): void {
 // App lifecycle
 // ---------------------------------------------------------------------------
 
+// Cap renderer V8 heap at 128MB to prevent over-allocation during
+// markdown rendering and syntax highlighting.
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=128");
+
 app.whenReady().then(async () => {
   console.log(`Mcode v${app.getVersion()} starting`);
 

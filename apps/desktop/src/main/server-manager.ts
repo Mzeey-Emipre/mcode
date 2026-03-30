@@ -78,7 +78,12 @@ export class ServerManager {
 
     this.serverProcess = fork(SERVER_ENTRY, [], {
       cwd: SERVER_DIR,
-      execArgv: ["--import", "tsx"],
+      execArgv: [
+        "--import", "tsx",
+        "--max-old-space-size=96",
+        "--max-semi-space-size=2",
+        "--expose-gc",
+      ],
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
