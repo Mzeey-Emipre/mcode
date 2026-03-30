@@ -44,6 +44,12 @@ const LANG_IMPORTS: Record<string, () => Promise<{ default: unknown }>> = {
   go: () => import("@shikijs/langs/go"),
   diff: () => import("@shikijs/langs/diff"),
   toml: () => import("@shikijs/langs/toml"),
+  java: () => import("@shikijs/langs/java"),
+  csharp: () => import("@shikijs/langs/csharp"),
+  php: () => import("@shikijs/langs/php"),
+  cpp: () => import("@shikijs/langs/cpp"),
+  swift: () => import("@shikijs/langs/swift"),
+  kotlin: () => import("@shikijs/langs/kotlin"),
 };
 
 /** In-flight language load promises. Coalesces concurrent loads for the same language. */
