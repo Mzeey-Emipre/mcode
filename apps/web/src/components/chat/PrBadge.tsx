@@ -1,12 +1,27 @@
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, GitPullRequest, GitMerge } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { PrInfo } from "@/transport";
 
 interface PrBadgeProps {
   pr: PrInfo;
 }
 
-/** Small clickable badge showing PR number. Opens in default browser via the desktop bridge. */
+/** Resolves the icon and color for a PR based on its state. */
+function getPrVisual(state: string) {
+  switch (state) {
+    case "merged":
+      return { Icon: GitMerge, color: "text-purple-400" };
+    case "closed":
+      return { Icon: GitPullRequest, color: "text-red-400" };
+    default:
+      return { Icon: GitPullRequest, color: "text-green-400" };
+  }
+}
+
+/** Small clickable badge showing PR number with state icon. Opens in default browser via the desktop bridge. */
 export function PrBadge({ pr }: PrBadgeProps) {
+  const { Icon, color } = getPrVisual(pr.state);
+
   const handleClick = () => {
     // Validate URL scheme before opening
     try {
@@ -26,6 +41,7 @@ export function PrBadge({ pr }: PrBadgeProps) {
       title={`View PR #${pr.number}`}
       aria-label={`View pull request number ${pr.number}`}
     >
+      <Icon size={12} className={cn("shrink-0", color)} />
       <span>PR #{pr.number}</span>
       <ExternalLink size={10} />
     </button>
