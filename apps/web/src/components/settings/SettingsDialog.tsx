@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Settings } from "lucide-react";
+import type { SettingsProviderId } from "@mcode/contracts";
 import { MODEL_PROVIDERS } from "@/lib/model-registry";
 
 /** Flat list of all selectable models across providers. */
@@ -69,7 +70,7 @@ export function SettingsDialog() {
                       model: {
                         defaults: {
                           id: m.id,
-                          provider: m.providerId as "claude" | "codex" | "gemini" | "copilot",
+                          provider: m.providerId as SettingsProviderId,
                         },
                       },
                     })

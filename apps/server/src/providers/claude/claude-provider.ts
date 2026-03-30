@@ -236,9 +236,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     }
 
     const resumeId = this.sdkSessionIds.get(sessionId) ?? uuid;
-    const thinkingBudget = reasoningLevel
-      ? REASONING_BUDGET[reasoningLevel as keyof typeof REASONING_BUDGET]
-      : undefined;
+    const thinkingBudget =
+      reasoningLevel && reasoningLevel in REASONING_BUDGET
+        ? REASONING_BUDGET[reasoningLevel as keyof typeof REASONING_BUDGET]
+        : undefined;
+
+    if (reasoningLevel && !(reasoningLevel in REASONING_BUDGET)) {
+      logger.warn("Unrecognized reasoning level, thinking budget omitted", { sessionId, reasoningLevel });
+    }
 
     const baseOptions = {
       cwd: resolvedCwd,

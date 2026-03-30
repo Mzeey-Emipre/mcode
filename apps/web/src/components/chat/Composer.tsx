@@ -15,7 +15,7 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findProviderForModel, findModelById } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -45,9 +45,9 @@ import {
   inferMimeType,
   MAX_ATTACHMENTS,
 } from "@mcode/contracts";
-import { useComposerDraftStore, type ReasoningLevel } from "@/stores/composerDraftStore";
+import type { ReasoningLevel, SettingsProviderId } from "@mcode/contracts";
+import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { findProviderForModel } from "@/lib/model-registry";
 
 /** Convert a Blob to a base64 string using the native FileReader API. */
 function blobToBase64(blob: Blob): Promise<string> {
@@ -109,6 +109,22 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const saveDraft = useComposerDraftStore((s) => s.saveDraft);
   const getDraft = useComposerDraftStore((s) => s.getDraft);
   const clearDraftFromStore = useComposerDraftStore((s) => s.clearDraft);
+
+  // Reactive settings: sync model/reasoning defaults when settings finish loading
+  const settingsLoaded = useSettingsStore((s) => s.loaded);
+  const settingsDefaultModelId = useSettingsStore((s) => s.settings.model.defaults.id);
+  const settingsDefaultReasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    // Only sync when no draft exists (new thread or thread without saved state)
+    const hasDraft = threadId ? getDraft(threadId) != null : false;
+    if (hasDraft) return;
+
+    const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
+    setModelId(validModelId);
+    setReasoning(settingsDefaultReasoning);
+  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning]); // Only sync when settings change
 
   // Save draft for previous thread, restore draft for new thread
   useEffect(() => {
@@ -698,22 +714,22 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
 
     // Auto-save "last used" model and reasoning as the new default
-    const defaults = useSettingsStore.getState().settings.model.defaults;
-    if (modelId !== defaults.id || reasoning !== defaults.reasoning) {
+    const { settings, loaded, update: updateSettings } = useSettingsStore.getState();
+    if (loaded && (modelId !== settings.model.defaults.id || reasoning !== settings.model.defaults.reasoning)) {
       const provider = findProviderForModel(modelId);
-      void useSettingsStore.getState().update({
+      void updateSettings({
         model: {
           defaults: {
             id: modelId,
             reasoning,
-            ...(provider && { provider: provider.id as "claude" | "codex" | "gemini" | "copilot" }),
+            ...(provider && { provider: provider.id as SettingsProviderId }),
           },
         },
       });
     }
 
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
 
   const handleEditorChange = useCallback((text: string) => {
     setInput(text);

@@ -2,8 +2,6 @@ import { create } from "zustand";
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
 import type { ReasoningLevel } from "@mcode/contracts";
 
-export type { ReasoningLevel } from "@mcode/contracts";
-
 /** Draft state for a single composer instance, keyed by thread ID. */
 export interface ComposerDraft {
   input: string;

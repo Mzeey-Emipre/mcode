@@ -77,10 +77,14 @@ export function getDefaultModelId(): string {
   return findModelById(id) ? id : "claude-sonnet-4-6";
 }
 
+/** Valid reasoning levels for fallback validation. */
+const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high"];
+
 /**
  * Return the default reasoning level from user settings, falling back
- * to "high" when settings have not loaded yet.
+ * to "high" when settings have not loaded or the stored value is invalid.
  */
 export function getDefaultReasoningLevel(): ReasoningLevel {
-  return useSettingsStore.getState().settings.model.defaults.reasoning;
+  const level = useSettingsStore.getState().settings.model.defaults.reasoning;
+  return VALID_REASONING_LEVELS.includes(level) ? level : "high";
 }
