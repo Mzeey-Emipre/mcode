@@ -192,7 +192,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     };
 
     set((state) => ({
-      messages: [...state.messages, userMessage],
+      messages: state.currentThreadId === threadId
+        ? [...state.messages, userMessage]
+        : state.messages,
       runningThreadIds: new Set([...state.runningThreadIds, threadId]),
       agentStartTimes: { ...state.agentStartTimes, [threadId]: Date.now() },
       error: null,

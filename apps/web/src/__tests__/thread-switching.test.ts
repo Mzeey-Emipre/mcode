@@ -134,6 +134,31 @@ describe("Thread Switching", () => {
     expect(state.runningThreadIds.has("thread-a")).toBe(true);
   });
 
+  it("sendMessage for a background thread does not inject into the active thread", async () => {
+    // Arrange: user is viewing Thread B
+    const threadBMsg = createMockMessage({
+      id: "b-1",
+      thread_id: "thread-b",
+      content: "Thread B message",
+    });
+    useThreadStore.setState({
+      currentThreadId: "thread-b",
+      messages: [threadBMsg],
+    });
+
+    // Act: sendMessage fires for Thread A (e.g. dequeue timer)
+    await useThreadStore.getState().sendMessage(
+      "thread-a",
+      "queued message for thread A",
+    );
+
+    // Assert: Thread B's messages are unchanged — no Thread A content injected
+    const state = useThreadStore.getState();
+    expect(state.messages).toEqual([threadBMsg]);
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].thread_id).toBe("thread-b");
+  });
+
   it("switching back to a thread loads its messages from the database", async () => {
     // Arrange: start on Thread A
     const threadAMsgs = [
