@@ -33,6 +33,7 @@ import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type { SnapshotService } from "../services/snapshot-service";
 import type { SettingsService } from "../services/settings-service";
 import type { GitWatcherService } from "../services/git-watcher-service";
+import type { MemoryPressureService } from "../services/memory-pressure-service";
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
@@ -52,6 +53,7 @@ export interface RouterDeps {
   settingsService: SettingsService;
   /** Watcher service for tracking per-workspace HEAD file changes. */
   gitWatcherService: GitWatcherService;
+  memoryPressureService: MemoryPressureService;
 }
 
 /**
@@ -346,6 +348,15 @@ async function dispatch(
       return deps.settingsService.get();
     case "settings.update":
       return deps.settingsService.update(params);
+
+    // Memory pressure
+    case "memory.setBackground":
+      if (params.background) {
+        deps.memoryPressureService.markBackground();
+      } else {
+        deps.memoryPressureService.markForeground();
+      }
+      return;
 
     // App
     case "app.version":

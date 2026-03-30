@@ -23,6 +23,7 @@ import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import { GitService } from "./git-service";
 import { AttachmentService } from "./attachment-service";
 import { SnapshotService } from "./snapshot-service";
+import { MemoryPressureService } from "./memory-pressure-service";
 import { broadcast } from "../transport/push";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
@@ -80,6 +81,8 @@ export class AgentService {
     @inject(ToolCallRecordRepo) private readonly toolCallRecordRepo: ToolCallRecordRepo,
     @inject(TurnSnapshotRepo) private readonly turnSnapshotRepo: TurnSnapshotRepo,
     @inject(SnapshotService) private readonly snapshotService: SnapshotService,
+    @inject(MemoryPressureService)
+    private readonly memoryPressureService: MemoryPressureService,
   ) {}
 
   /**
@@ -179,6 +182,7 @@ export class AgentService {
         attachments: attachments.length > 0 ? attachments : undefined,
       });
       this.activeSessionIds.add(threadId);
+      this.memoryPressureService.markActive();
       logger.info("Message sent via provider", {
         threadId,
         session: sessionName,
@@ -279,6 +283,9 @@ export class AgentService {
     await this.persistTurn(threadId, true);
     this.threadRepo.updateStatus(threadId, "paused");
     this.activeSessionIds.delete(threadId);
+    if (this.activeSessionIds.size === 0) {
+      this.memoryPressureService.markIdle();
+    }
     // clearTurnState already called inside persistTurn
   }
 
@@ -301,6 +308,9 @@ export class AgentService {
   /** Track that a session has ended. */
   private trackSessionEnded(threadId: string): void {
     this.activeSessionIds.delete(threadId);
+    if (this.activeSessionIds.size === 0) {
+      this.memoryPressureService.markIdle();
+    }
   }
 
   /**

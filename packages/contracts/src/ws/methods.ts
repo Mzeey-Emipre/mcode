@@ -232,6 +232,10 @@ export const WS_METHODS = {
     params: PartialSettingsSchema,
     result: SettingsSchema,
   },
+  "memory.setBackground": {
+    params: z.object({ background: z.boolean() }),
+    result: z.void(),
+  },
 } as const;
 
 /** Union of all RPC method names. */
