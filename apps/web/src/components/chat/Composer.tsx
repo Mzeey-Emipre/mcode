@@ -5,7 +5,6 @@ import type { PermissionMode, InteractionMode, AttachmentMeta } from "@/transpor
 import { PERMISSION_MODES, INTERACTION_MODES, getTransport } from "@/transport";
 import {
   ArrowUp,
-  Square,
   MessageSquare,
   FileEdit,
   Lock,
@@ -14,6 +13,8 @@ import {
   Loader2,
   Check,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { getDefaultModel } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
@@ -107,6 +108,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const saveDraft = useComposerDraftStore((s) => s.saveDraft);
   const getDraft = useComposerDraftStore((s) => s.getDraft);
   const clearDraftFromStore = useComposerDraftStore((s) => s.clearDraft);
+  const pendingPrefill = useComposerDraftStore((s) => s.pendingPrefill);
+  const clearPendingPrefill = useComposerDraftStore((s) => s.clearPendingPrefill);
 
   // Save draft for previous thread, restore draft for new thread
   useEffect(() => {
@@ -181,6 +184,23 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     prevThreadIdRef.current = threadId;
   }, [threadId]); // saveDraft/getDraft are stable store refs; setters are stable useState refs
   // Intentionally exclude saveDraft/getDraft (stable store refs) and setters (stable useState refs)
+
+  // Consume pending prefill set by empty-state prompt chips
+  useEffect(() => {
+    if (!pendingPrefill) return;
+    setInput(pendingPrefill);
+    if (editorRef.current) {
+      editorRef.current.update(() => {
+        const root = $getRoot();
+        root.clear();
+        const para = $createParagraphNode();
+        para.append($createTextNode(pendingPrefill));
+        root.append(para);
+      });
+    }
+    clearPendingPrefill();
+    editorRef.current?.focus();
+  }, [pendingPrefill, clearPendingPrefill]);
 
   const fileAutocomplete = useFileAutocomplete({
     workspaceId,
@@ -749,21 +769,24 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const toast = useQueueStore((s) => s.toast);
 
   return (
-    <div className="relative px-4 py-3">
+    <div className="relative px-8 py-4">
       {/* Gradient fade replacing the hard border-t line */}
-      <div className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-background to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 -top-5 h-5 bg-gradient-to-t from-background to-transparent" />
       {/* Queue toast */}
       {toast && (
-        <div className="pointer-events-none absolute -top-8 right-4 z-20 flex items-center gap-1.5 rounded-full bg-card/90 px-3 py-1 text-[11px] text-muted-foreground shadow-sm ring-1 ring-border/50 backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-150">
+        <div className="pointer-events-none absolute -top-8 right-4 z-20 flex items-center gap-1.5 rounded-full bg-card/90 px-3 py-1 text-xs text-muted-foreground shadow-sm ring-1 ring-border/50 backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-150">
           <Check size={10} className="text-primary" />
           {toast}
         </div>
       )}
 
+      {/* Max-width wrapper to align with message list column */}
+      <div className="mx-auto w-full max-w-4xl">
+
       {/* Main composer container - dark bg, rounded */}
       <div
         className={cn(
-          "relative rounded-xl bg-muted/50 ring-1 ring-border focus-within:ring-primary/50",
+          "relative rounded-xl bg-muted/50 ring-1 ring-border/60 shadow-lg shadow-black/20 focus-within:ring-2 focus-within:ring-primary/70",
           isDragOver && "ring-2 ring-primary"
         )}
         onDragEnter={handleDragEnter}
@@ -802,7 +825,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             disabled={false}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
-            placeholder={isAgentRunning ? "Queue a follow-up..." : "Ask for follow-up changes or attach images"}
+            placeholder={isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
           />
           <FileTagPopup
             files={fileAutocomplete.filteredFiles}
@@ -823,7 +846,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         )}
 
         {/* Controls row - inside the container */}
-        <div className="flex items-center gap-1 px-3 pb-2">
+        <div className="flex items-center gap-2.5 border-t border-border/20 px-3 py-1.5">
           {/* Model picker */}
           <ModelSelector
             selectedModelId={modelId}
@@ -832,20 +855,25 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             providerLocked={isProviderLocked}
           />
 
-          <span className="text-border">|</span>
-
           {/* Reasoning level */}
           <div className="relative">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowReasoningPicker(!showReasoningPicker);
-              }}
-              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              {reasoning.charAt(0).toUpperCase() + reasoning.slice(1)}
-              <ChevronDown size={10} />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowReasoningPicker(!showReasoningPicker);
+                  }}
+                  className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+                >
+                  <span className="text-sm">{reasoning.charAt(0).toUpperCase() + reasoning.slice(1)}</span>
+                  <ChevronDown size={11} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Reasoning level</TooltipContent>
+            </Tooltip>
             {showReasoningPicker && (
               <div className="absolute bottom-full left-0 z-20 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
                 {(["low", "medium", "high"] as const).map((level) => (
@@ -870,73 +898,67 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             )}
           </div>
 
-          <span className="text-border">|</span>
-
           {/* Chat / Plan toggle */}
-          <button
-            onClick={() => {
-              const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
-              setMode(next);
-              if (threadId) setThreadSettings(threadId, { interactionMode: next });
-            }}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            {mode === INTERACTION_MODES.CHAT ? (
-              <>
-                <MessageSquare size={12} />
-                Chat
-              </>
-            ) : (
-              <>
-                <FileEdit size={12} />
-                Plan
-              </>
-            )}
-          </button>
-
-          <span className="text-border">|</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => {
+                  const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
+                  setMode(next);
+                  if (threadId) setThreadSettings(threadId, { interactionMode: next });
+                }}
+                className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+              >
+                {mode === INTERACTION_MODES.CHAT ? <MessageSquare size={14} /> : <FileEdit size={14} />}
+                <span className="text-sm">{mode === INTERACTION_MODES.CHAT ? "Chat" : "Plan"}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{mode === INTERACTION_MODES.CHAT ? "Chat mode" : "Plan mode"}</TooltipContent>
+          </Tooltip>
 
           {/* Full access / Supervised toggle */}
-          <button
-            onClick={() => {
-              const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
-              setAccess(next);
-              if (threadId) setThreadSettings(threadId, { permissionMode: next });
-            }}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            {access === PERMISSION_MODES.FULL ? (
-              <>
-                <Unlock size={12} />
-                Full access
-              </>
-            ) : (
-              <>
-                <Lock size={12} />
-                Supervised
-              </>
-            )}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => {
+                  const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
+                  setAccess(next);
+                  if (threadId) setThreadSettings(threadId, { permissionMode: next });
+                }}
+                className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+              >
+                {access === PERMISSION_MODES.FULL ? <Unlock size={14} /> : <Lock size={14} />}
+                <span className="text-sm">{access === PERMISSION_MODES.FULL ? "Full access" : "Supervised"}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{access === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode"}</TooltipContent>
+          </Tooltip>
 
           {/* Spacer */}
           <div className="flex-1" />
 
           {/* Preparing worktree indicator */}
           {preparingWorktree && (
-            <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
               Preparing worktree...
             </span>
           )}
 
           {/* Inline stop button: visible when agent running AND user has input */}
           {isAgentRunning && hasContent && (
-            <button
+            <Button
+              variant="ghost"
+              size="icon-xs"
               onClick={handleStop}
-              className="rounded-md p-1.5 text-destructive/60 transition-colors hover:bg-destructive/10 hover:text-destructive"
+              className="text-destructive/60 hover:bg-destructive/10 hover:text-destructive"
               title="Stop agent"
             >
-              <Square size={11} />
-            </button>
+              <div className="h-2.5 w-2.5 rounded-sm bg-current" />
+            </Button>
           )}
 
           {/* Queue badge + popover */}
@@ -970,18 +992,25 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
               (!isAgentRunning && !hasContent)
             }
             className={cn(
-              "rounded-full p-2 transition-colors",
+              "rounded-full p-1.5 transition-colors",
               preparingWorktree
                 ? "bg-primary text-primary-foreground animate-spin"
                 : isAgentRunning && hasContent
                   ? "bg-primary/60 text-primary-foreground hover:bg-primary/75"
                   : isAgentRunning
-                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    ? "bg-destructive text-white hover:bg-destructive/90"
                     : hasContent
                       ? "bg-primary text-primary-foreground hover:bg-primary/90"
                       : "bg-muted text-muted-foreground opacity-40"
             )}
             title={
+              isAgentRunning && hasContent
+                ? "Queue message"
+                : isAgentRunning
+                  ? "Stop agent"
+                  : "Send message"
+            }
+            aria-label={
               isAgentRunning && hasContent
                 ? "Queue message"
                 : isAgentRunning
@@ -994,7 +1023,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             ) : isAgentRunning && hasContent ? (
               <ArrowUp size={14} />
             ) : isAgentRunning ? (
-              <Square size={14} />
+              <div className="h-3 w-3 rounded-sm bg-current" />
             ) : (
               <ArrowUp size={14} />
             )}
@@ -1060,6 +1089,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           ) : null}
         </div>
       </div>
+      </div>{/* end max-width wrapper */}
 
       <SlashCommandPopup
         isOpen={slashCommand.isOpen}

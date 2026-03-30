@@ -9,6 +9,7 @@ import { useTerminalStore } from "@/stores/terminalStore";
 import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
@@ -72,17 +73,19 @@ export function App() {
   }, [theme]);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <ConnectionBanner />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <main className="flex-1 overflow-hidden">
-            <ChatView />
-          </main>
-          <TerminalPanel />
+    <TooltipProvider delay={400}>
+      <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+        <ConnectionBanner />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar />
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <main className="flex-1 overflow-hidden">
+              <ChatView />
+            </main>
+            <TerminalPanel />
+          </div>
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
