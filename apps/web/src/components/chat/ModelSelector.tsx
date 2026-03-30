@@ -1,14 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  Lock,
-  Sparkles,
-  Terminal,
-  MousePointer,
-  Code,
-  Diamond,
-} from "lucide-react";
+import { useState, useEffect, useRef, type ComponentType } from "react";
+import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,12 +9,22 @@ import {
   findProviderForModel,
   type ModelProvider,
 } from "@/lib/model-registry";
-const PROVIDER_META: Record<string, { icon: typeof Sparkles; color: string }> = {
-  claude: { icon: Sparkles, color: "text-orange-400" },
-  codex: { icon: Terminal, color: "text-emerald-400" },
-  cursor: { icon: MousePointer, color: "text-blue-400" },
-  opencode: { icon: Code, color: "text-violet-400" },
-  gemini: { icon: Diamond, color: "text-sky-400" },
+import {
+  ClaudeIcon,
+  CodexIcon,
+  CursorProviderIcon,
+  OpenCodeIcon,
+  GeminiIcon,
+} from "./ProviderIcons";
+
+type IconComponent = ComponentType<{ size?: number; className?: string }>;
+
+const PROVIDER_META: Record<string, { icon: IconComponent; color: string }> = {
+  claude: { icon: ClaudeIcon, color: "text-orange-400" },
+  codex: { icon: CodexIcon, color: "text-emerald-400" },
+  cursor: { icon: CursorProviderIcon, color: "text-blue-400" },
+  opencode: { icon: OpenCodeIcon, color: "text-violet-400" },
+  gemini: { icon: GeminiIcon, color: "text-sky-400" },
 };
 
 interface ModelSelectorProps {
@@ -62,7 +63,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
   const model = findModelById(selectedModelId);
   const provider = findProviderForModel(selectedModelId);
   const meta = provider ? PROVIDER_META[provider.id] : undefined;
-  const Icon = meta?.icon ?? Sparkles;
+  const Icon = meta?.icon ?? ClaudeIcon;
   const iconClass = meta?.color ?? "";
   const shortLabel = model ? model.label.replace(`${provider?.name} `, "") : selectedModelId;
 
@@ -149,7 +150,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
             ))
           ) : MODEL_PROVIDERS.map((p) => {
             const pm = PROVIDER_META[p.id];
-            const ProvIcon = pm?.icon ?? Sparkles;
+            const ProvIcon = pm?.icon ?? ClaudeIcon;
             const provIconClass = pm?.color ?? "";
             const hasModels = p.models.length > 0;
 
