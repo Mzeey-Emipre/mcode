@@ -31,10 +31,10 @@ describe("getStatusDisplay", () => {
     expect(result.color).toContain("yellow");
   });
 
-  it("errored status returns Errored with red", () => {
+  it("errored status returns Errored with destructive color", () => {
     const result = getStatusDisplay(makeThread({ status: "errored" }), false);
     expect(result.label).toBe("Errored");
-    expect(result.color).toContain("red");
+    expect(result.color).toContain("destructive");
   });
 
   it("completed status returns Completed with green", () => {

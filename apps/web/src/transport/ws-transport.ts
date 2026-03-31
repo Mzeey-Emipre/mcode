@@ -13,6 +13,7 @@ import type {
   ToolCallRecord,
   Settings,
 } from "./types";
+import type { ReasoningLevel } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
@@ -64,6 +65,13 @@ export class PushEmitter {
 
 /** Singleton push emitter shared between ws-transport and ws-events. */
 export const pushEmitter = new PushEmitter();
+
+/**
+ * Channels suppressed from WebSocket push delivery.
+ * When a MessagePort handles a channel, it adds the channel name here
+ * so WebSocket push messages for that channel are silently dropped.
+ */
+export const suppressedPushChannels = new Set<string>();
 
 interface PendingCall {
   resolve: (value: unknown) => void;
@@ -142,7 +150,11 @@ export function createWsTransport(
 
       // Push message
       if (msg.type === "push") {
-        pushEmitter.emit(msg.channel as string, msg.data);
+        const channel = msg.channel as string;
+        // Skip channels handled by MessagePort to avoid duplicate events
+        if (!suppressedPushChannels.has(channel)) {
+          pushEmitter.emit(channel, msg.data);
+        }
       }
     };
 
@@ -239,8 +251,8 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]) =>
-      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments }),
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel) =>
+      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments, reasoningLevel }),
     createAndSendMessage: (
       workspaceId,
       content,
@@ -250,6 +262,7 @@ export function createWsTransport(
       branch?,
       existingWorktreePath?,
       attachments?,
+      reasoningLevel?,
     ) =>
       rpc<Thread>("agent.createAndSend", {
         workspaceId,
@@ -260,6 +273,7 @@ export function createWsTransport(
         branch,
         existingWorktreePath,
         attachments,
+        reasoningLevel,
       }),
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
     readClipboardImage: () =>
@@ -324,6 +338,9 @@ export function createWsTransport(
     // Settings
     getSettings: () => rpc<Settings>("settings.get", {}),
     updateSettings: (partial) => rpc<Settings>("settings.update", partial as Record<string, unknown>),
+
+    // Memory pressure
+    setBackground: (background) => rpc<void>("memory.setBackground", { background }),
 
     // Lifecycle
     close: () => {

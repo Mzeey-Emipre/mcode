@@ -1,70 +1,98 @@
 /** Brand icons for supported code editors. */
 
+import { useId } from "react";
+
 interface IconProps {
   size?: number;
   className?: string;
 }
 
+/** VS Code - official Microsoft brand mark (via devicons). Uses instance-scoped IDs to prevent conflicts. */
 export function VsCodeIcon({ size = 14, className }: IconProps) {
+  const uid = useId().replace(/:/g, "");
+  const maskId = `vsc-mask-${uid}`;
+  const gradId = `vsc-grad-${uid}`;
+
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 100 100"
+      viewBox="0 0 128 128"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      <mask id="vsc-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+      <defs>
+        <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
+          <path
+            fill="#fff"
+            fillRule="evenodd"
+            clipRule="evenodd"
+            d="M90.767 127.126a7.968 7.968 0 0 0 6.35-.244l26.353-12.681a8 8 0 0 0 4.53-7.209V21.009a8 8 0 0 0-4.53-7.21L97.117 1.12a7.97 7.97 0 0 0-9.093 1.548l-50.45 46.026L15.6 32.013a5.328 5.328 0 0 0-6.807.302l-7.048 6.411a5.335 5.335 0 0 0-.006 7.888L20.796 64 1.74 81.387a5.336 5.336 0 0 0 .006 7.887l7.048 6.411a5.327 5.327 0 0 0 6.807.303l21.974-16.68 50.45 46.025a7.96 7.96 0 0 0 2.743 1.793Zm5.252-92.183L57.74 64l38.28 29.058V34.943Z"
+          />
+        </mask>
+        <linearGradient id={gradId} x1="64" y1="0.42" x2="64" y2="127.58" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#fff" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <g mask={`url(#${maskId})`}>
         <path
+          fill="#0065A9"
+          d="M123.471 13.82 97.097 1.12A7.973 7.973 0 0 0 88 2.668L1.662 81.387a5.333 5.333 0 0 0 .006 7.887l7.052 6.411a5.333 5.333 0 0 0 6.811.303l103.971-78.875c3.488-2.646 8.498-.158 8.498 4.22v-.306a8.001 8.001 0 0 0-4.529-7.208Z"
+        />
+        <path
+          fill="#007ACC"
+          d="m123.471 114.181-26.374 12.698A7.973 7.973 0 0 1 88 125.333L1.662 46.613a5.333 5.333 0 0 1 .006-7.887l7.052-6.411a5.333 5.333 0 0 1 6.811-.303l103.971 78.874c3.488 2.647 8.498.159 8.498-4.219v.306a8.001 8.001 0 0 1-4.529 7.208Z"
+        />
+        <path
+          fill="#1F9CF0"
+          d="M97.098 126.882A7.977 7.977 0 0 1 88 125.333c2.952 2.952 8 .861 8-3.314V5.98c0-4.175-5.048-6.266-8-3.313a7.977 7.977 0 0 1 9.098-1.549L123.467 13.8A8 8 0 0 1 128 21.01v85.982a8 8 0 0 1-4.533 7.21l-26.369 12.681Z"
+        />
+        <path
+          fill={`url(#${gradId})`}
           fillRule="evenodd"
           clipRule="evenodd"
-          d="M70.912 99.317a6.223 6.223 0 004.932-.639l20.476-10.26A6.25 6.25 0 0099.56 83V17a6.25 6.25 0 00-3.24-5.418L75.844 1.322a6.228 6.228 0 00-7.108.986L29.355 36.94 12.187 24.07a4.162 4.162 0 00-5.318.27L1.38 29.462a4.168 4.168 0 00-.004 6.076L16.17 50 1.376 64.462a4.168 4.168 0 00.004 6.076l5.49 5.122a4.162 4.162 0 005.318.27l17.168-12.87 39.38 34.632a6.215 6.215 0 002.176 1.655zM75.024 27.18L45.096 50l29.928 22.82V27.18z"
-          fill="#fff"
+          opacity="0.25"
+          d="M90.69 127.126a7.968 7.968 0 0 0 6.349-.244l26.353-12.681a8 8 0 0 0 4.53-7.21V21.009a8 8 0 0 0-4.53-7.21L97.039 1.12a7.97 7.97 0 0 0-9.093 1.548l-50.45 46.026-21.974-16.68a5.328 5.328 0 0 0-6.807.302l-7.048 6.411a5.336 5.336 0 0 0-.006 7.888L20.718 64 1.662 81.386a5.335 5.335 0 0 0 .006 7.888l7.048 6.411a5.328 5.328 0 0 0 6.807.303l21.975-16.681 50.45 46.026a7.959 7.959 0 0 0 2.742 1.793Zm5.252-92.184L57.662 64l38.28 29.057V34.943Z"
         />
-      </mask>
-      <g mask="url(#vsc-mask)">
-        <path d="M96.32 11.582L75.844 1.322a6.228 6.228 0 00-7.108.986L1.376 64.462a4.168 4.168 0 00.004 6.076l5.49 5.122a4.162 4.162 0 005.318.27L96.074 7.674a6.25 6.25 0 00-3.24-5.418" fill="#0065A9" />
-        <path d="M96.32 88.418L75.844 98.678a6.228 6.228 0 01-7.108-.986L1.376 35.538a4.168 4.168 0 01.004-6.076l5.49-5.122a4.162 4.162 0 015.318-.27l83.886 62.256a6.25 6.25 0 013.24 5.418" fill="#007ACC" />
-        <path d="M75.844 98.678a6.225 6.225 0 007.108-.986 6.244 6.244 0 01-5.612 2.322 6.244 6.244 0 01-5.612-2.322 6.228 6.228 0 004.116.986z" fill="#1F9CF0" />
-        <path
-          opacity=".25"
-          d="M70.912 99.317a6.223 6.223 0 004.932-.639l20.476-10.26A6.25 6.25 0 0099.56 83V17a6.25 6.25 0 00-3.24-5.418L75.844 1.322a6.228 6.228 0 00-7.108.986L29.355 36.94 12.187 24.07a4.162 4.162 0 00-5.318.27L1.38 29.462a4.168 4.168 0 00-.004 6.076L16.17 50 1.376 64.462a4.168 4.168 0 00.004 6.076l5.49 5.122a4.162 4.162 0 005.318.27l17.168-12.87 39.38 34.632a6.215 6.215 0 002.176 1.655z"
-          fill="url(#vsc-grad)"
-        />
-        <defs>
-          <linearGradient id="vsc-grad" x1="49.78" y1="0.958" x2="49.78" y2="99.042" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#fff" />
-            <stop offset="1" stopColor="#fff" stopOpacity="0" />
-          </linearGradient>
-        </defs>
       </g>
     </svg>
   );
 }
 
+/** Zed - official Zed Industries logomark (sourced from T3 Code). */
 export function ZedIcon({ size = 14, className }: IconProps) {
+  const uid = useId().replace(/:/g, "");
+  const clipId = `zed-clip-${uid}`;
+
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 1024 1024"
+      viewBox="0 0 96 96"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      <path
-        d="M530.3 271.4H843l-41.6 73.6H530.3L307.8 731.5h230.4l-41 73.1H108L330.5 418h-186l41.2-73.4h186L530.3 271.4z"
-        fill="#F4A261"
-      />
-      <path
-        d="M656.2 509.8h259.8l-41.6 73.6H656.2l-82.7 148.1h230.4l-41 73.1H373.7l82.5-148.1H270.3l41.1-73.6h185.9l82.7-148.1h-186l41.2-73.4h186l35.2-63.1h73.4l-37.6 63.1h-36.3L656.2 509.8z"
-        fill="currentColor"
-      />
+      <g clipPath={`url(#${clipId})`}>
+        <path
+          fill="currentColor"
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M9 6a3 3 0 0 0-3 3v66H0V9a9 9 0 0 1 9-9h80.379c4.009 0 6.016 4.847 3.182 7.682L43.055 57.187H57V51h6v7.688a4.5 4.5 0 0 1-4.5 4.5H37.055L26.743 73.5H73.5V36h6v37.5a6 6 0 0 1-6 6H20.743L10.243 90H87a3 3 0 0 0 3-3V21h6v66a9 9 0 0 1-9 9H6.621c-4.009 0-6.016-4.847-3.182-7.682L52.757 39H39v6h-6v-7.5a4.5 4.5 0 0 1 4.5-4.5h21.257l10.5-10.5H22.5V60h-6V22.5a6 6 0 0 1 6-6h52.757L85.757 6H9Z"
+        />
+      </g>
+      <defs>
+        <clipPath id={clipId}>
+          <path fill="#fff" d="M0 0h96v96H0z" />
+        </clipPath>
+      </defs>
     </svg>
   );
 }
 
+/** Cursor - official Cursor editor brand mark (rounded rect with arrow cutout). */
 export function CursorIcon({ size = 14, className }: IconProps) {
   return (
     <svg

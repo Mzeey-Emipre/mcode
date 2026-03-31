@@ -72,6 +72,16 @@ When a category has only one setting or settings that don't share a qualifier, k
 }
 ```
 
+**Exception:** If a property name would require a qualifier prefix (e.g., `memoryHeapMb` where "memory" qualifies "heap"), extract that prefix as a nested key even if it currently has only one child:
+
+```jsonc
+// Good: qualifier extracted as nested key
+{ "server": { "memory": { "heapMb": 512 } } }
+
+// Bad: qualifier baked into property name
+{ "server": { "memoryHeapMb": 512 } }
+```
+
 ### 5. Use camelCase for property names
 
 All property names use camelCase, matching the TypeScript codebase convention.
@@ -91,8 +101,9 @@ When adding a new setting, ask these questions in order:
 
 1. **Which category does it belong to?** Pick an existing category or create a new one if no existing category fits.
 2. **Does it share a qualifier with sibling settings?** If 2+ settings share a prefix (e.g., "default"), nest them under that qualifier.
-3. **Am I at 3 levels or fewer?** If the nesting would exceed 3, flatten by removing the least meaningful level.
-4. **Does the single-setting category still make sense?** Even one setting gets a category, but the category name should be broad enough to accept future siblings.
+3. **Does the property name contain a qualifier prefix?** If the name reads as `qualifierSetting` (e.g., `memoryHeapMb` within a `server` category), extract the qualifier as a nested key (`memory.heapMb`), even if it is the only child. The resulting path must stay within 3 levels total (category → qualifier → setting).
+4. **Am I at 3 levels or fewer?** If the nesting would exceed 3, flatten by removing the least meaningful level.
+5. **Does the single-setting category still make sense?** Even one setting gets a category, but the category name should be broad enough to accept future siblings.
 
 ## Current Schema
 
@@ -126,6 +137,11 @@ When adding a new setting, ask these questions in order:
       "mode": "auto",                  // "auto" | "custom" | "ai"
       "aiConfirmation": true
     }
+  },
+  "server": {
+    "memory": {
+      "heapMb": 512                    // 64-8192, V8 max old space (MB)
+    }
   }
 }
 ```
@@ -133,7 +149,7 @@ When adding a new setting, ask these questions in order:
 ## Adding New Settings
 
 1. Follow the rules above.
-2. Add the setting to the "Current Schema" section in this document.
+2. Add the setting to the "Current Schema" section in this document and to `docs/settings/reference.md`.
 3. Add a Zod schema for the new setting in `packages/contracts/`.
 4. Provide a sensible default so the app works without a `settings.json` file.
 5. Settings must be optional and merge over defaults. A missing key means "use default", never an error.

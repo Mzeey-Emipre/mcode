@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from "react";
-import { Loader2 } from "lucide-react";
 import { formatDuration } from "../../lib/time";
 import type { ToolCall } from "@/transport/types";
 import { TOOL_PHASE_LABELS } from "./tool-renderers/constants";
@@ -21,6 +20,7 @@ function derivePhaseLabel(toolCalls?: readonly ToolCall[]): string {
   return "Pulling the next step together...";
 }
 
+/** Renders an animated gradient sweep bar with a phase label and elapsed timer during agent work. */
 export function StreamingIndicator({ startTime, activeToolCalls }: StreamingIndicatorProps) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -39,10 +39,9 @@ export function StreamingIndicator({ startTime, activeToolCalls }: StreamingIndi
   const phaseLabel = useMemo(() => derivePhaseLabel(activeToolCalls), [activeToolCalls]);
 
   return (
-    <div className="flex items-center gap-2 px-4 py-3">
-      <Loader2 size={14} className="animate-spin text-muted-foreground" />
+    <div className="flex items-center gap-2 px-4 py-2">
       <span className="animate-shimmer-text text-sm">{phaseLabel}</span>
-      <span className="text-muted-foreground/50 text-xs">({formatDuration(elapsed)})</span>
+      <span className="text-xs text-muted-foreground/50">({formatDuration(elapsed)})</span>
     </div>
   );
 }

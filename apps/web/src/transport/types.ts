@@ -10,6 +10,7 @@ import type {
   PrDetail,
   SkillInfo,
   PermissionMode,
+  ReasoningLevel,
   ToolCallRecord,
   Settings,
   PartialSettings,
@@ -73,7 +74,7 @@ export interface McodeTransport {
   listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
     content: string,
@@ -83,6 +84,7 @@ export interface McodeTransport {
     branch?: string,
     existingWorktreePath?: string,
     attachments?: AttachmentMeta[],
+    reasoningLevel?: ReasoningLevel,
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
   readClipboardImage(): Promise<AttachmentMeta | null>;
@@ -153,4 +155,8 @@ export interface McodeTransport {
   getSettings(): Promise<Settings>;
   /** Update settings with a deep-partial merge. Returns full merged settings. */
   updateSettings(partial: PartialSettings): Promise<Settings>;
+
+  // Memory pressure
+  /** Notify server of window background/foreground state for memory management. */
+  setBackground(background: boolean): Promise<void>;
 }

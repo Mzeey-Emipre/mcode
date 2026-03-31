@@ -1,27 +1,30 @@
-import { useState, useEffect, useRef } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  Lock,
-  Sparkles,
-  Terminal,
-  MousePointer,
-  Code,
-  Diamond,
-} from "lucide-react";
+import { useState, useEffect, useRef, type ComponentType } from "react";
+import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   MODEL_PROVIDERS,
   findModelById,
   findProviderForModel,
   type ModelProvider,
 } from "@/lib/model-registry";
-const PROVIDER_META: Record<string, { icon: typeof Sparkles; color: string }> = {
-  claude: { icon: Sparkles, color: "text-orange-400" },
-  codex: { icon: Terminal, color: "text-emerald-400" },
-  cursor: { icon: MousePointer, color: "text-blue-400" },
-  opencode: { icon: Code, color: "text-violet-400" },
-  gemini: { icon: Diamond, color: "text-sky-400" },
+import {
+  ClaudeIcon,
+  CodexIcon,
+  CursorProviderIcon,
+  OpenCodeIcon,
+  GeminiIcon,
+} from "./ProviderIcons";
+
+type IconComponent = ComponentType<{ size?: number; className?: string }>;
+
+const PROVIDER_META: Record<string, { icon: IconComponent; color: string }> = {
+  claude: { icon: ClaudeIcon, color: "text-orange-400/75" },
+  codex: { icon: CodexIcon, color: "text-emerald-400" },
+  cursor: { icon: CursorProviderIcon, color: "text-blue-400" },
+  opencode: { icon: OpenCodeIcon, color: "text-violet-400" },
+  gemini: { icon: GeminiIcon, color: "text-sky-400" },
 };
 
 interface ModelSelectorProps {
@@ -33,6 +36,7 @@ interface ModelSelectorProps {
   providerLocked?: boolean;
 }
 
+/** Renders a model selection dropdown and controls selection state. */
 export function ModelSelector({ selectedModelId, onSelect, locked, providerLocked }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
@@ -59,7 +63,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
   const model = findModelById(selectedModelId);
   const provider = findProviderForModel(selectedModelId);
   const meta = provider ? PROVIDER_META[provider.id] : undefined;
-  const Icon = meta?.icon ?? Sparkles;
+  const Icon = meta?.icon ?? ClaudeIcon;
   const iconClass = meta?.color ?? "";
   const shortLabel = model ? model.label.replace(`${provider?.name} `, "") : selectedModelId;
 
@@ -79,7 +83,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
 
   if (locked) {
     return (
-      <span className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground">
+      <span className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
         <Icon size={12} className={iconClass} />
         {shortLabel}
         <Lock size={10} className="ml-0.5 opacity-60" />
@@ -120,14 +124,11 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
 
   return (
     <div ref={containerRef} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
-        <Icon size={12} className={iconClass} />
-        {shortLabel}
-        <ChevronDown size={10} />
-      </button>
+      <Button variant="ghost" size="xs" onClick={() => setOpen(!open)} className="text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors">
+        <Icon size={14} className={iconClass} />
+        <span className="text-sm">{shortLabel}</span>
+        <ChevronDown size={11} />
+      </Button>
 
       {open && (
         <div className="absolute bottom-full left-0 z-20 mb-1 min-w-[180px] rounded-md border border-border bg-popover p-1 shadow-lg">
@@ -149,7 +150,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
             ))
           ) : MODEL_PROVIDERS.map((p) => {
             const pm = PROVIDER_META[p.id];
-            const ProvIcon = pm?.icon ?? Sparkles;
+            const ProvIcon = pm?.icon ?? ClaudeIcon;
             const provIconClass = pm?.color ?? "";
             const hasModels = p.models.length > 0;
 
@@ -177,9 +178,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
                   <ProvIcon size={12} className={p.comingSoon ? "opacity-40" : provIconClass} />
                   <span className="flex-1 text-left">{p.name}</span>
                   {p.comingSoon && (
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
-                      SOON
-                    </span>
+                    <Badge variant="secondary" size="sm">SOON</Badge>
                   )}
                   {!p.comingSoon && hasModels && p.models.length > 1 && (
                     <ChevronRight size={10} className="text-muted-foreground" />

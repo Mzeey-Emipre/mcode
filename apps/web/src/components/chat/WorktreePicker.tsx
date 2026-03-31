@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { GitFork, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import type { WorktreeInfo } from "@/transport/types";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
@@ -26,13 +28,7 @@ export function WorktreePicker({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
-        <GitFork size={12} />
-        <span>{selectedName}</span>
-        <ChevronDown size={10} />
-      </PopoverTrigger>
+      <PopoverTrigger render={<Button variant="ghost" size="xs" className="text-muted-foreground"><GitFork size={12} /><span>{selectedName}</span><ChevronDown size={10} /></Button>} />
 
       <PopoverContent align="end" sideOffset={4} className="w-[300px] p-0">
         {loading ? (
@@ -74,12 +70,10 @@ export function WorktreePicker({
                       )}
                     >
                       <span className="font-medium">{w.name}</span>
-                      <span className="text-[10px] text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         {w.branch} &middot; {truncatePath(w.path)}
                         {!w.managed && (
-                          <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] leading-none">
-                            external
-                          </span>
+                          <Badge variant="secondary" size="sm" className="ml-1">external</Badge>
                         )}
                       </span>
                     </CommandItem>

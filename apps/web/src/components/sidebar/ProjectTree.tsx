@@ -1,7 +1,9 @@
-import { useEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useLayoutEffect, useCallback, useState, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2 } from "lucide-react";
+import { getPrVisual } from "@/lib/pr-status";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ContextMenu } from "@/components/ui/context-menu";
@@ -12,6 +14,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay } from "@/lib/thread-status";
@@ -238,23 +241,20 @@ export function ProjectTree() {
     }
   }, [wsDeleteDialog, deleteWorkspace]);
 
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
+
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-medium uppercase text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 mb-0.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
           Projects
         </span>
-        <button
-          disabled={isCreating}
-          onClick={handleOpenFolder}
-          aria-label="Open project folder"
-          className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-        >
+        <Button variant="ghost" size="icon-xs" disabled={isCreating} onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground/60 hover:text-foreground">
           <Plus size={14} />
-        </button>
+        </Button>
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
         <div className="px-1">
           {workspaces.map((ws) => (
             <ProjectNode
@@ -265,6 +265,7 @@ export function ProjectTree() {
               activeThreadId={activeThreadId}
               threads={threads.filter((t) => t.workspace_id === ws.id)}
               runningThreadIds={runningThreadIds}
+              scrollElementRef={scrollViewportRef}
               inlineEdit={inlineEdit}
               onInlineEditChange={(title) =>
                 setInlineEdit((prev) => prev ? { ...prev, title } : null)
@@ -296,14 +297,10 @@ export function ProjectTree() {
           {workspaces.length === 0 && (
             <div className="px-2 py-4 text-center">
               <p className="text-xs text-muted-foreground">No projects yet.</p>
-              <button
-                disabled={isCreating}
-                onClick={handleOpenFolder}
-                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50"
-              >
+              <Button variant="outline" size="sm" disabled={isCreating} onClick={handleOpenFolder} className="mt-2 w-full border-dashed text-muted-foreground hover:border-primary hover:text-primary">
                 <FolderOpen size={12} />
                 Open a folder
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -454,8 +451,154 @@ export function ProjectTree() {
   );
 }
 
+// --- VirtualizedThreadList: only mounts when the workspace is expanded ---
+
+/** Props for the virtualized thread list rendered inside an expanded workspace. */
+interface VirtualizedThreadListProps {
+  threads: Thread[];
+  activeThreadId: string | null;
+  runningThreadIds: Set<string>;
+  scrollElementRef: React.RefObject<HTMLDivElement | null>;
+  inlineEdit: InlineEditState | null;
+  onInlineEditChange: (title: string) => void;
+  onInlineEditCommit: () => void;
+  onInlineEditCancel: () => void;
+  onSelectThread: (id: string) => void;
+  onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
+}
+
+/** Renders a virtualized, scrollable list of threads for a single workspace. */
+function VirtualizedThreadList({
+  threads,
+  activeThreadId,
+  runningThreadIds,
+  scrollElementRef,
+  inlineEdit,
+  onInlineEditChange,
+  onInlineEditCommit,
+  onInlineEditCancel,
+  onSelectThread,
+  onThreadContextMenu,
+}: VirtualizedThreadListProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  // Recompute offset from the outer scroll viewport after each layout pass.
+  // Stays in sync when workspaces above expand/collapse.
+  useLayoutEffect(() => {
+    setScrollMargin((prev) => {
+      const next = containerRef.current?.offsetTop ?? 0;
+      return prev === next ? prev : next;
+    });
+  });
+
+  const virtualizer = useVirtualizer({
+    count: threads.length,
+    getScrollElement: () => scrollElementRef.current,
+    estimateSize: () => 28,
+    overscan: 5,
+    scrollMargin,
+  });
+
+  return (
+    <div
+      ref={containerRef}
+      style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+    >
+      {virtualizer.getVirtualItems().map((virtualItem) => {
+        const thread = threads[virtualItem.index];
+        const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
+        const isEditing = inlineEdit?.threadId === thread.id;
+        return (
+          <div
+            key={thread.id}
+            data-index={virtualItem.index}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${virtualItem.start - scrollMargin}px)`,
+            }}
+          >
+              <div
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (isEditing) return;
+                  if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+                    e.preventDefault();
+                    onSelectThread(thread.id);
+                  }
+                }}
+                onClick={() => {
+                  if (!isEditing) onSelectThread(thread.id);
+                }}
+                onContextMenu={(e) => onThreadContextMenu(e, thread)}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer transition-colors",
+                  activeThreadId === thread.id
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                )}
+              >
+                {thread.pr_number != null ? (() => {
+                  const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
+                  return (
+                    <span
+                      title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
+                      className="shrink-0"
+                    >
+                      <PrIcon size={12} className={prColor} />
+                    </span>
+                  );
+                })() : (
+                  <span className={cn("h-2 w-2 shrink-0 rounded-full", status.dotClass)} />
+                )}
+                {!thread.pr_number && status.label && (
+                  <span className={cn("shrink-0 text-xs", status.color)}>
+                    {status.label}
+                  </span>
+                )}
+                {isEditing ? (
+                  <Input
+                    type="text"
+                    size="xs"
+                    value={inlineEdit.title}
+                    onChange={(e) => onInlineEditChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (!e.nativeEvent.isComposing) {
+                        if (e.key === "Enter") onInlineEditCommit();
+                        if (e.key === "Escape") onInlineEditCancel();
+                      }
+                      e.stopPropagation();
+                    }}
+                    onBlur={onInlineEditCommit}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex-1 border-ring"
+                  />
+                ) : (
+                  <span className="truncate flex-1 text-sm">
+                    {thread.title}
+                  </span>
+                )}
+                {!isEditing && (
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {relativeTime(thread.updated_at)}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+  );
+}
+
 // --- ProjectNode: a single workspace with its threads ---
 
+/** Props for a single workspace node in the sidebar tree. */
 interface ProjectNodeProps {
   workspace: Workspace;
   isExpanded: boolean;
@@ -463,6 +606,7 @@ interface ProjectNodeProps {
   activeThreadId: string | null;
   threads: Thread[];
   runningThreadIds: Set<string>;
+  scrollElementRef: React.RefObject<HTMLDivElement | null>;
   inlineEdit: InlineEditState | null;
   onInlineEditChange: (title: string) => void;
   onInlineEditCommit: () => void;
@@ -474,6 +618,7 @@ interface ProjectNodeProps {
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
 }
 
+/** Renders a collapsible workspace row with its virtualized thread list. */
 function ProjectNode({
   workspace,
   isExpanded,
@@ -481,6 +626,7 @@ function ProjectNode({
   activeThreadId,
   threads,
   runningThreadIds,
+  scrollElementRef,
   inlineEdit,
   onInlineEditChange,
   onInlineEditCommit,
@@ -519,99 +665,42 @@ function ProjectNode({
         )}
         <FolderOpen size={14} className="shrink-0" />
         <span className="truncate flex-1 font-medium">{workspace.name}</span>
-        <button
-          aria-label={`Delete ${workspace.name}`}
-          onClick={(e) => {
+        <Button variant="ghost" size="icon-xs" aria-label={`Delete ${workspace.name}`} onClick={(e) => {
             e.stopPropagation();
             onDelete();
-          }}
-          className="opacity-0 rounded p-0.5 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
-        >
+          }} className="opacity-0 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100">
           <Trash2 size={12} />
-        </button>
+        </Button>
       </div>
 
       {/* Threads (when expanded) */}
       {isExpanded && (
         <div className="ml-3 border-l border-border/50 pl-2">
-          {threads.map((thread) => {
-            const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
-            const isEditing = inlineEdit?.threadId === thread.id;
-            return (
-              <div
-                key={thread.id}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (isEditing) return;
-                  if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
-                    e.preventDefault();
-                    onSelectThread(thread.id);
-                  }
-                }}
-                onClick={() => {
-                  if (!isEditing) onSelectThread(thread.id);
-                }}
-                onContextMenu={(e) => onThreadContextMenu(e, thread)}
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer",
-                  activeThreadId === thread.id
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                )}
-              >
-                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotClass)} />
-                {status.label && (
-                  <span className={cn("shrink-0 text-xs", status.color)}>
-                    {status.label}
-                  </span>
-                )}
-                {isEditing ? (
-                  <input
-                    type="text"
-                    value={inlineEdit.title}
-                    onChange={(e) => onInlineEditChange(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (!e.nativeEvent.isComposing) {
-                        if (e.key === "Enter") onInlineEditCommit();
-                        if (e.key === "Escape") onInlineEditCancel();
-                      }
-                      e.stopPropagation();
-                    }}
-                    onBlur={onInlineEditCommit}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex-1 rounded border border-ring bg-background px-1 py-0 text-xs text-foreground outline-none"
-                  />
-                ) : (
-                  <span className="truncate flex-1 text-xs">
-                    {thread.title}
-                  </span>
-                )}
-                {!isEditing && (
-                  <span className="shrink-0 text-[10px] text-muted-foreground">
-                    {relativeTime(thread.updated_at)}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-
-          {threads.length === 0 && (
-            <p className="px-2 py-1 text-[11px] text-muted-foreground italic">
+          {threads.length === 0 ? (
+            <p className="px-2 py-1 text-xs text-muted-foreground italic">
               No threads
             </p>
+          ) : (
+            <VirtualizedThreadList
+              threads={threads}
+              activeThreadId={activeThreadId}
+              runningThreadIds={runningThreadIds}
+              scrollElementRef={scrollElementRef}
+              inlineEdit={inlineEdit}
+              onInlineEditChange={onInlineEditChange}
+              onInlineEditCommit={onInlineEditCommit}
+              onInlineEditCancel={onInlineEditCancel}
+              onSelectThread={onSelectThread}
+              onThreadContextMenu={onThreadContextMenu}
+            />
           )}
 
           {/* New thread button inside expanded project */}
           <div className="mt-0.5 px-1">
-            <button
-              onClick={onCreateThread}
-              className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-            >
-              <Plus size={11} />
+            <Button variant="ghost" size="xs" onClick={onCreateThread} className="w-full justify-start text-muted-foreground">
+              <Plus size={12} />
               New thread
-            </button>
+            </Button>
           </div>
         </div>
       )}

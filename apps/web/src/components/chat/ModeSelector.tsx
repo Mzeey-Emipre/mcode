@@ -36,7 +36,7 @@ export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) 
     const lockedLabel =
       mode === "worktree" || mode === "existing-worktree" ? "Worktree" : "Local";
     return (
-      <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70">
+      <span className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground/70">
         <Icon size={11} />
         {lockedLabel}
       </span>
@@ -46,11 +46,11 @@ export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
       >
-        <Icon size={11} />
+        <Icon size={12} />
         {selected.label}
-        <ChevronDown size={9} />
+        <ChevronDown size={10} />
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="start" sideOffset={4} className="min-w-[160px]">
@@ -61,7 +61,7 @@ export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) 
               key={option.value}
               onClick={() => onModeChange(option.value)}
               className={cn(
-                "flex items-center gap-2 px-3 py-1.5 text-xs",
+                "flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs",
                 option.value === mode
                   ? "bg-accent text-foreground"
                   : "text-popover-foreground",

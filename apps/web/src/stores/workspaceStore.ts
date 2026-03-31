@@ -5,8 +5,9 @@ import { useThreadStore } from "./threadStore";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useComposerDraftStore } from "./composerDraftStore";
-import type { NamingMode } from "@mcode/contracts";
+import type { NamingMode, ReasoningLevel } from "@mcode/contracts";
 import { useSettingsStore } from "./settingsStore";
+import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
 function generateBranchId(): string {
@@ -50,7 +51,7 @@ interface WorkspaceState {
     mode: "direct" | "worktree",
     branch: string,
   ) => Promise<Thread>;
-  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[]) => Promise<Thread>;
+  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel) => Promise<Thread>;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
   setPendingNewThread: (value: boolean) => void;
@@ -213,7 +214,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  createAndSendMessage: async (content, model, permissionMode, attachments) => {
+  createAndSendMessage: async (content, model, permissionMode, attachments, reasoningLevel) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
 
@@ -231,7 +232,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           branch = autoPreviewBranch;
           set({ namingMode: "auto" as NamingMode });
         } else {
-          branch = customBranchName;
+          branch = trimTrailingBranchChars(customBranchName);
         }
       } else {
         branch = autoPreviewBranch;
@@ -246,7 +247,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
     try {
       const thread = await getTransport().createAndSendMessage(
-        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments,
+        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments, reasoningLevel,
       );
       set((state) => ({
         threads: [thread, ...state.threads],
@@ -389,7 +390,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   setNamingMode: (mode) => set({ namingMode: mode }),
-  setCustomBranchName: (name) => set({ customBranchName: name }),
+  setCustomBranchName: (name) => set({ customBranchName: sanitizeCustomBranchInput(name) }),
   setSelectedWorktree: (worktree) => set({ selectedWorktree: worktree }),
   regenerateAutoPreview: () => set({ autoPreviewBranch: generateBranchId() }),
 

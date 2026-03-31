@@ -1,21 +1,25 @@
 /**
- * Child process lifecycle manager for the Mcode server.
- * Spawns the server as a forked Node process, polls for readiness,
+ * Utility process lifecycle manager for the Mcode server.
+ * Spawns the server as an Electron utilityProcess, polls for readiness,
  * and provides restart/shutdown capabilities.
+ *
+ * Uses utilityProcess instead of child_process.fork to enable
+ * MessagePort transfer for direct renderer streaming.
  */
 
-import { fork, type ChildProcess } from "child_process";
+import { app, utilityProcess, type UtilityProcess, MessageChannelMain } from "electron";
+import { readFileSync } from "fs";
 import { createServer, type AddressInfo } from "net";
 import { randomUUID } from "crypto";
-import { resolve } from "path";
-import { app } from "electron";
+import { resolve, join } from "path";
 import { getMcodeDir } from "@mcode/shared";
+import { SettingsSchema } from "@mcode/contracts";
 
 /** Absolute path to the server package directory. */
 const SERVER_DIR = resolve(__dirname, "../../../server");
 
-/** Absolute path to the server entry point. */
-const SERVER_ENTRY = resolve(SERVER_DIR, "src/index.ts");
+/** Absolute path to the server bootstrap entry (registers tsx for utilityProcess). */
+const SERVER_ENTRY = resolve(SERVER_DIR, "src/entry.mjs");
 
 /**
  * Port range to scan for an available port.
@@ -28,6 +32,49 @@ const PORT_MAX = isDev ? 19600 : 19500;
 
 /** Interval (ms) between health-check polls during startup. */
 const HEALTH_POLL_INTERVAL = 200;
+
+/** Default V8 max old space size in MB. Tuned for the < 100MB idle target. */
+const DEFAULT_HEAP_MB = 96;
+
+/** Minimum allowed heap size in MB. */
+const MIN_HEAP_MB = 64;
+
+/** Maximum allowed heap size in MB. */
+const MAX_HEAP_MB = 8192;
+
+/**
+ * Determine the V8 max old space size for the server process.
+ * Priority: MCODE_SERVER_HEAP_MB env var > settings.json > default (96).
+ */
+function readServerHeapMb(): number {
+  // 1. Environment variable takes highest precedence
+  const envVal = process.env.MCODE_SERVER_HEAP_MB;
+  if (envVal !== undefined) {
+    const parsed = Number(envVal);
+    if (Number.isInteger(parsed) && parsed >= MIN_HEAP_MB && parsed <= MAX_HEAP_MB) {
+      return parsed;
+    }
+    console.warn(
+      `[server-manager] MCODE_SERVER_HEAP_MB="${envVal}" is invalid ` +
+        `(parsed: ${parsed}, allowed: ${MIN_HEAP_MB}-${MAX_HEAP_MB} integer). ` +
+        `Falling back to default ${DEFAULT_HEAP_MB} MB.`,
+    );
+    return DEFAULT_HEAP_MB;
+  }
+
+  // 2. Read from settings.json via the Zod schema
+  try {
+    const raw = readFileSync(join(getMcodeDir(), "settings.json"), "utf-8");
+    const result = SettingsSchema.safeParse(JSON.parse(raw));
+    if (result.success) {
+      return result.data.server.memory.heapMb;
+    }
+  } catch {
+    // File missing or unreadable, fall through to default
+  }
+
+  return DEFAULT_HEAP_MB;
+}
 
 /**
  * Find an available TCP port in the given range.
@@ -50,13 +97,20 @@ async function findAvailablePort(min: number, max: number): Promise<number> {
 }
 
 /**
- * Manages the lifecycle of the Mcode server child process.
+ * Manages the lifecycle of the Mcode server utility process.
  * Handles spawning, health-check polling, restart, and shutdown.
+ * Supports MessagePort transfer for direct streaming to renderer.
  */
 export class ServerManager {
-  private serverProcess: ChildProcess | null = null;
+  private serverProcess: UtilityProcess | null = null;
   private _port = 0;
   private _authToken = "";
+
+  /**
+   * Optional callback invoked when the server process exits unexpectedly
+   * (i.e. not via {@link shutdown}). Receives the exit code (or null).
+   */
+  onUnexpectedExit: ((code: number | null) => void) | null = null;
 
   /** The port the server is listening on. */
   get port(): number {
@@ -76,12 +130,21 @@ export class ServerManager {
     this._port = await findAvailablePort(PORT_MIN, PORT_MAX);
     this._authToken = randomUUID();
 
-    this.serverProcess = fork(SERVER_ENTRY, [], {
+    const heapMb = readServerHeapMb();
+    console.log(`Starting server with --max-old-space-size=${heapMb}`);
+
+    // V8 flags are processed at engine level before JS runs, so they work
+    // in utilityProcess. Module loader flags (--import) do NOT work here;
+    // tsx registration is handled by the entry.mjs bootstrap instead.
+    const child = utilityProcess.fork(SERVER_ENTRY, [], {
       cwd: SERVER_DIR,
-      execArgv: ["--import", "tsx"],
+      execArgv: [
+        `--max-old-space-size=${heapMb}`,
+        "--max-semi-space-size=2",
+        "--expose-gc",
+      ],
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
         MCODE_PORT: String(this._port),
         MCODE_AUTH_TOKEN: this._authToken,
         MCODE_MODE: "desktop",
@@ -89,20 +152,24 @@ export class ServerManager {
         MCODE_TEMP_DIR: app.getPath("temp"),
         MCODE_VERSION: app.getVersion(),
       },
-      stdio: ["pipe", "pipe", "pipe", "ipc"],
+      stdio: "pipe",
     });
+    this.serverProcess = child;
 
     // Forward server stdout/stderr to the main process console
-    this.serverProcess.stdout?.on("data", (data: Buffer) => {
+    child.stdout?.on("data", (data: Buffer) => {
       process.stdout.write(`[server] ${data.toString()}`);
     });
-    this.serverProcess.stderr?.on("data", (data: Buffer) => {
+    child.stderr?.on("data", (data: Buffer) => {
       process.stderr.write(`[server] ${data.toString()}`);
     });
 
-    this.serverProcess.on("exit", (code) => {
+    child.on("exit", (code) => {
       console.error(`Server process exited with code ${code}`);
-      this.serverProcess = null;
+      if (this.serverProcess === child) {
+        this.serverProcess = null;
+        this.onUnexpectedExit?.(code);
+      }
     });
 
     await this.waitForReady(10_000);
@@ -121,8 +188,22 @@ export class ServerManager {
   }
 
   /**
+   * Create a MessagePort pair and send one end to the server utility process.
+   * Returns the renderer-facing port for forwarding to the BrowserWindow.
+   */
+  createStreamPort(): Electron.MessagePortMain {
+    if (!this.serverProcess) {
+      throw new Error("Cannot create stream port: server not running");
+    }
+    const { port1, port2 } = new MessageChannelMain();
+    this.serverProcess.postMessage({ type: "stream-port" }, [port2]);
+    return port1;
+  }
+
+  /**
    * Gracefully terminate the server process.
-   * Sends SIGTERM first, escalating to SIGKILL after 5 seconds.
+   * Sends kill() and retries after 5 seconds if the process has not exited.
+   * utilityProcess.kill() does not accept signal arguments.
    */
   shutdown(): void {
     if (!this.serverProcess) return;
@@ -130,10 +211,10 @@ export class ServerManager {
     const proc = this.serverProcess;
     this.serverProcess = null;
 
-    proc.kill("SIGTERM");
+    proc.kill();
     const forceKill = setTimeout(() => {
       try {
-        proc.kill("SIGKILL");
+        proc.kill();
       } catch {
         // Already dead
       }

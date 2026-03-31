@@ -1,4 +1,6 @@
-import { useRef, useEffect, useMemo, useCallback, memo } from "react";
+import { useRef, useEffect, useMemo, useCallback, memo, useState } from "react";
+import { ArrowDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useShallow } from "zustand/shallow";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -53,6 +55,15 @@ export function MessageList() {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const itemsLengthRef = useRef(0);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+
+  /** Track whether the user has scrolled away from the bottom. */
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollBtn(distanceFromBottom > 200);
+  }, []);
 
   const messages = useThreadStore((s) => s.messages);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -175,26 +186,44 @@ export function MessageList() {
   }, [streamingText, scrollToBottom]);
 
   return (
-    <div ref={containerRef} className="h-full overflow-y-auto">
-      <div
-        className="relative w-full"
-        style={{ height: virtualizer.getTotalSize() }}
-      >
-        {virtualizer.getVirtualItems().map((vi) => {
-          const item = items[vi.index];
-          return (
-            <div
-              key={vi.key}
-              ref={virtualizer.measureElement}
-              data-index={vi.index}
-              className="absolute left-0 w-full px-4 py-2"
-              style={{ transform: `translateY(${vi.start}px)` }}
-            >
-              <VirtualItemRenderer item={item} />
-            </div>
-          );
-        })}
+    <div className="relative h-full">
+      <div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto pt-4">
+        <div
+          className="relative w-full"
+          style={{ height: virtualizer.getTotalSize() }}
+        >
+          {virtualizer.getVirtualItems().map((vi) => {
+            const item = items[vi.index];
+            return (
+              <div
+                key={vi.key}
+                ref={virtualizer.measureElement}
+                data-index={vi.index}
+                className="absolute left-0 w-full px-8 py-3"
+                style={{ transform: `translateY(${vi.start}px)` }}
+              >
+                <div className="mx-auto w-full max-w-4xl">
+                  <VirtualItemRenderer item={item} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
+
+      {/* Scroll-to-bottom floating button */}
+      {showScrollBtn && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={() => scrollToBottom(true)}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 h-8 w-8 rounded-full bg-muted/80 text-muted-foreground shadow-md ring-1 ring-border/40 backdrop-blur-sm transition-all hover:bg-muted hover:text-foreground"
+          aria-label="Scroll to bottom"
+        >
+          <ArrowDown size={14} />
+        </Button>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { AttachmentMeta, PermissionMode } from "@/transport";
+import type { ReasoningLevel } from "@mcode/contracts";
 
 export interface QueuedMessage {
   id: string;
@@ -8,6 +9,7 @@ export interface QueuedMessage {
   attachments: AttachmentMeta[];
   model: string;
   permissionMode: PermissionMode;
+  reasoningLevel?: ReasoningLevel;
   queuedAt: number;
 }
 
