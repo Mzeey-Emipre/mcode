@@ -58,6 +58,8 @@ export function MessageList() {
   const itemsLengthRef = useRef(0);
   const prevMessageCountRef = useRef(0);
   const prevScrollHeightRef = useRef(0);
+  /** Tracks the first message ID to detect real prepends vs appends. */
+  const firstMessageIdRef = useRef<string | null>(null);
   /** True until initial messages are positioned at the bottom after a thread switch. */
   const isInitialLoadRef = useRef(true);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -205,18 +207,22 @@ export function MessageList() {
   }, [activeThreadId, virtualizer]);
 
   // Stabilize scroll position when older messages are prepended.
+  // Detects real prepends by comparing the first message ID before and after
+  // the render, avoiding false positives from appends while near the top.
   useEffect(() => {
     const el = containerRef.current;
     const prevCount = prevMessageCountRef.current;
+    const prevFirstId = firstMessageIdRef.current;
     prevMessageCountRef.current = messages.length;
+    firstMessageIdRef.current = messages.length > 0 ? messages[0].id : null;
 
     if (!el || messages.length <= prevCount || prevCount === 0) {
       prevScrollHeightRef.current = el?.scrollHeight ?? 0;
       return;
     }
 
-    // Check if this was a prepend (user was near top) vs append
-    const wasPrepend = prevScrollHeightRef.current > 0 && el.scrollTop < PAGINATION_THRESHOLD;
+    // A prepend occurred if the first message ID changed (new items at the front)
+    const wasPrepend = prevFirstId !== null && messages[0].id !== prevFirstId;
     if (wasPrepend) {
       // After React renders the new items, restore scroll position
       requestAnimationFrame(() => {
