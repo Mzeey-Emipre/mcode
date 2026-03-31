@@ -236,11 +236,6 @@ export function MessageList() {
   return (
     <div className="relative h-full">
       <div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto pt-4">
-        {isLoadingMore && (
-          <div className="flex justify-center py-3">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        )}
         <div
           className="relative w-full"
           style={{ height: virtualizer.getTotalSize() }}
@@ -263,6 +258,15 @@ export function MessageList() {
           })}
         </div>
       </div>
+
+      {/* Loading spinner overlay for scroll-up pagination */}
+      {isLoadingMore && (
+        <div className="absolute top-2 left-1/2 z-10 -translate-x-1/2">
+          <div className="rounded-full bg-muted/80 p-2 shadow-md ring-1 ring-border/40 backdrop-blur-sm">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          </div>
+        </div>
+      )}
 
       {/* Scroll-to-bottom floating button */}
       {showScrollBtn && (

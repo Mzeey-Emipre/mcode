@@ -35,7 +35,6 @@ export type {
 } from "@mcode/contracts";
 
 export type { ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
-export type { PaginatedMessages } from "@mcode/contracts";
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
