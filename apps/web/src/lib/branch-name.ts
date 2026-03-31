@@ -20,6 +20,34 @@ export function sanitizeBranchName(raw: string): string {
     .slice(0, 50);
 }
 
+/**
+ * Sanitize a custom branch name as the user types.
+ * Replaces git-invalid characters with hyphens and collapses sequences
+ * that git-check-ref-format rejects (`..`, `//`, consecutive hyphens).
+ * Also strips structural patterns like leading `-`, `.lock` suffix,
+ * and dot-prefixed path components (e.g. `feat/.hidden`).
+ */
+export function sanitizeCustomBranchInput(raw: string): string {
+  return raw
+    .replace(/[^a-zA-Z0-9/._-]/g, "-")
+    .replace(/\.lock$/i, "")
+    .replace(/\.{2,}/g, ".")
+    .replace(/\/{2,}/g, "/")
+    .replace(/-{2,}/g, "-")
+    .replace(/(?:^|\/)\.+/g, (m) => m.startsWith("/") ? "/" : "")
+    .replace(/^-+/, "")
+    .slice(0, 100);
+}
+
+/**
+ * Final cleanup for a custom branch name before submission.
+ * Strips trailing dots and slashes that cannot be removed during
+ * typing without interfering with the user's input flow.
+ */
+export function finalizeCustomBranchName(raw: string): string {
+  return sanitizeCustomBranchInput(raw).replace(/[./]+$/, "");
+}
+
 export function generateBranchNameFromMessage(message: string): string {
   const words = message
     .split(/\s+/)

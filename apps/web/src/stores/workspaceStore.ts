@@ -7,6 +7,7 @@ import { useQueueStore } from "./queueStore";
 import { useComposerDraftStore } from "./composerDraftStore";
 import type { NamingMode, ReasoningLevel } from "@mcode/contracts";
 import { useSettingsStore } from "./settingsStore";
+import { sanitizeCustomBranchInput, finalizeCustomBranchName } from "@/lib/branch-name";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
 function generateBranchId(): string {
@@ -231,7 +232,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           branch = autoPreviewBranch;
           set({ namingMode: "auto" as NamingMode });
         } else {
-          branch = customBranchName;
+          branch = finalizeCustomBranchName(customBranchName);
         }
       } else {
         branch = autoPreviewBranch;
@@ -389,7 +390,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   setNamingMode: (mode) => set({ namingMode: mode }),
-  setCustomBranchName: (name) => set({ customBranchName: name }),
+  setCustomBranchName: (name) => set({ customBranchName: sanitizeCustomBranchInput(name) }),
   setSelectedWorktree: (worktree) => set({ selectedWorktree: worktree }),
   regenerateAutoPreview: () => set({ autoPreviewBranch: generateBranchId() }),
 

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   sanitizeBranchName,
+  sanitizeCustomBranchInput,
+  finalizeCustomBranchName,
   generateBranchNameFromMessage,
   generateFallbackBranchName,
 } from "../lib/branch-name";
@@ -49,6 +51,87 @@ describe("generateBranchNameFromMessage", () => {
   it("returns fallback for empty/stop-word-only messages", () => {
     const name = generateBranchNameFromMessage("hey hi hello");
     expect(name).toMatch(/^thread-/);
+  });
+});
+
+describe("sanitizeCustomBranchInput", () => {
+  it("preserves valid branch names", () => {
+    expect(sanitizeCustomBranchInput("feat/my-branch")).toBe("feat/my-branch");
+  });
+
+  it("replaces spaces with hyphens", () => {
+    expect(sanitizeCustomBranchInput("fix my bug")).toBe("fix-my-bug");
+  });
+
+  it("replaces git-invalid characters with hyphens", () => {
+    expect(sanitizeCustomBranchInput("feat?add*stuff")).toBe("feat-add-stuff");
+  });
+
+  it("collapses consecutive dots", () => {
+    expect(sanitizeCustomBranchInput("feat..bar")).toBe("feat.bar");
+  });
+
+  it("collapses consecutive slashes", () => {
+    expect(sanitizeCustomBranchInput("feat//bar")).toBe("feat/bar");
+  });
+
+  it("collapses consecutive hyphens from replacements", () => {
+    expect(sanitizeCustomBranchInput("feat?!bar")).toBe("feat-bar");
+  });
+
+  it("preserves dots, slashes, and underscores", () => {
+    expect(sanitizeCustomBranchInput("v1.0/my_branch")).toBe("v1.0/my_branch");
+  });
+
+  it("preserves uppercase letters", () => {
+    expect(sanitizeCustomBranchInput("Fix/OAuth")).toBe("Fix/OAuth");
+  });
+
+  it("truncates to 100 characters", () => {
+    const long = "a".repeat(120);
+    expect(sanitizeCustomBranchInput(long).length).toBe(100);
+  });
+
+  it("strips tilde, caret, colon, question, asterisk, brackets, backslash", () => {
+    expect(sanitizeCustomBranchInput("a~b^c:d?e*f[g]h\\i")).toBe("a-b-c-d-e-f-g-h-i");
+  });
+
+  it("strips leading hyphens", () => {
+    expect(sanitizeCustomBranchInput("-my-branch")).toBe("my-branch");
+  });
+
+  it("strips .lock suffix", () => {
+    expect(sanitizeCustomBranchInput("refs.lock")).toBe("refs");
+  });
+
+  it("strips dot-prefixed path components", () => {
+    expect(sanitizeCustomBranchInput("feat/.hidden")).toBe("feat/hidden");
+  });
+
+  it("strips leading dot at start of name", () => {
+    expect(sanitizeCustomBranchInput(".dotfile")).toBe("dotfile");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(sanitizeCustomBranchInput("")).toBe("");
+  });
+});
+
+describe("finalizeCustomBranchName", () => {
+  it("strips trailing dot", () => {
+    expect(finalizeCustomBranchName("branch.")).toBe("branch");
+  });
+
+  it("strips trailing slash", () => {
+    expect(finalizeCustomBranchName("feat/")).toBe("feat");
+  });
+
+  it("strips multiple trailing dots and slashes", () => {
+    expect(finalizeCustomBranchName("feat/bar./..")).toBe("feat/bar");
+  });
+
+  it("passes through valid names unchanged", () => {
+    expect(finalizeCustomBranchName("feat/my-branch")).toBe("feat/my-branch");
   });
 });
 
