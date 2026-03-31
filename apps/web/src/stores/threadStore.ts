@@ -169,6 +169,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
           currentTurnMessageIdByThread: nextTurnMsgIds,
+          loadingOlder: false,
+          hasOlderMessages: false,
         };
       });
     } else {
@@ -178,6 +180,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         currentThreadId: threadId,
         messages: [],
         persistedToolCallCounts: {},
+        loadingOlder: false,
+        hasOlderMessages: false,
       });
     }
     try {
@@ -337,12 +341,20 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         oldestSequence,
       );
 
-      if (get().currentThreadId !== currentThreadId) return;
+      if (get().currentThreadId !== currentThreadId) {
+        set({ loadingOlder: false });
+        return;
+      }
 
       const merged = [...older, ...get().messages];
+      // Bound to MESSAGE_WINDOW_SIZE: trim newest messages since user is paginating upward.
+      // Keeps a contiguous window around the user's scroll position.
+      const bounded = merged.length > MESSAGE_WINDOW_SIZE
+        ? merged.slice(0, MESSAGE_WINDOW_SIZE)
+        : merged;
 
       set({
-        messages: merged,
+        messages: bounded,
         loadingOlder: false,
         hasOlderMessages: older.length >= OLDER_PAGE_SIZE,
       });

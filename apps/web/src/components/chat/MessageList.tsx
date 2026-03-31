@@ -57,6 +57,7 @@ export function MessageList() {
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const itemsLengthRef = useRef(0);
   const prevScrollHeightRef = useRef(0);
+  const suppressAutoScrollRef = useRef(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
 
   const messages = useThreadStore((s) => s.messages);
@@ -94,6 +95,7 @@ export function MessageList() {
     // Trigger upward pagination when near the top
     if (el.scrollTop < PAGINATION_THRESHOLD && hasOlderMessages && !loadingOlder) {
       prevScrollHeightRef.current = el.scrollHeight;
+      suppressAutoScrollRef.current = true;
       loadOlderMessages();
     }
   }, [hasOlderMessages, loadingOlder, loadOlderMessages]);
@@ -199,17 +201,20 @@ export function MessageList() {
         prevScrollHeightRef.current = 0;
       }
       virtualizer.measure();
+      suppressAutoScrollRef.current = false;
     }
     wasLoadingOlderRef.current = loadingOlder;
   }, [loadingOlder, virtualizer]);
 
   // Discrete events (new message, tool call) -> smooth scroll
   useEffect(() => {
+    if (suppressAutoScrollRef.current) return;
     scrollToBottom(true);
   }, [messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
 
   // Streaming deltas -> instant scroll (no animation lag)
   useEffect(() => {
+    if (suppressAutoScrollRef.current) return;
     if (streamingText) scrollToBottom(false);
   }, [streamingText, scrollToBottom]);
 

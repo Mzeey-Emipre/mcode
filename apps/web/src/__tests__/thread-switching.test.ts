@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useThreadStore } from "@/stores/threadStore";
+import { useThreadStore, TOOL_CALL_CACHE_SIZE } from "@/stores/threadStore";
 import type { Message } from "@/transport/types";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 import { LruCache } from "@/lib/lru-cache";
@@ -22,7 +22,7 @@ describe("Thread Switching", () => {
       currentThreadId: null,
       persistedToolCallCounts: {},
       serverMessageIds: {},
-      toolCallRecordCache: new LruCache(200),
+      toolCallRecordCache: new LruCache(TOOL_CALL_CACHE_SIZE),
       currentTurnMessageIdByThread: {},
       agentStartTimes: {},
       settingsByThread: {},
