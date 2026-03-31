@@ -14,6 +14,13 @@ import { GitService } from "./git-service";
 import { AgentService } from "./agent-service";
 import { TerminalService } from "./terminal-service";
 
+/**
+ * Grace period (ms) after killing processes on Windows before attempting
+ * to delete a worktree directory. Windows doesn't release directory handles
+ * synchronously when a process is terminated.
+ */
+const HANDLE_RELEASE_DELAY_MS = 500;
+
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
 export class ThreadService {
@@ -190,10 +197,8 @@ export class ThreadService {
       });
     }
 
-    // On Windows, processes may not release directory handles immediately
-    // after being killed. A short delay gives the OS time to clean up.
     if (process.platform === "win32") {
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, HANDLE_RELEASE_DELAY_MS));
     }
   }
 
