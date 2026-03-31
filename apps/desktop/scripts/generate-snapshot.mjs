@@ -11,7 +11,7 @@
 
 import { build } from "esbuild";
 import { execFileSync } from "child_process";
-import { renameSync, existsSync, mkdirSync, unlinkSync } from "fs";
+import { renameSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -19,9 +19,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const snapshotDir = resolve(desktopRoot, "dist/snapshot");
 
-if (!existsSync(snapshotDir)) {
-  mkdirSync(snapshotDir, { recursive: true });
+// Clean stale artifacts from previous builds to prevent after-pack from
+// copying an outdated snapshot if this script fails mid-way.
+if (existsSync(snapshotDir)) {
+  rmSync(snapshotDir, { recursive: true, force: true });
 }
+mkdirSync(snapshotDir, { recursive: true });
 
 // ---------------------------------------------------------------------------
 // Step 1: Bundle snapshot entry as IIFE

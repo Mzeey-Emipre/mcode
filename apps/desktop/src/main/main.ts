@@ -485,7 +485,7 @@ app.commandLine.appendSwitch(
 );
 
 app.whenReady().then(async () => {
-  console.log(`[perf] Module load: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+  console.log(`[perf] App ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
   console.log(`[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`);
   console.log(`Mcode v${app.getVersion()} starting`);
 
