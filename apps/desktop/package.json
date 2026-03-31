@@ -10,29 +10,33 @@
     "prod": "NODE_ENV=production bun run build && NODE_ENV=production npx electron .",
     "typecheck": "tsc --noEmit",
     "rebuild": "electron-rebuild -f",
-    "dist": "bun run build && electron-builder --publish never",
+    "dist": "bun run build && bun scripts/generate-snapshot.mjs && electron-builder --publish never",
+    "dist:no-snapshot": "bun run build && electron-builder --publish never",
     "test": "vitest run"
   },
   "dependencies": {
+    "@electron/rebuild": "^3.7.1",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
-    "@electron/rebuild": "^3.7.1",
     "uuid": "^11.1.0",
     "which": "^5.0.0"
   },
   "devDependencies": {
+    "@electron/fuses": "^2.1.1",
     "@types/uuid": "^10.0.0",
     "@types/which": "^3.0.4",
-    "electron": "^35.0.0",
+    "@vitest/coverage-v8": "^4.1.0",
+    "electron": "35.7.5",
     "electron-builder": "^25.1.0",
+    "electron-mksnapshot": "35.7.5",
     "esbuild": "^0.27.0",
     "typescript": "^5.8.0",
-    "vitest": "^4.1.0",
-    "@vitest/coverage-v8": "^4.1.0"
+    "vitest": "^4.1.0"
   },
   "build": {
     "appId": "com.mzeey.mcode",
     "productName": "Mcode",
+    "afterPack": "./scripts/after-pack.mjs",
     "directories": {
       "output": "release"
     },

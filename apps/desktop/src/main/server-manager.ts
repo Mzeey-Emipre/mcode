@@ -13,7 +13,10 @@ import { createServer, type AddressInfo } from "net";
 import { randomUUID } from "crypto";
 import { resolve, join } from "path";
 import { getMcodeDir } from "@mcode/shared";
-import { SettingsSchema } from "@mcode/contracts";
+import { SettingsSchema as BundledSettingsSchema } from "@mcode/contracts";
+
+/** Use snapshot-provided schema when available (V8 snapshot pre-initializes Zod). */
+const SettingsSchema = globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? BundledSettingsSchema;
 
 /** Absolute path to the server package directory. */
 const SERVER_DIR = resolve(__dirname, "../../../server");
