@@ -254,7 +254,7 @@ export class AgentService {
         branch: canonicalBranch,
       };
     } else if (mode === "worktree") {
-      thread = this.threadService.create(workspaceId, title, "worktree", branch);
+      thread = await this.threadService.create(workspaceId, title, "worktree", branch);
     } else {
       thread = this.threadRepo.create(
         workspaceId,
