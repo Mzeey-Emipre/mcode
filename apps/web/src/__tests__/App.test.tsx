@@ -9,7 +9,7 @@ vi.mock("@/transport", async () => ({
   getTransport: () => ({
     listWorkspaces: vi.fn().mockResolvedValue([]),
     listThreads: vi.fn().mockResolvedValue([]),
-    getMessages: vi.fn().mockResolvedValue([]),
+    getMessages: vi.fn().mockResolvedValue({ messages: [], hasMore: false }),
     sendMessage: vi.fn().mockResolvedValue(undefined),
     createAndSendMessage: vi.fn().mockResolvedValue({ id: "t1", title: "test", model: null }),
     updateThreadTitle: vi.fn().mockResolvedValue(true),

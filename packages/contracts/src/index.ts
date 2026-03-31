@@ -28,8 +28,8 @@ export type { Workspace } from "./models/workspace.js";
 export { ThreadSchema } from "./models/thread.js";
 export type { Thread } from "./models/thread.js";
 
-export { MessageSchema } from "./models/message.js";
-export type { Message } from "./models/message.js";
+export { MessageSchema, PaginatedMessagesSchema } from "./models/message.js";
+export type { Message, PaginatedMessages } from "./models/message.js";
 
 export {
   ToolCallRecordSchema,
