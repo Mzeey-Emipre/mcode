@@ -3,6 +3,7 @@ import { FolderOpen } from "lucide-react";
 import { getTransport } from "@/transport";
 import { useInstalledEditors } from "@/hooks/useInstalledEditors";
 import { registerShortcut } from "@/lib/shortcuts";
+import { useToastStore } from "@/stores/toastStore";
 import { VsCodeIcon, ZedIcon, CursorIcon } from "./EditorIcons";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,7 +44,12 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
     }));
 
   const handleOpenEditor = (editorId: string) => {
-    getTransport().openInEditor(editorId, dirPath).catch(console.error);
+    const label = EDITOR_CONFIG[editorId]?.label ?? editorId;
+    getTransport()
+      .openInEditor(editorId, dirPath)
+      .catch((err) =>
+        useToastStore.getState().show("error", `Could not open ${label}`, String(err?.message ?? err)),
+      );
   };
 
   const handleOpenExplorer = useCallback(() => {

@@ -10,6 +10,7 @@ import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ToastContainer } from "@/components/Toast";
 
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
@@ -86,6 +87,7 @@ export function App() {
           </div>
         </div>
       </div>
+      <ToastContainer />
     </TooltipProvider>
   );
 }
