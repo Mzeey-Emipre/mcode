@@ -79,8 +79,13 @@ export class ThreadService {
               worktreeName,
               branch,
             );
-          } catch {
-            // best-effort cleanup
+          } catch (err) {
+            logger.warn("Rollback worktree cleanup failed during thread creation", {
+              threadId: thread.id,
+              worktreeName,
+              workspacePath: workspace.path,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
           this.threadRepo.hardDelete(thread.id);
           throw new Error(
@@ -119,11 +124,17 @@ export class ThreadService {
               .split("/")
               .pop() ?? thread.worktree_path;
           try {
-            await this.gitService.removeWorktree(
+            const cleaned = await this.gitService.removeWorktree(
               workspace.path,
               wtName,
               thread.branch,
             );
+            if (!cleaned) {
+              logger.error(
+                "Worktree directory could not be removed during thread deletion",
+                { threadId, wtName },
+              );
+            }
           } catch (err) {
             logger.error("Worktree cleanup failed during thread deletion", {
               threadId,

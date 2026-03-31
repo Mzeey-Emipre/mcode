@@ -74,6 +74,17 @@ describe("ThreadService.delete", () => {
     expect(threadRepo.findById("t-2")?.status).toBe("deleted");
   });
 
+  it("soft-deletes even when removeWorktree returns false", async () => {
+    (mockGitService.removeWorktree as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    insertWorktreeThread("t-4", ws.id, "feat/test", "/tmp/wt/my-worktree");
+
+    const result = await threadService.delete("t-4", true);
+
+    expect(result).toBe(true);
+    expect(threadRepo.findById("t-4")?.status).toBe("deleted");
+  });
+
   it("skips worktree cleanup when cleanupWorktree is false", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     insertWorktreeThread("t-3", ws.id, "feat/test", "/tmp/wt/my-worktree");
