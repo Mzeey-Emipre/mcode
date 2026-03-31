@@ -5,12 +5,16 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { execFileSync } from "child_process";
+import { execFileSync, execFile as execFileCb } from "child_process";
+import { promisify } from "util";
+import { rm } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
-import { getMcodeDir, validateBranchName, validateWorktreeName } from "@mcode/shared";
+import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
 import type { GitBranch, WorktreeInfo } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
+
+const execFile = promisify(execFileCb);
 
 /** Resolve the worktree base directory path under the mcode data dir. */
 function getWorktreeBaseDir(repoPath: string): string {
@@ -126,42 +130,75 @@ export class GitService {
     return { name, path: wtPath, branch, managed: true };
   }
 
-  /** Remove a git worktree by name. Returns true on success. */
-  removeWorktree(
+  /** Remove a git worktree by name. Returns true if the directory was cleaned up. */
+  async removeWorktree(
     repoPath: string,
     name: string,
     branchName?: string,
-  ): boolean {
+  ): Promise<boolean> {
     validateWorktreeName(name);
 
     const wtPath = join(getWorktreeBaseDir(repoPath), name);
     const branch = branchName ?? `mcode/${name}`;
     validateBranchName(branch);
 
+    // 1. Try git worktree remove
     try {
-      execFileSync(
+      await execFile(
         "git",
         ["-C", repoPath, "worktree", "remove", wtPath, "--force"],
-        { stdio: "pipe" },
+        { timeout: 30_000 },
       );
-    } catch {
-      // Worktree may not exist; continue to prune
+    } catch (err) {
+      logger.warn("git worktree remove failed", {
+        wtPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
+    // 2. Prune stale worktree metadata
     try {
-      execFileSync("git", ["-C", repoPath, "worktree", "prune"], {
-        stdio: "pipe",
+      await execFile("git", ["-C", repoPath, "worktree", "prune"], {
+        timeout: 10_000,
       });
-    } catch {
-      // Prune failure is non-fatal
+    } catch (err) {
+      logger.warn("git worktree prune failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
+    // 3. Fallback: remove directory manually if git didn't clean it up
+    if (existsSync(wtPath)) {
+      logger.warn(
+        "Worktree directory still exists after git remove, falling back to fs.rm",
+        { wtPath },
+      );
+      try {
+        await rm(wtPath, { recursive: true, force: true });
+      } catch (err) {
+        logger.error("Fallback fs.rm failed", {
+          wtPath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 4. Verify cleanup
+    if (existsSync(wtPath)) {
+      logger.error("Worktree directory could not be removed", { wtPath });
+      return false;
+    }
+
+    // 5. Delete the branch
     try {
-      execFileSync("git", ["-C", repoPath, "branch", "-d", branch], {
-        stdio: "pipe",
+      await execFile("git", ["-C", repoPath, "branch", "-d", branch], {
+        timeout: 10_000,
       });
-    } catch {
-      // Branch may not exist
+    } catch (err) {
+      logger.warn("Branch deletion failed (may not exist)", {
+        branch,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     return true;
