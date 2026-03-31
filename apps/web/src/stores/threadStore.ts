@@ -251,8 +251,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const { messages: olderMessages, hasMore } = await getTransport().getMessages(threadId, 50, cursor);
 
       // Discard if thread switched or loadMessages reset state since we started
-      if (get().currentThreadId !== threadId) return;
-      if ((get().loadEpochByThread[threadId] ?? 0) !== epoch) return;
+      if (get().currentThreadId !== threadId || (get().loadEpochByThread[threadId] ?? 0) !== epoch) {
+        set((s) => ({ isLoadingMore: { ...s.isLoadingMore, [threadId]: false } }));
+        return;
+      }
 
       // Populate tool call counts from older messages
       const newCounts: Record<string, number> = {};
