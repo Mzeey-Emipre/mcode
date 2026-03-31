@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModel } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findProviderForModel, findModelById } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -46,7 +46,9 @@ import {
   inferMimeType,
   MAX_ATTACHMENTS,
 } from "@mcode/contracts";
-import { useComposerDraftStore, type ReasoningLevel } from "@/stores/composerDraftStore";
+import type { ReasoningLevel, SettingsProviderId } from "@mcode/contracts";
+import { useComposerDraftStore } from "@/stores/composerDraftStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 /** Convert a Blob to a base64 string using the native FileReader API. */
 function blobToBase64(blob: Blob): Promise<string> {
@@ -80,8 +82,8 @@ type AccessMode = PermissionMode;
  */
 export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) {
   const [input, setInput] = useState("");
-  const [modelId, setModelId] = useState(getDefaultModel().id);
-  const [reasoning, setReasoning] = useState<ReasoningLevel>("high");
+  const [modelId, setModelId] = useState(getDefaultModelId());
+  const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
   const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.CHAT);
   const [access, setAccess] = useState<AccessMode>(PERMISSION_MODES.FULL);
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
@@ -110,6 +112,22 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const clearDraftFromStore = useComposerDraftStore((s) => s.clearDraft);
   const pendingPrefill = useComposerDraftStore((s) => s.pendingPrefill);
   const clearPendingPrefill = useComposerDraftStore((s) => s.clearPendingPrefill);
+
+  // Reactive settings: sync model/reasoning defaults when settings finish loading
+  const settingsLoaded = useSettingsStore((s) => s.loaded);
+  const settingsDefaultModelId = useSettingsStore((s) => s.settings.model.defaults.id);
+  const settingsDefaultReasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    // Only sync when no draft exists (new thread or thread without saved state)
+    const hasDraft = threadId ? getDraft(threadId) != null : false;
+    if (hasDraft) return;
+
+    const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
+    setModelId(validModelId);
+    setReasoning(settingsDefaultReasoning);
+  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning]); // Only sync when settings change
 
   // Save draft for previous thread, restore draft for new thread
   useEffect(() => {
@@ -155,8 +173,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         // No saved draft: reset to defaults
         setInput("");
         setAttachments([]);
-        setModelId(getDefaultModel().id);
-        setReasoning("high");
+        setModelId(getDefaultModelId());
+        setReasoning(getDefaultReasoningLevel());
         // Reset Lexical editor
         if (editorRef.current) {
           editorRef.current.update(() => {
@@ -170,8 +188,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       // Entering "new thread" mode: ensure clean slate
       setInput("");
       setAttachments([]);
-      setModelId(getDefaultModel().id);
-      setReasoning("high");
+      setModelId(getDefaultModelId());
+      setReasoning(getDefaultReasoningLevel());
       if (editorRef.current) {
         editorRef.current.update(() => {
           const root = $getRoot();
@@ -649,6 +667,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         attachments: currentAttachments,
         model: modelId,
         permissionMode: access,
+        reasoningLevel: reasoning,
       });
 
       setInput("");
@@ -706,15 +725,31 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined);
+        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning);
       } finally {
         setPreparingWorktree(false);
       }
     } else if (threadId) {
-      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent);
+      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning);
     }
+
+    // Auto-save "last used" model and reasoning as the new default
+    const { settings, loaded, update: updateSettings } = useSettingsStore.getState();
+    if (loaded && (modelId !== settings.model.defaults.id || reasoning !== settings.model.defaults.reasoning)) {
+      const provider = findProviderForModel(modelId);
+      void updateSettings({
+        model: {
+          defaults: {
+            id: modelId,
+            reasoning,
+            ...(provider && { provider: provider.id as SettingsProviderId }),
+          },
+        },
+      });
+    }
+
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
 
   const handleEditorChange = useCallback((text: string) => {
     setInput(text);

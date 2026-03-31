@@ -5,7 +5,7 @@
  * and the server connection URL.
  */
 
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Get the WebSocket URL (with auth token) for connecting to the server. */
@@ -47,4 +47,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
 
   /** Resolve the native file path for a File object (drag-and-drop). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+
+  /** Clear Blink's in-memory resource caches (images, scripts, CSS).
+   * Typically called after a thread switch to reclaim memory. */
+  clearRendererCache: (): void => webFrame.clearCache(),
+
+  /** Return total bytes held in Blink's resource cache (images, scripts, CSS, fonts). */
+  getRendererCacheBytes: (): number => {
+    const { images, scripts, cssStyleSheets, xslStyleSheets, fonts, other } =
+      webFrame.getResourceUsage();
+    return (
+      images.size + scripts.size + cssStyleSheets.size +
+      xslStyleSheets.size + fonts.size + other.size
+    );
+  },
 });

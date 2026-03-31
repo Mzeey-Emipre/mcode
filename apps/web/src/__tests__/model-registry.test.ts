@@ -1,9 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
+import { DEFAULT_SETTINGS } from "@mcode/contracts";
+import { useSettingsStore } from "@/stores/settingsStore";
 import {
   MODEL_PROVIDERS,
   findModelById,
   findProviderForModel,
   getDefaultModel,
+  getDefaultModelId,
+  getDefaultReasoningLevel,
 } from "@/lib/model-registry";
 
 describe("ModelRegistry", () => {
@@ -36,5 +40,58 @@ describe("ModelRegistry", () => {
   it("getDefaultModel returns Claude Sonnet 4.6", () => {
     const model = getDefaultModel();
     expect(model.id).toBe("claude-sonnet-4-6");
+  });
+});
+
+describe("Settings-aware defaults", () => {
+  beforeEach(() => {
+    useSettingsStore.setState({
+      settings: DEFAULT_SETTINGS,
+      loaded: true,
+    });
+  });
+
+  it("getDefaultModelId returns settings value", () => {
+    useSettingsStore.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        model: {
+          defaults: { provider: "claude", id: "claude-opus-4-6", reasoning: "high" },
+        },
+      },
+    });
+    expect(getDefaultModelId()).toBe("claude-opus-4-6");
+  });
+
+  it("getDefaultModelId falls back to sonnet when model ID is unknown", () => {
+    useSettingsStore.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        model: {
+          defaults: { provider: "claude", id: "nonexistent-model", reasoning: "high" },
+        },
+      },
+    });
+    expect(getDefaultModelId()).toBe("claude-sonnet-4-6");
+  });
+
+  it("getDefaultModelId returns sonnet from default settings", () => {
+    expect(getDefaultModelId()).toBe("claude-sonnet-4-6");
+  });
+
+  it("getDefaultReasoningLevel returns settings value", () => {
+    useSettingsStore.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        model: {
+          defaults: { provider: "claude", id: "claude-sonnet-4-6", reasoning: "low" },
+        },
+      },
+    });
+    expect(getDefaultReasoningLevel()).toBe("low");
+  });
+
+  it("getDefaultReasoningLevel returns high from default settings", () => {
+    expect(getDefaultReasoningLevel()).toBe("high");
   });
 });
