@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useCallback, memo, useState } from "react";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useShallow } from "zustand/shallow";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -55,15 +55,9 @@ export function MessageList() {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const itemsLengthRef = useRef(0);
+  const prevMessageCountRef = useRef(0);
+  const prevScrollHeightRef = useRef(0);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
-
-  /** Track whether the user has scrolled away from the bottom. */
-  const handleScroll = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowScrollBtn(distanceFromBottom > 200);
-  }, []);
 
   const messages = useThreadStore((s) => s.messages);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -85,6 +79,32 @@ export function MessageList() {
   const serverMessageIds = useThreadStore(
     useShallow((s) => s.serverMessageIds),
   );
+  const hasMore = useThreadStore((s) =>
+    activeThreadId ? s.hasMoreMessages[activeThreadId] ?? false : false,
+  );
+  const isLoadingMore = useThreadStore((s) =>
+    activeThreadId ? s.isLoadingMore[activeThreadId] ?? false : false,
+  );
+  const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
+
+  /** Track scroll position for scroll-to-bottom button and load-more trigger. */
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollBtn(distanceFromBottom > 200);
+
+    // Trigger loading older messages when near the top
+    if (
+      el.scrollTop < 200 &&
+      activeThreadId &&
+      hasMore &&
+      !isLoadingMore
+    ) {
+      loadOlderMessages(activeThreadId);
+    }
+  }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages]);
+
   const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
 
   const stableItems = useMemo(
@@ -175,6 +195,34 @@ export function MessageList() {
     virtualizer.measure();
   }, [activeThreadId, virtualizer]);
 
+  // Stabilize scroll position when older messages are prepended.
+  useEffect(() => {
+    const el = containerRef.current;
+    const prevCount = prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+
+    if (!el || messages.length <= prevCount || prevCount === 0) {
+      prevScrollHeightRef.current = el?.scrollHeight ?? 0;
+      return;
+    }
+
+    // Check if this was a prepend (user was near top) vs append
+    const wasPrepend = prevScrollHeightRef.current > 0 && el.scrollTop < 200;
+    if (wasPrepend) {
+      // After React renders the new items, restore scroll position
+      requestAnimationFrame(() => {
+        const newScrollHeight = el.scrollHeight;
+        const addedHeight = newScrollHeight - prevScrollHeightRef.current;
+        if (addedHeight > 0) {
+          el.scrollTop += addedHeight;
+        }
+        prevScrollHeightRef.current = newScrollHeight;
+      });
+    } else {
+      prevScrollHeightRef.current = el.scrollHeight;
+    }
+  }, [messages.length, messages]);
+
   // Discrete events (new message, tool call) -> smooth scroll
   useEffect(() => {
     scrollToBottom(true);
@@ -188,6 +236,11 @@ export function MessageList() {
   return (
     <div className="relative h-full">
       <div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto pt-4">
+        {isLoadingMore && (
+          <div className="flex justify-center py-3">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
         <div
           className="relative w-full"
           style={{ height: virtualizer.getTotalSize() }}
