@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore, TOOL_CALL_CACHE_SIZE } from "@/stores/threadStore";
 import { LruCache } from "@/lib/lru-cache";
 import { mockTransport, createMockMessage } from "./mocks/transport";
+import type { Message } from "@/transport";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -125,7 +126,7 @@ describe("Chat Pagination", () => {
       hasMoreMessages: { [threadId]: true },
     });
 
-    let resolveGetMessages!: (result: { messages: any[]; hasMore: boolean }) => void;
+    let resolveGetMessages!: (result: { messages: Message[]; hasMore: boolean }) => void;
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockReturnValueOnce(
       new Promise((resolve) => { resolveGetMessages = resolve; }),
     );
@@ -156,7 +157,7 @@ describe("Chat Pagination", () => {
       loadEpochByThread: { [threadId]: 1 },
     });
 
-    let resolveGetMessages!: (result: { messages: any[]; hasMore: boolean }) => void;
+    let resolveGetMessages!: (result: { messages: Message[]; hasMore: boolean }) => void;
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockReturnValueOnce(
       new Promise((resolve) => { resolveGetMessages = resolve; }),
     );
