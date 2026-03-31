@@ -79,6 +79,17 @@ When working on frontend code, follow the component registry and rules in **[doc
 
 Always add JSDoc/TSDoc docstrings to all exported functions, components, types, and interfaces. AI-powered code reviews depend on these for context. At minimum include a one-line summary of what the symbol does.
 
+## Cross-Package Changes
+
+This is a monorepo. When changing a function signature, return type, or shared interface, you must typecheck ALL packages that import it, not just the one you modified. Use `grep` to find all call sites across the monorepo before considering the change complete.
+
+```sh
+# Typecheck all packages after cross-cutting changes
+cd apps/server && npx tsc --noEmit
+cd apps/web && npx tsc --noEmit
+cd apps/desktop && npx tsc --noEmit
+```
+
 ## Commit Guidelines
 
 Use [Conventional Commits](https://www.conventionalcommits.org/).
