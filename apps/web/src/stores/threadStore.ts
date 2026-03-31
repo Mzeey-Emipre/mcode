@@ -187,6 +187,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           messages,
           loading: false,
           persistedToolCallCounts: counts,
+          // If we fetched a full page (100), there are likely more messages in the DB
           hasOlderMessages: messages.length >= 100,
         });
       }

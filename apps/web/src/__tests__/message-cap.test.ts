@@ -167,6 +167,7 @@ describe("message sliding window", () => {
     vi.runAllTimers();
 
     expect(useThreadStore.getState().messages.length).toBe(200);
+    expect(useThreadStore.getState().hasOlderMessages).toBe(true);
     vi.useRealTimers();
   });
 });
