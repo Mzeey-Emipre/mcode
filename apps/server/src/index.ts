@@ -6,6 +6,7 @@
 import { setupContainer } from "./container";
 import { createWsServer } from "./transport/ws-server";
 import { broadcast } from "./transport/push";
+import { PortPush, type MessagePortLike } from "./transport/port-push";
 import { logger } from "@mcode/shared";
 
 // Services
@@ -65,12 +66,34 @@ const gitWatcherService = container.resolve(GitWatcherService);
 const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup watcher initialization
 const db = container.resolve<Database.Database>("Database");
 
+const portPush = new PortPush();
+
+// Listen for MessagePort from parent utility process.
+// `parentPort` exists only when running inside Electron's utilityProcess.
+const parentPort = (process as NodeJS.Process & { parentPort?: {
+  on(event: string, listener: (e: { data: unknown; ports: unknown[] }) => void): void;
+  start(): void;
+} }).parentPort;
+
+if (parentPort) {
+  parentPort.on("message", (e: { data: unknown; ports: unknown[] }) => {
+    const msg = e.data as { type?: string };
+    if (msg?.type === "stream-port" && e.ports[0]) {
+      portPush.attach(e.ports[0] as MessagePortLike);
+      logger.info("Stream MessagePort attached");
+    }
+  });
+  parentPort.start();
+}
+
 // Wire up PTY sender to broadcast push events
 terminalService.setSender((channel, data) => {
   if (channel === "terminal.data") {
     broadcast("terminal.data", data);
+    portPush.send("terminal.data", data);
   } else if (channel === "terminal.exit") {
     broadcast("terminal.exit", data);
+    portPush.send("terminal.exit", data);
   }
 });
 
@@ -108,26 +131,24 @@ for (const provider of providerRegistry.resolveAll()) {
     }
 
     broadcast("agent.event", enrichedEvent);
+    portPush.send("agent.event", enrichedEvent);
 
     if (event.type === "turnComplete") {
       threadRepo.updateStatus(event.threadId, "completed");
-      broadcast("thread.status", {
-        threadId: event.threadId,
-        status: "completed",
-      });
+      const completedStatus = { threadId: event.threadId, status: "completed" };
+      broadcast("thread.status", completedStatus);
+      portPush.send("thread.status", completedStatus);
       const thread = threadRepo.findById(event.threadId);
       if (thread) {
-        broadcast("files.changed", {
-          workspaceId: thread.workspace_id,
-          threadId: thread.id,
-        });
+        const filesPayload = { workspaceId: thread.workspace_id, threadId: thread.id };
+        broadcast("files.changed", filesPayload);
+        portPush.send("files.changed", filesPayload);
       }
     } else if (event.type === "error") {
       threadRepo.updateStatus(event.threadId, "errored");
-      broadcast("thread.status", {
-        threadId: event.threadId,
-        status: "errored",
-      });
+      const erroredStatus = { threadId: event.threadId, status: "errored" };
+      broadcast("thread.status", erroredStatus);
+      portPush.send("thread.status", erroredStatus);
     }
   });
 }
@@ -179,6 +200,9 @@ listen(PREFERRED_PORT);
  */
 async function shutdown(): Promise<void> {
   logger.info("Shutting down...");
+
+  // 0. Close the MessagePort stream transport
+  portPush.detach();
 
   // 1. Capture active thread IDs before stopAll() clears them
   const activeThreadIds = agentService.activeThreadIds();

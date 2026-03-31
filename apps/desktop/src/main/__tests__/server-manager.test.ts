@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const refs = vi.hoisted(() => {
   let exitCallback: ((code: number | null) => void) | null = null;
 
-  const mockChildProcess = {
+  const mockUtilityProcess = {
     stdout: { on: vi.fn() },
     stderr: { on: vi.fn() },
     on: vi.fn((event: string, cb: (code: number | null) => void) => {
@@ -15,11 +15,12 @@ const refs = vi.hoisted(() => {
     }),
     once: vi.fn(),
     kill: vi.fn(),
+    postMessage: vi.fn(),
     pid: 12345,
   };
 
   return {
-    mockChildProcess,
+    mockUtilityProcess,
     getExitCallback: () => exitCallback,
     resetExitCallback: () => { exitCallback = null; },
   };
@@ -30,14 +31,17 @@ vi.mock("electron", () => ({
     getPath: vi.fn().mockReturnValue("/tmp"),
     getVersion: vi.fn().mockReturnValue("0.1.0-test"),
   },
+  utilityProcess: {
+    fork: vi.fn().mockReturnValue(refs.mockUtilityProcess),
+  },
+  MessageChannelMain: class {
+    port1 = { postMessage: vi.fn(), close: vi.fn() };
+    port2 = { postMessage: vi.fn(), close: vi.fn() };
+  },
 }));
 
 vi.mock("@mcode/shared", () => ({
   getMcodeDir: vi.fn().mockReturnValue("/tmp/mcode"),
-}));
-
-vi.mock("child_process", () => ({
-  fork: vi.fn().mockReturnValue(refs.mockChildProcess),
 }));
 
 vi.mock("net", () => ({
@@ -57,7 +61,7 @@ vi.mock("crypto", () => ({
 const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
-import { fork } from "child_process";
+import { utilityProcess } from "electron";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -82,10 +86,10 @@ describe("ServerManager", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("starts the server by forking a child process", async () => {
+  it("starts the server by forking a utility process", async () => {
     const result = await manager.start();
 
-    expect(fork).toHaveBeenCalledOnce();
+    expect(utilityProcess.fork).toHaveBeenCalledOnce();
     expect(result.port).toBe(19400);
     expect(result.authToken).toBe("mock-auth-token");
   });
@@ -97,40 +101,65 @@ describe("ServerManager", () => {
     expect(manager.authToken).toBe("mock-auth-token");
   });
 
-  it("passes correct environment to the forked process", async () => {
+  it("passes correct environment to the utility process", async () => {
     await manager.start();
 
-    const forkCall = vi.mocked(fork).mock.calls[0];
-    const env = forkCall[2]?.env as Record<string, string>;
-    expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const opts = forkCall[2] as Record<string, unknown>;
+    const env = opts.env as Record<string, string>;
+    // utilityProcess does not need ELECTRON_RUN_AS_NODE; verify it is not
+    // explicitly added beyond whatever process.env already contains.
     expect(env.MCODE_PORT).toBe("19400");
     expect(env.MCODE_AUTH_TOKEN).toBe("mock-auth-token");
     expect(env.MCODE_MODE).toBe("desktop");
+    // stdio should be "pipe" instead of the old IPC array
+    expect(opts.stdio).toBe("pipe");
   });
 
-  it("shutdown sends SIGTERM to the child process", async () => {
+  it("shutdown kills the utility process", async () => {
     await manager.start();
 
     manager.shutdown();
 
-    expect(refs.mockChildProcess.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(refs.mockUtilityProcess.kill).toHaveBeenCalledWith();
   });
 
   it("shutdown is a no-op when no server is running", () => {
     expect(() => manager.shutdown()).not.toThrow();
   });
 
-  it("handles child process exit by clearing serverProcess reference", async () => {
+  it("createStreamPort creates a MessageChannelMain pair and posts to server", async () => {
     await manager.start();
 
-    // Simulate the child process exiting
+    const port = manager.createStreamPort();
+
+    // Should have called postMessage with the stream-port message and port2
+    expect(refs.mockUtilityProcess.postMessage).toHaveBeenCalledWith(
+      { type: "stream-port" },
+      expect.any(Array),
+    );
+    // Should return port1 (the renderer-side port)
+    expect(port).toBeDefined();
+    expect(port).toHaveProperty("postMessage");
+  });
+
+  it("createStreamPort throws when server is not running", () => {
+    expect(() => manager.createStreamPort()).toThrow(
+      "Cannot create stream port: server not running",
+    );
+  });
+
+  it("handles utility process exit by clearing serverProcess reference", async () => {
+    await manager.start();
+
+    // Simulate the utility process exiting
     const exitCb = refs.getExitCallback();
     expect(exitCb).toBeDefined();
     exitCb!(0);
 
     // After exit, shutdown should be a no-op (no kill call)
-    refs.mockChildProcess.kill.mockClear();
+    refs.mockUtilityProcess.kill.mockClear();
     manager.shutdown();
-    expect(refs.mockChildProcess.kill).not.toHaveBeenCalled();
+    expect(refs.mockUtilityProcess.kill).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,23 @@
 
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
+/**
+ * Stream port callback registry.
+ * The preload receives a MessagePort via webContents.postMessage('stream-port')
+ * and forwards messages to the registered callback in the renderer world.
+ */
+let streamCallback: ((data: unknown) => void) | null = null;
+
+ipcRenderer.on("stream-port", (event) => {
+  const port = event.ports[0];
+  if (!port) return;
+
+  port.onmessage = (e: MessageEvent) => {
+    streamCallback?.(e.data);
+  };
+  port.start();
+});
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Get the WebSocket URL (with auth token) for connecting to the server. */
   getServerUrl: (): Promise<string> => ipcRenderer.invoke("get-server-url"),
@@ -47,4 +64,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
 
   /** Resolve the native file path for a File object (drag-and-drop). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+
+  /** Register a callback for streaming events received via MessagePort. */
+  onStreamEvent: (callback: (data: unknown) => void): void => {
+    streamCallback = callback;
+  },
 });

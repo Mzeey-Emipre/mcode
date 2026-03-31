@@ -1,14 +1,13 @@
 /**
- * Child process lifecycle manager for the Mcode server.
- * Spawns the server as a forked Node process, polls for readiness,
+ * Utility process lifecycle manager for the Mcode server.
+ * Spawns the server as an Electron utilityProcess, polls for readiness,
  * and provides restart/shutdown capabilities.
  */
 
-import { fork, type ChildProcess } from "child_process";
+import { app, utilityProcess, type UtilityProcess, MessageChannelMain } from "electron";
 import { createServer, type AddressInfo } from "net";
 import { randomUUID } from "crypto";
 import { resolve } from "path";
-import { app } from "electron";
 import { getMcodeDir } from "@mcode/shared";
 
 /** Absolute path to the server package directory. */
@@ -50,11 +49,11 @@ async function findAvailablePort(min: number, max: number): Promise<number> {
 }
 
 /**
- * Manages the lifecycle of the Mcode server child process.
+ * Manages the lifecycle of the Mcode server utility process.
  * Handles spawning, health-check polling, restart, and shutdown.
  */
 export class ServerManager {
-  private serverProcess: ChildProcess | null = null;
+  private serverProcess: UtilityProcess | null = null;
   private _port = 0;
   private _authToken = "";
 
@@ -76,12 +75,11 @@ export class ServerManager {
     this._port = await findAvailablePort(PORT_MIN, PORT_MAX);
     this._authToken = randomUUID();
 
-    this.serverProcess = fork(SERVER_ENTRY, [], {
+    this.serverProcess = utilityProcess.fork(SERVER_ENTRY, [], {
       cwd: SERVER_DIR,
       execArgv: ["--import", "tsx"],
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
         MCODE_PORT: String(this._port),
         MCODE_AUTH_TOKEN: this._authToken,
         MCODE_MODE: "desktop",
@@ -89,7 +87,7 @@ export class ServerManager {
         MCODE_TEMP_DIR: app.getPath("temp"),
         MCODE_VERSION: app.getVersion(),
       },
-      stdio: ["pipe", "pipe", "pipe", "ipc"],
+      stdio: "pipe",
     });
 
     // Forward server stdout/stderr to the main process console
@@ -121,8 +119,21 @@ export class ServerManager {
   }
 
   /**
+   * Create a MessagePort pair and send one end to the server utility process.
+   * Returns the renderer-facing port for forwarding to the BrowserWindow.
+   */
+  createStreamPort(): Electron.MessagePortMain {
+    if (!this.serverProcess) {
+      throw new Error("Cannot create stream port: server not running");
+    }
+    const { port1, port2 } = new MessageChannelMain();
+    this.serverProcess.postMessage({ type: "stream-port" }, [port2]);
+    return port1;
+  }
+
+  /**
    * Gracefully terminate the server process.
-   * Sends SIGTERM first, escalating to SIGKILL after 5 seconds.
+   * Sends kill first, escalating to a second kill after 5 seconds.
    */
   shutdown(): void {
     if (!this.serverProcess) return;
@@ -130,10 +141,10 @@ export class ServerManager {
     const proc = this.serverProcess;
     this.serverProcess = null;
 
-    proc.kill("SIGTERM");
+    proc.kill();
     const forceKill = setTimeout(() => {
       try {
-        proc.kill("SIGKILL");
+        proc.kill();
       } catch {
         // Already dead
       }

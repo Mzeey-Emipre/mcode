@@ -28,6 +28,8 @@ interface DesktopBridge {
   getRecentLogs(lines: number): string;
   /** Map a browser File object to its real filesystem path. */
   getPathForFile(file: File): string;
+  /** Register a callback for streaming events received via MessagePort. */
+  onStreamEvent(callback: (data: unknown) => void): void;
 }
 
 declare global {

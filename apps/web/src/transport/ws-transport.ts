@@ -65,6 +65,13 @@ export class PushEmitter {
 /** Singleton push emitter shared between ws-transport and ws-events. */
 export const pushEmitter = new PushEmitter();
 
+/**
+ * Channels suppressed from WebSocket push delivery.
+ * When a MessagePort handles a channel, it adds the channel name here
+ * so WebSocket push messages for that channel are silently dropped.
+ */
+export const suppressedPushChannels = new Set<string>();
+
 interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -142,7 +149,11 @@ export function createWsTransport(
 
       // Push message
       if (msg.type === "push") {
-        pushEmitter.emit(msg.channel as string, msg.data);
+        const channel = msg.channel as string;
+        // Skip channels handled by MessagePort to avoid duplicate events
+        if (!suppressedPushChannels.has(channel)) {
+          pushEmitter.emit(channel, msg.data);
+        }
       }
     };
 
