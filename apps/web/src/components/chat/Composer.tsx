@@ -140,6 +140,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const prevThreadIdRef = useRef<string | undefined>(threadId);
   const draftRef = useRef({ input, attachments, modelId, reasoning });
+  /** Tracks whether the user toggled mode/access before settings finished loading. */
+  const agentSettingsTouchedRef = useRef(false);
 
   // Keep draft ref in sync so the thread-switch effect reads current values
   useEffect(() => {
@@ -156,6 +158,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const settingsDefaultModelId = useSettingsStore((s) => s.settings.model.defaults.id);
   const settingsDefaultReasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
+  const settingsDefaultMode = useSettingsStore((s) => s.settings.agent.defaults.mode);
+  const settingsDefaultPermission = useSettingsStore((s) => s.settings.agent.defaults.permission);
 
   useEffect(() => {
     if (!settingsLoaded) return;
@@ -166,7 +170,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
     setModelId(validModelId);
     setReasoning(settingsDefaultReasoning);
-  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning]); // Only sync when settings change
+
+    // Sync mode and access from settings for new threads, unless the user already toggled them
+    if (!threadId && !agentSettingsTouchedRef.current) {
+      setMode(settingsDefaultMode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
+      setAccess(settingsDefaultPermission);
+    }
+  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission]); // Only sync when settings change
 
   // Save draft for previous thread, restore draft for new thread
   useEffect(() => {
@@ -229,6 +239,11 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       setAttachments([]);
       setModelId(getDefaultModelId());
       setReasoning(getDefaultReasoningLevel());
+      // Reset mode/access to persisted defaults
+      agentSettingsTouchedRef.current = false;
+      const { settings } = useSettingsStore.getState();
+      setMode(settings.agent.defaults.mode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
+      setAccess(settings.agent.defaults.permission);
       if (editorRef.current) {
         editorRef.current.update(() => {
           const root = $getRoot();
@@ -286,7 +301,6 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const sendMessage = useThreadStore((s) => s.sendMessage);
   const stopAgent = useThreadStore((s) => s.stopAgent);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
-  const getThreadSettings = useThreadStore((s) => s.getThreadSettings);
   const setThreadSettings = useThreadStore((s) => s.setThreadSettings);
   const isAgentRunning = threadId ? runningThreadIds.has(threadId) : false;
 
@@ -342,14 +356,23 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [activeThread?.model]);
 
+  // Reactive per-thread and global-default slices so the effect re-runs on hydration
+  const perThreadSettings = useThreadStore((s) => threadId ? s.settingsByThread[threadId] : undefined);
+  const settingsAgentDefaults = useSettingsStore((s) => s.settings.agent.defaults);
+
   // Sync access mode and interaction mode from per-thread settings
   useEffect(() => {
     if (threadId) {
-      const settings = getThreadSettings(threadId);
-      setAccess(settings.permissionMode);
-      setMode(settings.interactionMode);
+      if (perThreadSettings) {
+        setAccess(perThreadSettings.permissionMode);
+        setMode(perThreadSettings.interactionMode);
+      } else {
+        // No per-thread overrides: use persisted defaults
+        setMode(settingsAgentDefaults.mode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
+        setAccess(settingsAgentDefaults.permission);
+      }
     }
-  }, [threadId, getThreadSettings]);
+  }, [threadId, perThreadSettings, settingsAgentDefaults]);
 
   // Combined setter that keeps local + store in sync
   const setComposerMode = useCallback(
@@ -772,7 +795,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning);
     }
 
-    // Auto-save "last used" model and reasoning as the new default
+    // Auto-save "last used" model, reasoning, mode, and access as the new defaults
     const { settings, loaded, update: updateSettings } = useSettingsStore.getState();
     if (loaded && (modelId !== settings.model.defaults.id || reasoning !== settings.model.defaults.reasoning)) {
       const provider = findProviderForModel(modelId);
@@ -786,9 +809,19 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         },
       });
     }
+    if (loaded && (mode !== settings.agent.defaults.mode || access !== settings.agent.defaults.permission)) {
+      void updateSettings({
+        agent: {
+          defaults: {
+            mode,
+            permission: access,
+          },
+        },
+      });
+    }
 
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, mode, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
 
   const handleEditorChange = useCallback((text: string) => {
     setInput(text);
@@ -984,6 +1017,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                   onClick={() => {
                     const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
                     setMode(next);
+                    agentSettingsTouchedRef.current = true;
                     if (threadId) setThreadSettings(threadId, { interactionMode: next });
                   }}
                   className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
@@ -1006,6 +1040,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                   onClick={() => {
                     const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
                     setAccess(next);
+                    agentSettingsTouchedRef.current = true;
                     if (threadId) setThreadSettings(threadId, { permissionMode: next });
                   }}
                   className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
