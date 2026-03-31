@@ -185,11 +185,10 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    // Keep window hidden until first paint to eliminate the blank white flash.
     show: false,
     backgroundColor: "#0a0a0f",
     autoHideMenuBar: true,
-    // Keep window hidden until first paint to eliminate the blank white flash.
-    show: false,
     webPreferences: {
       preload: join(__dirname, "../preload/preload.cjs"),
       contextIsolation: true,
