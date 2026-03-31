@@ -35,6 +35,7 @@
   "build": {
     "appId": "com.mzeey.mcode",
     "productName": "Mcode",
+    "afterPack": "./scripts/after-pack.mjs",
     "directories": {
       "output": "release"
     },
