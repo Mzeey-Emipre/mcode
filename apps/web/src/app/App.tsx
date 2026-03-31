@@ -3,9 +3,11 @@ import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatView } from "@/components/chat/ChatView";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { TerminalPanel } from "@/components/terminal";
+import { TaskPanel } from "@/components/tasks";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { useTaskStore } from "@/stores/taskStore";
 import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
@@ -48,11 +50,19 @@ export function App() {
       handler: () => useTerminalStore.getState().togglePanel(),
     });
 
+    const unregCtrlT = registerShortcut({
+      key: "t",
+      ctrl: true,
+      description: "Toggle task panel",
+      handler: () => useTaskStore.getState().togglePanel(),
+    });
+
     return () => {
       cleanup();
       unregCmdK();
       unregEscape();
       unregCtrlJ();
+      unregCtrlT();
     };
   }, []);
 
@@ -79,9 +89,12 @@ export function App() {
         <div className="flex flex-1 overflow-hidden">
           <Sidebar />
           <div className="flex flex-1 flex-col overflow-hidden">
-            <main className="flex-1 overflow-hidden">
-              <ChatView />
-            </main>
+            <div className="flex flex-1 overflow-hidden">
+              <main className="flex-1 overflow-hidden">
+                <ChatView />
+              </main>
+              <TaskPanel />
+            </div>
             <TerminalPanel />
           </div>
         </div>

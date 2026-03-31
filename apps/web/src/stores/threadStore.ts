@@ -4,6 +4,8 @@ import type { ReasoningLevel } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
+import { useTaskStore, coerceTaskStatus } from "./taskStore";
+import type { TaskItem } from "./taskStore";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -163,6 +165,26 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           loading: false,
           persistedToolCallCounts: counts,
         });
+
+        // Hydrate task panel from persisted TodoWrite state.
+        // Guard: skip if live agent events have already populated tasks for this
+        // thread (avoids overwriting up-to-date in-progress state with stale DB data).
+        getTransport()
+          .getThreadTasks(threadId)
+          .then((tasks) => {
+            if (tasks && tasks.length > 0 && !useTaskStore.getState().tasksByThread[threadId]?.length) {
+              const items: TaskItem[] = tasks.map((t, i) => ({
+                id: String(i),
+                content: t.content,
+                status: coerceTaskStatus(t.status),
+                group: "Tasks",
+              }));
+              useTaskStore.getState().setTasks(threadId, items);
+            }
+          })
+          .catch(() => {
+            // Non-critical: task panel just won't show persisted state
+          });
       }
     } catch (e) {
       if (get().currentThreadId === threadId) {
@@ -369,6 +391,24 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
       // Track subagent count
       const toolName = (params.toolName as string) || "unknown";
+
+      // Intercept TodoWrite calls to populate the task panel
+      if (toolName === "TodoWrite") {
+        const toolInput = (params.toolInput as Record<string, unknown>) || {};
+        const todos = toolInput.todos as Array<Record<string, unknown>> | undefined;
+        if (todos && Array.isArray(todos)) {
+          const taskItems: TaskItem[] = todos.map((t, i) => ({
+            // Prefer SDK-provided stable id; fall back to index-based surrogate
+            id: t.id != null ? String(t.id) : String(i),
+            content: String(t.content ?? ""),
+            status: coerceTaskStatus(t.status),
+            group: "Tasks",
+          }));
+          useTaskStore.getState().setTasks(threadId, taskItems);
+          useTaskStore.getState().showPanel();
+        }
+      }
+
       if (toolName === "Agent") {
         set((state) => ({
           activeSubagentsByThread: {

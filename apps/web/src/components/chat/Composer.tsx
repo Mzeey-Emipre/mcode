@@ -12,6 +12,7 @@ import {
   ChevronDown,
   Loader2,
   Check,
+  ListTodo,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -30,6 +31,7 @@ import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
 import { AgentStatusBar } from "./AgentStatusBar";
+import { useTaskStore } from "@/stores/taskStore";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
@@ -70,6 +72,43 @@ interface ComposerProps {
 }
 
 type AccessMode = PermissionMode;
+
+/** Tasks toggle button shown in the status bar only when the thread has tasks. */
+function TasksToggle({ threadId }: { threadId?: string }) {
+  const hasTasks = useTaskStore(
+    (s) => !!(threadId && s.tasksByThread[threadId]?.length),
+  );
+  const panelVisible = useTaskStore((s) => s.panelVisible);
+  const togglePanel = useTaskStore((s) => s.togglePanel);
+
+  if (!hasTasks) return null;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={togglePanel}
+            className={cn(
+              "gap-1.5 transition-colors",
+              panelVisible
+                ? "text-primary hover:bg-muted/40"
+                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+            )}
+            aria-label="Toggle tasks"
+            aria-pressed={panelVisible}
+          >
+            <ListTodo size={14} />
+            <span className="text-sm">Tasks</span>
+          </Button>
+        }
+      />
+      <TooltipContent>Toggle task panel (Ctrl+T)</TooltipContent>
+    </Tooltip>
+  );
+}
 
 /**
  * Main message composer with model/mode selectors and branch controls.
@@ -978,6 +1017,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             />
             <TooltipContent>{access === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode"}</TooltipContent>
           </Tooltip>
+
+          {/* Tasks toggle - only visible when thread has tasks */}
+          <TasksToggle threadId={threadId} />
 
           {/* Spacer */}
           <div className="flex-1" />

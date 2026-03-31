@@ -14,6 +14,7 @@ import { ThreadRepo } from "./repositories/thread-repo";
 import { MessageRepo } from "./repositories/message-repo";
 import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
+import { TaskRepo } from "./repositories/task-repo";
 
 // Providers
 import { ClaudeProvider } from "./providers/claude/claude-provider";
@@ -83,6 +84,14 @@ export function setupContainer(): typeof container {
   });
   container.register("TurnSnapshotRepo", {
     useFactory: (c) => c.resolve(TurnSnapshotRepo),
+  });
+  container.register(
+    TaskRepo,
+    { useClass: TaskRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("TaskRepo", {
+    useFactory: (c) => c.resolve(TaskRepo),
   });
 
   // Providers

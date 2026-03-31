@@ -192,4 +192,15 @@ function runMigrations(db: Database.Database): void {
     `);
     db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(7);
   }
+
+  if (currentVersion < 8) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS thread_tasks (
+        thread_id TEXT PRIMARY KEY NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        tasks_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+    `);
+    db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(8);
+  }
 }

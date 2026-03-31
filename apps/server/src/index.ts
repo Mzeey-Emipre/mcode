@@ -23,6 +23,7 @@ import { MessageRepo } from "./repositories/message-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
 import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
+import { TaskRepo } from "./repositories/task-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { GitWatcherService } from "./services/git-watcher-service";
@@ -65,6 +66,7 @@ const snapshotService = container.resolve(SnapshotService);
 const settingsService = container.resolve(SettingsService);
 const gitWatcherService = container.resolve(GitWatcherService);
 const memoryPressureService = container.resolve(MemoryPressureService);
+const taskRepo = container.resolve(TaskRepo);
 const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup watcher initialization
 const db = container.resolve<Database.Database>("Database");
 
@@ -176,6 +178,7 @@ const { httpServer, wss } = createWsServer({
   settingsService,
   gitWatcherService,
   memoryPressureService,
+  taskRepo,
 });
 
 /**
