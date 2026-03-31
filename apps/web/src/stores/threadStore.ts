@@ -4,6 +4,7 @@ import type { ReasoningLevel } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
+import { LruCache } from "@/lib/lru-cache";
 import { useTaskStore, coerceTaskStatus } from "./taskStore";
 import type { TaskItem } from "./taskStore";
 
@@ -30,9 +31,16 @@ interface ThreadState {
   /** Active subagent count per thread (incremented on Agent toolUse, decremented on Agent toolResult). */
   activeSubagentsByThread: Record<string, number>;
   /** Cache for tool call records to avoid re-fetching from server. */
-  toolCallRecordCache: Record<string, ToolCallRecord[]>;
+  toolCallRecordCache: LruCache<string, ToolCallRecord[]>;
   /** Tracks the local message ID for the most recent assistant message per thread, used by handleTurnPersisted to correctly assign tool call counts. */
   currentTurnMessageIdByThread: Record<string, string>;
+  /** Whether there are older messages in the DB beyond the in-memory window. */
+  hasOlderMessages: boolean;
+  /** Whether older messages are currently being fetched. */
+  loadingOlder: boolean;
+
+  /** Fetch older messages from the database and prepend to the in-memory window. */
+  loadOlderMessages: () => Promise<void>;
 
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
@@ -74,6 +82,29 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
   interactionMode: INTERACTION_MODES.CHAT,
 };
 
+/** Maximum entries in the tool call record LRU cache. */
+export const TOOL_CALL_CACHE_SIZE = 200;
+
+/** Number of older messages to fetch per pagination request. */
+export const OLDER_PAGE_SIZE = 100;
+
+/** Maximum messages kept in the in-memory sliding window. */
+export const MESSAGE_WINDOW_SIZE = 200;
+
+/**
+ * Enforce the sliding window cap on a messages array.
+ * Returns the trimmed array and whether messages were evicted.
+ */
+function capMessages(messages: Message[]): { messages: Message[]; evicted: boolean } {
+  if (messages.length <= MESSAGE_WINDOW_SIZE) {
+    return { messages, evicted: false };
+  }
+  return {
+    messages: messages.slice(messages.length - MESSAGE_WINDOW_SIZE),
+    evicted: true,
+  };
+}
+
 export const useThreadStore = create<ThreadState>((set, get) => {
   return {
   messages: [],
@@ -88,22 +119,22 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   persistedToolCallCounts: {},
   serverMessageIds: {},
   activeSubagentsByThread: {},
-  toolCallRecordCache: {},
+  toolCallRecordCache: new LruCache<string, ToolCallRecord[]>(TOOL_CALL_CACHE_SIZE),
   currentTurnMessageIdByThread: {},
+  hasOlderMessages: false,
+  loadingOlder: false,
 
   cacheToolCallRecords: (key, records) => {
-    set((state) => ({
-      toolCallRecordCache: { ...state.toolCallRecordCache, [key]: records },
-    }));
+    get().toolCallRecordCache.set(key, records);
   },
 
   getCachedToolCallRecords: (key) => {
-    return get().toolCallRecordCache[key] ?? null;
+    return get().toolCallRecordCache.get(key) ?? null;
   },
 
   /** Evict the entire tool call record cache. Records are re-fetched on next expand. */
   clearToolCallRecordCache: () => {
-    set({ toolCallRecordCache: {} });
+    get().toolCallRecordCache.clear();
   },
 
   /**
@@ -118,6 +149,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     // from a previous visit don't linger when switching back.
     const isRunning = get().runningThreadIds.has(threadId);
     if (!isRunning) {
+      get().toolCallRecordCache.clear();
       set((state) => {
         const nextToolCalls = { ...state.toolCallsByThread };
         delete nextToolCalls[threadId];
@@ -137,7 +169,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
           currentTurnMessageIdByThread: nextTurnMsgIds,
-          toolCallRecordCache: {},
+          loadingOlder: false,
+          hasOlderMessages: false,
         };
       });
     } else {
@@ -147,6 +180,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         currentThreadId: threadId,
         messages: [],
         persistedToolCallCounts: {},
+        loadingOlder: false,
+        hasOlderMessages: false,
       });
     }
     try {
@@ -164,6 +199,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           messages,
           loading: false,
           persistedToolCallCounts: counts,
+          // If we fetched a full page (100), there are likely more messages in the DB
+          hasOlderMessages: messages.length >= 100,
         });
 
         // Hydrate task panel from persisted TodoWrite state.
@@ -222,9 +259,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     };
 
     set((state) => ({
-      messages: state.currentThreadId === threadId
-        ? [...state.messages, userMessage]
-        : state.messages,
+      ...(state.currentThreadId === threadId
+        ? (() => {
+            const { messages: capped, evicted } = capMessages([...state.messages, userMessage]);
+            return { messages: capped, ...(evicted ? { hasOlderMessages: true } : {}) };
+          })()
+        : {}),
       runningThreadIds: new Set([...state.runningThreadIds, threadId]),
       agentStartTimes: { ...state.agentStartTimes, [threadId]: Date.now() },
       error: null,
@@ -262,9 +302,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
   /** Append a single message to the current thread's message list. */
   addMessage: (message) => {
-    set((state) => ({
-      messages: [...state.messages, message],
-    }));
+    set((state) => {
+      const next = [...state.messages, message];
+      const { messages: capped, evicted } = capMessages(next);
+      return {
+        messages: capped,
+        ...(evicted ? { hasOlderMessages: true } : {}),
+      };
+    });
   },
 
   /**
@@ -272,8 +317,50 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * Does NOT reset runningThreadIds since agents may still be executing.
    */
   clearMessages: () => {
-    set({ messages: [], error: null, streamingByThread: {}, toolCallsByThread: {}, persistedToolCallCounts: {}, serverMessageIds: {}, toolCallRecordCache: {}, currentTurnMessageIdByThread: {} });
+    get().toolCallRecordCache.clear();
+    set({ messages: [], error: null, streamingByThread: {}, toolCallsByThread: {}, persistedToolCallCounts: {}, serverMessageIds: {}, currentTurnMessageIdByThread: {}, hasOlderMessages: false, loadingOlder: false });
     // Note: does NOT reset runningThreadIds - agents may still be running
+  },
+
+  /**
+   * Fetch older messages from the DB and prepend them to the in-memory window.
+   * Uses cursor-based pagination: passes the oldest known sequence as the
+   * `before` parameter so the server returns the preceding page.
+   */
+  loadOlderMessages: async () => {
+    const { hasOlderMessages, loadingOlder, currentThreadId, messages } = get();
+    if (!hasOlderMessages || loadingOlder || !currentThreadId || messages.length === 0) return;
+
+    const oldestSequence = messages[0].sequence;
+    set({ loadingOlder: true });
+
+    try {
+      const older = await getTransport().getMessages(
+        currentThreadId,
+        OLDER_PAGE_SIZE,
+        oldestSequence,
+      );
+
+      if (get().currentThreadId !== currentThreadId) {
+        set({ loadingOlder: false });
+        return;
+      }
+
+      const merged = [...older, ...get().messages];
+      // Bound to MESSAGE_WINDOW_SIZE: trim newest messages since user is paginating upward.
+      // Keeps a contiguous window around the user's scroll position.
+      const bounded = merged.length > MESSAGE_WINDOW_SIZE
+        ? merged.slice(0, MESSAGE_WINDOW_SIZE)
+        : merged;
+
+      set({
+        messages: bounded,
+        loadingOlder: false,
+        hasOlderMessages: older.length >= OLDER_PAGE_SIZE,
+      });
+    } catch {
+      set({ loadingOlder: false });
+    }
   },
 
   /** Check whether an agent is currently executing on the given thread. */
@@ -343,11 +430,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           sequence: get().messages.length + 1,
           attachments: null,
         };
-        set((state) => ({
-          messages: state.currentThreadId === threadId
-            ? [...state.messages, message]
-            : state.messages,
-        }));
+        set((state) => {
+          if (state.currentThreadId !== threadId) return {};
+          const { messages: capped, evicted } = capMessages([...state.messages, message]);
+          return {
+            messages: capped,
+            ...(evicted ? { hasOlderMessages: true } : {}),
+          };
+        });
       }
       return;
     }
@@ -369,15 +459,21 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           sequence: get().messages.length + 1,
           attachments: null,
         };
-        set((state) => ({
-          messages: state.currentThreadId === threadId
-            ? [...state.messages, message]
-            : state.messages,
-          currentTurnMessageIdByThread: {
-            ...state.currentTurnMessageIdByThread,
-            [threadId]: message.id,
-          },
-        }));
+        set((state) => {
+          const trackTurn = {
+            currentTurnMessageIdByThread: {
+              ...state.currentTurnMessageIdByThread,
+              [threadId]: message.id,
+            },
+          };
+          if (state.currentThreadId !== threadId) return trackTurn;
+          const { messages: capped, evicted } = capMessages([...state.messages, message]);
+          return {
+            messages: capped,
+            ...(evicted ? { hasOlderMessages: true } : {}),
+            ...trackTurn,
+          };
+        });
       }
       return;
     }
@@ -523,9 +619,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             tc.isComplete ? tc : { ...tc, isComplete: true }
           );
           return {
-            messages: state.currentThreadId === threadId
-              ? [...state.messages, message]
-              : state.messages,
+            ...(state.currentThreadId === threadId
+              ? (() => {
+                  const { messages: capped, evicted } = capMessages([...state.messages, message]);
+                  return { messages: capped, ...(evicted ? { hasOlderMessages: true } : {}) };
+                })()
+              : {}),
             streamingByThread: nextStreaming,
             runningThreadIds: nextRunning,
             agentStartTimes: nextStartTimes,

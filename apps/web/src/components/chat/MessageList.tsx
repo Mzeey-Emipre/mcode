@@ -23,6 +23,7 @@ const EMPTY_TOOL_CALLS: ToolCall[] = [];
 const AUTO_SCROLL_THRESHOLD = 64;
 const OVERSCAN = 8;
 const DEFAULT_ITEM_HEIGHT = 80;
+const PAGINATION_THRESHOLD = 200;
 
 /** Renders a single virtual item based on its type discriminant. */
 const VirtualItemRenderer = memo(function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
@@ -55,15 +56,9 @@ export function MessageList() {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const itemsLengthRef = useRef(0);
+  const prevScrollHeightRef = useRef(0);
+  const suppressAutoScrollRef = useRef(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
-
-  /** Track whether the user has scrolled away from the bottom. */
-  const handleScroll = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowScrollBtn(distanceFromBottom > 200);
-  }, []);
 
   const messages = useThreadStore((s) => s.messages);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -85,7 +80,25 @@ export function MessageList() {
   const serverMessageIds = useThreadStore(
     useShallow((s) => s.serverMessageIds),
   );
+  const hasOlderMessages = useThreadStore((s) => s.hasOlderMessages);
+  const loadingOlder = useThreadStore((s) => s.loadingOlder);
+  const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
   const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
+
+  /** Track scroll-to-bottom button visibility and trigger upward pagination near the top. */
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollBtn(distanceFromBottom > 200);
+
+    // Trigger upward pagination when near the top
+    if (el.scrollTop < PAGINATION_THRESHOLD && hasOlderMessages && !loadingOlder) {
+      prevScrollHeightRef.current = el.scrollHeight;
+      suppressAutoScrollRef.current = true;
+      loadOlderMessages();
+    }
+  }, [hasOlderMessages, loadingOlder, loadOlderMessages]);
 
   const stableItems = useMemo(
     () => buildStableItems(messages, persistedToolCallCounts, serverMessageIds),
@@ -175,19 +188,44 @@ export function MessageList() {
     virtualizer.measure();
   }, [activeThreadId, virtualizer]);
 
+  const wasLoadingOlderRef = useRef(false);
+
+  // Restore scroll position after older messages are prepended so the
+  // viewport stays anchored at the same content.
+  useEffect(() => {
+    if (wasLoadingOlderRef.current && !loadingOlder) {
+      const el = containerRef.current;
+      if (el && prevScrollHeightRef.current > 0) {
+        const newScrollHeight = el.scrollHeight;
+        el.scrollTop += newScrollHeight - prevScrollHeightRef.current;
+        prevScrollHeightRef.current = 0;
+      }
+      virtualizer.measure();
+      suppressAutoScrollRef.current = false;
+    }
+    wasLoadingOlderRef.current = loadingOlder;
+  }, [loadingOlder, virtualizer]);
+
   // Discrete events (new message, tool call) -> smooth scroll
   useEffect(() => {
+    if (suppressAutoScrollRef.current) return;
     scrollToBottom(true);
   }, [messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
 
   // Streaming deltas -> instant scroll (no animation lag)
   useEffect(() => {
+    if (suppressAutoScrollRef.current) return;
     if (streamingText) scrollToBottom(false);
   }, [streamingText, scrollToBottom]);
 
   return (
     <div className="relative h-full">
       <div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto pt-4">
+        {loadingOlder && (
+          <div className="flex justify-center py-2 text-xs text-muted-foreground">
+            Loading older messages...
+          </div>
+        )}
         <div
           className="relative w-full"
           style={{ height: virtualizer.getTotalSize() }}

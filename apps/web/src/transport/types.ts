@@ -100,7 +100,15 @@ export interface McodeTransport {
   syncThreadPrs(workspaceId: string): Promise<Array<{ threadId: string; prNumber: number; prStatus: string }>>;
 
   // Message queries
-  getMessages(threadId: string, limit: number): Promise<Message[]>;
+  /**
+   * Fetch persisted messages for a thread, ordered by sequence ascending.
+   * @param threadId - Thread to fetch messages from.
+   * @param limit - Maximum number of messages to return.
+   * @param before - Optional sequence cursor; when provided, only messages with
+   *   `sequence < before` are returned, enabling backward pagination.
+   *   Omit to fetch the most recent messages.
+   */
+  getMessages(threadId: string, limit: number, before?: number): Promise<Message[]>;
 
   // Config
   discoverConfig(workspacePath: string): Promise<Record<string, unknown>>;

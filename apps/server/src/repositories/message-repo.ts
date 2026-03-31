@@ -114,9 +114,19 @@ export class MessageRepo {
    *
    * Uses a sub-select pattern: grab the last N rows by descending sequence,
    * then re-sort ascending so the caller gets chronological order.
+   *
+   * When `before` is provided, only messages with sequence < before are
+   * considered, enabling cursor-based pagination for older messages.
    */
-  listByThread(threadId: string, limit: number): Message[] {
+  listByThread(threadId: string, limit: number, before?: number): Message[] {
     const clampedLimit = Math.max(1, Math.min(1000, limit));
+
+    const whereClause = before != null
+      ? "m.thread_id = ? AND m.sequence < ?"
+      : "m.thread_id = ?";
+    const queryParams = before != null
+      ? [threadId, before, clampedLimit]
+      : [threadId, clampedLimit];
 
     const rows = this.db
       .prepare(
@@ -124,7 +134,7 @@ export class MessageRepo {
 FROM (
   SELECT ${MESSAGE_COLUMNS_PREFIXED}
   FROM messages m
-  WHERE m.thread_id = ?
+  WHERE ${whereClause}
   ORDER BY m.sequence DESC
   LIMIT ?
 ) m
@@ -135,7 +145,7 @@ LEFT JOIN (
 ) tc_count ON tc_count.message_id = m.id
 ORDER BY m.sequence ASC`,
       )
-      .all(threadId, clampedLimit) as MessageRow[];
+      .all(...queryParams) as MessageRow[];
 
     return rows.map(rowToMessage);
   }
