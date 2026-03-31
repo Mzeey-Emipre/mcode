@@ -23,6 +23,7 @@ import { MessageRepo } from "./repositories/message-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
 import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
+import { TaskRepo } from "./repositories/task-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { GitWatcherService } from "./services/git-watcher-service";
@@ -65,6 +66,7 @@ const snapshotService = container.resolve(SnapshotService);
 const settingsService = container.resolve(SettingsService);
 const gitWatcherService = container.resolve(GitWatcherService);
 const memoryPressureService = container.resolve(MemoryPressureService);
+const taskRepo = container.resolve(TaskRepo);
 const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup watcher initialization
 const db = container.resolve<Database.Database>("Database");
 
@@ -148,6 +150,21 @@ for (const provider of providerRegistry.resolveAll()) {
         const filesPayload = { workspaceId: thread.workspace_id, threadId: thread.id };
         broadcast("files.changed", filesPayload);
         portPush.send("files.changed", filesPayload);
+
+        // Auto-detect PR for the thread's branch if not already linked
+        if (thread.pr_number == null) {
+          const workspace = workspaceRepo.findById(thread.workspace_id);
+          if (workspace) {
+            githubService.getBranchPr(thread.branch, workspace.path).then((pr) => {
+              if (pr) {
+                threadRepo.updatePr(thread.id, pr.number, pr.state);
+                const prPayload = { threadId: thread.id, prNumber: pr.number, prStatus: pr.state };
+                broadcast("thread.prLinked", prPayload);
+                portPush.send("thread.prLinked", prPayload);
+              }
+            }).catch(() => {});
+          }
+        }
       }
     } else if (event.type === "error") {
       threadRepo.updateStatus(event.threadId, "errored");
@@ -176,6 +193,7 @@ const { httpServer, wss } = createWsServer({
   settingsService,
   gitWatcherService,
   memoryPressureService,
+  taskRepo,
 });
 
 /**

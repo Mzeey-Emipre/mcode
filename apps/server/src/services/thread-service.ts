@@ -5,7 +5,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { validateBranchName, sanitizeBranchForFolder } from "@mcode/shared";
+import { validateBranchName, sanitizeBranchForFolder, logger } from "@mcode/shared";
 import type { Thread, ThreadMode } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -25,12 +25,12 @@ export class ThreadService {
    * If mode is "worktree", creates a git worktree on disk and persists its path.
    * Rolls back DB record on any failure.
    */
-  create(
+  async create(
     workspaceId: string,
     title: string,
     mode: string,
     branch: string,
-  ): Thread {
+  ): Promise<Thread> {
     validateBranchName(branch);
 
     const threadMode: ThreadMode =
@@ -74,13 +74,25 @@ export class ThreadService {
 
         if (!updated) {
           try {
-            this.gitService.removeWorktree(
+            const cleaned = await this.gitService.removeWorktree(
               workspace.path,
               worktreeName,
               branch,
             );
-          } catch {
-            // best-effort cleanup
+            if (!cleaned) {
+              logger.warn("Rollback worktree cleanup returned false during thread creation", {
+                threadId: thread.id,
+                worktreeName,
+                workspacePath: workspace.path,
+              });
+            }
+          } catch (err) {
+            logger.warn("Rollback worktree cleanup failed during thread creation", {
+              threadId: thread.id,
+              worktreeName,
+              workspacePath: workspace.path,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
           this.threadRepo.hardDelete(thread.id);
           throw new Error(
@@ -107,7 +119,7 @@ export class ThreadService {
    * Delete a thread. Optionally removes the worktree from disk and
    * soft-deletes the DB record.
    */
-  delete(threadId: string, cleanupWorktree: boolean): boolean {
+  async delete(threadId: string, cleanupWorktree: boolean): Promise<boolean> {
     if (cleanupWorktree) {
       const thread = this.threadRepo.findById(threadId);
       if (thread?.worktree_path && thread.worktree_managed) {
@@ -119,13 +131,23 @@ export class ThreadService {
               .split("/")
               .pop() ?? thread.worktree_path;
           try {
-            this.gitService.removeWorktree(
+            const cleaned = await this.gitService.removeWorktree(
               workspace.path,
               wtName,
               thread.branch,
             );
-          } catch {
-            // Non-fatal: worktree may already be gone
+            if (!cleaned) {
+              logger.error(
+                "Worktree directory could not be removed during thread deletion",
+                { threadId, wtName },
+              );
+            }
+          } catch (err) {
+            logger.error("Worktree cleanup failed during thread deletion", {
+              threadId,
+              wtName,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         }
       }
@@ -139,12 +161,19 @@ export class ThreadService {
     return this.threadRepo.updateTitle(threadId, title);
   }
 
-  /** Mark a thread as viewed by touching its updated_at timestamp. */
+  /** Link a GitHub PR to a thread by updating pr_number and pr_status. Throws on failure. */
+  linkPr(threadId: string, prNumber: number, prStatus: string): void {
+    const ok = this.threadRepo.updatePr(threadId, prNumber, prStatus);
+    if (!ok) {
+      throw new Error(`Failed to link PR #${prNumber} to thread ${threadId}`);
+    }
+  }
+
+  /** Mark a thread as viewed, dismissing the completed badge if present. */
   markViewed(threadId: string): void {
-    this.threadRepo.updateStatus(
-      threadId,
-      this.threadRepo.findById(threadId)?.status ?? "completed",
-    );
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread || thread.status !== "completed") return;
+    this.threadRepo.updateStatus(threadId, "paused");
   }
 
   /** Mark all active threads as interrupted (for graceful shutdown). */

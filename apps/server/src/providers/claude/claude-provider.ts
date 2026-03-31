@@ -628,7 +628,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       }
     }
 
-    contentBlocks.push({ type: "text", text: message });
+    if (message.trim().length > 0) {
+      contentBlocks.push({ type: "text", text: message });
+    }
 
     return {
       type: "user" as const,

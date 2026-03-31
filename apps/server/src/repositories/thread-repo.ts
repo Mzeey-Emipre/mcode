@@ -203,6 +203,18 @@ export class ThreadRepo {
     return result.changes > 0;
   }
 
+  /** Link a GitHub PR to a thread. Returns true if a row was changed. */
+  updatePr(id: string, prNumber: number, prStatus: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        "UPDATE threads SET pr_number = ?, pr_status = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(prNumber, prStatus, now, id);
+
+    return result.changes > 0;
+  }
+
   /** Update a thread's display title. Returns true if a row was changed. */
   updateTitle(id: string, title: string): boolean {
     const now = new Date().toISOString();

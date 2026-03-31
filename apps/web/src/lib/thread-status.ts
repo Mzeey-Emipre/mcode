@@ -7,6 +7,33 @@ export interface StatusDisplay {
   dotClass: string;
 }
 
+/** Notification dot overlay for PR threads with an actionable status. */
+export interface NotificationDot {
+  dotClass: string;
+  animate: boolean;
+}
+
+/**
+ * Returns notification dot info for threads with PRs, or null if idle.
+ * Used to overlay a small colored dot on the PR icon in the sidebar.
+ */
+export function getNotificationDot(
+  thread: Thread,
+  isActuallyRunning: boolean,
+): NotificationDot | null {
+  if (isActuallyRunning) {
+    return { dotClass: "bg-yellow-500", animate: true };
+  }
+  switch (thread.status) {
+    case "completed":
+      return { dotClass: "bg-green-500", animate: false };
+    case "errored":
+      return { dotClass: "bg-destructive", animate: false };
+    default:
+      return null;
+  }
+}
+
 /** Returns the display label, text color, and dot class for a thread's status. */
 export function getStatusDisplay(
   thread: Thread,

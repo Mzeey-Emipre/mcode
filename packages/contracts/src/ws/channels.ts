@@ -12,6 +12,11 @@ export const WS_CHANNELS = {
     threadId: z.string(),
     status: ThreadStatusSchema,
   }),
+  "thread.prLinked": z.object({
+    threadId: z.string(),
+    prNumber: z.number(),
+    prStatus: z.string(),
+  }),
   "files.changed": z.object({
     workspaceId: z.string(),
     threadId: z.string().optional(),

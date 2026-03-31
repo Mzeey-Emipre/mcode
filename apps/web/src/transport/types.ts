@@ -96,6 +96,8 @@ export interface McodeTransport {
   updateThreadTitle(threadId: string, title: string): Promise<boolean>;
   /** Clear the "completed" badge for a thread. Transitions completed -> paused in the DB. */
   markThreadViewed(threadId: string): Promise<void>;
+  /** Scan threads missing PR data and link discovered PRs. Returns linked PRs. */
+  syncThreadPrs(workspaceId: string): Promise<Array<{ threadId: string; prNumber: number; prStatus: string }>>;
 
   // Message queries
   getMessages(threadId: string, limit: number, before?: number): Promise<Message[]>;
@@ -143,6 +145,9 @@ export interface McodeTransport {
   listToolCallRecords(messageId: string): Promise<ToolCallRecord[]>;
   /** Fetch child tool call records for a parent tool call. */
   listToolCallRecordsByParent(parentToolCallId: string): Promise<ToolCallRecord[]>;
+
+  /** Fetch persisted task list for a thread (from last TodoWrite). */
+  getThreadTasks(threadId: string): Promise<Array<{ content: string; status: "pending" | "in_progress" | "completed" }> | null>;
 
   // Snapshots
   /** Get a unified diff for a specific file from a turn snapshot. */

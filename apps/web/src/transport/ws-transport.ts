@@ -242,6 +242,8 @@ export function createWsTransport(
     updateThreadTitle: (threadId, title) =>
       rpc<boolean>("thread.updateTitle", { threadId, title }),
     markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
+    syncThreadPrs: (workspaceId) =>
+      rpc<Array<{ threadId: string; prNumber: number; prStatus: string }>>("thread.syncPrs", { workspaceId }),
 
     // Git
     listBranches: (workspaceId) => rpc<GitBranch[]>("git.listBranches", { workspaceId }),
@@ -329,6 +331,12 @@ export function createWsTransport(
       rpc<ToolCallRecord[]>("toolCallRecord.list", { messageId }),
     listToolCallRecordsByParent: (parentToolCallId) =>
       rpc<ToolCallRecord[]>("toolCallRecord.listByParent", { parentToolCallId }),
+
+    // Thread tasks
+    getThreadTasks: (threadId: string) =>
+      rpc<Array<{ content: string; status: "pending" | "in_progress" | "completed" }> | null>(
+        "thread.getTasks", { threadId },
+      ),
 
     // Snapshots
     getSnapshotDiff: (snapshotId, filePath?, maxLines?) =>

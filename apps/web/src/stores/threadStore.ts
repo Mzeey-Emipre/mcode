@@ -5,6 +5,8 @@ import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
 import { LruCache } from "@/lib/lru-cache";
+import { useTaskStore, coerceTaskStatus } from "./taskStore";
+import type { TaskItem } from "./taskStore";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -196,6 +198,27 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           // If we fetched a full page (100), there are likely more messages in the DB
           hasOlderMessages: messages.length >= 100,
         });
+
+        // Hydrate task panel from persisted TodoWrite state.
+        // Guard: skip if live agent events have already populated tasks for this
+        // thread (avoids overwriting up-to-date in-progress state with stale DB data).
+        getTransport()
+          .getThreadTasks(threadId)
+          .then((tasks) => {
+            if (tasks && tasks.length > 0 && !useTaskStore.getState().tasksByThread[threadId]?.length) {
+              const items: TaskItem[] = tasks.map((t, i) => ({
+                id: String(i),
+                content: t.content,
+                status: coerceTaskStatus(t.status),
+                group: "Tasks",
+              }));
+              useTaskStore.getState().setTasks(threadId, items);
+            }
+          })
+          .catch((err) => {
+            // Non-critical: task panel just won't show persisted state
+            console.debug("[taskHydration] Failed to load tasks for thread %s:", threadId, err);
+          });
       }
     } catch (e) {
       if (get().currentThreadId === threadId) {
@@ -453,6 +476,24 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
       // Track subagent count
       const toolName = (params.toolName as string) || "unknown";
+
+      // Intercept TodoWrite calls to populate the task panel
+      if (toolName === "TodoWrite") {
+        const toolInput = (params.toolInput as Record<string, unknown>) || {};
+        const todos = toolInput.todos as Array<Record<string, unknown>> | undefined;
+        if (todos && Array.isArray(todos)) {
+          const taskItems: TaskItem[] = todos.map((t, i) => ({
+            // Prefer SDK-provided stable id; fall back to index-based surrogate
+            id: t.id != null ? String(t.id) : String(i),
+            content: String(t.content ?? ""),
+            status: coerceTaskStatus(t.status),
+            group: "Tasks",
+          }));
+          useTaskStore.getState().setTasks(threadId, taskItems);
+          useTaskStore.getState().showPanel();
+        }
+      }
+
       if (toolName === "Agent") {
         set((state) => ({
           activeSubagentsByThread: {
@@ -613,11 +654,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
       // Sync the thread's status in workspaceStore so the sidebar shows
       // the green "Completed" badge without waiting for a full thread reload.
-      useWorkspaceStore.setState((ws) => ({
-        threads: ws.threads.map((t) =>
-          t.id === threadId ? { ...t, status: "completed" as const } : t,
-        ),
-      }));
+      // If the user is already viewing this thread, skip the badge and
+      // immediately mark viewed so the DB transitions to "paused".
+      const isActiveThread = useWorkspaceStore.getState().activeThreadId === threadId;
+      if (isActiveThread) {
+        getTransport().markThreadViewed(threadId).catch(() => {});
+      } else {
+        useWorkspaceStore.setState((ws) => ({
+          threads: ws.threads.map((t) =>
+            t.id === threadId ? { ...t, status: "completed" as const } : t,
+          ),
+        }));
+      }
 
       // Auto-dequeue: send next queued message after a brief visual pause.
       // Only on turnComplete (not session.ended) so explicit stops don't drain the queue.

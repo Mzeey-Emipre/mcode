@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getStatusDisplay } from "@/lib/thread-status";
+import { getStatusDisplay, getNotificationDot } from "@/lib/thread-status";
 import type { Thread } from "@/transport/types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -46,5 +46,38 @@ describe("getStatusDisplay", () => {
   it("default status returns empty label", () => {
     const result = getStatusDisplay(makeThread({ status: "active" }), false);
     expect(result.label).toBe("");
+  });
+});
+
+describe("getNotificationDot", () => {
+  it("returns yellow with pulse for running thread", () => {
+    const result = getNotificationDot(makeThread(), true);
+    expect(result).not.toBeNull();
+    expect(result!.dotClass).toContain("yellow");
+    expect(result!.animate).toBe(true);
+  });
+
+  it("returns green for completed thread", () => {
+    const result = getNotificationDot(makeThread({ status: "completed" }), false);
+    expect(result).not.toBeNull();
+    expect(result!.dotClass).toContain("green");
+    expect(result!.animate).toBe(false);
+  });
+
+  it("returns red for errored thread", () => {
+    const result = getNotificationDot(makeThread({ status: "errored" }), false);
+    expect(result).not.toBeNull();
+    expect(result!.dotClass).toContain("destructive");
+    expect(result!.animate).toBe(false);
+  });
+
+  it("returns null for idle thread", () => {
+    const result = getNotificationDot(makeThread({ status: "active" }), false);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for paused thread", () => {
+    const result = getNotificationDot(makeThread({ status: "paused" }), false);
+    expect(result).toBeNull();
   });
 });

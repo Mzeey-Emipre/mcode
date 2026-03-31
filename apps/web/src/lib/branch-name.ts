@@ -37,7 +37,6 @@ export function sanitizeCustomBranchInput(raw: string): string {
     .replace(/-{2,}/g, "-")
     .replace(/(?:^|\/)\.+/g, (m) => m.startsWith("/") ? "/" : "")
     .replace(/^[-/]+/, "")
-    .replace(/-+$/, "")
     .slice(0, 100);
 }
 
