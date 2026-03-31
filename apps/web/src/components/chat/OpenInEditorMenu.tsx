@@ -53,7 +53,11 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
   };
 
   const handleOpenExplorer = useCallback(() => {
-    getTransport().openInExplorer(dirPath).catch(console.error);
+    getTransport()
+      .openInExplorer(dirPath)
+      .catch((err) =>
+        useToastStore.getState().show("error", "Could not open explorer", String(err?.message ?? err)),
+      );
   }, [dirPath]);
 
   // Ctrl/Cmd+O shortcut to open in file explorer (via centralized shortcut system)

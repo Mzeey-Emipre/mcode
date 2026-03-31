@@ -29,7 +29,7 @@ function ToastItem({ toast }: { toast: ToastData }) {
 
   return (
     <div
-      role="alert"
+      role={toast.level === "info" ? "status" : "alert"}
       className={[
         "group pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg px-3 py-2.5",
         "bg-popover/95 shadow-lg shadow-black/20 ring-1 backdrop-blur-md",
