@@ -85,9 +85,9 @@ This is a monorepo. When changing a function signature, return type, or shared i
 
 ```sh
 # Typecheck all packages after cross-cutting changes
-cd apps/server && npx tsc --noEmit
-cd apps/web && npx tsc --noEmit
-cd apps/desktop && npx tsc --noEmit
+(cd apps/server && npx tsc --noEmit)
+(cd apps/web && npx tsc --noEmit)
+(cd apps/desktop && npx tsc --noEmit)
 ```
 
 ## Commit Guidelines
