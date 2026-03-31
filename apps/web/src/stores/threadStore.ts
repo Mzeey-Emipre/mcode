@@ -37,6 +37,9 @@ interface ThreadState {
   /** Whether older messages are currently being fetched. */
   loadingOlder: boolean;
 
+  /** Fetch older messages from the database and prepend to the in-memory window. */
+  loadOlderMessages: () => Promise<void>;
+
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
   /** Retrieve cached tool call records, or null if not cached. */
@@ -79,6 +82,9 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
 
 /** Maximum entries in the tool call record LRU cache. */
 const TOOL_CALL_CACHE_SIZE = 200;
+
+/** Number of older messages to fetch per pagination request. */
+const OLDER_PAGE_SIZE = 100;
 
 /** Maximum messages kept in the in-memory sliding window. */
 const MESSAGE_WINDOW_SIZE = 200;
@@ -287,6 +293,40 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     get().toolCallRecordCache.clear();
     set({ messages: [], error: null, streamingByThread: {}, toolCallsByThread: {}, persistedToolCallCounts: {}, serverMessageIds: {}, currentTurnMessageIdByThread: {}, hasOlderMessages: false, loadingOlder: false });
     // Note: does NOT reset runningThreadIds - agents may still be running
+  },
+
+  /**
+   * Fetch older messages from the DB and prepend them to the in-memory window.
+   * Uses cursor-based pagination: passes the oldest known sequence as the
+   * `before` parameter so the server returns the preceding page.
+   */
+  loadOlderMessages: async () => {
+    const { hasOlderMessages, loadingOlder, currentThreadId, messages } = get();
+    if (!hasOlderMessages || loadingOlder || !currentThreadId || messages.length === 0) return;
+
+    const oldestSequence = messages[0].sequence;
+    set({ loadingOlder: true });
+
+    try {
+      const older = await getTransport().getMessages(
+        currentThreadId,
+        OLDER_PAGE_SIZE,
+        oldestSequence,
+      );
+
+      if (get().currentThreadId !== currentThreadId) return;
+
+      const merged = [...older, ...get().messages];
+      const { messages: capped } = capMessages(merged);
+
+      set({
+        messages: capped,
+        loadingOlder: false,
+        hasOlderMessages: older.length >= OLDER_PAGE_SIZE,
+      });
+    } catch {
+      set({ loadingOlder: false });
+    }
   },
 
   /** Check whether an agent is currently executing on the given thread. */

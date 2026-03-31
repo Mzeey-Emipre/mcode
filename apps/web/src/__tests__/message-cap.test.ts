@@ -171,3 +171,112 @@ describe("message sliding window", () => {
     vi.useRealTimers();
   });
 });
+
+describe("loadOlderMessages", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useThreadStore.setState({
+      messages: [],
+      runningThreadIds: new Set(),
+      loading: false,
+      loadingOlder: false,
+      error: null,
+      currentThreadId: "thread-1",
+      streamingByThread: {},
+      toolCallsByThread: {},
+      persistedToolCallCounts: {},
+      serverMessageIds: {},
+      hasOlderMessages: true,
+      toolCallRecordCache: new LruCache(200),
+    });
+  });
+
+  it("prepends older messages fetched from the server", async () => {
+    // Current in-memory messages start at sequence 51
+    const currentMsgs = Array.from({ length: 50 }, (_, i) => ({
+      id: `msg-${i + 50}`,
+      thread_id: "thread-1",
+      role: "user" as const,
+      content: `Message ${i + 50}`,
+      tool_calls: null,
+      files_changed: null,
+      cost_usd: null,
+      tokens_used: null,
+      timestamp: new Date().toISOString(),
+      sequence: i + 51,
+      attachments: null,
+    }));
+    useThreadStore.setState({ messages: currentMsgs });
+
+    // Server returns 50 older messages (sequences 1-50)
+    const olderMsgs = Array.from({ length: 50 }, (_, i) => ({
+      id: `msg-${i}`,
+      thread_id: "thread-1",
+      role: "user" as const,
+      content: `Message ${i}`,
+      tool_calls: null,
+      files_changed: null,
+      cost_usd: null,
+      tokens_used: null,
+      timestamp: new Date().toISOString(),
+      sequence: i + 1,
+      attachments: null,
+    }));
+    vi.mocked(mockTransport.getMessages).mockResolvedValueOnce(olderMsgs);
+
+    await useThreadStore.getState().loadOlderMessages();
+
+    const state = useThreadStore.getState();
+    expect(state.messages.length).toBe(100);
+    expect(state.messages[0].sequence).toBe(1);
+    expect(state.messages[99].sequence).toBe(100);
+  });
+
+  it("sets hasOlderMessages to false when server returns fewer than limit", async () => {
+    const currentMsgs = [{
+      id: "msg-10",
+      thread_id: "thread-1",
+      role: "user" as const,
+      content: "Message 10",
+      tool_calls: null,
+      files_changed: null,
+      cost_usd: null,
+      tokens_used: null,
+      timestamp: new Date().toISOString(),
+      sequence: 10,
+      attachments: null,
+    }];
+    useThreadStore.setState({ messages: currentMsgs });
+
+    const olderMsgs = Array.from({ length: 5 }, (_, i) => ({
+      id: `msg-${i}`,
+      thread_id: "thread-1",
+      role: "user" as const,
+      content: `Message ${i}`,
+      tool_calls: null,
+      files_changed: null,
+      cost_usd: null,
+      tokens_used: null,
+      timestamp: new Date().toISOString(),
+      sequence: i + 1,
+      attachments: null,
+    }));
+    vi.mocked(mockTransport.getMessages).mockResolvedValueOnce(olderMsgs);
+
+    await useThreadStore.getState().loadOlderMessages();
+
+    expect(useThreadStore.getState().hasOlderMessages).toBe(false);
+  });
+
+  it("does nothing when hasOlderMessages is false", async () => {
+    useThreadStore.setState({ hasOlderMessages: false });
+    await useThreadStore.getState().loadOlderMessages();
+    expect(mockTransport.getMessages).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when already loading older messages", async () => {
+    useThreadStore.setState({ loadingOlder: true });
+    await useThreadStore.getState().loadOlderMessages();
+    expect(mockTransport.getMessages).not.toHaveBeenCalled();
+  });
+});
