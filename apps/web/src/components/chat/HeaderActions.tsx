@@ -53,7 +53,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
                 title={`PR #${pr.number} – ${pr.state}`}
               >
                 <Github size={12} />
-                <span>View PR</span>
+                <span>View PR #{pr.number}</span>
               </Button>
               <div className="w-px h-4 bg-border/30" />
             </>

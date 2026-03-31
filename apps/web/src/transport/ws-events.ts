@@ -18,6 +18,7 @@ let unsubs: (() => void)[] = [];
  * - `terminal.data` -- PTY output forwarded to xterm instances via custom DOM event
  * - `terminal.exit` -- PTY exit forwarded via custom DOM event
  * - `thread.status` -- thread status changes reflected in threadStore
+ * - `thread.prLinked` -- PR detected for a thread, updates pr_number/pr_status
  * - `files.changed` -- invalidates the file autocomplete cache
  * - `skills.changed` -- reserved for future skill cache invalidation
  * - `turn.persisted` -- tool call persistence confirmation forwarded to threadStore
@@ -83,6 +84,26 @@ export function startPushListeners(): void {
         useWorkspaceStore.setState((ws) => ({
           threads: ws.threads.map((t) =>
             t.id === threadId ? { ...t, status: status as typeof t.status } : t,
+          ),
+        }));
+      });
+    }),
+  );
+
+  // thread.prLinked: a PR was detected and linked to a thread
+  unsubs.push(
+    pushEmitter.on("thread.prLinked", (data) => {
+      const { threadId, prNumber, prStatus } = data as {
+        threadId: string;
+        prNumber: number;
+        prStatus: string;
+      };
+      import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
+        useWorkspaceStore.setState((ws) => ({
+          threads: ws.threads.map((t) =>
+            t.id === threadId
+              ? { ...t, pr_number: prNumber, pr_status: prStatus }
+              : t,
           ),
         }));
       });

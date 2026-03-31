@@ -139,12 +139,19 @@ export class ThreadService {
     return this.threadRepo.updateTitle(threadId, title);
   }
 
-  /** Mark a thread as viewed by touching its updated_at timestamp. */
+  /** Link a GitHub PR to a thread by updating pr_number and pr_status. Throws on failure. */
+  linkPr(threadId: string, prNumber: number, prStatus: string): void {
+    const ok = this.threadRepo.updatePr(threadId, prNumber, prStatus);
+    if (!ok) {
+      throw new Error(`Failed to link PR #${prNumber} to thread ${threadId}`);
+    }
+  }
+
+  /** Mark a thread as viewed, dismissing the completed badge if present. */
   markViewed(threadId: string): void {
-    this.threadRepo.updateStatus(
-      threadId,
-      this.threadRepo.findById(threadId)?.status ?? "completed",
-    );
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread || thread.status !== "completed") return;
+    this.threadRepo.updateStatus(threadId, "paused");
   }
 
   /** Mark all active threads as interrupted (for graceful shutdown). */

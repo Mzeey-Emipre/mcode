@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
-import { getStatusDisplay } from "@/lib/thread-status";
+import { getStatusDisplay, getNotificationDot } from "@/lib/thread-status";
 import type { Workspace, Thread } from "@/transport/types";
 
 // Persist expand/collapse in localStorage
@@ -31,6 +31,23 @@ function getExpandedState(): Record<string, boolean> {
 
 function setExpandedState(state: Record<string, boolean>) {
   localStorage.setItem("mcode-expanded-projects", JSON.stringify(state));
+}
+
+/** Maximum threads shown before "Show more" appears. */
+const THREAD_LIST_CAP = 6;
+
+/** Read per-workspace "show all threads" state from localStorage. */
+function getThreadListExpanded(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem("mcode-expanded-thread-lists") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+/** Persist per-workspace "show all threads" state to localStorage. */
+function setThreadListExpanded(state: Record<string, boolean>) {
+  localStorage.setItem("mcode-expanded-thread-lists", JSON.stringify(state));
 }
 
 interface ContextMenuState {
@@ -79,6 +96,7 @@ export function ProjectTree() {
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
+  const [threadListExpanded, setThreadListExpandedState] = useState<Record<string, boolean>>(getThreadListExpanded);
   const [isCreating, setIsCreating] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -107,6 +125,15 @@ export function ProjectTree() {
   useEffect(() => {
     setExpandedState(expanded);
   }, [expanded]);
+
+  // Persist thread-list expanded state
+  useEffect(() => {
+    setThreadListExpanded(threadListExpanded);
+  }, [threadListExpanded]);
+
+  const toggleThreadList = useCallback((wsId: string) => {
+    setThreadListExpandedState((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
+  }, []);
 
   // F2 shortcut: rename the active thread
   useEffect(() => {
@@ -265,6 +292,8 @@ export function ProjectTree() {
               activeThreadId={activeThreadId}
               threads={threads.filter((t) => t.workspace_id === ws.id)}
               runningThreadIds={runningThreadIds}
+              isThreadListExpanded={threadListExpanded[ws.id] ?? false}
+              onToggleThreadList={() => toggleThreadList(ws.id)}
               scrollElementRef={scrollViewportRef}
               inlineEdit={inlineEdit}
               onInlineEditChange={(title) =>
@@ -456,6 +485,7 @@ export function ProjectTree() {
 /** Props for the virtualized thread list rendered inside an expanded workspace. */
 interface VirtualizedThreadListProps {
   threads: Thread[];
+  maxVisible: number;
   activeThreadId: string | null;
   runningThreadIds: Set<string>;
   scrollElementRef: React.RefObject<HTMLDivElement | null>;
@@ -470,6 +500,7 @@ interface VirtualizedThreadListProps {
 /** Renders a virtualized, scrollable list of threads for a single workspace. */
 function VirtualizedThreadList({
   threads,
+  maxVisible,
   activeThreadId,
   runningThreadIds,
   scrollElementRef,
@@ -492,8 +523,10 @@ function VirtualizedThreadList({
     });
   });
 
+  const visibleCount = Math.min(threads.length, maxVisible);
+
   const virtualizer = useVirtualizer({
-    count: threads.length,
+    count: visibleCount,
     getScrollElement: () => scrollElementRef.current,
     estimateSize: () => 28,
     overscan: 5,
@@ -544,12 +577,22 @@ function VirtualizedThreadList({
               >
                 {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
+                  const dot = getNotificationDot(thread, runningThreadIds.has(thread.id));
                   return (
                     <span
                       title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
-                      className="shrink-0"
+                      className="relative shrink-0"
                     >
                       <PrIcon size={12} className={prColor} />
+                      {dot && (
+                        <span
+                          className={cn(
+                            "absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background",
+                            dot.dotClass,
+                            dot.animate && "animate-pulse",
+                          )}
+                        />
+                      )}
                     </span>
                   );
                 })() : (
@@ -585,6 +628,9 @@ function VirtualizedThreadList({
                 )}
                 {!isEditing && (
                   <span className="shrink-0 text-xs text-muted-foreground">
+                    {thread.pr_number != null && (
+                      <span className="mr-1 opacity-70">#{thread.pr_number}</span>
+                    )}
                     {relativeTime(thread.updated_at)}
                   </span>
                 )}
@@ -606,6 +652,10 @@ interface ProjectNodeProps {
   activeThreadId: string | null;
   threads: Thread[];
   runningThreadIds: Set<string>;
+  /** Whether the thread list is fully expanded (persisted by parent). */
+  isThreadListExpanded: boolean;
+  /** Callback to toggle the thread list expanded state (persisted by parent). */
+  onToggleThreadList: () => void;
   scrollElementRef: React.RefObject<HTMLDivElement | null>;
   inlineEdit: InlineEditState | null;
   onInlineEditChange: (title: string) => void;
@@ -626,6 +676,8 @@ function ProjectNode({
   activeThreadId,
   threads,
   runningThreadIds,
+  isThreadListExpanded,
+  onToggleThreadList,
   scrollElementRef,
   inlineEdit,
   onInlineEditChange,
@@ -637,6 +689,13 @@ function ProjectNode({
   onDelete,
   onThreadContextMenu,
 }: ProjectNodeProps) {
+  const needsCap = threads.length > THREAD_LIST_CAP;
+
+  // Auto-expand when the active thread sits beyond the cap (temporary, not persisted).
+  const activeIndex = activeThreadId ? threads.findIndex((t) => t.id === activeThreadId) : -1;
+  const forceExpand = activeIndex >= THREAD_LIST_CAP;
+  const maxVisible = (!needsCap || isThreadListExpanded || forceExpand) ? Infinity : THREAD_LIST_CAP;
+
   return (
     <div className="mb-0.5">
       {/* Workspace row */}
@@ -683,6 +742,7 @@ function ProjectNode({
           ) : (
             <VirtualizedThreadList
               threads={threads}
+              maxVisible={maxVisible}
               activeThreadId={activeThreadId}
               runningThreadIds={runningThreadIds}
               scrollElementRef={scrollElementRef}
@@ -693,6 +753,21 @@ function ProjectNode({
               onSelectThread={onSelectThread}
               onThreadContextMenu={onThreadContextMenu}
             />
+          )}
+
+          {needsCap && !forceExpand && (
+            <div className="px-1">
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={onToggleThreadList}
+                className="w-full justify-start text-muted-foreground/60 hover:text-muted-foreground"
+              >
+                {isThreadListExpanded
+                  ? "Show less"
+                  : `Show more (${threads.length - THREAD_LIST_CAP})`}
+              </Button>
+            </div>
           )}
 
           {/* New thread button inside expanded project */}
