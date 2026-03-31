@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport } from "./mocks/transport";
+import { LruCache } from "@/lib/lru-cache";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -17,6 +18,7 @@ describe("toolCallRecordCache LRU", () => {
       currentThreadId: null,
       streamingByThread: {},
       toolCallsByThread: {},
+      toolCallRecordCache: new LruCache(200),
     });
   });
 
