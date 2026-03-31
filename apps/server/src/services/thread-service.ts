@@ -5,7 +5,11 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { validateBranchName, sanitizeBranchForFolder } from "@mcode/shared";
+import {
+  validateBranchName,
+  sanitizeBranchForFolder,
+  logger,
+} from "@mcode/shared";
 import type { Thread, ThreadMode } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -74,13 +78,28 @@ export class ThreadService {
 
         if (!updated) {
           try {
-            this.gitService.removeWorktree(
+            const removed = this.gitService.removeWorktree(
               workspace.path,
               worktreeName,
               branch,
             );
-          } catch {
-            // best-effort cleanup
+            if (!removed) {
+              logger.warn("Worktree rollback returned false", {
+                threadId: thread.id,
+                worktreeName,
+                workspacePath: workspace.path,
+              });
+            }
+          } catch (cleanupErr) {
+            logger.warn("Worktree rollback threw during cleanup", {
+              threadId: thread.id,
+              worktreeName,
+              workspacePath: workspace.path,
+              error:
+                cleanupErr instanceof Error
+                  ? cleanupErr.message
+                  : String(cleanupErr),
+            });
           }
           this.threadRepo.hardDelete(thread.id);
           throw new Error(
