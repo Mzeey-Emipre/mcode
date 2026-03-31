@@ -81,13 +81,13 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
 };
 
 /** Maximum entries in the tool call record LRU cache. */
-const TOOL_CALL_CACHE_SIZE = 200;
+export const TOOL_CALL_CACHE_SIZE = 200;
 
 /** Number of older messages to fetch per pagination request. */
-const OLDER_PAGE_SIZE = 100;
+export const OLDER_PAGE_SIZE = 100;
 
 /** Maximum messages kept in the in-memory sliding window. */
-const MESSAGE_WINDOW_SIZE = 200;
+export const MESSAGE_WINDOW_SIZE = 200;
 
 /**
  * Enforce the sliding window cap on a messages array.

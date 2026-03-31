@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useThreadStore } from "@/stores/threadStore";
+import { useThreadStore, MESSAGE_WINDOW_SIZE, TOOL_CALL_CACHE_SIZE } from "@/stores/threadStore";
 import { mockTransport } from "./mocks/transport";
 import { LruCache } from "@/lib/lru-cache";
 
@@ -27,14 +27,14 @@ describe("toolCallRecordCache LRU", () => {
       useThreadStore.getState();
 
     // Fill cache beyond capacity (TOOL_CALL_CACHE_SIZE = 200)
-    for (let i = 0; i < 201; i++) {
+    for (let i = 0; i < TOOL_CALL_CACHE_SIZE + 1; i++) {
       cacheToolCallRecords(`key-${i}`, []);
     }
 
     // First entry should have been evicted
     expect(getCachedToolCallRecords("key-0")).toBeNull();
     // Last entry should still be present
-    expect(getCachedToolCallRecords("key-200")).toEqual([]);
+    expect(getCachedToolCallRecords(`key-${TOOL_CALL_CACHE_SIZE}`)).toEqual([]);
   });
 
   it("get refreshes LRU order so accessed entry is not evicted", () => {
@@ -42,7 +42,7 @@ describe("toolCallRecordCache LRU", () => {
       useThreadStore.getState();
 
     // Fill to capacity
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < TOOL_CALL_CACHE_SIZE; i++) {
       cacheToolCallRecords(`key-${i}`, []);
     }
 
@@ -50,7 +50,7 @@ describe("toolCallRecordCache LRU", () => {
     getCachedToolCallRecords("key-0");
 
     // Add one more to trigger eviction
-    cacheToolCallRecords("key-200", []);
+    cacheToolCallRecords(`key-${TOOL_CALL_CACHE_SIZE}`, []);
 
     // key-0 was refreshed, so key-1 should be evicted instead
     expect(getCachedToolCallRecords("key-0")).toEqual([]);
@@ -75,7 +75,7 @@ describe("message sliding window", () => {
   });
 
   it("caps messages at MESSAGE_WINDOW_SIZE when addMessage exceeds limit", () => {
-    const msgs = Array.from({ length: 200 }, (_, i) => ({
+    const msgs = Array.from({ length: MESSAGE_WINDOW_SIZE }, (_, i) => ({
       id: `msg-${i}`,
       thread_id: "thread-1",
       role: "user" as const,
@@ -91,7 +91,7 @@ describe("message sliding window", () => {
     useThreadStore.setState({ messages: msgs });
 
     useThreadStore.getState().addMessage({
-      id: "msg-200",
+      id: `msg-${MESSAGE_WINDOW_SIZE}`,
       thread_id: "thread-1",
       role: "assistant",
       content: "New message",
@@ -100,18 +100,18 @@ describe("message sliding window", () => {
       cost_usd: null,
       tokens_used: null,
       timestamp: new Date().toISOString(),
-      sequence: 201,
+      sequence: MESSAGE_WINDOW_SIZE + 1,
       attachments: null,
     });
 
     const state = useThreadStore.getState();
-    expect(state.messages.length).toBe(200);
+    expect(state.messages.length).toBe(MESSAGE_WINDOW_SIZE);
     expect(state.messages[0].id).toBe("msg-1");
-    expect(state.messages[state.messages.length - 1].id).toBe("msg-200");
+    expect(state.messages[state.messages.length - 1].id).toBe(`msg-${MESSAGE_WINDOW_SIZE}`);
   });
 
   it("sets hasOlderMessages to true when messages are evicted", () => {
-    const msgs = Array.from({ length: 200 }, (_, i) => ({
+    const msgs = Array.from({ length: MESSAGE_WINDOW_SIZE }, (_, i) => ({
       id: `msg-${i}`,
       thread_id: "thread-1",
       role: "user" as const,
@@ -136,7 +136,7 @@ describe("message sliding window", () => {
       cost_usd: null,
       tokens_used: null,
       timestamp: new Date().toISOString(),
-      sequence: 201,
+      sequence: MESSAGE_WINDOW_SIZE + 1,
       attachments: null,
     });
 
@@ -145,7 +145,7 @@ describe("message sliding window", () => {
 
   it("session.message event respects the message cap", () => {
     vi.useFakeTimers();
-    const msgs = Array.from({ length: 200 }, (_, i) => ({
+    const msgs = Array.from({ length: MESSAGE_WINDOW_SIZE }, (_, i) => ({
       id: `msg-${i}`,
       thread_id: "thread-1",
       role: "user" as const,
@@ -166,7 +166,7 @@ describe("message sliding window", () => {
     });
     vi.runAllTimers();
 
-    expect(useThreadStore.getState().messages.length).toBe(200);
+    expect(useThreadStore.getState().messages.length).toBe(MESSAGE_WINDOW_SIZE);
     expect(useThreadStore.getState().hasOlderMessages).toBe(true);
     vi.useRealTimers();
   });
