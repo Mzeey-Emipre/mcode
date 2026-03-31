@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useCallback, memo, useState } from "react";
+import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, useState } from "react";
 import { ArrowDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useShallow } from "zustand/shallow";
@@ -57,7 +57,11 @@ export function MessageList() {
   const itemsLengthRef = useRef(0);
   const prevMessageCountRef = useRef(0);
   const prevScrollHeightRef = useRef(0);
+  /** True until initial messages are positioned at the bottom after a thread switch. */
+  const isInitialLoadRef = useRef(true);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  /** Controls container visibility: hidden while positioning to prevent top-to-bottom flash. */
+  const [isPositioned, setIsPositioned] = useState(false);
 
   const messages = useThreadStore((s) => s.messages);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -191,7 +195,11 @@ export function MessageList() {
 
   // On thread switch, invalidate the virtualizer's cached sizes so
   // stale heights from the previous thread don't cause overlap.
+  // Also reset positioning state so the container stays hidden until
+  // new messages are scrolled to the bottom.
   useEffect(() => {
+    isInitialLoadRef.current = true;
+    setIsPositioned(false);
     virtualizer.measure();
   }, [activeThreadId, virtualizer]);
 
@@ -223,19 +231,55 @@ export function MessageList() {
     }
   }, [messages.length, messages]);
 
+  // Initial load: position at the bottom before paint to avoid top-to-bottom flash.
+  // useLayoutEffect fires after DOM mutations but before the browser paints.
+  const loading = useThreadStore((s) => s.loading);
+  useLayoutEffect(() => {
+    if (!isInitialLoadRef.current) return;
+
+    // If loading finished with no items (empty thread), just reveal.
+    if (!loading && items.length === 0) {
+      isInitialLoadRef.current = false;
+      setIsPositioned(true);
+      return;
+    }
+
+    if (items.length === 0) return;
+
+    isInitialLoadRef.current = false;
+
+    virtualizer.scrollToIndex(items.length - 1, {
+      align: "end",
+      behavior: "auto",
+    });
+
+    // Fallback nudge + reveal: the virtualizer may not have measured all items
+    // yet, so force scrollTop to the absolute bottom and then show the container.
+    requestAnimationFrame(() => {
+      const el = containerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+      setIsPositioned(true);
+    });
+  }, [items.length, loading, virtualizer]);
+
   // Discrete events (new message, tool call) -> smooth scroll
   useEffect(() => {
-    scrollToBottom(true);
+    if (!isInitialLoadRef.current) scrollToBottom(true);
   }, [messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
 
   // Streaming deltas -> instant scroll (no animation lag)
   useEffect(() => {
-    if (streamingText) scrollToBottom(false);
+    if (streamingText && !isInitialLoadRef.current) scrollToBottom(false);
   }, [streamingText, scrollToBottom]);
 
   return (
     <div className="relative h-full">
-      <div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto pt-4">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="h-full overflow-y-auto pt-4 transition-opacity duration-75"
+        style={{ opacity: isPositioned ? 1 : 0 }}
+      >
         <div
           className="relative w-full"
           style={{ height: virtualizer.getTotalSize() }}
