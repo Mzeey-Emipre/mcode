@@ -286,7 +286,7 @@ export function createWsTransport(
 
     // Messages
     getMessages: (threadId, limit, before?) =>
-      rpc<{ messages: Message[]; hasMore: boolean }>("message.list", { threadId, limit, ...(before != null ? { before } : {}) }),
+      rpc<Message[]>("message.list", { threadId, limit, ...(before != null ? { before } : {}) }),
 
     // Config
     discoverConfig: (workspacePath) =>

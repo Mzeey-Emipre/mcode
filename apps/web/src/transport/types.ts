@@ -107,9 +107,8 @@ export interface McodeTransport {
    * @param before - Optional sequence cursor; when provided, only messages with
    *   `sequence < before` are returned, enabling backward pagination.
    *   Omit to fetch the most recent messages.
-   * @returns Paginated response with messages array and hasMore flag.
    */
-  getMessages(threadId: string, limit: number, before?: number): Promise<{ messages: Message[]; hasMore: boolean }>;
+  getMessages(threadId: string, limit: number, before?: number): Promise<Message[]>;
 
   // Config
   discoverConfig(workspacePath: string): Promise<Record<string, unknown>>;
