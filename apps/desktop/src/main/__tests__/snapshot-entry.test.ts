@@ -10,11 +10,6 @@ describe("snapshot-entry", () => {
     expect(globalThis.__v8Snapshot).toBeDefined();
   });
 
-  it("provides Zod z export", () => {
-    expect(globalThis.__v8Snapshot!.zod.z).toBeDefined();
-    expect(typeof globalThis.__v8Snapshot!.zod.z.string).toBe("function");
-  });
-
   it("provides SettingsSchema", () => {
     const schema = globalThis.__v8Snapshot!.contracts.SettingsSchema;
     expect(schema).toBeDefined();
@@ -32,7 +27,6 @@ describe("snapshot-entry", () => {
 
   it("freezes the snapshot exports", () => {
     expect(Object.isFrozen(globalThis.__v8Snapshot)).toBe(true);
-    expect(Object.isFrozen(globalThis.__v8Snapshot!.zod)).toBe(true);
     expect(Object.isFrozen(globalThis.__v8Snapshot!.contracts)).toBe(true);
   });
 });

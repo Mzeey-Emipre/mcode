@@ -7,14 +7,12 @@
  * on globalThis.__v8Snapshot so the main process can skip re-initialization.
  */
 
-import type { z as ZodZ } from "zod";
 import type {
   SettingsSchema as SettingsSchemaType,
   getExtension as GetExtensionType,
 } from "@mcode/contracts";
 
 interface V8Snapshot {
-  readonly zod: { readonly z: typeof ZodZ };
   readonly contracts: {
     readonly SettingsSchema: typeof SettingsSchemaType;
     readonly getExtension: typeof GetExtensionType;

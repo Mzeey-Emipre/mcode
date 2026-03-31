@@ -11,11 +11,9 @@
  * - Only pure JavaScript that runs in a bare V8 context
  */
 
-import { z } from "zod";
 import { SettingsSchema, getExtension } from "@mcode/contracts";
 
 const snapshot = Object.freeze({
-  zod: Object.freeze({ z }),
   contracts: Object.freeze({ SettingsSchema, getExtension }),
 });
 
