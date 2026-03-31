@@ -10,7 +10,8 @@
     "prod": "NODE_ENV=production bun run build && NODE_ENV=production npx electron .",
     "typecheck": "tsc --noEmit",
     "rebuild": "electron-rebuild -f",
-    "dist": "bun run build && electron-builder --publish never",
+    "dist": "bun run build && bun scripts/generate-snapshot.mjs && electron-builder --publish never",
+    "dist:no-snapshot": "bun run build && electron-builder --publish never",
     "test": "vitest run"
   },
   "dependencies": {
