@@ -1,3 +1,5 @@
+const STARTUP_TIME = performance.now();
+
 /**
  * Electron main process entry point.
  * Thin shell that spawns the Mcode server as a child process and
@@ -480,10 +482,12 @@ app.commandLine.appendSwitch(
 );
 
 app.whenReady().then(async () => {
+  console.log(`[perf] Module load: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
   console.log(`Mcode v${app.getVersion()} starting`);
 
   // Start the server child process
   const { port } = await serverManager.start();
+  console.log(`[perf] Server ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
   console.log(`Server started on port ${port}`);
 
   // Show a Restart / Quit dialog if the server crashes unexpectedly
@@ -509,6 +513,7 @@ app.whenReady().then(async () => {
 
   // Create window
   createWindow();
+  console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
 
   // Create and distribute streaming MessagePort pair
   const rendererPort = serverManager.createStreamPort();
@@ -530,6 +535,8 @@ app.whenReady().then(async () => {
       setupCloseHandler();
     }
   });
+
+  console.log(`[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
 });
 
 app.on("window-all-closed", () => {
