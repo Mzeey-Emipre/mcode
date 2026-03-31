@@ -7,11 +7,6 @@ interface IconProps {
   className?: string;
 }
 
-interface ZedIconProps extends IconProps {
-  /** Fill color for the path. Defaults to Zed's brand blue (#1348DC). */
-  fill?: string;
-}
-
 /** VS Code - official Microsoft brand mark (via devicons). Uses instance-scoped IDs to prevent conflicts. */
 export function VsCodeIcon({ size = 14, className }: IconProps) {
   const uid = useId().replace(/:/g, "");
@@ -66,21 +61,33 @@ export function VsCodeIcon({ size = 14, className }: IconProps) {
   );
 }
 
-/** Zed - official Zed Industries logomark (via Simple Icons). Defaults to Zed brand blue. */
-export function ZedIcon({ size = 14, className, fill = "#1348DC" }: ZedIconProps) {
+/** Zed - official Zed Industries logomark (sourced from T3 Code). */
+export function ZedIcon({ size = 14, className }: IconProps) {
+  const uid = useId().replace(/:/g, "");
+  const clipId = `zed-clip-${uid}`;
+
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
+      viewBox="0 0 96 96"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      <path
-        d="M2.25 1.5a.75.75 0 0 0-.75.75v16.5H0V2.25A2.25 2.25 0 0 1 2.25 0h20.095c1.002 0 1.504 1.212.795 1.92L10.764 14.298h3.486V12.75h1.5v1.922a1.125 1.125 0 0 1-1.125 1.125H9.264l-2.578 2.578h11.689V9h1.5v9.375a1.5 1.5 0 0 1-1.5 1.5H5.185L2.562 22.5H21.75a.75.75 0 0 0 .75-.75V5.25H24v16.5A2.25 2.25 0 0 1 21.75 24H1.655C.653 24 .151 22.788.86 22.08L13.19 9.75H9.75v1.5h-1.5V9.375A1.125 1.125 0 0 1 9.375 8.25h5.314l2.625-2.625H5.625V15h-1.5V5.625a1.5 1.5 0 0 1 1.5-1.5h13.19L21.438 1.5z"
-        fill={fill}
-      />
+      <g clipPath={`url(#${clipId})`}>
+        <path
+          fill="currentColor"
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M9 6a3 3 0 0 0-3 3v66H0V9a9 9 0 0 1 9-9h80.379c4.009 0 6.016 4.847 3.182 7.682L43.055 57.187H57V51h6v7.688a4.5 4.5 0 0 1-4.5 4.5H37.055L26.743 73.5H73.5V36h6v37.5a6 6 0 0 1-6 6H20.743L10.243 90H87a3 3 0 0 0 3-3V21h6v66a9 9 0 0 1-9 9H6.621c-4.009 0-6.016-4.847-3.182-7.682L52.757 39H39v6h-6v-7.5a4.5 4.5 0 0 1 4.5-4.5h21.257l10.5-10.5H22.5V60h-6V22.5a6 6 0 0 1 6-6h52.757L85.757 6H9Z"
+        />
+      </g>
+      <defs>
+        <clipPath id={clipId}>
+          <path fill="#fff" d="M0 0h96v96H0z" />
+        </clipPath>
+      </defs>
     </svg>
   );
 }

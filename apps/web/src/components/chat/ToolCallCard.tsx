@@ -41,18 +41,18 @@ function CollapsedGroup({
   return (
     <div
       className={`border-l-2 transition-colors ${
-        isActive ? "border-blue-500/60" : "border-border/30 hover:border-border/50"
+        isActive ? "border-primary/60 glow-primary" : "border-border/30 hover:border-border/50"
       }`}
     >
       <button
         type="button"
         onClick={() => setExpanded((p) => !p)}
-        className="flex w-full items-center gap-2 pl-3 pr-1 py-1.5 text-left text-xs cursor-pointer hover:bg-muted/15"
+        className="flex w-full items-center gap-2 pl-3 pr-1 py-1 text-left text-xs cursor-pointer hover:bg-muted/20 transition-colors"
       >
         <Icon
           size={13}
           className={`shrink-0 ${
-            isActive ? "animate-spin text-blue-400/80" : "text-muted-foreground/60"
+            isActive ? "animate-spin text-primary/80" : "text-muted-foreground/60"
           }`}
           style={isActive ? SLOW_SPIN_STYLE : undefined}
         />
@@ -63,7 +63,7 @@ function CollapsedGroup({
         >
           {label}
         </span>
-        <span className="text-[11px] text-muted-foreground/40">
+        <span className="text-xs text-muted-foreground/40">
           ({group.calls.length})
         </span>
         <ChevronRight
@@ -113,11 +113,11 @@ function LiveAgentGroup({
   const isExpandable = hasChildren || isActive || !agentCall.isComplete;
 
   return (
-    <div className="border-l-2 border-purple-500/30 hover:border-purple-500/50 transition-colors">
+    <div className="border-l-2 border-ring/30 hover:border-ring/50 transition-colors">
       <button
         type="button"
         onClick={() => isExpandable && setExpanded((p) => !p)}
-        className={`flex w-full items-center gap-2 pl-3 pr-1 py-1.5 text-xs text-muted-foreground hover:bg-muted/10 transition-colors ${
+        className={`flex w-full items-center gap-2 pl-3 pr-1 py-1.5 text-xs text-muted-foreground hover:bg-muted/30 transition-colors ${
           isExpandable ? "cursor-pointer" : "cursor-default"
         }`}
       >
@@ -129,8 +129,8 @@ function LiveAgentGroup({
         <Bot
           className={`h-3.5 w-3.5 shrink-0 ${
             isActive || hasActiveChild
-              ? "animate-spin text-purple-400/80"
-              : "text-purple-400/60"
+              ? "animate-spin text-ring/80"
+              : "text-ring/60"
           }`}
           style={isActive || hasActiveChild ? SLOW_SPIN_STYLE : undefined}
         />
@@ -144,7 +144,7 @@ function LiveAgentGroup({
           {description}
         </span>
         {hasChildren && (
-          <span className="ml-auto text-[10px] text-muted-foreground/40">
+          <span className="ml-auto text-xs text-muted-foreground/40">
             {children.length} call{children.length !== 1 ? "s" : ""}
           </span>
         )}
@@ -245,7 +245,7 @@ export function ToolCallCard({ toolCalls, isLive = true, _depth = 0 }: ToolCallC
         }
         return (
           <CollapsedGroup
-            key={`group-${i}-${group.toolName}`}
+            key={group.calls[0]?.id ?? `group-${i}`}
             group={group}
             isActive={isLastGroup}
             lastToolId={lastTopLevelId}

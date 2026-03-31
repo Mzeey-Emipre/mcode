@@ -244,12 +244,12 @@ export function ProjectTree() {
   const scrollViewportRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-medium uppercase text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 mb-0.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
           Projects
         </span>
-        <Button variant="ghost" size="icon-xs" disabled={isCreating} onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground">
+        <Button variant="ghost" size="icon-xs" disabled={isCreating} onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground/60 hover:text-foreground">
           <Plus size={14} />
         </Button>
       </div>
@@ -536,25 +536,26 @@ function VirtualizedThreadList({
                 }}
                 onContextMenu={(e) => onThreadContextMenu(e, thread)}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer",
+                  "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer transition-colors",
                   activeThreadId === thread.id
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                 )}
               >
-                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotClass)} />
-                {thread.pr_number != null && (() => {
+                {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
                   return (
                     <span
                       title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
                       className="shrink-0"
                     >
-                      <PrIcon size={11} className={prColor} />
+                      <PrIcon size={12} className={prColor} />
                     </span>
                   );
-                })()}
-                {status.label && (
+                })() : (
+                  <span className={cn("h-2 w-2 shrink-0 rounded-full", status.dotClass)} />
+                )}
+                {!thread.pr_number && status.label && (
                   <span className={cn("shrink-0 text-xs", status.color)}>
                     {status.label}
                   </span>
@@ -578,7 +579,7 @@ function VirtualizedThreadList({
                     className="flex-1 border-ring"
                   />
                 ) : (
-                  <span className="truncate flex-1 text-xs">
+                  <span className="truncate flex-1 text-sm">
                     {thread.title}
                   </span>
                 )}

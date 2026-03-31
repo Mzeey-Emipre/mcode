@@ -1,9 +1,10 @@
 import { useEffect, useCallback } from "react";
-import { ChevronDown, FolderOpen } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { getTransport } from "@/transport";
 import { useInstalledEditors } from "@/hooks/useInstalledEditors";
 import { registerShortcut } from "@/lib/shortcuts";
 import { VsCodeIcon, ZedIcon, CursorIcon } from "./EditorIcons";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -29,6 +30,7 @@ interface OpenInEditorMenuProps {
   dirPath: string;
 }
 
+/** Dropdown menu that opens a directory in an installed code editor or system file explorer. */
 export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
   const installedEditors = useInstalledEditors();
 
@@ -37,7 +39,7 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
     .map((id) => ({
       id,
       label: EDITOR_CONFIG[id].label,
-      icon: EDITOR_CONFIG[id].icon(14),
+      icon: EDITOR_CONFIG[id].icon(16),
     }));
 
   const handleOpenEditor = (editorId: string) => {
@@ -60,18 +62,21 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
-        <FolderOpen size={12} />
-        Open
-        <ChevronDown size={10} />
-      </DropdownMenuTrigger>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="ghost" size="xs" className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6">
+            <FolderOpen size={12} />
+            <span>Open</span>
+          </Button>
+        }
+      />
 
       <DropdownMenuContent align="end" sideOffset={4} className="min-w-[160px]">
         {entries.map((entry) => (
           <DropdownMenuItem
             key={entry.id}
             onClick={() => handleOpenEditor(entry.id)}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs"
+            className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs"
           >
             {entry.icon}
             <span>{entry.label}</span>
@@ -82,7 +87,7 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
 
         <DropdownMenuItem
           onClick={handleOpenExplorer}
-          className="flex items-center justify-between px-3 py-1.5 text-xs"
+          className="flex cursor-pointer items-center justify-between px-3 py-1.5 text-xs"
         >
           <span className="flex items-center gap-2">
             <FolderOpen size={14} />

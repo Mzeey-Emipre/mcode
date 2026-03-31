@@ -54,10 +54,10 @@ export function DiffViewer({ snapshotId, filePath, changeType = "modified" }: Di
 
   /** Re-fetch the diff without a line cap so the user sees the complete output. */
   const handleShowAll = useCallback(async () => {
-    setShowAll(true);
     try {
       const fullDiff = await getTransport().getSnapshotDiff(snapshotId, filePath);
       setDiff(fullDiff);
+      setShowAll(true);
     } catch {
       // Keep existing truncated diff on error
     }
@@ -96,9 +96,9 @@ export function DiffViewer({ snapshotId, filePath, changeType = "modified" }: Di
               key={i}
               className={
                 line.type === "add"
-                  ? "bg-green-500/10 text-green-400"
+                  ? "bg-primary/10 text-primary/70"
                   : line.type === "remove"
-                    ? "bg-red-500/10 text-red-400"
+                    ? "bg-destructive/10 text-destructive/70"
                     : line.type === "header"
                       ? "bg-muted/30 text-muted-foreground/70"
                       : "text-muted-foreground"

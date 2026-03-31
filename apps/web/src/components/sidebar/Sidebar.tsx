@@ -12,14 +12,14 @@ export function Sidebar() {
   return (
     <div
       className={cn(
-        "flex h-full flex-col border-r border-border bg-card transition-all duration-200",
+        "flex h-full flex-col border-r border-border bg-sidebar transition-[width] duration-200",
         collapsed ? "w-12" : "w-72"
       )}
     >
       {/* Header */}
       <div className="flex h-11 items-center justify-between border-b border-border px-3">
         {!collapsed && (
-          <span className="text-sm font-semibold text-foreground">Mcode</span>
+          <span className="text-sm font-semibold tracking-tight text-foreground">Mcode</span>
         )}
         <Button variant="ghost" size="icon-sm" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} className="text-muted-foreground">
           {collapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}

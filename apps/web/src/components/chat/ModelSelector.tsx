@@ -20,7 +20,7 @@ import {
 type IconComponent = ComponentType<{ size?: number; className?: string }>;
 
 const PROVIDER_META: Record<string, { icon: IconComponent; color: string }> = {
-  claude: { icon: ClaudeIcon, color: "text-orange-400" },
+  claude: { icon: ClaudeIcon, color: "text-orange-400/75" },
   codex: { icon: CodexIcon, color: "text-emerald-400" },
   cursor: { icon: CursorProviderIcon, color: "text-blue-400" },
   opencode: { icon: OpenCodeIcon, color: "text-violet-400" },
@@ -124,10 +124,10 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
 
   return (
     <div ref={containerRef} className="relative">
-      <Button variant="ghost" size="xs" onClick={() => setOpen(!open)} className="text-muted-foreground">
-        <Icon size={12} className={iconClass} />
-        {shortLabel}
-        <ChevronDown size={10} />
+      <Button variant="ghost" size="xs" onClick={() => setOpen(!open)} className="text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors">
+        <Icon size={14} className={iconClass} />
+        <span className="text-sm">{shortLabel}</span>
+        <ChevronDown size={11} />
       </Button>
 
       {open && (

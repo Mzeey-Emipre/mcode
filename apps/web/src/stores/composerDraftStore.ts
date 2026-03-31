@@ -13,6 +13,9 @@ export interface ComposerDraft {
 interface ComposerDraftState {
   drafts: Record<string, ComposerDraft>;
 
+  /** Prefill text set by the empty-state prompt chips, consumed once by the Composer. */
+  pendingPrefill: string | null;
+
   /** Save a draft for a thread. Skips storage if both input and attachments are empty. */
   saveDraft: (threadId: string, draft: ComposerDraft) => void;
 
@@ -21,11 +24,18 @@ interface ComposerDraftState {
 
   /** Remove the draft for a thread (e.g. after sending a message). */
   clearDraft: (threadId: string) => void;
+
+  /** Set a prefill text to be picked up by the Composer on next render. */
+  setPendingPrefill: (text: string) => void;
+
+  /** Clear the pending prefill after the Composer has consumed it. */
+  clearPendingPrefill: () => void;
 }
 
 /** Zustand store for per-thread composer draft persistence. */
 export const useComposerDraftStore = create<ComposerDraftState>((set, get) => ({
   drafts: {},
+  pendingPrefill: null,
 
   saveDraft: (threadId, draft) => {
     const isEmpty = draft.input.trim() === "" && draft.attachments.length === 0;
@@ -68,4 +78,8 @@ export const useComposerDraftStore = create<ComposerDraftState>((set, get) => ({
     delete rest[threadId];
     set({ drafts: rest });
   },
+
+  setPendingPrefill: (text) => set({ pendingPrefill: text }),
+
+  clearPendingPrefill: () => set({ pendingPrefill: null }),
 }));

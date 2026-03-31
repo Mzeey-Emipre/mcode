@@ -61,7 +61,7 @@ export function ModeSelector({ mode, onModeChange, locked }: ModeSelectorProps) 
               key={option.value}
               onClick={() => onModeChange(option.value)}
               className={cn(
-                "flex items-center gap-2 px-3 py-1.5 text-xs",
+                "flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs",
                 option.value === mode
                   ? "bg-accent text-foreground"
                   : "text-popover-foreground",
