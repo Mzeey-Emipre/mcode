@@ -147,9 +147,8 @@ export class ThreadService {
   /** Mark a thread as viewed, dismissing the completed badge if present. */
   markViewed(threadId: string): void {
     const thread = this.threadRepo.findById(threadId);
-    if (!thread) return;
-    const newStatus = thread.status === "completed" ? "paused" : thread.status;
-    this.threadRepo.updateStatus(threadId, newStatus);
+    if (!thread || thread.status !== "completed") return;
+    this.threadRepo.updateStatus(threadId, "paused");
   }
 
   /** Mark all active threads as interrupted (for graceful shutdown). */

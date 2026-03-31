@@ -752,7 +752,7 @@ function ProjectNode({
             />
           )}
 
-          {needsCap && (
+          {needsCap && !forceExpand && (
             <div className="px-1">
               <Button
                 variant="ghost"
@@ -760,7 +760,7 @@ function ProjectNode({
                 onClick={onToggleThreadList}
                 className="w-full justify-start text-muted-foreground/60 hover:text-muted-foreground"
               >
-                {(isThreadListExpanded || forceExpand)
+                {isThreadListExpanded
                   ? "Show less"
                   : `Show more (${threads.length - THREAD_LIST_CAP})`}
               </Button>
