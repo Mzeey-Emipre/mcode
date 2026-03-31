@@ -6,12 +6,16 @@ import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { ThreadService } from "../services/thread-service";
 import type { GitService } from "../services/git-service";
+import type { AgentService } from "../services/agent-service";
+import type { TerminalService } from "../services/terminal-service";
 
 describe("ThreadService.delete", () => {
   let db: Database.Database;
   let threadRepo: ThreadRepo;
   let workspaceRepo: WorkspaceRepo;
   let mockGitService: GitService;
+  let mockAgentService: AgentService;
+  let mockTerminalService: TerminalService;
   let threadService: ThreadService;
 
   beforeEach(() => {
@@ -28,7 +32,19 @@ describe("ThreadService.delete", () => {
       listWorktrees: vi.fn(),
       fetchBranch: vi.fn(),
     } as unknown as GitService;
-    threadService = new ThreadService(threadRepo, workspaceRepo, mockGitService);
+    mockAgentService = {
+      stopSession: vi.fn().mockResolvedValue(undefined),
+    } as unknown as AgentService;
+    mockTerminalService = {
+      killByThread: vi.fn(),
+    } as unknown as TerminalService;
+    threadService = new ThreadService(
+      threadRepo,
+      workspaceRepo,
+      mockGitService,
+      mockAgentService,
+      mockTerminalService,
+    );
   });
 
   /** Insert a worktree-backed thread directly into the database. */
@@ -93,5 +109,46 @@ describe("ThreadService.delete", () => {
 
     expect(result).toBe(true);
     expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    expect(mockAgentService.stopSession).not.toHaveBeenCalled();
+    expect(mockTerminalService.killByThread).not.toHaveBeenCalled();
+  });
+
+  it("stops agent and terminals before removing worktree", async () => {
+    const callOrder: string[] = [];
+    (mockAgentService.stopSession as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      callOrder.push("stopSession");
+    });
+    (mockTerminalService.killByThread as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      callOrder.push("killByThread");
+    });
+    (mockGitService.removeWorktree as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      callOrder.push("removeWorktree");
+      return true;
+    });
+
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    insertWorktreeThread("t-5", ws.id, "feat/test", "/tmp/wt/my-worktree");
+
+    await threadService.delete("t-5", true);
+
+    expect(callOrder).toEqual(["stopSession", "killByThread", "removeWorktree"]);
+  });
+
+  it("proceeds with worktree removal even if process cleanup fails", async () => {
+    (mockAgentService.stopSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("agent not found"),
+    );
+    (mockTerminalService.killByThread as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("terminal error");
+    });
+
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    insertWorktreeThread("t-6", ws.id, "feat/test", "/tmp/wt/my-worktree");
+
+    const result = await threadService.delete("t-6", true);
+
+    expect(result).toBe(true);
+    expect(mockGitService.removeWorktree).toHaveBeenCalled();
+    expect(threadRepo.findById("t-6")?.status).toBe("deleted");
   });
 });
