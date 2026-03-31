@@ -105,7 +105,7 @@ export class MemoryPressureService {
 
 | Action | Implementation | Savings |
 |--------|---------------|---------|
-| Full GC | `global.gc(true)` (full mark-sweep-compact) | 10-30MB |
+| Full GC | `global.gc()` (full mark-sweep-compact) | 10-30MB |
 | SQLite cache reduction | `db.pragma("cache_size = -500")` (500KB) | 1.5MB |
 
 **Return to active:**
@@ -223,6 +223,7 @@ The tool call record cache is currently cleared as a side effect of `loadThread`
 
 This hook is mounted once in the root `App` component.
 
+<<<<<<< HEAD
 ### Layer 6: Terminal Buffer Management (Warm Idle)
 
 Non-visible terminal instances hold scrollback buffers in memory. When a terminal tab is not active, clear its buffer.
@@ -239,6 +240,23 @@ On terminal tab switch (when a terminal becomes non-visible):
 This is implemented in the terminal tab switching logic, not as a timer-based approach, so there is no delay.
 
 **Estimated savings:** 1-3MB per hidden terminal instance.
+=======
+### Layer 6: Terminal Buffer Management (Background Idle)
+
+Non-visible terminal instances hold scrollback buffers in memory. Each terminal instance uses approximately 1-3MB depending on content.
+
+**Implementation:** Terminal buffer clearing is handled inside `useIdleReclamation` as part of the background idle sequence. After 60 seconds of window blur, the hook dispatches a `mcode:clear-terminal-buffers` CustomEvent. Each `TerminalView` instance listens for this event and calls `terminal.clear()` to release its scrollback buffer.
+
+**Why background idle, not tab switch:** Per-terminal savings (1-3MB) do not justify degrading tab-switch UX. Clearing on tab switch loses scrollback that the user may want to review when switching back during an active session. Background idle clearing aligns with the "reclaim when nobody's looking" philosophy: the user is not present to notice the loss of scrollback, and any relevant output will resume flowing when they return.
+
+**Behavior:**
+- Clearing fires once per background idle entry, 60s after blur
+- All mounted `TerminalView` instances clear simultaneously via the broadcast CustomEvent
+- Historical scrollback is lost; only new PTY output appears after the user returns
+- The PTY session itself remains alive on the server; only the frontend buffer is cleared
+
+**Estimated savings:** 1-3MB per terminal instance during background idle.
+>>>>>>> origin/main
 
 ## New Files
 
@@ -256,11 +274,11 @@ This is implemented in the terminal tab switching logic, not as a timer-based ap
 | `apps/server/src/store/database.ts` | Add `cache_size` and `mmap_size` PRAGMAs |
 | `apps/server/src/container.ts` | Register `MemoryPressureService` |
 | `apps/server/src/services/agent-service.ts` | Call `markActive`/`markIdle` on agent lifecycle |
-| `apps/server/src/transport/ws-server.ts` | Add `memory.setBackground` RPC handler |
+| `apps/server/src/transport/ws-router.ts` | Add `memory.setBackground` RPC handler |
 | `apps/web/src/workers/shiki.worker.ts` | Switch from `shiki/bundle/full` to `shiki/core` |
 | `apps/web/src/app/App.tsx` | Mount `useIdleReclamation` hook |
 | `apps/web/src/stores/threadStore.ts` | Add `clearToolCallRecordCache` action |
-| `apps/web/src/components/terminal/TerminalView.tsx` | Clear scrollback on tab switch |
+| `apps/web/src/components/terminal/TerminalView.tsx` | Clear scrollback after 60s background idle |
 
 ## Estimated Impact
 
@@ -276,7 +294,7 @@ This is implemented in the terminal tab switching logic, not as a timer-based ap
 |------|-----------|
 | `--max-old-space-size=96` too tight during 5 concurrent agents | Monitor OOM crashes; increase to 128 if needed. Each agent session uses ~5-10MB. |
 | `global.gc()` causes noticeable pause | Only called during verified idle (no agents, no user interaction). Minor GC takes 5-20ms; full GC 20-50ms. |
-| SQLite cache reduction slows queries | 2MB cache with simple key-lookup patterns gives >95% hit rate. Profile with `.pragma("cache_hit_rate")` if needed. |
+| SQLite cache reduction slows queries | 2MB cache with simple key-lookup patterns gives >95% hit rate. Validate by varying `PRAGMA cache_size` / `PRAGMA mmap_size` and measuring query latency; use `sqlite3_db_status(SQLITE_DBSTATUS_CACHE_HIT / CACHE_MISS)` via a native addon or the memstat extension for precise counters. |
 | Shiki core import breaks language loading | Existing on-demand loading pattern already works; the full bundle just pre-registers grammars we never use. |
 | Terminal clear loses scrollback | Scrollback is only 500 lines; content comes from PTY output which continues to flow. Users can scroll up after re-focus. |
 

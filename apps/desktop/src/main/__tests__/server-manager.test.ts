@@ -57,11 +57,20 @@ vi.mock("crypto", () => ({
   randomUUID: vi.fn().mockReturnValue("mock-auth-token"),
 }));
 
+vi.mock("fs", () => ({
+  readFileSync: vi.fn(() => {
+    const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    throw err;
+  }),
+}));
+
 // Mock fetch for health check
 const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
 import { utilityProcess } from "electron";
+import { readFileSync } from "fs";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -75,6 +84,14 @@ describe("ServerManager", () => {
     refs.resetExitCallback();
     manager = new ServerManager();
 
+    // Reset readFileSync fully (clears queued once-returns) then restore
+    // the default throwing implementation so it simulates a missing file.
+    vi.mocked(readFileSync).mockReset().mockImplementation(() => {
+      const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    });
+
     // Mock fetch to simulate server health
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -84,6 +101,7 @@ describe("ServerManager", () => {
   afterEach(() => {
     manager.shutdown();
     globalThis.fetch = originalFetch;
+    delete process.env.MCODE_SERVER_HEAP_MB;
   });
 
   it("starts the server by forking a utility process", async () => {
@@ -107,12 +125,9 @@ describe("ServerManager", () => {
     const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
     const opts = forkCall[2] as Record<string, unknown>;
     const env = opts.env as Record<string, string>;
-    // utilityProcess does not need ELECTRON_RUN_AS_NODE; verify it is not
-    // explicitly added beyond whatever process.env already contains.
     expect(env.MCODE_PORT).toBe("19400");
     expect(env.MCODE_AUTH_TOKEN).toBe("mock-auth-token");
     expect(env.MCODE_MODE).toBe("desktop");
-    // stdio should be "pipe" instead of the old IPC array
     expect(opts.stdio).toBe("pipe");
   });
 
@@ -133,12 +148,10 @@ describe("ServerManager", () => {
 
     const port = manager.createStreamPort();
 
-    // Should have called postMessage with the stream-port message and port2
     expect(refs.mockUtilityProcess.postMessage).toHaveBeenCalledWith(
       { type: "stream-port" },
       expect.any(Array),
     );
-    // Should return port1 (the renderer-side port)
     expect(port).toBeDefined();
     expect(port).toHaveProperty("postMessage");
   });
@@ -152,14 +165,81 @@ describe("ServerManager", () => {
   it("handles utility process exit by clearing serverProcess reference", async () => {
     await manager.start();
 
-    // Simulate the utility process exiting
     const exitCb = refs.getExitCallback();
     expect(exitCb).toBeDefined();
     exitCb!(0);
 
-    // After exit, shutdown should be a no-op (no kill call)
     refs.mockUtilityProcess.kill.mockClear();
     manager.shutdown();
     expect(refs.mockUtilityProcess.kill).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // V8 heap flags in execArgv
+  // -----------------------------------------------------------------------
+
+  it("passes V8 heap flags in execArgv with default 96", async () => {
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const execArgv = forkCall[2]?.execArgv as string[];
+    expect(execArgv).toContain("--max-old-space-size=96");
+    expect(execArgv).toContain("--max-semi-space-size=2");
+    expect(execArgv).toContain("--expose-gc");
+    // --import tsx is NOT in execArgv; handled by entry.mjs bootstrap
+    expect(execArgv).not.toContain("--import");
+  });
+
+  it("reads heapMb from settings.json when file exists", async () => {
+    vi.mocked(readFileSync).mockReturnValueOnce(
+      JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
+    );
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const execArgv = forkCall[2]?.execArgv as string[];
+    expect(execArgv).toContain("--max-old-space-size=1024");
+  });
+
+  it("uses MCODE_SERVER_HEAP_MB env var over settings.json", async () => {
+    process.env.MCODE_SERVER_HEAP_MB = "2048";
+    vi.mocked(readFileSync).mockReturnValueOnce(
+      JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
+    );
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const execArgv = forkCall[2]?.execArgv as string[];
+    expect(execArgv).toContain("--max-old-space-size=2048");
+  });
+
+  it("falls back to default when settings.json has invalid heapMb", async () => {
+    vi.mocked(readFileSync).mockReturnValueOnce(
+      JSON.stringify({ server: { memory: { heapMb: 10 } } }),
+    );
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const execArgv = forkCall[2]?.execArgv as string[];
+    expect(execArgv).toContain("--max-old-space-size=96");
+  });
+
+  // -----------------------------------------------------------------------
+  // onUnexpectedExit callback
+  // -----------------------------------------------------------------------
+
+  it("calls onUnexpectedExit when server exits without shutdown", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCb = refs.getExitCallback();
+    exitCb!(1);
+    expect(onCrash).toHaveBeenCalledWith(1);
+  });
+
+  it("does not call onUnexpectedExit after shutdown", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    manager.shutdown();
+    const exitCb = refs.getExitCallback();
+    exitCb!(0);
+    expect(onCrash).not.toHaveBeenCalled();
   });
 });

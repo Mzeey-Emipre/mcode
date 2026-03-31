@@ -11,8 +11,12 @@ export class PortPush {
     return this.port !== null;
   }
 
-  /** Attach a MessagePort for sending push events. */
+  /** Attach a MessagePort for sending push events. Closes any existing port. */
   attach(port: MessagePortLike): void {
+    if (this.port === port) return;
+    if (this.port) {
+      try { this.port.close(); } catch { /* already closed */ }
+    }
     this.port = port;
   }
 
@@ -32,6 +36,7 @@ export class PortPush {
     } catch {
       // Port may have been closed; detach silently.
       // WebSocket fallback will deliver the event.
+      try { this.port?.close(); } catch { /* already closed */ }
       this.port = null;
     }
   }

@@ -38,6 +38,18 @@ export class PortEventSource {
       pushEmitter.emit(msg.channel, msg.data);
     };
   }
+
+  /**
+   * Deactivate the port source and remove all suppressed channels.
+   * Call when the MessagePort disconnects or the app reconnects via WebSocket.
+   */
+  deactivate(): void {
+    for (const ch of this.channels) {
+      suppressedPushChannels.delete(ch);
+    }
+    this.channels.clear();
+    this.active = false;
+  }
 }
 
 /** Singleton port event source. */

@@ -42,8 +42,9 @@ playwright-report/
 test-results/
 apps/web/e2e/screenshots/
 
-# Plans (local working docs)
+# Plans and superpowers (local working docs)
 docs/plans/
+docs/superpowers/
 
 # Build cache artifacts
 *.timestamp-*.mjs

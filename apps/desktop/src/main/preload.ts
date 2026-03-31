@@ -5,21 +5,29 @@
  * and the server connection URL.
  */
 
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 /**
  * Stream port callback registry.
  * The preload receives a MessagePort via webContents.postMessage('stream-port')
  * and forwards messages to the registered callback in the renderer world.
+ *
+ * Messages arriving before the callback is registered are buffered and
+ * flushed in FIFO order once onStreamEvent is called.
  */
 let streamCallback: ((data: unknown) => void) | null = null;
+const streamQueue: unknown[] = [];
 
 ipcRenderer.on("stream-port", (event) => {
   const port = event.ports[0];
   if (!port) return;
 
   port.onmessage = (e: MessageEvent) => {
-    streamCallback?.(e.data);
+    if (streamCallback) {
+      streamCallback(e.data);
+    } else {
+      streamQueue.push(e.data);
+    }
   };
   port.start();
 });
@@ -68,5 +76,23 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   /** Register a callback for streaming events received via MessagePort. */
   onStreamEvent: (callback: (data: unknown) => void): void => {
     streamCallback = callback;
+    // Flush any messages that arrived before the callback was registered
+    while (streamQueue.length > 0) {
+      callback(streamQueue.shift()!);
+    }
+  },
+
+  /** Clear Blink's in-memory resource caches (images, scripts, CSS).
+   * Typically called after a thread switch to reclaim memory. */
+  clearRendererCache: (): void => webFrame.clearCache(),
+
+  /** Return total bytes held in Blink's resource cache (images, scripts, CSS, fonts). */
+  getRendererCacheBytes: (): number => {
+    const { images, scripts, cssStyleSheets, xslStyleSheets, fonts, other } =
+      webFrame.getResourceUsage();
+    return (
+      images.size + scripts.size + cssStyleSheets.size +
+      xslStyleSheets.size + fonts.size + other.size
+    );
   },
 });

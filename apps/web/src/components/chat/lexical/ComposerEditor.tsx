@@ -35,8 +35,10 @@ interface ComposerEditorProps {
   onPopupKeyDown?: (key: string) => boolean;
 }
 
+const COMPOSER_MIN_HEIGHT = "80px";
+
 const EDITOR_THEME = {
-  paragraph: "min-h-[1.5em]",
+  paragraph: `min-h-[${COMPOSER_MIN_HEIGHT}]`,
 };
 
 /** Internal plugin that exposes the editor instance via ref. */
@@ -111,7 +113,7 @@ export function ComposerEditor({
                   {placeholder}
                 </div>
               }
-              style={{ minHeight: "1.5em", maxHeight: "200px", overflowY: "auto" }}
+              style={{ minHeight: COMPOSER_MIN_HEIGHT, maxHeight: "30vh", overflowY: "auto" }}
             />
           }
           ErrorBoundary={LexicalErrorBoundary}

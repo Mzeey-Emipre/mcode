@@ -188,6 +188,8 @@ function createWindow(): void {
     show: false,
     backgroundColor: "#0a0a0f",
     autoHideMenuBar: true,
+    // Keep window hidden until first paint to eliminate the blank white flash.
+    show: false,
     webPreferences: {
       preload: join(__dirname, "../preload/preload.cjs"),
       contextIsolation: true,
@@ -200,6 +202,18 @@ function createWindow(): void {
   });
 
   mainWindow.setMenuBarVisibility(false);
+
+  // Show the window as soon as the first frame is painted.
+  // Fallback timeout ensures the window becomes visible even if the
+  // ready-to-show event never fires (e.g. renderer crash before first paint).
+  const showFallback = setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+  }, 3000);
+  mainWindow.once("ready-to-show", () => {
+    clearTimeout(showFallback);
+    mainWindow?.show();
+  });
+  mainWindow.once("closed", () => clearTimeout(showFallback));
 
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -428,12 +442,53 @@ function setupCloseHandler(): void {
 // App lifecycle
 // ---------------------------------------------------------------------------
 
+// Disable GPU process - the app renders text and markdown only, no WebGL or
+// hardware-accelerated graphics. Eliminates the ~70 MB GPU process.
+// Must be called before app.whenReady().
+app.disableHardwareAcceleration();
+
+// Pre-cache compiled V8 bytecode to disk so subsequent launches skip
+// re-parsing the renderer bundle (mirrors VS Code's approach).
+app.commandLine.appendSwitch("v8-cache-options", "code");
+
+// Instruct Blink to aggressively evict memory caches under idle conditions.
+app.commandLine.appendSwitch("aggressive-cache-discard");
+
+// The renderer communicates via a local WebSocket - there is no HTTP content
+// worth persisting to disk. Remove the disk cache overhead.
+app.commandLine.appendSwitch("disable-disk-cache");
+
+// Cap renderer V8 heap at 128 MB and young-generation semi-space at 2 MB
+// to prevent over-allocation during markdown rendering and syntax highlighting.
+app.commandLine.appendSwitch(
+  "js-flags",
+  "--max-old-space-size=128 --max-semi-space-size=2",
+);
+
 app.whenReady().then(async () => {
   console.log(`Mcode v${app.getVersion()} starting`);
 
   // Start the server child process
   const { port } = await serverManager.start();
   console.log(`Server started on port ${port}`);
+
+  // Show a Restart / Quit dialog if the server crashes unexpectedly
+  serverManager.onUnexpectedExit = async (code) => {
+    if (!mainWindow) return;
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "error",
+      title: "Server crashed",
+      message: `The Mcode server exited unexpectedly (code ${code ?? "unknown"}).`,
+      buttons: ["Restart", "Quit"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response === 0) {
+      await serverManager.restart();
+    } else {
+      app.quit();
+    }
+  };
 
   // Register custom protocol for attachment files
   registerAttachmentProtocol();

@@ -3,6 +3,7 @@ import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { getTransport } from "@/transport";
 import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
+import { CLEAR_TERMINAL_BUFFERS_EVENT } from "@/hooks/useIdleReclamation";
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
 
@@ -170,6 +171,17 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       fitAddonRef.current.fit();
     }
   }, [visible]);
+
+  // Clear scrollback buffer during background idle to release memory
+  useEffect(() => {
+    const handleClearBuffers = () => {
+      termRef.current?.clear();
+    };
+    window.addEventListener(CLEAR_TERMINAL_BUFFERS_EVENT, handleClearBuffers);
+    return () => {
+      window.removeEventListener(CLEAR_TERMINAL_BUFFERS_EVENT, handleClearBuffers);
+    };
+  }, []);
 
   return (
     <div

@@ -1,3 +1,6 @@
+import { useSettingsStore } from "@/stores/settingsStore";
+import type { ReasoningLevel } from "@mcode/contracts";
+
 export interface ModelProvider {
   id: string;
   name: string;
@@ -60,6 +63,28 @@ export function findProviderForModel(modelId: string): ModelProvider | undefined
   return MODEL_PROVIDERS.find((p) => p.models.some((m) => m.id === modelId));
 }
 
+/** @deprecated Use `getDefaultModelId()` for settings-aware defaults. */
 export function getDefaultModel(): ModelDefinition {
   return MODEL_PROVIDERS[0].models[1]; // Claude Sonnet 4.6
+}
+
+/**
+ * Return the default model ID from user settings, falling back to
+ * Claude Sonnet 4.6 when settings have not loaded yet.
+ */
+export function getDefaultModelId(): string {
+  const id = useSettingsStore.getState().settings.model.defaults.id;
+  return findModelById(id) ? id : "claude-sonnet-4-6";
+}
+
+/** Valid reasoning levels for fallback validation. */
+const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high"];
+
+/**
+ * Return the default reasoning level from user settings, falling back
+ * to "high" when settings have not loaded or the stored value is invalid.
+ */
+export function getDefaultReasoningLevel(): ReasoningLevel {
+  const level = useSettingsStore.getState().settings.model.defaults.reasoning;
+  return VALID_REASONING_LEVELS.includes(level) ? level : "high";
 }

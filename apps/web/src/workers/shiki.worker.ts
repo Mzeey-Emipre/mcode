@@ -1,4 +1,4 @@
-import { createHighlighter } from "shiki/bundle/full";
+import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
 /** Message sent from main thread to request highlighting. */
@@ -16,25 +16,79 @@ interface HighlightResponse {
   error?: string;
 }
 
-/** Shiki language parameter type extracted from the bundle's loadLanguage signature. */
-type ShikiLang = Parameters<Awaited<ReturnType<typeof createHighlighter>>["loadLanguage"]>[0];
+/** Shiki language parameter type derived from the core highlighter's loadLanguage signature. */
+type ShikiLang = Parameters<
+  Awaited<ReturnType<typeof createHighlighterCore>>["loadLanguage"]
+>[0];
 
-/** In-flight language load promises, keyed by language name. Coalesces concurrent loads for the same language. */
+/**
+ * Explicit grammar imports for languages commonly seen in agent output.
+ * Each entry is a lazy import so the bundler code-splits grammars into
+ * separate chunks. Languages not in this map fall back to plain text.
+ * Adding a new language is a one-line addition.
+ */
+const LANG_IMPORTS: Record<string, () => Promise<{ default: unknown }>> = {
+  typescript: () => import("@shikijs/langs/typescript"),
+  javascript: () => import("@shikijs/langs/javascript"),
+  json: () => import("@shikijs/langs/json"),
+  bash: () => import("@shikijs/langs/bash"),
+  shell: () => import("@shikijs/langs/shell"),
+  markdown: () => import("@shikijs/langs/markdown"),
+  python: () => import("@shikijs/langs/python"),
+  dockerfile: () => import("@shikijs/langs/dockerfile"),
+  yaml: () => import("@shikijs/langs/yaml"),
+  css: () => import("@shikijs/langs/css"),
+  html: () => import("@shikijs/langs/html"),
+  sql: () => import("@shikijs/langs/sql"),
+  rust: () => import("@shikijs/langs/rust"),
+  go: () => import("@shikijs/langs/go"),
+  diff: () => import("@shikijs/langs/diff"),
+  toml: () => import("@shikijs/langs/toml"),
+  java: () => import("@shikijs/langs/java"),
+  csharp: () => import("@shikijs/langs/csharp"),
+  php: () => import("@shikijs/langs/php"),
+  cpp: () => import("@shikijs/langs/cpp"),
+  swift: () => import("@shikijs/langs/swift"),
+  kotlin: () => import("@shikijs/langs/kotlin"),
+};
+
+/**
+ * Common markdown fence aliases mapped to their canonical Shiki language names.
+ * Prevents common short-forms (e.g. `ts`, `py`) from silently falling back to plain text.
+ */
+const LANG_ALIASES: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  py: "python",
+  sh: "shell",
+  zsh: "shell",
+  yml: "yaml",
+  cs: "csharp",
+  "c++": "cpp",
+  kt: "kotlin",
+};
+
+/** In-flight language load promises. Coalesces concurrent loads for the same language. */
 const languageLoading = new Map<string, Promise<void>>();
 
-let highlighterPromise: ReturnType<typeof createHighlighter> | null = null;
+let highlighterPromise: ReturnType<typeof createHighlighterCore> | null = null;
 
 /**
  * Returns the singleton highlighter, creating it on first call.
- * Uses shiki/bundle/full for broad language coverage (~200 languages) with the
- * JS RegExp engine (no WASM binary, ~4% the size of Oniguruma).
+ * Uses shiki/core with the JS RegExp engine (no WASM). Only themes load at
+ * startup; grammars are imported on demand from @shikijs/langs.
  * If creation fails, the cached promise is cleared so the next request retries.
  */
 function getHighlighter() {
   if (!highlighterPromise) {
-    highlighterPromise = createHighlighter({
+    highlighterPromise = createHighlighterCore({
       engine: createJavaScriptRegexEngine(),
-      themes: ["github-dark", "github-light"],
+      themes: [
+        import("@shikijs/themes/github-dark"),
+        import("@shikijs/themes/github-light"),
+      ],
       langs: [],
     }).catch((err) => {
       highlighterPromise = null;
@@ -49,32 +103,45 @@ self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
 
   try {
     const highlighter = await getHighlighter();
-
-    // Load language on demand. shiki/bundle/full resolves these via static
-    // imports so Vite can bundle them. Unknown languages throw and we fall back.
     const loadedLangs = highlighter.getLoadedLanguages();
-    let lang = language;
+    // Resolve common markdown aliases (e.g. "ts" -> "typescript") before lookup
+    let lang = LANG_ALIASES[language] ?? language;
 
-    if (!loadedLangs.includes(language)) {
-      // Coalesce concurrent loads for the same language via shared promise
-      let loadPromise = languageLoading.get(language);
-      if (!loadPromise) {
-        loadPromise = highlighter
-          .loadLanguage(language as ShikiLang)
-          .finally(() => languageLoading.delete(language));
-        languageLoading.set(language, loadPromise);
-      }
-      try {
-        await loadPromise;
-      } catch {
-        lang = "text";
-        if (!highlighter.getLoadedLanguages().includes("text")) {
-          await highlighter.loadLanguage("text" as ShikiLang);
+    if (!loadedLangs.includes(lang)) {
+      const importFn = LANG_IMPORTS[lang];
+      if (importFn) {
+        // Coalesce concurrent loads for the same language via shared promise
+        let loadPromise = languageLoading.get(lang);
+        if (!loadPromise) {
+          loadPromise = importFn()
+            .then((mod) =>
+              highlighter.loadLanguage(mod.default as ShikiLang),
+            )
+            .finally(() => languageLoading.delete(lang));
+          languageLoading.set(lang, loadPromise);
         }
+        try {
+          await loadPromise;
+        } catch {
+          lang = "text";
+        }
+      } else {
+        lang = "text";
       }
     }
 
-    const html = highlighter.codeToHtml(code, { lang, theme });
+    // codeToHtml may throw if "text" is not a registered language in shiki/core.
+    // Fall back to pre-escaped HTML in that case.
+    let html: string;
+    try {
+      html = highlighter.codeToHtml(code, { lang, theme });
+    } catch {
+      const escaped = code
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      html = `<pre class="shiki"><code>${escaped}</code></pre>`;
+    }
 
     self.postMessage({ id, html } satisfies HighlightResponse);
   } catch (err) {

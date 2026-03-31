@@ -31,7 +31,7 @@ export function BranchNameInput({
 
   if (namingMode === "auto") {
     return (
-      <span className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-muted-foreground/50">
+      <span className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-muted-foreground/50">
         <GitBranch size={11} />
         {autoPreview}
       </span>
@@ -47,7 +47,8 @@ export function BranchNameInput({
         value={customValue}
         onChange={(e) => onCustomChange(e.target.value)}
         placeholder="branch-name"
-        className="h-auto w-[160px] rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus-visible:border-primary"
+        size="xs"
+        className="w-[160px] text-foreground placeholder:text-muted-foreground/50 focus-visible:border-primary"
       />
     </div>
   );

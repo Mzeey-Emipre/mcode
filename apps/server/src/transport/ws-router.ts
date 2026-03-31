@@ -33,6 +33,7 @@ import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type { SnapshotService } from "../services/snapshot-service";
 import type { SettingsService } from "../services/settings-service";
 import type { GitWatcherService } from "../services/git-watcher-service";
+import type { MemoryPressureService } from "../services/memory-pressure-service";
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
@@ -52,6 +53,8 @@ export interface RouterDeps {
   settingsService: SettingsService;
   /** Watcher service for tracking per-workspace HEAD file changes. */
   gitWatcherService: GitWatcherService;
+  /** Manages lifecycle-aware memory pressure (idle timers, SQLite cache, GC). */
+  memoryPressureService: MemoryPressureService;
 }
 
 /**
@@ -217,6 +220,7 @@ async function dispatch(
         params.permissionMode ?? "default",
         params.model,
         params.attachments,
+        params.reasoningLevel,
       );
       return;
     case "agent.createAndSend":
@@ -229,6 +233,7 @@ async function dispatch(
         params.branch,
         params.existingWorktreePath,
         params.attachments,
+        params.reasoningLevel,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);
@@ -346,6 +351,15 @@ async function dispatch(
       return deps.settingsService.get();
     case "settings.update":
       return deps.settingsService.update(params);
+
+    // Memory pressure
+    case "memory.setBackground":
+      if (params.background) {
+        deps.memoryPressureService.markBackground();
+      } else {
+        deps.memoryPressureService.markForeground();
+      }
+      return;
 
     // App
     case "app.version":

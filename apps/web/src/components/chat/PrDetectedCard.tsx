@@ -1,5 +1,7 @@
 import { GitPullRequest, X, GitFork } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
+/** Props for {@link PrDetectedCard}, describing a detected GitHub PR. */
 interface PrDetectedCardProps {
   number: number;
   title: string;
@@ -23,7 +25,7 @@ export function PrDetectedCard({
   return (
     <div className="mx-4 mt-2 flex items-center justify-between rounded-lg border border-border bg-card p-2.5 text-xs shadow-sm">
       <div className="flex items-center gap-2 truncate">
-        <GitPullRequest size={14} className="shrink-0 text-green-500" />
+        <GitPullRequest size={14} className="shrink-0 text-primary/70" />
         <div className="truncate">
           <span className="font-medium">
             #{number} {title}
@@ -34,20 +36,13 @@ export function PrDetectedCard({
         </div>
       </div>
       <div className="flex items-center gap-1 shrink-0 ml-2">
-        <button
-          onClick={onReview}
-          disabled={loading}
-          className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
+        <Button size="xs" onClick={onReview} disabled={loading}>
           <GitFork size={10} />
           Review in worktree
-        </button>
-        <button
-          onClick={onDismiss}
-          className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
+        </Button>
+        <Button variant="ghost" size="icon-xs" onClick={onDismiss} aria-label="Dismiss" className="text-muted-foreground">
           <X size={12} />
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -68,4 +68,19 @@ describe("PortEventSource", () => {
 
     expect(suppressedPushChannels.has("agent.event")).toBe(true);
   });
+
+  it("deactivate clears suppressed channels and resets state", () => {
+    const callback = source.getCallback();
+    callback({ channel: "agent.event", data: {} });
+    callback({ channel: "terminal.data", data: {} });
+
+    expect(source.isActive).toBe(true);
+    expect(suppressedPushChannels.size).toBe(2);
+
+    source.deactivate();
+
+    expect(source.isActive).toBe(false);
+    expect(source.suppressedChannels.size).toBe(0);
+    expect(suppressedPushChannels.size).toBe(0);
+  });
 });

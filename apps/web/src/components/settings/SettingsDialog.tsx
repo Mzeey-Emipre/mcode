@@ -10,12 +10,21 @@ import {
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Settings } from "lucide-react";
+import type { SettingsProviderId } from "@mcode/contracts";
+import { MODEL_PROVIDERS } from "@/lib/model-registry";
+
+/** Flat list of all selectable models across providers. */
+const ALL_MODELS = MODEL_PROVIDERS.flatMap((p) =>
+  p.comingSoon ? [] : p.models,
+);
 
 /** Settings dialog for configuring user preferences. */
 export function SettingsDialog() {
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
   const notifications = useSettingsStore((s) => s.settings.notifications.enabled);
   const maxAgents = useSettingsStore((s) => s.settings.agent.maxConcurrent);
+  const defaultModelId = useSettingsStore((s) => s.settings.model.defaults.id);
+  const defaultReasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
   const update = useSettingsStore((s) => s.update);
 
   // Local slider state: tracks the in-progress value without triggering RPC on
@@ -42,6 +51,59 @@ export function SettingsDialog() {
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-6 py-4">
+          {/* Default Model */}
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-foreground">
+              Default Model
+            </label>
+            <p className="text-xs text-muted-foreground">
+              New threads start with this model. Sending a message with a different model updates this automatically.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {ALL_MODELS.map((m) => (
+                <Button
+                  key={m.id}
+                  size="sm"
+                  variant={defaultModelId === m.id ? "default" : "secondary"}
+                  onClick={() =>
+                    update({
+                      model: {
+                        defaults: {
+                          id: m.id,
+                          provider: m.providerId as SettingsProviderId,
+                        },
+                      },
+                    })
+                  }
+                >
+                  {m.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Default Reasoning Level */}
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-foreground">
+              Default Reasoning
+            </label>
+            <div className="flex gap-2">
+              {(["low", "medium", "high"] as const).map((level) => (
+                <Button
+                  key={level}
+                  size="sm"
+                  variant={defaultReasoning === level ? "default" : "secondary"}
+                  onClick={() =>
+                    update({ model: { defaults: { reasoning: level } } })
+                  }
+                  className="capitalize"
+                >
+                  {level}
+                </Button>
+              ))}
+            </div>
+          </div>
+
           {/* Theme */}
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium text-foreground">

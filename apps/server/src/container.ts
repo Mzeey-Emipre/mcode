@@ -33,6 +33,7 @@ import { AttachmentService } from "./services/attachment-service";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { GitWatcherService } from "./services/git-watcher-service";
+import { MemoryPressureService } from "./services/memory-pressure-service";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(): typeof container {
@@ -171,6 +172,11 @@ export function setupContainer(): typeof container {
   container.register(
     GitWatcherService,
     { useClass: GitWatcherService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    MemoryPressureService,
+    { useClass: MemoryPressureService },
     { lifecycle: Lifecycle.Singleton },
   );
 

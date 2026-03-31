@@ -26,6 +26,7 @@ import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { GitWatcherService } from "./services/git-watcher-service";
+import { MemoryPressureService } from "./services/memory-pressure-service";
 import { WorkspaceRepo } from "./repositories/workspace-repo";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
@@ -63,17 +64,22 @@ const turnSnapshotRepo = container.resolve(TurnSnapshotRepo);
 const snapshotService = container.resolve(SnapshotService);
 const settingsService = container.resolve(SettingsService);
 const gitWatcherService = container.resolve(GitWatcherService);
+const memoryPressureService = container.resolve(MemoryPressureService);
 const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup watcher initialization
 const db = container.resolve<Database.Database>("Database");
 
 const portPush = new PortPush();
 
+/** Electron utilityProcess parentPort shape (only present when running as a utility process). */
+interface ParentPort {
+  on(event: string, listener: (e: { data: unknown; ports: unknown[] }) => void): void;
+}
+
 // Listen for MessagePort from parent utility process.
 // `parentPort` exists only when running inside Electron's utilityProcess.
-const parentPort = (process as NodeJS.Process & { parentPort?: {
-  on(event: string, listener: (e: { data: unknown; ports: unknown[] }) => void): void;
-  start(): void;
-} }).parentPort;
+// Calling start() is not needed: Electron auto-starts the port when the
+// first "message" listener is added.
+const parentPort = (process as NodeJS.Process & { parentPort?: ParentPort }).parentPort;
 
 if (parentPort) {
   parentPort.on("message", (e: { data: unknown; ports: unknown[] }) => {
@@ -83,7 +89,6 @@ if (parentPort) {
       logger.info("Stream MessagePort attached");
     }
   });
-  parentPort.start();
 }
 
 // Wire up PTY sender to broadcast push events
@@ -170,6 +175,7 @@ const { httpServer, wss } = createWsServer({
   snapshotService,
   settingsService,
   gitWatcherService,
+  memoryPressureService,
 });
 
 /**
@@ -225,14 +231,17 @@ async function shutdown(): Promise<void> {
   // 7. Dispose all git HEAD file watchers
   gitWatcherService.dispose();
 
-  // 8. Close all WebSocket clients and shut down the WS server
+  // 8. Dispose memory pressure timers
+  memoryPressureService.dispose();
+
+  // 9. Close all WebSocket clients and shut down the WS server
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) {
       client.close(1001, "Server shutting down");
     }
   }
 
-  // 9. Await WS and HTTP server close so pending handshakes can finish
+  // 10. Await WS and HTTP server close so pending handshakes can finish
   const wssClose = new Promise<void>((res, rej) => {
     wss.close((err) => (err ? rej(err) : res()));
   });
@@ -242,7 +251,7 @@ async function shutdown(): Promise<void> {
 
   await Promise.allSettled([wssClose, httpClose]);
 
-  // 10. Close database
+  // 11. Close database
   try {
     db.close();
   } catch {
