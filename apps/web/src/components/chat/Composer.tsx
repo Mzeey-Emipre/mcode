@@ -893,20 +893,22 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           {/* Reasoning level */}
           <div className="relative">
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowReasoningPicker(!showReasoningPicker);
-                  }}
-                  className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
-                >
-                  <span className="text-sm">{reasoning.charAt(0).toUpperCase() + reasoning.slice(1)}</span>
-                  <ChevronDown size={11} />
-                </Button>
-              </TooltipTrigger>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowReasoningPicker(!showReasoningPicker);
+                    }}
+                    className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+                  >
+                    <span className="text-sm">{reasoning.charAt(0).toUpperCase() + reasoning.slice(1)}</span>
+                    <ChevronDown size={11} />
+                  </Button>
+                }
+              />
               <TooltipContent>Reasoning level</TooltipContent>
             </Tooltip>
             {showReasoningPicker && (
@@ -935,41 +937,45 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
           {/* Chat / Plan toggle */}
           <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => {
-                  const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
-                  setMode(next);
-                  if (threadId) setThreadSettings(threadId, { interactionMode: next });
-                }}
-                className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
-              >
-                {mode === INTERACTION_MODES.CHAT ? <MessageSquare size={14} /> : <FileEdit size={14} />}
-                <span className="text-sm">{mode === INTERACTION_MODES.CHAT ? "Chat" : "Plan"}</span>
-              </Button>
-            </TooltipTrigger>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => {
+                    const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
+                    setMode(next);
+                    if (threadId) setThreadSettings(threadId, { interactionMode: next });
+                  }}
+                  className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+                >
+                  {mode === INTERACTION_MODES.CHAT ? <MessageSquare size={14} /> : <FileEdit size={14} />}
+                  <span className="text-sm">{mode === INTERACTION_MODES.CHAT ? "Chat" : "Plan"}</span>
+                </Button>
+              }
+            />
             <TooltipContent>{mode === INTERACTION_MODES.CHAT ? "Chat mode" : "Plan mode"}</TooltipContent>
           </Tooltip>
 
           {/* Full access / Supervised toggle */}
           <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => {
-                  const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
-                  setAccess(next);
-                  if (threadId) setThreadSettings(threadId, { permissionMode: next });
-                }}
-                className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
-              >
-                {access === PERMISSION_MODES.FULL ? <Unlock size={14} /> : <Lock size={14} />}
-                <span className="text-sm">{access === PERMISSION_MODES.FULL ? "Full access" : "Supervised"}</span>
-              </Button>
-            </TooltipTrigger>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => {
+                    const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
+                    setAccess(next);
+                    if (threadId) setThreadSettings(threadId, { permissionMode: next });
+                  }}
+                  className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+                >
+                  {access === PERMISSION_MODES.FULL ? <Unlock size={14} /> : <Lock size={14} />}
+                  <span className="text-sm">{access === PERMISSION_MODES.FULL ? "Full access" : "Supervised"}</span>
+                </Button>
+              }
+            />
             <TooltipContent>{access === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode"}</TooltipContent>
           </Tooltip>
 

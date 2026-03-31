@@ -62,12 +62,14 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="xs" className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6">
-          <FolderOpen size={12} />
-          <span>Open</span>
-        </Button>
-      </DropdownMenuTrigger>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="ghost" size="xs" className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6">
+            <FolderOpen size={12} />
+            <span>Open</span>
+          </Button>
+        }
+      />
 
       <DropdownMenuContent align="end" sideOffset={4} className="min-w-[160px]">
         {entries.map((entry) => (

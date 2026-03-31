@@ -1,5 +1,5 @@
 import { memo, useMemo, useState, useCallback, useRef, useEffect } from "react";
-import type { Message, StoredAttachment } from "@/transport";
+import type { Message } from "@/transport";
 import { FileText, File, ImageIcon, RotateCcw, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarkdownContent } from "./MarkdownContent";
@@ -59,7 +59,7 @@ function ImageThumbnail({ src, name, single }: { src: string; name: string; sing
 /** Copy button with check feedback, visible on parent hover. */
 function CopyButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
@@ -85,48 +85,6 @@ function CopyButton({ content }: { content: string }) {
     </button>
   );
 }
-
-/** Renders image thumbnails and file badges for message attachments. */
-const AttachmentDisplay = memo(function AttachmentDisplay({
-  attachments,
-  threadId,
-}: {
-  attachments: StoredAttachment[];
-  threadId: string;
-}) {
-  const images = useMemo(() => attachments.filter((a) => a.mimeType.startsWith("image/")), [attachments]);
-  const files = useMemo(() => attachments.filter((a) => !a.mimeType.startsWith("image/")), [attachments]);
-
-  return (
-    <div className="space-y-2">
-      {images.length > 0 && (
-        <div className={cn(
-          "gap-1.5",
-          images.length === 1 ? "flex" : "grid grid-cols-2 max-w-[280px]"
-        )}>
-          {images.map((img) => (
-            <ImageThumbnail
-              key={img.id}
-              src={`mcode-attachment://${threadId}/${img.id}${extFromMime(img.mimeType)}`}
-              name={img.name}
-              single={images.length === 1}
-            />
-          ))}
-        </div>
-      )}
-      {files.map((file) => (
-        <div key={file.id} className="flex items-center gap-1.5 rounded-md bg-primary-foreground/10 px-2 py-1">
-          {file.mimeType === "application/pdf" ? (
-            <FileText size={14} className="text-primary-foreground/70" />
-          ) : (
-            <File size={14} className="text-primary-foreground/70" />
-          )}
-          <span className="truncate text-xs text-primary-foreground/80">{file.name}</span>
-        </div>
-      ))}
-    </div>
-  );
-});
 
 /** Renders a single chat message (system, user, or assistant). Memoized to prevent re-renders when the message ref is unchanged. */
 export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
