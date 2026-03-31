@@ -266,6 +266,7 @@ async function dispatch(
       return deps.messageRepo.listByThread(
         params.threadId,
         params.limit,
+        params.before,
       );
 
     // Files
