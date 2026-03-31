@@ -35,6 +35,7 @@ export type {
 } from "@mcode/contracts";
 
 export type { ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
+export type { PaginatedMessages } from "@mcode/contracts";
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
@@ -100,7 +101,7 @@ export interface McodeTransport {
   syncThreadPrs(workspaceId: string): Promise<Array<{ threadId: string; prNumber: number; prStatus: string }>>;
 
   // Message queries
-  getMessages(threadId: string, limit: number): Promise<Message[]>;
+  getMessages(threadId: string, limit: number, before?: number): Promise<{ messages: Message[]; hasMore: boolean }>;
 
   // Config
   discoverConfig(workspacePath: string): Promise<Record<string, unknown>>;

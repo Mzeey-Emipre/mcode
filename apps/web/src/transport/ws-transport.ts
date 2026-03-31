@@ -285,7 +285,8 @@ export function createWsTransport(
     getActiveAgentCount: () => rpc<number>("agent.activeCount", {}),
 
     // Messages
-    getMessages: (threadId, limit) => rpc<Message[]>("message.list", { threadId, limit }),
+    getMessages: (threadId, limit, before?) =>
+      rpc<{ messages: Message[]; hasMore: boolean }>("message.list", { threadId, limit, before }),
 
     // Config
     discoverConfig: (workspacePath) =>
