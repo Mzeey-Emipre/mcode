@@ -197,17 +197,24 @@ async function dispatch(
       return;
     case "thread.syncPrs": {
       const threads = deps.threadService.list(params.workspaceId);
-      const needsPr = threads.filter((t) => t.pr_number == null);
-      if (needsPr.length === 0) return [];
+      // Check threads without a PR and threads whose PR may have changed state
+      const needsCheck = threads.filter(
+        (t) => t.pr_number == null || (t.pr_status && t.pr_status.toLowerCase() !== "merged" && t.pr_status.toLowerCase() !== "closed"),
+      );
+      if (needsCheck.length === 0) return [];
       const workspace = deps.workspaceService.findById(params.workspaceId);
       if (!workspace) return [];
       const results: Array<{ threadId: string; prNumber: number; prStatus: string }> = [];
       await Promise.allSettled(
-        needsPr.map(async (t) => {
+        needsCheck.map(async (t) => {
           const pr = await deps.githubService.getBranchPr(t.branch, workspace.path);
           if (pr) {
-            deps.threadService.linkPr(t.id, pr.number, pr.state);
-            results.push({ threadId: t.id, prNumber: pr.number, prStatus: pr.state });
+            const stateChanged = t.pr_number == null
+              || t.pr_status?.toLowerCase() !== pr.state.toLowerCase();
+            if (stateChanged) {
+              deps.threadService.linkPr(t.id, pr.number, pr.state);
+              results.push({ threadId: t.id, prNumber: pr.number, prStatus: pr.state });
+            }
           }
         }),
       );

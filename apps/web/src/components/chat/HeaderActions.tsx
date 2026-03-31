@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Github, Terminal } from "lucide-react";
 import { OpenInEditorMenu } from "./OpenInEditorMenu";
 import { useBranchPr } from "@/hooks/useBranchPr";
@@ -22,6 +23,26 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   const cwd = workspace?.path ?? null;
   const shouldPollPr = thread.branch !== "main" && thread.branch !== "master";
   const pr = useBranchPr(shouldPollPr ? thread.branch : null, cwd);
+
+  // Sync polled PR state back to the workspace store so the project tree
+  // icon reflects state changes (e.g. OPEN -> MERGED) in realtime.
+  useEffect(() => {
+    if (!pr) return;
+    const state = useWorkspaceStore.getState();
+    const stored = state.threads.find((t) => t.id === thread.id);
+    if (!stored) return;
+    const stateChanged = stored.pr_status?.toLowerCase() !== pr.state.toLowerCase();
+    const numberChanged = stored.pr_number !== pr.number;
+    if (stateChanged || numberChanged) {
+      useWorkspaceStore.setState((ws) => ({
+        threads: ws.threads.map((t) =>
+          t.id === thread.id
+            ? { ...t, pr_number: pr.number, pr_status: pr.state }
+            : t,
+        ),
+      }));
+    }
+  }, [pr, thread.id]);
 
   const panelVisible = useTerminalStore((s) => s.panelVisible);
   const togglePanel = useTerminalStore((s) => s.togglePanel);
