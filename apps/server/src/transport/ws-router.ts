@@ -197,10 +197,13 @@ async function dispatch(
       return;
     case "thread.syncPrs": {
       const threads = deps.threadService.list(params.workspaceId);
-      /** Returns true if the thread has no linked PR or its PR is still in a non-terminal state. */
-      const isPrMissingOrNonTerminal = (t: { pr_number: number | null; pr_status: string | null }) =>
-        t.pr_number == null || (t.pr_status != null && t.pr_status.toLowerCase() !== "merged" && t.pr_status.toLowerCase() !== "closed");
-      const needsCheck = threads.filter(isPrMissingOrNonTerminal);
+      /** Returns true if the thread has no linked PR, missing status, or a non-terminal PR state. */
+      const needsPrCheck = (t: { pr_number: number | null; pr_status: string | null }) => {
+        if (t.pr_number == null || t.pr_status == null) return true;
+        const s = t.pr_status.toLowerCase();
+        return s !== "merged" && s !== "closed";
+      };
+      const needsCheck = threads.filter(needsPrCheck);
       if (needsCheck.length === 0) return [];
       const workspace = deps.workspaceService.findById(params.workspaceId);
       if (!workspace) return [];
@@ -209,9 +212,9 @@ async function dispatch(
         needsCheck.map(async (t) => {
           const pr = await deps.githubService.getBranchPr(t.branch, workspace.path);
           if (pr) {
-            const stateChanged = t.pr_number == null
-              || t.pr_status?.toLowerCase() !== pr.state.toLowerCase();
-            if (stateChanged) {
+            const numberChanged = t.pr_number !== pr.number;
+            const statusChanged = t.pr_status?.toLowerCase() !== pr.state.toLowerCase();
+            if (numberChanged || statusChanged) {
               deps.threadService.linkPr(t.id, pr.number, pr.state);
               results.push({ threadId: t.id, prNumber: pr.number, prStatus: pr.state });
             }
