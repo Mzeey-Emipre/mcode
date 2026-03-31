@@ -7,15 +7,17 @@ export class LruCache<K, V> {
   private readonly map = new Map<K, V>();
   private readonly capacity: number;
 
+  /**
+   * @param capacity Maximum number of entries to hold. Clamped to a minimum of 1.
+   */
   constructor(capacity: number) {
     this.capacity = Math.max(1, capacity);
   }
 
   /** Retrieve a value, returning undefined on miss. Refreshes access order on hit. */
   get(key: K): V | undefined {
-    const value = this.map.get(key);
-    if (value === undefined) return undefined;
-    // Move to end (most recently used)
+    if (!this.map.has(key)) return undefined;
+    const value = this.map.get(key) as V;
     this.map.delete(key);
     this.map.set(key, value);
     return value;
