@@ -2,7 +2,6 @@ import type {
   McodeTransport,
   Workspace,
   Thread,
-  Message,
   GitBranch,
   WorktreeInfo,
   AttachmentMeta,
@@ -13,6 +12,7 @@ import type {
   ToolCallRecord,
   Settings,
 } from "./types";
+import type { PaginatedMessages } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
@@ -286,7 +286,7 @@ export function createWsTransport(
 
     // Messages
     getMessages: (threadId, limit, before?) =>
-      rpc<Message[]>("message.list", { threadId, limit, ...(before != null ? { before } : {}) }),
+      rpc<PaginatedMessages>("message.list", { threadId, limit, ...(before != null ? { before } : {}) }),
 
     // Config
     discoverConfig: (workspacePath) =>

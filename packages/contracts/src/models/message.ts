@@ -19,3 +19,11 @@ export const MessageSchema = z.object({
 });
 /** Message record from the database. */
 export type Message = z.infer<typeof MessageSchema>;
+
+/** Paginated message list with cursor metadata. */
+export const PaginatedMessagesSchema = z.object({
+  messages: z.array(MessageSchema),
+  hasMore: z.boolean(),
+});
+/** Paginated message response from the server. */
+export type PaginatedMessages = z.infer<typeof PaginatedMessagesSchema>;

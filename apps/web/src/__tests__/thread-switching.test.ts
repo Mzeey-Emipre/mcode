@@ -27,6 +27,10 @@ describe("Thread Switching", () => {
       agentStartTimes: {},
       settingsByThread: {},
       activeSubagentsByThread: {},
+      oldestLoadedSequence: {},
+      hasMoreMessages: {},
+      isLoadingMore: {},
+      loadEpochByThread: {},
     });
     vi.clearAllMocks();
   });
@@ -45,7 +49,7 @@ describe("Thread Switching", () => {
     });
 
     // Use a deferred promise so we can inspect state mid-flight
-    let resolveGetMessages!: (msgs: Message[]) => void;
+    let resolveGetMessages!: (result: { messages: Message[]; hasMore: boolean }) => void;
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockReturnValueOnce(
       new Promise((resolve) => {
         resolveGetMessages = resolve;
@@ -68,7 +72,7 @@ describe("Thread Switching", () => {
       thread_id: "thread-b",
       content: "Thread B message",
     });
-    resolveGetMessages([threadBMsg]);
+    resolveGetMessages({ messages: [threadBMsg], hasMore: false });
     await loadPromise;
 
     // Final state has Thread B's messages
@@ -91,7 +95,7 @@ describe("Thread Switching", () => {
       runningThreadIds: new Set(["thread-b"]),
     });
 
-    let resolveGetMessages!: (msgs: Message[]) => void;
+    let resolveGetMessages!: (result: { messages: Message[]; hasMore: boolean }) => void;
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockReturnValueOnce(
       new Promise((resolve) => {
         resolveGetMessages = resolve;
@@ -108,7 +112,7 @@ describe("Thread Switching", () => {
     expect(midState.persistedToolCallCounts).toEqual({});
     expect(midState.loading).toBe(true);
 
-    resolveGetMessages([]);
+    resolveGetMessages({ messages: [], hasMore: false });
     await loadPromise;
   });
 
@@ -125,7 +129,7 @@ describe("Thread Switching", () => {
       serverMessageIds: { "local-1": "server-1" },
     });
 
-    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messages: [], hasMore: false });
 
     // Act: switch to Thread B
     await useThreadStore.getState().loadMessages("thread-b");
@@ -166,12 +170,12 @@ describe("Thread Switching", () => {
     const threadAMsgs = [
       createMockMessage({ id: "a-1", thread_id: "thread-a", content: "first" }),
     ];
-    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce(threadAMsgs);
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messages: threadAMsgs, hasMore: false });
     await useThreadStore.getState().loadMessages("thread-a");
     expect(useThreadStore.getState().messages).toEqual(threadAMsgs);
 
     // Act: switch to Thread B
-    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messages: [], hasMore: false });
     await useThreadStore.getState().loadMessages("thread-b");
     expect(useThreadStore.getState().messages).toEqual([]);
 
@@ -180,7 +184,7 @@ describe("Thread Switching", () => {
       createMockMessage({ id: "a-1", thread_id: "thread-a", content: "first" }),
       createMockMessage({ id: "a-2", thread_id: "thread-a", content: "agent replied while away" }),
     ];
-    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedThreadAMsgs);
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messages: updatedThreadAMsgs, hasMore: false });
     await useThreadStore.getState().loadMessages("thread-a");
 
     // Assert: all messages shown, including those that arrived while viewing Thread B

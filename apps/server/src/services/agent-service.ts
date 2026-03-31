@@ -128,7 +128,7 @@ export class AgentService {
     }
 
     // Compute next sequence number and persist user message
-    const existingMessages = this.messageRepo.listByThread(threadId, 1);
+    const { messages: existingMessages } = this.messageRepo.listByThread(threadId, 1);
     const nextSeq =
       existingMessages.length > 0
         ? existingMessages[existingMessages.length - 1].sequence + 1
@@ -345,7 +345,7 @@ export class AgentService {
       provider.on("event", (event: AgentEvent) => {
         if (event.type === "message") {
           try {
-            const existing = this.messageRepo.listByThread(event.threadId, 1);
+            const { messages: existing } = this.messageRepo.listByThread(event.threadId, 1);
             const nextSeq =
               existing.length > 0
                 ? existing[existing.length - 1].sequence + 1
@@ -488,7 +488,7 @@ export class AgentService {
     try {
       const buffer = this.turnToolCalls.get(threadId) ?? [];
 
-      const messages = this.messageRepo.listByThread(threadId, 1);
+      const { messages } = this.messageRepo.listByThread(threadId, 1);
       if (messages.length === 0) {
         if (buffer.length > 0) {
           logger.warn("Discarding buffered tool calls: no messages found", {

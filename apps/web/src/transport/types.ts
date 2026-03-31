@@ -2,7 +2,7 @@
 import type {
   Workspace,
   Thread,
-  Message,
+  PaginatedMessages,
   AttachmentMeta,
   GitBranch,
   WorktreeInfo,
@@ -34,7 +34,7 @@ export type {
   PartialSettings,
 } from "@mcode/contracts";
 
-export type { ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
+export type { PaginatedMessages, ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
@@ -107,8 +107,9 @@ export interface McodeTransport {
    * @param before - Optional sequence cursor; when provided, only messages with
    *   `sequence < before` are returned, enabling backward pagination.
    *   Omit to fetch the most recent messages.
+   * @returns Paginated response with messages array and hasMore flag.
    */
-  getMessages(threadId: string, limit: number, before?: number): Promise<Message[]>;
+  getMessages(threadId: string, limit: number, before?: number): Promise<PaginatedMessages>;
 
   // Config
   discoverConfig(workspacePath: string): Promise<Record<string, unknown>>;
