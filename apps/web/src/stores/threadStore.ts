@@ -4,6 +4,7 @@ import type { ReasoningLevel } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
+import { LruCache } from "@/lib/lru-cache";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -28,7 +29,7 @@ interface ThreadState {
   /** Active subagent count per thread (incremented on Agent toolUse, decremented on Agent toolResult). */
   activeSubagentsByThread: Record<string, number>;
   /** Cache for tool call records to avoid re-fetching from server. */
-  toolCallRecordCache: Record<string, ToolCallRecord[]>;
+  toolCallRecordCache: LruCache<string, ToolCallRecord[]>;
   /** Tracks the local message ID for the most recent assistant message per thread, used by handleTurnPersisted to correctly assign tool call counts. */
   currentTurnMessageIdByThread: Record<string, string>;
 
@@ -72,6 +73,9 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
   interactionMode: INTERACTION_MODES.CHAT,
 };
 
+/** Maximum entries in the tool call record LRU cache. */
+const TOOL_CALL_CACHE_SIZE = 200;
+
 export const useThreadStore = create<ThreadState>((set, get) => {
   return {
   messages: [],
@@ -86,22 +90,20 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   persistedToolCallCounts: {},
   serverMessageIds: {},
   activeSubagentsByThread: {},
-  toolCallRecordCache: {},
+  toolCallRecordCache: new LruCache<string, ToolCallRecord[]>(TOOL_CALL_CACHE_SIZE),
   currentTurnMessageIdByThread: {},
 
   cacheToolCallRecords: (key, records) => {
-    set((state) => ({
-      toolCallRecordCache: { ...state.toolCallRecordCache, [key]: records },
-    }));
+    get().toolCallRecordCache.set(key, records);
   },
 
   getCachedToolCallRecords: (key) => {
-    return get().toolCallRecordCache[key] ?? null;
+    return get().toolCallRecordCache.get(key) ?? null;
   },
 
   /** Evict the entire tool call record cache. Records are re-fetched on next expand. */
   clearToolCallRecordCache: () => {
-    set({ toolCallRecordCache: {} });
+    get().toolCallRecordCache.clear();
   },
 
   /**
@@ -116,6 +118,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     // from a previous visit don't linger when switching back.
     const isRunning = get().runningThreadIds.has(threadId);
     if (!isRunning) {
+      get().toolCallRecordCache.clear();
       set((state) => {
         const nextToolCalls = { ...state.toolCallsByThread };
         delete nextToolCalls[threadId];
@@ -135,7 +138,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
           currentTurnMessageIdByThread: nextTurnMsgIds,
-          toolCallRecordCache: {},
         };
       });
     } else {
@@ -249,7 +251,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * Does NOT reset runningThreadIds since agents may still be executing.
    */
   clearMessages: () => {
-    set({ messages: [], error: null, streamingByThread: {}, toolCallsByThread: {}, persistedToolCallCounts: {}, serverMessageIds: {}, toolCallRecordCache: {}, currentTurnMessageIdByThread: {} });
+    get().toolCallRecordCache.clear();
+    set({ messages: [], error: null, streamingByThread: {}, toolCallsByThread: {}, persistedToolCallCounts: {}, serverMessageIds: {}, currentTurnMessageIdByThread: {} });
     // Note: does NOT reset runningThreadIds - agents may still be running
   },
 

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import type { Message } from "@/transport/types";
 import { mockTransport, createMockMessage } from "./mocks/transport";
+import { LruCache } from "@/lib/lru-cache";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -21,7 +22,7 @@ describe("Thread Switching", () => {
       currentThreadId: null,
       persistedToolCallCounts: {},
       serverMessageIds: {},
-      toolCallRecordCache: {},
+      toolCallRecordCache: new LruCache(200),
       currentTurnMessageIdByThread: {},
       agentStartTimes: {},
       settingsByThread: {},
