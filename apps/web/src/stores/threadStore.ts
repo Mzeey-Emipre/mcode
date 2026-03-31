@@ -317,10 +317,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       if (get().currentThreadId !== currentThreadId) return;
 
       const merged = [...older, ...get().messages];
-      const { messages: capped } = capMessages(merged);
 
       set({
-        messages: capped,
+        messages: merged,
         loadingOlder: false,
         hasOlderMessages: older.length >= OLDER_PAGE_SIZE,
       });

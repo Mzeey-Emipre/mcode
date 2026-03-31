@@ -126,7 +126,7 @@ export const WS_METHODS = {
     params: z.object({
       threadId: z.string(),
       limit: z.number(),
-      before: z.number().optional(),
+      before: z.number().int().optional(),
     }),
     result: z.array(MessageSchema),
   },
