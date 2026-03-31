@@ -74,11 +74,18 @@ export class ThreadService {
 
         if (!updated) {
           try {
-            await this.gitService.removeWorktree(
+            const cleaned = await this.gitService.removeWorktree(
               workspace.path,
               worktreeName,
               branch,
             );
+            if (!cleaned) {
+              logger.warn("Rollback worktree cleanup returned false during thread creation", {
+                threadId: thread.id,
+                worktreeName,
+                workspacePath: workspace.path,
+              });
+            }
           } catch (err) {
             logger.warn("Rollback worktree cleanup failed during thread creation", {
               threadId: thread.id,
