@@ -15,6 +15,11 @@ function generateBranchId(): string {
   return `mcode-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** Minimum interval between syncThreadPrs calls per workspace. */
+const SYNC_THROTTLE_MS = 30_000;
+/** Tracks the last syncThreadPrs request time per workspace. */
+const lastSyncTime = new Map<string, number>();
+
 interface WorkspaceState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
@@ -184,17 +189,39 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const newThreads = await getTransport().listThreads(workspaceId);
-      // Merge: keep threads from other workspaces, replace threads for this workspace
-      set((state) => ({
-        threads: [
-          ...state.threads.filter((t) => t.workspace_id !== workspaceId),
-          ...newThreads,
-        ],
-        loading: false,
-      }));
+      // Merge: keep threads from other workspaces, replace threads for this workspace.
+      // Preserve locally-fresher PR metadata that may not yet be persisted on the server.
+      set((state) => {
+        const existing = new Map(
+          state.threads
+            .filter((t) => t.workspace_id === workspaceId)
+            .map((t) => [t.id, t]),
+        );
+        const merged = newThreads.map((incoming) => {
+          const local = existing.get(incoming.id);
+          if (!local) return incoming;
+          // Keep local PR fields when server hasn't caught up yet
+          const localHasPr = local.pr_number != null && local.pr_status != null;
+          const serverMissingPr = incoming.pr_number == null || incoming.pr_status == null;
+          if (localHasPr && serverMissingPr) {
+            return { ...incoming, pr_number: local.pr_number, pr_status: local.pr_status };
+          }
+          return incoming;
+        });
+        return {
+          threads: [
+            ...state.threads.filter((t) => t.workspace_id !== workspaceId),
+            ...merged,
+          ],
+          loading: false,
+        };
+      });
 
-      // Async: scan for missing PR data and patch threads when found
-      if (newThreads.some((t) => t.pr_number == null)) {
+      // Async: scan for new PRs and refresh stale PR states (throttled)
+      const now = Date.now();
+      const lastSync = lastSyncTime.get(workspaceId) ?? 0;
+      if (now - lastSync >= SYNC_THROTTLE_MS) {
+        lastSyncTime.set(workspaceId, now);
         getTransport().syncThreadPrs(workspaceId).then((linked) => {
           if (linked.length === 0) return;
           set((state) => ({

@@ -115,8 +115,8 @@ export class MessageRepo {
    * Uses a sub-select pattern: grab the last N rows by descending sequence,
    * then re-sort ascending so the caller gets chronological order.
    *
-   * When `before` is provided, returns messages with sequence < before
-   * (cursor-based pagination for loading older history).
+   * When `before` is provided, only messages with sequence < before are
+   * considered, enabling cursor-based pagination for older messages.
    *
    * Returns `{ messages, hasMore }` where hasMore indicates whether
    * older messages exist beyond this batch (uses limit+1 trick).
@@ -129,16 +129,20 @@ export class MessageRepo {
     const clampedLimit = Math.max(1, Math.min(1000, limit));
     const fetchLimit = clampedLimit + 1;
 
-    let rows: MessageRow[];
+    const whereClause = before != null
+      ? "m.thread_id = ? AND m.sequence < ?"
+      : "m.thread_id = ?";
+    const queryParams = before != null
+      ? [threadId, before, fetchLimit]
+      : [threadId, fetchLimit];
 
-    if (before != null) {
-      rows = this.db
-        .prepare(
-          `SELECT ${MESSAGE_COLUMNS}, tc_count.cnt as tool_call_count
+    let rows = this.db
+      .prepare(
+        `SELECT ${MESSAGE_COLUMNS}, tc_count.cnt as tool_call_count
 FROM (
   SELECT ${MESSAGE_COLUMNS_PREFIXED}
   FROM messages m
-  WHERE m.thread_id = ? AND m.sequence < ?
+  WHERE ${whereClause}
   ORDER BY m.sequence DESC
   LIMIT ?
 ) m
@@ -148,28 +152,8 @@ LEFT JOIN (
   GROUP BY message_id
 ) tc_count ON tc_count.message_id = m.id
 ORDER BY m.sequence ASC`,
-        )
-        .all(threadId, before, fetchLimit) as MessageRow[];
-    } else {
-      rows = this.db
-        .prepare(
-          `SELECT ${MESSAGE_COLUMNS}, tc_count.cnt as tool_call_count
-FROM (
-  SELECT ${MESSAGE_COLUMNS_PREFIXED}
-  FROM messages m
-  WHERE m.thread_id = ?
-  ORDER BY m.sequence DESC
-  LIMIT ?
-) m
-LEFT JOIN (
-  SELECT message_id, COUNT(*) as cnt
-  FROM tool_call_records
-  GROUP BY message_id
-) tc_count ON tc_count.message_id = m.id
-ORDER BY m.sequence ASC`,
-        )
-        .all(threadId, fetchLimit) as MessageRow[];
-    }
+      )
+      .all(...queryParams) as MessageRow[];
 
     const hasMore = rows.length > clampedLimit;
     if (hasMore) {

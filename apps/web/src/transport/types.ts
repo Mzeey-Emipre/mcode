@@ -100,7 +100,15 @@ export interface McodeTransport {
   syncThreadPrs(workspaceId: string): Promise<Array<{ threadId: string; prNumber: number; prStatus: string }>>;
 
   // Message queries
-  /** Fetch messages for a thread with cursor-based pagination. Omit `before` for the newest batch. */
+  /**
+   * Fetch persisted messages for a thread, ordered by sequence ascending.
+   * @param threadId - Thread to fetch messages from.
+   * @param limit - Maximum number of messages to return.
+   * @param before - Optional sequence cursor; when provided, only messages with
+   *   `sequence < before` are returned, enabling backward pagination.
+   *   Omit to fetch the most recent messages.
+   * @returns Paginated response with messages array and hasMore flag.
+   */
   getMessages(threadId: string, limit: number, before?: number): Promise<{ messages: Message[]; hasMore: boolean }>;
 
   // Config

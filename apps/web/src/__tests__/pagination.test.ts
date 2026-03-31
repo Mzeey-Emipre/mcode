@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useThreadStore } from "@/stores/threadStore";
+import { useThreadStore, TOOL_CALL_CACHE_SIZE } from "@/stores/threadStore";
+import { LruCache } from "@/lib/lru-cache";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({
@@ -22,7 +23,7 @@ describe("Chat Pagination", () => {
       currentThreadId: threadId,
       persistedToolCallCounts: {},
       serverMessageIds: {},
-      toolCallRecordCache: {},
+      toolCallRecordCache: new LruCache(TOOL_CALL_CACHE_SIZE),
       currentTurnMessageIdByThread: {},
       agentStartTimes: {},
       settingsByThread: {},

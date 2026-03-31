@@ -4,12 +4,22 @@
  * Extracted from apps/desktop/src/main/app-state.ts.
  */
 
-import { injectable, inject } from "tsyringe";
+import { injectable, inject, delay } from "tsyringe";
 import { validateBranchName, sanitizeBranchForFolder, logger } from "@mcode/shared";
 import type { Thread, ThreadMode } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { GitService } from "./git-service";
+// Lazy-imported to break circular dependency: AgentService -> ThreadService
+import { AgentService } from "./agent-service";
+import { TerminalService } from "./terminal-service";
+
+/**
+ * Grace period (ms) after killing processes on Windows before attempting
+ * to delete a worktree directory. Windows doesn't release directory handles
+ * synchronously when a process is terminated.
+ */
+const HANDLE_RELEASE_DELAY_MS = 500;
 
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
@@ -18,6 +28,10 @@ export class ThreadService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(GitService) private readonly gitService: GitService,
+    @inject(delay(() => AgentService))
+    private readonly agentService: AgentService,
+    @inject(TerminalService)
+    private readonly terminalService: TerminalService,
   ) {}
 
   /**
@@ -125,6 +139,10 @@ export class ThreadService {
       if (thread?.worktree_path && thread.worktree_managed) {
         const workspace = this.workspaceRepo.findById(thread.workspace_id);
         if (workspace) {
+          // Stop agent and terminal sessions first so processes release
+          // file locks on the worktree directory (critical on Windows).
+          await this.stopProcesses(threadId);
+
           const wtName =
             thread.worktree_path
               .replace(/\\/g, "/")
@@ -154,6 +172,34 @@ export class ThreadService {
     }
 
     return this.threadRepo.softDelete(threadId);
+  }
+
+  /**
+   * Stop agent and terminal sessions for a thread, then wait briefly
+   * for the OS to release file handles on the worktree directory.
+   */
+  private async stopProcesses(threadId: string): Promise<void> {
+    try {
+      await this.agentService.stopSession(threadId);
+    } catch (err) {
+      logger.warn("Failed to stop agent session during thread deletion", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    try {
+      this.terminalService.killByThread(threadId);
+    } catch (err) {
+      logger.warn("Failed to kill terminals during thread deletion", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    if (process.platform === "win32") {
+      await new Promise((resolve) => setTimeout(resolve, HANDLE_RELEASE_DELAY_MS));
+    }
   }
 
   /** Update a thread's display title. */

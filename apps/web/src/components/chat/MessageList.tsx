@@ -23,6 +23,7 @@ const EMPTY_TOOL_CALLS: ToolCall[] = [];
 const AUTO_SCROLL_THRESHOLD = 64;
 const OVERSCAN = 8;
 const DEFAULT_ITEM_HEIGHT = 80;
+const PAGINATION_THRESHOLD = 200;
 
 /** Renders a single virtual item based on its type discriminant. */
 const VirtualItemRenderer = memo(function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
@@ -91,7 +92,9 @@ export function MessageList() {
   );
   const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
 
-  /** Track scroll position for scroll-to-bottom button and load-more trigger. */
+  const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
+
+  /** Track scroll-to-bottom button visibility and trigger upward pagination near the top. */
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -100,7 +103,7 @@ export function MessageList() {
 
     // Trigger loading older messages when near the top
     if (
-      el.scrollTop < 200 &&
+      el.scrollTop < PAGINATION_THRESHOLD &&
       activeThreadId &&
       hasMore &&
       !isLoadingMore
@@ -108,8 +111,6 @@ export function MessageList() {
       loadOlderMessages(activeThreadId);
     }
   }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages]);
-
-  const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
 
   const stableItems = useMemo(
     () => buildStableItems(messages, persistedToolCallCounts, serverMessageIds),
@@ -215,7 +216,7 @@ export function MessageList() {
     }
 
     // Check if this was a prepend (user was near top) vs append
-    const wasPrepend = prevScrollHeightRef.current > 0 && el.scrollTop < 200;
+    const wasPrepend = prevScrollHeightRef.current > 0 && el.scrollTop < PAGINATION_THRESHOLD;
     if (wasPrepend) {
       // After React renders the new items, restore scroll position
       requestAnimationFrame(() => {
