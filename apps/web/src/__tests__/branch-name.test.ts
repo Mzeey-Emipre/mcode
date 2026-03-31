@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   sanitizeBranchName,
   sanitizeCustomBranchInput,
+  trimTrailingBranchChars,
   finalizeCustomBranchName,
   generateBranchNameFromMessage,
   generateFallbackBranchName,
@@ -115,19 +116,49 @@ describe("sanitizeCustomBranchInput", () => {
   it("returns empty string for empty input", () => {
     expect(sanitizeCustomBranchInput("")).toBe("");
   });
+
+  it("strips reflog @{...} syntax", () => {
+    expect(sanitizeCustomBranchInput("branch@{0}")).toBe("branch-0");
+  });
+
+  it("replaces control characters with hyphens", () => {
+    expect(sanitizeCustomBranchInput("foo\tbar")).toBe("foo-bar");
+  });
+
+  it("collapses multiple dot-prefixed path components", () => {
+    expect(sanitizeCustomBranchInput("feat/..hidden")).toBe("feat/hidden");
+  });
+
+  it("strips leading slash from dot-prefixed input", () => {
+    expect(sanitizeCustomBranchInput("./foo")).toBe("foo");
+  });
 });
 
-describe("finalizeCustomBranchName", () => {
+describe("trimTrailingBranchChars", () => {
   it("strips trailing dot", () => {
-    expect(finalizeCustomBranchName("branch.")).toBe("branch");
+    expect(trimTrailingBranchChars("branch.")).toBe("branch");
   });
 
   it("strips trailing slash", () => {
-    expect(finalizeCustomBranchName("feat/")).toBe("feat");
+    expect(trimTrailingBranchChars("feat/")).toBe("feat");
   });
 
-  it("strips multiple trailing dots and slashes", () => {
-    expect(finalizeCustomBranchName("feat/bar./..")).toBe("feat/bar");
+  it("strips trailing hyphen", () => {
+    expect(trimTrailingBranchChars("feat-")).toBe("feat");
+  });
+
+  it("strips mixed trailing chars", () => {
+    expect(trimTrailingBranchChars("feat/bar./..")).toBe("feat/bar");
+  });
+
+  it("passes through valid names unchanged", () => {
+    expect(trimTrailingBranchChars("feat/my-branch")).toBe("feat/my-branch");
+  });
+});
+
+describe("finalizeCustomBranchName", () => {
+  it("sanitizes and trims in one pass", () => {
+    expect(finalizeCustomBranchName("feat?bar.")).toBe("feat-bar");
   });
 
   it("passes through valid names unchanged", () => {

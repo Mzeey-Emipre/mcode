@@ -10,6 +10,7 @@ const STOP_WORDS = new Set([
   "hey", "hi", "hello", "please", "thanks", "need", "want", "like",
 ]);
 
+/** Sanitize an auto-generated branch name (lowercase, alphanumeric + hyphens only). */
 export function sanitizeBranchName(raw: string): string {
   return raw
     .toLowerCase()
@@ -24,7 +25,7 @@ export function sanitizeBranchName(raw: string): string {
  * Sanitize a custom branch name as the user types.
  * Replaces git-invalid characters with hyphens and collapses sequences
  * that git-check-ref-format rejects (`..`, `//`, consecutive hyphens).
- * Also strips structural patterns like leading `-`, `.lock` suffix,
+ * Also strips structural patterns like leading `-`/`/`, `.lock` suffix,
  * and dot-prefixed path components (e.g. `feat/.hidden`).
  */
 export function sanitizeCustomBranchInput(raw: string): string {
@@ -35,19 +36,29 @@ export function sanitizeCustomBranchInput(raw: string): string {
     .replace(/\/{2,}/g, "/")
     .replace(/-{2,}/g, "-")
     .replace(/(?:^|\/)\.+/g, (m) => m.startsWith("/") ? "/" : "")
-    .replace(/^-+/, "")
+    .replace(/^[-/]+/, "")
+    .replace(/-+$/, "")
     .slice(0, 100);
 }
 
 /**
- * Final cleanup for a custom branch name before submission.
- * Strips trailing dots and slashes that cannot be removed during
- * typing without interfering with the user's input flow.
+ * Strip trailing dots, slashes, and hyphens from a branch name.
+ * Used at submission time to clean up artifacts that the onChange
+ * sanitizer intentionally preserves while the user is still typing.
  */
-export function finalizeCustomBranchName(raw: string): string {
-  return sanitizeCustomBranchInput(raw).replace(/[./]+$/, "");
+export function trimTrailingBranchChars(name: string): string {
+  return name.replace(/[./-]+$/, "");
 }
 
+/**
+ * Full sanitize + trailing cleanup for a raw custom branch name.
+ * Useful for inputs that did not go through the store setter.
+ */
+export function finalizeCustomBranchName(raw: string): string {
+  return trimTrailingBranchChars(sanitizeCustomBranchInput(raw));
+}
+
+/** Extract meaningful words from a message and join them into a branch name slug. */
 export function generateBranchNameFromMessage(message: string): string {
   const words = message
     .split(/\s+/)
@@ -61,6 +72,7 @@ export function generateBranchNameFromMessage(message: string): string {
   return sanitizeBranchName(meaningful.join("-"));
 }
 
+/** Generate a timestamped fallback branch name (e.g. `thread-k5f2g`). */
 export function generateFallbackBranchName(): string {
   return `thread-${Date.now().toString(36)}`;
 }
