@@ -34,14 +34,13 @@ interface ThreadState {
   toolCallRecordCache: LruCache<string, ToolCallRecord[]>;
   /** Tracks the local message ID for the most recent assistant message per thread, used by handleTurnPersisted to correctly assign tool call counts. */
   currentTurnMessageIdByThread: Record<string, string>;
-  /** Lowest sequence number currently loaded per thread, used as cursor for "load older". */
-  oldestLoadedSequence: Record<string, number>;
-  /** Whether older messages exist beyond what is loaded, per thread. */
-  hasMoreMessages: Record<string, boolean>;
-  /** Guard against duplicate scroll-triggered fetches per thread. */
-  isLoadingMore: Record<string, boolean>;
-  /** Monotonic counter incremented on each loadMessages call, used to discard stale loadOlderMessages responses. */
-  loadEpochByThread: Record<string, number>;
+  /** Whether there are older messages in the DB beyond the in-memory window. */
+  hasOlderMessages: boolean;
+  /** Whether older messages are currently being fetched. */
+  loadingOlder: boolean;
+
+  /** Fetch older messages from the database and prepend to the in-memory window. */
+  loadOlderMessages: () => Promise<void>;
 
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
@@ -52,7 +51,6 @@ interface ThreadState {
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
-  loadOlderMessages: (threadId: string) => Promise<void>;
   sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
@@ -123,10 +121,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   activeSubagentsByThread: {},
   toolCallRecordCache: new LruCache<string, ToolCallRecord[]>(TOOL_CALL_CACHE_SIZE),
   currentTurnMessageIdByThread: {},
-  oldestLoadedSequence: {},
-  hasMoreMessages: {},
-  isLoadingMore: {},
-  loadEpochByThread: {},
+  hasOlderMessages: false,
+  loadingOlder: false,
 
   cacheToolCallRecords: (key, records) => {
     get().toolCallRecordCache.set(key, records);
@@ -173,6 +169,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
           currentTurnMessageIdByThread: nextTurnMsgIds,
+          loadingOlder: false,
+          hasOlderMessages: false,
         };
       });
     } else {
@@ -182,10 +180,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         currentThreadId: threadId,
         messages: [],
         persistedToolCallCounts: {},
+        loadingOlder: false,
+        hasOlderMessages: false,
       });
     }
     try {
-      const { messages, hasMore } = await getTransport().getMessages(threadId, 100);
+      const messages = await getTransport().getMessages(threadId, 100);
       // Only commit if this thread is still current
       if (get().currentThreadId === threadId) {
         // Populate persisted tool call counts from loaded messages
@@ -195,18 +195,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             counts[msg.id] = msg.tool_call_count;
           }
         }
-        const oldest = messages.length > 0 ? messages[0].sequence : 0;
-        set((s) => ({
+        set({
           messages,
           loading: false,
           persistedToolCallCounts: counts,
-          oldestLoadedSequence: { [threadId]: oldest },
-          hasMoreMessages: { [threadId]: hasMore },
-          isLoadingMore: {},
-          loadEpochByThread: { ...s.loadEpochByThread, [threadId]: (s.loadEpochByThread[threadId] ?? 0) + 1 },
-        }));
+          // If we fetched a full page (100), there are likely more messages in the DB
+          hasOlderMessages: messages.length >= 100,
+        });
 
         // Hydrate task panel from persisted TodoWrite state.
+        // Guard: skip if live agent events have already populated tasks for this
+        // thread (avoids overwriting up-to-date in-progress state with stale DB data).
         getTransport()
           .getThreadTasks(threadId)
           .then((tasks) => {
@@ -221,6 +220,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             }
           })
           .catch((err) => {
+            // Non-critical: task panel just won't show persisted state
             console.debug("[taskHydration] Failed to load tasks for thread %s:", threadId, err);
           });
       }
@@ -228,54 +228,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       if (get().currentThreadId === threadId) {
         set({ error: String(e), loading: false });
       }
-    }
-  },
-
-  /**
-   * Fetch the next batch of older messages for scroll-up pagination.
-   * Uses sequence cursor to load messages older than what is currently in memory.
-   * Guards against duplicate in-flight requests and stale thread responses.
-   */
-  loadOlderMessages: async (threadId) => {
-    const state = get();
-    if (!state.hasMoreMessages[threadId]) return;
-    if (state.isLoadingMore[threadId]) return;
-
-    set((s) => ({
-      isLoadingMore: { ...s.isLoadingMore, [threadId]: true },
-    }));
-
-    try {
-      const cursor = get().oldestLoadedSequence[threadId];
-      const epoch = get().loadEpochByThread[threadId] ?? 0;
-      const { messages: olderMessages, hasMore } = await getTransport().getMessages(threadId, 50, cursor);
-
-      // Discard if thread switched or loadMessages reset state since we started
-      if (get().currentThreadId !== threadId) return;
-      if ((get().loadEpochByThread[threadId] ?? 0) !== epoch) return;
-
-      // Populate tool call counts from older messages
-      const newCounts: Record<string, number> = {};
-      for (const msg of olderMessages) {
-        if (msg.tool_call_count && msg.tool_call_count > 0) {
-          newCounts[msg.id] = msg.tool_call_count;
-        }
-      }
-
-      const newOldest = olderMessages.length > 0 ? olderMessages[0].sequence : cursor;
-
-      set((s) => ({
-        messages: [...olderMessages, ...s.messages],
-        persistedToolCallCounts: { ...s.persistedToolCallCounts, ...newCounts },
-        oldestLoadedSequence: { ...s.oldestLoadedSequence, [threadId]: newOldest },
-        hasMoreMessages: { ...s.hasMoreMessages, [threadId]: hasMore },
-        isLoadingMore: { ...s.isLoadingMore, [threadId]: false },
-      }));
-    } catch {
-      // Silent failure: reset loading guard so next scroll can retry
-      set((s) => ({
-        isLoadingMore: { ...s.isLoadingMore, [threadId]: false },
-      }));
     }
   },
 
@@ -310,7 +262,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       ...(state.currentThreadId === threadId
         ? (() => {
             const { messages: capped, evicted } = capMessages([...state.messages, userMessage]);
-            return { messages: capped, ...(evicted && state.currentThreadId ? { hasMoreMessages: { ...state.hasMoreMessages, [state.currentThreadId]: true } } : {}) };
+            return { messages: capped, ...(evicted ? { hasOlderMessages: true } : {}) };
           })()
         : {}),
       runningThreadIds: new Set([...state.runningThreadIds, threadId]),
@@ -355,7 +307,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const { messages: capped, evicted } = capMessages(next);
       return {
         messages: capped,
-        ...(evicted && state.currentThreadId ? { hasMoreMessages: { ...state.hasMoreMessages, [state.currentThreadId]: true } } : {}),
+        ...(evicted ? { hasOlderMessages: true } : {}),
       };
     });
   },
@@ -366,20 +318,49 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    */
   clearMessages: () => {
     get().toolCallRecordCache.clear();
-    set({
-      messages: [],
-      error: null,
-      streamingByThread: {},
-      toolCallsByThread: {},
-      persistedToolCallCounts: {},
-      serverMessageIds: {},
-      currentTurnMessageIdByThread: {},
-      oldestLoadedSequence: {},
-      hasMoreMessages: {},
-      isLoadingMore: {},
-      loadEpochByThread: {},
-    });
+    set({ messages: [], error: null, streamingByThread: {}, toolCallsByThread: {}, persistedToolCallCounts: {}, serverMessageIds: {}, currentTurnMessageIdByThread: {}, hasOlderMessages: false, loadingOlder: false });
     // Note: does NOT reset runningThreadIds - agents may still be running
+  },
+
+  /**
+   * Fetch older messages from the DB and prepend them to the in-memory window.
+   * Uses cursor-based pagination: passes the oldest known sequence as the
+   * `before` parameter so the server returns the preceding page.
+   */
+  loadOlderMessages: async () => {
+    const { hasOlderMessages, loadingOlder, currentThreadId, messages } = get();
+    if (!hasOlderMessages || loadingOlder || !currentThreadId || messages.length === 0) return;
+
+    const oldestSequence = messages[0].sequence;
+    set({ loadingOlder: true });
+
+    try {
+      const older = await getTransport().getMessages(
+        currentThreadId,
+        OLDER_PAGE_SIZE,
+        oldestSequence,
+      );
+
+      if (get().currentThreadId !== currentThreadId) {
+        set({ loadingOlder: false });
+        return;
+      }
+
+      const merged = [...older, ...get().messages];
+      // Bound to MESSAGE_WINDOW_SIZE: trim newest messages since user is paginating upward.
+      // Keeps a contiguous window around the user's scroll position.
+      const bounded = merged.length > MESSAGE_WINDOW_SIZE
+        ? merged.slice(0, MESSAGE_WINDOW_SIZE)
+        : merged;
+
+      set({
+        messages: bounded,
+        loadingOlder: false,
+        hasOlderMessages: older.length >= OLDER_PAGE_SIZE,
+      });
+    } catch {
+      set({ loadingOlder: false });
+    }
   },
 
   /** Check whether an agent is currently executing on the given thread. */
@@ -454,7 +435,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const { messages: capped, evicted } = capMessages([...state.messages, message]);
           return {
             messages: capped,
-            ...(evicted && state.currentThreadId ? { hasMoreMessages: { ...state.hasMoreMessages, [state.currentThreadId]: true } } : {}),
+            ...(evicted ? { hasOlderMessages: true } : {}),
           };
         });
       }
@@ -489,7 +470,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const { messages: capped, evicted } = capMessages([...state.messages, message]);
           return {
             messages: capped,
-            ...(evicted && state.currentThreadId ? { hasMoreMessages: { ...state.hasMoreMessages, [state.currentThreadId]: true } } : {}),
+            ...(evicted ? { hasOlderMessages: true } : {}),
             ...trackTurn,
           };
         });
@@ -641,7 +622,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             ...(state.currentThreadId === threadId
               ? (() => {
                   const { messages: capped, evicted } = capMessages([...state.messages, message]);
-                  return { messages: capped, ...(evicted && state.currentThreadId ? { hasMoreMessages: { ...state.hasMoreMessages, [state.currentThreadId]: true } } : {}) };
+                  return { messages: capped, ...(evicted ? { hasOlderMessages: true } : {}) };
                 })()
               : {}),
             streamingByThread: nextStreaming,

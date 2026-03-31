@@ -1,5 +1,5 @@
-import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, useState } from "react";
-import { ArrowDown, Loader2 } from "lucide-react";
+import { useRef, useEffect, useMemo, useCallback, memo, useState } from "react";
+import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useShallow } from "zustand/shallow";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -56,13 +56,9 @@ export function MessageList() {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const itemsLengthRef = useRef(0);
-  const prevMessageCountRef = useRef(0);
   const prevScrollHeightRef = useRef(0);
-  /** True until initial messages are positioned at the bottom after a thread switch. */
-  const isInitialLoadRef = useRef(true);
+  const suppressAutoScrollRef = useRef(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
-  /** Controls container visibility: hidden while positioning to prevent top-to-bottom flash. */
-  const [isPositioned, setIsPositioned] = useState(false);
 
   const messages = useThreadStore((s) => s.messages);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -84,14 +80,9 @@ export function MessageList() {
   const serverMessageIds = useThreadStore(
     useShallow((s) => s.serverMessageIds),
   );
-  const hasMore = useThreadStore((s) =>
-    activeThreadId ? s.hasMoreMessages[activeThreadId] ?? false : false,
-  );
-  const isLoadingMore = useThreadStore((s) =>
-    activeThreadId ? s.isLoadingMore[activeThreadId] ?? false : false,
-  );
+  const hasOlderMessages = useThreadStore((s) => s.hasOlderMessages);
+  const loadingOlder = useThreadStore((s) => s.loadingOlder);
   const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
-
   const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
 
   /** Track scroll-to-bottom button visibility and trigger upward pagination near the top. */
@@ -101,16 +92,13 @@ export function MessageList() {
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     setShowScrollBtn(distanceFromBottom > 200);
 
-    // Trigger loading older messages when near the top
-    if (
-      el.scrollTop < PAGINATION_THRESHOLD &&
-      activeThreadId &&
-      hasMore &&
-      !isLoadingMore
-    ) {
-      loadOlderMessages(activeThreadId);
+    // Trigger upward pagination when near the top
+    if (el.scrollTop < PAGINATION_THRESHOLD && hasOlderMessages && !loadingOlder) {
+      prevScrollHeightRef.current = el.scrollHeight;
+      suppressAutoScrollRef.current = true;
+      loadOlderMessages();
     }
-  }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages]);
+  }, [hasOlderMessages, loadingOlder, loadOlderMessages]);
 
   const stableItems = useMemo(
     () => buildStableItems(messages, persistedToolCallCounts, serverMessageIds),
@@ -196,91 +184,48 @@ export function MessageList() {
 
   // On thread switch, invalidate the virtualizer's cached sizes so
   // stale heights from the previous thread don't cause overlap.
-  // Also reset positioning state so the container stays hidden until
-  // new messages are scrolled to the bottom.
   useEffect(() => {
-    isInitialLoadRef.current = true;
-    setIsPositioned(false);
     virtualizer.measure();
   }, [activeThreadId, virtualizer]);
 
-  // Stabilize scroll position when older messages are prepended.
+  const wasLoadingOlderRef = useRef(false);
+
+  // Restore scroll position after older messages are prepended so the
+  // viewport stays anchored at the same content.
   useEffect(() => {
-    const el = containerRef.current;
-    const prevCount = prevMessageCountRef.current;
-    prevMessageCountRef.current = messages.length;
-
-    if (!el || messages.length <= prevCount || prevCount === 0) {
-      prevScrollHeightRef.current = el?.scrollHeight ?? 0;
-      return;
-    }
-
-    // Check if this was a prepend (user was near top) vs append
-    const wasPrepend = prevScrollHeightRef.current > 0 && el.scrollTop < PAGINATION_THRESHOLD;
-    if (wasPrepend) {
-      // After React renders the new items, restore scroll position
-      requestAnimationFrame(() => {
-        const newScrollHeight = el.scrollHeight;
-        const addedHeight = newScrollHeight - prevScrollHeightRef.current;
-        if (addedHeight > 0) {
-          el.scrollTop += addedHeight;
-        }
-        prevScrollHeightRef.current = newScrollHeight;
-      });
-    } else {
-      prevScrollHeightRef.current = el.scrollHeight;
-    }
-  }, [messages]);
-
-  // Initial load: position at the bottom before paint to avoid top-to-bottom flash.
-  // useLayoutEffect fires after DOM mutations but before the browser paints.
-  const loading = useThreadStore((s) => s.loading);
-  useLayoutEffect(() => {
-    if (!isInitialLoadRef.current) return;
-
-    // If loading finished with no items (empty thread), just reveal.
-    if (!loading && items.length === 0) {
-      isInitialLoadRef.current = false;
-      setIsPositioned(true);
-      return;
-    }
-
-    if (items.length === 0) return;
-
-    isInitialLoadRef.current = false;
-
-    virtualizer.scrollToIndex(items.length - 1, {
-      align: "end",
-      behavior: "auto",
-    });
-
-    // Fallback nudge + reveal: the virtualizer may not have measured all items
-    // yet, so force scrollTop to the absolute bottom and then show the container.
-    requestAnimationFrame(() => {
+    if (wasLoadingOlderRef.current && !loadingOlder) {
       const el = containerRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-      setIsPositioned(true);
-    });
-  }, [items.length, loading, virtualizer]);
+      if (el && prevScrollHeightRef.current > 0) {
+        const newScrollHeight = el.scrollHeight;
+        el.scrollTop += newScrollHeight - prevScrollHeightRef.current;
+        prevScrollHeightRef.current = 0;
+      }
+      virtualizer.measure();
+      suppressAutoScrollRef.current = false;
+    }
+    wasLoadingOlderRef.current = loadingOlder;
+  }, [loadingOlder, virtualizer]);
 
   // Discrete events (new message, tool call) -> smooth scroll
   useEffect(() => {
-    if (!isInitialLoadRef.current) scrollToBottom(true);
+    if (suppressAutoScrollRef.current) return;
+    scrollToBottom(true);
   }, [messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
 
   // Streaming deltas -> instant scroll (no animation lag)
   useEffect(() => {
-    if (streamingText && !isInitialLoadRef.current) scrollToBottom(false);
+    if (suppressAutoScrollRef.current) return;
+    if (streamingText) scrollToBottom(false);
   }, [streamingText, scrollToBottom]);
 
   return (
     <div className="relative h-full">
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="h-full overflow-y-auto pt-4 transition-opacity duration-75"
-        style={{ opacity: isPositioned ? 1 : 0 }}
-      >
+      <div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto pt-4">
+        {loadingOlder && (
+          <div className="flex justify-center py-2 text-xs text-muted-foreground">
+            Loading older messages...
+          </div>
+        )}
         <div
           className="relative w-full"
           style={{ height: virtualizer.getTotalSize() }}
@@ -303,15 +248,6 @@ export function MessageList() {
           })}
         </div>
       </div>
-
-      {/* Loading spinner overlay for scroll-up pagination */}
-      {isLoadingMore && (
-        <div className="absolute top-2 left-1/2 z-10 -translate-x-1/2">
-          <div className="rounded-full bg-muted/80 p-2 shadow-md ring-1 ring-border/40 backdrop-blur-sm">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          </div>
-        </div>
-      )}
 
       {/* Scroll-to-bottom floating button */}
       {showScrollBtn && (

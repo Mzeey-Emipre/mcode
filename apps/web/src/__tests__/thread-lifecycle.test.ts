@@ -101,7 +101,7 @@ describe("Thread Lifecycle Behavior", () => {
     ];
     (
       mockTransport.getMessages as ReturnType<typeof vi.fn>
-    ).mockResolvedValueOnce({ messages: msgs, hasMore: false });
+    ).mockResolvedValueOnce(msgs);
 
     await useThreadStore.getState().loadMessages(threadId);
 

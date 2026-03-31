@@ -117,26 +117,18 @@ export class MessageRepo {
    *
    * When `before` is provided, only messages with sequence < before are
    * considered, enabling cursor-based pagination for older messages.
-   *
-   * Returns `{ messages, hasMore }` where hasMore indicates whether
-   * older messages exist beyond this batch (uses limit+1 trick).
    */
-  listByThread(
-    threadId: string,
-    limit: number,
-    before?: number,
-  ): { messages: Message[]; hasMore: boolean } {
+  listByThread(threadId: string, limit: number, before?: number): Message[] {
     const clampedLimit = Math.max(1, Math.min(1000, limit));
-    const fetchLimit = clampedLimit + 1;
 
     const whereClause = before != null
       ? "m.thread_id = ? AND m.sequence < ?"
       : "m.thread_id = ?";
     const queryParams = before != null
-      ? [threadId, before, fetchLimit]
-      : [threadId, fetchLimit];
+      ? [threadId, before, clampedLimit]
+      : [threadId, clampedLimit];
 
-    let rows = this.db
+    const rows = this.db
       .prepare(
         `SELECT ${MESSAGE_COLUMNS}, tc_count.cnt as tool_call_count
 FROM (
@@ -155,11 +147,6 @@ ORDER BY m.sequence ASC`,
       )
       .all(...queryParams) as MessageRow[];
 
-    const hasMore = rows.length > clampedLimit;
-    if (hasMore) {
-      rows = rows.slice(rows.length - clampedLimit);
-    }
-
-    return { messages: rows.map(rowToMessage), hasMore };
+    return rows.map(rowToMessage);
   }
 }
