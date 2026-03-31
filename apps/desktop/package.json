@@ -14,11 +14,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@electron/rebuild": "^3.7.1",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
-    "@electron/rebuild": "^3.7.1",
     "uuid": "^11.1.0",
-    "which": "^5.0.0"
+    "which": "^5.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@electron/fuses": "^2.1.1",
