@@ -215,9 +215,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         para.append($createTextNode(pendingPrefill));
         root.append(para);
       });
+      clearPendingPrefill();
+      editorRef.current.focus();
     }
-    clearPendingPrefill();
-    editorRef.current?.focus();
   }, [pendingPrefill, clearPendingPrefill]);
 
   const fileAutocomplete = useFileAutocomplete({

@@ -179,7 +179,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
         <MarkdownContent content={message.content} isStreaming={false} />
       </div>
       <div className="flex items-center gap-3 px-1">
-        <CopyButton content={message.content} />
+        <CopyButton content={textContent} />
         {message.tokens_used != null && (
           <span className="text-xs text-muted-foreground/50 transition-opacity group-hover/msg:text-muted-foreground/80">
             {message.tokens_used.toLocaleString()} tokens
