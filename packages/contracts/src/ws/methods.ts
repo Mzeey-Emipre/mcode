@@ -2,7 +2,7 @@ import { z } from "zod";
 import { WorkspaceSchema } from "../models/workspace.js";
 import { ThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema } from "../models/enums.js";
-import { MessageSchema } from "../models/message.js";
+import { PaginatedMessagesSchema } from "../models/message.js";
 import { AttachmentMetaSchema } from "../models/attachment.js";
 import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { GitBranchSchema, WorktreeSchema } from "../git.js";
@@ -131,8 +131,12 @@ export const WS_METHODS = {
     result: z.number(),
   },
   "message.list": {
-    params: z.object({ threadId: z.string(), limit: z.number() }),
-    result: z.array(MessageSchema),
+    params: z.object({
+      threadId: z.string(),
+      limit: z.number(),
+      before: z.number().optional(),
+    }),
+    result: PaginatedMessagesSchema,
   },
   "file.list": {
     params: z.object({
