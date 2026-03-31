@@ -193,6 +193,24 @@ async function dispatch(
     case "thread.markViewed":
       deps.threadService.markViewed(params.threadId);
       return;
+    case "thread.syncPrs": {
+      const threads = deps.threadService.list(params.workspaceId);
+      const needsPr = threads.filter((t) => t.pr_number == null);
+      if (needsPr.length === 0) return [];
+      const workspace = deps.workspaceService.findById(params.workspaceId);
+      if (!workspace) return [];
+      const results: Array<{ threadId: string; prNumber: number; prStatus: string }> = [];
+      await Promise.all(
+        needsPr.map(async (t) => {
+          const pr = await deps.githubService.getBranchPr(t.branch, workspace.path);
+          if (pr) {
+            deps.threadService.linkPr(t.id, pr.number, pr.state);
+            results.push({ threadId: t.id, prNumber: pr.number, prStatus: pr.state });
+          }
+        }),
+      );
+      return results;
+    }
 
     // Git
     case "git.listBranches":

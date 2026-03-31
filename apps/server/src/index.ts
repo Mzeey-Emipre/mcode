@@ -148,6 +148,21 @@ for (const provider of providerRegistry.resolveAll()) {
         const filesPayload = { workspaceId: thread.workspace_id, threadId: thread.id };
         broadcast("files.changed", filesPayload);
         portPush.send("files.changed", filesPayload);
+
+        // Auto-detect PR for the thread's branch if not already linked
+        if (thread.pr_number == null) {
+          const workspace = workspaceRepo.findById(thread.workspace_id);
+          if (workspace) {
+            githubService.getBranchPr(thread.branch, workspace.path).then((pr) => {
+              if (pr) {
+                threadRepo.updatePr(thread.id, pr.number, pr.state);
+                const prPayload = { threadId: thread.id, prNumber: pr.number, prStatus: pr.state };
+                broadcast("thread.prLinked", prPayload);
+                portPush.send("thread.prLinked", prPayload);
+              }
+            }).catch(() => {});
+          }
+        }
       }
     } else if (event.type === "error") {
       threadRepo.updateStatus(event.threadId, "errored");

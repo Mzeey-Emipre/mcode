@@ -82,6 +82,14 @@ export const WS_METHODS = {
     params: z.object({ threadId: z.string() }),
     result: z.void(),
   },
+  "thread.syncPrs": {
+    params: z.object({ workspaceId: z.string() }),
+    result: z.array(z.object({
+      threadId: z.string(),
+      prNumber: z.number(),
+      prStatus: z.string(),
+    })),
+  },
   "git.listBranches": {
     params: z.object({ workspaceId: z.string() }),
     result: z.array(GitBranchSchema),

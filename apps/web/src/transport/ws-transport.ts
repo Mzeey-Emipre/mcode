@@ -242,6 +242,8 @@ export function createWsTransport(
     updateThreadTitle: (threadId, title) =>
       rpc<boolean>("thread.updateTitle", { threadId, title }),
     markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
+    syncThreadPrs: (workspaceId) =>
+      rpc<Array<{ threadId: string; prNumber: number; prStatus: string }>>("thread.syncPrs", { workspaceId }),
 
     // Git
     listBranches: (workspaceId) => rpc<GitBranch[]>("git.listBranches", { workspaceId }),
