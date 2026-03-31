@@ -5,6 +5,7 @@
 
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
+import { logger } from "@mcode/shared";
 
 /** Serialized task item stored in thread_tasks.tasks_json. */
 export interface StoredTask {
@@ -12,6 +13,7 @@ export interface StoredTask {
   status: "pending" | "in_progress" | "completed";
 }
 
+/** Repository for persisting and retrieving per-thread TodoWrite task state. */
 @injectable()
 export class TaskRepo {
   private readonly stmtUpsert;
@@ -43,7 +45,12 @@ export class TaskRepo {
   get(threadId: string): StoredTask[] | null {
     const row = this.stmtGet.get(threadId) as { tasks_json: string } | undefined;
     if (!row) return null;
-    return JSON.parse(row.tasks_json) as StoredTask[];
+    try {
+      return JSON.parse(row.tasks_json) as StoredTask[];
+    } catch (err) {
+      logger.warn("Malformed tasks_json for thread %s: %s", threadId, err);
+      return null;
+    }
   }
 
   /** Remove persisted tasks for a thread. */

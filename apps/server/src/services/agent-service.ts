@@ -431,16 +431,28 @@ export class AgentService {
       const todos = event.toolInput?.todos;
       if (Array.isArray(todos)) {
         const validStatuses = new Set(["pending", "in_progress", "completed"]);
-        this.taskRepo.upsert(
-          threadId,
-          todos.map((t: Record<string, unknown>) => {
+        const cleanedTodos = todos
+          .filter(
+            (t): t is Record<string, unknown> =>
+              t != null && typeof t === "object" && "content" in t,
+          )
+          .map((t) => {
             const rawStatus = String(t.status ?? "");
             return {
               content: String(t.content ?? ""),
-              status: (validStatuses.has(rawStatus) ? rawStatus : "pending") as "pending" | "in_progress" | "completed",
+              status: (validStatuses.has(rawStatus) ? rawStatus : "pending") as
+                | "pending"
+                | "in_progress"
+                | "completed",
             };
-          }),
-        );
+          });
+        if (cleanedTodos.length > 0) {
+          try {
+            this.taskRepo.upsert(threadId, cleanedTodos);
+          } catch (err) {
+            logger.warn("Failed to persist TodoWrite tasks for thread %s: %s", threadId, err);
+          }
+        }
       }
     }
   }

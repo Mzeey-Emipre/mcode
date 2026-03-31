@@ -1,5 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTaskStore, MIN_WIDTH, MAX_WIDTH } from "@/stores/taskStore";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,6 +19,8 @@ export function TaskPanel() {
   );
 
   const draggingRef = useRef(false);
+  // Store active drag listeners so they can be cleaned up on unmount.
+  const dragListenersRef = useRef<{ move: (e: globalThis.MouseEvent) => void; up: () => void } | null>(null);
 
   // Drag handle for horizontal resizing (left edge)
   const onDragStart = useCallback(
@@ -39,13 +41,27 @@ export function TaskPanel() {
         draggingRef.current = false;
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
+        dragListenersRef.current = null;
       };
 
+      dragListenersRef.current = { move: onMouseMove, up: onMouseUp };
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
     [panelWidth, setPanelWidth],
   );
+
+  // Clean up drag listeners if the component unmounts mid-drag.
+  useEffect(() => {
+    return () => {
+      if (dragListenersRef.current) {
+        document.removeEventListener("mousemove", dragListenersRef.current.move);
+        document.removeEventListener("mouseup", dragListenersRef.current.up);
+        dragListenersRef.current = null;
+      }
+      draggingRef.current = false;
+    };
+  }, []);
 
   // Group tasks by their group field, preserving insertion order
   const groups = useMemo(() => {

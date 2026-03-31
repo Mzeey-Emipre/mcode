@@ -130,8 +130,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         .threads.filter((t) => t.workspace_id === id)
         .map((t) => t.id);
       const draftStore = useComposerDraftStore.getState();
+      const taskStore = useTaskStore.getState();
       for (const tid of deletedThreadIds) {
         draftStore.clearDraft(tid);
+        taskStore.clearTasks(tid);
       }
       set((state) => ({
         workspaces: state.workspaces.filter((w) => w.id !== id),

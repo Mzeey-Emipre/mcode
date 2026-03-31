@@ -182,8 +182,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               useTaskStore.getState().setTasks(threadId, items);
             }
           })
-          .catch(() => {
+          .catch((err) => {
             // Non-critical: task panel just won't show persisted state
+            console.debug("[taskHydration] Failed to load tasks for thread %s:", threadId, err);
           });
       }
     } catch (e) {

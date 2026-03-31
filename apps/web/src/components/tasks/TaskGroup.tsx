@@ -19,6 +19,7 @@ interface TaskGroupProps {
  * start expanded. When hideHeader is set, renders a flat item list.
  */
 export function TaskGroup({ name, tasks, hideHeader }: TaskGroupProps) {
+  const panelId = `task-group-${name.toLowerCase().replace(/\s+/g, "-")}`;
   const completedCount = tasks.filter((t) => t.status === "completed").length;
   const hasActive = tasks.some((t) => t.status === "in_progress");
   const allDone = completedCount === tasks.length && tasks.length > 0;
@@ -51,6 +52,8 @@ export function TaskGroup({ name, tasks, hideHeader }: TaskGroupProps) {
       {/* Group header */}
       <button
         type="button"
+        aria-expanded={expanded}
+        aria-controls={panelId}
         onClick={() => { userToggledRef.current = true; setExpanded((p) => !p); }}
         className="group flex w-full items-center gap-1.5 px-3 py-[5px] cursor-pointer hover:bg-muted/[0.06] transition-colors duration-100"
       >
@@ -92,6 +95,8 @@ export function TaskGroup({ name, tasks, hideHeader }: TaskGroupProps) {
 
       {/* Smooth height collapse via CSS grid */}
       <div
+        id={panelId}
+        role="region"
         className="overflow-hidden transition-all duration-200 ease-out"
         style={{
           display: "grid",
