@@ -197,7 +197,7 @@ async function dispatch(
       return;
     case "thread.syncPrs": {
       const threads = deps.threadService.list(params.workspaceId);
-      // Check threads without a PR and threads whose PR may have changed state
+      /** Returns true if the thread has no linked PR or its PR is still in a non-terminal state. */
       const isPrMissingOrNonTerminal = (t: { pr_number: number | null; pr_status: string | null }) =>
         t.pr_number == null || (t.pr_status != null && t.pr_status.toLowerCase() !== "merged" && t.pr_status.toLowerCase() !== "closed");
       const needsCheck = threads.filter(isPrMissingOrNonTerminal);

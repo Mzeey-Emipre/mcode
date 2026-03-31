@@ -165,7 +165,14 @@ for (const provider of providerRegistry.resolveAll()) {
               broadcast("thread.prLinked", prPayload);
               portPush.send("thread.prLinked", prPayload);
             }
-          }).catch(() => {});
+          }).catch((err) => {
+            logger.debug("PR lookup failed on turnComplete", {
+              threadId: thread.id,
+              branch: thread.branch,
+              workspacePath: workspace.path,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
         }
       }
     } else if (event.type === "error") {

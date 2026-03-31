@@ -7,10 +7,15 @@ import { useTerminalStore } from "@/stores/terminalStore";
 import { Button } from "@/components/ui/button";
 import type { Thread } from "@/transport";
 
+/** Props for {@link HeaderActions}. */
 interface HeaderActionsProps {
   thread: Thread;
 }
 
+/**
+ * Renders PR link, editor shortcut, and terminal toggle for the active thread header.
+ * Polls GitHub for the thread's PR and syncs state changes back to the workspace store.
+ */
 export function HeaderActions({ thread }: HeaderActionsProps) {
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === thread.workspace_id),
