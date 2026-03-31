@@ -23,7 +23,10 @@ import { isAbsolute, join } from "path";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import { getLogPath, getMcodeDir, getRecentLogs } from "@mcode/shared";
-import { getExtension } from "@mcode/contracts";
+import { getExtension as bundledGetExtension } from "@mcode/contracts";
+
+/** Use snapshot-provided module when available (V8 snapshot skips re-init). */
+const getExtension = globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 import { ServerManager } from "./server-manager.js";
 
 // ---------------------------------------------------------------------------
@@ -483,6 +486,7 @@ app.commandLine.appendSwitch(
 
 app.whenReady().then(async () => {
   console.log(`[perf] Module load: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+  console.log(`[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`);
   console.log(`Mcode v${app.getVersion()} starting`);
 
   // Start the server child process
