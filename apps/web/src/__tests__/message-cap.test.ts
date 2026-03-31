@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useThreadStore, MESSAGE_WINDOW_SIZE, TOOL_CALL_CACHE_SIZE, OLDER_PAGE_SIZE } from "@/stores/threadStore";
+import { useThreadStore, MESSAGE_WINDOW_SIZE, TOOL_CALL_CACHE_SIZE } from "@/stores/threadStore";
 import { mockTransport } from "./mocks/transport";
 import { LruCache } from "@/lib/lru-cache";
 
@@ -110,7 +110,7 @@ describe("message sliding window", () => {
     expect(state.messages[state.messages.length - 1].id).toBe(`msg-${MESSAGE_WINDOW_SIZE}`);
   });
 
-  it("sets hasOlderMessages to true when messages are evicted", () => {
+  it("sets hasMoreMessages to true when messages are evicted", () => {
     const msgs = Array.from({ length: MESSAGE_WINDOW_SIZE }, (_, i) => ({
       id: `msg-${i}`,
       thread_id: "thread-1",
@@ -124,7 +124,7 @@ describe("message sliding window", () => {
       sequence: i + 1,
       attachments: null,
     }));
-    useThreadStore.setState({ messages: msgs, hasOlderMessages: false });
+    useThreadStore.setState({ messages: msgs, hasMoreMessages: { "thread-1": false } });
 
     useThreadStore.getState().addMessage({
       id: "msg-overflow",
@@ -140,7 +140,7 @@ describe("message sliding window", () => {
       attachments: null,
     });
 
-    expect(useThreadStore.getState().hasOlderMessages).toBe(true);
+    expect(useThreadStore.getState().hasMoreMessages["thread-1"]).toBe(true);
   });
 
   it("session.message event respects the message cap", () => {
@@ -167,7 +167,7 @@ describe("message sliding window", () => {
     vi.runAllTimers();
 
     expect(useThreadStore.getState().messages.length).toBe(MESSAGE_WINDOW_SIZE);
-    expect(useThreadStore.getState().hasOlderMessages).toBe(true);
+    expect(useThreadStore.getState().hasMoreMessages["thread-1"]).toBe(true);
     vi.useRealTimers();
   });
 });
@@ -179,14 +179,16 @@ describe("loadOlderMessages", () => {
       messages: [],
       runningThreadIds: new Set(),
       loading: false,
-      loadingOlder: false,
       error: null,
       currentThreadId: "thread-1",
       streamingByThread: {},
       toolCallsByThread: {},
       persistedToolCallCounts: {},
       serverMessageIds: {},
-      hasOlderMessages: true,
+      hasMoreMessages: { "thread-1": true },
+      isLoadingMore: {},
+      oldestLoadedSequence: { "thread-1": 51 },
+      loadEpochByThread: {},
       toolCallRecordCache: new LruCache(TOOL_CALL_CACHE_SIZE),
     });
   });
@@ -222,9 +224,9 @@ describe("loadOlderMessages", () => {
       sequence: i + 1,
       attachments: null,
     }));
-    vi.mocked(mockTransport.getMessages).mockResolvedValueOnce(olderMsgs);
+    vi.mocked(mockTransport.getMessages).mockResolvedValueOnce({ messages: olderMsgs, hasMore: true });
 
-    await useThreadStore.getState().loadOlderMessages();
+    await useThreadStore.getState().loadOlderMessages("thread-1");
 
     const state = useThreadStore.getState();
     expect(state.messages.length).toBe(100);
@@ -232,7 +234,7 @@ describe("loadOlderMessages", () => {
     expect(state.messages[99].sequence).toBe(100);
   });
 
-  it("sets hasOlderMessages to false when server returns fewer than limit", async () => {
+  it("sets hasMoreMessages to false when server reports no more", async () => {
     const currentMsgs = [{
       id: "msg-10",
       thread_id: "thread-1",
@@ -246,7 +248,7 @@ describe("loadOlderMessages", () => {
       sequence: 10,
       attachments: null,
     }];
-    useThreadStore.setState({ messages: currentMsgs });
+    useThreadStore.setState({ messages: currentMsgs, oldestLoadedSequence: { "thread-1": 10 } });
 
     const olderMsgs = Array.from({ length: 5 }, (_, i) => ({
       id: `msg-${i}`,
@@ -261,22 +263,22 @@ describe("loadOlderMessages", () => {
       sequence: i + 1,
       attachments: null,
     }));
-    vi.mocked(mockTransport.getMessages).mockResolvedValueOnce(olderMsgs);
+    vi.mocked(mockTransport.getMessages).mockResolvedValueOnce({ messages: olderMsgs, hasMore: false });
 
-    await useThreadStore.getState().loadOlderMessages();
+    await useThreadStore.getState().loadOlderMessages("thread-1");
 
-    expect(useThreadStore.getState().hasOlderMessages).toBe(false);
+    expect(useThreadStore.getState().hasMoreMessages["thread-1"]).toBe(false);
   });
 
-  it("does nothing when hasOlderMessages is false", async () => {
-    useThreadStore.setState({ hasOlderMessages: false });
-    await useThreadStore.getState().loadOlderMessages();
+  it("does nothing when hasMoreMessages is false", async () => {
+    useThreadStore.setState({ hasMoreMessages: { "thread-1": false } });
+    await useThreadStore.getState().loadOlderMessages("thread-1");
     expect(mockTransport.getMessages).not.toHaveBeenCalled();
   });
 
   it("does nothing when already loading older messages", async () => {
-    useThreadStore.setState({ loadingOlder: true });
-    await useThreadStore.getState().loadOlderMessages();
+    useThreadStore.setState({ isLoadingMore: { "thread-1": true } });
+    await useThreadStore.getState().loadOlderMessages("thread-1");
     expect(mockTransport.getMessages).not.toHaveBeenCalled();
   });
 
@@ -301,35 +303,38 @@ describe("loadOlderMessages", () => {
       new Promise((resolve) => { resolveGetMessages = resolve; }),
     );
 
-    const promise = useThreadStore.getState().loadOlderMessages();
+    const promise = useThreadStore.getState().loadOlderMessages("thread-1");
 
     // Switch thread before the fetch resolves
     useThreadStore.setState({ currentThreadId: "thread-2", messages: [] });
 
-    resolveGetMessages(Array.from({ length: 50 }, (_, i) => ({
-      id: `older-${i}`,
-      thread_id: "thread-1",
-      role: "user",
-      content: `Older ${i}`,
-      tool_calls: null,
-      files_changed: null,
-      cost_usd: null,
-      tokens_used: null,
-      timestamp: new Date().toISOString(),
-      sequence: i + 1,
-      attachments: null,
-    })));
+    resolveGetMessages({
+      messages: Array.from({ length: 50 }, (_, i) => ({
+        id: `older-${i}`,
+        thread_id: "thread-1",
+        role: "user",
+        content: `Older ${i}`,
+        tool_calls: null,
+        files_changed: null,
+        cost_usd: null,
+        tokens_used: null,
+        timestamp: new Date().toISOString(),
+        sequence: i + 1,
+        attachments: null,
+      })),
+      hasMore: true,
+    });
     await promise;
 
     const state = useThreadStore.getState();
     expect(state.currentThreadId).toBe("thread-2");
     expect(state.messages).toEqual([]);
-    expect(state.loadingOlder).toBe(false);
+    expect(state.isLoadingMore["thread-1"]).toBe(false);
   });
 
-  it("repeated prepends respect MESSAGE_WINDOW_SIZE", async () => {
-    // Start with MESSAGE_WINDOW_SIZE messages (seq 301-500)
-    const initial = Array.from({ length: MESSAGE_WINDOW_SIZE }, (_, i) => ({
+  it("repeated prepends accumulate messages correctly", async () => {
+    // Start with 50 messages (seq 51-100)
+    const initial = Array.from({ length: 50 }, (_, i) => ({
       id: `msg-${i}`,
       thread_id: "thread-1",
       role: "user" as const,
@@ -339,13 +344,13 @@ describe("loadOlderMessages", () => {
       cost_usd: null,
       tokens_used: null,
       timestamp: new Date().toISOString(),
-      sequence: 301 + i,
+      sequence: 51 + i,
       attachments: null,
     }));
-    useThreadStore.setState({ messages: initial });
+    useThreadStore.setState({ messages: initial, oldestLoadedSequence: { "thread-1": 51 } });
 
-    // First pagination: 100 older messages (seq 201-300)
-    const batch1 = Array.from({ length: OLDER_PAGE_SIZE }, (_, i) => ({
+    // First pagination: 50 older messages (seq 1-50)
+    const batch1 = Array.from({ length: 50 }, (_, i) => ({
       id: `batch1-${i}`,
       thread_id: "thread-1",
       role: "user" as const,
@@ -355,34 +360,18 @@ describe("loadOlderMessages", () => {
       cost_usd: null,
       tokens_used: null,
       timestamp: new Date().toISOString(),
-      sequence: 201 + i,
+      sequence: 1 + i,
       attachments: null,
     }));
-    vi.mocked(mockTransport.getMessages).mockResolvedValueOnce(batch1);
-    await useThreadStore.getState().loadOlderMessages();
-
-    expect(useThreadStore.getState().messages.length).toBeLessThanOrEqual(MESSAGE_WINDOW_SIZE);
-
-    // Second pagination: 100 more older messages (seq 101-200)
-    const batch2 = Array.from({ length: OLDER_PAGE_SIZE }, (_, i) => ({
-      id: `batch2-${i}`,
-      thread_id: "thread-1",
-      role: "user" as const,
-      content: `Batch2 ${i}`,
-      tool_calls: null,
-      files_changed: null,
-      cost_usd: null,
-      tokens_used: null,
-      timestamp: new Date().toISOString(),
-      sequence: 101 + i,
-      attachments: null,
-    }));
-    vi.mocked(mockTransport.getMessages).mockResolvedValueOnce(batch2);
-    await useThreadStore.getState().loadOlderMessages();
+    vi.mocked(mockTransport.getMessages).mockResolvedValueOnce({ messages: batch1, hasMore: false });
+    await useThreadStore.getState().loadOlderMessages("thread-1");
 
     const state = useThreadStore.getState();
-    expect(state.messages.length).toBeLessThanOrEqual(MESSAGE_WINDOW_SIZE);
-    // Window slides: oldest messages are from the latest fetch
-    expect(state.messages[0].sequence).toBe(101);
+    // All 100 messages present (50 prepended + 50 original)
+    expect(state.messages.length).toBe(100);
+    expect(state.messages[0].sequence).toBe(1);
+    expect(state.messages[99].sequence).toBe(100);
+    // No more to load
+    expect(state.hasMoreMessages["thread-1"]).toBe(false);
   });
 });

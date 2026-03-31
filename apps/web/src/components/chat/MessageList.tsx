@@ -246,6 +246,7 @@ export function MessageList() {
     }
 
     if (items.length === 0) return;
+    if (loading) return; // don't position until persisted messages are loaded
 
     isInitialLoadRef.current = false;
 

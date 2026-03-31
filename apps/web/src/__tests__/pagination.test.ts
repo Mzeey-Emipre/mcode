@@ -144,6 +144,7 @@ describe("Chat Pagination", () => {
     const state = useThreadStore.getState();
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0].id).toBe("m2");
+    expect(state.isLoadingMore[threadId]).toBe(false);
   });
 
   it("loadOlderMessages discards results when epoch changes (A->B->A switch)", async () => {
@@ -177,6 +178,7 @@ describe("Chat Pagination", () => {
     const state = useThreadStore.getState();
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0].id).toBe("m2");
+    expect(state.isLoadingMore[threadId]).toBe(false);
   });
 
   it("loadOlderMessages resets isLoadingMore on network error", async () => {
