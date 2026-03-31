@@ -98,7 +98,7 @@ export interface McodeTransport {
   markThreadViewed(threadId: string): Promise<void>;
 
   // Message queries
-  getMessages(threadId: string, limit: number): Promise<Message[]>;
+  getMessages(threadId: string, limit: number, before?: number): Promise<Message[]>;
 
   // Config
   discoverConfig(workspacePath: string): Promise<Record<string, unknown>>;

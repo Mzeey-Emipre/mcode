@@ -123,7 +123,11 @@ export const WS_METHODS = {
     result: z.number(),
   },
   "message.list": {
-    params: z.object({ threadId: z.string(), limit: z.number() }),
+    params: z.object({
+      threadId: z.string(),
+      limit: z.number(),
+      before: z.number().optional(),
+    }),
     result: z.array(MessageSchema),
   },
   "file.list": {
