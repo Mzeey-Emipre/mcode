@@ -146,6 +146,9 @@ export interface McodeTransport {
   /** Fetch child tool call records for a parent tool call. */
   listToolCallRecordsByParent(parentToolCallId: string): Promise<ToolCallRecord[]>;
 
+  /** Fetch persisted task list for a thread (from last TodoWrite). */
+  getThreadTasks(threadId: string): Promise<Array<{ content: string; status: "pending" | "in_progress" | "completed" }> | null>;
+
   // Snapshots
   /** Get a unified diff for a specific file from a turn snapshot. */
   getSnapshotDiff(snapshotId: string, filePath?: string, maxLines?: number): Promise<string>;

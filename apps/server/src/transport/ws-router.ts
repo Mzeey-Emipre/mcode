@@ -30,6 +30,7 @@ import type { TerminalService } from "../services/terminal-service";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
+import type { TaskRepo } from "../repositories/task-repo";
 import type { SnapshotService } from "../services/snapshot-service";
 import type { SettingsService } from "../services/settings-service";
 import type { GitWatcherService } from "../services/git-watcher-service";
@@ -55,6 +56,7 @@ export interface RouterDeps {
   gitWatcherService: GitWatcherService;
   /** Manages lifecycle-aware memory pressure (idle timers, SQLite cache, GC). */
   memoryPressureService: MemoryPressureService;
+  taskRepo: TaskRepo;
 }
 
 /**
@@ -323,6 +325,10 @@ async function dispatch(
       return deps.toolCallRecordRepo.listByMessage(params.messageId);
     case "toolCallRecord.listByParent":
       return deps.toolCallRecordRepo.listByParent(params.parentToolCallId);
+
+    // Thread tasks
+    case "thread.getTasks":
+      return deps.taskRepo.get(params.threadId);
 
     // Snapshots
     case "snapshot.getDiff": {

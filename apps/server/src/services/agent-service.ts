@@ -21,6 +21,7 @@ import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { MessageRepo } from "../repositories/message-repo";
 import { ToolCallRecordRepo, type CreateToolCallRecordInput } from "../repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
+import { TaskRepo } from "../repositories/task-repo";
 import { GitService } from "./git-service";
 import { AttachmentService } from "./attachment-service";
 import { SnapshotService } from "./snapshot-service";
@@ -84,6 +85,7 @@ export class AgentService {
     @inject(SnapshotService) private readonly snapshotService: SnapshotService,
     @inject(MemoryPressureService)
     private readonly memoryPressureService: MemoryPressureService,
+    @inject(TaskRepo) private readonly taskRepo: TaskRepo,
   ) {}
 
   /**
@@ -423,6 +425,36 @@ export class AgentService {
       _rawToolInput: event.toolInput,
     });
     this.turnToolCalls.set(threadId, buffer);
+
+    // Persist TodoWrite state for hydration on reconnect
+    if (event.toolName === "TodoWrite") {
+      const todos = event.toolInput?.todos;
+      if (Array.isArray(todos)) {
+        const validStatuses = new Set(["pending", "in_progress", "completed"]);
+        const cleanedTodos = todos
+          .filter(
+            (t): t is Record<string, unknown> =>
+              t != null && typeof t === "object" && "content" in t,
+          )
+          .map((t) => {
+            const rawStatus = String(t.status ?? "");
+            return {
+              content: String(t.content ?? ""),
+              status: (validStatuses.has(rawStatus) ? rawStatus : "pending") as
+                | "pending"
+                | "in_progress"
+                | "completed",
+            };
+          });
+        if (cleanedTodos.length > 0) {
+          try {
+            this.taskRepo.upsert(threadId, cleanedTodos);
+          } catch (err) {
+            logger.warn("Failed to persist TodoWrite tasks for thread %s: %s", threadId, err);
+          }
+        }
+      }
+    }
   }
 
   /** Update a buffered tool call with its output when result arrives. */

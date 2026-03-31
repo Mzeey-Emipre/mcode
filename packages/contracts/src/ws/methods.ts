@@ -205,6 +205,18 @@ export const WS_METHODS = {
     params: z.object({ parentToolCallId: z.string() }),
     result: z.array(ToolCallRecordSchema),
   },
+  "thread.getTasks": {
+    params: z.object({ threadId: z.string() }),
+    // Note: `group` is intentionally absent from the wire format — the SDK's TodoWrite tool
+    // does not provide grouping metadata, so clients assign all tasks to a single "Tasks" group.
+    // If a future SDK version adds grouping, this schema and StoredTask will need to be extended.
+    result: z
+      .array(z.object({
+        content: z.string(),
+        status: z.enum(["pending", "in_progress", "completed"]),
+      }))
+      .nullable(),
+  },
   "snapshot.getDiff": {
     params: z.object({
       snapshotId: z.string(),

@@ -331,6 +331,12 @@ export function createWsTransport(
     listToolCallRecordsByParent: (parentToolCallId) =>
       rpc<ToolCallRecord[]>("toolCallRecord.listByParent", { parentToolCallId }),
 
+    // Thread tasks
+    getThreadTasks: (threadId: string) =>
+      rpc<Array<{ content: string; status: "pending" | "in_progress" | "completed" }> | null>(
+        "thread.getTasks", { threadId },
+      ),
+
     // Snapshots
     getSnapshotDiff: (snapshotId, filePath?, maxLines?) =>
       rpc<string>("snapshot.getDiff", { snapshotId, filePath, maxLines }),

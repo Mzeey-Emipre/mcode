@@ -4,6 +4,7 @@ import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
+import { useTaskStore } from "./taskStore";
 import { useComposerDraftStore } from "./composerDraftStore";
 import type { NamingMode, ReasoningLevel } from "@mcode/contracts";
 import { useSettingsStore } from "./settingsStore";
@@ -130,8 +131,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         .threads.filter((t) => t.workspace_id === id)
         .map((t) => t.id);
       const draftStore = useComposerDraftStore.getState();
+      const taskStore = useTaskStore.getState();
       for (const tid of deletedThreadIds) {
         draftStore.clearDraft(tid);
+        taskStore.clearTasks(tid);
       }
       set((state) => ({
         workspaces: state.workspaces.filter((w) => w.id !== id),
@@ -292,6 +295,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       useTerminalStore.getState().removeAllTerminals(threadId);
       useQueueStore.getState().clearQueue(threadId);
       useComposerDraftStore.getState().clearDraft(threadId);
+      useTaskStore.getState().clearTasks(threadId);
       set((state) => ({
         threads: state.threads.filter((t) => t.id !== threadId),
         activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
