@@ -114,13 +114,46 @@ export class MessageRepo {
    *
    * Uses a sub-select pattern: grab the last N rows by descending sequence,
    * then re-sort ascending so the caller gets chronological order.
+   *
+   * When `before` is provided, returns messages with sequence < before
+   * (cursor-based pagination for loading older history).
+   *
+   * Returns `{ messages, hasMore }` where hasMore indicates whether
+   * older messages exist beyond this batch (uses limit+1 trick).
    */
-  listByThread(threadId: string, limit: number): Message[] {
+  listByThread(
+    threadId: string,
+    limit: number,
+    before?: number,
+  ): { messages: Message[]; hasMore: boolean } {
     const clampedLimit = Math.max(1, Math.min(1000, limit));
+    const fetchLimit = clampedLimit + 1;
 
-    const rows = this.db
-      .prepare(
-        `SELECT ${MESSAGE_COLUMNS}, tc_count.cnt as tool_call_count
+    let rows: MessageRow[];
+
+    if (before != null) {
+      rows = this.db
+        .prepare(
+          `SELECT ${MESSAGE_COLUMNS}, tc_count.cnt as tool_call_count
+FROM (
+  SELECT ${MESSAGE_COLUMNS_PREFIXED}
+  FROM messages m
+  WHERE m.thread_id = ? AND m.sequence < ?
+  ORDER BY m.sequence DESC
+  LIMIT ?
+) m
+LEFT JOIN (
+  SELECT message_id, COUNT(*) as cnt
+  FROM tool_call_records
+  GROUP BY message_id
+) tc_count ON tc_count.message_id = m.id
+ORDER BY m.sequence ASC`,
+        )
+        .all(threadId, before, fetchLimit) as MessageRow[];
+    } else {
+      rows = this.db
+        .prepare(
+          `SELECT ${MESSAGE_COLUMNS}, tc_count.cnt as tool_call_count
 FROM (
   SELECT ${MESSAGE_COLUMNS_PREFIXED}
   FROM messages m
@@ -134,9 +167,15 @@ LEFT JOIN (
   GROUP BY message_id
 ) tc_count ON tc_count.message_id = m.id
 ORDER BY m.sequence ASC`,
-      )
-      .all(threadId, clampedLimit) as MessageRow[];
+        )
+        .all(threadId, fetchLimit) as MessageRow[];
+    }
 
-    return rows.map(rowToMessage);
+    const hasMore = rows.length > clampedLimit;
+    if (hasMore) {
+      rows = rows.slice(rows.length - clampedLimit);
+    }
+
+    return { messages: rows.map(rowToMessage), hasMore };
   }
 }
