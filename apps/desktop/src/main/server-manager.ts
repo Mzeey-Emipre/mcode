@@ -13,8 +13,8 @@ import { getMcodeDir } from "@mcode/shared";
 /** Absolute path to the server package directory. */
 const SERVER_DIR = resolve(__dirname, "../../../server");
 
-/** Absolute path to the server entry point. */
-const SERVER_ENTRY = resolve(SERVER_DIR, "src/index.ts");
+/** Absolute path to the server bootstrap entry (registers tsx for utilityProcess). */
+const SERVER_ENTRY = resolve(SERVER_DIR, "src/entry.mjs");
 
 /**
  * Port range to scan for an available port.
@@ -77,7 +77,6 @@ export class ServerManager {
 
     this.serverProcess = utilityProcess.fork(SERVER_ENTRY, [], {
       cwd: SERVER_DIR,
-      execArgv: ["--import", "tsx"],
       env: {
         ...process.env,
         MCODE_PORT: String(this._port),
