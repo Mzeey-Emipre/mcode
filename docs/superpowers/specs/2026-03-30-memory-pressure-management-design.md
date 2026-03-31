@@ -105,7 +105,7 @@ export class MemoryPressureService {
 
 | Action | Implementation | Savings |
 |--------|---------------|---------|
-| Full GC | `global.gc(true)` (full mark-sweep-compact) | 10-30MB |
+| Full GC | `global.gc()` (full mark-sweep-compact) | 10-30MB |
 | SQLite cache reduction | `db.pragma("cache_size = -500")` (500KB) | 1.5MB |
 
 **Return to active:**
@@ -223,6 +223,24 @@ The tool call record cache is currently cleared as a side effect of `loadThread`
 
 This hook is mounted once in the root `App` component.
 
+<<<<<<< HEAD
+### Layer 6: Terminal Buffer Management (Warm Idle)
+
+Non-visible terminal instances hold scrollback buffers in memory. When a terminal tab is not active, clear its buffer.
+
+**File:** `apps/web/src/components/terminal/TerminalView.tsx`
+
+Current scrollback is set to 500 lines. Each terminal instance uses approximately 1-3MB depending on content.
+
+On terminal tab switch (when a terminal becomes non-visible):
+- Call `terminal.clear()` on the outgoing terminal to release its scrollback buffer
+- Historical scrollback is lost; only new PTY output appears when the terminal becomes visible again
+- This is an acceptable trade-off: scrollback is 500 lines and terminals are primarily used for real-time agent output, not historical review
+
+This is implemented in the terminal tab switching logic, not as a timer-based approach, so there is no delay.
+
+**Estimated savings:** 1-3MB per hidden terminal instance.
+=======
 ### Layer 6: Terminal Buffer Management (Background Idle)
 
 Non-visible terminal instances hold scrollback buffers in memory. Each terminal instance uses approximately 1-3MB depending on content.
@@ -238,6 +256,7 @@ Non-visible terminal instances hold scrollback buffers in memory. Each terminal 
 - The PTY session itself remains alive on the server; only the frontend buffer is cleared
 
 **Estimated savings:** 1-3MB per terminal instance during background idle.
+>>>>>>> origin/main
 
 ## New Files
 
@@ -275,7 +294,7 @@ Non-visible terminal instances hold scrollback buffers in memory. Each terminal 
 |------|-----------|
 | `--max-old-space-size=96` too tight during 5 concurrent agents | Monitor OOM crashes; increase to 128 if needed. Each agent session uses ~5-10MB. |
 | `global.gc()` causes noticeable pause | Only called during verified idle (no agents, no user interaction). Minor GC takes 5-20ms; full GC 20-50ms. |
-| SQLite cache reduction slows queries | 2MB cache with simple key-lookup patterns gives >95% hit rate. Profile with `.pragma("cache_hit_rate")` if needed. |
+| SQLite cache reduction slows queries | 2MB cache with simple key-lookup patterns gives >95% hit rate. Validate by varying `PRAGMA cache_size` / `PRAGMA mmap_size` and measuring query latency; use `sqlite3_db_status(SQLITE_DBSTATUS_CACHE_HIT / CACHE_MISS)` via a native addon or the memstat extension for precise counters. |
 | Shiki core import breaks language loading | Existing on-demand loading pattern already works; the full bundle just pre-registers grammars we never use. |
 | Terminal clear loses scrollback | Scrollback is only 500 lines; content comes from PTY output which continues to flow. Users can scroll up after re-focus. |
 

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const refs = vi.hoisted(() => {
   let exitCallback: ((code: number | null) => void) | null = null;
 
-  const mockChildProcess = {
+  const mockUtilityProcess = {
     stdout: { on: vi.fn() },
     stderr: { on: vi.fn() },
     on: vi.fn((event: string, cb: (code: number | null) => void) => {
@@ -15,11 +15,12 @@ const refs = vi.hoisted(() => {
     }),
     once: vi.fn(),
     kill: vi.fn(),
+    postMessage: vi.fn(),
     pid: 12345,
   };
 
   return {
-    mockChildProcess,
+    mockUtilityProcess,
     getExitCallback: () => exitCallback,
     resetExitCallback: () => { exitCallback = null; },
   };
@@ -30,14 +31,17 @@ vi.mock("electron", () => ({
     getPath: vi.fn().mockReturnValue("/tmp"),
     getVersion: vi.fn().mockReturnValue("0.1.0-test"),
   },
+  utilityProcess: {
+    fork: vi.fn().mockReturnValue(refs.mockUtilityProcess),
+  },
+  MessageChannelMain: class {
+    port1 = { postMessage: vi.fn(), close: vi.fn() };
+    port2 = { postMessage: vi.fn(), close: vi.fn() };
+  },
 }));
 
 vi.mock("@mcode/shared", () => ({
   getMcodeDir: vi.fn().mockReturnValue("/tmp/mcode"),
-}));
-
-vi.mock("child_process", () => ({
-  fork: vi.fn().mockReturnValue(refs.mockChildProcess),
 }));
 
 vi.mock("net", () => ({
@@ -65,7 +69,7 @@ vi.mock("fs", () => ({
 const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
-import { fork } from "child_process";
+import { utilityProcess } from "electron";
 import { readFileSync } from "fs";
 
 // ---------------------------------------------------------------------------
@@ -100,10 +104,10 @@ describe("ServerManager", () => {
     delete process.env.MCODE_SERVER_HEAP_MB;
   });
 
-  it("starts the server by forking a child process", async () => {
+  it("starts the server by forking a utility process", async () => {
     const result = await manager.start();
 
-    expect(fork).toHaveBeenCalledOnce();
+    expect(utilityProcess.fork).toHaveBeenCalledOnce();
     expect(result.port).toBe(19400);
     expect(result.authToken).toBe("mock-auth-token");
   });
@@ -115,56 +119,74 @@ describe("ServerManager", () => {
     expect(manager.authToken).toBe("mock-auth-token");
   });
 
-  it("passes correct environment to the forked process", async () => {
+  it("passes correct environment to the utility process", async () => {
     await manager.start();
 
-    const forkCall = vi.mocked(fork).mock.calls[0];
-    const env = forkCall[2]?.env as Record<string, string>;
-    expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const opts = forkCall[2] as Record<string, unknown>;
+    const env = opts.env as Record<string, string>;
     expect(env.MCODE_PORT).toBe("19400");
     expect(env.MCODE_AUTH_TOKEN).toBe("mock-auth-token");
     expect(env.MCODE_MODE).toBe("desktop");
+    expect(opts.stdio).toBe("pipe");
   });
 
-  it("shutdown sends SIGTERM to the child process", async () => {
+  it("shutdown kills the utility process", async () => {
     await manager.start();
 
     manager.shutdown();
 
-    expect(refs.mockChildProcess.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(refs.mockUtilityProcess.kill).toHaveBeenCalledWith();
   });
 
   it("shutdown is a no-op when no server is running", () => {
     expect(() => manager.shutdown()).not.toThrow();
   });
 
-  it("handles child process exit by clearing serverProcess reference", async () => {
+  it("createStreamPort creates a MessageChannelMain pair and posts to server", async () => {
     await manager.start();
 
-    // Simulate the child process exiting
+    const port = manager.createStreamPort();
+
+    expect(refs.mockUtilityProcess.postMessage).toHaveBeenCalledWith(
+      { type: "stream-port" },
+      expect.any(Array),
+    );
+    expect(port).toBeDefined();
+    expect(port).toHaveProperty("postMessage");
+  });
+
+  it("createStreamPort throws when server is not running", () => {
+    expect(() => manager.createStreamPort()).toThrow(
+      "Cannot create stream port: server not running",
+    );
+  });
+
+  it("handles utility process exit by clearing serverProcess reference", async () => {
+    await manager.start();
+
     const exitCb = refs.getExitCallback();
     expect(exitCb).toBeDefined();
     exitCb!(0);
 
-    // After exit, shutdown should be a no-op (no kill call)
-    refs.mockChildProcess.kill.mockClear();
+    refs.mockUtilityProcess.kill.mockClear();
     manager.shutdown();
-    expect(refs.mockChildProcess.kill).not.toHaveBeenCalled();
+    expect(refs.mockUtilityProcess.kill).not.toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------
-  // Task 2: --max-old-space-size in execArgv
+  // V8 heap flags in execArgv
   // -----------------------------------------------------------------------
 
-  it("passes --max-old-space-size in execArgv with default 96", async () => {
+  it("passes V8 heap flags in execArgv with default 96", async () => {
     await manager.start();
-    const forkCall = vi.mocked(fork).mock.calls[0];
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
     const execArgv = forkCall[2]?.execArgv as string[];
-    expect(execArgv).toContain("--import");
-    expect(execArgv).toContain("tsx");
     expect(execArgv).toContain("--max-old-space-size=96");
     expect(execArgv).toContain("--max-semi-space-size=2");
     expect(execArgv).toContain("--expose-gc");
+    // --import tsx is NOT in execArgv; handled by entry.mjs bootstrap
+    expect(execArgv).not.toContain("--import");
   });
 
   it("reads heapMb from settings.json when file exists", async () => {
@@ -172,7 +194,7 @@ describe("ServerManager", () => {
       JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
     );
     await manager.start();
-    const forkCall = vi.mocked(fork).mock.calls[0];
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
     const execArgv = forkCall[2]?.execArgv as string[];
     expect(execArgv).toContain("--max-old-space-size=1024");
   });
@@ -183,7 +205,7 @@ describe("ServerManager", () => {
       JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
     );
     await manager.start();
-    const forkCall = vi.mocked(fork).mock.calls[0];
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
     const execArgv = forkCall[2]?.execArgv as string[];
     expect(execArgv).toContain("--max-old-space-size=2048");
   });
@@ -193,13 +215,13 @@ describe("ServerManager", () => {
       JSON.stringify({ server: { memory: { heapMb: 10 } } }),
     );
     await manager.start();
-    const forkCall = vi.mocked(fork).mock.calls[0];
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
     const execArgv = forkCall[2]?.execArgv as string[];
     expect(execArgv).toContain("--max-old-space-size=96");
   });
 
   // -----------------------------------------------------------------------
-  // Task 3: onUnexpectedExit callback
+  // onUnexpectedExit callback
   // -----------------------------------------------------------------------
 
   it("calls onUnexpectedExit when server exits without shutdown", async () => {

@@ -185,15 +185,19 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    backgroundColor: "#0a0a0f",
-    autoHideMenuBar: true,
     // Keep window hidden until first paint to eliminate the blank white flash.
     show: false,
+    backgroundColor: "#0a0a0f",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, "../preload/preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  mainWindow.once("ready-to-show", () => {
+    mainWindow?.show();
   });
 
   mainWindow.setMenuBarVisibility(false);
@@ -491,6 +495,10 @@ app.whenReady().then(async () => {
   // Create window
   createWindow();
 
+  // Create and distribute streaming MessagePort pair
+  const rendererPort = serverManager.createStreamPort();
+  mainWindow!.webContents.postMessage("stream-port", null, [rendererPort]);
+
   // Register native-only IPC handlers
   registerIpcHandlers();
 
@@ -501,6 +509,9 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+      // Re-distribute stream port to the new window
+      const port = serverManager.createStreamPort();
+      mainWindow!.webContents.postMessage("stream-port", null, [port]);
       setupCloseHandler();
     }
   });

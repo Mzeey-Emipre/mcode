@@ -1,5 +1,6 @@
 import type { Settings } from "@mcode/contracts";
 import { pushEmitter } from "./ws-transport";
+import { portEventSource } from "./port-events";
 import { useThreadStore } from "@/stores/threadStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -143,6 +144,11 @@ export function startPushListeners(): void {
       });
     }),
   );
+
+  // Register MessagePort event callback when running in Electron
+  if (window.desktopBridge?.onStreamEvent) {
+    window.desktopBridge.onStreamEvent(portEventSource.getCallback());
+  }
 }
 
 /** Remove all push channel listeners. Safe to call multiple times. */

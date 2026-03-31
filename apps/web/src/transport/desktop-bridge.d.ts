@@ -28,6 +28,8 @@ interface DesktopBridge {
   getRecentLogs(lines: number): Promise<string>;
   /** Map a browser File object to its real filesystem path. */
   getPathForFile(file: File): string;
+  /** Register a callback for streaming events received via MessagePort. */
+  onStreamEvent(callback: (data: unknown) => void): void;
   /** Clear Blink's in-memory resource caches (images, scripts, CSS).
    * Typically called after a thread switch to reclaim memory. */
   clearRendererCache(): void;
