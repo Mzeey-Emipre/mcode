@@ -100,6 +100,7 @@ export interface McodeTransport {
   syncThreadPrs(workspaceId: string): Promise<Array<{ threadId: string; prNumber: number; prStatus: string }>>;
 
   // Message queries
+  /** Fetch messages for a thread with cursor-based pagination. Omit `before` for the newest batch. */
   getMessages(threadId: string, limit: number, before?: number): Promise<{ messages: Message[]; hasMore: boolean }>;
 
   // Config

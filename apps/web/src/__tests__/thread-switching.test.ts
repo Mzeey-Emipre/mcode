@@ -29,6 +29,7 @@ describe("Thread Switching", () => {
       oldestLoadedSequence: {},
       hasMoreMessages: {},
       isLoadingMore: {},
+      loadEpochByThread: {},
     });
     vi.clearAllMocks();
   });

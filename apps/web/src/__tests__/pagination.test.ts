@@ -30,6 +30,7 @@ describe("Chat Pagination", () => {
       oldestLoadedSequence: {},
       hasMoreMessages: {},
       isLoadingMore: {},
+      loadEpochByThread: {},
     });
     vi.clearAllMocks();
   });
@@ -139,6 +140,39 @@ describe("Chat Pagination", () => {
     });
     await loadPromise;
 
+    const state = useThreadStore.getState();
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].id).toBe("m2");
+  });
+
+  it("loadOlderMessages discards results when epoch changes (A->B->A switch)", async () => {
+    useThreadStore.setState({
+      currentThreadId: threadId,
+      messages: [createMockMessage({ id: "m2", thread_id: threadId, sequence: 2 })],
+      oldestLoadedSequence: { [threadId]: 2 },
+      hasMoreMessages: { [threadId]: true },
+      loadEpochByThread: { [threadId]: 1 },
+    });
+
+    let resolveGetMessages!: (result: { messages: any[]; hasMore: boolean }) => void;
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      new Promise((resolve) => { resolveGetMessages = resolve; }),
+    );
+
+    const loadPromise = useThreadStore.getState().loadOlderMessages(threadId);
+
+    // Simulate A->B->A: loadMessages increments epoch while fetch is in-flight
+    useThreadStore.setState((s) => ({
+      loadEpochByThread: { ...s.loadEpochByThread, [threadId]: 2 },
+    }));
+
+    resolveGetMessages({
+      messages: [createMockMessage({ id: "m1", thread_id: threadId, sequence: 1 })],
+      hasMore: false,
+    });
+    await loadPromise;
+
+    // Stale response should be discarded - messages unchanged
     const state = useThreadStore.getState();
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0].id).toBe("m2");

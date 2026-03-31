@@ -229,7 +229,7 @@ export function MessageList() {
     } else {
       prevScrollHeightRef.current = el.scrollHeight;
     }
-  }, [messages.length, messages]);
+  }, [messages]);
 
   // Initial load: position at the bottom before paint to avoid top-to-bottom flash.
   // useLayoutEffect fires after DOM mutations but before the browser paints.

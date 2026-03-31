@@ -39,6 +39,8 @@ interface ThreadState {
   hasMoreMessages: Record<string, boolean>;
   /** Guard against duplicate scroll-triggered fetches per thread. */
   isLoadingMore: Record<string, boolean>;
+  /** Monotonic counter incremented on each loadMessages call, used to discard stale loadOlderMessages responses. */
+  loadEpochByThread: Record<string, number>;
 
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
@@ -100,6 +102,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   oldestLoadedSequence: {},
   hasMoreMessages: {},
   isLoadingMore: {},
+  loadEpochByThread: {},
 
   cacheToolCallRecords: (key, records) => {
     set((state) => ({
@@ -171,14 +174,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
         }
         const oldest = messages.length > 0 ? messages[0].sequence : 0;
-        set({
+        set((s) => ({
           messages,
           loading: false,
           persistedToolCallCounts: counts,
           oldestLoadedSequence: { [threadId]: oldest },
           hasMoreMessages: { [threadId]: hasMore },
           isLoadingMore: {},
-        });
+          loadEpochByThread: { ...s.loadEpochByThread, [threadId]: (s.loadEpochByThread[threadId] ?? 0) + 1 },
+        }));
 
         // Hydrate task panel from persisted TodoWrite state.
         getTransport()
@@ -221,10 +225,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
     try {
       const cursor = get().oldestLoadedSequence[threadId];
+      const epoch = get().loadEpochByThread[threadId] ?? 0;
       const { messages: olderMessages, hasMore } = await getTransport().getMessages(threadId, 50, cursor);
 
-      // Only apply if this thread is still current
+      // Discard if thread switched or loadMessages reset state since we started
       if (get().currentThreadId !== threadId) return;
+      if ((get().loadEpochByThread[threadId] ?? 0) !== epoch) return;
 
       // Populate tool call counts from older messages
       const newCounts: Record<string, number> = {};
@@ -341,6 +347,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       oldestLoadedSequence: {},
       hasMoreMessages: {},
       isLoadingMore: {},
+      loadEpochByThread: {},
     });
     // Note: does NOT reset runningThreadIds - agents may still be running
   },
