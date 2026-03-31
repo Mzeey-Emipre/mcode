@@ -28,20 +28,20 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   // icon reflects state changes (e.g. OPEN -> MERGED) in realtime.
   useEffect(() => {
     if (!pr) return;
-    const state = useWorkspaceStore.getState();
-    const stored = state.threads.find((t) => t.id === thread.id);
-    if (!stored) return;
-    const stateChanged = stored.pr_status?.toLowerCase() !== pr.state.toLowerCase();
-    const numberChanged = stored.pr_number !== pr.number;
-    if (stateChanged || numberChanged) {
-      useWorkspaceStore.setState((ws) => ({
+    useWorkspaceStore.setState((ws) => {
+      const stored = ws.threads.find((t) => t.id === thread.id);
+      if (!stored) return ws;
+      const stateChanged = stored.pr_status?.toLowerCase() !== pr.state.toLowerCase();
+      const numberChanged = stored.pr_number !== pr.number;
+      if (!stateChanged && !numberChanged) return ws;
+      return {
         threads: ws.threads.map((t) =>
           t.id === thread.id
             ? { ...t, pr_number: pr.number, pr_status: pr.state }
             : t,
         ),
-      }));
-    }
+      };
+    });
   }, [pr, thread.id]);
 
   const panelVisible = useTerminalStore((s) => s.panelVisible);

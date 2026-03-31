@@ -151,15 +151,16 @@ for (const provider of providerRegistry.resolveAll()) {
         broadcast("files.changed", filesPayload);
         portPush.send("files.changed", filesPayload);
 
-        // Detect or refresh PR state for the thread's branch
-        const workspace = workspaceRepo.findById(thread.workspace_id);
+        // Detect or refresh PR state for feature branches only
+        const isFeatureBranch = thread.branch !== "main" && thread.branch !== "master";
+        const workspace = isFeatureBranch ? workspaceRepo.findById(thread.workspace_id) : null;
         if (workspace) {
           githubService.getBranchPr(thread.branch, workspace.path).then((pr) => {
             if (!pr) return;
             const stateChanged = thread.pr_number == null
               || thread.pr_status?.toLowerCase() !== pr.state.toLowerCase();
             if (stateChanged) {
-              threadRepo.updatePr(thread.id, pr.number, pr.state);
+              threadService.linkPr(thread.id, pr.number, pr.state);
               const prPayload = { threadId: thread.id, prNumber: pr.number, prStatus: pr.state };
               broadcast("thread.prLinked", prPayload);
               portPush.send("thread.prLinked", prPayload);

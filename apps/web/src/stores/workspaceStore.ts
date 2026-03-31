@@ -15,6 +15,11 @@ function generateBranchId(): string {
   return `mcode-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** Minimum interval between syncThreadPrs calls per workspace. */
+const SYNC_THROTTLE_MS = 30_000;
+/** Tracks the last syncThreadPrs request time per workspace. */
+const lastSyncTime = new Map<string, number>();
+
 interface WorkspaceState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
@@ -193,18 +198,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         loading: false,
       }));
 
-      // Async: scan for new PRs and refresh stale PR states
-      getTransport().syncThreadPrs(workspaceId).then((linked) => {
-        if (linked.length === 0) return;
-        set((state) => ({
-          threads: state.threads.map((t) => {
-            const match = linked.find((l) => l.threadId === t.id);
-            return match
-              ? { ...t, pr_number: match.prNumber, pr_status: match.prStatus }
-              : t;
-          }),
-        }));
-      }).catch(() => {});
+      // Async: scan for new PRs and refresh stale PR states (throttled)
+      const now = Date.now();
+      const lastSync = lastSyncTime.get(workspaceId) ?? 0;
+      if (now - lastSync >= SYNC_THROTTLE_MS) {
+        lastSyncTime.set(workspaceId, now);
+        getTransport().syncThreadPrs(workspaceId).then((linked) => {
+          if (linked.length === 0) return;
+          set((state) => ({
+            threads: state.threads.map((t) => {
+              const match = linked.find((l) => l.threadId === t.id);
+              return match
+                ? { ...t, pr_number: match.prNumber, pr_status: match.prStatus }
+                : t;
+            }),
+          }));
+        }).catch(() => {});
+      }
     } catch (e) {
       set({ error: String(e), loading: false });
     }

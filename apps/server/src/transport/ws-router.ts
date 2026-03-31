@@ -198,9 +198,9 @@ async function dispatch(
     case "thread.syncPrs": {
       const threads = deps.threadService.list(params.workspaceId);
       // Check threads without a PR and threads whose PR may have changed state
-      const needsCheck = threads.filter(
-        (t) => t.pr_number == null || (t.pr_status && t.pr_status.toLowerCase() !== "merged" && t.pr_status.toLowerCase() !== "closed"),
-      );
+      const isPrMissingOrNonTerminal = (t: { pr_number: number | null; pr_status: string | null }) =>
+        t.pr_number == null || (t.pr_status != null && t.pr_status.toLowerCase() !== "merged" && t.pr_status.toLowerCase() !== "closed");
+      const needsCheck = threads.filter(isPrMissingOrNonTerminal);
       if (needsCheck.length === 0) return [];
       const workspace = deps.workspaceService.findById(params.workspaceId);
       if (!workspace) return [];
