@@ -113,12 +113,17 @@ describe("sanitizeCustomBranchInput", () => {
     expect(sanitizeCustomBranchInput(".dotfile")).toBe("dotfile");
   });
 
+  it("preserves trailing hyphens during typing", () => {
+    expect(sanitizeCustomBranchInput("feat-")).toBe("feat-");
+    expect(sanitizeCustomBranchInput("fix/my-")).toBe("fix/my-");
+  });
+
   it("returns empty string for empty input", () => {
     expect(sanitizeCustomBranchInput("")).toBe("");
   });
 
-  it("strips reflog @{...} syntax", () => {
-    expect(sanitizeCustomBranchInput("branch@{0}")).toBe("branch-0");
+  it("strips reflog @{...} syntax (trailing hyphen preserved for typing)", () => {
+    expect(sanitizeCustomBranchInput("branch@{0}")).toBe("branch-0-");
   });
 
   it("replaces control characters with hyphens", () => {

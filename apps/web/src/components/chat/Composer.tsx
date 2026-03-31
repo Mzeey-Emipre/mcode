@@ -156,6 +156,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const settingsDefaultModelId = useSettingsStore((s) => s.settings.model.defaults.id);
   const settingsDefaultReasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
+  const settingsDefaultMode = useSettingsStore((s) => s.settings.agent.defaults.mode);
+  const settingsDefaultPermission = useSettingsStore((s) => s.settings.agent.defaults.permission);
 
   useEffect(() => {
     if (!settingsLoaded) return;
@@ -166,7 +168,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
     setModelId(validModelId);
     setReasoning(settingsDefaultReasoning);
-  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning]); // Only sync when settings change
+
+    // Sync mode and access from settings for new threads
+    if (!threadId) {
+      setMode(settingsDefaultMode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
+      setAccess(settingsDefaultPermission);
+    }
+  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission]); // Only sync when settings change
 
   // Save draft for previous thread, restore draft for new thread
   useEffect(() => {
@@ -229,6 +237,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       setAttachments([]);
       setModelId(getDefaultModelId());
       setReasoning(getDefaultReasoningLevel());
+      // Reset mode/access to persisted defaults
+      const { settings } = useSettingsStore.getState();
+      setMode(settings.agent.defaults.mode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
+      setAccess(settings.agent.defaults.permission);
       if (editorRef.current) {
         editorRef.current.update(() => {
           const root = $getRoot();
@@ -345,9 +357,17 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   // Sync access mode and interaction mode from per-thread settings
   useEffect(() => {
     if (threadId) {
-      const settings = getThreadSettings(threadId);
-      setAccess(settings.permissionMode);
-      setMode(settings.interactionMode);
+      const hasPerThread = threadId in useThreadStore.getState().settingsByThread;
+      if (hasPerThread) {
+        const ts = getThreadSettings(threadId);
+        setAccess(ts.permissionMode);
+        setMode(ts.interactionMode);
+      } else {
+        // No per-thread overrides: use persisted defaults
+        const { settings } = useSettingsStore.getState();
+        setMode(settings.agent.defaults.mode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
+        setAccess(settings.agent.defaults.permission);
+      }
     }
   }, [threadId, getThreadSettings]);
 
@@ -772,7 +792,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning);
     }
 
-    // Auto-save "last used" model and reasoning as the new default
+    // Auto-save "last used" model, reasoning, mode, and access as the new defaults
     const { settings, loaded, update: updateSettings } = useSettingsStore.getState();
     if (loaded && (modelId !== settings.model.defaults.id || reasoning !== settings.model.defaults.reasoning)) {
       const provider = findProviderForModel(modelId);
@@ -786,9 +806,19 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         },
       });
     }
+    if (loaded && (mode !== settings.agent.defaults.mode || access !== settings.agent.defaults.permission)) {
+      void updateSettings({
+        agent: {
+          defaults: {
+            mode,
+            permission: access,
+          },
+        },
+      });
+    }
 
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, mode, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
 
   const handleEditorChange = useCallback((text: string) => {
     setInput(text);
