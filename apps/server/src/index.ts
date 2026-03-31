@@ -151,19 +151,28 @@ for (const provider of providerRegistry.resolveAll()) {
         broadcast("files.changed", filesPayload);
         portPush.send("files.changed", filesPayload);
 
-        // Auto-detect PR for the thread's branch if not already linked
-        if (thread.pr_number == null) {
-          const workspace = workspaceRepo.findById(thread.workspace_id);
-          if (workspace) {
-            githubService.getBranchPr(thread.branch, workspace.path).then((pr) => {
-              if (pr) {
-                threadRepo.updatePr(thread.id, pr.number, pr.state);
-                const prPayload = { threadId: thread.id, prNumber: pr.number, prStatus: pr.state };
-                broadcast("thread.prLinked", prPayload);
-                portPush.send("thread.prLinked", prPayload);
-              }
-            }).catch(() => {});
-          }
+        // Detect or refresh PR state for feature branches only
+        const isFeatureBranch = thread.branch !== "main" && thread.branch !== "master";
+        const workspace = isFeatureBranch ? workspaceRepo.findById(thread.workspace_id) : null;
+        if (workspace) {
+          githubService.getBranchPr(thread.branch, workspace.path).then((pr) => {
+            if (!pr) return;
+            const stateChanged = thread.pr_number == null
+              || thread.pr_status?.toLowerCase() !== pr.state.toLowerCase();
+            if (stateChanged) {
+              threadService.linkPr(thread.id, pr.number, pr.state);
+              const prPayload = { threadId: thread.id, prNumber: pr.number, prStatus: pr.state };
+              broadcast("thread.prLinked", prPayload);
+              portPush.send("thread.prLinked", prPayload);
+            }
+          }).catch((err) => {
+            logger.debug("PR lookup failed on turnComplete", {
+              threadId: thread.id,
+              branch: thread.branch,
+              workspacePath: workspace.path,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
         }
       }
     } else if (event.type === "error") {
