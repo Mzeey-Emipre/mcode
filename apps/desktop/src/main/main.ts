@@ -134,23 +134,38 @@ function detectEditors(): EditorId[] {
 }
 
 /** Open a directory in the given editor as a detached process. */
-function openInEditor(editor: EditorId, dirPath: string): void {
+function openInEditor(editor: EditorId, dirPath: string): Promise<void> {
   const cmd = resolvedEditors?.get(editor);
   if (!cmd) {
-    throw new Error(`Editor not detected: ${editor}. Call detectEditors() first.`);
+    return Promise.reject(
+      new Error(`Editor not detected: ${editor}. Call detectEditors() first.`),
+    );
   }
 
-  let child: ChildProcess;
-  if (process.platform === "win32" && cmd.endsWith(".cmd")) {
-    child = spawn("cmd.exe", ["/c", cmd, dirPath], {
-      detached: true,
-      stdio: "ignore",
-      windowsVerbatimArguments: true,
+  return new Promise<void>((resolve, reject) => {
+    let child: ChildProcess;
+    // On Windows, always route through cmd.exe because PATH-resolved commands
+    // (e.g. "code") are .cmd scripts that Node's spawn cannot execute directly.
+    if (process.platform === "win32") {
+      child = spawn("cmd.exe", ["/c", cmd, dirPath], {
+        detached: true,
+        stdio: "ignore",
+      });
+    } else {
+      child = spawn(cmd, [dirPath], { detached: true, stdio: "ignore" });
+    }
+
+    child.on("error", (err: Error) => {
+      reject(new Error(err.message));
     });
-  } else {
-    child = spawn(cmd, [dirPath], { detached: true, stdio: "ignore" });
-  }
-  child.unref();
+
+    // If the process spawned successfully, resolve on next tick.
+    // The "spawn" event fires once the child process has been created.
+    child.on("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +269,7 @@ function registerIpcHandlers(): void {
   // Open in editor
   ipcMain.handle(
     "open-in-editor",
-    (_event, editor: string, dirPath: string) => {
+    async (_event, editor: string, dirPath: string) => {
       if (!isAbsolute(dirPath)) {
         throw new Error("Editor path must be absolute");
       }
@@ -265,7 +280,7 @@ function registerIpcHandlers(): void {
       if (!validEditors.has(editor)) {
         throw new Error(`Unknown editor: ${editor}`);
       }
-      openInEditor(editor as EditorId, dirPath);
+      await openInEditor(editor as EditorId, dirPath);
     },
   );
 
