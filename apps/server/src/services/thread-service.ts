@@ -138,13 +138,28 @@ export class ThreadService {
               .split("/")
               .pop() ?? thread.worktree_path;
           try {
-            this.gitService.removeWorktree(
+            const removed = this.gitService.removeWorktree(
               workspace.path,
               wtName,
               thread.branch,
             );
-          } catch {
-            // Non-fatal: worktree may already be gone
+            if (!removed) {
+              logger.warn("Worktree removal returned false during thread deletion", {
+                threadId: thread.id,
+                worktreeName: wtName,
+                workspacePath: workspace.path,
+              });
+            }
+          } catch (cleanupErr) {
+            logger.warn("Worktree removal threw during thread deletion", {
+              threadId: thread.id,
+              worktreeName: wtName,
+              workspacePath: workspace.path,
+              error:
+                cleanupErr instanceof Error
+                  ? cleanupErr.message
+                  : String(cleanupErr),
+            });
           }
         }
       }
