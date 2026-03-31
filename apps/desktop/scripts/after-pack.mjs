@@ -73,6 +73,9 @@ export default async function afterPack(context) {
   console.log(`[after-pack] Flipping V8 snapshot fuse on ${electronBinary}`);
   await flipFuses(electronBinary, {
     version: FuseVersion.V1,
+    // On ARM64 macOS, flipping fuses invalidates the ad-hoc code signature.
+    // Reset it so the binary can launch before electron-builder codesigns.
+    resetAdHocDarwinSignature: electronPlatformName === "darwin",
     [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: true,
   });
 
