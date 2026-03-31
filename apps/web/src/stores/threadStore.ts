@@ -88,7 +88,7 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
 export const TOOL_CALL_CACHE_SIZE = 200;
 
 /** Number of older messages to fetch per pagination request. */
-export const OLDER_PAGE_SIZE = 100;
+export const OLDER_PAGE_SIZE = 50;
 
 /** Maximum messages kept in the in-memory sliding window. */
 export const MESSAGE_WINDOW_SIZE = 200;
@@ -170,6 +170,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           messages: [],
           persistedToolCallCounts: {},
           isLoadingMore: {},
+          loadEpochByThread: { ...state.loadEpochByThread, [threadId]: (state.loadEpochByThread[threadId] ?? 0) + 1 },
           toolCallsByThread: nextToolCalls,
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
@@ -177,14 +178,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         };
       });
     } else {
-      set({
+      set((state) => ({
         loading: true,
         error: null,
         currentThreadId: threadId,
         messages: [],
         persistedToolCallCounts: {},
         isLoadingMore: {},
-      });
+        loadEpochByThread: { ...state.loadEpochByThread, [threadId]: (state.loadEpochByThread[threadId] ?? 0) + 1 },
+      }));
     }
     try {
       const { messages, hasMore } = await getTransport().getMessages(threadId, 100);
@@ -198,15 +200,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
         }
         const oldest = messages.length > 0 ? messages[0].sequence : 0;
-        set((s) => ({
+        set({
           messages,
           loading: false,
           persistedToolCallCounts: counts,
           oldestLoadedSequence: { [threadId]: oldest },
           hasMoreMessages: { [threadId]: hasMore },
           isLoadingMore: {},
-          loadEpochByThread: { ...s.loadEpochByThread, [threadId]: (s.loadEpochByThread[threadId] ?? 0) + 1 },
-        }));
+        });
 
         // Hydrate task panel from persisted TodoWrite state.
         getTransport()
@@ -250,7 +251,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     try {
       const cursor = get().oldestLoadedSequence[threadId];
       const epoch = get().loadEpochByThread[threadId] ?? 0;
-      const { messages: olderMessages, hasMore } = await getTransport().getMessages(threadId, 50, cursor);
+      const { messages: olderMessages, hasMore } = await getTransport().getMessages(threadId, OLDER_PAGE_SIZE, cursor);
 
       // Discard if thread switched or loadMessages reset state since we started
       const isStale = get().currentThreadId !== threadId
