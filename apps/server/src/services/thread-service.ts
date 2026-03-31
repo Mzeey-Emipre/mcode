@@ -139,9 +139,12 @@ export class ThreadService {
     return this.threadRepo.updateTitle(threadId, title);
   }
 
-  /** Link a GitHub PR to a thread by updating pr_number and pr_status. */
-  linkPr(threadId: string, prNumber: number, prStatus: string): boolean {
-    return this.threadRepo.updatePr(threadId, prNumber, prStatus);
+  /** Link a GitHub PR to a thread by updating pr_number and pr_status. Throws on failure. */
+  linkPr(threadId: string, prNumber: number, prStatus: string): void {
+    const ok = this.threadRepo.updatePr(threadId, prNumber, prStatus);
+    if (!ok) {
+      throw new Error(`Failed to link PR #${prNumber} to thread ${threadId}`);
+    }
   }
 
   /** Mark a thread as viewed, dismissing the completed badge if present. */

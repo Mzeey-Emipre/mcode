@@ -628,6 +628,9 @@ function VirtualizedThreadList({
                 )}
                 {!isEditing && (
                   <span className="shrink-0 text-xs text-muted-foreground">
+                    {thread.pr_number != null && (
+                      <span className="mr-1 opacity-70">#{thread.pr_number}</span>
+                    )}
                     {relativeTime(thread.updated_at)}
                   </span>
                 )}

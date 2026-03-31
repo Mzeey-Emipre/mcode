@@ -200,7 +200,7 @@ async function dispatch(
       const workspace = deps.workspaceService.findById(params.workspaceId);
       if (!workspace) return [];
       const results: Array<{ threadId: string; prNumber: number; prStatus: string }> = [];
-      await Promise.all(
+      await Promise.allSettled(
         needsPr.map(async (t) => {
           const pr = await deps.githubService.getBranchPr(t.branch, workspace.path);
           if (pr) {
