@@ -169,7 +169,11 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
     const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
     setModelId(validModelId);
-    setReasoning(settingsDefaultReasoning);
+    setReasoning(
+      settingsDefaultReasoning === "max" && !isMaxEffortModel(validModelId)
+        ? "high"
+        : settingsDefaultReasoning
+    );
 
     // Sync mode and access from settings for new threads, unless the user already toggled them
     if (!threadId && !agentSettingsTouchedRef.current) {
@@ -183,7 +187,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     if (reasoning === "max" && !isMaxEffortModel(modelId)) {
       setReasoning("high");
     }
-  }, [modelId]);
+  }, [modelId, reasoning]);
 
   // Save draft for previous thread, restore draft for new thread
   useEffect(() => {
