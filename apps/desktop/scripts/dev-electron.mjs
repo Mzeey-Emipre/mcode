@@ -34,13 +34,13 @@ const entries = [
     ...shared,
     entryPoints: [resolve(projectRoot, "src/main/main.ts")],
     outfile: resolve(projectRoot, "dist/main/main.cjs"),
-    external: ["electron", "@mcode/contracts", "@mcode/shared"],
+    external: ["electron"],
   },
   {
     ...shared,
     entryPoints: [resolve(projectRoot, "src/main/preload.ts")],
     outfile: resolve(projectRoot, "dist/preload/preload.cjs"),
-    external: ["electron", "@mcode/contracts", "@mcode/shared"],
+    external: ["electron"],
   },
 ];
 

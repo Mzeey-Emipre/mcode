@@ -34,13 +34,13 @@ await Promise.all([
     ...shared,
     entryPoints: ["src/main/main.ts"],
     outfile: "dist/main/main.cjs",
-    external: ["electron", "@mcode/contracts", "@mcode/shared"],
+    external: ["electron"],
   }),
   build({
     ...shared,
     entryPoints: ["src/main/preload.ts"],
     outfile: "dist/preload/preload.cjs",
-    external: ["electron", "@mcode/contracts", "@mcode/shared"],
+    external: ["electron"],
   }),
 ]);
 
