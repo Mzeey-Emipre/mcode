@@ -100,7 +100,7 @@ describe("Settings-aware defaults", () => {
       settings: {
         ...DEFAULT_SETTINGS,
         model: {
-          defaults: { provider: "claude", id: "claude-opus-4-6", reasoning: "max" as ReasoningLevel },
+          defaults: { provider: "claude", id: "claude-opus-4-6", reasoning: "max" },
         },
       },
     });
