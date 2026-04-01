@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { InteractionModeSchema, PermissionModeSchema } from "./enums.js";
+import { lazySchema } from "../utils/lazySchema.js";
 
 // ---------------------------------------------------------------------------
 // Enum schemas
@@ -43,106 +44,110 @@ export type NamingMode = z.infer<typeof NamingModeSchema>;
 // ---------------------------------------------------------------------------
 
 /** Schema for the full user settings object. Every field has a default. */
-export const SettingsSchema = z.object({
-  /** Visual appearance settings. */
-  appearance: z
-    .object({
-      /** Color theme preference. */
-      theme: ThemeSchema.default("system"),
-    })
-    .default({}),
+export const SettingsSchema = lazySchema(() =>
+  z.object({
+    /** Visual appearance settings. */
+    appearance: z
+      .object({
+        /** Color theme preference. */
+        theme: ThemeSchema.default("system"),
+      })
+      .default({}),
 
-  /** Agent orchestration settings. */
-  agent: z
-    .object({
-      /** Maximum number of concurrent agent sessions. */
-      maxConcurrent: z.number().int().positive().default(5),
-      /** Default values for new agent sessions. */
-      defaults: z
-        .object({
-          /** Default interaction mode. */
-          mode: AgentDefaultModeSchema.default("chat"),
-          /** Default permission mode. */
-          permission: PermissionModeSchema.default("full"),
-        })
-        .default({}),
-    })
-    .default({}),
+    /** Agent orchestration settings. */
+    agent: z
+      .object({
+        /** Maximum number of concurrent agent sessions. */
+        maxConcurrent: z.number().int().positive().default(5),
+        /** Default values for new agent sessions. */
+        defaults: z
+          .object({
+            /** Default interaction mode. */
+            mode: AgentDefaultModeSchema.default("chat"),
+            /** Default permission mode. */
+            permission: PermissionModeSchema.default("full"),
+          })
+          .default({}),
+      })
+      .default({}),
 
-  /** Model inference settings. */
-  model: z
-    .object({
-      /** Default values for model selection. */
-      defaults: z
-        .object({
-          /** Default AI provider. */
-          provider: ProviderIdSchema.default("claude"),
-          /** Default model identifier. */
-          id: z.string().default("claude-sonnet-4-6"),
-          /** Default reasoning effort level. */
-          reasoning: ReasoningLevelSchema.default("high"),
-        })
-        .default({}),
-    })
-    .default({}),
+    /** Model inference settings. */
+    model: z
+      .object({
+        /** Default values for model selection. */
+        defaults: z
+          .object({
+            /** Default AI provider. */
+            provider: ProviderIdSchema.default("claude"),
+            /** Default model identifier. */
+            id: z.string().default("claude-sonnet-4-6"),
+            /** Default reasoning effort level. */
+            reasoning: ReasoningLevelSchema.default("high"),
+          })
+          .default({}),
+      })
+      .default({}),
 
-  /** Terminal emulator settings. */
-  terminal: z
-    .object({
-      /** Number of scrollback lines to retain. */
-      scrollback: z.number().int().nonnegative().default(500),
-    })
-    .default({}),
+    /** Terminal emulator settings. */
+    terminal: z
+      .object({
+        /** Number of scrollback lines to retain. */
+        scrollback: z.number().int().nonnegative().default(500),
+      })
+      .default({}),
 
-  /** Notification settings. */
-  notifications: z
-    .object({
-      /** Whether desktop notifications are enabled. */
-      enabled: z.boolean().default(true),
-    })
-    .default({}),
+    /** Notification settings. */
+    notifications: z
+      .object({
+        /** Whether desktop notifications are enabled. */
+        enabled: z.boolean().default(true),
+      })
+      .default({}),
 
-  /** Git worktree settings. */
-  worktree: z
-    .object({
-      /** Branch naming settings for new worktrees. */
-      naming: z
-        .object({
-          /** Naming strategy for new worktree branches. */
-          mode: NamingModeSchema.default("auto"),
-          /** Whether to prompt for confirmation when using AI-generated names. */
-          aiConfirmation: z.boolean().default(true),
-        })
-        .default({}),
-    })
-    .default({}),
+    /** Git worktree settings. */
+    worktree: z
+      .object({
+        /** Branch naming settings for new worktrees. */
+        naming: z
+          .object({
+            /** Naming strategy for new worktree branches. */
+            mode: NamingModeSchema.default("auto"),
+            /** Whether to prompt for confirmation when using AI-generated names. */
+            aiConfirmation: z.boolean().default(true),
+          })
+          .default({}),
+      })
+      .default({}),
 
-  /** Server child process settings. */
-  server: z
-    .object({
-      /** Memory settings for the server process. */
-      memory: z
-        .object({
-          /** V8 max old space size in MB. Valid range: 64-8192. Default tuned for < 100MB idle. */
-          heapMb: z.number().int().min(64).max(8192).default(96),
-        })
-        .default({}),
-    })
-    .default({}),
-});
+    /** Server child process settings. */
+    server: z
+      .object({
+        /** Memory settings for the server process. */
+        memory: z
+          .object({
+            /** V8 max old space size in MB. Valid range: 64-8192. Default tuned for < 100MB idle. */
+            heapMb: z.number().int().min(64).max(8192).default(96),
+          })
+          .default({}),
+      })
+      .default({}),
+  }),
+);
 
 /** Full settings object with all defaults applied. */
-export type Settings = z.infer<typeof SettingsSchema>;
+export type Settings = z.infer<ReturnType<typeof SettingsSchema>>;
 
-/** Default settings produced by parsing an empty object. */
-export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
+/** Returns a fresh default settings object by parsing an empty input. */
+export function getDefaultSettings(): Settings {
+  return SettingsSchema().parse({});
+}
 
 // ---------------------------------------------------------------------------
 // Partial settings schema (for deep-partial updates)
 // ---------------------------------------------------------------------------
 
 /** Deep-partial settings schema for incremental updates via `settings.update`. */
-export const PartialSettingsSchema = SettingsSchema.deepPartial();
+export const PartialSettingsSchema = lazySchema(() => SettingsSchema().deepPartial());
 
 /** Deep-partial settings for incremental updates. */
-export type PartialSettings = z.infer<typeof PartialSettingsSchema>;
+export type PartialSettings = z.infer<ReturnType<typeof PartialSettingsSchema>>;

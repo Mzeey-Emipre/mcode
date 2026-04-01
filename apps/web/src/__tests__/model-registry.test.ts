@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { DEFAULT_SETTINGS, ReasoningLevelSchema } from "@mcode/contracts";
+import { getDefaultSettings, ReasoningLevelSchema } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   MODEL_PROVIDERS,
@@ -48,7 +48,7 @@ describe("ModelRegistry", () => {
 describe("Settings-aware defaults", () => {
   beforeEach(() => {
     useSettingsStore.setState({
-      settings: DEFAULT_SETTINGS,
+      settings: getDefaultSettings(),
       loaded: true,
     });
   });
@@ -56,7 +56,7 @@ describe("Settings-aware defaults", () => {
   it("getDefaultModelId returns settings value", () => {
     useSettingsStore.setState({
       settings: {
-        ...DEFAULT_SETTINGS,
+        ...getDefaultSettings(),
         model: {
           defaults: { provider: "claude", id: "claude-opus-4-6", reasoning: "high" },
         },
@@ -68,7 +68,7 @@ describe("Settings-aware defaults", () => {
   it("getDefaultModelId falls back to sonnet when model ID is unknown", () => {
     useSettingsStore.setState({
       settings: {
-        ...DEFAULT_SETTINGS,
+        ...getDefaultSettings(),
         model: {
           defaults: { provider: "claude", id: "nonexistent-model", reasoning: "high" },
         },
@@ -84,7 +84,7 @@ describe("Settings-aware defaults", () => {
   it("getDefaultReasoningLevel returns settings value", () => {
     useSettingsStore.setState({
       settings: {
-        ...DEFAULT_SETTINGS,
+        ...getDefaultSettings(),
         model: {
           defaults: { provider: "claude", id: "claude-sonnet-4-6", reasoning: "low" },
         },
@@ -100,7 +100,7 @@ describe("Settings-aware defaults", () => {
   it("getDefaultReasoningLevel accepts max as a valid level", () => {
     useSettingsStore.setState({
       settings: {
-        ...DEFAULT_SETTINGS,
+        ...getDefaultSettings(),
         model: {
           defaults: { provider: "claude", id: "claude-opus-4-6", reasoning: "max" },
         },

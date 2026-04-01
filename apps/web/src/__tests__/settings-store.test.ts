@@ -1,17 +1,17 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { DEFAULT_SETTINGS } from "@mcode/contracts";
+import { getDefaultSettings } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 describe("SettingsStore", () => {
   beforeEach(() => {
     useSettingsStore.setState({
-      settings: DEFAULT_SETTINGS,
+      settings: getDefaultSettings(),
       loaded: false,
     });
   });
 
-  it("defaults to DEFAULT_SETTINGS", () => {
-    expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS);
+  it("defaults to getDefaultSettings()", () => {
+    expect(useSettingsStore.getState().settings).toEqual(getDefaultSettings());
   });
 
   it("starts with loaded = false", () => {
@@ -20,7 +20,7 @@ describe("SettingsStore", () => {
 
   it("_applyPush replaces settings", () => {
     const updated = {
-      ...DEFAULT_SETTINGS,
+      ...getDefaultSettings(),
       appearance: { theme: "dark" as const },
     };
     useSettingsStore.getState()._applyPush(updated);

@@ -13,6 +13,7 @@ import {
   PartialSettingsSchema,
   ReasoningLevelSchema,
 } from "../models/settings.js";
+import { lazySchema } from "../utils/lazySchema.js";
 
 /** Schema for creating a new thread. */
 export const CreateThreadSchema = z.object({
@@ -46,7 +47,7 @@ export const CreateAndSendSchema = z.object({
 });
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
-export const WS_METHODS = {
+export const WS_METHODS = lazySchema(() => ({
   "workspace.list": {
     params: z.object({}),
     result: z.array(WorkspaceSchema),
@@ -253,17 +254,17 @@ export const WS_METHODS = {
   },
   "settings.get": {
     params: z.object({}),
-    result: SettingsSchema,
+    result: SettingsSchema(),
   },
   "settings.update": {
-    params: PartialSettingsSchema,
-    result: SettingsSchema,
+    params: PartialSettingsSchema(),
+    result: SettingsSchema(),
   },
   "memory.setBackground": {
     params: z.object({ background: z.boolean() }),
     result: z.void(),
   },
-} as const;
+} as const));
 
 /** Union of all RPC method names. */
-export type WsMethodName = keyof typeof WS_METHODS;
+export type WsMethodName = keyof ReturnType<typeof WS_METHODS>;
