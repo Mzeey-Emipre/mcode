@@ -20,6 +20,7 @@ const SYNC_THROTTLE_MS = 30_000;
 /** Tracks the last syncThreadPrs request time per workspace. */
 const lastSyncTime = new Map<string, number>();
 
+/** Full state shape and action interface for the workspace store. */
 interface WorkspaceState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
@@ -83,6 +84,7 @@ interface WorkspaceState {
   fetchBranch: (workspaceId: string, branch: string, prNumber?: number) => Promise<void>;
 }
 
+/** Zustand store for workspace, thread, branch, and PR state management. */
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   activeWorkspaceId: null,
