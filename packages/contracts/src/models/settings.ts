@@ -84,7 +84,7 @@ export const SettingsSchema = lazySchema(() =>
             /** Default reasoning effort level. */
             reasoning: ReasoningLevelSchema.default("high"),
             /** Fallback model when the primary is unavailable. Empty string disables fallback. */
-            fallbackId: z.string().default("claude-sonnet-4-6"),
+            fallbackId: z.string().trim().default("claude-sonnet-4-6"),
           })
           .default({}),
       })

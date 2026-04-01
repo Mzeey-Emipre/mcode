@@ -56,5 +56,12 @@ describe("SettingsSchema", () => {
     it("includes fallbackId in getDefaultSettings()", () => {
       expect(getDefaultSettings().model.defaults.fallbackId).toBe("claude-sonnet-4-6");
     });
+
+    it("trims whitespace so a space-only value becomes empty string", () => {
+      const result = SettingsSchema().parse({
+        model: { defaults: { fallbackId: "   " } },
+      });
+      expect(result.model.defaults.fallbackId).toBe("");
+    });
   });
 });
