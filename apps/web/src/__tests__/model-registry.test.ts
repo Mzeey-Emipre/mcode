@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { DEFAULT_SETTINGS } from "@mcode/contracts";
+import { DEFAULT_SETTINGS, ReasoningLevelSchema, type ReasoningLevel } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   MODEL_PROVIDERS,
@@ -93,5 +93,34 @@ describe("Settings-aware defaults", () => {
 
   it("getDefaultReasoningLevel returns high from default settings", () => {
     expect(getDefaultReasoningLevel()).toBe("high");
+  });
+
+  it("getDefaultReasoningLevel accepts max as a valid level", () => {
+    useSettingsStore.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        model: {
+          defaults: { provider: "claude", id: "claude-opus-4-6", reasoning: "max" as ReasoningLevel },
+        },
+      },
+    });
+    expect(getDefaultReasoningLevel()).toBe("max");
+  });
+});
+
+describe("ReasoningLevelSchema", () => {
+  it("accepts low, medium, high", () => {
+    expect(() => ReasoningLevelSchema.parse("low")).not.toThrow();
+    expect(() => ReasoningLevelSchema.parse("medium")).not.toThrow();
+    expect(() => ReasoningLevelSchema.parse("high")).not.toThrow();
+  });
+
+  it("accepts max", () => {
+    expect(() => ReasoningLevelSchema.parse("max")).not.toThrow();
+    expect(ReasoningLevelSchema.parse("max")).toBe("max");
+  });
+
+  it("rejects unknown values", () => {
+    expect(() => ReasoningLevelSchema.parse("extreme")).toThrow();
   });
 });

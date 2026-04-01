@@ -78,7 +78,7 @@ export function getDefaultModelId(): string {
 }
 
 /** Valid reasoning levels for fallback validation. */
-const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high"];
+const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high", "max"];
 
 /**
  * Return the default reasoning level from user settings, falling back
