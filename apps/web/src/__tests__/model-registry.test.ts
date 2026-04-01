@@ -9,6 +9,7 @@ import {
   getDefaultModelId,
   getDefaultReasoningLevel,
   isMaxEffortModel,
+  normalizeReasoningLevelForModel,
 } from "@/lib/model-registry";
 
 describe("ModelRegistry", () => {
@@ -141,5 +142,25 @@ describe("isMaxEffortModel", () => {
 
   it("returns false for unknown model", () => {
     expect(isMaxEffortModel("nonexistent")).toBe(false);
+  });
+});
+
+describe("normalizeReasoningLevelForModel", () => {
+  it("returns max unchanged for Opus 4.6", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-6", "max")).toBe("max");
+  });
+
+  it("clamps max to high for Sonnet", () => {
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "max")).toBe("high");
+  });
+
+  it("clamps max to high for Haiku", () => {
+    expect(normalizeReasoningLevelForModel("claude-haiku-4-5", "max")).toBe("high");
+  });
+
+  it("passes through non-max levels unchanged for any model", () => {
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "high")).toBe("high");
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "medium")).toBe("medium");
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "low")).toBe("low");
   });
 });

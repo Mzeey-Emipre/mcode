@@ -99,3 +99,17 @@ const MAX_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-6"];
 export function isMaxEffortModel(modelId: string): boolean {
   return MAX_EFFORT_MODEL_IDS.includes(modelId);
 }
+
+/**
+ * Normalizes a reasoning level for the given model.
+ * Clamps "max" to "high" when the model does not support the max effort tier.
+ */
+export function normalizeReasoningLevelForModel(
+  modelId: string,
+  level: ReasoningLevel,
+): ReasoningLevel {
+  if (level === "max" && !isMaxEffortModel(modelId)) {
+    return "high";
+  }
+  return level;
+}

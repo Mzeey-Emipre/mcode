@@ -250,7 +250,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       },
       permissionMode: sdkPermissionMode,
       ...(isBypass && { allowDangerouslySkipPermissions: true }),
-      ...buildReasoningOptions(reasoningLevel),
+      ...buildReasoningOptions(reasoningLevel, resolvedModel),
     };
     const options = resume
       ? { ...baseOptions, resume: resumeId }
