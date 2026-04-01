@@ -7,9 +7,13 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.0"
   }
 }
