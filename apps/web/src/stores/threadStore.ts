@@ -7,6 +7,8 @@ import { useQueueStore } from "./queueStore";
 import { LruCache } from "@/lib/lru-cache";
 import { useTaskStore, coerceTaskStatus } from "./taskStore";
 import type { TaskItem } from "./taskStore";
+import { useToastStore } from "./toastStore";
+import { findModelById } from "@/lib/model-registry";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -734,6 +736,28 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         }, 400);
         dequeueTimers.set(threadId, timer);
       }
+      return;
+    }
+
+    if (method === "session.modelFallback") {
+      const requestedModel = params.requestedModel as string;
+      const actualModel = params.actualModel as string;
+
+      // Patch workspaceStore so the Composer's model selector updates reactively
+      useWorkspaceStore.setState((ws) => ({
+        threads: ws.threads.map((t) =>
+          t.id === threadId ? { ...t, model: actualModel } : t,
+        ),
+      }));
+
+      // Notify the user which model was actually used
+      const actualLabel = findModelById(actualModel)?.label ?? actualModel;
+      const requestedLabel = findModelById(requestedModel)?.label ?? requestedModel;
+      useToastStore.getState().show(
+        "info",
+        `Switched to ${actualLabel}`,
+        `${requestedLabel} was unavailable`,
+      );
       return;
     }
 
