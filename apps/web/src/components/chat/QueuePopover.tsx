@@ -52,9 +52,9 @@ export function QueuePopover({ threadId, isAgentRunning, onResume }: QueuePopove
           {queue.map((msg, i) => (
             <div
               key={msg.id}
-              className="group flex items-start gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/50"
+              className="group flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/50"
             >
-              <span className="mt-px text-xs font-medium text-muted-foreground/50 tabular-nums">
+              <span className="text-xs font-medium text-muted-foreground/50 tabular-nums">
                 {i + 1}.
               </span>
               <div className="min-w-0 flex-1">
@@ -68,7 +68,7 @@ export function QueuePopover({ threadId, isAgentRunning, onResume }: QueuePopove
                   </span>
                 )}
               </div>
-              <Button variant="ghost" size="icon-xs" onClick={() => removeFromQueue(threadId, msg.id)} aria-label={`Remove queued message ${i + 1}`} className="mt-px text-muted-foreground/30 opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100">
+              <Button variant="ghost" size="icon-xs" onClick={() => removeFromQueue(threadId, msg.id)} aria-label={`Remove queued message ${i + 1}`} className="text-muted-foreground/30 opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100">
                 <X size={10} />
               </Button>
             </div>
