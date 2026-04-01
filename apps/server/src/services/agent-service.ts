@@ -31,6 +31,7 @@ import { broadcast } from "../transport/push";
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
 import { ThreadService } from "./thread-service";
+import { SettingsService } from "./settings-service.js";
 
 /**
  * Generate a thread title from message content: first line, truncated
@@ -86,6 +87,7 @@ export class AgentService {
     @inject(MemoryPressureService)
     private readonly memoryPressureService: MemoryPressureService,
     @inject(TaskRepo) private readonly taskRepo: TaskRepo,
+    @inject(SettingsService) private readonly settingsService: SettingsService,
   ) {}
 
   /**
@@ -163,6 +165,8 @@ export class AgentService {
     this.agentCallStack.set(threadId, []);
 
     const resolvedModel = model;
+    const { fallbackId } = (await this.settingsService.get()).model.defaults;
+    const fallbackModel = fallbackId || undefined; // empty string → no fallback
     this.threadRepo.updateModel(threadId, resolvedModel);
 
     const sessionName = `mcode-${threadId}`;
@@ -183,6 +187,7 @@ export class AgentService {
         message: content,
         cwd,
         model: resolvedModel,
+        fallbackModel,
         resume: isResume,
         permissionMode,
         attachments: attachments.length > 0 ? attachments : undefined,
