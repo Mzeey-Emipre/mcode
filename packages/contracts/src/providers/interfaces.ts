@@ -15,6 +15,8 @@ export interface IAgentProvider {
     message: string;
     cwd: string;
     model: string;
+    /** Fallback model to use if the primary model is unavailable. Undefined disables fallback. */
+    fallbackModel?: string;
     resume: boolean;
     permissionMode: string;
     attachments?: AttachmentMeta[];
