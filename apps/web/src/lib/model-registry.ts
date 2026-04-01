@@ -78,7 +78,7 @@ export function getDefaultModelId(): string {
 }
 
 /** Valid reasoning levels for fallback validation. */
-const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high"];
+const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high", "max"];
 
 /**
  * Return the default reasoning level from user settings, falling back
@@ -87,4 +87,29 @@ const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high"];
 export function getDefaultReasoningLevel(): ReasoningLevel {
   const level = useSettingsStore.getState().settings.model.defaults.reasoning;
   return VALID_REASONING_LEVELS.includes(level) ? level : "high";
+}
+
+/** Opus model IDs that support the "max" effort level. */
+const MAX_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-6"];
+
+/**
+ * Returns true when the given model supports "max" reasoning effort.
+ * Only Opus 4.6 exposes the max effort tier.
+ */
+export function isMaxEffortModel(modelId: string): boolean {
+  return MAX_EFFORT_MODEL_IDS.includes(modelId);
+}
+
+/**
+ * Normalizes a reasoning level for the given model.
+ * Clamps "max" to "high" when the model does not support the max effort tier.
+ */
+export function normalizeReasoningLevelForModel(
+  modelId: string,
+  level: ReasoningLevel,
+): ReasoningLevel {
+  if (level === "max" && !isMaxEffortModel(modelId)) {
+    return "high";
+  }
+  return level;
 }

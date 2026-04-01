@@ -25,7 +25,7 @@ export const AgentDefaultModeSchema = z.enum([
 export type AgentDefaultMode = z.infer<typeof AgentDefaultModeSchema>;
 
 /** Reasoning effort level for model inference. */
-export const ReasoningLevelSchema = z.enum(["low", "medium", "high"]);
+export const ReasoningLevelSchema = z.enum(["low", "medium", "high", "max"]);
 /** Reasoning effort level value. */
 export type ReasoningLevel = z.infer<typeof ReasoningLevelSchema>;
 

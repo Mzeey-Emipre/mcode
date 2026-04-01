@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { getDefaultSettings } from "@mcode/contracts";
+import { getDefaultSettings, ReasoningLevelSchema } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   MODEL_PROVIDERS,
@@ -8,6 +8,8 @@ import {
   getDefaultModel,
   getDefaultModelId,
   getDefaultReasoningLevel,
+  isMaxEffortModel,
+  normalizeReasoningLevelForModel,
 } from "@/lib/model-registry";
 
 describe("ModelRegistry", () => {
@@ -93,5 +95,72 @@ describe("Settings-aware defaults", () => {
 
   it("getDefaultReasoningLevel returns high from default settings", () => {
     expect(getDefaultReasoningLevel()).toBe("high");
+  });
+
+  it("getDefaultReasoningLevel accepts max as a valid level", () => {
+    useSettingsStore.setState({
+      settings: {
+        ...getDefaultSettings(),
+        model: {
+          defaults: { provider: "claude", id: "claude-opus-4-6", reasoning: "max" },
+        },
+      },
+    });
+    expect(getDefaultReasoningLevel()).toBe("max");
+  });
+});
+
+describe("ReasoningLevelSchema", () => {
+  it("accepts low, medium, high", () => {
+    expect(() => ReasoningLevelSchema.parse("low")).not.toThrow();
+    expect(() => ReasoningLevelSchema.parse("medium")).not.toThrow();
+    expect(() => ReasoningLevelSchema.parse("high")).not.toThrow();
+  });
+
+  it("accepts max", () => {
+    expect(() => ReasoningLevelSchema.parse("max")).not.toThrow();
+    expect(ReasoningLevelSchema.parse("max")).toBe("max");
+  });
+
+  it("rejects unknown values", () => {
+    expect(() => ReasoningLevelSchema.parse("extreme")).toThrow();
+  });
+});
+
+describe("isMaxEffortModel", () => {
+  it("returns true for claude-opus-4-6", () => {
+    expect(isMaxEffortModel("claude-opus-4-6")).toBe(true);
+  });
+
+  it("returns false for claude-sonnet-4-6", () => {
+    expect(isMaxEffortModel("claude-sonnet-4-6")).toBe(false);
+  });
+
+  it("returns false for claude-haiku-4-5", () => {
+    expect(isMaxEffortModel("claude-haiku-4-5")).toBe(false);
+  });
+
+  it("returns false for unknown model", () => {
+    expect(isMaxEffortModel("nonexistent")).toBe(false);
+  });
+});
+
+describe("normalizeReasoningLevelForModel", () => {
+  it("returns max unchanged for Opus 4.6", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-6", "max")).toBe("max");
+  });
+
+  it("clamps max to high for Sonnet", () => {
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "max")).toBe("high");
+  });
+
+  it("clamps max to high for Haiku", () => {
+    expect(normalizeReasoningLevelForModel("claude-haiku-4-5", "max")).toBe("high");
+  });
+
+  it("passes through non-max levels unchanged for any model", () => {
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "high")).toBe("high");
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "medium")).toBe("medium");
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "low")).toBe("low");
   });
 });
