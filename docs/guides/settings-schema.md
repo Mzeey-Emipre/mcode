@@ -123,7 +123,8 @@ When adding a new setting, ask these questions in order:
     "defaults": {
       "provider": "claude",            // "claude" | "codex" | "gemini" | "copilot"
       "id": "claude-sonnet-4-6",
-      "reasoning": "high"              // "low" | "medium" | "high"
+      "reasoning": "high",             // "low" | "medium" | "high"
+      "fallbackId": "claude-sonnet-4-6" // "" disables fallback
     }
   },
   "terminal": {
