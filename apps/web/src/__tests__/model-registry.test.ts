@@ -102,7 +102,7 @@ describe("Settings-aware defaults", () => {
       settings: {
         ...getDefaultSettings(),
         model: {
-          defaults: { provider: "claude", id: "claude-opus-4-6", reasoning: "max" },
+          defaults: { provider: "claude", id: "claude-opus-4-6", reasoning: "max", fallbackId: "" },
         },
       },
     });
