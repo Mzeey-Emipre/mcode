@@ -138,7 +138,9 @@ export const SettingsSchema = lazySchema(() =>
 export type Settings = z.infer<ReturnType<typeof SettingsSchema>>;
 
 /** Returns a fresh default settings object by parsing an empty input. */
-export const getDefaultSettings = lazySchema(() => SettingsSchema().parse({}));
+export function getDefaultSettings(): Settings {
+  return SettingsSchema().parse({});
+}
 
 // ---------------------------------------------------------------------------
 // Partial settings schema (for deep-partial updates)
