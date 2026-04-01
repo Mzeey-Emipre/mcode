@@ -17,6 +17,7 @@ import type {
   AgentEvent,
   AttachmentMeta,
 } from "@mcode/contracts";
+import { buildReasoningOptions } from "./build-reasoning-options.js";
 
 /** Idle TTL before a session is evicted (10 minutes). */
 const IDLE_TTL_MS = 10 * 60 * 1000;
@@ -24,13 +25,6 @@ const IDLE_TTL_MS = 10 * 60 * 1000;
 const EVICTION_INTERVAL_MS = 60 * 1000;
 /** Max queued messages before push() warns and drops. */
 const MAX_QUEUE_DEPTH = 20;
-
-/** Thinking budget tokens mapped to reasoning level. */
-const REASONING_BUDGET = {
-  low: 5_000,
-  medium: 16_000,
-  high: 32_000,
-} as const;
 
 interface SessionEntry {
   query: Query;
@@ -257,14 +251,6 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     }
 
     const resumeId = this.sdkSessionIds.get(sessionId) ?? uuid;
-    const thinkingBudget =
-      reasoningLevel && reasoningLevel in REASONING_BUDGET
-        ? REASONING_BUDGET[reasoningLevel as keyof typeof REASONING_BUDGET]
-        : undefined;
-
-    if (reasoningLevel && !(reasoningLevel in REASONING_BUDGET)) {
-      logger.warn("Unrecognized reasoning level, thinking budget omitted", { sessionId, reasoningLevel });
-    }
 
     const baseOptions = {
       cwd: resolvedCwd,
@@ -284,7 +270,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       },
       permissionMode: sdkPermissionMode,
       ...(isBypass && { allowDangerouslySkipPermissions: true }),
-      ...(thinkingBudget != null && { maxThinkingTokens: thinkingBudget }),
+      ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
     };
     const options = resume

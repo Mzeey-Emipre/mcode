@@ -7,17 +7,26 @@ const POLL_INTERVAL_MS = 30_000;
  * Polls for a PR associated with the given branch.
  * Re-polls every 30 seconds. Pauses when the document is hidden.
  * Returns the current PrInfo or null.
+ *
+ * Tracks both the branch and cwd alongside the PR data so that when either
+ * changes (e.g. the user switches threads or workspaces), null is returned
+ * synchronously on the first re-render before the reset effect has had a
+ * chance to run. This prevents a stale PR from a previous thread from being
+ * applied to the newly active thread.
  */
 export function useBranchPr(
   branch: string | null,
   cwd: string | null,
 ): PrInfo | null {
-  const [pr, setPr] = useState<PrInfo | null>(null);
+  const [state, setState] = useState<{
+    branch: string | null;
+    cwd: string | null;
+    pr: PrInfo | null;
+  }>({ branch: null, cwd: null, pr: null });
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    // Clear stale data from previous thread immediately
-    setPr(null);
+    setState({ branch, cwd, pr: null });
 
     if (!branch || !cwd) {
       return;
@@ -29,18 +38,16 @@ export function useBranchPr(
       getTransport()
         .getBranchPr(branch, cwd)
         .then((result) => {
-          if (!cancelled) setPr(result);
+          if (!cancelled) setState({ branch, cwd, pr: result });
         })
         .catch(() => {
           // Keep last known value on error
         });
     };
 
-    // Fetch immediately, then poll
     fetchPr();
     intervalRef.current = setInterval(fetchPr, POLL_INTERVAL_MS);
 
-    // Pause polling when tab is hidden
     const onVisibilityChange = () => {
       if (document.hidden) {
         if (intervalRef.current) {
@@ -48,7 +55,6 @@ export function useBranchPr(
           intervalRef.current = null;
         }
       } else {
-        // Clear any stale interval before starting a new one
         if (intervalRef.current) clearInterval(intervalRef.current);
         fetchPr();
         intervalRef.current = setInterval(fetchPr, POLL_INTERVAL_MS);
@@ -63,5 +69,5 @@ export function useBranchPr(
     };
   }, [branch, cwd]);
 
-  return pr;
+  return state.branch === branch && state.cwd === cwd ? state.pr : null;
 }

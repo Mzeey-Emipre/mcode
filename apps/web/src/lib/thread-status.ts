@@ -42,9 +42,9 @@ export function getStatusDisplay(
   // Live process state takes priority over DB status
   if (isActuallyRunning) {
     return {
-      label: "Working",
-      color: "text-yellow-500/60",
-      dotClass: "bg-yellow-500/60",
+      label: "",
+      color: "text-yellow-500",
+      dotClass: "bg-yellow-500 animate-pulse",
     };
   }
 
@@ -58,9 +58,9 @@ export function getStatusDisplay(
       };
     case "completed":
       return {
-        label: "Completed",
-        color: "text-green-500/60",
-        dotClass: "bg-green-500/60",
+        label: "",
+        color: "text-green-500",
+        dotClass: "bg-green-500",
       };
     default:
       // No agent running, not completed, not errored = idle / ready for input

@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findProviderForModel, findModelById } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findProviderForModel, findModelById, isMaxEffortModel } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -169,7 +169,11 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
     const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
     setModelId(validModelId);
-    setReasoning(settingsDefaultReasoning);
+    setReasoning(
+      settingsDefaultReasoning === "max" && !isMaxEffortModel(validModelId)
+        ? "high"
+        : settingsDefaultReasoning
+    );
 
     // Sync mode and access from settings for new threads, unless the user already toggled them
     if (!threadId && !agentSettingsTouchedRef.current) {
@@ -177,6 +181,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       setAccess(settingsDefaultPermission);
     }
   }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission]); // Only sync when settings change
+
+  // Reset "max" reasoning when the selected model does not support it
+  useEffect(() => {
+    if (reasoning === "max" && !isMaxEffortModel(modelId)) {
+      setReasoning("high");
+    }
+  }, [modelId, reasoning]);
 
   // Save draft for previous thread, restore draft for new thread
   useEffect(() => {
@@ -202,7 +213,11 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setInput(saved.input);
         setAttachments(saved.attachments);
         setModelId(saved.modelId);
-        setReasoning(saved.reasoning);
+        setReasoning(
+          saved.reasoning === "max" && !isMaxEffortModel(saved.modelId)
+            ? "high"
+            : saved.reasoning
+        );
         // Restore Lexical editor content
         if (editorRef.current) {
           const editor = editorRef.current;
@@ -223,7 +238,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setInput("");
         setAttachments([]);
         setModelId(getDefaultModelId());
-        setReasoning(getDefaultReasoningLevel());
+        const defaultReasoning1 = getDefaultReasoningLevel();
+        setReasoning(
+          defaultReasoning1 === "max" && !isMaxEffortModel(getDefaultModelId())
+            ? "high"
+            : defaultReasoning1
+        );
         // Reset Lexical editor
         if (editorRef.current) {
           editorRef.current.update(() => {
@@ -238,7 +258,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       setInput("");
       setAttachments([]);
       setModelId(getDefaultModelId());
-      setReasoning(getDefaultReasoningLevel());
+      const defaultReasoning2 = getDefaultReasoningLevel();
+      setReasoning(
+        defaultReasoning2 === "max" && !isMaxEffortModel(getDefaultModelId())
+          ? "high"
+          : defaultReasoning2
+      );
       // Reset mode/access to persisted defaults
       agentSettingsTouchedRef.current = false;
       const { settings } = useSettingsStore.getState();
@@ -875,6 +900,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const toast = useQueueStore((s) => s.toast);
 
+  const reasoningLevels: ReasoningLevel[] = isMaxEffortModel(modelId)
+    ? ["low", "medium", "high", "max"]
+    : ["low", "medium", "high"];
+
   return (
     <div className="relative px-8 py-4">
       {/* Gradient fade replacing the hard border-t line */}
@@ -985,7 +1014,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             </Tooltip>
             {showReasoningPicker && (
               <div className="absolute bottom-full left-0 z-20 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
-                {(["low", "medium", "high"] as const).map((level) => (
+                {reasoningLevels.map((level) => (
                   <button
                     key={level}
                     onClick={(e) => {
