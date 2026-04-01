@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findProviderForModel, findModelById } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findProviderForModel, findModelById, isMaxEffortModel } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -177,6 +177,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       setAccess(settingsDefaultPermission);
     }
   }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission]); // Only sync when settings change
+
+  // Reset "max" reasoning when the selected model does not support it
+  useEffect(() => {
+    if (reasoning === "max" && !isMaxEffortModel(modelId)) {
+      setReasoning("high");
+    }
+  }, [modelId]);
 
   // Save draft for previous thread, restore draft for new thread
   useEffect(() => {
@@ -875,6 +882,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const toast = useQueueStore((s) => s.toast);
 
+  const reasoningLevels: ReasoningLevel[] = isMaxEffortModel(modelId)
+    ? ["low", "medium", "high", "max"]
+    : ["low", "medium", "high"];
+
   return (
     <div className="relative px-8 py-4">
       {/* Gradient fade replacing the hard border-t line */}
@@ -985,7 +996,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             </Tooltip>
             {showReasoningPicker && (
               <div className="absolute bottom-full left-0 z-20 mb-1 rounded-md border border-border bg-card p-1 shadow-lg">
-                {(["low", "medium", "high"] as const).map((level) => (
+                {reasoningLevels.map((level) => (
                   <button
                     key={level}
                     onClick={(e) => {
