@@ -24,6 +24,7 @@ export function SettingsDialog() {
   const notifications = useSettingsStore((s) => s.settings.notifications.enabled);
   const maxAgents = useSettingsStore((s) => s.settings.agent.maxConcurrent);
   const defaultModelId = useSettingsStore((s) => s.settings.model.defaults.id);
+  const fallbackModelId = useSettingsStore((s) => s.settings.model.defaults.fallbackId);
   const defaultReasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
   const update = useSettingsStore((s) => s.update);
 
@@ -74,6 +75,39 @@ export function SettingsDialog() {
                         },
                       },
                     })
+                  }
+                >
+                  {m.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Fallback Model */}
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-foreground">
+              Fallback Model
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Used automatically if the primary model is unavailable. Off disables fallback.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant={fallbackModelId === "" ? "default" : "secondary"}
+                onClick={() =>
+                  update({ model: { defaults: { fallbackId: "" } } })
+                }
+              >
+                Off
+              </Button>
+              {ALL_MODELS.map((m) => (
+                <Button
+                  key={m.id}
+                  size="sm"
+                  variant={fallbackModelId === m.id ? "default" : "secondary"}
+                  onClick={() =>
+                    update({ model: { defaults: { fallbackId: m.id } } })
                   }
                 >
                   {m.label}
