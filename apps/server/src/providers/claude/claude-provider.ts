@@ -488,19 +488,22 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 } satisfies AgentEvent);
               }
 
-              // Detect if the SDK used a fallback model
-              const requestedModel = entry?.model ?? "";
-              const usedFallback = detectFallbackModel(
-                (anyMsg.modelUsage as Record<string, unknown>) ?? {},
-                requestedModel,
-              );
-              if (usedFallback) {
-                this.emit("event", {
-                  type: "modelFallback",
-                  threadId,
+              // Detect if the SDK used a fallback model. Guard on entry?.model
+              // to avoid a spurious event if the session was evicted mid-stream.
+              const requestedModel = entry?.model;
+              if (requestedModel) {
+                const usedFallback = detectFallbackModel(
+                  (anyMsg.modelUsage as Record<string, unknown>) ?? {},
                   requestedModel,
-                  actualModel: usedFallback,
-                } satisfies AgentEvent);
+                );
+                if (usedFallback) {
+                  this.emit("event", {
+                    type: "modelFallback",
+                    threadId,
+                    requestedModel,
+                    actualModel: usedFallback,
+                  } satisfies AgentEvent);
+                }
               }
 
               this.emit("event", {

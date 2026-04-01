@@ -3,9 +3,9 @@ import { SettingsSchema, getDefaultSettings } from "../models/settings.js";
 
 describe("SettingsSchema", () => {
   describe("server.memory.heapMb", () => {
-    it("defaults to 512 when parsing an empty object", () => {
+    it("defaults to 96 when parsing an empty object", () => {
       const result = SettingsSchema().parse({});
-      expect(result.server.memory.heapMb).toBe(512);
+      expect(result.server.memory.heapMb).toBe(96);
     });
 
     it("accepts a valid heapMb value", () => {
@@ -29,7 +29,7 @@ describe("SettingsSchema", () => {
     });
 
     it("includes server.memory.heapMb in getDefaultSettings", () => {
-      expect(getDefaultSettings().server.memory.heapMb).toBe(512);
+      expect(getDefaultSettings().server.memory.heapMb).toBe(96);
     });
   });
 
