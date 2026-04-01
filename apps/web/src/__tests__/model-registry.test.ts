@@ -8,6 +8,7 @@ import {
   getDefaultModel,
   getDefaultModelId,
   getDefaultReasoningLevel,
+  isMaxEffortModel,
 } from "@/lib/model-registry";
 
 describe("ModelRegistry", () => {
@@ -122,5 +123,23 @@ describe("ReasoningLevelSchema", () => {
 
   it("rejects unknown values", () => {
     expect(() => ReasoningLevelSchema.parse("extreme")).toThrow();
+  });
+});
+
+describe("isMaxEffortModel", () => {
+  it("returns true for claude-opus-4-6", () => {
+    expect(isMaxEffortModel("claude-opus-4-6")).toBe(true);
+  });
+
+  it("returns false for claude-sonnet-4-6", () => {
+    expect(isMaxEffortModel("claude-sonnet-4-6")).toBe(false);
+  });
+
+  it("returns false for claude-haiku-4-5", () => {
+    expect(isMaxEffortModel("claude-haiku-4-5")).toBe(false);
+  });
+
+  it("returns false for unknown model", () => {
+    expect(isMaxEffortModel("nonexistent")).toBe(false);
   });
 });
