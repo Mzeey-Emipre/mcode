@@ -125,6 +125,23 @@ function toUserMessage(text: string, sessionId: string): SDKUserMessage {
   };
 }
 
+/**
+ * Checks whether the SDK used a different model than the one requested.
+ * Returns the actual model ID if a fallback fired, or null if the requested
+ * model ran as expected.
+ *
+ * @param modelUsage - `SDKResultSuccess.modelUsage` record (keys are model IDs)
+ * @param requestedModel - the model ID that was passed to the SDK
+ */
+export function detectFallbackModel(
+  modelUsage: Record<string, unknown>,
+  requestedModel: string,
+): string | null {
+  const usedModels = Object.keys(modelUsage);
+  const actualModel = usedModels.find((m) => m !== requestedModel);
+  return actualModel ?? null;
+}
+
 /** Claude Agent SDK adapter implementing IAgentProvider with prompt queue pattern. */
 @injectable()
 export class ClaudeProvider extends EventEmitter implements IAgentProvider {
@@ -140,6 +157,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     message: string;
     cwd: string;
     model: string;
+    fallbackModel?: string;
     resume: boolean;
     permissionMode: string;
     attachments?: AttachmentMeta[];
@@ -161,6 +179,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     message: string;
     cwd: string;
     model: string;
+    fallbackModel?: string;
     resume: boolean;
     permissionMode: string;
     attachments?: AttachmentMeta[];
@@ -171,6 +190,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       message,
       cwd,
       model,
+      fallbackModel,
       resume,
       permissionMode,
       attachments,
@@ -265,6 +285,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       permissionMode: sdkPermissionMode,
       ...(isBypass && { allowDangerouslySkipPermissions: true }),
       ...(thinkingBudget != null && { maxThinkingTokens: thinkingBudget }),
+      ...(fallbackModel && { fallbackModel }),
     };
     const options = resume
       ? { ...baseOptions, resume: resumeId }
@@ -464,6 +485,21 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                         output_tokens?: number;
                       }
                     )?.output_tokens ?? null,
+                } satisfies AgentEvent);
+              }
+
+              // Detect if the SDK used a fallback model
+              const requestedModel = entry?.model ?? "";
+              const usedFallback = detectFallbackModel(
+                (anyMsg.modelUsage as Record<string, unknown>) ?? {},
+                requestedModel,
+              );
+              if (usedFallback) {
+                this.emit("event", {
+                  type: "modelFallback",
+                  threadId,
+                  requestedModel,
+                  actualModel: usedFallback,
                 } satisfies AgentEvent);
               }
 
