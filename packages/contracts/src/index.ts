@@ -46,7 +46,7 @@ export type { TurnSnapshot } from "./models/turn-snapshot.js";
 export {
   SettingsSchema,
   PartialSettingsSchema,
-  DEFAULT_SETTINGS,
+  getDefaultSettings,
   ThemeSchema,
   AgentDefaultModeSchema,
   ReasoningLevelSchema,
@@ -111,6 +111,9 @@ export type { WsMethodName } from "./ws/methods.js";
 
 export { WS_CHANNELS } from "./ws/channels.js";
 export type { WsChannelName } from "./ws/channels.js";
+
+// Utilities
+export { lazySchema } from "./utils/lazySchema.js";
 
 // Provider interfaces
 export type {

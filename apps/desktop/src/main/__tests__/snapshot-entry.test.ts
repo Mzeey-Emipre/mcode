@@ -13,8 +13,8 @@ describe("snapshot-entry", () => {
   it("provides SettingsSchema", () => {
     const schema = globalThis.__v8Snapshot!.contracts.SettingsSchema;
     expect(schema).toBeDefined();
-    // Verify it's a working Zod schema by parsing defaults
-    const result = schema.safeParse({});
+    // Verify it's a working lazy schema factory by parsing defaults
+    const result = schema().safeParse({});
     expect(result.success).toBe(true);
   });
 

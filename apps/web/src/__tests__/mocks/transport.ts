@@ -5,7 +5,7 @@ import type {
   Message,
   SkillInfo,
 } from "@/transport/types";
-import { DEFAULT_SETTINGS } from "@mcode/contracts";
+import { getDefaultSettings } from "@mcode/contracts";
 import { vi } from "vitest";
 
 export function createMockWorkspace(
@@ -104,7 +104,7 @@ export const mockTransport: McodeTransport = {
   getThreadTasks: vi.fn().mockResolvedValue(null),
   getSnapshotDiff: vi.fn().mockResolvedValue(""),
   cleanupSnapshots: vi.fn().mockResolvedValue({ removed: 0 }),
-  getSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(DEFAULT_SETTINGS))),
-  updateSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(DEFAULT_SETTINGS))),
+  getSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(getDefaultSettings()))),
+  updateSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(getDefaultSettings()))),
   setBackground: vi.fn().mockResolvedValue(undefined),
 };
