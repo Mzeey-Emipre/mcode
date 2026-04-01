@@ -47,6 +47,15 @@ export const AgentEventSchema = lazySchema(() =>
       threadId: z.string(),
       subtype: z.string(),
     }),
+    z.object({
+      /** Emitted when the SDK fell back to an alternate model. */
+      type: z.literal("modelFallback"),
+      threadId: z.string(),
+      /** The model that was originally requested. */
+      requestedModel: z.string(),
+      /** The model that actually ran. */
+      actualModel: z.string(),
+    }),
   ]),
 );
 /** Union of all events emitted by an agent provider. */

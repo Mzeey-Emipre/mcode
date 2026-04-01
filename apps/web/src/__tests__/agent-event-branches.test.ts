@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
-import { mockTransport } from "./mocks/transport";
+import { mockTransport, createMockThread } from "./mocks/transport";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useToastStore } from "@/stores/toastStore";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -62,5 +64,75 @@ describe("handleAgentEvent branches", () => {
     expect(calls[0].id).toBe("tc1");
     expect(calls[0].toolInput).toEqual({ path: "/foo" });
     expect(calls[0].isComplete).toBe(false);
+  });
+});
+
+describe("session.modelFallback", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    const thread = createMockThread({ id: "thread-1", model: "claude-opus-4-6" });
+    useWorkspaceStore.setState({
+      threads: [thread],
+      activeWorkspaceId: thread.workspace_id,
+      activeThreadId: null,
+      workspaces: [],
+    });
+    useThreadStore.setState({
+      messages: [],
+      runningThreadIds: new Set(["thread-1"]),
+      loading: false,
+      error: null,
+      streamingByThread: {},
+      toolCallsByThread: {},
+      agentStartTimes: { "thread-1": Date.now() },
+      currentThreadId: "thread-1",
+    });
+    useToastStore.setState({ toasts: [] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("updates thread model in workspaceStore to actualModel", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.modelFallback",
+      params: {
+        requestedModel: "claude-opus-4-6",
+        actualModel: "claude-sonnet-4-6",
+      },
+    });
+
+    const thread = useWorkspaceStore.getState().threads.find((t) => t.id === "thread-1");
+    expect(thread?.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("shows an info toast on fallback", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.modelFallback",
+      params: {
+        requestedModel: "claude-opus-4-6",
+        actualModel: "claude-sonnet-4-6",
+      },
+    });
+
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].level).toBe("info");
+    expect(toasts[0].title).toContain("Sonnet");
+  });
+
+  it("does not show toast for unknown model IDs (uses raw ID)", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.modelFallback",
+      params: {
+        requestedModel: "claude-unknown-model",
+        actualModel: "claude-another-unknown",
+      },
+    });
+
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toContain("claude-another-unknown");
   });
 });
