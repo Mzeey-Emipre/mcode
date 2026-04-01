@@ -86,8 +86,9 @@ export const WS_METHODS = {
     params: z.object({ workspaceId: z.string() }),
     result: z.array(z.object({
       threadId: z.string(),
-      prNumber: z.number(),
-      prStatus: z.string(),
+      /** null signals the PR was cleared from this thread (stale data removed). */
+      prNumber: z.number().nullable(),
+      prStatus: z.string().nullable(),
     })),
   },
   "git.listBranches": {

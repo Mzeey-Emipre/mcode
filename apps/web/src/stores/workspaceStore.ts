@@ -189,47 +189,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const newThreads = await getTransport().listThreads(workspaceId);
-      // Merge: keep threads from other workspaces, replace threads for this workspace.
-      // Preserve locally-fresher PR metadata that may not yet be persisted on the server.
-      set((state) => {
-        const existing = new Map(
-          state.threads
-            .filter((t) => t.workspace_id === workspaceId)
-            .map((t) => [t.id, t]),
-        );
-        const merged = newThreads.map((incoming) => {
-          const local = existing.get(incoming.id);
-          if (!local) return incoming;
-          // Keep local PR fields when server hasn't caught up yet
-          const localHasPr = local.pr_number != null && local.pr_status != null;
-          const serverMissingPr = incoming.pr_number == null || incoming.pr_status == null;
-          if (localHasPr && serverMissingPr) {
-            return { ...incoming, pr_number: local.pr_number, pr_status: local.pr_status };
-          }
-          return incoming;
-        });
-        return {
-          threads: [
-            ...state.threads.filter((t) => t.workspace_id !== workspaceId),
-            ...merged,
-          ],
-          loading: false,
-        };
-      });
+      // Replace threads for this workspace; keep threads from other workspaces intact.
+      set((state) => ({
+        threads: [
+          ...state.threads.filter((t) => t.workspace_id !== workspaceId),
+          ...newThreads,
+        ],
+        loading: false,
+      }));
 
-      // Async: scan for new PRs and refresh stale PR states (throttled)
+      // Background PR sync: scanned for new PRs and refreshed stale PR states (throttled)
       const now = Date.now();
       const lastSync = lastSyncTime.get(workspaceId) ?? 0;
       if (now - lastSync >= SYNC_THROTTLE_MS) {
         lastSyncTime.set(workspaceId, now);
-        getTransport().syncThreadPrs(workspaceId).then((linked) => {
-          if (linked.length === 0) return;
+        getTransport().syncThreadPrs(workspaceId).then((results) => {
+          if (results.length === 0) return;
+          // Discard results if the workspace changed while the request was in flight
+          if (get().activeWorkspaceId !== workspaceId) return;
           set((state) => ({
             threads: state.threads.map((t) => {
-              const match = linked.find((l) => l.threadId === t.id);
-              return match
-                ? { ...t, pr_number: match.prNumber, pr_status: match.prStatus }
-                : t;
+              const match = results.find((r) => r.threadId === t.id);
+              if (!match) return t;
+              // null prNumber means the stale PR was cleared server-side
+              return { ...t, pr_number: match.prNumber, pr_status: match.prStatus };
             }),
           }));
         }).catch(() => {});
