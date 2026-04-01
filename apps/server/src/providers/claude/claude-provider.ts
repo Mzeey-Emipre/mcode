@@ -26,7 +26,6 @@ const EVICTION_INTERVAL_MS = 60 * 1000;
 /** Max queued messages before push() warns and drops. */
 const MAX_QUEUE_DEPTH = 20;
 
-
 interface SessionEntry {
   query: Query;
   pushMessage: (msg: SDKUserMessage) => void;

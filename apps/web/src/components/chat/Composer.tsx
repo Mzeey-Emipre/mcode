@@ -213,7 +213,11 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setInput(saved.input);
         setAttachments(saved.attachments);
         setModelId(saved.modelId);
-        setReasoning(saved.reasoning);
+        setReasoning(
+          saved.reasoning === "max" && !isMaxEffortModel(saved.modelId)
+            ? "high"
+            : saved.reasoning
+        );
         // Restore Lexical editor content
         if (editorRef.current) {
           const editor = editorRef.current;
