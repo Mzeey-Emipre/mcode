@@ -25,10 +25,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("getStatusDisplay", () => {
-  it("isActuallyRunning=true returns Working with yellow", () => {
+  it("isActuallyRunning=true returns no label and pulsing yellow dot", () => {
     const result = getStatusDisplay(makeThread(), true);
-    expect(result.label).toBe("Working");
+    expect(result.label).toBe("");
     expect(result.color).toContain("yellow");
+    expect(result.dotClass).toContain("animate-pulse");
   });
 
   it("errored status returns Errored with destructive color", () => {
@@ -37,10 +38,10 @@ describe("getStatusDisplay", () => {
     expect(result.color).toContain("destructive");
   });
 
-  it("completed status returns Completed with green", () => {
+  it("completed status returns no label with full green dot", () => {
     const result = getStatusDisplay(makeThread({ status: "completed" }), false);
-    expect(result.label).toBe("Completed");
-    expect(result.color).toContain("green");
+    expect(result.label).toBe("");
+    expect(result.dotClass).toBe("bg-green-500");
   });
 
   it("default status returns empty label", () => {

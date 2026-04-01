@@ -96,8 +96,9 @@ export interface McodeTransport {
   updateThreadTitle(threadId: string, title: string): Promise<boolean>;
   /** Clear the "completed" badge for a thread. Transitions completed -> paused in the DB. */
   markThreadViewed(threadId: string): Promise<void>;
-  /** Scan threads missing PR data and link discovered PRs. Returns linked PRs. */
-  syncThreadPrs(workspaceId: string): Promise<Array<{ threadId: string; prNumber: number; prStatus: string }>>;
+  /** Scan threads for stale or missing PR data and refresh their state. Returns updated PR state
+   * for all affected threads. A null prNumber/prStatus signals the PR was cleared (stale data removed). */
+  syncThreadPrs(workspaceId: string): Promise<Array<{ threadId: string; prNumber: number | null; prStatus: string | null }>>;
 
   // Message queries
   /**
