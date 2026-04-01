@@ -234,7 +234,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setInput("");
         setAttachments([]);
         setModelId(getDefaultModelId());
-        setReasoning(getDefaultReasoningLevel());
+        const defaultReasoning1 = getDefaultReasoningLevel();
+        setReasoning(
+          defaultReasoning1 === "max" && !isMaxEffortModel(getDefaultModelId())
+            ? "high"
+            : defaultReasoning1
+        );
         // Reset Lexical editor
         if (editorRef.current) {
           editorRef.current.update(() => {
@@ -249,7 +254,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       setInput("");
       setAttachments([]);
       setModelId(getDefaultModelId());
-      setReasoning(getDefaultReasoningLevel());
+      const defaultReasoning2 = getDefaultReasoningLevel();
+      setReasoning(
+        defaultReasoning2 === "max" && !isMaxEffortModel(getDefaultModelId())
+          ? "high"
+          : defaultReasoning2
+      );
       // Reset mode/access to persisted defaults
       agentSettingsTouchedRef.current = false;
       const { settings } = useSettingsStore.getState();
