@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { DEFAULT_SETTINGS, SettingsSchema, type Settings, type PartialSettings } from "@mcode/contracts";
+import { getDefaultSettings, SettingsSchema, type Settings, type PartialSettings } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 
 /**
@@ -116,7 +116,7 @@ let updateGeneration = 0;
  * and kept in sync through `settings.changed` push events.
  */
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  settings: DEFAULT_SETTINGS,
+  settings: getDefaultSettings(),
   loaded: false,
 
   fetch: async () => {
@@ -152,7 +152,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   _applyPush: (raw) => {
-    const result = SettingsSchema.safeParse(raw);
+    const result = SettingsSchema().safeParse(raw);
     if (result.success) {
       set({ settings: result.data, loaded: true });
     }

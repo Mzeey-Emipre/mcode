@@ -11,7 +11,7 @@ import type { FSWatcher } from "fs";
 
 import {
   SettingsSchema,
-  DEFAULT_SETTINGS,
+  getDefaultSettings,
   type Settings,
   type PartialSettings,
 } from "@mcode/contracts";
@@ -81,7 +81,7 @@ export class SettingsService {
    * Read the current settings from disk.
    * Returns the cached value if available. On cache miss, reads from disk,
    * validates, and populates the cache. Never throws; returns
-   * DEFAULT_SETTINGS if the file is missing or contains invalid JSON.
+   * getDefaultSettings() if the file is missing or contains invalid JSON.
    */
   get(): Settings {
     if (this.cache !== null) {
@@ -91,7 +91,7 @@ export class SettingsService {
     try {
       const raw = readFileSync(this.filePath, "utf-8");
       const parsed = JSON.parse(raw) as unknown;
-      const result = SettingsSchema.safeParse(parsed);
+      const result = SettingsSchema().safeParse(parsed);
       if (result.success) {
         this.cache = result.data;
         return this.cache;
@@ -99,10 +99,10 @@ export class SettingsService {
       logger.warn("Settings file failed validation, returning defaults", {
         error: result.error.message,
       });
-      return DEFAULT_SETTINGS;
+      return getDefaultSettings();
     } catch {
       // File doesn't exist or is not valid JSON
-      return DEFAULT_SETTINGS;
+      return getDefaultSettings();
     }
   }
 
@@ -119,7 +119,7 @@ export class SettingsService {
     );
 
     // Validate and strip unknown keys before writing to disk
-    const validated = SettingsSchema.parse(merged);
+    const validated = SettingsSchema().parse(merged);
 
     // Ensure parent directory exists (only on first write)
     if (!this.dirEnsured) {

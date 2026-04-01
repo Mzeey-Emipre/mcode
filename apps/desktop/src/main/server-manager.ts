@@ -68,7 +68,7 @@ function readServerHeapMb(): number {
   // 2. Read from settings.json via the Zod schema
   try {
     const raw = readFileSync(join(getMcodeDir(), "settings.json"), "utf-8");
-    const result = SettingsSchema.safeParse(JSON.parse(raw));
+    const result = SettingsSchema().safeParse(JSON.parse(raw));
     if (result.success) {
       return result.data.server.memory.heapMb;
     }

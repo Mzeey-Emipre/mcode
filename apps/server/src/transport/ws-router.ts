@@ -88,7 +88,7 @@ export async function routeMessage(
     };
   }
 
-  const methodDef = WS_METHODS[request.method as WsMethodName];
+  const methodDef = WS_METHODS()[request.method as WsMethodName];
   if (!methodDef) {
     return {
       id: request.id,

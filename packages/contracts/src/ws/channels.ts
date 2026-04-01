@@ -5,7 +5,7 @@ import { SettingsSchema } from "../models/settings.js";
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
-  "agent.event": AgentEventSchema,
+  "agent.event": AgentEventSchema(),
   "terminal.data": z.object({ ptyId: z.string(), data: z.string() }),
   "terminal.exit": z.object({ ptyId: z.string(), code: z.number() }),
   "thread.status": z.object({
@@ -21,7 +21,7 @@ export const WS_CHANNELS = {
     workspaceId: z.string(),
     threadId: z.string().optional(),
   }),
-  "settings.changed": SettingsSchema,
+  "settings.changed": SettingsSchema(),
   "skills.changed": z.object({}),
   "branch.changed": z.object({ workspaceId: z.string(), branch: z.string() }),
   "turn.persisted": z.object({
