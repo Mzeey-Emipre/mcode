@@ -313,8 +313,8 @@ describe("CleanupWorker", () => {
     });
 
     it("normalises Windows backslash paths when extracting the worktree name", async () => {
-      // Use path.join so the path contains OS-native separators (backslashes on Windows).
-      const winWtPath = join(WT_BASE, "win-wt");
+      // Force backslashes regardless of OS so the test validates normalization everywhere.
+      const winWtPath = WT_BASE.replace(/\//g, "\\") + "\\win-wt";
       const ws = workspaceRepo.create("test", "C:/repo");
       insertThread("t-win", ws.id, "mcode/win", winWtPath);
       cleanupJobRepo.insert({

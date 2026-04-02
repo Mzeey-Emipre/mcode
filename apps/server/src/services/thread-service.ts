@@ -121,7 +121,8 @@ export class ThreadService {
    * Soft-delete a thread and enqueue a background cleanup job when the thread
    * has a managed worktree. The cleanup job handles process termination,
    * filesystem removal, and hard-deletion of the DB row asynchronously with
-   * exponential backoff retries.
+   * exponential backoff retries. The job's branch field is set from
+   * thread.branch; branches prefixed with "mcode/" are deleted by the worker.
    */
   delete(threadId: string, cleanupWorktree: boolean): boolean {
     if (cleanupWorktree) {

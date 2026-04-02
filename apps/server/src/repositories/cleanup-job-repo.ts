@@ -16,6 +16,7 @@ export const MAX_CLEANUP_ATTEMPTS = 5;
 /** Max length for persisted error messages. */
 const MAX_ERROR_LENGTH = 500;
 
+/** Queued worktree cleanup job processed by CleanupWorker with exponential backoff. */
 export interface CleanupJob {
   id: string;
   thread_id: string;
