@@ -75,7 +75,7 @@ export function MessageList() {
     activeThreadId ? s.agentStartTimes[activeThreadId] : undefined,
   );
   const streamingText = useThreadStore((s) =>
-    activeThreadId ? s.streamingByThread[activeThreadId] : undefined,
+    activeThreadId ? s.streamingPreviewByThread[activeThreadId] : undefined,
   );
   const toolCallsRaw = useThreadStore((s) =>
     activeThreadId ? s.toolCallsByThread[activeThreadId] : undefined,

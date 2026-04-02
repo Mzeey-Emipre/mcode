@@ -21,7 +21,10 @@ interface ThreadState {
   loading: boolean;
   error: string | null;
   currentThreadId: string | null;
+  /** Full accumulated streaming text per thread, used for finalization into a message. */
   streamingByThread: Record<string, string>;
+  /** Tail-truncated preview of the streaming text (last 200 chars), used by StreamingCard for render optimization. */
+  streamingPreviewByThread: Record<string, string>;
   toolCallsByThread: Record<string, ToolCall[]>;
   agentStartTimes: Record<string, number>;
   /** Per-thread permission mode and interaction mode. */
@@ -117,6 +120,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   error: null,
   currentThreadId: null,
   streamingByThread: {},
+  streamingPreviewByThread: {},
   toolCallsByThread: {},
   agentStartTimes: {},
   settingsByThread: {},
@@ -379,6 +383,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       messages: [],
       error: null,
       streamingByThread: {},
+      streamingPreviewByThread: {},
       toolCallsByThread: {},
       persistedToolCallCounts: {},
       serverMessageIds: {},
@@ -506,12 +511,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           // Clear streaming text so turnComplete won't duplicate this message.
           const nextStreaming = { ...state.streamingByThread };
           delete nextStreaming[threadId];
+          const nextPreview = { ...state.streamingPreviewByThread };
+          delete nextPreview[threadId];
           const trackTurn = {
             currentTurnMessageIdByThread: {
               ...state.currentTurnMessageIdByThread,
               [threadId]: message.id,
             },
             streamingByThread: nextStreaming,
+            streamingPreviewByThread: nextPreview,
           };
           if (state.currentThreadId !== threadId) return trackTurn;
           const { messages: capped, evicted } = capMessages([...state.messages, message]);
@@ -631,17 +639,19 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
+    // session.textDelta: accumulate streaming text for live preview and finalization.
     if (method === "session.textDelta") {
       const delta = (params.delta as string) || "";
       if (!delta) return;
+      // Text deltas signal Claude is responding — mark prior tool calls complete.
+      markPriorToolCallsComplete();
       set((state) => {
         const current = state.streamingByThread[threadId] ?? "";
         const combined = current + delta;
-        // Front-truncate: keep only the last 200 characters so the store
-        // does not grow unbounded during long responses.
-        const truncated = combined.length > 200 ? combined.slice(-200) : combined;
+        const preview = combined.length > 200 ? combined.slice(-200) : combined;
         return {
-          streamingByThread: { ...state.streamingByThread, [threadId]: truncated },
+          streamingByThread: { ...state.streamingByThread, [threadId]: combined },
+          streamingPreviewByThread: { ...state.streamingPreviewByThread, [threadId]: preview },
         };
       });
       return;
@@ -651,14 +661,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const toolCallId = (params.toolCallId as string) || "";
       const elapsedSeconds = (params.elapsedSeconds as number) ?? 0;
       if (!toolCallId) return;
-      const calls = get().toolCallsByThread[threadId] ?? [];
-      // Skip if no active call matches — avoids a no-op re-render.
-      if (!calls.some((tc) => tc.id === toolCallId && !tc.isComplete)) return;
       set((state) => {
         const current = state.toolCallsByThread[threadId] ?? [];
-        const updated = current.map((tc) =>
-          tc.id === toolCallId && !tc.isComplete ? { ...tc, elapsedSeconds } : tc
-        );
+        let changed = false;
+        const updated = current.map((tc) => {
+          if (tc.id === toolCallId && !tc.isComplete && tc.elapsedSeconds !== elapsedSeconds) {
+            changed = true;
+            return { ...tc, elapsedSeconds };
+          }
+          return tc;
+        });
+        // Return same state reference when nothing changed — Zustand skips notification.
+        if (!changed) return state;
         return {
           toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
         };
@@ -693,6 +707,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         set((state) => {
           const nextStreaming = { ...state.streamingByThread };
           delete nextStreaming[threadId];
+          const nextPreview = { ...state.streamingPreviewByThread };
+          delete nextPreview[threadId];
           const nextRunning = new Set(state.runningThreadIds);
           nextRunning.delete(threadId);
           const nextStartTimes = { ...state.agentStartTimes };
@@ -712,6 +728,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 })()
               : {}),
             streamingByThread: nextStreaming,
+            streamingPreviewByThread: nextPreview,
             runningThreadIds: nextRunning,
             agentStartTimes: nextStartTimes,
             activeSubagentsByThread: nextSubagents,
@@ -726,6 +743,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           nextRunning.delete(threadId);
           const nextStreaming = { ...state.streamingByThread };
           delete nextStreaming[threadId];
+          const nextPreview = { ...state.streamingPreviewByThread };
+          delete nextPreview[threadId];
           const nextStartTimes = { ...state.agentStartTimes };
           delete nextStartTimes[threadId];
           const nextSubagents = { ...state.activeSubagentsByThread };
@@ -737,6 +756,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           return {
             runningThreadIds: nextRunning,
             streamingByThread: nextStreaming,
+            streamingPreviewByThread: nextPreview,
             agentStartTimes: nextStartTimes,
             activeSubagentsByThread: nextSubagents,
             toolCallsByThread: completedCalls.length > 0

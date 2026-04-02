@@ -129,6 +129,7 @@ describe("duplicate message prevention", () => {
       loading: false,
       error: null,
       streamingByThread: { "thread-1": "Hello world" },
+      streamingPreviewByThread: { "thread-1": "Hello world" },
       toolCallsByThread: {},
       agentStartTimes: { "thread-1": Date.now() },
       activeSubagentsByThread: {},
@@ -148,8 +149,9 @@ describe("duplicate message prevention", () => {
     });
     vi.runAllTimers();
 
-    // streamingByThread must be cleared
+    // Both streaming fields must be cleared
     expect(useThreadStore.getState().streamingByThread["thread-1"]).toBeUndefined();
+    expect(useThreadStore.getState().streamingPreviewByThread["thread-1"]).toBeUndefined();
 
     // Now turnComplete fires — should NOT create a second message
     handleAgentEvent("thread-1", {
@@ -189,16 +191,36 @@ describe("session.textDelta", () => {
     expect(useThreadStore.getState().streamingByThread["thread-1"]).toBe("Hello world");
   });
 
-  it("front-truncates to last 200 characters when text exceeds limit", () => {
+  it("stores full text in streamingByThread and truncated preview in streamingPreviewByThread", () => {
     const longText = "x".repeat(250);
     useThreadStore.setState({ streamingByThread: { "thread-1": longText } });
     const { handleAgentEvent } = useThreadStore.getState();
 
     handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "end" } });
 
-    const result = useThreadStore.getState().streamingByThread["thread-1"];
-    expect(result.length).toBe(200);
-    expect(result.endsWith("end")).toBe(true);
+    const state = useThreadStore.getState();
+    // Full buffer is preserved
+    expect(state.streamingByThread["thread-1"]).toBe(longText + "end");
+    expect(state.streamingByThread["thread-1"].length).toBe(253);
+    // Preview is truncated to last 200 chars
+    const preview = state.streamingPreviewByThread["thread-1"];
+    expect(preview.length).toBe(200);
+    expect(preview.endsWith("end")).toBe(true);
+  });
+
+  it("marks prior tool calls complete on first textDelta", () => {
+    useThreadStore.setState({
+      toolCallsByThread: {
+        "thread-1": [
+          { id: "tc-1", toolName: "Read", toolInput: {}, output: null, isError: false, isComplete: false },
+        ],
+      },
+    });
+    const { handleAgentEvent } = useThreadStore.getState();
+    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "Hi" } });
+
+    const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
+    expect(calls[0].isComplete).toBe(true);
   });
 
   it("does not affect other threads", () => {
