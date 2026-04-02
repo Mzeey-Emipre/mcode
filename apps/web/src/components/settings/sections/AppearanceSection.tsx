@@ -12,7 +12,7 @@ export function AppearanceSection() {
 
   return (
     <div>
-      <h2 className="mb-0.5 text-[15px] font-semibold tracking-tight text-foreground">
+      <h2 className="mb-0.5 text-base font-semibold tracking-tight text-foreground">
         Appearance
       </h2>
       <p className="mb-6 text-xs text-muted-foreground">Theme and display preferences.</p>

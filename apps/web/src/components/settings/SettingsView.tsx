@@ -112,9 +112,9 @@ export function SettingsView({ onClose }: SettingsViewProps) {
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
         {/* Nav sidebar */}
-        <nav className="w-44 flex-shrink-0 overflow-y-auto border-r border-border py-3">
+        <nav className="w-44 flex-shrink-0 overflow-y-auto border-r border-border py-7">
           {NAV_GROUPS.map((group) => (
-            <div key={group.label} className="mb-4 px-2">
+            <div key={group.label} className="mb-5 px-2">
               <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
                 {group.label}
               </p>
@@ -124,9 +124,9 @@ export function SettingsView({ onClose }: SettingsViewProps) {
                   type="button"
                   onClick={() => setSection(item.id)}
                   className={cn(
-                    "flex w-full rounded-md px-2 py-1.5 text-left text-sm font-medium transition-colors",
+                    "relative flex w-full rounded-md px-2 py-1.5 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                     section === item.id
-                      ? "bg-accent text-accent-foreground"
+                      ? "bg-accent text-foreground before:absolute before:left-0 before:top-1 before:bottom-1 before:w-0.5 before:rounded-full before:bg-primary"
                       : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
                   )}
                 >

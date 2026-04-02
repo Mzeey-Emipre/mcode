@@ -18,10 +18,10 @@ interface SettingRowProps {
 export function SettingRow({ label, hint, configKey, children, className }: SettingRowProps) {
   return (
     <div className={cn("border-t border-border py-4 first:border-t-0 first:pt-0", className)}>
-      <div className="mb-1 flex items-baseline justify-between gap-3">
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
         <span className="text-sm font-medium text-foreground">{label}</span>
         {configKey && (
-          <span className="shrink-0 font-mono text-[10px] text-muted-foreground/40">
+          <span className="shrink-0 rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/50">
             {configKey}
           </span>
         )}

@@ -14,7 +14,7 @@ export function WorktreeSection() {
 
   return (
     <div>
-      <h2 className="mb-0.5 text-[15px] font-semibold tracking-tight text-foreground">
+      <h2 className="mb-0.5 text-base font-semibold tracking-tight text-foreground">
         Worktrees
       </h2>
       <p className="mb-6 text-xs text-muted-foreground">Branch naming for new git worktrees.</p>
@@ -35,16 +35,15 @@ export function WorktreeSection() {
         />
       </SettingRow>
 
-      <SettingRow configKey="worktree.naming.aiConfirmation" label="Confirm AI names">
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
-            Prompt before using an AI-generated branch name.
-          </p>
-          <Switch
-            checked={aiConfirmation}
-            onCheckedChange={(v) => update({ worktree: { naming: { aiConfirmation: v } } })}
-          />
-        </div>
+      <SettingRow
+        configKey="worktree.naming.aiConfirmation"
+        label="Confirm AI names"
+        hint="Prompt before using an AI-generated branch name."
+      >
+        <Switch
+          checked={aiConfirmation}
+          onCheckedChange={(v) => update({ worktree: { naming: { aiConfirmation: v } } })}
+        />
       </SettingRow>
     </div>
   );

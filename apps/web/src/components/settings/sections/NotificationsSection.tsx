@@ -11,21 +11,20 @@ export function NotificationsSection() {
 
   return (
     <div>
-      <h2 className="mb-0.5 text-[15px] font-semibold tracking-tight text-foreground">
+      <h2 className="mb-0.5 text-base font-semibold tracking-tight text-foreground">
         Notifications
       </h2>
       <p className="mb-6 text-xs text-muted-foreground">Desktop notification preferences.</p>
 
-      <SettingRow label="Notifications" configKey="notifications.enabled">
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
-            Show desktop notifications for agent events.
-          </p>
-          <Switch
-            checked={enabled}
-            onCheckedChange={(v) => update({ notifications: { enabled: v } })}
-          />
-        </div>
+      <SettingRow
+        label="Notifications"
+        configKey="notifications.enabled"
+        hint="Show desktop notifications for agent events."
+      >
+        <Switch
+          checked={enabled}
+          onCheckedChange={(v) => update({ notifications: { enabled: v } })}
+        />
       </SettingRow>
     </div>
   );

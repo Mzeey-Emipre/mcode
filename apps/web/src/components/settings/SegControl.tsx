@@ -35,7 +35,7 @@ export function SegControl({ options, value, onChange, className }: SegControlPr
           disabled={opt.disabled}
           onClick={() => onChange(opt.value)}
           className={cn(
-            "rounded px-3 py-1 text-xs font-medium transition-all duration-100",
+            "rounded px-3 py-1 text-xs font-medium transition-all duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
             value === opt.value
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
