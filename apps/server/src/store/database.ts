@@ -213,4 +213,22 @@ function runMigrations(db: Database.Database): void {
       db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(9);
     })();
   }
+
+  if (currentVersion < 10) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS cleanup_jobs (
+        id TEXT PRIMARY KEY NOT NULL,
+        thread_id TEXT NOT NULL UNIQUE,
+        workspace_path TEXT NOT NULL,
+        worktree_path TEXT NOT NULL,
+        branch TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_retry_at INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_cleanup_jobs_retry ON cleanup_jobs(next_retry_at, attempts, created_at);
+    `);
+    db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(10);
+  }
 }

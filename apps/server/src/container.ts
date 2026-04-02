@@ -15,6 +15,7 @@ import { MessageRepo } from "./repositories/message-repo";
 import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
 import { TaskRepo } from "./repositories/task-repo";
+import { CleanupJobRepo } from "./repositories/cleanup-job-repo";
 
 // Providers
 import { ClaudeProvider } from "./providers/claude/claude-provider";
@@ -35,6 +36,7 @@ import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { GitWatcherService } from "./services/git-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
+import { CleanupWorker } from "./services/cleanup-worker";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(): typeof container {
@@ -92,6 +94,14 @@ export function setupContainer(): typeof container {
   );
   container.register("TaskRepo", {
     useFactory: (c) => c.resolve(TaskRepo),
+  });
+  container.register(
+    CleanupJobRepo,
+    { useClass: CleanupJobRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("CleanupJobRepo", {
+    useFactory: (c) => c.resolve(CleanupJobRepo),
   });
 
   // Providers
@@ -186,6 +196,11 @@ export function setupContainer(): typeof container {
   container.register(
     MemoryPressureService,
     { useClass: MemoryPressureService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    CleanupWorker,
+    { useClass: CleanupWorker },
     { lifecycle: Lifecycle.Singleton },
   );
 

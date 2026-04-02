@@ -787,6 +787,43 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     }
   }
 
+  /**
+   * Stop a session and wait for the underlying subprocess to exit.
+   * Resolves when the stream loop emits _streamDone or when the timeout
+   * elapses — whichever comes first. Safe to call if the session does not
+   * exist (resolves immediately). The once-listener is always cleaned up,
+   * even on timeout, to prevent EventEmitter listener accumulation.
+   */
+  async waitForSessionExit(sessionId: string, timeoutMs = 5000): Promise<void> {
+    // Register the listener BEFORE checking sessions so we never miss an
+    // event that fires between the check and the once() call.
+    await new Promise<void>((resolve) => {
+      let settled = false;
+
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.removeListener(`_streamDone:${sessionId}`, done);
+        resolve();
+      };
+
+      const timer = setTimeout(done, timeoutMs);
+      this.once(`_streamDone:${sessionId}`, done);
+
+      const entry = this.sessions.get(sessionId);
+      if (!entry) {
+        // No active session — resolve immediately without waiting.
+        done();
+        return;
+      }
+
+      this.sessions.delete(sessionId);
+      entry.closeQueue();
+      entry.query.close();
+    });
+  }
+
   /** Tear down all sessions and release resources. */
   shutdown(): void {
     if (this.evictionTimer) {

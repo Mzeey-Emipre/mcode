@@ -29,6 +29,7 @@ import { SettingsService } from "./services/settings-service";
 import { GitWatcherService } from "./services/git-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
 import { WorkspaceRepo } from "./repositories/workspace-repo";
+import { CleanupWorker } from "./services/cleanup-worker";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
 import type { AgentEvent } from "@mcode/contracts";
@@ -68,6 +69,7 @@ const gitWatcherService = container.resolve(GitWatcherService);
 const memoryPressureService = container.resolve(MemoryPressureService);
 const taskRepo = container.resolve(TaskRepo);
 const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup watcher initialization
+const cleanupWorker = container.resolve(CleanupWorker);
 const db = container.resolve<Database.Database>("Database");
 
 const portPush = new PortPush();
@@ -106,6 +108,9 @@ terminalService.setSender((channel, data) => {
 
 // AgentService self-wires persistence and session tracking against providers
 agentService.init();
+
+// Start background worktree cleanup worker
+cleanupWorker.start();
 
 // Run snapshot garbage collection on startup
 const maxAge = parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10);
@@ -260,6 +265,9 @@ async function shutdown(): Promise<void> {
 
   // 8. Dispose memory pressure timers
   memoryPressureService.dispose();
+
+  // 8a. Dispose cleanup worker
+  cleanupWorker.dispose();
 
   // 9. Close all WebSocket clients and shut down the WS server
   for (const client of wss.clients) {

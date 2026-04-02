@@ -4,22 +4,13 @@
  * Extracted from apps/desktop/src/main/app-state.ts.
  */
 
-import { injectable, inject, delay } from "tsyringe";
+import { injectable, inject } from "tsyringe";
 import { validateBranchName, sanitizeBranchForFolder, logger } from "@mcode/shared";
 import type { Thread, ThreadMode } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { GitService } from "./git-service";
-// Lazy-imported to break circular dependency: AgentService -> ThreadService
-import { AgentService } from "./agent-service";
-import { TerminalService } from "./terminal-service";
-
-/**
- * Grace period (ms) after killing processes on Windows before attempting
- * to delete a worktree directory. Windows doesn't release directory handles
- * synchronously when a process is terminated.
- */
-const HANDLE_RELEASE_DELAY_MS = 500;
+import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
@@ -28,10 +19,7 @@ export class ThreadService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(GitService) private readonly gitService: GitService,
-    @inject(delay(() => AgentService))
-    private readonly agentService: AgentService,
-    @inject(TerminalService)
-    private readonly terminalService: TerminalService,
+    @inject(CleanupJobRepo) private readonly cleanupJobRepo: CleanupJobRepo,
   ) {}
 
   /**
@@ -130,76 +118,39 @@ export class ThreadService {
   }
 
   /**
-   * Delete a thread. Optionally removes the worktree from disk and
-   * soft-deletes the DB record.
+   * Soft-delete a thread and enqueue a background cleanup job when the thread
+   * has a managed worktree. The cleanup job handles process termination,
+   * filesystem removal, and hard-deletion of the DB row asynchronously with
+   * exponential backoff retries. The job's branch field is set from
+   * thread.branch; branches prefixed with "mcode/" are deleted by the worker.
    */
-  async delete(threadId: string, cleanupWorktree: boolean): Promise<boolean> {
+  delete(threadId: string, cleanupWorktree: boolean): boolean {
     if (cleanupWorktree) {
       const thread = this.threadRepo.findById(threadId);
       if (thread?.worktree_path && thread.worktree_managed) {
         const workspace = this.workspaceRepo.findById(thread.workspace_id);
         if (workspace) {
-          // Stop agent and terminal sessions first so processes release
-          // file locks on the worktree directory (critical on Windows).
-          await this.stopProcesses(threadId);
-
-          const wtName =
-            thread.worktree_path
-              .replace(/\\/g, "/")
-              .split("/")
-              .pop() ?? thread.worktree_path;
-          try {
-            const cleaned = await this.gitService.removeWorktree(
-              workspace.path,
-              wtName,
-              thread.branch,
-            );
-            if (!cleaned) {
-              logger.error(
-                "Worktree directory could not be removed during thread deletion",
-                { threadId, wtName },
-              );
-            }
-          } catch (err) {
-            logger.error("Worktree cleanup failed during thread deletion", {
-              threadId,
-              wtName,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
+          this.cleanupJobRepo.insert({
+            thread_id: threadId,
+            workspace_path: workspace.path,
+            worktree_path: thread.worktree_path,
+            branch: thread.branch,
+          });
+          logger.info("Worktree cleanup job enqueued", {
+            threadId,
+            worktreePath: thread.worktree_path,
+          });
+        } else {
+          logger.warn("Worktree cleanup skipped - workspace not found, directory will not be removed", {
+            threadId,
+            workspaceId: thread.workspace_id,
+            worktreePath: thread.worktree_path,
+          });
         }
       }
     }
 
     return this.threadRepo.softDelete(threadId);
-  }
-
-  /**
-   * Stop agent and terminal sessions for a thread, then wait briefly
-   * for the OS to release file handles on the worktree directory.
-   */
-  private async stopProcesses(threadId: string): Promise<void> {
-    try {
-      await this.agentService.stopSession(threadId);
-    } catch (err) {
-      logger.warn("Failed to stop agent session during thread deletion", {
-        threadId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-
-    try {
-      this.terminalService.killByThread(threadId);
-    } catch (err) {
-      logger.warn("Failed to kill terminals during thread deletion", {
-        threadId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-
-    if (process.platform === "win32") {
-      await new Promise((resolve) => setTimeout(resolve, HANDLE_RELEASE_DELAY_MS));
-    }
   }
 
   /** Update a thread's display title. */
