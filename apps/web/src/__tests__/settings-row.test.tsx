@@ -20,7 +20,8 @@ describe("SettingRow", () => {
   });
 
   it("omits hint element when hint not provided", () => {
-    render(<SettingRow label="X"><span /></SettingRow>);
-    expect(screen.queryByRole("paragraph")).toBeNull();
+    // queryByRole("paragraph") is unreliable in jsdom; query the DOM directly.
+    const { container } = render(<SettingRow label="X"><span /></SettingRow>);
+    expect(container.querySelector("p")).toBeNull();
   });
 });

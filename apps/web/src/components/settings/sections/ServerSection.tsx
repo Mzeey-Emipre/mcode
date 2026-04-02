@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { SettingRow } from "../SettingRow";
 
-/** Server process settings. */
+/**
+ * Server settings section: V8 heap size. Changes apply after the server restarts.
+ */
 export function ServerSection() {
   const heapMb = useSettingsStore((s) => s.settings.server.memory.heapMb);
   const update = useSettingsStore((s) => s.update);

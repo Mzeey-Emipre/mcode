@@ -3,7 +3,9 @@ import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import type { Theme } from "@mcode/contracts";
 
-/** Visual theme settings. */
+/**
+ * Appearance settings section: color theme preference.
+ */
 export function AppearanceSection() {
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
   const update = useSettingsStore((s) => s.update);

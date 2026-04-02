@@ -1,5 +1,6 @@
+import { useMemo } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { MODEL_PROVIDERS, isMaxEffortModel } from "@/lib/model-registry";
+import { MODEL_PROVIDERS, isMaxEffortModel, normalizeReasoningLevelForModel } from "@/lib/model-registry";
 import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import type { SettingsProviderId, ReasoningLevel } from "@mcode/contracts";
@@ -11,9 +12,17 @@ const PROVIDER_OPTIONS = MODEL_PROVIDERS.map((p) => ({
   disabled: p.comingSoon,
 }));
 
+const REASONING_OPTIONS_BASE = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+
 /**
  * Model settings section: provider, default model, fallback model, and reasoning effort.
- * Model options update when the provider changes.
+ * Model options update when the provider changes. Switching provider resets the model
+ * and fallback to the new provider's first model. Switching to a non-Opus model clamps
+ * the reasoning level from "max" to "high".
  */
 export function ModelSection() {
   const provider = useSettingsStore((s) => s.settings.model.defaults.provider);
@@ -23,11 +32,49 @@ export function ModelSection() {
   const update = useSettingsStore((s) => s.update);
 
   const activeProvider = MODEL_PROVIDERS.find((p) => p.id === provider);
-  const modelOptions = (activeProvider?.models ?? []).map((m) => ({
-    value: m.id,
-    label: m.label,
-  }));
-  const fallbackOptions = [{ value: "", label: "Off" }, ...modelOptions];
+
+  const modelOptions = useMemo(
+    () => (activeProvider?.models ?? []).map((m) => ({ value: m.id, label: m.label })),
+    [activeProvider],
+  );
+
+  const fallbackOptions = useMemo(
+    () => [{ value: "", label: "Off" }, ...modelOptions],
+    [modelOptions],
+  );
+
+  const reasoningOptions = useMemo(
+    () => [
+      ...REASONING_OPTIONS_BASE,
+      { value: "max", label: "Max", disabled: !isMaxEffortModel(modelId) },
+    ],
+    [modelId],
+  );
+
+  const handleProviderChange = (v: string) => {
+    const newProvider = MODEL_PROVIDERS.find((p) => p.id === v);
+    const firstModel = newProvider?.models[0];
+    void update({
+      model: {
+        defaults: {
+          provider: v as SettingsProviderId,
+          ...(firstModel && { id: firstModel.id, fallbackId: "" }),
+        },
+      },
+    });
+  };
+
+  const handleModelChange = (v: string) => {
+    const clamped = normalizeReasoningLevelForModel(v, reasoning);
+    void update({
+      model: {
+        defaults: {
+          id: v,
+          ...(clamped !== reasoning && { reasoning: clamped }),
+        },
+      },
+    });
+  };
 
   return (
     <div>
@@ -41,13 +88,7 @@ export function ModelSection() {
         configKey="model.defaults.provider"
         hint="AI provider for new threads."
       >
-        <SegControl
-          options={PROVIDER_OPTIONS}
-          value={provider}
-          onChange={(v) =>
-            update({ model: { defaults: { provider: v as SettingsProviderId } } })
-          }
-        />
+        <SegControl options={PROVIDER_OPTIONS} value={provider} onChange={handleProviderChange} />
       </SettingRow>
 
       <SettingRow
@@ -55,11 +96,7 @@ export function ModelSection() {
         configKey="model.defaults.id"
         hint="New threads start with this model."
       >
-        <SegControl
-          options={modelOptions}
-          value={modelId}
-          onChange={(v) => update({ model: { defaults: { id: v } } })}
-        />
+        <SegControl options={modelOptions} value={modelId} onChange={handleModelChange} />
       </SettingRow>
 
       <SettingRow
@@ -80,12 +117,7 @@ export function ModelSection() {
         hint="Default reasoning level. Max requires Opus 4.6."
       >
         <SegControl
-          options={[
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High" },
-            { value: "max", label: "Max", disabled: !isMaxEffortModel(modelId) },
-          ]}
+          options={reasoningOptions}
           value={reasoning}
           onChange={(v) =>
             update({ model: { defaults: { reasoning: v as ReasoningLevel } } })

@@ -4,7 +4,9 @@ import { SegControl } from "../SegControl";
 import { Switch } from "@/components/ui/switch";
 import type { NamingMode } from "@mcode/contracts";
 
-/** Worktree branch naming settings. */
+/**
+ * Worktree settings section: branch naming strategy and AI name confirmation.
+ */
 export function WorktreeSection() {
   const namingMode = useSettingsStore((s) => s.settings.worktree.naming.mode);
   const aiConfirmation = useSettingsStore((s) => s.settings.worktree.naming.aiConfirmation);

@@ -4,7 +4,9 @@ import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import type { AgentDefaultMode } from "@mcode/contracts";
 
-/** Agent concurrency and session defaults. */
+/**
+ * Agent settings section: max concurrent agents, default interaction mode, and permission level.
+ */
 export function AgentSection() {
   const maxConcurrent = useSettingsStore((s) => s.settings.agent.maxConcurrent);
   const mode = useSettingsStore((s) => s.settings.agent.defaults.mode);

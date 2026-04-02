@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { SettingRow } from "../SettingRow";
 
-/** Terminal emulator settings. */
+/**
+ * Terminal settings section: scrollback buffer size.
+ */
 export function TerminalSection() {
   const scrollback = useSettingsStore((s) => s.settings.terminal.scrollback);
   const update = useSettingsStore((s) => s.update);

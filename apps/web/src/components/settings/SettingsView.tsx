@@ -47,14 +47,17 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-const SECTION_MAP: Record<SettingsSection, React.ReactNode> = {
-  model: <ModelSection />,
-  agent: <AgentSection />,
-  worktree: <WorktreeSection />,
-  appearance: <AppearanceSection />,
-  notifications: <NotificationsSection />,
-  terminal: <TerminalSection />,
-  server: <ServerSection />,
+/** True when running inside the Electron shell (set once at startup by the preload script). */
+const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;
+
+const SECTION_MAP: Record<SettingsSection, React.ComponentType> = {
+  model: ModelSection,
+  agent: AgentSection,
+  worktree: WorktreeSection,
+  appearance: AppearanceSection,
+  notifications: NotificationsSection,
+  terminal: TerminalSection,
+  server: ServerSection,
 };
 
 interface SettingsViewProps {
@@ -68,7 +71,7 @@ interface SettingsViewProps {
  */
 export function SettingsView({ onClose }: SettingsViewProps) {
   const [section, setSection] = useState<SettingsSection>("model");
-  const isDesktop = typeof window !== "undefined" && !!window.desktopBridge;
+  const ActiveSection = SECTION_MAP[section];
 
   const handleEditJson = () => {
     if (window.desktopBridge) {
@@ -92,7 +95,7 @@ export function SettingsView({ onClose }: SettingsViewProps) {
           </Button>
           <span className="text-sm font-semibold text-muted-foreground">Settings</span>
         </div>
-        {isDesktop && (
+        {IS_DESKTOP && (
           <Button
             variant="ghost"
             size="sm"
@@ -136,7 +139,9 @@ export function SettingsView({ onClose }: SettingsViewProps) {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto">
-          <div className="max-w-[560px] px-8 py-7">{SECTION_MAP[section]}</div>
+          <div className="max-w-[560px] px-8 py-7">
+            <ActiveSection />
+          </div>
         </div>
       </div>
     </div>
