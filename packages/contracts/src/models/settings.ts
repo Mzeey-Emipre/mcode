@@ -148,8 +148,76 @@ export function getDefaultSettings(): Settings {
 // Partial settings schema (for deep-partial updates)
 // ---------------------------------------------------------------------------
 
-/** Deep-partial settings schema for incremental updates via `settings.update`. */
-export const PartialSettingsSchema = lazySchema(() => SettingsSchema().deepPartial());
+/**
+ * Deep-partial settings schema for incremental updates via `settings.update`.
+ *
+ * Hand-authored with `.optional()` instead of `.default()` so that absent
+ * fields remain `undefined` after parsing rather than being backfilled with
+ * schema defaults. Using `SettingsSchema().deepPartial()` would preserve
+ * the `.default()` wrappers, causing Zod to inject default values for every
+ * omitted sibling when a parent object is present in the input.
+ */
+export const PartialSettingsSchema = lazySchema(() =>
+  z.object({
+    appearance: z
+      .object({
+        theme: ThemeSchema.optional(),
+      })
+      .optional(),
+    agent: z
+      .object({
+        maxConcurrent: z.number().int().positive().optional(),
+        defaults: z
+          .object({
+            mode: AgentDefaultModeSchema.optional(),
+            permission: PermissionModeSchema.optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    model: z
+      .object({
+        defaults: z
+          .object({
+            provider: ProviderIdSchema.optional(),
+            id: z.string().optional(),
+            reasoning: ReasoningLevelSchema.optional(),
+            fallbackId: z.string().trim().optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    terminal: z
+      .object({
+        scrollback: z.number().int().nonnegative().optional(),
+      })
+      .optional(),
+    notifications: z
+      .object({
+        enabled: z.boolean().optional(),
+      })
+      .optional(),
+    worktree: z
+      .object({
+        naming: z
+          .object({
+            mode: NamingModeSchema.optional(),
+            aiConfirmation: z.boolean().optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    server: z
+      .object({
+        memory: z
+          .object({
+            heapMb: z.number().int().min(64).max(8192).optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+  }),
+);
 
 /** Deep-partial settings for incremental updates. */
 export type PartialSettings = z.infer<ReturnType<typeof PartialSettingsSchema>>;

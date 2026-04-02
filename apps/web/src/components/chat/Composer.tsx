@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findProviderForModel, findModelById, isMaxEffortModel, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -50,7 +50,7 @@ import {
   inferMimeType,
   MAX_ATTACHMENTS,
 } from "@mcode/contracts";
-import type { ReasoningLevel, SettingsProviderId } from "@mcode/contracts";
+import type { ReasoningLevel } from "@mcode/contracts";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 
@@ -824,20 +824,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning);
     }
 
-    // Auto-save "last used" model, reasoning, mode, and access as the new defaults
+    // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
     const { settings, loaded, update: updateSettings } = useSettingsStore.getState();
-    if (loaded && (modelId !== settings.model.defaults.id || reasoning !== settings.model.defaults.reasoning)) {
-      const provider = findProviderForModel(modelId);
-      void updateSettings({
-        model: {
-          defaults: {
-            id: modelId,
-            reasoning,
-            ...(provider && { provider: provider.id as SettingsProviderId }),
-          },
-        },
-      });
-    }
     if (loaded && (mode !== settings.agent.defaults.mode || access !== settings.agent.defaults.permission)) {
       void updateSettings({
         agent: {

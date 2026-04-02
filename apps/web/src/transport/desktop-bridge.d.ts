@@ -35,6 +35,8 @@ interface DesktopBridge {
   clearRendererCache(): void;
   /** Return total bytes held in Blink's resource cache. */
   getRendererCacheBytes(): number;
+  /** Open settings.json in the OS default editor. Resolves to an empty string on success. */
+  openSettingsFile(): Promise<string>;
 }
 
 declare global {

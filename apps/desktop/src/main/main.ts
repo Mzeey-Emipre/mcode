@@ -364,6 +364,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle("get-recent-logs", (_event, lines: number) => {
     return getRecentLogs(lines);
   });
+
+  // Open settings.json in the default system editor
+  ipcMain.handle("open-settings-file", async () => {
+    const dir = getMcodeDir();
+    const filePath = join(dir, "settings.json");
+    if (!existsSync(filePath)) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(filePath, "{}\n", "utf8");
+    }
+    const err = await shell.openPath(filePath);
+    if (err) {
+      throw new Error(`Failed to open settings.json: ${err}`);
+    }
+    return "";
+  });
 }
 
 // ---------------------------------------------------------------------------
