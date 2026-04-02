@@ -67,7 +67,9 @@ export const AgentEventSchema = lazySchema(() =>
       /** Heartbeat emitted while a tool is executing, carrying elapsed wall-clock time. */
       type: z.literal("toolProgress"),
       threadId: z.string(),
+      /** Identifier of the tool call this progress event belongs to. */
       toolCallId: z.string(),
+      /** Name of the tool currently executing. */
       toolName: z.string(),
       /** Elapsed seconds since the tool started, as reported by the SDK. */
       elapsedSeconds: z.number(),
