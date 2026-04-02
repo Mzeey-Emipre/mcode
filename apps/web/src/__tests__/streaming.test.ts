@@ -153,7 +153,7 @@ describe("session.textDelta", () => {
     handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "end" } });
 
     const result = useThreadStore.getState().streamingByThread["thread-1"];
-    expect(result.length).toBeLessThanOrEqual(200);
+    expect(result.length).toBe(200);
     expect(result.endsWith("end")).toBe(true);
   });
 

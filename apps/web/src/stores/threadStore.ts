@@ -628,10 +628,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const toolCallId = (params.toolCallId as string) || "";
       const elapsedSeconds = (params.elapsedSeconds as number) ?? 0;
       if (!toolCallId) return;
+      const calls = get().toolCallsByThread[threadId] ?? [];
+      // Skip if no active call matches — avoids a no-op re-render.
+      if (!calls.some((tc) => tc.id === toolCallId && !tc.isComplete)) return;
       set((state) => {
-        const calls = state.toolCallsByThread[threadId] ?? [];
-        const updated = calls.map((tc) =>
-          tc.id === toolCallId ? { ...tc, elapsedSeconds } : tc
+        const current = state.toolCallsByThread[threadId] ?? [];
+        const updated = current.map((tc) =>
+          tc.id === toolCallId && !tc.isComplete ? { ...tc, elapsedSeconds } : tc
         );
         return {
           toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
