@@ -64,6 +64,13 @@ export const AgentEventSchema = lazySchema(() =>
       delta: z.string(),
     }),
     z.object({
+      /** Incremental JSON fragment emitted while Claude builds a tool call's input. */
+      type: z.literal("toolInputDelta"),
+      threadId: z.string(),
+      /** Partial JSON string to append to the tool input being assembled. */
+      partialJson: z.string(),
+    }),
+    z.object({
       /** Heartbeat emitted while a tool is executing, carrying elapsed wall-clock time. */
       type: z.literal("toolProgress"),
       threadId: z.string(),
