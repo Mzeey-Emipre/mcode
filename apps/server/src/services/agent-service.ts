@@ -33,6 +33,9 @@ import { broadcast } from "../transport/push";
 import { ThreadService } from "./thread-service";
 import { SettingsService } from "./settings-service.js";
 
+/** Fallback context window size used when the SDK does not report one. */
+const DEFAULT_CONTEXT_WINDOW = 200_000;
+
 /**
  * Generate a thread title from message content: first line, truncated
  * to 50 characters at a word boundary with "..." appended.
@@ -385,6 +388,19 @@ export class AgentService {
               error: err instanceof Error ? err.message : String(err),
             });
           });
+
+          // Persist context usage so the tracker shows immediately on thread reload.
+          if (event.tokensIn > 0) {
+            try {
+              const ctxWindow = event.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+              this.threadRepo.updateContextUsage(event.threadId, event.tokensIn, ctxWindow);
+            } catch (err) {
+              logger.warn("Context usage not persisted", {
+                threadId: event.threadId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
         }
 
         if (event.type === "error") {
@@ -394,6 +410,28 @@ export class AgentService {
               error: err instanceof Error ? err.message : String(err),
             });
           });
+        }
+
+        if (event.type === "compacting" && !event.active) {
+          // Compaction finished — persist a system divider message
+          try {
+            const { messages: existing } = this.messageRepo.listByThread(event.threadId, 1);
+            const nextSeq =
+              existing.length > 0
+                ? existing[existing.length - 1].sequence + 1
+                : 1;
+            this.messageRepo.create(
+              event.threadId,
+              "system",
+              "Context compacted",
+              nextSeq,
+            );
+          } catch (err) {
+            logger.error("Failed to persist compaction system message", {
+              threadId: event.threadId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
 
         if (event.type === "ended") {

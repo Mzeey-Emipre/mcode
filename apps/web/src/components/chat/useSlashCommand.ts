@@ -1,21 +1,27 @@
 import { useState, useRef, useCallback } from "react";
 import { getTransport, type SkillInfo } from "@/transport";
+import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
 
 /** A slash command entry shown in the popup. */
 export interface Command {
   name: string;
   description: string;
-  namespace: "skill" | "mcode" | "plugin";
+  namespace: SlashCommandNamespace;
   /** For mcode-namespace commands, the action string dispatched on selection. */
   action?: string;
 }
 
-const MCODE_COMMANDS: Command[] = [
+const BUILTIN_COMMANDS: Command[] = [
   {
     name: "m:plan",
     description: "Toggle plan mode",
     namespace: "mcode",
     action: "toggle-plan",
+  },
+  {
+    name: "compact",
+    description: "Summarise conversation history to free up context window",
+    namespace: "command",
   },
 ];
 
@@ -54,7 +60,7 @@ export function useSlashCommand({
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [items, setItems] = useState<Command[]>([]);
-  const [allCommands, setAllCommands] = useState<Command[]>(MCODE_COMMANDS);
+  const [allCommands, setAllCommands] = useState<Command[]>(BUILTIN_COMMANDS);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
@@ -75,7 +81,7 @@ export function useSlashCommand({
       description: description || `Run /${name}`,
       namespace: (name.includes(":") ? "plugin" : "skill") as "plugin" | "skill",
     }));
-    const all = [...MCODE_COMMANDS, ...skills];
+    const all = [...BUILTIN_COMMANDS, ...skills];
     if (!f) return all;
     return all.filter((cmd) => cmd.name.toLowerCase().includes(f));
   }, []);

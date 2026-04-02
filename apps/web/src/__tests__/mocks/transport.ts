@@ -22,6 +22,7 @@ export function createMockWorkspace(
   };
 }
 
+/** Build a mock `Thread` with stable defaults for web tests. */
 export function createMockThread(overrides?: Partial<Thread>): Thread {
   return {
     id: crypto.randomUUID(),
@@ -40,6 +41,8 @@ export function createMockThread(overrides?: Partial<Thread>): Thread {
     updated_at: new Date().toISOString(),
     model: null,
     deleted_at: null,
+    last_context_tokens: null,
+    context_window: null,
     ...overrides,
   };
 }

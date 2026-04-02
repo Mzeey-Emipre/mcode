@@ -116,6 +116,9 @@
       "dependencies": {
         "zod": "^3.24.2",
       },
+      "devDependencies": {
+        "vitest": "^4.1.0",
+      },
     },
     "packages/shared": {
       "name": "@mcode/shared",

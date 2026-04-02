@@ -32,6 +32,8 @@ export const AgentEventSchema = lazySchema(() =>
       costUsd: z.number().nullable(),
       tokensIn: z.number(),
       tokensOut: z.number(),
+      /** Model's max context window reported by the SDK, if available. */
+      contextWindow: z.number().optional(),
     }),
     z.object({
       type: z.literal("error"),
@@ -46,6 +48,13 @@ export const AgentEventSchema = lazySchema(() =>
       type: z.literal("system"),
       threadId: z.string(),
       subtype: z.string(),
+    }),
+    z.object({
+      /** Emitted when the SDK starts or finishes compacting the context window. */
+      type: z.literal("compacting"),
+      threadId: z.string(),
+      /** True when compaction is starting, false when it has finished. */
+      active: z.boolean(),
     }),
     z.object({
       /** Emitted when the SDK fell back to an alternate model. */

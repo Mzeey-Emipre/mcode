@@ -25,6 +25,8 @@ interface ThreadRow {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  last_context_tokens: number | null;
+  context_window: number | null;
 }
 
 function rowToThread(row: ThreadRow): Thread {
@@ -45,11 +47,13 @@ function rowToThread(row: ThreadRow): Thread {
     created_at: row.created_at,
     updated_at: row.updated_at,
     deleted_at: row.deleted_at,
+    last_context_tokens: row.last_context_tokens ?? null,
+    context_window: row.context_window ?? null,
   };
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, created_at, updated_at, deleted_at";
+  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, created_at, updated_at, deleted_at, last_context_tokens, context_window";
 
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
@@ -101,6 +105,8 @@ export class ThreadRepo {
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      last_context_tokens: null,
+      context_window: null,
     };
   }
 
@@ -211,6 +217,18 @@ export class ThreadRepo {
         "UPDATE threads SET pr_number = ?, pr_status = ?, updated_at = ? WHERE id = ?",
       )
       .run(prNumber, prStatus, now, id);
+
+    return result.changes > 0;
+  }
+
+  /** Persist the latest context window usage for a thread. */
+  updateContextUsage(id: string, lastContextTokens: number, contextWindow: number): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        "UPDATE threads SET last_context_tokens = ?, context_window = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(lastContextTokens, contextWindow, now, id);
 
     return result.changes > 0;
   }

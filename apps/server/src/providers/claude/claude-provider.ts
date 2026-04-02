@@ -367,6 +367,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       try {
         let lastAssistantText = "";
         let sessionInitialized = false;
+        /** Tracks whether the SDK has signalled compaction is active for this stream. */
+        let sessionCompacting = false;
 
         for await (const msg of q) {
           const entry = this.sessions.get(sessionId);
@@ -496,6 +498,29 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 }
               }
 
+              // Extract the authoritative context window from SDK modelUsage.
+              // modelUsage is Record<modelId, { contextWindow?: number, ... }>.
+              const sdkModelUsage = (anyMsg.modelUsage ?? {}) as Record<
+                string,
+                { contextWindow?: number }
+              >;
+              const sdkContextWindow = Object.values(sdkModelUsage).find(
+                (u) => typeof u.contextWindow === "number",
+              )?.contextWindow;
+
+              // With prompt caching, input_tokens is only the uncached portion.
+              // Sum all input token categories for the true context window fill.
+              const usage = (anyMsg.usage ?? {}) as {
+                input_tokens?: number;
+                output_tokens?: number;
+                cache_read_input_tokens?: number;
+                cache_creation_input_tokens?: number;
+              };
+              const totalInputTokens =
+                (usage.input_tokens ?? 0) +
+                (usage.cache_read_input_tokens ?? 0) +
+                (usage.cache_creation_input_tokens ?? 0);
+
               this.emit("event", {
                 type: "turnComplete",
                 threadId,
@@ -505,18 +530,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   "end_turn",
                 costUsd:
                   (anyMsg.total_cost_usd as number) ?? null,
-                tokensIn:
-                  (
-                    anyMsg.usage as {
-                      input_tokens?: number;
-                    }
-                  )?.input_tokens ?? 0,
-                tokensOut:
-                  (
-                    anyMsg.usage as {
-                      output_tokens?: number;
-                    }
-                  )?.output_tokens ?? 0,
+                tokensIn: totalInputTokens,
+                tokensOut: usage.output_tokens ?? 0,
+                contextWindow: sdkContextWindow,
               } satisfies AgentEvent);
 
               lastAssistantText = "";
@@ -524,12 +540,34 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             }
 
             case "system": {
-              this.emit("event", {
-                type: "system",
-                threadId,
-                subtype:
-                  (anyMsg.subtype as string) || "unknown",
-              } satisfies AgentEvent);
+              // subtype 'status' carries the SDK's compaction state.
+              // Only emit a compacting event on known transitions to avoid
+              // spurious "active: false" from unrelated status strings (e.g.
+              // "idle", "ready") that the SDK may send during session lifecycle.
+              if ((anyMsg.subtype as string) === "status") {
+                const sdkStatus = (anyMsg as { status?: string | null }).status;
+                if (sdkStatus === "compacting" && !sessionCompacting) {
+                  sessionCompacting = true;
+                  this.emit("event", {
+                    type: "compacting",
+                    threadId,
+                    active: true,
+                  } satisfies AgentEvent);
+                } else if (sdkStatus !== "compacting" && sessionCompacting) {
+                  sessionCompacting = false;
+                  this.emit("event", {
+                    type: "compacting",
+                    threadId,
+                    active: false,
+                  } satisfies AgentEvent);
+                }
+              } else {
+                this.emit("event", {
+                  type: "system",
+                  threadId,
+                  subtype: (anyMsg.subtype as string) || "unknown",
+                } satisfies AgentEvent);
+              }
               break;
             }
 
