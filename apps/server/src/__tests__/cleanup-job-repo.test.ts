@@ -39,6 +39,26 @@ describe("CleanupJobRepo", () => {
 
       expect(job.branch).toBeNull();
     });
+
+    it("returns the existing row when the same thread_id is inserted twice (INSERT OR IGNORE)", () => {
+      const first = repo.insert({
+        thread_id: "t-dup",
+        workspace_path: "/repo",
+        worktree_path: "/repo/.worktrees/feat",
+        branch: "feat/dup",
+      });
+      const second = repo.insert({
+        thread_id: "t-dup",
+        workspace_path: "/repo",
+        worktree_path: "/repo/.worktrees/feat",
+        branch: "feat/dup",
+      });
+
+      // Only one row created
+      expect(repo.count()).toBe(1);
+      // Both calls return the same persisted ID
+      expect(second.id).toBe(first.id);
+    });
   });
 
   describe("findDue", () => {

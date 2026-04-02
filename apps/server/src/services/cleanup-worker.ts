@@ -6,7 +6,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { resolve } from "path";
+import { isAbsolute, relative, resolve } from "path";
 import { existsSync } from "fs";
 import type Database from "better-sqlite3";
 import { getMcodeDir, logger } from "@mcode/shared";
@@ -60,6 +60,7 @@ export class CleanupWorker {
    * polling for due jobs.
    */
   start(): void {
+    if (this.pollTimer !== null) return;
     this.cleanupJobRepo.resetAttempts();
     this.stopped = false;
     this.pollTimer = setInterval(() => {
@@ -122,7 +123,8 @@ export class CleanupWorker {
       if (!existsSync(resolvedWs)) {
         throw new Error(`workspace_path does not exist: ${resolvedWs}`);
       }
-      if (!resolvedWt.startsWith(worktreeBase)) {
+      const rel = relative(worktreeBase, resolvedWt);
+      if (rel.startsWith("..") || isAbsolute(rel)) {
         throw new Error(`worktree_path outside expected base: ${resolvedWt}`);
       }
 

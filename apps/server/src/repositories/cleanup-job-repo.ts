@@ -40,6 +40,7 @@ export class CleanupJobRepo {
   private readonly stmtDelete: Statement;
   private readonly stmtResetAttempts: Statement;
   private readonly stmtFindById: Statement;
+  private readonly stmtFindByThreadId: Statement;
   private readonly stmtCount: Statement;
 
   constructor(@inject("Database") db: Database.Database) {
@@ -67,6 +68,9 @@ export class CleanupJobRepo {
     this.stmtFindById = db.prepare(
       `SELECT ${SELECT_COLS} FROM cleanup_jobs WHERE id = ?`,
     );
+    this.stmtFindByThreadId = db.prepare(
+      `SELECT ${SELECT_COLS} FROM cleanup_jobs WHERE thread_id = ?`,
+    );
     this.stmtCount = db.prepare("SELECT COUNT(*) as n FROM cleanup_jobs");
   }
 
@@ -84,7 +88,7 @@ export class CleanupJobRepo {
     const id = randomUUID();
     const now = Date.now();
 
-    this.stmtInsert.run(
+    const result = this.stmtInsert.run(
       id,
       job.thread_id,
       job.workspace_path,
@@ -92,6 +96,12 @@ export class CleanupJobRepo {
       job.branch ?? null,
       now,
     );
+
+    if (result.changes === 0) {
+      // A job for this thread already exists (UNIQUE constraint). Return the
+      // persisted row so callers always get a valid, DB-backed object.
+      return this.stmtFindByThreadId.get(job.thread_id) as CleanupJob;
+    }
 
     return {
       id,
