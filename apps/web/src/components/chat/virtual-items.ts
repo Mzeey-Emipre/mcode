@@ -8,12 +8,13 @@ function assertNever(value: never): never {
 export type ChatVirtualItem =
   | { key: string; type: "message"; message: Message }
   | { key: string; type: "active-tools"; toolCalls: readonly ToolCall[] }
-  | { key: string; type: "streaming"; content: string }
   | {
       key: string;
       type: "indicator";
       startTime: number | undefined;
       activeToolCalls: readonly ToolCall[];
+      /** Streaming text to display below the phase label, if any. */
+      streamingText?: string;
     }
   | { key: string; type: "tool-summary"; messageId: string; serverMessageId: string; toolCallCount: number };
 
@@ -62,17 +63,14 @@ export function buildVolatileItems(
     items.push({ key: "active-tools", type: "active-tools", toolCalls });
   }
 
-  if (streamingText) {
-    items.push({ key: "streaming", type: "streaming", content: streamingText });
-  }
-
-  if (isAgentRunning && !streamingText) {
+  if (isAgentRunning || streamingText) {
     const activeOnly = toolCalls.filter((tc) => !tc.isComplete);
     items.push({
       key: "indicator",
       type: "indicator",
       startTime: agentStartTime,
       activeToolCalls: activeOnly,
+      streamingText,
     });
   }
 
@@ -203,10 +201,8 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
     }
     case "active-tools":
       return Math.min(item.toolCalls.length * 48, 400);
-    case "streaming":
-      return 80 + estimateMarkdownHeight(item.content);
     case "indicator":
-      return 48;
+      return item.streamingText ? 72 : 48;
     case "tool-summary":
       return 36;
     default:
