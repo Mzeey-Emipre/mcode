@@ -132,7 +132,11 @@ export function detectFallbackModel(
   requestedModel: string,
 ): string | null {
   const usedModels = Object.keys(modelUsage);
-  const actualModel = usedModels.find((m) => m !== requestedModel);
+  // SDK resolves aliases to dated IDs (e.g. "claude-sonnet-4-6" → "claude-sonnet-4-6-20250514").
+  // A dated variant that starts with the requested alias is the same model, not a fallback.
+  const actualModel = usedModels.find(
+    (m) => m !== requestedModel && !m.startsWith(requestedModel),
+  );
   return actualModel ?? null;
 }
 

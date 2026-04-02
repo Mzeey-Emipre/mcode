@@ -166,7 +166,8 @@ export class AgentService {
 
     const resolvedModel = model;
     const { fallbackId } = (await this.settingsService.get()).model.defaults;
-    const fallbackModel = fallbackId || undefined; // empty string → no fallback
+    const fallbackModel =
+      fallbackId && fallbackId !== resolvedModel ? fallbackId : undefined;
     this.threadRepo.updateModel(threadId, resolvedModel);
 
     const sessionName = `mcode-${threadId}`;
