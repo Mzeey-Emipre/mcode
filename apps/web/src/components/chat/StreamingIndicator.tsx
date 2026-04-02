@@ -39,9 +39,11 @@ export function StreamingIndicator({ startTime, activeToolCalls }: StreamingIndi
   const phaseLabel = useMemo(() => derivePhaseLabel(activeToolCalls), [activeToolCalls]);
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2">
-      <span className="animate-shimmer-text text-sm">{phaseLabel}</span>
-      <span className="text-xs text-muted-foreground/50">({formatDuration(elapsed)})</span>
+    <div className="flex flex-col gap-0.5 px-4 py-2">
+      <div className="flex items-center gap-2">
+        <span className="animate-shimmer-text text-sm">{phaseLabel}</span>
+        <span className="text-xs text-muted-foreground/50">({formatDuration(elapsed)})</span>
+      </div>
     </div>
   );
 }

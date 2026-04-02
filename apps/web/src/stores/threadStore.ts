@@ -21,7 +21,10 @@ interface ThreadState {
   loading: boolean;
   error: string | null;
   currentThreadId: string | null;
+  /** Full accumulated streaming text per thread, used for finalization into a message. */
   streamingByThread: Record<string, string>;
+  /** Tail-truncated preview of the streaming text (last 200 chars), used by StreamingCard for render optimization. */
+  streamingPreviewByThread: Record<string, string>;
   toolCallsByThread: Record<string, ToolCall[]>;
   agentStartTimes: Record<string, number>;
   /** Per-thread permission mode and interaction mode. */
@@ -121,6 +124,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   error: null,
   currentThreadId: null,
   streamingByThread: {},
+  streamingPreviewByThread: {},
   toolCallsByThread: {},
   agentStartTimes: {},
   settingsByThread: {},
@@ -388,6 +392,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       messages: [],
       error: null,
       streamingByThread: {},
+      streamingPreviewByThread: {},
       toolCallsByThread: {},
       persistedToolCallCounts: {},
       serverMessageIds: {},
@@ -440,12 +445,27 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       if (!calls || !calls.some((tc) => !tc.isComplete)) return;
       set((state) => {
         const current = state.toolCallsByThread[threadId] ?? [];
+        // Count how many Agent calls are being completed in this sweep.
+        const agentCompletions = current.filter(
+          (tc) => !tc.isComplete && tc.toolName === "Agent"
+        ).length;
         const updated = current.map((tc) =>
           tc.isComplete ? tc : { ...tc, isComplete: true }
         );
-        return {
+        const result: Partial<ThreadState> = {
           toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
         };
+        if (agentCompletions > 0) {
+          // Fall back to agentCompletions when the counter is absent — this keeps the
+          // arithmetic correct even if the increment was missed (e.g. the Agent toolUse
+          // event arrived on a thread we weren't tracking yet).
+          const count = (state.activeSubagentsByThread[threadId] ?? agentCompletions) - agentCompletions;
+          const nextSubagents = { ...state.activeSubagentsByThread };
+          if (count <= 0) delete nextSubagents[threadId];
+          else nextSubagents[threadId] = count;
+          result.activeSubagentsByThread = nextSubagents;
+        }
+        return result;
       });
     };
 
@@ -497,11 +517,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           attachments: null,
         };
         set((state) => {
+          // Clear streaming text so turnComplete won't duplicate this message.
+          const nextStreaming = { ...state.streamingByThread };
+          delete nextStreaming[threadId];
+          const nextPreview = { ...state.streamingPreviewByThread };
+          delete nextPreview[threadId];
           const trackTurn = {
             currentTurnMessageIdByThread: {
               ...state.currentTurnMessageIdByThread,
               [threadId]: message.id,
             },
+            streamingByThread: nextStreaming,
+            streamingPreviewByThread: nextPreview,
           };
           if (state.currentThreadId !== threadId) return trackTurn;
           const { messages: capped, evicted } = capMessages([...state.messages, message]);
@@ -580,10 +607,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         // when the SDK sends a null or non-matching toolCallId.
         const hasIdMatch = toolCallId && calls.some((tc) => tc.id === toolCallId);
 
-        // Identify the matched call before mutating, so we can check for Agent completion
+        // Fallback: pick the first incomplete call, but never pick an Agent call
+        // that has active children — completing it prematurely would decrement
+        // the subagent count and hide the nested work from the UI.
+        const hasActiveChildren = (id: string) =>
+          calls.some((c) => c.parentToolCallId === id && !c.isComplete);
         const matchedCall = hasIdMatch
           ? calls.find((tc) => tc.id === toolCallId)
-          : calls.find((tc) => !tc.isComplete);
+          : calls.find((tc) => !tc.isComplete && !(tc.toolName === "Agent" && hasActiveChildren(tc.id)));
         const isAgentCompletion = matchedCall?.toolName === "Agent";
 
         let matched = false;
@@ -592,7 +623,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               tc.id === toolCallId ? { ...tc, output, isError, isComplete: true } : tc
             )
           : calls.map((tc) => {
-              if (!matched && !tc.isComplete) {
+              if (!matched && !tc.isComplete && !(tc.toolName === "Agent" && hasActiveChildren(tc.id))) {
                 matched = true;
                 return { ...tc, output, isError, isComplete: true };
               }
@@ -613,6 +644,47 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         }
 
         return result;
+      });
+      return;
+    }
+
+    // session.textDelta: accumulate streaming text for live preview and finalization.
+    if (method === "session.textDelta") {
+      const delta = (params.delta as string) || "";
+      if (!delta) return;
+      // Text deltas signal Claude is responding — mark prior tool calls complete.
+      markPriorToolCallsComplete();
+      set((state) => {
+        const current = state.streamingByThread[threadId] ?? "";
+        const combined = current + delta;
+        const preview = combined.length > 200 ? combined.slice(-200) : combined;
+        return {
+          streamingByThread: { ...state.streamingByThread, [threadId]: combined },
+          streamingPreviewByThread: { ...state.streamingPreviewByThread, [threadId]: preview },
+        };
+      });
+      return;
+    }
+
+    if (method === "session.toolProgress") {
+      const toolCallId = (params.toolCallId as string) || "";
+      const elapsedSeconds = (params.elapsedSeconds as number) ?? 0;
+      if (!toolCallId) return;
+      set((state) => {
+        const current = state.toolCallsByThread[threadId] ?? [];
+        let changed = false;
+        const updated = current.map((tc) => {
+          if (tc.id === toolCallId && !tc.isComplete && tc.elapsedSeconds !== elapsedSeconds) {
+            changed = true;
+            return { ...tc, elapsedSeconds };
+          }
+          return tc;
+        });
+        // Return same state reference when nothing changed — Zustand skips notification.
+        if (!changed) return state;
+        return {
+          toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
+        };
       });
       return;
     }
@@ -644,6 +716,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         set((state) => {
           const nextStreaming = { ...state.streamingByThread };
           delete nextStreaming[threadId];
+          const nextPreview = { ...state.streamingPreviewByThread };
+          delete nextPreview[threadId];
           const nextRunning = new Set(state.runningThreadIds);
           nextRunning.delete(threadId);
           const nextStartTimes = { ...state.agentStartTimes };
@@ -663,6 +737,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 })()
               : {}),
             streamingByThread: nextStreaming,
+            streamingPreviewByThread: nextPreview,
             runningThreadIds: nextRunning,
             agentStartTimes: nextStartTimes,
             activeSubagentsByThread: nextSubagents,
@@ -677,6 +752,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           nextRunning.delete(threadId);
           const nextStreaming = { ...state.streamingByThread };
           delete nextStreaming[threadId];
+          const nextPreview = { ...state.streamingPreviewByThread };
+          delete nextPreview[threadId];
           const nextStartTimes = { ...state.agentStartTimes };
           delete nextStartTimes[threadId];
           const nextSubagents = { ...state.activeSubagentsByThread };
@@ -688,6 +765,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           return {
             runningThreadIds: nextRunning,
             streamingByThread: nextStreaming,
+            streamingPreviewByThread: nextPreview,
             agentStartTimes: nextStartTimes,
             activeSubagentsByThread: nextSubagents,
             toolCallsByThread: completedCalls.length > 0

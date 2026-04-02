@@ -65,6 +65,31 @@ export const AgentEventSchema = lazySchema(() =>
       /** The model that actually ran. */
       actualModel: z.string(),
     }),
+    z.object({
+      /** A streaming text chunk emitted as Claude types its response. */
+      type: z.literal("textDelta"),
+      threadId: z.string(),
+      /** Partial response text - append to accumulate the full response. */
+      delta: z.string(),
+    }),
+    z.object({
+      /** Incremental JSON fragment emitted while Claude builds a tool call's input. */
+      type: z.literal("toolInputDelta"),
+      threadId: z.string(),
+      /** Partial JSON string to append to the tool input being assembled. */
+      partialJson: z.string(),
+    }),
+    z.object({
+      /** Heartbeat emitted while a tool is executing, carrying elapsed wall-clock time. */
+      type: z.literal("toolProgress"),
+      threadId: z.string(),
+      /** Identifier of the tool call this progress event belongs to. */
+      toolCallId: z.string(),
+      /** Name of the tool currently executing. */
+      toolName: z.string(),
+      /** Elapsed seconds since the tool started, as reported by the SDK. */
+      elapsedSeconds: z.number(),
+    }),
   ]),
 );
 /** Union of all events emitted by an agent provider. */
