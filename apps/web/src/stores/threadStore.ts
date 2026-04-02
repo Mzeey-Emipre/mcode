@@ -431,12 +431,24 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       if (!calls || !calls.some((tc) => !tc.isComplete)) return;
       set((state) => {
         const current = state.toolCallsByThread[threadId] ?? [];
+        // Count how many Agent calls are being completed in this sweep.
+        const agentCompletions = current.filter(
+          (tc) => !tc.isComplete && tc.toolName === "Agent"
+        ).length;
         const updated = current.map((tc) =>
           tc.isComplete ? tc : { ...tc, isComplete: true }
         );
-        return {
+        const result: Partial<ThreadState> = {
           toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
         };
+        if (agentCompletions > 0) {
+          const count = (state.activeSubagentsByThread[threadId] ?? agentCompletions) - agentCompletions;
+          const nextSubagents = { ...state.activeSubagentsByThread };
+          if (count <= 0) delete nextSubagents[threadId];
+          else nextSubagents[threadId] = count;
+          result.activeSubagentsByThread = nextSubagents;
+        }
+        return result;
       });
     };
 

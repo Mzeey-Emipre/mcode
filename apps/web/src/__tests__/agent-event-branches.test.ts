@@ -166,3 +166,40 @@ describe("session.modelFallback", () => {
     expect(toasts[0].title).toContain("claude-another-unknown");
   });
 });
+
+describe("subagent count via markPriorToolCallsComplete", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useThreadStore.setState({
+      messages: [],
+      runningThreadIds: new Set(["thread-1"]),
+      streamingByThread: {},
+      toolCallsByThread: {
+        "thread-1": [
+          { id: "agent-1", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
+        ],
+      },
+      activeSubagentsByThread: { "thread-1": 1 },
+      agentStartTimes: {},
+      currentThreadId: "thread-1",
+    });
+  });
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("decrements activeSubagentsByThread when markPriorToolCallsComplete completes an Agent call", () => {
+    // Trigger markPriorToolCallsComplete by dispatching a new top-level toolUse
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: { toolCallId: "tc2", toolName: "Read", toolInput: {} },
+    });
+    vi.runAllTimers();
+
+    // The Agent call is marked complete by markPriorToolCallsComplete
+    const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
+    expect(calls.find((c) => c.id === "agent-1")?.isComplete).toBe(true);
+
+    // The subagent count must be decremented
+    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBeUndefined();
+  });
+});
