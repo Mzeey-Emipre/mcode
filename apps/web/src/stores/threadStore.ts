@@ -8,7 +8,7 @@ import { LruCache } from "@/lib/lru-cache";
 import { useTaskStore, coerceTaskStatus } from "./taskStore";
 import type { TaskItem } from "./taskStore";
 import { useToastStore } from "./toastStore";
-import { findModelById, getContextWindow } from "@/lib/model-registry";
+import { findModelById, getContextWindow, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -780,9 +780,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const active = params.active as boolean;
       if (!active) {
         // Only add the system divider if the thread was actually marked as
-        // compacting — guards against duplicate events from the SDK.
+        // compacting AND this is the currently loaded thread. addMessage appends
+        // to the shared messages array, so inserting on a background thread
+        // would show the divider in the wrong chat.
         const wasCompacting = get().isCompactingByThread[threadId] ?? false;
-        if (wasCompacting) {
+        if (wasCompacting && get().currentThreadId === threadId) {
           const systemMsg: Message = {
             id: crypto.randomUUID(),
             thread_id: threadId,
@@ -806,17 +808,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         } else {
           delete next[threadId];
         }
-        // Clear the context tracker only when compaction STARTS (active=true).
-        // This hides the stale pre-compaction value while the SDK is summarising.
-        // When active=false we leave contextByThread untouched: the post-compaction
-        // turnComplete may have already written fresh data, and clearing here would
-        // race against it and blank the ring unnecessarily.
+        // When compaction starts, replace the live context entry with a zero
+        // sentinel so the ring hides. Deleting the key would let the UI fall
+        // back to the stale persisted value from the thread record.
+        // When active=false, leave contextByThread untouched: the post-compaction
+        // turnComplete may have already written fresh data.
         const nextCtx = active
-          ? (() => {
-              const c = { ...state.contextByThread };
-              delete c[threadId];
-              return c;
-            })()
+          ? {
+              ...state.contextByThread,
+              [threadId]: { lastTokensIn: 0, contextWindow: state.contextByThread[threadId]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW },
+            }
           : state.contextByThread;
         return { isCompactingByThread: next, contextByThread: nextCtx };
       });

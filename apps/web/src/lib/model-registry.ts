@@ -8,6 +8,7 @@ export interface ModelProvider {
   models: ModelDefinition[];
 }
 
+/** Metadata for a selectable model in the provider registry. */
 export interface ModelDefinition {
   id: string;
   label: string;

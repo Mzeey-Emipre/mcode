@@ -41,6 +41,9 @@ const NAMESPACE_STYLES: Record<SlashCommandNamespace, string> = {
   command: "bg-sky-500/20 ring-1 ring-sky-500/30",
 };
 
+/** Valid namespace values for deserialisation fallback. */
+const VALID_NAMESPACES = new Set<SlashCommandNamespace>(["skill", "mcode", "plugin", "command"]);
+
 const NAMESPACE_ICONS: Record<SlashCommandNamespace, typeof Terminal> = {
   skill: Terminal,
   mcode: Zap,
@@ -147,8 +150,7 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
   static importJSON(
     serializedNode: SerializedSlashCommandNode,
   ): SlashCommandNode {
-    const validNamespaces = new Set<SlashCommandNamespace>(["skill", "mcode", "plugin", "command"]);
-    const ns = validNamespaces.has(serializedNode.namespace)
+    const ns = VALID_NAMESPACES.has(serializedNode.namespace)
       ? serializedNode.namespace
       : "mcode";
     return $createSlashCommandNode(serializedNode.commandName, ns);
