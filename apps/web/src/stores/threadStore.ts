@@ -442,6 +442,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
         };
         if (agentCompletions > 0) {
+          // Fall back to agentCompletions when the counter is absent — this keeps the
+          // arithmetic correct even if the increment was missed (e.g. the Agent toolUse
+          // event arrived on a thread we weren't tracking yet).
           const count = (state.activeSubagentsByThread[threadId] ?? agentCompletions) - agentCompletions;
           const nextSubagents = { ...state.activeSubagentsByThread };
           if (count <= 0) delete nextSubagents[threadId];

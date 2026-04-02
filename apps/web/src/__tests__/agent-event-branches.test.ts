@@ -202,4 +202,30 @@ describe("subagent count via markPriorToolCallsComplete", () => {
     // The subagent count must be decremented
     expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBeUndefined();
   });
+
+  it("decrements activeSubagentsByThread by the full count when multiple Agent calls are swept at once", () => {
+    useThreadStore.setState({
+      toolCallsByThread: {
+        "thread-1": [
+          { id: "agent-1", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
+          { id: "agent-2", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
+        ],
+      },
+      activeSubagentsByThread: { "thread-1": 2 },
+    });
+
+    // A new top-level toolUse triggers markPriorToolCallsComplete
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: { toolCallId: "tc3", toolName: "Read", toolInput: {} },
+    });
+    vi.runAllTimers();
+
+    const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
+    expect(calls.find((c) => c.id === "agent-1")?.isComplete).toBe(true);
+    expect(calls.find((c) => c.id === "agent-2")?.isComplete).toBe(true);
+
+    // Both completions must be accounted for — key deleted, not left at 0
+    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBeUndefined();
+  });
 });
