@@ -272,6 +272,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       ...(isBypass && { allowDangerouslySkipPermissions: true }),
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
+      includePartialMessages: true,
     };
     const options = resume
       ? { ...baseOptions, resume: resumeId }
@@ -565,6 +566,38 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                     : JSON.stringify(content ?? ""),
                 isError: Boolean(anyMsg.is_error),
               } satisfies AgentEvent);
+              break;
+            }
+
+            case "stream_event": {
+              const streamEvent = (anyMsg.event as { type?: string; delta?: { type?: string; text?: string } } | undefined);
+              if (
+                streamEvent?.type === "content_block_delta" &&
+                streamEvent.delta?.type === "text_delta" &&
+                streamEvent.delta.text
+              ) {
+                this.emit("event", {
+                  type: "textDelta",
+                  threadId,
+                  delta: streamEvent.delta.text,
+                } satisfies AgentEvent);
+              }
+              break;
+            }
+
+            case "tool_progress": {
+              const toolUseId = (anyMsg.tool_use_id as string | undefined) ?? "";
+              const toolName = (anyMsg.tool_name as string | undefined) ?? "unknown";
+              const elapsedSeconds = (anyMsg.elapsed_time_seconds as number | undefined) ?? 0;
+              if (toolUseId) {
+                this.emit("event", {
+                  type: "toolProgress",
+                  threadId,
+                  toolCallId: toolUseId,
+                  toolName,
+                  elapsedSeconds,
+                } satisfies AgentEvent);
+              }
               break;
             }
           }
