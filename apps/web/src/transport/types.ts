@@ -48,6 +48,8 @@ export interface ToolCall {
   isComplete: boolean;
   /** ID of the parent Agent tool call, if this is a subagent child. */
   parentToolCallId?: string;
+  /** Elapsed wall-clock seconds reported by the most recent toolProgress event. */
+  elapsedSeconds?: number;
 }
 
 /** Transport interface consumed by the web app to communicate with the backend. */

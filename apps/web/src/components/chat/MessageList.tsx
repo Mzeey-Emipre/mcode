@@ -8,7 +8,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { MessageBubble } from "./MessageBubble";
 import { ToolCallCard } from "./ToolCallCard";
 import { StreamingIndicator } from "./StreamingIndicator";
-import { StreamingBubble } from "./StreamingBubble";
+import { StreamingCard } from "./StreamingCard";
 import { ToolCallSummary } from "./ToolCallSummary";
 import {
   buildStableItems,
@@ -32,8 +32,6 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({ item }: { item: 
       return <MessageBubble message={item.message} />;
     case "active-tools":
       return <ToolCallCard toolCalls={item.toolCalls} />;
-    case "streaming":
-      return <StreamingBubble content={item.content} />;
     case "indicator":
       return (
         <StreamingIndicator
@@ -41,6 +39,8 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({ item }: { item: 
           activeToolCalls={item.activeToolCalls}
         />
       );
+    case "streaming":
+      return <StreamingCard text={item.text} />;
     case "tool-summary":
       return (
         <ToolCallSummary
@@ -75,7 +75,7 @@ export function MessageList() {
     activeThreadId ? s.agentStartTimes[activeThreadId] : undefined,
   );
   const streamingText = useThreadStore((s) =>
-    activeThreadId ? s.streamingByThread[activeThreadId] : undefined,
+    activeThreadId ? s.streamingPreviewByThread[activeThreadId] : undefined,
   );
   const toolCallsRaw = useThreadStore((s) =>
     activeThreadId ? s.toolCallsByThread[activeThreadId] : undefined,

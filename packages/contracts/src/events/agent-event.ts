@@ -32,6 +32,8 @@ export const AgentEventSchema = lazySchema(() =>
       costUsd: z.number().nullable(),
       tokensIn: z.number(),
       tokensOut: z.number(),
+      /** Model's max context window reported by the SDK, if available. */
+      contextWindow: z.number().optional(),
     }),
     z.object({
       type: z.literal("error"),
@@ -48,6 +50,13 @@ export const AgentEventSchema = lazySchema(() =>
       subtype: z.string(),
     }),
     z.object({
+      /** Emitted when the SDK starts or finishes compacting the context window. */
+      type: z.literal("compacting"),
+      threadId: z.string(),
+      /** True when compaction is starting, false when it has finished. */
+      active: z.boolean(),
+    }),
+    z.object({
       /** Emitted when the SDK fell back to an alternate model. */
       type: z.literal("modelFallback"),
       threadId: z.string(),
@@ -55,6 +64,31 @@ export const AgentEventSchema = lazySchema(() =>
       requestedModel: z.string(),
       /** The model that actually ran. */
       actualModel: z.string(),
+    }),
+    z.object({
+      /** A streaming text chunk emitted as Claude types its response. */
+      type: z.literal("textDelta"),
+      threadId: z.string(),
+      /** Partial response text - append to accumulate the full response. */
+      delta: z.string(),
+    }),
+    z.object({
+      /** Incremental JSON fragment emitted while Claude builds a tool call's input. */
+      type: z.literal("toolInputDelta"),
+      threadId: z.string(),
+      /** Partial JSON string to append to the tool input being assembled. */
+      partialJson: z.string(),
+    }),
+    z.object({
+      /** Heartbeat emitted while a tool is executing, carrying elapsed wall-clock time. */
+      type: z.literal("toolProgress"),
+      threadId: z.string(),
+      /** Identifier of the tool call this progress event belongs to. */
+      toolCallId: z.string(),
+      /** Name of the tool currently executing. */
+      toolName: z.string(),
+      /** Elapsed seconds since the tool started, as reported by the SDK. */
+      elapsedSeconds: z.number(),
     }),
   ]),
 );

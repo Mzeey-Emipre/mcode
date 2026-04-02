@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -40,6 +40,8 @@ import { type LexicalEditor, $getRoot, $createParagraphNode, $createTextNode } f
 import { PrDetectedCard } from "./PrDetectedCard";
 import type { PrDetail } from "@/transport/types";
 import { QueuePopover } from "./QueuePopover";
+import { ContextTracker } from "./ContextTracker";
+import { CompactingBanner } from "./CompactingBanner";
 import { useQueueStore } from "@/stores/queueStore";
 import {
   classifyFile,
@@ -327,6 +329,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const stopAgent = useThreadStore((s) => s.stopAgent);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const setThreadSettings = useThreadStore((s) => s.setThreadSettings);
+  const contextEntry = useThreadStore((s) => threadId ? s.contextByThread[threadId] : undefined);
+  const isCompacting = useThreadStore((s) => !!(threadId && s.isCompactingByThread[threadId]));
   const isAgentRunning = threadId ? runningThreadIds.has(threadId) : false;
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -962,6 +966,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         {/* Attachment previews */}
         <AttachmentPreview attachments={attachments} onRemove={removeAttachment} />
 
+        {/* Compacting banner — shown while the SDK is summarising the context window */}
+        {isCompacting && <CompactingBanner />}
+
         {/* Drag overlay */}
         {isDragOver && (
           <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-primary/10 backdrop-blur-sm">
@@ -1109,6 +1116,14 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     next.attachments.length > 0 ? next.attachments : undefined, next.displayContent);
                 }
               }}
+            />
+          )}
+
+          {/* Context window tracker — live data from turnComplete, fallback to persisted thread record */}
+          {threadId && (
+            <ContextTracker
+              tokensIn={contextEntry?.lastTokensIn ?? activeThread?.last_context_tokens ?? 0}
+              contextWindow={contextEntry?.contextWindow ?? activeThread?.context_window ?? DEFAULT_CONTEXT_WINDOW}
             />
           )}
 

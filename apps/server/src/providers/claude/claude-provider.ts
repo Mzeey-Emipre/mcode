@@ -132,7 +132,11 @@ export function detectFallbackModel(
   requestedModel: string,
 ): string | null {
   const usedModels = Object.keys(modelUsage);
-  const actualModel = usedModels.find((m) => m !== requestedModel);
+  // SDK resolves aliases to dated IDs (e.g. "claude-sonnet-4-6" → "claude-sonnet-4-6-20250514").
+  // A dated variant that starts with the requested alias is the same model, not a fallback.
+  const actualModel = usedModels.find(
+    (m) => m !== requestedModel && !m.startsWith(requestedModel),
+  );
   return actualModel ?? null;
 }
 
@@ -272,6 +276,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       ...(isBypass && { allowDangerouslySkipPermissions: true }),
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
+      includePartialMessages: true,
     };
     const options = resume
       ? { ...baseOptions, resume: resumeId }
@@ -363,6 +368,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       try {
         let lastAssistantText = "";
         let sessionInitialized = false;
+        /** Tracks whether the SDK has signalled compaction is active for this stream. */
+        let sessionCompacting = false;
 
         for await (const msg of q) {
           const entry = this.sessions.get(sessionId);
@@ -492,6 +499,29 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 }
               }
 
+              // Extract the authoritative context window from SDK modelUsage.
+              // modelUsage is Record<modelId, { contextWindow?: number, ... }>.
+              const sdkModelUsage = (anyMsg.modelUsage ?? {}) as Record<
+                string,
+                { contextWindow?: number }
+              >;
+              const sdkContextWindow = Object.values(sdkModelUsage).find(
+                (u) => typeof u.contextWindow === "number",
+              )?.contextWindow;
+
+              // With prompt caching, input_tokens is only the uncached portion.
+              // Sum all input token categories for the true context window fill.
+              const usage = (anyMsg.usage ?? {}) as {
+                input_tokens?: number;
+                output_tokens?: number;
+                cache_read_input_tokens?: number;
+                cache_creation_input_tokens?: number;
+              };
+              const totalInputTokens =
+                (usage.input_tokens ?? 0) +
+                (usage.cache_read_input_tokens ?? 0) +
+                (usage.cache_creation_input_tokens ?? 0);
+
               this.emit("event", {
                 type: "turnComplete",
                 threadId,
@@ -501,18 +531,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   "end_turn",
                 costUsd:
                   (anyMsg.total_cost_usd as number) ?? null,
-                tokensIn:
-                  (
-                    anyMsg.usage as {
-                      input_tokens?: number;
-                    }
-                  )?.input_tokens ?? 0,
-                tokensOut:
-                  (
-                    anyMsg.usage as {
-                      output_tokens?: number;
-                    }
-                  )?.output_tokens ?? 0,
+                tokensIn: totalInputTokens,
+                tokensOut: usage.output_tokens ?? 0,
+                contextWindow: sdkContextWindow,
               } satisfies AgentEvent);
 
               lastAssistantText = "";
@@ -520,12 +541,34 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             }
 
             case "system": {
-              this.emit("event", {
-                type: "system",
-                threadId,
-                subtype:
-                  (anyMsg.subtype as string) || "unknown",
-              } satisfies AgentEvent);
+              // subtype 'status' carries the SDK's compaction state.
+              // Only emit a compacting event on known transitions to avoid
+              // spurious "active: false" from unrelated status strings (e.g.
+              // "idle", "ready") that the SDK may send during session lifecycle.
+              if ((anyMsg.subtype as string) === "status") {
+                const sdkStatus = (anyMsg as { status?: string | null }).status;
+                if (sdkStatus === "compacting" && !sessionCompacting) {
+                  sessionCompacting = true;
+                  this.emit("event", {
+                    type: "compacting",
+                    threadId,
+                    active: true,
+                  } satisfies AgentEvent);
+                } else if (sdkStatus !== "compacting" && sessionCompacting) {
+                  sessionCompacting = false;
+                  this.emit("event", {
+                    type: "compacting",
+                    threadId,
+                    active: false,
+                  } satisfies AgentEvent);
+                }
+              } else {
+                this.emit("event", {
+                  type: "system",
+                  threadId,
+                  subtype: (anyMsg.subtype as string) || "unknown",
+                } satisfies AgentEvent);
+              }
               break;
             }
 
@@ -565,6 +608,53 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                     : JSON.stringify(content ?? ""),
                 isError: Boolean(anyMsg.is_error),
               } satisfies AgentEvent);
+              break;
+            }
+
+            case "stream_event": {
+              const streamEvent = anyMsg.event as {
+                type?: string;
+                delta?: { type?: string; text?: string; partial_json?: string };
+              };
+              if (streamEvent?.type === "content_block_delta") {
+                if (
+                  streamEvent.delta?.type === "text_delta" &&
+                  typeof streamEvent.delta.text === "string" &&
+                  streamEvent.delta.text
+                ) {
+                  this.emit("event", {
+                    type: "textDelta",
+                    threadId,
+                    delta: streamEvent.delta.text,
+                  } satisfies AgentEvent);
+                } else if (
+                  streamEvent.delta?.type === "input_json_delta" &&
+                  typeof streamEvent.delta.partial_json === "string" &&
+                  streamEvent.delta.partial_json
+                ) {
+                  this.emit("event", {
+                    type: "toolInputDelta",
+                    threadId,
+                    partialJson: streamEvent.delta.partial_json,
+                  } satisfies AgentEvent);
+                }
+              }
+              break;
+            }
+
+            case "tool_progress": {
+              const toolUseId = (anyMsg.tool_use_id as string | undefined) ?? "";
+              const toolName = (anyMsg.tool_name as string | undefined) ?? "unknown";
+              const elapsedSeconds = (anyMsg.elapsed_time_seconds as number | undefined) ?? 0;
+              if (toolUseId) {
+                this.emit("event", {
+                  type: "toolProgress",
+                  threadId,
+                  toolCallId: toolUseId,
+                  toolName,
+                  elapsedSeconds,
+                } satisfies AgentEvent);
+              }
               break;
             }
           }

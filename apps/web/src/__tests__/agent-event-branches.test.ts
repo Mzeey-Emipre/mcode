@@ -65,6 +65,36 @@ describe("handleAgentEvent branches", () => {
     expect(calls[0].toolInput).toEqual({ path: "/foo" });
     expect(calls[0].isComplete).toBe(false);
   });
+
+  it("toolResult fallback does not mark an Agent call complete when it has active children", () => {
+    useThreadStore.setState({
+      toolCallsByThread: {
+        "thread-1": [
+          // Parent Agent call — should NOT be matched by fallback
+          { id: "agent-1", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
+          // Child call with no ID match — this result is for this child
+          { id: "child-1", toolName: "Read", toolInput: {}, output: null, isError: false, isComplete: false, parentToolCallId: "agent-1" },
+        ],
+      },
+      activeSubagentsByThread: { "thread-1": 1 },
+    });
+
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolResult",
+      params: { toolCallId: "no-match", output: "file contents", isError: false },
+    });
+
+    const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
+    const agentCall = calls.find((c) => c.id === "agent-1");
+    // The Agent call must NOT be marked complete
+    expect(agentCall?.isComplete).toBe(false);
+    // The active subagent count must NOT be decremented
+    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBe(1);
+    // The child call MUST be marked complete — fallback resolves to it, not the Agent
+    const childCall = calls.find((c) => c.id === "child-1");
+    expect(childCall?.isComplete).toBe(true);
+    expect(childCall?.output).toBe("file contents");
+  });
 });
 
 describe("session.modelFallback", () => {
@@ -134,5 +164,68 @@ describe("session.modelFallback", () => {
     const toasts = useToastStore.getState().toasts;
     expect(toasts).toHaveLength(1);
     expect(toasts[0].title).toContain("claude-another-unknown");
+  });
+});
+
+describe("subagent count via markPriorToolCallsComplete", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useThreadStore.setState({
+      messages: [],
+      runningThreadIds: new Set(["thread-1"]),
+      streamingByThread: {},
+      toolCallsByThread: {
+        "thread-1": [
+          { id: "agent-1", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
+        ],
+      },
+      activeSubagentsByThread: { "thread-1": 1 },
+      agentStartTimes: {},
+      currentThreadId: "thread-1",
+    });
+  });
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("decrements activeSubagentsByThread when markPriorToolCallsComplete completes an Agent call", () => {
+    // Trigger markPriorToolCallsComplete by dispatching a new top-level toolUse
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: { toolCallId: "tc2", toolName: "Read", toolInput: {} },
+    });
+    vi.runAllTimers();
+
+    // The Agent call is marked complete by markPriorToolCallsComplete
+    const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
+    expect(calls.find((c) => c.id === "agent-1")?.isComplete).toBe(true);
+
+    // The subagent count must be decremented
+    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBeUndefined();
+  });
+
+  it("decrements activeSubagentsByThread by the full count when multiple Agent calls are swept at once", () => {
+    useThreadStore.setState({
+      toolCallsByThread: {
+        "thread-1": [
+          { id: "agent-1", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
+          { id: "agent-2", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
+        ],
+      },
+      activeSubagentsByThread: { "thread-1": 2 },
+    });
+
+    // A new top-level toolUse triggers markPriorToolCallsComplete
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: { toolCallId: "tc3", toolName: "Read", toolInput: {} },
+    });
+    vi.runAllTimers();
+
+    const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
+    expect(calls.find((c) => c.id === "agent-1")?.isComplete).toBe(true);
+    expect(calls.find((c) => c.id === "agent-2")?.isComplete).toBe(true);
+
+    // Both completions must be accounted for — key deleted, not left at 0
+    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBeUndefined();
   });
 });

@@ -203,4 +203,14 @@ function runMigrations(db: Database.Database): void {
     `);
     db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(8);
   }
+
+  if (currentVersion < 9) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE threads ADD COLUMN last_context_tokens INTEGER DEFAULT NULL;
+        ALTER TABLE threads ADD COLUMN context_window INTEGER DEFAULT NULL;
+      `);
+      db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(9);
+    })();
+  }
 }

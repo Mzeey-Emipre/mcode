@@ -8,7 +8,7 @@ import { LruCache } from "@/lib/lru-cache";
 import { useTaskStore, coerceTaskStatus } from "./taskStore";
 import type { TaskItem } from "./taskStore";
 import { useToastStore } from "./toastStore";
-import { findModelById } from "@/lib/model-registry";
+import { findModelById, getContextWindow, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -21,7 +21,10 @@ interface ThreadState {
   loading: boolean;
   error: string | null;
   currentThreadId: string | null;
+  /** Full accumulated streaming text per thread, used for finalization into a message. */
   streamingByThread: Record<string, string>;
+  /** Tail-truncated preview of the streaming text (last 200 chars), used by StreamingCard for render optimization. */
+  streamingPreviewByThread: Record<string, string>;
   toolCallsByThread: Record<string, ToolCall[]>;
   agentStartTimes: Record<string, number>;
   /** Per-thread permission mode and interaction mode. */
@@ -44,6 +47,10 @@ interface ThreadState {
   isLoadingMore: Record<string, boolean>;
   /** Monotonic counter incremented on each loadMessages call, used to discard stale loadOlderMessages responses. */
   loadEpochByThread: Record<string, number>;
+  /** Last known token usage and context window size per thread, updated on turn completion. */
+  contextByThread: Record<string, { lastTokensIn: number; contextWindow: number }>;
+  /** Whether the SDK is currently compacting the context window for a thread. */
+  isCompactingByThread: Record<string, boolean>;
 
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
@@ -117,6 +124,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   error: null,
   currentThreadId: null,
   streamingByThread: {},
+  streamingPreviewByThread: {},
   toolCallsByThread: {},
   agentStartTimes: {},
   settingsByThread: {},
@@ -129,6 +137,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   hasMoreMessages: {},
   isLoadingMore: {},
   loadEpochByThread: {},
+  contextByThread: {},
+  isCompactingByThread: {},
 
   cacheToolCallRecords: (key, records) => {
     get().toolCallRecordCache.set(key, records);
@@ -165,6 +175,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         delete nextStartTimes[threadId];
         const nextTurnMsgIds = { ...state.currentTurnMessageIdByThread };
         delete nextTurnMsgIds[threadId];
+        const nextCompacting = { ...state.isCompactingByThread };
+        delete nextCompacting[threadId];
         return {
           loading: true,
           error: null,
@@ -177,6 +189,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
           currentTurnMessageIdByThread: nextTurnMsgIds,
+          isCompactingByThread: nextCompacting,
         };
       });
     } else {
@@ -379,6 +392,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       messages: [],
       error: null,
       streamingByThread: {},
+      streamingPreviewByThread: {},
       toolCallsByThread: {},
       persistedToolCallCounts: {},
       serverMessageIds: {},
@@ -431,12 +445,27 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       if (!calls || !calls.some((tc) => !tc.isComplete)) return;
       set((state) => {
         const current = state.toolCallsByThread[threadId] ?? [];
+        // Count how many Agent calls are being completed in this sweep.
+        const agentCompletions = current.filter(
+          (tc) => !tc.isComplete && tc.toolName === "Agent"
+        ).length;
         const updated = current.map((tc) =>
           tc.isComplete ? tc : { ...tc, isComplete: true }
         );
-        return {
+        const result: Partial<ThreadState> = {
           toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
         };
+        if (agentCompletions > 0) {
+          // Fall back to agentCompletions when the counter is absent — this keeps the
+          // arithmetic correct even if the increment was missed (e.g. the Agent toolUse
+          // event arrived on a thread we weren't tracking yet).
+          const count = (state.activeSubagentsByThread[threadId] ?? agentCompletions) - agentCompletions;
+          const nextSubagents = { ...state.activeSubagentsByThread };
+          if (count <= 0) delete nextSubagents[threadId];
+          else nextSubagents[threadId] = count;
+          result.activeSubagentsByThread = nextSubagents;
+        }
+        return result;
       });
     };
 
@@ -488,11 +517,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           attachments: null,
         };
         set((state) => {
+          // Clear streaming text so turnComplete won't duplicate this message.
+          const nextStreaming = { ...state.streamingByThread };
+          delete nextStreaming[threadId];
+          const nextPreview = { ...state.streamingPreviewByThread };
+          delete nextPreview[threadId];
           const trackTurn = {
             currentTurnMessageIdByThread: {
               ...state.currentTurnMessageIdByThread,
               [threadId]: message.id,
             },
+            streamingByThread: nextStreaming,
+            streamingPreviewByThread: nextPreview,
           };
           if (state.currentThreadId !== threadId) return trackTurn;
           const { messages: capped, evicted } = capMessages([...state.messages, message]);
@@ -571,10 +607,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         // when the SDK sends a null or non-matching toolCallId.
         const hasIdMatch = toolCallId && calls.some((tc) => tc.id === toolCallId);
 
-        // Identify the matched call before mutating, so we can check for Agent completion
+        // Fallback: pick the first incomplete call, but never pick an Agent call
+        // that has active children — completing it prematurely would decrement
+        // the subagent count and hide the nested work from the UI.
+        const hasActiveChildren = (id: string) =>
+          calls.some((c) => c.parentToolCallId === id && !c.isComplete);
         const matchedCall = hasIdMatch
           ? calls.find((tc) => tc.id === toolCallId)
-          : calls.find((tc) => !tc.isComplete);
+          : calls.find((tc) => !tc.isComplete && !(tc.toolName === "Agent" && hasActiveChildren(tc.id)));
         const isAgentCompletion = matchedCall?.toolName === "Agent";
 
         let matched = false;
@@ -583,7 +623,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               tc.id === toolCallId ? { ...tc, output, isError, isComplete: true } : tc
             )
           : calls.map((tc) => {
-              if (!matched && !tc.isComplete) {
+              if (!matched && !tc.isComplete && !(tc.toolName === "Agent" && hasActiveChildren(tc.id))) {
                 matched = true;
                 return { ...tc, output, isError, isComplete: true };
               }
@@ -604,6 +644,47 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         }
 
         return result;
+      });
+      return;
+    }
+
+    // session.textDelta: accumulate streaming text for live preview and finalization.
+    if (method === "session.textDelta") {
+      const delta = (params.delta as string) || "";
+      if (!delta) return;
+      // Text deltas signal Claude is responding — mark prior tool calls complete.
+      markPriorToolCallsComplete();
+      set((state) => {
+        const current = state.streamingByThread[threadId] ?? "";
+        const combined = current + delta;
+        const preview = combined.length > 200 ? combined.slice(-200) : combined;
+        return {
+          streamingByThread: { ...state.streamingByThread, [threadId]: combined },
+          streamingPreviewByThread: { ...state.streamingPreviewByThread, [threadId]: preview },
+        };
+      });
+      return;
+    }
+
+    if (method === "session.toolProgress") {
+      const toolCallId = (params.toolCallId as string) || "";
+      const elapsedSeconds = (params.elapsedSeconds as number) ?? 0;
+      if (!toolCallId) return;
+      set((state) => {
+        const current = state.toolCallsByThread[threadId] ?? [];
+        let changed = false;
+        const updated = current.map((tc) => {
+          if (tc.id === toolCallId && !tc.isComplete && tc.elapsedSeconds !== elapsedSeconds) {
+            changed = true;
+            return { ...tc, elapsedSeconds };
+          }
+          return tc;
+        });
+        // Return same state reference when nothing changed — Zustand skips notification.
+        if (!changed) return state;
+        return {
+          toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
+        };
       });
       return;
     }
@@ -635,6 +716,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         set((state) => {
           const nextStreaming = { ...state.streamingByThread };
           delete nextStreaming[threadId];
+          const nextPreview = { ...state.streamingPreviewByThread };
+          delete nextPreview[threadId];
           const nextRunning = new Set(state.runningThreadIds);
           nextRunning.delete(threadId);
           const nextStartTimes = { ...state.agentStartTimes };
@@ -654,6 +737,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 })()
               : {}),
             streamingByThread: nextStreaming,
+            streamingPreviewByThread: nextPreview,
             runningThreadIds: nextRunning,
             agentStartTimes: nextStartTimes,
             activeSubagentsByThread: nextSubagents,
@@ -668,6 +752,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           nextRunning.delete(threadId);
           const nextStreaming = { ...state.streamingByThread };
           delete nextStreaming[threadId];
+          const nextPreview = { ...state.streamingPreviewByThread };
+          delete nextPreview[threadId];
           const nextStartTimes = { ...state.agentStartTimes };
           delete nextStartTimes[threadId];
           const nextSubagents = { ...state.activeSubagentsByThread };
@@ -679,11 +765,40 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           return {
             runningThreadIds: nextRunning,
             streamingByThread: nextStreaming,
+            streamingPreviewByThread: nextPreview,
             agentStartTimes: nextStartTimes,
             activeSubagentsByThread: nextSubagents,
             toolCallsByThread: completedCalls.length > 0
               ? { ...state.toolCallsByThread, [threadId]: completedCalls }
               : state.toolCallsByThread,
+          };
+        });
+      }
+
+      // Update context tracker. Prefer the SDK-reported contextWindow (authoritative)
+      // over the local registry. The DB is updated server-side; contextByThread is
+      // the live source within a session and loaded from thread.list on cold start.
+      if (tokensIn > 0) {
+        const sdkContextWindow = params.contextWindow as number | undefined;
+        const modelId = useWorkspaceStore.getState().threads.find((t) => t.id === threadId)?.model ?? "claude-sonnet-4-6";
+        const contextWindow = sdkContextWindow ?? getContextWindow(modelId);
+        set((state) => {
+          // Only copy isCompactingByThread if the key is actually present to avoid
+          // an unnecessary allocation on every turn for non-compacting threads.
+          const isCompactingByThread =
+            threadId in state.isCompactingByThread
+              ? (() => {
+                  const c = { ...state.isCompactingByThread };
+                  delete c[threadId];
+                  return c;
+                })()
+              : state.isCompactingByThread;
+          return {
+            contextByThread: {
+              ...state.contextByThread,
+              [threadId]: { lastTokensIn: tokensIn, contextWindow },
+            },
+            isCompactingByThread,
           };
         });
       }
@@ -739,6 +854,54 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
+    if (method === "session.compacting") {
+      const active = params.active as boolean;
+      if (!active) {
+        // Only add the system divider if the thread was actually marked as
+        // compacting AND this is the currently loaded thread. addMessage appends
+        // to the shared messages array, so inserting on a background thread
+        // would show the divider in the wrong chat.
+        const wasCompacting = get().isCompactingByThread[threadId] ?? false;
+        if (wasCompacting && get().currentThreadId === threadId) {
+          const systemMsg: Message = {
+            id: crypto.randomUUID(),
+            thread_id: threadId,
+            role: "system",
+            content: "Context compacted",
+            sequence: get().messages.length + 1,
+            timestamp: new Date().toISOString(),
+            tool_calls: null,
+            files_changed: null,
+            cost_usd: null,
+            tokens_used: null,
+            attachments: null,
+          };
+          get().addMessage(systemMsg);
+        }
+      }
+      set((state) => {
+        const next = { ...state.isCompactingByThread };
+        if (active) {
+          next[threadId] = true;
+        } else {
+          delete next[threadId];
+        }
+        // When compaction starts, replace the live context entry with a zero
+        // sentinel so the ring hides. Deleting the key would let the UI fall
+        // back to the stale persisted value from the thread record.
+        // When active=false, leave contextByThread untouched: the post-compaction
+        // turnComplete may have already written fresh data.
+        const nextCtx = active
+          ? {
+              ...state.contextByThread,
+              [threadId]: { lastTokensIn: 0, contextWindow: state.contextByThread[threadId]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW },
+            }
+          : state.contextByThread;
+        return { isCompactingByThread: next, contextByThread: nextCtx };
+      });
+      return;
+    }
+
     if (method === "session.modelFallback") {
       const requestedModel = params.requestedModel as string;
       const actualModel = params.actualModel as string;
@@ -774,6 +937,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         delete nextToolCalls[threadId];
         const nextSubagents = { ...state.activeSubagentsByThread };
         delete nextSubagents[threadId];
+        const nextCompacting = { ...state.isCompactingByThread };
+        delete nextCompacting[threadId];
         return {
           error: errorMsg,
           runningThreadIds: nextRunning,
@@ -781,6 +946,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           agentStartTimes: nextStartTimes,
           toolCallsByThread: nextToolCalls,
           activeSubagentsByThread: nextSubagents,
+          isCompactingByThread: nextCompacting,
         };
       });
 

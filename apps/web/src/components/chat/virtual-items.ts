@@ -5,16 +5,20 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled item type: ${(value as { type: string }).type}`);
 }
 
+/** Estimated collapsed height (px) for a streaming card virtual item. */
+export const STREAMING_CARD_COLLAPSED_HEIGHT = 56;
+
+/** Represents an item rendered in the virtualized chat list: messages, tool indicators, or streaming text. */
 export type ChatVirtualItem =
   | { key: string; type: "message"; message: Message }
   | { key: string; type: "active-tools"; toolCalls: readonly ToolCall[] }
-  | { key: string; type: "streaming"; content: string }
   | {
       key: string;
       type: "indicator";
       startTime: number | undefined;
       activeToolCalls: readonly ToolCall[];
     }
+  | { key: string; type: "streaming"; text: string }
   | { key: string; type: "tool-summary"; messageId: string; serverMessageId: string; toolCallCount: number };
 
 /**
@@ -62,11 +66,7 @@ export function buildVolatileItems(
     items.push({ key: "active-tools", type: "active-tools", toolCalls });
   }
 
-  if (streamingText) {
-    items.push({ key: "streaming", type: "streaming", content: streamingText });
-  }
-
-  if (isAgentRunning && !streamingText) {
+  if (isAgentRunning) {
     const activeOnly = toolCalls.filter((tc) => !tc.isComplete);
     items.push({
       key: "indicator",
@@ -74,6 +74,10 @@ export function buildVolatileItems(
       startTime: agentStartTime,
       activeToolCalls: activeOnly,
     });
+  }
+
+  if (streamingText) {
+    items.push({ key: "streaming", type: "streaming", text: streamingText });
   }
 
   return items;
@@ -203,10 +207,10 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
     }
     case "active-tools":
       return Math.min(item.toolCalls.length * 48, 400);
-    case "streaming":
-      return 80 + estimateMarkdownHeight(item.content);
     case "indicator":
       return 48;
+    case "streaming":
+      return STREAMING_CARD_COLLAPSED_HEIGHT;
     case "tool-summary":
       return 36;
     default:
