@@ -235,6 +235,9 @@ input[type="range"].settings-range::-webkit-slider-thumb:active {
 input[type="range"].settings-range:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
 }
+input[type="range"].settings-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
+}
 input[type="range"].settings-range::-moz-range-track {
   height: 4px;
   background: var(--border);

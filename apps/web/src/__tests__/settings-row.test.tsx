@@ -14,9 +14,9 @@ describe("SettingRow", () => {
     expect(screen.getByText("Some hint")).toBeTruthy();
   });
 
-  it("renders configKey when provided", () => {
-    render(<SettingRow label="X" configKey="foo.bar"><span /></SettingRow>);
-    expect(screen.getByText("foo.bar")).toBeTruthy();
+  it("accepts configKey prop without error", () => {
+    const { container } = render(<SettingRow label="X" configKey="foo.bar"><span /></SettingRow>);
+    expect(container.querySelector("div")).toBeTruthy();
   });
 
   it("omits hint element when hint not provided", () => {

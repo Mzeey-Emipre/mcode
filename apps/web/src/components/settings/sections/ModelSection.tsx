@@ -39,9 +39,9 @@ const REASONING_OPTIONS_BASE = [
 
 /**
  * Model settings section: provider, default model, fallback model, and reasoning effort.
- * Model options update when the provider changes. Switching provider resets the model
- * and fallback to the new provider's first model. Switching to a non-Opus model clamps
- * the reasoning level from "max" to "high".
+ * Model options update when the provider changes. Switching provider resets the default
+ * model to the new provider's first model and clears the fallback. Switching to a
+ * non-Opus model clamps the reasoning level from "max" to "high".
  */
 export function ModelSection() {
   const provider = useSettingsStore((s) => s.settings.model.defaults.provider);

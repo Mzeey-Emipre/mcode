@@ -373,7 +373,11 @@ function registerIpcHandlers(): void {
       await mkdir(dir, { recursive: true });
       await writeFile(filePath, "{}\n", "utf8");
     }
-    return shell.openPath(filePath);
+    const err = await shell.openPath(filePath);
+    if (err) {
+      throw new Error(`Failed to open settings.json: ${err}`);
+    }
+    return "";
   });
 }
 

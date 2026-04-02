@@ -35,20 +35,26 @@ export function SegControl({ options, value, onChange, className }: SegControlPr
   return (
     <TooltipProvider>
       <div
+        role="radiogroup"
         className={cn(
           "inline-flex gap-0.5 rounded-md border border-border bg-muted/40 p-0.5",
           className,
         )}
       >
         {options.map((opt) => {
+          const isActive = value === opt.value;
           const button = (
             <button
               type="button"
+              role="radio"
+              aria-checked={isActive}
+              aria-disabled={opt.disabled || undefined}
               disabled={opt.disabled}
+              tabIndex={isActive ? 0 : -1}
               onClick={() => onChange(opt.value)}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded px-3 py-1 text-xs font-medium transition-all duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                value === opt.value
+                isActive
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
                 opt.disabled && "cursor-not-allowed opacity-30",
