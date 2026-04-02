@@ -120,6 +120,50 @@ describe("Agent Message Flow", () => {
   });
 });
 
+describe("duplicate message prevention", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useThreadStore.setState({
+      messages: [],
+      runningThreadIds: new Set(["thread-1"]),
+      loading: false,
+      error: null,
+      streamingByThread: { "thread-1": "Hello world" },
+      toolCallsByThread: {},
+      agentStartTimes: { "thread-1": Date.now() },
+      activeSubagentsByThread: {},
+      currentThreadId: "thread-1",
+    });
+  });
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("session.message clears streamingByThread so turnComplete does not duplicate", () => {
+    const { handleAgentEvent } = useThreadStore.getState();
+
+    // session.message arrives with the final content
+    handleAgentEvent("thread-1", {
+      method: "session.message",
+      params: { content: "Hello world", tokens: 10 },
+    });
+    vi.runAllTimers();
+
+    // streamingByThread must be cleared
+    expect(useThreadStore.getState().streamingByThread["thread-1"]).toBeUndefined();
+
+    // Now turnComplete fires — should NOT create a second message
+    handleAgentEvent("thread-1", {
+      method: "session.turnComplete",
+      params: { costUsd: 0.01, tokensIn: 50, tokensOut: 50 },
+    });
+    vi.runAllTimers();
+
+    const messages = useThreadStore.getState().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe("Hello world");
+  });
+});
+
 describe("session.textDelta", () => {
   beforeEach(() => {
     vi.useFakeTimers();

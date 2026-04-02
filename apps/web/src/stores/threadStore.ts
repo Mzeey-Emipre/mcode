@@ -503,11 +503,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           attachments: null,
         };
         set((state) => {
+          // Clear streaming text so turnComplete won't duplicate this message.
+          const nextStreaming = { ...state.streamingByThread };
+          delete nextStreaming[threadId];
           const trackTurn = {
             currentTurnMessageIdByThread: {
               ...state.currentTurnMessageIdByThread,
               [threadId]: message.id,
             },
+            streamingByThread: nextStreaming,
           };
           if (state.currentThreadId !== threadId) return trackTurn;
           const { messages: capped, evicted } = capMessages([...state.messages, message]);
