@@ -90,6 +90,10 @@ describe("handleAgentEvent branches", () => {
     expect(agentCall?.isComplete).toBe(false);
     // The active subagent count must NOT be decremented
     expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBe(1);
+    // The child call MUST be marked complete — fallback resolves to it, not the Agent
+    const childCall = calls.find((c) => c.id === "child-1");
+    expect(childCall?.isComplete).toBe(true);
+    expect(childCall?.output).toBe("file contents");
   });
 });
 
