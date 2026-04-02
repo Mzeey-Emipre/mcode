@@ -65,6 +65,32 @@ describe("handleAgentEvent branches", () => {
     expect(calls[0].toolInput).toEqual({ path: "/foo" });
     expect(calls[0].isComplete).toBe(false);
   });
+
+  it("toolResult fallback does not mark an Agent call complete when it has active children", () => {
+    useThreadStore.setState({
+      toolCallsByThread: {
+        "thread-1": [
+          // Parent Agent call — should NOT be matched by fallback
+          { id: "agent-1", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
+          // Child call with no ID match — this result is for this child
+          { id: "child-1", toolName: "Read", toolInput: {}, output: null, isError: false, isComplete: false, parentToolCallId: "agent-1" },
+        ],
+      },
+      activeSubagentsByThread: { "thread-1": 1 },
+    });
+
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolResult",
+      params: { toolCallId: "no-match", output: "file contents", isError: false },
+    });
+
+    const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
+    const agentCall = calls.find((c) => c.id === "agent-1");
+    // The Agent call must NOT be marked complete
+    expect(agentCall?.isComplete).toBe(false);
+    // The active subagent count must NOT be decremented
+    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBe(1);
+  });
 });
 
 describe("session.modelFallback", () => {

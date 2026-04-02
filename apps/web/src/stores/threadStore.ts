@@ -571,10 +571,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         // when the SDK sends a null or non-matching toolCallId.
         const hasIdMatch = toolCallId && calls.some((tc) => tc.id === toolCallId);
 
-        // Identify the matched call before mutating, so we can check for Agent completion
+        // Fallback: pick the first incomplete call, but never pick an Agent call
+        // that has active children — completing it prematurely would decrement
+        // the subagent count and hide the nested work from the UI.
+        const hasActiveChildren = (id: string) =>
+          calls.some((c) => c.parentToolCallId === id && !c.isComplete);
         const matchedCall = hasIdMatch
           ? calls.find((tc) => tc.id === toolCallId)
-          : calls.find((tc) => !tc.isComplete);
+          : calls.find((tc) => !tc.isComplete && !(tc.toolName === "Agent" && hasActiveChildren(tc.id)));
         const isAgentCompletion = matchedCall?.toolName === "Agent";
 
         let matched = false;
@@ -583,7 +587,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               tc.id === toolCallId ? { ...tc, output, isError, isComplete: true } : tc
             )
           : calls.map((tc) => {
-              if (!matched && !tc.isComplete) {
+              if (!matched && !tc.isComplete && !(tc.toolName === "Agent" && hasActiveChildren(tc.id))) {
                 matched = true;
                 return { ...tc, output, isError, isComplete: true };
               }
