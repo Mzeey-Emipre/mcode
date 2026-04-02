@@ -608,6 +608,38 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
+    if (method === "session.textDelta") {
+      const delta = (params.delta as string) || "";
+      if (!delta) return;
+      set((state) => {
+        const current = state.streamingByThread[threadId] ?? "";
+        const combined = current + delta;
+        // Front-truncate: keep only the last 200 characters so the store
+        // does not grow unbounded during long responses.
+        const truncated = combined.length > 200 ? combined.slice(-200) : combined;
+        return {
+          streamingByThread: { ...state.streamingByThread, [threadId]: truncated },
+        };
+      });
+      return;
+    }
+
+    if (method === "session.toolProgress") {
+      const toolCallId = (params.toolCallId as string) || "";
+      const elapsedSeconds = (params.elapsedSeconds as number) ?? 0;
+      if (!toolCallId) return;
+      set((state) => {
+        const calls = state.toolCallsByThread[threadId] ?? [];
+        const updated = calls.map((tc) =>
+          tc.id === toolCallId ? { ...tc, elapsedSeconds } : tc
+        );
+        return {
+          toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
+        };
+      });
+      return;
+    }
+
     if (method === "session.turnComplete" || method === "session.ended") {
       const costUsd = (params.costUsd as number) ?? null;
       const tokensIn = ((params.tokensIn as number) ?? (params.totalTokensIn as number)) ?? 0;

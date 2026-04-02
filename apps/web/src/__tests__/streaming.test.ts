@@ -119,3 +119,92 @@ describe("Agent Message Flow", () => {
     expect(state.messages).toHaveLength(0);
   });
 });
+
+describe("session.textDelta", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useThreadStore.setState({
+      messages: [],
+      runningThreadIds: new Set(["thread-1"]),
+      loading: false,
+      error: null,
+      streamingByThread: {},
+      toolCallsByThread: {},
+      agentStartTimes: {},
+      currentThreadId: "thread-1",
+    });
+  });
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("appends delta to streamingByThread", () => {
+    const { handleAgentEvent } = useThreadStore.getState();
+    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "Hello" } });
+    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: " world" } });
+
+    expect(useThreadStore.getState().streamingByThread["thread-1"]).toBe("Hello world");
+  });
+
+  it("front-truncates to last 200 characters when text exceeds limit", () => {
+    const longText = "x".repeat(250);
+    useThreadStore.setState({ streamingByThread: { "thread-1": longText } });
+    const { handleAgentEvent } = useThreadStore.getState();
+
+    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "end" } });
+
+    const result = useThreadStore.getState().streamingByThread["thread-1"];
+    expect(result.length).toBeLessThanOrEqual(200);
+    expect(result.endsWith("end")).toBe(true);
+  });
+
+  it("does not affect other threads", () => {
+    const { handleAgentEvent } = useThreadStore.getState();
+    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "ping" } });
+
+    expect(useThreadStore.getState().streamingByThread["thread-2"]).toBeUndefined();
+  });
+});
+
+describe("session.toolProgress", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useThreadStore.setState({
+      messages: [],
+      runningThreadIds: new Set(["thread-1"]),
+      loading: false,
+      error: null,
+      streamingByThread: {},
+      toolCallsByThread: {
+        "thread-1": [
+          { id: "tc1", toolName: "Bash", toolInput: {}, output: null, isError: false, isComplete: false },
+        ],
+      },
+      agentStartTimes: {},
+      currentThreadId: "thread-1",
+    });
+  });
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("updates elapsedSeconds on the matching tool call", () => {
+    const { handleAgentEvent } = useThreadStore.getState();
+    handleAgentEvent("thread-1", {
+      method: "session.toolProgress",
+      params: { toolCallId: "tc1", toolName: "Bash", elapsedSeconds: 5 },
+    });
+
+    const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
+    expect(calls[0].elapsedSeconds).toBe(5);
+  });
+
+  it("ignores toolProgress for unknown toolCallId", () => {
+    const { handleAgentEvent } = useThreadStore.getState();
+    handleAgentEvent("thread-1", {
+      method: "session.toolProgress",
+      params: { toolCallId: "unknown", toolName: "Bash", elapsedSeconds: 3 },
+    });
+
+    const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
+    expect(calls[0].elapsedSeconds).toBeUndefined();
+  });
+});
