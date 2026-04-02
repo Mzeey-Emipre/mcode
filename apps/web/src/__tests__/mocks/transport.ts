@@ -40,6 +40,8 @@ export function createMockThread(overrides?: Partial<Thread>): Thread {
     updated_at: new Date().toISOString(),
     model: null,
     deleted_at: null,
+    last_context_tokens: null,
+    context_window: null,
     ...overrides,
   };
 }

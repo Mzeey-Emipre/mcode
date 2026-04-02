@@ -21,6 +21,10 @@ export const ThreadSchema = z.object({
   updated_at: z.string(),
   model: z.string().nullable(),
   deleted_at: z.string().nullable(),
+  /** Last known input token count from the most recent turn. */
+  last_context_tokens: z.number().nullable(),
+  /** Model's context window size from the most recent turn. */
+  context_window: z.number().nullable(),
 });
 /** Thread record from the database. */
 export type Thread = z.infer<typeof ThreadSchema>;

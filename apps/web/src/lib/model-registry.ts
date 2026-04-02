@@ -12,7 +12,12 @@ export interface ModelDefinition {
   id: string;
   label: string;
   providerId: string;
+  /** Maximum context window size in tokens, if known. */
+  contextWindow?: number;
 }
+
+/** Fallback context window size used when a model's limit is not yet registered. */
+export const DEFAULT_CONTEXT_WINDOW = 200_000;
 
 export const MODEL_PROVIDERS: readonly ModelProvider[] = [
   {
@@ -20,9 +25,9 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     name: "Claude",
     comingSoon: false,
     models: [
-      { id: "claude-opus-4-6", label: "Claude Opus 4.6", providerId: "claude" },
-      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", providerId: "claude" },
-      { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", providerId: "claude" },
+      { id: "claude-opus-4-6", label: "Claude Opus 4.6", providerId: "claude", contextWindow: DEFAULT_CONTEXT_WINDOW },
+      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", providerId: "claude", contextWindow: DEFAULT_CONTEXT_WINDOW },
+      { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", providerId: "claude", contextWindow: DEFAULT_CONTEXT_WINDOW },
     ],
   },
   {
@@ -112,4 +117,9 @@ export function normalizeReasoningLevelForModel(
     return "high";
   }
   return level;
+}
+
+/** Returns the context window size for a model, falling back to DEFAULT_CONTEXT_WINDOW. */
+export function getContextWindow(modelId: string): number {
+  return findModelById(modelId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 }

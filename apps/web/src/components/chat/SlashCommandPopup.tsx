@@ -166,7 +166,7 @@ function CommandRow({
           <Zap size={12} />
         ) : cmd.namespace === "plugin" ? (
           <Puzzle size={12} />
-        ) : (
+        ) : /* skill | command */ (
           <Terminal size={12} />
         )}
       </span>
@@ -189,7 +189,9 @@ function CommandRow({
             ? "bg-primary/15 text-primary"
             : cmd.namespace === "plugin"
               ? "bg-orange-500/15 text-orange-500"
-              : "bg-muted text-muted-foreground",
+              : cmd.namespace === "command"
+                ? "bg-sky-500/15 text-sky-500"
+                : "bg-muted text-muted-foreground",
         )}
       >
         {cmd.namespace}

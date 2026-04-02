@@ -8,7 +8,7 @@ import { LruCache } from "@/lib/lru-cache";
 import { useTaskStore, coerceTaskStatus } from "./taskStore";
 import type { TaskItem } from "./taskStore";
 import { useToastStore } from "./toastStore";
-import { findModelById } from "@/lib/model-registry";
+import { findModelById, getContextWindow } from "@/lib/model-registry";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -44,6 +44,10 @@ interface ThreadState {
   isLoadingMore: Record<string, boolean>;
   /** Monotonic counter incremented on each loadMessages call, used to discard stale loadOlderMessages responses. */
   loadEpochByThread: Record<string, number>;
+  /** Last known token usage and context window size per thread, updated on turn completion. */
+  contextByThread: Record<string, { lastTokensIn: number; contextWindow: number }>;
+  /** Whether the SDK is currently compacting the context window for a thread. */
+  isCompactingByThread: Record<string, boolean>;
 
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
@@ -129,6 +133,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   hasMoreMessages: {},
   isLoadingMore: {},
   loadEpochByThread: {},
+  contextByThread: {},
+  isCompactingByThread: {},
 
   cacheToolCallRecords: (key, records) => {
     get().toolCallRecordCache.set(key, records);
@@ -165,6 +171,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         delete nextStartTimes[threadId];
         const nextTurnMsgIds = { ...state.currentTurnMessageIdByThread };
         delete nextTurnMsgIds[threadId];
+        const nextCompacting = { ...state.isCompactingByThread };
+        delete nextCompacting[threadId];
         return {
           loading: true,
           error: null,
@@ -177,6 +185,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
           currentTurnMessageIdByThread: nextTurnMsgIds,
+          isCompactingByThread: nextCompacting,
         };
       });
     } else {
@@ -688,6 +697,34 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         });
       }
 
+      // Update context tracker. Prefer the SDK-reported contextWindow (authoritative)
+      // over the local registry. The DB is updated server-side; contextByThread is
+      // the live source within a session and loaded from thread.list on cold start.
+      if (tokensIn > 0) {
+        const sdkContextWindow = params.contextWindow as number | undefined;
+        const modelId = useWorkspaceStore.getState().threads.find((t) => t.id === threadId)?.model ?? "claude-sonnet-4-6";
+        const contextWindow = sdkContextWindow ?? getContextWindow(modelId);
+        set((state) => {
+          // Only copy isCompactingByThread if the key is actually present to avoid
+          // an unnecessary allocation on every turn for non-compacting threads.
+          const isCompactingByThread =
+            threadId in state.isCompactingByThread
+              ? (() => {
+                  const c = { ...state.isCompactingByThread };
+                  delete c[threadId];
+                  return c;
+                })()
+              : state.isCompactingByThread;
+          return {
+            contextByThread: {
+              ...state.contextByThread,
+              [threadId]: { lastTokensIn: tokensIn, contextWindow },
+            },
+            isCompactingByThread,
+          };
+        });
+      }
+
       // Tool calls remain in state (all marked complete). They render as
       // a collapsed summary in-place. When turn.persisted fires, the DB-backed
       // summary replaces them and tool calls are cleared.
@@ -739,6 +776,53 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
+    if (method === "session.compacting") {
+      const active = params.active as boolean;
+      if (!active) {
+        // Only add the system divider if the thread was actually marked as
+        // compacting — guards against duplicate events from the SDK.
+        const wasCompacting = get().isCompactingByThread[threadId] ?? false;
+        if (wasCompacting) {
+          const systemMsg: Message = {
+            id: crypto.randomUUID(),
+            thread_id: threadId,
+            role: "system",
+            content: "Context compacted",
+            sequence: get().messages.length + 1,
+            timestamp: new Date().toISOString(),
+            tool_calls: null,
+            files_changed: null,
+            cost_usd: null,
+            tokens_used: null,
+            attachments: null,
+          };
+          get().addMessage(systemMsg);
+        }
+      }
+      set((state) => {
+        const next = { ...state.isCompactingByThread };
+        if (active) {
+          next[threadId] = true;
+        } else {
+          delete next[threadId];
+        }
+        // Clear the context tracker only when compaction STARTS (active=true).
+        // This hides the stale pre-compaction value while the SDK is summarising.
+        // When active=false we leave contextByThread untouched: the post-compaction
+        // turnComplete may have already written fresh data, and clearing here would
+        // race against it and blank the ring unnecessarily.
+        const nextCtx = active
+          ? (() => {
+              const c = { ...state.contextByThread };
+              delete c[threadId];
+              return c;
+            })()
+          : state.contextByThread;
+        return { isCompactingByThread: next, contextByThread: nextCtx };
+      });
+      return;
+    }
+
     if (method === "session.modelFallback") {
       const requestedModel = params.requestedModel as string;
       const actualModel = params.actualModel as string;
@@ -774,6 +858,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         delete nextToolCalls[threadId];
         const nextSubagents = { ...state.activeSubagentsByThread };
         delete nextSubagents[threadId];
+        const nextCompacting = { ...state.isCompactingByThread };
+        delete nextCompacting[threadId];
         return {
           error: errorMsg,
           runningThreadIds: nextRunning,
@@ -781,6 +867,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           agentStartTimes: nextStartTimes,
           toolCallsByThread: nextToolCalls,
           activeSubagentsByThread: nextSubagents,
+          isCompactingByThread: nextCompacting,
         };
       });
 

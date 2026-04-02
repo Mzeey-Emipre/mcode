@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 // ---------------------------------------------------------------------------
 
 /** The origin namespace of a slash command: built-in, skill, or plugin. */
-export type SlashCommandNamespace = "skill" | "mcode" | "plugin";
+export type SlashCommandNamespace = "skill" | "mcode" | "plugin" | "command";
 
 /** JSON-serialized form of a SlashCommandNode for editor state persistence. */
 export interface SerializedSlashCommandNode extends SerializedLexicalNode {
@@ -38,12 +38,14 @@ const NAMESPACE_STYLES: Record<SlashCommandNamespace, string> = {
   skill: "bg-emerald-500/20 ring-1 ring-emerald-500/30",
   mcode: "bg-primary/20 ring-1 ring-primary/30",
   plugin: "bg-orange-500/20 ring-1 ring-orange-500/30",
+  command: "bg-sky-500/20 ring-1 ring-sky-500/30",
 };
 
 const NAMESPACE_ICONS: Record<SlashCommandNamespace, typeof Terminal> = {
   skill: Terminal,
   mcode: Zap,
   plugin: Puzzle,
+  command: Terminal,
 };
 
 // ---------------------------------------------------------------------------
@@ -145,7 +147,7 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
   static importJSON(
     serializedNode: SerializedSlashCommandNode,
   ): SlashCommandNode {
-    const validNamespaces = new Set<SlashCommandNamespace>(["skill", "mcode", "plugin"]);
+    const validNamespaces = new Set<SlashCommandNamespace>(["skill", "mcode", "plugin", "command"]);
     const ns = validNamespaces.has(serializedNode.namespace)
       ? serializedNode.namespace
       : "mcode";
