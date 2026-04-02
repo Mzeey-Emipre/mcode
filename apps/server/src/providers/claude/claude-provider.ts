@@ -570,7 +570,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             }
 
             case "stream_event": {
-              const streamEvent = (anyMsg.event as { type?: string; delta?: { type?: string; text?: string } } | undefined);
+              const streamEvent = anyMsg.event as { type?: string; delta?: { type?: string; text?: string } };
               if (
                 streamEvent?.type === "content_block_delta" &&
                 streamEvent.delta?.type === "text_delta" &&
