@@ -24,4 +24,14 @@ describe("detectFallbackModel", () => {
     };
     expect(detectFallbackModel(usage, "claude-opus-4-6")).toBe("claude-sonnet-4-6");
   });
+
+  it("returns null when SDK resolves alias to dated variant of same model", () => {
+    const usage = { "claude-sonnet-4-6-20250514": { inputTokens: 100, outputTokens: 50 } };
+    expect(detectFallbackModel(usage, "claude-sonnet-4-6")).toBeNull();
+  });
+
+  it("detects real fallback even when both keys are dated variants", () => {
+    const usage = { "claude-haiku-4-5-20251001": { inputTokens: 100, outputTokens: 50 } };
+    expect(detectFallbackModel(usage, "claude-sonnet-4-6")).toBe("claude-haiku-4-5-20251001");
+  });
 });
