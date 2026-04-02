@@ -14,11 +14,13 @@ import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ToastContainer } from "@/components/Toast";
+import type { SettingsSection } from "@/components/settings/settings-nav";
 
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("model");
   useIdleReclamation();
 
   useEffect(() => {
@@ -90,19 +92,25 @@ export function App() {
       <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
         <ConnectionBanner />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
+          <Sidebar
+            settingsOpen={settingsOpen}
+            settingsSection={settingsSection}
+            onSettingsSection={setSettingsSection}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onCloseSettings={() => setSettingsOpen(false)}
+          />
           <div className="flex flex-1 flex-col overflow-hidden">
             <div className="flex flex-1 overflow-hidden">
               <main className="flex-1 overflow-hidden">
                 {settingsOpen ? (
-                  <SettingsView onClose={() => setSettingsOpen(false)} />
+                  <SettingsView section={settingsSection} />
                 ) : (
                   <ChatView />
                 )}
               </main>
-              <TaskPanel />
+              {!settingsOpen && <TaskPanel />}
             </div>
-            <TerminalPanel />
+            {!settingsOpen && <TerminalPanel />}
           </div>
         </div>
       </div>

@@ -1,148 +1,21 @@
-import { useState } from "react";
-import { ArrowLeft, ExternalLink } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { ModelSection } from "./sections/ModelSection";
-import { AgentSection } from "./sections/AgentSection";
-import { WorktreeSection } from "./sections/WorktreeSection";
-import { AppearanceSection } from "./sections/AppearanceSection";
-import { NotificationsSection } from "./sections/NotificationsSection";
-import { TerminalSection } from "./sections/TerminalSection";
-import { ServerSection } from "./sections/ServerSection";
-
-type SettingsSection =
-  | "model"
-  | "agent"
-  | "worktree"
-  | "appearance"
-  | "notifications"
-  | "terminal"
-  | "server";
-
-interface NavGroup {
-  label: string;
-  items: { id: SettingsSection; label: string }[];
-}
-
-const NAV_GROUPS: NavGroup[] = [
-  {
-    label: "AI",
-    items: [
-      { id: "model", label: "Model" },
-      { id: "agent", label: "Agent" },
-      { id: "worktree", label: "Worktrees" },
-    ],
-  },
-  {
-    label: "Interface",
-    items: [
-      { id: "appearance", label: "Appearance" },
-      { id: "notifications", label: "Notifications" },
-      { id: "terminal", label: "Terminal" },
-    ],
-  },
-  {
-    label: "System",
-    items: [{ id: "server", label: "Server" }],
-  },
-];
-
-/** True when running inside the Electron shell (set once at startup by the preload script). */
-const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;
-
-const SECTION_MAP: Record<SettingsSection, React.ComponentType> = {
-  model: ModelSection,
-  agent: AgentSection,
-  worktree: WorktreeSection,
-  appearance: AppearanceSection,
-  notifications: NotificationsSection,
-  terminal: TerminalSection,
-  server: ServerSection,
-};
+import { SECTION_MAP, type SettingsSection } from "./settings-nav";
 
 interface SettingsViewProps {
-  /** Called when the user clicks the back button. */
-  onClose: () => void;
+  /** Active settings section to render. */
+  section: SettingsSection;
 }
 
 /**
- * Full-page settings view with sidebar navigation.
- * Replaces the main content area when open.
+ * Settings content panel. Renders the active section inside a centered column.
+ * Navigation and header are handled by the Sidebar.
  */
-export function SettingsView({ onClose }: SettingsViewProps) {
-  const [section, setSection] = useState<SettingsSection>("model");
+export function SettingsView({ section }: SettingsViewProps) {
   const ActiveSection = SECTION_MAP[section];
 
-  const handleEditJson = () => {
-    if (window.desktopBridge) {
-      void window.desktopBridge.openSettingsFile();
-    }
-  };
-
   return (
-    <div className="flex h-full flex-col bg-background">
-      {/* Header */}
-      <header className="flex h-11 flex-shrink-0 items-center justify-between border-b border-border px-4">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onClose}
-            aria-label="Back to chat"
-            className="text-muted-foreground"
-          >
-            <ArrowLeft size={15} />
-          </Button>
-          <span className="text-sm font-semibold text-muted-foreground">Settings</span>
-        </div>
-        {IS_DESKTOP && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleEditJson}
-            className="gap-1.5 text-xs text-muted-foreground"
-          >
-            <span className="font-mono">{"{}"}</span>
-            Edit settings.json
-            <ExternalLink size={11} />
-          </Button>
-        )}
-      </header>
-
-      {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Nav sidebar */}
-        <nav className="w-44 flex-shrink-0 overflow-y-auto border-r border-border py-7">
-          {NAV_GROUPS.map((group) => (
-            <div key={group.label} className="mb-5 px-2">
-              <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
-                {group.label}
-              </p>
-              {group.items.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setSection(item.id)}
-                  className={cn(
-                    "relative flex w-full rounded-md px-2 py-1.5 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                    section === item.id
-                      ? "bg-accent text-foreground before:absolute before:left-0 before:top-1 before:bottom-1 before:w-0.5 before:rounded-full before:bg-primary"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                  )}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          ))}
-        </nav>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-[560px] px-8 py-7">
-            <ActiveSection />
-          </div>
-        </div>
+    <div className="h-full overflow-y-auto bg-background">
+      <div className="mx-auto max-w-4xl px-10 py-7">
+        <ActiveSection />
       </div>
     </div>
   );

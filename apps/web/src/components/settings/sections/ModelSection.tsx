@@ -1,15 +1,33 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { MODEL_PROVIDERS, isMaxEffortModel, normalizeReasoningLevelForModel } from "@/lib/model-registry";
 import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import type { SettingsProviderId, ReasoningLevel } from "@mcode/contracts";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  CursorProviderIcon,
+  OpenCodeIcon,
+  GeminiIcon,
+} from "@/components/chat/ProviderIcons";
 
-/** All provider options. Coming-soon providers are rendered disabled. */
+/** Maps provider id to its brand icon component. */
+const PROVIDER_ICONS: Record<string, ReactNode> = {
+  claude: <ClaudeIcon size={12} />,
+  codex: <CodexIcon size={12} />,
+  cursor: <CursorProviderIcon size={12} />,
+  opencode: <OpenCodeIcon size={12} />,
+  gemini: <GeminiIcon size={12} />,
+};
+
+/** All provider options with icons. Coming-soon providers show a tooltip. */
 const PROVIDER_OPTIONS = MODEL_PROVIDERS.map((p) => ({
   value: p.id,
   label: p.name,
   disabled: p.comingSoon,
+  icon: PROVIDER_ICONS[p.id],
+  title: p.comingSoon ? "Coming soon" : undefined,
 }));
 
 const REASONING_OPTIONS_BASE = [
@@ -54,11 +72,15 @@ export function ModelSection() {
   const handleProviderChange = (v: string) => {
     const newProvider = MODEL_PROVIDERS.find((p) => p.id === v);
     const firstModel = newProvider?.models[0];
+    const clamped = firstModel
+      ? normalizeReasoningLevelForModel(firstModel.id, reasoning)
+      : reasoning;
     void update({
       model: {
         defaults: {
           provider: v as SettingsProviderId,
           ...(firstModel && { id: firstModel.id, fallbackId: "" }),
+          reasoning: clamped,
         },
       },
     });
@@ -78,11 +100,10 @@ export function ModelSection() {
 
   return (
     <div>
-      <h2 className="mb-0.5 text-base font-semibold tracking-tight text-foreground">Model</h2>
-      <p className="mb-6 text-xs text-muted-foreground">
-        Provider, model, and inference defaults for new threads.
-      </p>
-
+      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+        Model
+      </h2>
+      <div>
       <SettingRow
         label="Provider"
         configKey="model.defaults.provider"
@@ -124,6 +145,7 @@ export function ModelSection() {
           }
         />
       </SettingRow>
+      </div>
     </div>
   );
 }

@@ -5,29 +5,29 @@ interface SettingRowProps {
   label: string;
   /** Short description shown below the label. */
   hint?: string;
-  /** JSON key path shown as a dim monospace badge (e.g. "model.defaults.id"). */
+  /** JSON key path (reserved for future tooltip use). */
   configKey?: string;
   children: React.ReactNode;
   className?: string;
 }
 
 /**
- * Standard row layout for a single setting: label, optional hint,
- * optional config-key badge, and a control slot.
+ * Responsive row layout for a single setting: label + hint on the left,
+ * control slot on the right. Wraps to a stacked layout on narrow viewports.
  */
-export function SettingRow({ label, hint, configKey, children, className }: SettingRowProps) {
+export function SettingRow({ label, hint, children, className }: SettingRowProps) {
   return (
-    <div className={cn("border-t border-border py-4 first:border-t-0 first:pt-0", className)}>
-      <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <span className="text-sm font-medium text-foreground">{label}</span>
-        {configKey && (
-          <span className="shrink-0 rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/50">
-            {configKey}
-          </span>
-        )}
+    <div
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-border/50 px-1 py-4 last:border-b-0",
+        className,
+      )}
+    >
+      <div className="min-w-[10rem]">
+        <span className="text-sm font-semibold text-foreground">{label}</span>
+        {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
       </div>
-      {hint && <p className="mb-3 text-xs text-muted-foreground">{hint}</p>}
-      {children}
+      <div className="shrink-0">{children}</div>
     </div>
   );
 }

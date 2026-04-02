@@ -15,11 +15,10 @@ export function AgentSection() {
 
   return (
     <div>
-      <h2 className="mb-0.5 text-base font-semibold tracking-tight text-foreground">Agent</h2>
-      <p className="mb-6 text-xs text-muted-foreground">
-        Concurrency and defaults for new agent sessions.
-      </p>
-
+      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+        Agent
+      </h2>
+      <div>
       <SettingRow
         label="Max concurrent agents"
         configKey="agent.maxConcurrent"
@@ -42,7 +41,7 @@ export function AgentSection() {
           options={[
             { value: "plan", label: "Plan" },
             { value: "chat", label: "Chat" },
-            { value: "agent", label: "Agent" },
+            { value: "agent", label: "Agent", disabled: true, title: "Coming soon" },
           ]}
           value={mode}
           onChange={(v) => update({ agent: { defaults: { mode: v as AgentDefaultMode } } })}
@@ -65,6 +64,7 @@ export function AgentSection() {
           }
         />
       </SettingRow>
+      </div>
     </div>
   );
 }

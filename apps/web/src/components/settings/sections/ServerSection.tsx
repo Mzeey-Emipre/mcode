@@ -11,15 +11,14 @@ export function ServerSection() {
 
   return (
     <div>
-      <h2 className="mb-0.5 text-base font-semibold tracking-tight text-foreground">Server</h2>
-      <p className="mb-6 text-xs text-muted-foreground">
-        Server process settings. Changes apply after restart.
-      </p>
-
+      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+        Server
+      </h2>
+      <div>
       <SettingRow
         label="Heap memory"
         configKey="server.memory.heapMb"
-        hint="V8 max old space in MB. Valid range: 64–8192."
+        hint="V8 max old space in MB (64–8192). Override via MCODE_SERVER_HEAP_MB. Changes apply after restart."
       >
         <RangeControl
           min={64}
@@ -29,11 +28,8 @@ export function ServerSection() {
           onCommit={(v) => void update({ server: { memory: { heapMb: v } } })}
           formatValue={(v) => `${v} MB`}
         />
-        <p className="mt-2 text-xs text-muted-foreground/60">
-          Override via{" "}
-          <code className="font-mono text-[10px]">MCODE_SERVER_HEAP_MB</code> env variable.
-        </p>
       </SettingRow>
+      </div>
     </div>
   );
 }

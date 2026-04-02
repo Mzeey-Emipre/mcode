@@ -11,11 +11,10 @@ export function NotificationsSection() {
 
   return (
     <div>
-      <h2 className="mb-0.5 text-base font-semibold tracking-tight text-foreground">
+      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
         Notifications
       </h2>
-      <p className="mb-6 text-xs text-muted-foreground">Desktop notification preferences.</p>
-
+      <div>
       <SettingRow
         label="Notifications"
         configKey="notifications.enabled"
@@ -26,6 +25,7 @@ export function NotificationsSection() {
           onCheckedChange={(v) => update({ notifications: { enabled: v } })}
         />
       </SettingRow>
+      </div>
     </div>
   );
 }

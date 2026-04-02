@@ -2,10 +2,17 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { NamingMode } from "@mcode/contracts";
 
 /**
  * Worktree settings section: branch naming strategy and AI name confirmation.
+ * AI naming and confirmation are disabled until the feature ships.
  */
 export function WorktreeSection() {
   const namingMode = useSettingsStore((s) => s.settings.worktree.naming.mode);
@@ -14,11 +21,10 @@ export function WorktreeSection() {
 
   return (
     <div>
-      <h2 className="mb-0.5 text-base font-semibold tracking-tight text-foreground">
+      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
         Worktrees
       </h2>
-      <p className="mb-6 text-xs text-muted-foreground">Branch naming for new git worktrees.</p>
-
+      <div>
       <SettingRow
         label="Branch naming"
         configKey="worktree.naming.mode"
@@ -28,23 +34,33 @@ export function WorktreeSection() {
           options={[
             { value: "auto", label: "Auto" },
             { value: "custom", label: "Custom" },
-            { value: "ai", label: "AI" },
+            { value: "ai", label: "AI", disabled: true, title: "Coming soon" },
           ]}
           value={namingMode}
           onChange={(v) => update({ worktree: { naming: { mode: v as NamingMode } } })}
         />
       </SettingRow>
 
-      <SettingRow
-        configKey="worktree.naming.aiConfirmation"
-        label="Confirm AI names"
-        hint="Prompt before using an AI-generated branch name."
-      >
-        <Switch
-          checked={aiConfirmation}
-          onCheckedChange={(v) => update({ worktree: { naming: { aiConfirmation: v } } })}
-        />
-      </SettingRow>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger render={<div />}>
+            <SettingRow
+              configKey="worktree.naming.aiConfirmation"
+              label="Confirm AI names"
+              hint="Prompt before using an AI-generated branch name."
+              className="opacity-30"
+            >
+              <Switch
+                disabled
+                checked={aiConfirmation}
+                onCheckedChange={(v) => update({ worktree: { naming: { aiConfirmation: v } } })}
+              />
+            </SettingRow>
+          </TooltipTrigger>
+          <TooltipContent>Coming soon</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      </div>
     </div>
   );
 }
