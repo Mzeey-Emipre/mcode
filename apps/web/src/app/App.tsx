@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatView } from "@/components/chat/ChatView";
+import { SettingsView } from "@/components/settings/SettingsView";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { TerminalPanel } from "@/components/terminal";
 import { TaskPanel } from "@/components/tasks";
@@ -17,6 +18,7 @@ import { ToastContainer } from "@/components/Toast";
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   useIdleReclamation();
 
   useEffect(() => {
@@ -88,11 +90,15 @@ export function App() {
       <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
         <ConnectionBanner />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar />
+          <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
           <div className="flex flex-1 flex-col overflow-hidden">
             <div className="flex flex-1 overflow-hidden">
               <main className="flex-1 overflow-hidden">
-                <ChatView />
+                {settingsOpen ? (
+                  <SettingsView onClose={() => setSettingsOpen(false)} />
+                ) : (
+                  <ChatView />
+                )}
               </main>
               <TaskPanel />
             </div>

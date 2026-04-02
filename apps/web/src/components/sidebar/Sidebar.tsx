@@ -1,12 +1,16 @@
 import { ProjectTree } from "./ProjectTree";
-import { SettingsDialog } from "@/components/settings/SettingsDialog";
-import { PanelLeftClose, PanelLeft } from "lucide-react";
+import { PanelLeftClose, PanelLeft, Settings } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
+interface SidebarProps {
+  /** Called when the user clicks the Settings button. */
+  onOpenSettings: () => void;
+}
+
 /** Sidebar component that renders app navigation and the project tree. */
-export function Sidebar() {
+export function Sidebar({ onOpenSettings }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -29,10 +33,17 @@ export function Sidebar() {
       {/* Project tree */}
       {!collapsed && <ProjectTree />}
 
-      {/* Settings at bottom - text + icon */}
+      {/* Settings at bottom */}
       {!collapsed && (
         <div className="border-t border-border p-3">
-          <SettingsDialog />
+          <Button
+            variant="ghost"
+            className="flex w-full items-center gap-2 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={onOpenSettings}
+          >
+            <Settings size={16} />
+            Settings
+          </Button>
         </div>
       )}
     </div>
