@@ -6,8 +6,6 @@ import { TOOL_PHASE_LABELS } from "./tool-renderers/constants";
 interface StreamingIndicatorProps {
   startTime?: number;
   activeToolCalls?: readonly ToolCall[];
-  /** Partial response text arriving via textDelta events. Displayed below the phase label when present. */
-  streamingText?: string;
 }
 
 function derivePhaseLabel(toolCalls?: readonly ToolCall[]): string {
@@ -23,7 +21,7 @@ function derivePhaseLabel(toolCalls?: readonly ToolCall[]): string {
 }
 
 /** Renders an animated gradient sweep bar with a phase label and elapsed timer during agent work. */
-export function StreamingIndicator({ startTime, activeToolCalls, streamingText }: StreamingIndicatorProps) {
+export function StreamingIndicator({ startTime, activeToolCalls }: StreamingIndicatorProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -46,9 +44,6 @@ export function StreamingIndicator({ startTime, activeToolCalls, streamingText }
         <span className="animate-shimmer-text text-sm">{phaseLabel}</span>
         <span className="text-xs text-muted-foreground/50">({formatDuration(elapsed)})</span>
       </div>
-      {streamingText && (
-        <p className="line-clamp-2 text-xs text-muted-foreground/70">{streamingText}</p>
-      )}
     </div>
   );
 }

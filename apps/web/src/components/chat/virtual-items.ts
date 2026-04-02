@@ -13,9 +13,8 @@ export type ChatVirtualItem =
       type: "indicator";
       startTime: number | undefined;
       activeToolCalls: readonly ToolCall[];
-      /** Streaming text to display below the phase label, if any. */
-      streamingText?: string;
     }
+  | { key: string; type: "streaming"; text: string }
   | { key: string; type: "tool-summary"; messageId: string; serverMessageId: string; toolCallCount: number };
 
 /**
@@ -63,15 +62,18 @@ export function buildVolatileItems(
     items.push({ key: "active-tools", type: "active-tools", toolCalls });
   }
 
-  if (isAgentRunning || streamingText) {
+  if (isAgentRunning) {
     const activeOnly = toolCalls.filter((tc) => !tc.isComplete);
     items.push({
       key: "indicator",
       type: "indicator",
       startTime: agentStartTime,
       activeToolCalls: activeOnly,
-      streamingText,
     });
+  }
+
+  if (streamingText) {
+    items.push({ key: "streaming", type: "streaming", text: streamingText });
   }
 
   return items;
@@ -202,7 +204,9 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
     case "active-tools":
       return Math.min(item.toolCalls.length * 48, 400);
     case "indicator":
-      return item.streamingText ? 72 : 48;
+      return 48;
+    case "streaming":
+      return 56;
     case "tool-summary":
       return 36;
     default:

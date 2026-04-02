@@ -8,6 +8,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { MessageBubble } from "./MessageBubble";
 import { ToolCallCard } from "./ToolCallCard";
 import { StreamingIndicator } from "./StreamingIndicator";
+import { StreamingCard } from "./StreamingCard";
 import { ToolCallSummary } from "./ToolCallSummary";
 import {
   buildStableItems,
@@ -36,9 +37,10 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({ item }: { item: 
         <StreamingIndicator
           startTime={item.startTime}
           activeToolCalls={item.activeToolCalls}
-          streamingText={item.streamingText}
         />
       );
+    case "streaming":
+      return <StreamingCard text={item.text} />;
     case "tool-summary":
       return (
         <ToolCallSummary

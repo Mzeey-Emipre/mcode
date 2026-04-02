@@ -89,19 +89,21 @@ describe("buildVolatileItems", () => {
     expect(items).toHaveLength(0);
   });
 
-  it("returns indicator with streamingText when streaming text is present but agent not running", () => {
+  it("returns streaming item when streaming text is present but agent not running", () => {
     const items = buildVolatileItems([], false, undefined, "partial...");
     expect(items).toHaveLength(1);
-    expect(items[0].type).toBe("indicator");
-    const indicator = items[0] as ChatVirtualItem & { type: "indicator" };
-    expect(indicator.streamingText).toBe("partial...");
+    expect(items[0].type).toBe("streaming");
+    const streaming = items[0] as ChatVirtualItem & { type: "streaming" };
+    expect(streaming.text).toBe("partial...");
   });
 
-  it("includes indicator with streamingText when agent is running and streaming", () => {
+  it("includes both indicator and streaming items when agent is running and streaming", () => {
     const items = buildVolatileItems([], true, 1000, "streaming...");
-    const indicator = items.find((i) => i.type === "indicator") as (ChatVirtualItem & { type: "indicator" }) | undefined;
+    const indicator = items.find((i) => i.type === "indicator");
+    const streaming = items.find((i) => i.type === "streaming") as (ChatVirtualItem & { type: "streaming" }) | undefined;
     expect(indicator).toBeDefined();
-    expect(indicator?.streamingText).toBe("streaming...");
+    expect(streaming).toBeDefined();
+    expect(streaming?.text).toBe("streaming...");
   });
 });
 
@@ -138,13 +140,13 @@ describe("buildVirtualItems (combined)", () => {
     expect(result[2]).toMatchObject({ type: "message", key: "msg-2" });
   });
 
-  it("streaming text adds an 'indicator' item with streamingText at the end", () => {
+  it("streaming text adds a 'streaming' item at the end", () => {
     const messages = [makeMessage({ id: "msg-1" })];
     const result = buildAll(messages, [], "partial response...", false, undefined);
 
     const last = result[result.length - 1];
-    expect(last.type).toBe("indicator");
-    expect((last as ChatVirtualItem & { type: "indicator" }).streamingText).toBe("partial response...");
+    expect(last.type).toBe("streaming");
+    expect((last as ChatVirtualItem & { type: "streaming" }).text).toBe("partial response...");
   });
 
   it("indicator (running, no streaming) adds an 'indicator' item", () => {
@@ -173,14 +175,15 @@ describe("buildVirtualItems (combined)", () => {
     expect(summary.toolCallCount).toBe(5);
   });
 
-  it("includes indicator with streamingText when both running and streaming", () => {
+  it("includes both indicator and streaming items when both running and streaming", () => {
     const messages = [makeMessage({ id: "msg-1" })];
     const result = buildAll(messages, [], "streaming...", true, undefined);
 
     const types = result.map((item) => item.type);
     expect(types).toContain("indicator");
-    const indicator = result.find((i) => i.type === "indicator") as (ChatVirtualItem & { type: "indicator" }) | undefined;
-    expect(indicator?.streamingText).toBe("streaming...");
+    expect(types).toContain("streaming");
+    const streaming = result.find((i) => i.type === "streaming") as (ChatVirtualItem & { type: "streaming" }) | undefined;
+    expect(streaming?.text).toBe("streaming...");
   });
 
   it("does not split when last message is not assistant role", () => {
@@ -208,8 +211,8 @@ describe("buildVirtualItems (combined)", () => {
     const result = buildAll(messages, toolCalls, "Here is my answer...", true, 99999);
 
     const types = result.map((item) => item.type);
-    // user msg, active-tools, split assistant msg, indicator with streamingText
-    expect(types).toEqual(["message", "active-tools", "message", "indicator"]);
+    // user msg, active-tools, split assistant msg, indicator, streaming
+    expect(types).toEqual(["message", "active-tools", "message", "indicator", "streaming"]);
     expect(result[0]).toMatchObject({ key: "msg-1" });
     expect(result[2]).toMatchObject({ key: "msg-2" });
     const activeItem = result[1] as ChatVirtualItem & { type: "active-tools" };
@@ -276,7 +279,7 @@ describe("estimateItemHeight", () => {
     expect(estimateItemHeight(item)).toBe(400);
   });
 
-  it("indicator without streaming text returns 48", () => {
+  it("indicator returns 48", () => {
     const item: ChatVirtualItem = {
       key: "indicator",
       type: "indicator",
@@ -286,15 +289,13 @@ describe("estimateItemHeight", () => {
     expect(estimateItemHeight(item)).toBe(48);
   });
 
-  it("indicator with streaming text returns 72", () => {
+  it("streaming item returns 56", () => {
     const item: ChatVirtualItem = {
-      key: "indicator",
-      type: "indicator",
-      startTime: undefined,
-      activeToolCalls: [],
-      streamingText: "Hello world",
+      key: "streaming",
+      type: "streaming",
+      text: "Hello world",
     };
-    expect(estimateItemHeight(item)).toBe(72);
+    expect(estimateItemHeight(item)).toBe(56);
   });
 
   it("tool-summary returns 36", () => {
