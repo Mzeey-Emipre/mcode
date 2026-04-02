@@ -30,7 +30,7 @@ export const ReasoningLevelSchema = z.enum(["low", "medium", "high", "max"]);
 export type ReasoningLevel = z.infer<typeof ReasoningLevelSchema>;
 
 /** Supported AI provider identifier for settings. */
-export const ProviderIdSchema = z.enum(["claude", "codex", "gemini", "copilot"]);
+export const ProviderIdSchema = z.enum(["claude", "codex", "gemini", "copilot", "cursor", "opencode"]);
 /** Supported AI provider identifier value. */
 export type SettingsProviderId = z.infer<typeof ProviderIdSchema>;
 

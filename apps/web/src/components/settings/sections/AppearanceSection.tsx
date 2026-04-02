@@ -1,6 +1,7 @@
 import { useSettingsStore } from "@/stores/settingsStore";
 import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
+import { SectionHeading } from "../SectionHeading";
 import type { Theme } from "@mcode/contracts";
 
 /**
@@ -12,9 +13,7 @@ export function AppearanceSection() {
 
   return (
     <div>
-      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
-        Appearance
-      </h2>
+      <SectionHeading>Appearance</SectionHeading>
       <div>
       <SettingRow
         label="Theme"

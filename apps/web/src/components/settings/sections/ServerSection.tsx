@@ -1,6 +1,7 @@
 import { useSettingsStore } from "@/stores/settingsStore";
 import { SettingRow } from "../SettingRow";
 import { RangeControl } from "../RangeControl";
+import { SectionHeading } from "../SectionHeading";
 
 /**
  * Server settings section: V8 heap size. Changes apply after the server restarts.
@@ -11,9 +12,7 @@ export function ServerSection() {
 
   return (
     <div>
-      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
-        Server
-      </h2>
+      <SectionHeading>Server</SectionHeading>
       <div>
       <SettingRow
         label="Heap memory"
@@ -22,7 +21,7 @@ export function ServerSection() {
       >
         <RangeControl
           min={64}
-          max={2048}
+          max={8192}
           step={64}
           value={heapMb}
           onCommit={(v) => void update({ server: { memory: { heapMb: v } } })}

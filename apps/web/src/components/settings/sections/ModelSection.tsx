@@ -3,6 +3,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { MODEL_PROVIDERS, isMaxEffortModel, normalizeReasoningLevelForModel } from "@/lib/model-registry";
 import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
+import { SectionHeading } from "../SectionHeading";
 import type { SettingsProviderId, ReasoningLevel } from "@mcode/contracts";
 import {
   ClaudeIcon,
@@ -100,9 +101,7 @@ export function ModelSection() {
 
   return (
     <div>
-      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
-        Model
-      </h2>
+      <SectionHeading>Model</SectionHeading>
       <div>
       <SettingRow
         label="Provider"

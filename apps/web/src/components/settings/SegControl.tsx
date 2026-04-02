@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import {
   Tooltip,
   TooltipContent,
@@ -43,7 +43,6 @@ export function SegControl({ options, value, onChange, className }: SegControlPr
         {options.map((opt) => {
           const button = (
             <button
-              key={opt.value}
               type="button"
               disabled={opt.disabled}
               onClick={() => onChange(opt.value)}
@@ -60,7 +59,7 @@ export function SegControl({ options, value, onChange, className }: SegControlPr
             </button>
           );
 
-          if (!opt.title) return button;
+          if (!opt.title) return <Fragment key={opt.value}>{button}</Fragment>;
 
           return (
             <Tooltip key={opt.value}>

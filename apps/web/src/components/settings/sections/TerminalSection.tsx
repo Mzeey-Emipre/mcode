@@ -1,6 +1,7 @@
 import { useSettingsStore } from "@/stores/settingsStore";
 import { SettingRow } from "../SettingRow";
 import { RangeControl } from "../RangeControl";
+import { SectionHeading } from "../SectionHeading";
 
 /**
  * Terminal settings section: scrollback buffer size.
@@ -11,9 +12,7 @@ export function TerminalSection() {
 
   return (
     <div>
-      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
-        Terminal
-      </h2>
+      <SectionHeading>Terminal</SectionHeading>
       <div>
       <SettingRow
         label="Scrollback lines"

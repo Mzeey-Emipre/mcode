@@ -8,6 +8,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { SectionHeading } from "../SectionHeading";
 import type { NamingMode } from "@mcode/contracts";
 
 /**
@@ -21,9 +22,7 @@ export function WorktreeSection() {
 
   return (
     <div>
-      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
-        Worktrees
-      </h2>
+      <SectionHeading>Worktrees</SectionHeading>
       <div>
       <SettingRow
         label="Branch naming"

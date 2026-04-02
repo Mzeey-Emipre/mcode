@@ -36,6 +36,11 @@ export function RangeControl({
     onCommit(v);
   };
 
+  const handlePointerCommit = (e: React.SyntheticEvent<HTMLInputElement>) =>
+    commit(Number(e.currentTarget.value));
+
+  const VALUE_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"]);
+
   return (
     <div className="flex w-52 items-center gap-3">
       <input
@@ -45,9 +50,9 @@ export function RangeControl({
         step={step}
         value={display}
         onChange={(e) => setLocal(Number(e.target.value))}
-        onMouseUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
-        onKeyUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
-        onTouchEnd={(e) => commit(Number((e.target as HTMLInputElement).value))}
+        onMouseUp={handlePointerCommit}
+        onKeyUp={(e) => { if (VALUE_KEYS.has(e.key)) commit(Number(e.currentTarget.value)); }}
+        onTouchEnd={() => { if (local !== null) commit(local); }}
         className="settings-range flex-1"
       />
       <span className="min-w-[2.5rem] text-right font-mono text-xs text-foreground">
