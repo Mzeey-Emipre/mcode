@@ -5,6 +5,10 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled item type: ${(value as { type: string }).type}`);
 }
 
+/** Estimated collapsed height (px) for a streaming card virtual item. */
+export const STREAMING_CARD_COLLAPSED_HEIGHT = 56;
+
+/** Represents an item rendered in the virtualized chat list: messages, tool indicators, or streaming text. */
 export type ChatVirtualItem =
   | { key: string; type: "message"; message: Message }
   | { key: string; type: "active-tools"; toolCalls: readonly ToolCall[] }
@@ -206,7 +210,7 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
     case "indicator":
       return 48;
     case "streaming":
-      return 56;
+      return STREAMING_CARD_COLLAPSED_HEIGHT;
     case "tool-summary":
       return 36;
     default:

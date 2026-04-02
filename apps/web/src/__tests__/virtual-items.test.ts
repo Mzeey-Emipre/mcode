@@ -4,6 +4,7 @@ import {
   buildVolatileItems,
   buildVirtualItems,
   estimateItemHeight,
+  STREAMING_CARD_COLLAPSED_HEIGHT,
 } from "@/components/chat/virtual-items";
 import type { ChatVirtualItem } from "@/components/chat/virtual-items";
 import type { Message, ToolCall } from "@/transport/types";
@@ -295,7 +296,7 @@ describe("estimateItemHeight", () => {
       type: "streaming",
       text: "Hello world",
     };
-    expect(estimateItemHeight(item)).toBe(56);
+    expect(estimateItemHeight(item)).toBe(STREAMING_CARD_COLLAPSED_HEIGHT);
   });
 
   it("tool-summary returns 36", () => {
