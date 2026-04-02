@@ -95,4 +95,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       xslStyleSheets.size + fonts.size + other.size
     );
   },
+
+  /** Open settings.json in the OS default editor. Resolves to an empty string on success. */
+  openSettingsFile: (): Promise<string> =>
+    ipcRenderer.invoke("open-settings-file"),
 });
