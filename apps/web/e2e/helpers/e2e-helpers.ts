@@ -31,7 +31,7 @@ export async function mockWebSocketServer(
     resolveWs = r;
   });
 
-  await page.routeWebSocket(/ws:\/\/localhost:3100/, (ws) => {
+  await page.routeWebSocket(/ws:\/\/localhost:\d+/, (ws) => {
     resolveWs(ws);
 
     ws.onMessage((data) => {
