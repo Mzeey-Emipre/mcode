@@ -36,6 +36,7 @@ interface ComposerEditorProps {
 }
 
 const COMPOSER_MIN_HEIGHT = "80px";
+const COMPOSER_MAX_HEIGHT = "30vh";
 
 const EDITOR_THEME = {
   paragraph: `min-h-[${COMPOSER_MIN_HEIGHT}]`,
@@ -113,7 +114,7 @@ export function ComposerEditor({
                   {placeholder}
                 </div>
               }
-              style={{ minHeight: COMPOSER_MIN_HEIGHT, maxHeight: "30vh", overflowY: "auto" }}
+              style={{ minHeight: COMPOSER_MIN_HEIGHT, maxHeight: COMPOSER_MAX_HEIGHT, overflowY: "auto" }}
             />
           }
           ErrorBoundary={LexicalErrorBoundary}

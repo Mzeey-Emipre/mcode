@@ -56,14 +56,4 @@ export default defineConfig({
     minify: "oxc",
     sourcemap: false,
   },
-  test: {
-    globals: true,
-    environment: "jsdom",
-    setupFiles: "./src/test-setup.ts",
-    pool: "threads",
-    exclude: ["e2e/**", "node_modules/**"],
-    env: {
-      NODE_ENV: "test",
-    },
-  },
 });
