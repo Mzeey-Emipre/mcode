@@ -304,29 +304,32 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     this.sessions.set(sessionId, entry);
 
     if (resume) {
+      const failedEvent = `_resumeFailed:${sessionId}`;
+      const doneEvent = `_streamDone:${sessionId}`;
+
+      let resumeHandler: (() => void) | null = null;
+      let doneHandler: (() => void) | null = null;
+
       const retryPromise = new Promise<boolean>((resolve) => {
-        const resumeHandler = () => {
-          this.removeListener(
-            `_streamDone:${sessionId}`,
-            doneHandler,
-          );
-          resolve(true);
-        };
-        const doneHandler = () => {
-          this.removeListener(
-            `_resumeFailed:${sessionId}`,
-            resumeHandler,
-          );
-          resolve(false);
-        };
-        this.once(`_resumeFailed:${sessionId}`, resumeHandler);
-        this.once(`_streamDone:${sessionId}`, doneHandler);
+        resumeHandler = () => resolve(true);
+        doneHandler = () => resolve(false);
+        this.once(failedEvent, resumeHandler);
+        this.once(doneEvent, doneHandler);
       });
 
       this.startStreamLoop(sessionId, q);
       queue.push(prompt);
 
-      const needsRetry = await retryPromise;
+      let needsRetry: boolean;
+      try {
+        needsRetry = await retryPromise;
+      } finally {
+        // Guarantee both listeners are removed regardless of how the
+        // promise settled (resolve, reject, or upstream cancellation).
+        if (resumeHandler) this.removeListener(failedEvent, resumeHandler);
+        if (doneHandler) this.removeListener(doneEvent, doneHandler);
+      }
+
       if (needsRetry) {
         logger.info("Resume failed, falling back to fresh query()", {
           sessionId,
