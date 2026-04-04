@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, DEFAULT_CONTEXT_WINDOW, findProviderForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -189,7 +189,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission]); // Only sync when settings change
 
-  // Reset "max" reasoning when the selected model does not support it
+  // Reset reasoning when the selected model does not support the current level
   useEffect(() => {
     const normalized = normalizeReasoningLevelForModel(modelId, reasoning);
     if (normalized !== reasoning) {
@@ -754,6 +754,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       const { content, display } = await injectFileContent(trimmed);
       const currentAttachments = collectAndClearAttachments();
 
+      const queueProvider = findProviderForModel(modelId)?.id;
       useQueueStore.getState().enqueue(threadId, {
         content,
         displayContent: display,
@@ -761,6 +762,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         model: modelId,
         permissionMode: access,
         reasoningLevel: reasoning,
+        provider: queueProvider,
       });
 
       setInput("");
@@ -778,6 +780,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
     // ---- Normal send path ----
     const { content: messageContent, display: displayContent } = await injectFileContent(trimmed);
+    const provider = findProviderForModel(modelId)?.id;
 
     // Validate worktree mode requirements
     if (isNewThread && newThreadMode === "worktree" && namingMode === "custom" && !customBranchName.trim()) {
@@ -818,12 +821,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning);
+        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider);
       } finally {
         setPreparingWorktree(false);
       }
     } else if (threadId) {
-      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning);
+      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider);
     }
 
     // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
@@ -894,9 +897,16 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const toast = useQueueStore((s) => s.toast);
 
-  const reasoningLevels: ReasoningLevel[] = isMaxEffortModel(modelId)
-    ? ["low", "medium", "high", "max"]
-    : ["low", "medium", "high"];
+  /** Display label for a reasoning level value. */
+  const reasoningLabel = (level: string) =>
+    level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+
+  const codexLevels = getCodexReasoningLevels(modelId);
+  const reasoningLevels: ReasoningLevel[] = codexLevels
+    ? (codexLevels as unknown as ReasoningLevel[])
+    : isMaxEffortModel(modelId)
+      ? ["low", "medium", "high", "max"]
+      : ["low", "medium", "high"];
 
   return (
     <div className="relative px-8 py-4">
@@ -1002,7 +1012,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     }}
                     className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
                   >
-                    <span className="text-sm">{reasoning.charAt(0).toUpperCase() + reasoning.slice(1)}</span>
+                    <span className="text-sm">{reasoningLabel(reasoning)}</span>
                     <ChevronDown size={11} />
                   </Button>
                 }
@@ -1020,13 +1030,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                       setShowReasoningPicker(false);
                     }}
                     className={cn(
-                      "flex w-full items-center rounded px-3 py-1.5 text-xs capitalize",
+                      "flex w-full items-center rounded px-3 py-1.5 text-xs",
                       reasoning === level
                         ? "bg-accent text-foreground"
                         : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                     )}
                   >
-                    {level}
+                    {reasoningLabel(level)}
                   </button>
                 ))}
               </div>
@@ -1115,7 +1125,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                 const next = useQueueStore.getState().dequeueNext(threadId);
                 if (next) {
                   sendMessage(threadId, next.content, next.model, next.permissionMode,
-                    next.attachments.length > 0 ? next.attachments : undefined, next.displayContent);
+                    next.attachments.length > 0 ? next.attachments : undefined, next.displayContent, next.reasoningLevel, next.provider);
                 }
               }}
             />

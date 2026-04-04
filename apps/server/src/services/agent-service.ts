@@ -15,6 +15,7 @@ import type {
   ReasoningLevel,
   IProviderRegistry,
   AgentEvent,
+  ProviderId,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -105,9 +106,13 @@ export class AgentService {
     model = "claude-sonnet-4-6",
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
+    provider?: ProviderId,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
+    // Use the thread's stored provider as authoritative fallback; only override
+    // when the caller explicitly supplies a provider (new thread or explicit switch).
+    const effectiveProvider: ProviderId = provider ?? (thread.provider as ProviderId) ?? "claude";
     if (thread.status === "deleted" || thread.deleted_at != null) {
       throw new Error(`Cannot send message to deleted thread: ${threadId}`);
     }
@@ -172,21 +177,25 @@ export class AgentService {
     const fallbackModel =
       fallbackId && fallbackId !== resolvedModel ? fallbackId : undefined;
     this.threadRepo.updateModel(threadId, resolvedModel);
+    // Only persist provider when the caller explicitly supplied one (new thread or deliberate switch).
+    if (provider !== undefined) {
+      this.threadRepo.updateProvider(threadId, effectiveProvider);
+    }
 
     const sessionName = `mcode-${threadId}`;
     const isResume = nextSeq > 1;
 
     // Hydrate SDK session ID mapping for resume
     if (isResume && thread.sdk_session_id) {
-      const provider = this.providerRegistry.resolve("claude");
-      provider.setSdkSessionId(sessionName, thread.sdk_session_id);
+      const sdkProvider = this.providerRegistry.resolve(effectiveProvider);
+      sdkProvider.setSdkSessionId(sessionName, thread.sdk_session_id);
     }
 
     this.activeSessionIds.add(threadId);
     this.memoryPressureService.markActive();
     try {
-      const provider = this.providerRegistry.resolve("claude");
-      await provider.sendMessage({
+      const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
+      await resolvedProvider.sendMessage({
         sessionId: sessionName,
         message: content,
         cwd,
@@ -207,12 +216,34 @@ export class AgentService {
       if (this.activeSessionIds.size === 0) {
         this.memoryPressureService.markIdle();
       }
-      this.threadRepo.updateStatus(threadId, "paused");
-      logger.error("Provider send failed, reverted status", {
-        threadId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      // Normalize spawn ENOENT into a user-friendly CLI-not-found message that
+      // the frontend CliErrorBanner can detect and display with setup instructions.
+      const errorMessage = this.normalizeProviderError(rawMessage, effectiveProvider);
+      logger.error("Provider send failed", { threadId, error: rawMessage });
+
+      // Emit an error event through the provider so the frontend receives it
+      // via the normal agent.event push pipeline and can display the CLI error banner.
+      // Cast to EventEmitter since all providers extend it, but IAgentProvider only exposes on().
+      try {
+        const resolvedProvider = this.providerRegistry.resolve(effectiveProvider) as unknown as import("events").EventEmitter;
+        resolvedProvider.emit("event", {
+          type: "error",
+          threadId,
+          error: errorMessage,
+        } satisfies AgentEvent);
+        resolvedProvider.emit("event", {
+          type: "ended",
+          threadId,
+        } satisfies AgentEvent);
+      } catch (emitErr) {
+        logger.warn("Failed to emit error event to provider", {
+          threadId,
+          error: emitErr instanceof Error ? emitErr.message : String(emitErr),
+        });
+      }
+
+      this.threadRepo.updateStatus(threadId, "errored");
     }
   }
 
@@ -231,6 +262,7 @@ export class AgentService {
     existingWorktreePath?: string,
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
+    provider: ProviderId = "claude",
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
@@ -257,6 +289,7 @@ export class AgentService {
         "worktree",
         canonicalBranch,
         false,
+        provider,
       );
       this.threadRepo.updateWorktreePath(thread.id, existingWorktreePath);
       thread = {
@@ -266,12 +299,16 @@ export class AgentService {
       };
     } else if (mode === "worktree") {
       thread = await this.threadService.create(workspaceId, title, "worktree", branch);
+      this.threadRepo.updateProvider(thread.id, provider);
+      thread = { ...thread, provider };
     } else {
       thread = this.threadRepo.create(
         workspaceId,
         title,
         "direct",
         branch,
+        true,
+        provider,
       );
     }
 
@@ -282,6 +319,7 @@ export class AgentService {
       model,
       attachments,
       reasoningLevel,
+      provider,
     );
 
     // Re-read from DB to pick up model update applied by sendMessage
@@ -292,8 +330,10 @@ export class AgentService {
   /** Stop the agent for a given thread, persisting any buffered tool calls first. */
   async stopSession(threadId: string): Promise<void> {
     const sessionId = `mcode-${threadId}`;
+    const thread = this.threadRepo.findById(threadId);
+    const providerId = (thread?.provider ?? "claude") as ProviderId;
     try {
-      const provider = this.providerRegistry.resolve("claude");
+      const provider = this.providerRegistry.resolve(providerId);
       provider.stopSession(sessionId);
     } catch {
       // Provider may not be available
@@ -404,12 +444,22 @@ export class AgentService {
         }
 
         if (event.type === "error") {
-          this.persistTurn(event.threadId, true).catch((err) => {
-            logger.error("persistTurn failed on error event", {
-              threadId: event.threadId,
-              error: err instanceof Error ? err.message : String(err),
+          // Only persist the turn when an assistant message was actually created.
+          // For pre-turn failures (e.g. CLI not found) the last message is the
+          // user message; calling persistTurn would broadcast turn.persisted with
+          // the wrong message ID. In that case, just clear the turn state.
+          const { messages: turnMsgs } = this.messageRepo.listByThread(event.threadId, 1);
+          const lastMsg = turnMsgs[turnMsgs.length - 1];
+          if (lastMsg?.role === "assistant") {
+            this.persistTurn(event.threadId, true).catch((err) => {
+              logger.error("persistTurn failed on error event", {
+                threadId: event.threadId,
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
-          });
+          } else {
+            this.clearTurnState(event.threadId);
+          }
         }
 
         if (event.type === "compacting" && !event.active) {
@@ -439,6 +489,25 @@ export class AgentService {
         }
       });
     }
+  }
+
+  /**
+   * Normalize a raw provider error into a user-friendly message.
+   * Converts spawn ENOENT errors (CLI binary not found) into the standardized
+   * "CLI not found" format that the frontend CliErrorBanner can detect.
+   */
+  private normalizeProviderError(message: string, provider: string): string {
+    // Detect spawn ENOENT: the OS-level error when a binary doesn't exist
+    if (message.includes("ENOENT") || message.includes("spawn") && message.includes("ENOENT")) {
+      if (provider === "claude") {
+        return "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code\n\nOr set a custom path in Settings > Model.";
+      }
+      if (provider === "codex") {
+        return "Codex CLI not found. Install it with: npm install -g @openai/codex\n\nOr set a custom path in Settings > Model.";
+      }
+      return `${provider} CLI not found. Check the CLI path in Settings > Model.`;
+    }
+    return message;
   }
 
   /** Buffer a tool call event for later persistence. */
@@ -639,8 +708,10 @@ export class AgentService {
     const ids = [...this.activeSessionIds];
     for (const threadId of ids) {
       const sessionId = `mcode-${threadId}`;
+      const thread = this.threadRepo.findById(threadId);
+      const providerId = (thread?.provider ?? "claude") as ProviderId;
       try {
-        const provider = this.providerRegistry.resolve("claude");
+        const provider = this.providerRegistry.resolve(providerId);
         provider.stopSession(sessionId);
       } catch {
         // best-effort

@@ -24,9 +24,13 @@ export function buildReasoningOptions(
     });
     level = "high";
   }
+  // "xhigh" is a Codex-only level; Claude SDK does not accept it
+  if (level === "xhigh") {
+    level = "high";
+  }
 
   return {
-    effort: level,
+    effort: level as Exclude<ReasoningLevel, "xhigh">,
     thinking: { type: "adaptive" },
   };
 }

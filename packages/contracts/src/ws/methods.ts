@@ -12,6 +12,7 @@ import {
   SettingsSchema,
   PartialSettingsSchema,
   ReasoningLevelSchema,
+  ProviderIdSchema,
 } from "../models/settings.js";
 import { lazySchema } from "../utils/lazySchema.js";
 
@@ -31,6 +32,7 @@ export const SendMessageSchema = z.object({
   permissionMode: PermissionModeSchema.optional(),
   attachments: z.array(AttachmentMetaSchema).optional(),
   reasoningLevel: ReasoningLevelSchema.optional(),
+  provider: ProviderIdSchema.optional(),
 });
 
 /** Schema for creating a thread and sending a message in one call. */
@@ -44,6 +46,7 @@ export const CreateAndSendSchema = z.object({
   existingWorktreePath: z.string().optional(),
   attachments: z.array(AttachmentMetaSchema).optional(),
   reasoningLevel: ReasoningLevelSchema.optional(),
+  provider: ProviderIdSchema.optional(),
 });
 
 /** All RPC method definitions keyed by method name with params and result schemas. */

@@ -62,7 +62,7 @@ interface ThreadState {
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
   loadOlderMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
@@ -306,7 +306,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * message to local state, marks the thread as running, then dispatches
    * to the transport layer. On failure, rolls back the running state.
    */
-  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel) => {
+  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider) => {
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
     const userMessage: Message = {
@@ -341,7 +341,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }));
 
     try {
-      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments, reasoningLevel);
+      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments, reasoningLevel, provider);
     } catch (e) {
       set((state) => {
         const next = new Set(state.runningThreadIds);
@@ -846,6 +846,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               next.attachments.length > 0 ? next.attachments : undefined,
               next.displayContent,
               next.reasoningLevel,
+              next.provider,
             );
           }
         }, 400);

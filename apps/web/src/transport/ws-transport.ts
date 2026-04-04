@@ -253,8 +253,8 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel) =>
-      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments, reasoningLevel }),
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string) =>
+      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments, reasoningLevel, provider }),
     createAndSendMessage: (
       workspaceId,
       content,
@@ -265,6 +265,7 @@ export function createWsTransport(
       existingWorktreePath?,
       attachments?,
       reasoningLevel?,
+      provider?,
     ) =>
       rpc<Thread>("agent.createAndSend", {
         workspaceId,
@@ -276,6 +277,7 @@ export function createWsTransport(
         existingWorktreePath,
         attachments,
         reasoningLevel,
+        provider,
       }),
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
     readClipboardImage: () =>

@@ -29,6 +29,17 @@ export function App() {
     return () => stopPushListeners();
   }, []);
 
+  // Listen for deep-link requests to open a specific settings section
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const section = (e as CustomEvent<{ section: SettingsSection }>).detail?.section ?? "model";
+      setSettingsSection(section);
+      setSettingsOpen(true);
+    };
+    window.addEventListener("mcode:open-settings", handler);
+    return () => window.removeEventListener("mcode:open-settings", handler);
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const cleanup = initShortcuts();

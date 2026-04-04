@@ -1,10 +1,16 @@
 import { useMemo, type ReactNode } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { MODEL_PROVIDERS, isMaxEffortModel, normalizeReasoningLevelForModel } from "@/lib/model-registry";
+import {
+  MODEL_PROVIDERS,
+  isMaxEffortModel,
+  normalizeReasoningLevelForModel,
+  getCodexReasoningLevels,
+} from "@/lib/model-registry";
 import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import { SectionHeading } from "../SectionHeading";
 import type { SettingsProviderId, ReasoningLevel } from "@mcode/contracts";
+import { Input } from "@/components/ui/input";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -37,6 +43,15 @@ const REASONING_OPTIONS_BASE = [
   { value: "high", label: "High" },
 ];
 
+/** Codex reasoning effort labels mapped from SDK level names. */
+const CODEX_REASONING_LABELS: Record<string, string> = {
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "X-High",
+};
+
 /**
  * Model settings section: provider, default model, fallback model, and reasoning effort.
  * Model options update when the provider changes. Switching provider resets the default
@@ -48,6 +63,8 @@ export function ModelSection() {
   const modelId = useSettingsStore((s) => s.settings.model.defaults.id);
   const fallbackId = useSettingsStore((s) => s.settings.model.defaults.fallbackId);
   const reasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
+  const codexCliPath = useSettingsStore((s) => s.settings.provider.cli.codex);
+  const claudeCliPath = useSettingsStore((s) => s.settings.provider.cli.claude);
   const update = useSettingsStore((s) => s.update);
 
   const activeProvider = MODEL_PROVIDERS.find((p) => p.id === provider);
@@ -62,38 +79,72 @@ export function ModelSection() {
     [modelOptions],
   );
 
-  const reasoningOptions = useMemo(
-    () => [
+  const codexLevels = useMemo(() => getCodexReasoningLevels(modelId), [modelId]);
+
+  const reasoningOptions = useMemo(() => {
+    if (codexLevels) {
+      // Codex model: show its specific supported levels
+      return codexLevels.map((level) => ({
+        value: level,
+        label: CODEX_REASONING_LABELS[level] ?? level,
+      }));
+    }
+    // Standard Claude reasoning levels
+    return [
       ...REASONING_OPTIONS_BASE,
       { value: "max", label: "Max", disabled: !isMaxEffortModel(modelId) },
-    ],
-    [modelId],
-  );
+    ];
+  }, [modelId, codexLevels]);
+
+  const reasoningHint = useMemo(() => {
+    if (codexLevels) {
+      return codexLevels.includes("xhigh")
+        ? "Reasoning effort for Codex models. X-High is the maximum tier."
+        : "Reasoning effort for Codex models.";
+    }
+    return "Default reasoning level. Max requires Opus 4.6.";
+  }, [codexLevels]);
 
   const handleProviderChange = (v: string) => {
     const newProvider = MODEL_PROVIDERS.find((p) => p.id === v);
     const firstModel = newProvider?.models[0];
-    const clamped = firstModel
-      ? normalizeReasoningLevelForModel(firstModel.id, reasoning)
-      : reasoning;
+    let newReasoning: string = reasoning;
+    if (firstModel) {
+      const codexLevels = getCodexReasoningLevels(firstModel.id);
+      if (codexLevels) {
+        // Switching to Codex: reset to model default if current level isn't valid
+        newReasoning = codexLevels.includes(reasoning as never) ? reasoning : "medium";
+      } else {
+        newReasoning = normalizeReasoningLevelForModel(firstModel.id, reasoning);
+      }
+    }
     void update({
       model: {
         defaults: {
           provider: v as SettingsProviderId,
           ...(firstModel && { id: firstModel.id, fallbackId: "" }),
-          reasoning: clamped,
+          reasoning: newReasoning as ReasoningLevel,
         },
       },
     });
   };
 
   const handleModelChange = (v: string) => {
-    const clamped = normalizeReasoningLevelForModel(v, reasoning);
+    const codexLevels = getCodexReasoningLevels(v);
+    let newReasoning: string = reasoning;
+    if (codexLevels) {
+      // For Codex models: if the stored level isn't valid for this model, use its default
+      if (!codexLevels.includes(reasoning as never)) {
+        newReasoning = "medium";
+      }
+    } else {
+      newReasoning = normalizeReasoningLevelForModel(v, reasoning);
+    }
     void update({
       model: {
         defaults: {
           id: v,
-          ...(clamped !== reasoning && { reasoning: clamped }),
+          ...(newReasoning !== reasoning && { reasoning: newReasoning as ReasoningLevel }),
         },
       },
     });
@@ -134,7 +185,7 @@ export function ModelSection() {
       <SettingRow
         label="Reasoning effort"
         configKey="model.defaults.reasoning"
-        hint="Default reasoning level. Max requires Opus 4.6."
+        hint={reasoningHint}
       >
         <SegControl
           options={reasoningOptions}
@@ -144,6 +195,36 @@ export function ModelSection() {
           }
         />
       </SettingRow>
+      </div>
+
+      <div className="mt-8">
+        <SectionHeading>CLI Paths</SectionHeading>
+        <div>
+          <SettingRow
+            label="Codex CLI path"
+            configKey="provider.cli.codex"
+            hint="Path to the Codex CLI binary. Leave empty to auto-discover from PATH."
+          >
+            <Input
+              value={codexCliPath}
+              onChange={(e) => void update({ provider: { cli: { codex: e.target.value } } })}
+              placeholder="codex"
+              className="h-7 w-56 text-xs"
+            />
+          </SettingRow>
+          <SettingRow
+            label="Claude CLI path"
+            configKey="provider.cli.claude"
+            hint="Path to the Claude Code CLI binary. Leave empty to auto-discover from PATH."
+          >
+            <Input
+              value={claudeCliPath}
+              onChange={(e) => void update({ provider: { cli: { claude: e.target.value } } })}
+              placeholder="claude"
+              className="h-7 w-56 text-xs"
+            />
+          </SettingRow>
+        </div>
       </div>
     </div>
   );

@@ -19,6 +19,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     model: null,
+    provider: "claude",
     deleted_at: null,
     last_context_tokens: null,
     context_window: null,

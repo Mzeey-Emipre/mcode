@@ -8,6 +8,12 @@ export interface ModelProvider {
   models: ModelDefinition[];
 }
 
+/**
+ * Reasoning effort level values accepted by the Codex SDK.
+ * Distinct from mcode's internal ReasoningLevel which uses "max" for Claude.
+ */
+export type CodexReasoningLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
+
 /** Metadata for a selectable model in the provider registry. */
 export interface ModelDefinition {
   id: string;
@@ -15,6 +21,13 @@ export interface ModelDefinition {
   providerId: string;
   /** Maximum context window size in tokens, if known. */
   contextWindow?: number;
+  /**
+   * Reasoning effort levels this model supports, ordered low→high.
+   * Omit for models that use the standard mcode reasoning levels.
+   */
+  supportedReasoningLevels?: readonly CodexReasoningLevel[];
+  /** Default reasoning effort level for this model. */
+  defaultReasoningLevel?: CodexReasoningLevel;
 }
 
 /** Fallback context window size used when a model's limit is not yet registered. */
@@ -34,8 +47,51 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
   {
     id: "codex",
     name: "Codex",
-    comingSoon: true,
-    models: [],
+    comingSoon: false,
+    models: [
+      {
+        id: "gpt-5.4",
+        label: "GPT-5.4",
+        providerId: "codex",
+        contextWindow: 272_000,
+        supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "medium",
+      },
+      {
+        id: "gpt-5.4-mini",
+        label: "GPT-5.4 Mini",
+        providerId: "codex",
+        contextWindow: 272_000,
+        // Not yet in models.json catalog; assume same range as gpt-5.4
+        supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "medium",
+      },
+      {
+        id: "gpt-5.3-codex",
+        label: "GPT-5.3 Codex",
+        providerId: "codex",
+        contextWindow: 272_000,
+        supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "medium",
+      },
+      {
+        id: "gpt-5.2-codex",
+        label: "GPT-5.2 Codex",
+        providerId: "codex",
+        contextWindow: 272_000,
+        supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "medium",
+      },
+      {
+        id: "gpt-5.1-codex-mini",
+        label: "GPT-5.1 Codex Mini",
+        providerId: "codex",
+        contextWindow: 272_000,
+        // gpt-5.1-codex-mini treated same as gpt-5.1-codex: up to high, no xhigh
+        supportedReasoningLevels: ["low", "medium", "high"],
+        defaultReasoningLevel: "medium",
+      },
+    ],
   },
   {
     id: "cursor",
@@ -121,7 +177,7 @@ export function getDefaultModelId(): string {
 }
 
 /** Valid reasoning levels for fallback validation. */
-const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high", "max"];
+const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high", "max", "xhigh"];
 
 /**
  * Return the default reasoning level from user settings, falling back
@@ -147,19 +203,44 @@ export function isMaxEffortModel(modelId: string): boolean {
 
 /**
  * Normalizes a reasoning level for the given model.
- * Clamps "max" to "high" when the model does not support the max effort tier.
+ * - Clamps "max" to "high" for non-Opus Claude models.
+ * - Clamps "xhigh" to "high" for Claude models (xhigh is Codex-only).
  */
 export function normalizeReasoningLevelForModel(
   modelId: string,
   level: ReasoningLevel,
 ): ReasoningLevel {
-  if (level === "max" && !isMaxEffortModel(modelId)) {
-    return "high";
+  const codexLevels = getCodexReasoningLevels(modelId);
+  if (codexLevels) {
+    // For Codex models: xhigh is valid only if supported, otherwise clamp to high
+    if (level === "xhigh" && !codexLevels.includes("xhigh")) return "high";
+    // max is not a Codex level — treat as xhigh if supported, else high
+    if (level === "max") return codexLevels.includes("xhigh") ? "xhigh" : "high";
+    return level;
   }
+  // Claude: xhigh is not valid, clamp to high
+  if (level === "xhigh") return "high";
+  if (level === "max" && !isMaxEffortModel(modelId)) return "high";
   return level;
 }
 
 /** Returns the context window size for a model, falling back to DEFAULT_CONTEXT_WINDOW. */
 export function getContextWindow(modelId: string): number {
   return findModelById(modelId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+}
+
+/**
+ * Returns the Codex-specific reasoning levels for a model, or null if the model
+ * uses mcode's standard reasoning levels (i.e. is not a Codex model).
+ */
+export function getCodexReasoningLevels(modelId: string): readonly CodexReasoningLevel[] | null {
+  return findModelById(modelId)?.supportedReasoningLevels ?? null;
+}
+
+/**
+ * Returns true when the given Codex model supports the "xhigh" reasoning effort tier.
+ */
+export function isXhighModel(modelId: string): boolean {
+  const levels = getCodexReasoningLevels(modelId);
+  return levels?.includes("xhigh") ?? false;
 }

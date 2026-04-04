@@ -24,8 +24,11 @@ export const AgentDefaultModeSchema = z.enum([
 /** Default agent interaction mode value. */
 export type AgentDefaultMode = z.infer<typeof AgentDefaultModeSchema>;
 
-/** Reasoning effort level for model inference. */
-export const ReasoningLevelSchema = z.enum(["low", "medium", "high", "max"]);
+/**
+ * Reasoning effort level for model inference.
+ * "max" maps to Claude's extended thinking; "xhigh" maps to Codex's xhigh effort tier.
+ */
+export const ReasoningLevelSchema = z.enum(["low", "medium", "high", "max", "xhigh"]);
 /** Reasoning effort level value. */
 export type ReasoningLevel = z.infer<typeof ReasoningLevelSchema>;
 
@@ -133,6 +136,21 @@ export const SettingsSchema = lazySchema(() =>
           .default({}),
       })
       .default({}),
+
+    /** Provider-specific configuration. */
+    provider: z
+      .object({
+        /** CLI binary paths. Empty string means auto-discover from PATH. */
+        cli: z
+          .object({
+            /** Path to the Codex CLI binary. Empty uses PATH lookup. */
+            codex: z.string().default(""),
+            /** Path to the Claude CLI binary. Empty uses PATH lookup. */
+            claude: z.string().default(""),
+          })
+          .default({}),
+      })
+      .default({}),
   }),
 );
 
@@ -212,6 +230,16 @@ export const PartialSettingsSchema = lazySchema(() =>
         memory: z
           .object({
             heapMb: z.number().int().min(64).max(8192).optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    provider: z
+      .object({
+        cli: z
+          .object({
+            codex: z.string().optional(),
+            claude: z.string().optional(),
           })
           .optional(),
       })

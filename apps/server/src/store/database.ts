@@ -231,4 +231,11 @@ function runMigrations(db: Database.Database): void {
     `);
     db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(10);
   }
+
+  if (currentVersion < 11) {
+    db.exec(
+      "ALTER TABLE threads ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'",
+    );
+    db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(11);
+  }
 }
