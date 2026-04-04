@@ -43,9 +43,9 @@ function toCodexReasoningEffort(
 
 /**
  * Build a Codex SDK `Input` from a message string and optional attachments.
- * Images are passed as `local_image` entries referencing the file on disk.
- * Non-image attachments are included as a text note with the file path so the
- * agent can read them if needed.
+ * Images are passed as `local_image` entries referencing the persisted file path on disk.
+ * Non-image attachments are included as a sanitized text note (name and MIME type only)
+ * without exposing local filesystem paths.
  */
 function buildCodexInput(message: string, attachments?: AttachmentMeta[]): CodexInput {
   if (!attachments || attachments.length === 0) return message;
