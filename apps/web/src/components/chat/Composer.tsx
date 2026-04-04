@@ -380,12 +380,14 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const loadOpenPrs = useWorkspaceStore((s) => s.loadOpenPrs);
   const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
 
-  // Sync modelId with the active thread's locked model when switching threads
+  // Sync modelId when the SDK triggers a model fallback mid-session.
+  // Skip if a draft exists — the draft holds the user's explicit model choice and takes priority.
   useEffect(() => {
-    if (activeThread?.model) {
-      setModelId(activeThread.model);
-    }
-  }, [activeThread?.model]);
+    if (!activeThread?.model) return;
+    const hasDraft = threadId ? getDraft(threadId) != null : false;
+    if (hasDraft) return;
+    setModelId(activeThread.model);
+  }, [activeThread?.model, threadId, getDraft]);
 
   // Reactive per-thread and global-default slices so the effect re-runs on hydration
   const perThreadSettings = useThreadStore((s) => threadId ? s.settingsByThread[threadId] : undefined);
