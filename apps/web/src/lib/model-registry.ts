@@ -34,8 +34,10 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
   {
     id: "codex",
     name: "Codex",
-    comingSoon: true,
-    models: [],
+    comingSoon: false,
+    models: [
+      { id: "codex", label: "Codex", providerId: "codex", contextWindow: 192_000 },
+    ],
   },
   {
     id: "cursor",
