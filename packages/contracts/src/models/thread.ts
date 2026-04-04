@@ -20,6 +20,8 @@ export const ThreadSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   model: z.string().nullable(),
+  /** The AI provider used by this thread (e.g. "claude", "codex"). */
+  provider: z.string().default("claude"),
   deleted_at: z.string().nullable(),
   /** Last known input token count from the most recent turn. */
   last_context_tokens: z.number().int().nonnegative().nullable(),

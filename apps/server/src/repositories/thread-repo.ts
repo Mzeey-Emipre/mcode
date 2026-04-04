@@ -22,6 +22,7 @@ interface ThreadRow {
   pr_status: string | null;
   sdk_session_id: string | null;
   model: string | null;
+  provider: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -44,6 +45,7 @@ function rowToThread(row: ThreadRow): Thread {
     pr_status: row.pr_status,
     sdk_session_id: row.sdk_session_id,
     model: row.model ?? null,
+    provider: row.provider,
     created_at: row.created_at,
     updated_at: row.updated_at,
     deleted_at: row.deleted_at,
@@ -53,7 +55,7 @@ function rowToThread(row: ThreadRow): Thread {
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, created_at, updated_at, deleted_at, last_context_tokens, context_window";
+  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window";
 
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
@@ -67,6 +69,7 @@ export class ThreadRepo {
     mode: ThreadMode,
     branch: string,
     worktreeManaged = true,
+    provider = "claude",
   ): Thread {
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -74,7 +77,7 @@ export class ThreadRepo {
 
     this.db
       .prepare(
-        "INSERT INTO threads (id, workspace_id, title, status, mode, branch, worktree_managed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO threads (id, workspace_id, title, status, mode, branch, worktree_managed, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id,
@@ -84,6 +87,7 @@ export class ThreadRepo {
         mode,
         branch,
         managedInt,
+        provider,
         now,
         now,
       );
@@ -102,6 +106,7 @@ export class ThreadRepo {
       pr_status: null,
       sdk_session_id: null,
       model: null,
+      provider,
       created_at: now,
       updated_at: now,
       deleted_at: null,
@@ -171,6 +176,16 @@ export class ThreadRepo {
     const result = this.db
       .prepare("DELETE FROM threads WHERE id = ?")
       .run(id);
+
+    return result.changes > 0;
+  }
+
+  /** Update the provider associated with a thread. Returns true if a row was changed. */
+  updateProvider(id: string, provider: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare("UPDATE threads SET provider = ?, updated_at = ? WHERE id = ?")
+      .run(provider, now, id);
 
     return result.changes > 0;
   }
