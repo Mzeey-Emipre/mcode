@@ -64,4 +64,35 @@ describe("SettingsSchema", () => {
       expect(result.model.defaults.fallbackId).toBe("");
     });
   });
+
+  describe("terminal.scrollback", () => {
+    it("defaults to 250 when parsing an empty object", () => {
+      const result = SettingsSchema().parse({});
+      expect(result.terminal.scrollback).toBe(250);
+    });
+
+    it("accepts a custom scrollback value", () => {
+      const result = SettingsSchema().parse({ terminal: { scrollback: 1000 } });
+      expect(result.terminal.scrollback).toBe(1000);
+    });
+
+    it("rejects negative scrollback", () => {
+      const result = SettingsSchema().safeParse({ terminal: { scrollback: -1 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects non-integer scrollback", () => {
+      const result = SettingsSchema().safeParse({ terminal: { scrollback: 100.5 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts zero for unlimited scrollback", () => {
+      const result = SettingsSchema().parse({ terminal: { scrollback: 0 } });
+      expect(result.terminal.scrollback).toBe(0);
+    });
+
+    it("includes terminal.scrollback in getDefaultSettings()", () => {
+      expect(getDefaultSettings().terminal.scrollback).toBe(250);
+    });
+  });
 });

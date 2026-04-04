@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { getTransport } from "@/transport";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 import { CLEAR_TERMINAL_BUFFERS_EVENT } from "@/hooks/useIdleReclamation";
 // Static import so bundler deduplicates the stylesheet
@@ -22,6 +23,10 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
   const fitAddonRef = useRef<FitAddon | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
 
+  const scrollback = useSettingsStore((s) => s.settings.terminal.scrollback);
+  const scrollbackRef = useRef(scrollback);
+  scrollbackRef.current = scrollback;
+
   // Mount terminal
   useEffect(() => {
     const container = containerRef.current;
@@ -39,7 +44,7 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       if (disposed || !containerRef.current) return;
 
       const term = new XTerminal({
-        scrollback: 500,
+        scrollback: scrollbackRef.current,
         fontSize: 13,
         fontFamily: "monospace",
         theme: {
@@ -182,6 +187,13 @@ export function TerminalView({ ptyId, visible }: TerminalViewProps) {
       window.removeEventListener(CLEAR_TERMINAL_BUFFERS_EVENT, handleClearBuffers);
     };
   }, []);
+
+  // Sync scrollback setting to live terminal without remounting
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.options.scrollback = scrollback;
+    }
+  }, [scrollback]);
 
   return (
     <div
