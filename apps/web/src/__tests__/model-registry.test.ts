@@ -165,6 +165,13 @@ describe("findProviderForModel dated variants", () => {
   it("returns undefined for a totally unknown dated-style string", () => {
     expect(findProviderForModel("claude-unknown-99-9-20251001")).toBeUndefined();
   });
+
+  it("prefers longest match when model IDs share a prefix", () => {
+    const provider = findProviderForModel("claude-sonnet-4-6-20251001");
+    expect(provider?.id).toBe("claude");
+    const model = findModelById("claude-sonnet-4-6-20251001");
+    expect(model?.id).toBe("claude-sonnet-4-6");
+  });
 });
 
 describe("isMaxEffortModel", () => {
@@ -226,8 +233,8 @@ describe("resolveThreadModelId", () => {
     expect(resolveThreadModelId("claude-opus-4-6", "claude-sonnet-4-6")).toBe("claude-opus-4-6");
   });
 
-  it("returns locked model when it is a dated variant of a known model", () => {
-    expect(resolveThreadModelId("claude-haiku-4-5-20251001", "claude-sonnet-4-6")).toBe("claude-haiku-4-5-20251001");
+  it("normalizes dated variant to base model ID", () => {
+    expect(resolveThreadModelId("claude-haiku-4-5-20251001", "claude-sonnet-4-6")).toBe("claude-haiku-4-5");
   });
 
   it("returns default when locked model is null", () => {

@@ -58,44 +58,52 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
 ];
 
 /**
+ * Matches a dated SDK variant ID (e.g. `claude-haiku-4-5-20251001`) to its base
+ * model definition by prefix. Sorts candidates longest-first so a more specific
+ * ID is never shadowed by a shorter prefix.
+ */
+function matchDatedVariant(id: string): ModelDefinition | undefined {
+  return MODEL_PROVIDERS.flatMap((p) => p.models)
+    .sort((a, b) => b.id.length - a.id.length)
+    .find((m) => id.startsWith(`${m.id}-`));
+}
+
+/**
  * Finds a model definition by ID, with fallback prefix matching for dated variants
- * returned by the Anthropic SDK (e.g. `claude-haiku-4-5-20251001` → `claude-haiku-4-5`).
+ * returned by the Anthropic SDK (e.g. `claude-haiku-4-5-20251001` -> `claude-haiku-4-5`).
  */
 export function findModelById(id: string): ModelDefinition | undefined {
   for (const p of MODEL_PROVIDERS) {
     const m = p.models.find((model) => model.id === id);
     if (m) return m;
   }
-  // Dated variants use a hyphen separator, so `claude-haiku-4-5-20251001` starts with
-  // `claude-haiku-4-5-` and should resolve to the base model entry.
-  // Sort candidates longest-first so a more specific ID (e.g. `claude-sonnet-4-6`)
-  // is never shadowed by a shorter prefix match (e.g. a hypothetical `claude-sonnet-4`).
-  const allModels = MODEL_PROVIDERS.flatMap((p) => p.models).sort(
-    (a, b) => b.id.length - a.id.length,
-  );
-  const m = allModels.find((model) => id.startsWith(`${model.id}-`));
-  if (m) return m;
-  return undefined;
+  return matchDatedVariant(id);
 }
 
 /**
  * Resolves the model ID to display when switching to a thread with no draft.
- * Returns the thread's locked model if it is a recognized ID (including dated variants),
+ * Returns the thread's locked model normalized to its base ID if recognized,
  * otherwise falls back to the supplied default.
+ *
+ * @param lockedModel - The thread's stored model ID (may be a dated SDK variant, null, or undefined).
+ * @param defaultModelId - Fallback model ID when the locked model is absent or unrecognized.
  */
 export function resolveThreadModelId(
   lockedModel: string | null | undefined,
   defaultModelId: string,
 ): string {
-  if (lockedModel && findModelById(lockedModel)) return lockedModel;
+  if (lockedModel) {
+    const def = findModelById(lockedModel);
+    if (def) return def.id;
+  }
   return defaultModelId;
 }
 
 /** Finds the provider that owns the given model ID, including dated SDK variants. */
 export function findProviderForModel(modelId: string): ModelProvider | undefined {
-  return MODEL_PROVIDERS.find((p) =>
-    p.models.some((m) => m.id === modelId || modelId.startsWith(`${m.id}-`)),
-  );
+  const def = findModelById(modelId);
+  if (!def) return undefined;
+  return MODEL_PROVIDERS.find((p) => p.models.some((m) => m.id === def.id));
 }
 
 /** @deprecated Use `getDefaultModelId()` for settings-aware defaults. */
