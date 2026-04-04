@@ -12,7 +12,7 @@ import { injectable, inject } from "tsyringe";
 import { SettingsService } from "../../services/settings-service";
 import { EventEmitter } from "events";
 import { Codex } from "@openai/codex-sdk";
-import type { Thread as CodexThread } from "@openai/codex-sdk";
+import type { Thread as CodexThread, ModelReasoningEffort } from "@openai/codex-sdk";
 import { logger } from "@mcode/shared";
 import type {
   IAgentProvider,
@@ -21,6 +21,25 @@ import type {
   AgentEvent,
   AttachmentMeta,
 } from "@mcode/contracts";
+
+/**
+ * Map mcode ReasoningLevel to the Codex SDK's ModelReasoningEffort.
+ * mcode uses "max" for Claude's top tier; Codex uses "xhigh".
+ * mcode's "low"/"medium"/"high" map 1:1 to Codex.
+ */
+/**
+ * Map mcode ReasoningLevel to the Codex SDK's ModelReasoningEffort.
+ * - "max" (Claude's top tier) maps to "xhigh" for Codex.
+ * - "xhigh" passes through directly.
+ * - "low" / "medium" / "high" map 1:1.
+ */
+function toCodexReasoningEffort(
+  level: ReasoningLevel | undefined,
+): ModelReasoningEffort | undefined {
+  if (!level) return undefined;
+  if (level === "max" || level === "xhigh") return "xhigh";
+  return level as ModelReasoningEffort;
+}
 
 /** Idle TTL before a session is evicted (10 minutes). */
 const IDLE_TTL_MS = 10 * 60 * 1000;
@@ -123,7 +142,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
   }): Promise<void> {
     await this.refreshClient();
 
-    const { sessionId, message, cwd, model, resume, permissionMode } = params;
+    const { sessionId, message, cwd, model, resume, permissionMode, reasoningLevel } = params;
 
     if (!this.evictionTimer) {
       this.evictionTimer = setInterval(
@@ -166,10 +185,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       ? "danger-full-access" as const
       : "workspace-write" as const;
 
+    const modelReasoningEffort = toCodexReasoningEffort(reasoningLevel);
     const threadOptions = {
       workingDirectory: cwd,
       model: model || undefined,
       sandboxMode,
+      ...(modelReasoningEffort && { modelReasoningEffort }),
     };
 
     let codexThread: CodexThread;

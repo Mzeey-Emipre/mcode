@@ -24,8 +24,11 @@ export const AgentDefaultModeSchema = z.enum([
 /** Default agent interaction mode value. */
 export type AgentDefaultMode = z.infer<typeof AgentDefaultModeSchema>;
 
-/** Reasoning effort level for model inference. */
-export const ReasoningLevelSchema = z.enum(["low", "medium", "high", "max"]);
+/**
+ * Reasoning effort level for model inference.
+ * "max" maps to Claude's extended thinking; "xhigh" maps to Codex's xhigh effort tier.
+ */
+export const ReasoningLevelSchema = z.enum(["low", "medium", "high", "max", "xhigh"]);
 /** Reasoning effort level value. */
 export type ReasoningLevel = z.infer<typeof ReasoningLevelSchema>;
 

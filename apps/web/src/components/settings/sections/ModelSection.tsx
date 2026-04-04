@@ -1,6 +1,11 @@
 import { useMemo, type ReactNode } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { MODEL_PROVIDERS, isMaxEffortModel, normalizeReasoningLevelForModel } from "@/lib/model-registry";
+import {
+  MODEL_PROVIDERS,
+  isMaxEffortModel,
+  normalizeReasoningLevelForModel,
+  getCodexReasoningLevels,
+} from "@/lib/model-registry";
 import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import { SectionHeading } from "../SectionHeading";
@@ -38,6 +43,15 @@ const REASONING_OPTIONS_BASE = [
   { value: "high", label: "High" },
 ];
 
+/** Codex reasoning effort labels mapped from SDK level names. */
+const CODEX_REASONING_LABELS: Record<string, string> = {
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "X-High",
+};
+
 /**
  * Model settings section: provider, default model, fallback model, and reasoning effort.
  * Model options update when the provider changes. Switching provider resets the default
@@ -65,38 +79,62 @@ export function ModelSection() {
     [modelOptions],
   );
 
-  const reasoningOptions = useMemo(
-    () => [
+  const reasoningOptions = useMemo(() => {
+    const codexLevels = getCodexReasoningLevels(modelId);
+    if (codexLevels) {
+      // Codex model: show its specific supported levels
+      return codexLevels.map((level) => ({
+        value: level,
+        label: CODEX_REASONING_LABELS[level] ?? level,
+      }));
+    }
+    // Standard Claude reasoning levels
+    return [
       ...REASONING_OPTIONS_BASE,
       { value: "max", label: "Max", disabled: !isMaxEffortModel(modelId) },
-    ],
-    [modelId],
-  );
+    ];
+  }, [modelId]);
 
   const handleProviderChange = (v: string) => {
     const newProvider = MODEL_PROVIDERS.find((p) => p.id === v);
     const firstModel = newProvider?.models[0];
-    const clamped = firstModel
-      ? normalizeReasoningLevelForModel(firstModel.id, reasoning)
-      : reasoning;
+    let newReasoning: string = reasoning;
+    if (firstModel) {
+      const codexLevels = getCodexReasoningLevels(firstModel.id);
+      if (codexLevels) {
+        // Switching to Codex: reset to model default if current level isn't valid
+        newReasoning = codexLevels.includes(reasoning as never) ? reasoning : "medium";
+      } else {
+        newReasoning = normalizeReasoningLevelForModel(firstModel.id, reasoning);
+      }
+    }
     void update({
       model: {
         defaults: {
           provider: v as SettingsProviderId,
           ...(firstModel && { id: firstModel.id, fallbackId: "" }),
-          reasoning: clamped,
+          reasoning: newReasoning as ReasoningLevel,
         },
       },
     });
   };
 
   const handleModelChange = (v: string) => {
-    const clamped = normalizeReasoningLevelForModel(v, reasoning);
+    const codexLevels = getCodexReasoningLevels(v);
+    let newReasoning: string = reasoning;
+    if (codexLevels) {
+      // For Codex models: if the stored level isn't valid for this model, use its default
+      if (!codexLevels.includes(reasoning as never)) {
+        newReasoning = "medium";
+      }
+    } else {
+      newReasoning = normalizeReasoningLevelForModel(v, reasoning);
+    }
     void update({
       model: {
         defaults: {
           id: v,
-          ...(clamped !== reasoning && { reasoning: clamped }),
+          ...(newReasoning !== reasoning && { reasoning: newReasoning as ReasoningLevel }),
         },
       },
     });
