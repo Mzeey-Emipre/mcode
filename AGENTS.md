@@ -110,6 +110,7 @@ When adding or modifying user-facing settings, follow the schema conventions in 
 - **tsyringe docs:** https://github.com/microsoft/tsyringe
 - **shadcn/ui docs:** https://ui.shadcn.com/
 - **Tailwind CSS 4:** https://tailwindcss.com/docs
+- **Codex Agent SDK:** https://github.com/openai/codex (repo + SDK source, `@openai/codex-sdk`)
 
 ## Performance Requirements
 
