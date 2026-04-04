@@ -36,62 +36,72 @@ describe("ClaudeProvider resume listener cleanup", () => {
   }
 
   /**
-   * Register listeners for the resume retry lifecycle without emitting any events.
+   * Simulate the production resume listener lifecycle using the same
+   * try/finally pattern as doSendMessage (claude-provider.ts:306-331).
    *
-   * Both handlers call resolve() to signal cleanup is complete. The resumeHandler
-   * resolves when _resumeFailed fires (retry succeeded), and doneHandler resolves
-   * when _streamDone fires (stream completed). The promise settles as soon as either
-   * event fires, indicating cross-cleanup is complete.
+   * Registers two once() listeners, emits the specified event to settle
+   * the promise, then unconditionally removes both in a finally block.
+   * This mirrors the real code path without requiring the full SDK.
    *
    * @param provider - The ClaudeProvider instance
    * @param sessionId - The session ID for this listener cycle
-   * @returns A promise that settles when either handler fires
+   * @param eventToEmit - The event name to emit (triggers settlement)
+   * @returns The settled boolean (true = resumeFailed, false = streamDone)
    */
-  function registerListenerCycle(
+  async function runResumeCycle(
     provider: ClaudeProvider,
     sessionId: string,
+    eventToEmit: string,
   ): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
-      const resumeHandler = () => {
-        provider.removeListener(
-          `_streamDone:${sessionId}`,
-          doneHandler,
-        );
-        resolve(true);
-      };
-      const doneHandler = () => {
-        provider.removeListener(
-          `_resumeFailed:${sessionId}`,
-          resumeHandler,
-        );
-        resolve(false);
-      };
-      provider.once(`_resumeFailed:${sessionId}`, resumeHandler);
-      provider.once(`_streamDone:${sessionId}`, doneHandler);
+    const failedEvent = `_resumeFailed:${sessionId}`;
+    const doneEvent = `_streamDone:${sessionId}`;
+
+    let resumeHandler: (() => void) | null = null;
+    let doneHandler: (() => void) | null = null;
+
+    const retryPromise = new Promise<boolean>((resolve) => {
+      resumeHandler = () => resolve(true);
+      doneHandler = () => resolve(false);
+      provider.once(failedEvent, resumeHandler);
+      provider.once(doneEvent, doneHandler);
     });
+
+    provider.emit(eventToEmit);
+
+    let result: boolean;
+    try {
+      result = await retryPromise;
+    } finally {
+      if (resumeHandler) provider.removeListener(failedEvent, resumeHandler);
+      if (doneHandler) provider.removeListener(doneEvent, doneHandler);
+    }
+
+    return result;
   }
 
   it("cleans up both listeners after _resumeFailed fires", async () => {
     const sid = "test-session-1";
 
-    const listenerPromise = registerListenerCycle(provider, sid);
-    expect(countResumeListeners(provider, sid)).toBe(2);
+    const result = await runResumeCycle(
+      provider,
+      sid,
+      `_resumeFailed:${sid}`,
+    );
 
-    provider.emit(`_resumeFailed:${sid}`);
-    await listenerPromise;
-
+    expect(result).toBe(true);
     expect(countResumeListeners(provider, sid)).toBe(0);
   });
 
   it("cleans up both listeners after _streamDone fires", async () => {
     const sid = "test-session-2";
 
-    const listenerPromise = registerListenerCycle(provider, sid);
-    expect(countResumeListeners(provider, sid)).toBe(2);
+    const result = await runResumeCycle(
+      provider,
+      sid,
+      `_streamDone:${sid}`,
+    );
 
-    provider.emit(`_streamDone:${sid}`);
-    await listenerPromise;
-
+    expect(result).toBe(false);
     expect(countResumeListeners(provider, sid)).toBe(0);
   });
 
@@ -100,9 +110,8 @@ describe("ClaudeProvider resume listener cleanup", () => {
     const iterations = 50;
 
     for (let i = 0; i < iterations; i++) {
-      const listenerPromise = registerListenerCycle(provider, sid);
-      provider.emit(`_resumeFailed:${sid}`);
-      await listenerPromise;
+      await runResumeCycle(provider, sid, `_resumeFailed:${sid}`);
+      expect(countResumeListeners(provider, sid)).toBe(0);
     }
 
     expect(countResumeListeners(provider, sid)).toBe(0);
