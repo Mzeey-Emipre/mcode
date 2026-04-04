@@ -15,6 +15,7 @@ import type {
   ReasoningLevel,
   IProviderRegistry,
   AgentEvent,
+  ProviderId,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -105,6 +106,7 @@ export class AgentService {
     model = "claude-sonnet-4-6",
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
+    provider = "claude",
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -172,21 +174,22 @@ export class AgentService {
     const fallbackModel =
       fallbackId && fallbackId !== resolvedModel ? fallbackId : undefined;
     this.threadRepo.updateModel(threadId, resolvedModel);
+    this.threadRepo.updateProvider(threadId, provider);
 
     const sessionName = `mcode-${threadId}`;
     const isResume = nextSeq > 1;
 
     // Hydrate SDK session ID mapping for resume
     if (isResume && thread.sdk_session_id) {
-      const provider = this.providerRegistry.resolve("claude");
-      provider.setSdkSessionId(sessionName, thread.sdk_session_id);
+      const resolvedProvider = this.providerRegistry.resolve(provider as ProviderId);
+      resolvedProvider.setSdkSessionId(sessionName, thread.sdk_session_id);
     }
 
     this.activeSessionIds.add(threadId);
     this.memoryPressureService.markActive();
     try {
-      const provider = this.providerRegistry.resolve("claude");
-      await provider.sendMessage({
+      const resolvedProvider = this.providerRegistry.resolve(provider as ProviderId);
+      await resolvedProvider.sendMessage({
         sessionId: sessionName,
         message: content,
         cwd,
@@ -231,6 +234,7 @@ export class AgentService {
     existingWorktreePath?: string,
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
+    provider = "claude",
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
@@ -257,6 +261,7 @@ export class AgentService {
         "worktree",
         canonicalBranch,
         false,
+        provider,
       );
       this.threadRepo.updateWorktreePath(thread.id, existingWorktreePath);
       thread = {
@@ -266,12 +271,16 @@ export class AgentService {
       };
     } else if (mode === "worktree") {
       thread = await this.threadService.create(workspaceId, title, "worktree", branch);
+      this.threadRepo.updateProvider(thread.id, provider);
+      thread = { ...thread, provider };
     } else {
       thread = this.threadRepo.create(
         workspaceId,
         title,
         "direct",
         branch,
+        true,
+        provider,
       );
     }
 
@@ -282,6 +291,7 @@ export class AgentService {
       model,
       attachments,
       reasoningLevel,
+      provider,
     );
 
     // Re-read from DB to pick up model update applied by sendMessage
@@ -292,8 +302,10 @@ export class AgentService {
   /** Stop the agent for a given thread, persisting any buffered tool calls first. */
   async stopSession(threadId: string): Promise<void> {
     const sessionId = `mcode-${threadId}`;
+    const thread = this.threadRepo.findById(threadId);
+    const providerId = (thread?.provider ?? "claude") as ProviderId;
     try {
-      const provider = this.providerRegistry.resolve("claude");
+      const provider = this.providerRegistry.resolve(providerId);
       provider.stopSession(sessionId);
     } catch {
       // Provider may not be available
@@ -639,8 +651,10 @@ export class AgentService {
     const ids = [...this.activeSessionIds];
     for (const threadId of ids) {
       const sessionId = `mcode-${threadId}`;
+      const thread = this.threadRepo.findById(threadId);
+      const providerId = (thread?.provider ?? "claude") as ProviderId;
       try {
-        const provider = this.providerRegistry.resolve("claude");
+        const provider = this.providerRegistry.resolve(providerId);
         provider.stopSession(sessionId);
       } catch {
         // best-effort
