@@ -364,8 +364,11 @@ async function dispatch(
         parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10),
       ) };
 
-    // Clipboard
+    // Clipboard (legacy JSON-RPC path -- binary upload preferred)
     case "clipboard.saveFile": {
+      if (!params.data) {
+        throw new Error("clipboard.saveFile via JSON-RPC requires the data field; use binary upload instead");
+      }
       const buffer = Buffer.from(params.data, "base64");
       const id = randomUUID();
       const ext = getExtension(params.fileName);

@@ -54,19 +54,6 @@ import type { ReasoningLevel } from "@mcode/contracts";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 
-/** Convert a Blob to a base64 string using the native FileReader API. */
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
 interface ComposerProps {
   threadId?: string;
   isNewThread?: boolean;
@@ -641,9 +628,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
               file.name,
             );
           } else {
-            // Encode as base64 using native FileReader (async, no UI blocking)
-            const base64 = await blobToBase64(file);
-            meta = await getTransport().saveClipboardFile(base64, mimeType, file.name);
+            // Send binary data directly over WebSocket (no base64 encoding)
+            const arrayBuffer = await file.arrayBuffer();
+            meta = await getTransport().saveClipboardFile(arrayBuffer, mimeType, file.name);
           }
           if (meta) {
             const resolved = meta;

@@ -240,8 +240,11 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "clipboard.saveFile": {
     params: z.object({
-      /** Base64-encoded file content (1 byte to ~45 MB). */
-      data: z.string().min(1).max(45_000_000),
+      /**
+       * Base64-encoded file content. Optional when using binary WebSocket upload
+       * (the payload arrives as a separate binary frame).
+       */
+      data: z.string().min(1).max(45_000_000).optional(),
       /** MIME type of the file (e.g. "application/pdf", "text/plain"). */
       mimeType: z.string().min(1).max(127),
       /** Display name for the file (e.g. "document.pdf"). No path separators allowed. */

@@ -94,11 +94,13 @@ export {
   WebSocketRequestSchema,
   WebSocketResponseSchema,
   WsPushSchema,
+  BinaryUploadHeaderSchema,
 } from "./ws/protocol.js";
 export type {
   WebSocketRequest,
   WebSocketResponse,
   WsPush,
+  BinaryUploadHeader,
 } from "./ws/protocol.js";
 
 export {
