@@ -68,11 +68,27 @@ export function findModelById(id: string): ModelDefinition | undefined {
   }
   // Dated variants use a hyphen separator, so `claude-haiku-4-5-20251001` starts with
   // `claude-haiku-4-5-` and should resolve to the base model entry.
-  for (const p of MODEL_PROVIDERS) {
-    const m = p.models.find((model) => id.startsWith(`${model.id}-`));
-    if (m) return m;
-  }
+  // Sort candidates longest-first so a more specific ID (e.g. `claude-sonnet-4-6`)
+  // is never shadowed by a shorter prefix match (e.g. a hypothetical `claude-sonnet-4`).
+  const allModels = MODEL_PROVIDERS.flatMap((p) => p.models).sort(
+    (a, b) => b.id.length - a.id.length,
+  );
+  const m = allModels.find((model) => id.startsWith(`${model.id}-`));
+  if (m) return m;
   return undefined;
+}
+
+/**
+ * Resolves the model ID to display when switching to a thread with no draft.
+ * Returns the thread's locked model if it is a recognized ID (including dated variants),
+ * otherwise falls back to the supplied default.
+ */
+export function resolveThreadModelId(
+  lockedModel: string | null | undefined,
+  defaultModelId: string,
+): string {
+  if (lockedModel && findModelById(lockedModel)) return lockedModel;
+  return defaultModelId;
 }
 
 /** Finds the provider that owns the given model ID, including dated SDK variants. */
@@ -113,10 +129,12 @@ const MAX_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-6"];
 
 /**
  * Returns true when the given model supports "max" reasoning effort.
- * Only Opus 4.6 exposes the max effort tier.
+ * Only Opus 4.6 exposes the max effort tier. Accepts dated SDK variants
+ * (e.g. `claude-opus-4-6-20251001`) by normalizing through `findModelById`.
  */
 export function isMaxEffortModel(modelId: string): boolean {
-  return MAX_EFFORT_MODEL_IDS.includes(modelId);
+  const baseId = findModelById(modelId)?.id ?? modelId;
+  return MAX_EFFORT_MODEL_IDS.includes(baseId);
 }
 
 /**

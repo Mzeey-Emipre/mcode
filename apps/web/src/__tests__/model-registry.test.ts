@@ -10,6 +10,7 @@ import {
   getDefaultReasoningLevel,
   isMaxEffortModel,
   normalizeReasoningLevelForModel,
+  resolveThreadModelId,
 } from "@/lib/model-registry";
 
 describe("ModelRegistry", () => {
@@ -127,13 +128,60 @@ describe("ReasoningLevelSchema", () => {
   });
 });
 
+describe("findModelById dated variants", () => {
+  it("resolves claude-haiku-4-5-20251001 to claude-haiku-4-5", () => {
+    const model = findModelById("claude-haiku-4-5-20251001");
+    expect(model?.id).toBe("claude-haiku-4-5");
+    expect(model?.label).toBe("Claude Haiku 4.5");
+  });
+
+  it("resolves claude-sonnet-4-6-20251001 to claude-sonnet-4-6", () => {
+    const model = findModelById("claude-sonnet-4-6-20251001");
+    expect(model?.id).toBe("claude-sonnet-4-6");
+  });
+
+  it("resolves claude-opus-4-6-20251001 to claude-opus-4-6", () => {
+    const model = findModelById("claude-opus-4-6-20251001");
+    expect(model?.id).toBe("claude-opus-4-6");
+  });
+
+  it("returns undefined for a totally unknown dated-style string", () => {
+    expect(findModelById("claude-unknown-99-9-20251001")).toBeUndefined();
+  });
+
+  it("prefers longest match when model IDs share a prefix", () => {
+    // Ensures a future model like "claude-sonnet-4" doesn't shadow "claude-sonnet-4-6"
+    // The dated variant of the longer ID must resolve to the longer ID.
+    const model = findModelById("claude-sonnet-4-6-20251001");
+    expect(model?.id).toBe("claude-sonnet-4-6");
+  });
+});
+
+describe("findProviderForModel dated variants", () => {
+  it("resolves claude-haiku-4-5-20251001 to claude provider", () => {
+    expect(findProviderForModel("claude-haiku-4-5-20251001")?.id).toBe("claude");
+  });
+
+  it("returns undefined for a totally unknown dated-style string", () => {
+    expect(findProviderForModel("claude-unknown-99-9-20251001")).toBeUndefined();
+  });
+});
+
 describe("isMaxEffortModel", () => {
   it("returns true for claude-opus-4-6", () => {
     expect(isMaxEffortModel("claude-opus-4-6")).toBe(true);
   });
 
+  it("returns true for dated Opus variant claude-opus-4-6-20251001", () => {
+    expect(isMaxEffortModel("claude-opus-4-6-20251001")).toBe(true);
+  });
+
   it("returns false for claude-sonnet-4-6", () => {
     expect(isMaxEffortModel("claude-sonnet-4-6")).toBe(false);
+  });
+
+  it("returns false for dated Sonnet variant", () => {
+    expect(isMaxEffortModel("claude-sonnet-4-6-20251001")).toBe(false);
   });
 
   it("returns false for claude-haiku-4-5", () => {
@@ -150,8 +198,16 @@ describe("normalizeReasoningLevelForModel", () => {
     expect(normalizeReasoningLevelForModel("claude-opus-4-6", "max")).toBe("max");
   });
 
+  it("returns max unchanged for dated Opus variant", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-6-20251001", "max")).toBe("max");
+  });
+
   it("clamps max to high for Sonnet", () => {
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "max")).toBe("high");
+  });
+
+  it("clamps max to high for dated Sonnet variant", () => {
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6-20251001", "max")).toBe("high");
   });
 
   it("clamps max to high for Haiku", () => {
@@ -162,5 +218,27 @@ describe("normalizeReasoningLevelForModel", () => {
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "high")).toBe("high");
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "medium")).toBe("medium");
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "low")).toBe("low");
+  });
+});
+
+describe("resolveThreadModelId", () => {
+  it("returns locked model when it is a known model ID", () => {
+    expect(resolveThreadModelId("claude-opus-4-6", "claude-sonnet-4-6")).toBe("claude-opus-4-6");
+  });
+
+  it("returns locked model when it is a dated variant of a known model", () => {
+    expect(resolveThreadModelId("claude-haiku-4-5-20251001", "claude-sonnet-4-6")).toBe("claude-haiku-4-5-20251001");
+  });
+
+  it("returns default when locked model is null", () => {
+    expect(resolveThreadModelId(null, "claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
+  });
+
+  it("returns default when locked model is undefined", () => {
+    expect(resolveThreadModelId(undefined, "claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
+  });
+
+  it("returns default when locked model is an unknown ID", () => {
+    expect(resolveThreadModelId("some-unknown-model", "claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
   });
 });
