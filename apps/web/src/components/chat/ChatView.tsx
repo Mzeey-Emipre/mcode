@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { HeaderActions } from "./HeaderActions";
+import { CliErrorBanner, isCliError } from "./CliErrorBanner";
 
 /** Prompt suggestions shown in the empty state. */
 const PROMPT_CHIPS = [
@@ -68,6 +69,26 @@ export function ChatView() {
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeThread = threads.find((t) => t.id === activeThreadId);
+  const sessionError = useThreadStore((s) => s.error);
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
+
+  const handleDismissCliError = useCallback(() => {
+    setDismissedError(sessionError);
+  }, [sessionError]);
+
+  // Reset dismissed state when the active thread changes
+  useEffect(() => {
+    setDismissedError(null);
+  }, [activeThreadId]);
+
+  const handleOpenSettings = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: { section: "model" } }));
+  }, []);
+
+  const showCliError =
+    !!sessionError &&
+    isCliError(sessionError) &&
+    sessionError !== dismissedError;
 
   const activeWorkspaceName = useMemo(
     () => workspaces.find((w) => w.id === (activeThread?.workspace_id ?? activeWorkspaceId))?.name ?? "",
@@ -168,6 +189,15 @@ export function ChatView() {
           <MessageList />
         )}
       </div>
+
+      {/* CLI error banner — shown when the provider binary is not found */}
+      {showCliError && (
+        <CliErrorBanner
+          error={sessionError!}
+          onDismiss={handleDismissCliError}
+          onOpenSettings={handleOpenSettings}
+        />
+      )}
 
       {/* Composer */}
       <Composer threadId={activeThread.id} workspaceId={activeWorkspaceId ?? undefined} />

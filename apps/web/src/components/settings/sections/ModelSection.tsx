@@ -5,6 +5,7 @@ import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import { SectionHeading } from "../SectionHeading";
 import type { SettingsProviderId, ReasoningLevel } from "@mcode/contracts";
+import { cn } from "@/lib/utils";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -48,6 +49,8 @@ export function ModelSection() {
   const modelId = useSettingsStore((s) => s.settings.model.defaults.id);
   const fallbackId = useSettingsStore((s) => s.settings.model.defaults.fallbackId);
   const reasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
+  const codexCliPath = useSettingsStore((s) => s.settings.provider.cli.codex);
+  const claudeCliPath = useSettingsStore((s) => s.settings.provider.cli.claude);
   const update = useSettingsStore((s) => s.update);
 
   const activeProvider = MODEL_PROVIDERS.find((p) => p.id === provider);
@@ -144,6 +147,44 @@ export function ModelSection() {
           }
         />
       </SettingRow>
+      </div>
+
+      <div className="mt-8">
+        <SectionHeading>CLI Paths</SectionHeading>
+        <div>
+          <SettingRow
+            label="Codex CLI path"
+            configKey="provider.cli.codex"
+            hint="Path to the Codex CLI binary. Leave empty to auto-discover from PATH."
+          >
+            <input
+              type="text"
+              value={codexCliPath}
+              onChange={(e) => void update({ provider: { cli: { codex: e.target.value } } })}
+              placeholder="codex"
+              className={cn(
+                "h-7 w-56 rounded border border-border bg-background px-2 text-xs text-foreground",
+                "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
+              )}
+            />
+          </SettingRow>
+          <SettingRow
+            label="Claude CLI path"
+            configKey="provider.cli.claude"
+            hint="Path to the Claude Code CLI binary. Leave empty to auto-discover from PATH."
+          >
+            <input
+              type="text"
+              value={claudeCliPath}
+              onChange={(e) => void update({ provider: { cli: { claude: e.target.value } } })}
+              placeholder="claude"
+              className={cn(
+                "h-7 w-56 rounded border border-border bg-background px-2 text-xs text-foreground",
+                "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
+              )}
+            />
+          </SettingRow>
+        </div>
       </div>
     </div>
   );
