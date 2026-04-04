@@ -143,6 +143,12 @@ When adding a new setting, ask these questions in order:
     "memory": {
       "heapMb": 512                    // 64-8192, V8 max old space (MB)
     }
+  },
+  "provider": {
+    "cli": {
+      "codex": "",                     // Path to codex CLI, empty = auto-discover
+      "claude": ""                     // Path to claude CLI, empty = auto-discover
+    }
   }
 }
 ```
