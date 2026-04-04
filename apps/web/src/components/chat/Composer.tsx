@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, resolveThreadModelId, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -180,11 +180,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
     const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
     setModelId(validModelId);
-    setReasoning(
-      settingsDefaultReasoning === "max" && !isMaxEffortModel(validModelId)
-        ? "high"
-        : settingsDefaultReasoning
-    );
+    setReasoning(normalizeReasoningLevelForModel(validModelId, settingsDefaultReasoning));
 
     // Sync mode and access from settings for new threads, unless the user already toggled them
     if (!threadId && !agentSettingsTouchedRef.current) {
@@ -195,8 +191,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   // Reset "max" reasoning when the selected model does not support it
   useEffect(() => {
-    if (reasoning === "max" && !isMaxEffortModel(modelId)) {
-      setReasoning("high");
+    const normalized = normalizeReasoningLevelForModel(modelId, reasoning);
+    if (normalized !== reasoning) {
+      setReasoning(normalized);
     }
   }, [modelId, reasoning]);
 
@@ -224,11 +221,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setInput(saved.input);
         setAttachments(saved.attachments);
         setModelId(saved.modelId);
-        setReasoning(
-          saved.reasoning === "max" && !isMaxEffortModel(saved.modelId)
-            ? "high"
-            : saved.reasoning
-        );
+        setReasoning(normalizeReasoningLevelForModel(saved.modelId, saved.reasoning));
         // Restore Lexical editor content
         if (editorRef.current) {
           const editor = editorRef.current;
@@ -251,12 +244,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         const nextThread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
         const resolvedModelId = resolveThreadModelId(nextThread?.model, getDefaultModelId());
         setModelId(resolvedModelId);
-        const defaultReasoning1 = getDefaultReasoningLevel();
-        setReasoning(
-          defaultReasoning1 === "max" && !isMaxEffortModel(resolvedModelId)
-            ? "high"
-            : defaultReasoning1
-        );
+        setReasoning(normalizeReasoningLevelForModel(resolvedModelId, getDefaultReasoningLevel()));
         // Reset Lexical editor
         if (editorRef.current) {
           editorRef.current.update(() => {
@@ -271,12 +259,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       setInput("");
       setAttachments([]);
       setModelId(getDefaultModelId());
-      const defaultReasoning2 = getDefaultReasoningLevel();
-      setReasoning(
-        defaultReasoning2 === "max" && !isMaxEffortModel(getDefaultModelId())
-          ? "high"
-          : defaultReasoning2
-      );
+      setReasoning(normalizeReasoningLevelForModel(getDefaultModelId(), getDefaultReasoningLevel()));
       // Reset mode/access to persisted defaults
       agentSettingsTouchedRef.current = false;
       const { settings } = useSettingsStore.getState();
