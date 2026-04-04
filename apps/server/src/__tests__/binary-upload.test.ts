@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { describe, it, expect } from "vitest";
 import { handleBinaryUpload } from "../transport/binary-upload";
 import { existsSync } from "fs";
-import { readFile } from "fs/promises";
+import { readFile, unlink } from "fs/promises";
 
 describe("handleBinaryUpload", () => {
   it("writes binary data to a temp file and returns attachment metadata", async () => {
@@ -13,19 +13,22 @@ describe("handleBinaryUpload", () => {
     };
 
     const result = await handleBinaryUpload(meta, payload);
+    try {
+      expect(result).toMatchObject({
+        id: expect.any(String),
+        name: "test.txt",
+        mimeType: "text/plain",
+        sizeBytes: 11,
+        sourcePath: expect.stringContaining("test"),
+      });
 
-    expect(result).toMatchObject({
-      id: expect.any(String),
-      name: "test.txt",
-      mimeType: "text/plain",
-      sizeBytes: 11,
-      sourcePath: expect.stringContaining("test"),
-    });
-
-    // Verify the file was actually written
-    expect(existsSync(result.sourcePath)).toBe(true);
-    const contents = await readFile(result.sourcePath);
-    expect(contents.toString()).toBe("hello world");
+      // Verify the file was actually written
+      expect(existsSync(result.sourcePath)).toBe(true);
+      const contents = await readFile(result.sourcePath);
+      expect(contents.toString()).toBe("hello world");
+    } finally {
+      await unlink(result.sourcePath).catch(() => undefined);
+    }
   });
 
   it("rejects files exceeding size limits", async () => {

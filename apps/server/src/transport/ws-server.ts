@@ -38,7 +38,7 @@ export function createWsServer(deps: RouterDeps): {
     },
   );
 
-  const wss = new WebSocketServer({ server: httpServer, maxPayload: 33 * 1024 * 1024 });
+  const wss = new WebSocketServer({ server: httpServer, maxPayload: 45 * 1024 * 1024 });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     // Auth: validate token from query params if configured

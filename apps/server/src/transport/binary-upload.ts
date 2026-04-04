@@ -7,7 +7,7 @@
 import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import { join, basename } from "path";
-import { tmpdir } from "os";
+import { getMcodeDir } from "@mcode/shared";
 import { getMaxSizeForMime } from "../services/attachment-service";
 
 /** Metadata accompanying a binary upload frame. */
@@ -49,7 +49,7 @@ export async function handleBinaryUpload(
   }
 
   const id = randomUUID();
-  const tempDir = join(tmpdir(), "mcode-attachments");
+  const tempDir = join(getMcodeDir(), "temp", "attachments");
   await mkdir(tempDir, { recursive: true });
   // Prefix with UUID to guarantee uniqueness; retain original name for debuggability.
   const tempPath = join(tempDir, `${id}-${safeName}`);
