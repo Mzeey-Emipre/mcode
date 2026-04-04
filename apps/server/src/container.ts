@@ -19,6 +19,7 @@ import { CleanupJobRepo } from "./repositories/cleanup-job-repo";
 
 // Providers
 import { ClaudeProvider } from "./providers/claude/claude-provider";
+import { CodexProvider } from "./providers/codex/codex-provider";
 import { ProviderRegistry } from "./providers/provider-registry";
 
 // Services
@@ -112,6 +113,14 @@ export function setupContainer(): typeof container {
   );
   container.register("IAgentProvider", {
     useFactory: (c) => c.resolve(ClaudeProvider),
+  });
+  container.register(
+    CodexProvider,
+    { useClass: CodexProvider },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("IAgentProvider", {
+    useFactory: (c) => c.resolve(CodexProvider),
   });
 
   // Provider Registry
