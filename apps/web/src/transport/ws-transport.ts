@@ -206,6 +206,36 @@ export function createWsTransport(
   }
 
   /**
+   * Send a binary payload via WebSocket with a JSON header for correlation.
+   * 1. Sends a JSON text frame with upload metadata and request ID
+   * 2. Immediately sends the binary data as a binary frame
+   * 3. Server matches the binary frame to the header and responds on the same ID
+   */
+  async function rpcBinary<T>(
+    method: string,
+    meta: Record<string, unknown>,
+    payload: ArrayBuffer,
+  ): Promise<T> {
+    await ready;
+    return new Promise<T>((resolve, reject) => {
+      const id = `req_${++idCounter}`;
+      pending.set(id, {
+        resolve: resolve as (v: unknown) => void,
+        reject,
+      });
+      try {
+        // Step 1: Send JSON header
+        ws.send(JSON.stringify({ type: "binary-upload", id, method, meta }));
+        // Step 2: Send binary payload
+        ws.send(payload);
+      } catch (err) {
+        pending.delete(id);
+        reject(err);
+      }
+    });
+  }
+
+  /**
    * Wait for the WebSocket to establish a connection, or reject if
    * the timeout elapses first.
    */
@@ -283,7 +313,7 @@ export function createWsTransport(
     readClipboardImage: () =>
       Promise.resolve(null as AttachmentMeta | null),
     saveClipboardFile: (data, mimeType, fileName) =>
-      rpc<AttachmentMeta | null>("clipboard.saveFile", { data, mimeType, fileName }),
+      rpcBinary<AttachmentMeta | null>("clipboard.saveFile", { mimeType, fileName }, data),
     getActiveAgentCount: () => rpc<number>("agent.activeCount", {}),
 
     // Messages

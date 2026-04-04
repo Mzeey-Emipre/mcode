@@ -92,7 +92,7 @@ export interface McodeTransport {
   stopAgent(threadId: string): Promise<void>;
   readClipboardImage(): Promise<AttachmentMeta | null>;
   /** Save a clipboard file blob to disk via the server. Returns attachment metadata. */
-  saveClipboardFile(data: string, mimeType: string, fileName: string): Promise<AttachmentMeta | null>;
+  saveClipboardFile(data: ArrayBuffer, mimeType: string, fileName: string): Promise<AttachmentMeta | null>;
   getActiveAgentCount(): Promise<number>;
 
   // Thread mutations
