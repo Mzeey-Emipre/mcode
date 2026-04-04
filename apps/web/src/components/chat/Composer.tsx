@@ -144,6 +144,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const draftRef = useRef({ input, attachments, modelId, reasoning });
   /** Tracks whether the user toggled mode/access before settings finished loading. */
   const agentSettingsTouchedRef = useRef(false);
+  /** Set to true by the thread-switch effect; cleared by the model-sync effect.
+   *  Prevents Effect 2 from overwriting Effect 1's model choice on thread switch. */
+  const threadSwitchRef = useRef(false);
 
   // Keep draft ref in sync so the thread-switch effect reads current values
   useEffect(() => {
@@ -168,6 +171,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     // Only sync when no draft exists (new thread or thread without saved state)
     const hasDraft = threadId ? getDraft(threadId) != null : false;
     if (hasDraft) return;
+
+    // Don't override a thread's locked model with the global default
+    if (threadId) {
+      const thread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
+      if (thread?.model && findModelById(thread.model)) return;
+    }
 
     const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
     setModelId(validModelId);
@@ -282,6 +291,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       }
     }
 
+    threadSwitchRef.current = true;
     prevThreadIdRef.current = threadId;
   }, [threadId]); // saveDraft/getDraft are stable store refs; setters are stable useState refs
   // Intentionally exclude saveDraft/getDraft (stable store refs) and setters (stable useState refs)
@@ -381,9 +391,14 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
 
   // Sync modelId when the SDK triggers a model fallback mid-session.
-  // Skip if a draft exists — the draft holds the user's explicit model choice and takes priority.
+  // Skip on thread switch (Effect 1 already set the model) and when a draft exists
+  // (the draft holds the user's explicit model choice).
   useEffect(() => {
     if (!activeThread?.model) return;
+    if (threadSwitchRef.current) {
+      threadSwitchRef.current = false;
+      return;
+    }
     const hasDraft = threadId ? getDraft(threadId) != null : false;
     if (hasDraft) return;
     setModelId(activeThread.model);
