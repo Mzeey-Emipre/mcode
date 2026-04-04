@@ -36,7 +36,9 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     name: "Codex",
     comingSoon: false,
     models: [
-      { id: "codex", label: "Codex", providerId: "codex", contextWindow: 192_000 },
+      { id: "o3", label: "o3", providerId: "codex", contextWindow: 200_000 },
+      { id: "o4-mini", label: "o4-mini", providerId: "codex", contextWindow: 200_000 },
+      { id: "codex-mini", label: "Codex Mini", providerId: "codex", contextWindow: 192_000 },
     ],
   },
   {
