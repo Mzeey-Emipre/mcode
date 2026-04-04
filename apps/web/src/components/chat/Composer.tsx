@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, normalizeReasoningLevelForModel, DEFAULT_CONTEXT_WINDOW, findProviderForModel, getCodexReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, DEFAULT_CONTEXT_WINDOW, findProviderForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -144,6 +144,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const draftRef = useRef({ input, attachments, modelId, reasoning });
   /** Tracks whether the user toggled mode/access before settings finished loading. */
   const agentSettingsTouchedRef = useRef(false);
+  /** Set to true by the thread-switch effect; cleared by the model-sync effect.
+   *  Prevents Effect 2 from overwriting Effect 1's model choice on thread switch. */
+  const threadSwitchRef = useRef(false);
 
   // Keep draft ref in sync so the thread-switch effect reads current values
   useEffect(() => {
@@ -169,13 +172,15 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     const hasDraft = threadId ? getDraft(threadId) != null : false;
     if (hasDraft) return;
 
+    // Don't override a thread's locked model with the global default
+    if (threadId) {
+      const thread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
+      if (thread?.model && findModelById(thread.model)) return;
+    }
+
     const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
     setModelId(validModelId);
-    setReasoning(
-      settingsDefaultReasoning === "max" && !isMaxEffortModel(validModelId)
-        ? "high"
-        : settingsDefaultReasoning
-    );
+    setReasoning(normalizeReasoningLevelForModel(validModelId, settingsDefaultReasoning));
 
     // Sync mode and access from settings for new threads, unless the user already toggled them
     if (!threadId && !agentSettingsTouchedRef.current) {
@@ -186,9 +191,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   // Reset reasoning when the selected model does not support the current level
   useEffect(() => {
-    const clamped = normalizeReasoningLevelForModel(modelId, reasoning);
-    if (clamped !== reasoning) {
-      setReasoning(clamped);
+    const normalized = normalizeReasoningLevelForModel(modelId, reasoning);
+    if (normalized !== reasoning) {
+      setReasoning(normalized);
     }
   }, [modelId, reasoning]);
 
@@ -216,11 +221,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setInput(saved.input);
         setAttachments(saved.attachments);
         setModelId(saved.modelId);
-        setReasoning(
-          saved.reasoning === "max" && !isMaxEffortModel(saved.modelId)
-            ? "high"
-            : saved.reasoning
-        );
+        setReasoning(normalizeReasoningLevelForModel(saved.modelId, saved.reasoning));
         // Restore Lexical editor content
         if (editorRef.current) {
           const editor = editorRef.current;
@@ -237,16 +238,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           });
         }
       } else {
-        // No saved draft: reset to defaults
+        // No saved draft: use thread's locked model if available, otherwise global default
         setInput("");
         setAttachments([]);
-        setModelId(getDefaultModelId());
-        const defaultReasoning1 = getDefaultReasoningLevel();
-        setReasoning(
-          defaultReasoning1 === "max" && !isMaxEffortModel(getDefaultModelId())
-            ? "high"
-            : defaultReasoning1
-        );
+        const nextThread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
+        const resolvedModelId = resolveThreadModelId(nextThread?.model, getDefaultModelId());
+        setModelId(resolvedModelId);
+        setReasoning(normalizeReasoningLevelForModel(resolvedModelId, getDefaultReasoningLevel()));
         // Reset Lexical editor
         if (editorRef.current) {
           editorRef.current.update(() => {
@@ -261,12 +259,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       setInput("");
       setAttachments([]);
       setModelId(getDefaultModelId());
-      const defaultReasoning2 = getDefaultReasoningLevel();
-      setReasoning(
-        defaultReasoning2 === "max" && !isMaxEffortModel(getDefaultModelId())
-          ? "high"
-          : defaultReasoning2
-      );
+      setReasoning(normalizeReasoningLevelForModel(getDefaultModelId(), getDefaultReasoningLevel()));
       // Reset mode/access to persisted defaults
       agentSettingsTouchedRef.current = false;
       const { settings } = useSettingsStore.getState();
@@ -281,9 +274,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       }
     }
 
+    threadSwitchRef.current = true;
     prevThreadIdRef.current = threadId;
-  }, [threadId]); // saveDraft/getDraft are stable store refs; setters are stable useState refs
-  // Intentionally exclude saveDraft/getDraft (stable store refs) and setters (stable useState refs)
+  }, [threadId, saveDraft, getDraft]);
 
   // Consume pending prefill set by empty-state prompt chips
   useEffect(() => {
@@ -379,12 +372,20 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const loadOpenPrs = useWorkspaceStore((s) => s.loadOpenPrs);
   const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
 
-  // Sync modelId with the active thread's locked model when switching threads
+  // Sync modelId when the SDK triggers a model fallback mid-session.
+  // Skip on thread switch (Effect 1 already set the model).
+  // Skip when a draft exists UNLESS the agent is running (server-side override takes priority).
   useEffect(() => {
-    if (activeThread?.model) {
-      setModelId(activeThread.model);
+    if (!activeThread?.model) return;
+    if (threadSwitchRef.current) {
+      threadSwitchRef.current = false;
+      return;
     }
-  }, [activeThread?.model]);
+    const hasDraft = threadId ? getDraft(threadId) != null : false;
+    const isRunning = threadId ? useThreadStore.getState().runningThreadIds.has(threadId) : false;
+    if (hasDraft && !isRunning) return;
+    setModelId(activeThread.model);
+  }, [activeThread?.model, threadId, getDraft]);
 
   // Reactive per-thread and global-default slices so the effect re-runs on hydration
   const perThreadSettings = useThreadStore((s) => threadId ? s.settingsByThread[threadId] : undefined);

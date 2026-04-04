@@ -907,15 +907,20 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const requestedModel = params.requestedModel as string;
       const actualModel = params.actualModel as string;
 
+      // Normalize dated SDK variants (e.g. claude-haiku-4-5-20251001 → claude-haiku-4-5)
+      // so the picker always stores and displays the clean base ID.
+      const actualDefinition = findModelById(actualModel);
+      const normalizedActual = actualDefinition?.id ?? actualModel;
+
       // Patch workspaceStore so the Composer's model selector updates reactively
       useWorkspaceStore.setState((ws) => ({
         threads: ws.threads.map((t) =>
-          t.id === threadId ? { ...t, model: actualModel } : t,
+          t.id === threadId ? { ...t, model: normalizedActual } : t,
         ),
       }));
 
       // Notify the user which model was actually used
-      const actualLabel = findModelById(actualModel)?.label ?? actualModel;
+      const actualLabel = actualDefinition?.label ?? normalizedActual;
       const requestedLabel = findModelById(requestedModel)?.label ?? requestedModel;
       useToastStore.getState().show(
         "info",

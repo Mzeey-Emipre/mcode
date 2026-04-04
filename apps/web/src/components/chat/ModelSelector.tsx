@@ -61,6 +61,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
   };
 
   const model = findModelById(selectedModelId);
+  const normalizedSelectedId = model?.id ?? selectedModelId;
   const provider = findProviderForModel(selectedModelId);
   const meta = provider ? PROVIDER_META[provider.id] : undefined;
   const Icon = meta?.icon ?? ClaudeIcon;
@@ -110,7 +111,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
           onClick={() => handleSelectModel(m.id)}
           className={cn(
             "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-            m.id === selectedModelId
+            m.id === normalizedSelectedId
               ? "bg-accent text-foreground"
               : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
           )}
@@ -140,7 +141,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
                 onClick={() => handleSelectModel(m.id)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                  m.id === selectedModelId
+                  m.id === normalizedSelectedId
                     ? "bg-accent text-foreground"
                     : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                 )}
