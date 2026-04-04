@@ -21,7 +21,8 @@ const MAX_TEXT_SIZE = 1 * 1024 * 1024;
  */
 const SAFE_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
-function getMaxSizeForMime(mimeType: string): number {
+/** Size limits per MIME category. Shared with binary upload handler. */
+export function getMaxSizeForMime(mimeType: string): number {
   if (mimeType.startsWith("image/")) return MAX_IMAGE_SIZE;
   if (mimeType === "application/pdf") return MAX_PDF_SIZE;
   if (mimeType === "text/plain") return MAX_TEXT_SIZE;
