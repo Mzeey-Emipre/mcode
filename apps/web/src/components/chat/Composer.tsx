@@ -374,8 +374,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
 
   // Sync modelId when the SDK triggers a model fallback mid-session.
-  // Skip on thread switch (Effect 1 already set the model) and when a draft exists
-  // (the draft holds the user's explicit model choice).
+  // Skip on thread switch (Effect 1 already set the model).
+  // Skip when a draft exists UNLESS the agent is running (server-side override takes priority).
   useEffect(() => {
     if (!activeThread?.model) return;
     if (threadSwitchRef.current) {
@@ -383,7 +383,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       return;
     }
     const hasDraft = threadId ? getDraft(threadId) != null : false;
-    if (hasDraft) return;
+    const isRunning = threadId ? useThreadStore.getState().runningThreadIds.has(threadId) : false;
+    if (hasDraft && !isRunning) return;
     setModelId(activeThread.model);
   }, [activeThread?.model, threadId, getDraft]);
 
