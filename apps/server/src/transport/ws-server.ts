@@ -8,8 +8,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "@mcode/shared";
+import { BinaryUploadHeaderSchema, type BinaryUploadHeader } from "@mcode/contracts";
 import { routeMessage, type RouterDeps } from "./ws-router";
 import { addClient, removeClient } from "./push";
+import { handleBinaryUpload } from "./binary-upload";
 
 /** Create and configure the HTTP + WebSocket server. */
 export function createWsServer(deps: RouterDeps): {
@@ -56,9 +58,54 @@ export function createWsServer(deps: RouterDeps): {
     logger.info("WebSocket client connected");
     addClient(ws);
 
-    ws.on("message", (data: Buffer | string) => {
-      const raw =
-        typeof data === "string" ? data : data.toString("utf-8");
+    /** Pending binary upload header for this connection. */
+    let pendingBinaryHeader: BinaryUploadHeader | null = null;
+
+    ws.on("message", (data: Buffer | string, isBinary: boolean) => {
+      // Binary frame: match to pending header
+      if (isBinary) {
+        const header = pendingBinaryHeader;
+        pendingBinaryHeader = null;
+
+        if (!header) {
+          logger.warn("Received binary frame with no pending upload header");
+          return;
+        }
+
+        const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
+        handleBinaryUpload(
+          { mimeType: header.meta.mimeType as string, fileName: header.meta.fileName as string },
+          buffer,
+        )
+          .then((result) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ id: header.id, result }));
+            }
+          })
+          .catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            logger.error("Binary upload failed", { error: message });
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ id: header.id, error: { code: "UPLOAD_FAILED", message } }));
+            }
+          });
+        return;
+      }
+
+      // Text frame: check if it's a binary upload header or normal RPC
+      const raw = typeof data === "string" ? data : data.toString("utf-8");
+
+      try {
+        const parsed = JSON.parse(raw);
+        const headerResult = BinaryUploadHeaderSchema.safeParse(parsed);
+        if (headerResult.success) {
+          pendingBinaryHeader = headerResult.data;
+          return; // Wait for the next binary frame
+        }
+      } catch {
+        // Not JSON or not a header — fall through to normal routing
+      }
 
       routeMessage(raw, deps)
         .then((response) => {
@@ -68,10 +115,7 @@ export function createWsServer(deps: RouterDeps): {
         })
         .catch((err: unknown) => {
           logger.error("Unexpected router error", {
-            error:
-              err instanceof Error
-                ? err.message
-                : String(err),
+            error: err instanceof Error ? err.message : String(err),
           });
         });
     });
