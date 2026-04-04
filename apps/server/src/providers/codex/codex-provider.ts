@@ -56,7 +56,11 @@ function buildCodexInput(message: string, attachments?: AttachmentMeta[]): Codex
     if (att.mimeType.startsWith("image/")) {
       inputs.push({ type: "local_image", path: att.sourcePath });
     } else {
-      inputs.push({ type: "text", text: `[Attached file: ${att.name} (${att.mimeType}) at ${att.sourcePath}]` });
+      // Strip control characters (including newlines) from user-supplied strings
+      // to prevent prompt injection. Do not expose internal filesystem paths.
+      const safeName = att.name.replace(/[\x00-\x1f\x7f]/g, "");
+      const safeMime = att.mimeType.replace(/[\x00-\x1f\x7f]/g, "");
+      inputs.push({ type: "text", text: `[Attached file: ${safeName} (${safeMime})]` });
     }
   }
 
