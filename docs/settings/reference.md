@@ -16,7 +16,7 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `model.defaults.id` | string | `"claude-sonnet-4-6"` | - | - | Default model identifier |
 | `model.defaults.reasoning` | enum | `"high"` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | - | Default reasoning effort level. `"xhigh"` applies to Codex models only. `"max"` is only valid for Opus 4.6; it normalizes to `"high"` at runtime on all other Claude models |
 | `model.defaults.fallbackId` | string | `"claude-sonnet-4-6"` | - | - | Fallback model when the primary is unavailable. Set to `""` to disable fallback. |
-| `terminal.scrollback` | integer | `500` | >= 0 | - | Number of scrollback lines to retain |
+| `terminal.scrollback` | integer | `250` | >= 0 | - | Number of scrollback lines to retain |
 | `notifications.enabled` | boolean | `true` | - | - | Whether desktop notifications are enabled |
 | `worktree.naming.mode` | enum | `"auto"` | `"auto"` \| `"custom"` \| `"ai"` | - | Naming strategy for new worktree branches |
 | `worktree.naming.aiConfirmation` | boolean | `true` | - | - | Prompt before using AI-generated branch names |
