@@ -14,7 +14,7 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `agent.defaults.permission` | enum | `"full"` | `"full"` \| `"supervised"` | - | Default permission mode for new agents |
 | `model.defaults.provider` | enum | `"claude"` | `"claude"` \| `"codex"` \| `"gemini"` \| `"copilot"` | - | Default AI provider |
 | `model.defaults.id` | string | `"claude-sonnet-4-6"` | - | - | Default model identifier |
-| `model.defaults.reasoning` | enum | `"high"` | `"low"` \| `"medium"` \| `"high"` \| `"max"` | - | Default reasoning effort level. `"max"` is only valid for Opus 4.6; it normalizes to `"high"` at runtime on all other models |
+| `model.defaults.reasoning` | enum | `"high"` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | - | Default reasoning effort level. `"xhigh"` applies to Codex models only. `"max"` is only valid for Opus 4.6; it normalizes to `"high"` at runtime on all other Claude models |
 | `model.defaults.fallbackId` | string | `"claude-sonnet-4-6"` | - | - | Fallback model when the primary is unavailable. Set to `""` to disable fallback. |
 | `terminal.scrollback` | integer | `500` | >= 0 | - | Number of scrollback lines to retain |
 | `notifications.enabled` | boolean | `true` | - | - | Whether desktop notifications are enabled |

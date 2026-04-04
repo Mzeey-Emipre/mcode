@@ -106,10 +106,13 @@ export class AgentService {
     model = "claude-sonnet-4-6",
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
-    provider: ProviderId = "claude",
+    provider?: ProviderId,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
+    // Use the thread's stored provider as authoritative fallback; only override
+    // when the caller explicitly supplies a provider (new thread or explicit switch).
+    const effectiveProvider: ProviderId = provider ?? (thread.provider as ProviderId) ?? "claude";
     if (thread.status === "deleted" || thread.deleted_at != null) {
       throw new Error(`Cannot send message to deleted thread: ${threadId}`);
     }
@@ -174,21 +177,24 @@ export class AgentService {
     const fallbackModel =
       fallbackId && fallbackId !== resolvedModel ? fallbackId : undefined;
     this.threadRepo.updateModel(threadId, resolvedModel);
-    this.threadRepo.updateProvider(threadId, provider);
+    // Only persist provider when the caller explicitly supplied one (new thread or deliberate switch).
+    if (provider !== undefined) {
+      this.threadRepo.updateProvider(threadId, effectiveProvider);
+    }
 
     const sessionName = `mcode-${threadId}`;
     const isResume = nextSeq > 1;
 
     // Hydrate SDK session ID mapping for resume
     if (isResume && thread.sdk_session_id) {
-      const resolvedProvider = this.providerRegistry.resolve(provider);
-      resolvedProvider.setSdkSessionId(sessionName, thread.sdk_session_id);
+      const sdkProvider = this.providerRegistry.resolve(effectiveProvider);
+      sdkProvider.setSdkSessionId(sessionName, thread.sdk_session_id);
     }
 
     this.activeSessionIds.add(threadId);
     this.memoryPressureService.markActive();
     try {
-      const resolvedProvider = this.providerRegistry.resolve(provider);
+      const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
       await resolvedProvider.sendMessage({
         sessionId: sessionName,
         message: content,
@@ -213,14 +219,14 @@ export class AgentService {
       const rawMessage = err instanceof Error ? err.message : String(err);
       // Normalize spawn ENOENT into a user-friendly CLI-not-found message that
       // the frontend CliErrorBanner can detect and display with setup instructions.
-      const errorMessage = this.normalizeProviderError(rawMessage, provider);
+      const errorMessage = this.normalizeProviderError(rawMessage, effectiveProvider);
       logger.error("Provider send failed", { threadId, error: rawMessage });
 
       // Emit an error event through the provider so the frontend receives it
       // via the normal agent.event push pipeline and can display the CLI error banner.
       // Cast to EventEmitter since all providers extend it, but IAgentProvider only exposes on().
       try {
-        const resolvedProvider = this.providerRegistry.resolve(provider) as unknown as import("events").EventEmitter;
+        const resolvedProvider = this.providerRegistry.resolve(effectiveProvider) as unknown as import("events").EventEmitter;
         resolvedProvider.emit("event", {
           type: "error",
           threadId,
@@ -438,12 +444,22 @@ export class AgentService {
         }
 
         if (event.type === "error") {
-          this.persistTurn(event.threadId, true).catch((err) => {
-            logger.error("persistTurn failed on error event", {
-              threadId: event.threadId,
-              error: err instanceof Error ? err.message : String(err),
+          // Only persist the turn when an assistant message was actually created.
+          // For pre-turn failures (e.g. CLI not found) the last message is the
+          // user message; calling persistTurn would broadcast turn.persisted with
+          // the wrong message ID. In that case, just clear the turn state.
+          const { messages: turnMsgs } = this.messageRepo.listByThread(event.threadId, 1);
+          const lastMsg = turnMsgs[turnMsgs.length - 1];
+          if (lastMsg?.role === "assistant") {
+            this.persistTurn(event.threadId, true).catch((err) => {
+              logger.error("persistTurn failed on error event", {
+                threadId: event.threadId,
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
-          });
+          } else {
+            this.clearTurnState(event.threadId);
+          }
         }
 
         if (event.type === "compacting" && !event.active) {

@@ -8,6 +8,8 @@
  *   web_search, todo_list, error
  */
 
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { injectable, inject } from "tsyringe";
 import { SettingsService } from "../../services/settings-service";
 import { EventEmitter } from "events";
@@ -22,11 +24,9 @@ import type {
   AttachmentMeta,
 } from "@mcode/contracts";
 
-/**
- * Map mcode ReasoningLevel to the Codex SDK's ModelReasoningEffort.
- * mcode uses "max" for Claude's top tier; Codex uses "xhigh".
- * mcode's "low"/"medium"/"high" map 1:1 to Codex.
- */
+/** Module-level promisified execFile for CLI availability probing. */
+const execFileAsync = promisify(execFile);
+
 /**
  * Map mcode ReasoningLevel to the Codex SDK's ModelReasoningEffort.
  * - "max" (Claude's top tier) maps to "xhigh" for Codex.
@@ -76,10 +76,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
    * if unavailable, or null if the CLI is found.
    */
   private async checkCliAvailable(): Promise<string | null> {
-    const { execFile } = await import("child_process");
-    const { promisify } = await import("util");
-    const execFileAsync = promisify(execFile);
-
     const settings = await this.settingsService.get();
     const cliPath = settings.provider.cli.codex || "codex";
 

@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, DEFAULT_CONTEXT_WINDOW, findProviderForModel, getCodexReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, normalizeReasoningLevelForModel, DEFAULT_CONTEXT_WINDOW, findProviderForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -186,14 +186,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   // Reset reasoning when the selected model does not support the current level
   useEffect(() => {
-    const levels = getCodexReasoningLevels(modelId);
-    if (levels) {
-      // Codex model: clamp to valid levels
-      if (!levels.includes(reasoning as never)) {
-        setReasoning("medium" as ReasoningLevel);
-      }
-    } else if (reasoning === "max" && !isMaxEffortModel(modelId)) {
-      setReasoning("high");
+    const clamped = normalizeReasoningLevelForModel(modelId, reasoning);
+    if (clamped !== reasoning) {
+      setReasoning(clamped);
     }
   }, [modelId, reasoning]);
 

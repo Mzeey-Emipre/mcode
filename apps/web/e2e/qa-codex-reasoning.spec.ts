@@ -59,7 +59,7 @@ test.describe("Codex reasoning selector QA", () => {
           ws.send(JSON.stringify({ id, result: currentSettings }));
         } else if (method === "settings.update") {
           // Deep merge the partial into current settings
-          const partial = (msg.params as any)?.[0] ?? msg.params;
+          const partial = (msg.params as Record<string, unknown>[])?.[0] ?? msg.params;
           deepMerge(currentSettings, partial);
           ws.send(JSON.stringify({ id, result: currentSettings }));
         } else if (method?.endsWith(".list")) {
@@ -148,7 +148,7 @@ test.describe("Codex reasoning selector QA", () => {
 });
 
 /** Deep-merge source into target (mutates target). */
-function deepMerge(target: any, source: any): void {
+function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
   if (!source || typeof source !== "object") return;
   for (const key of Object.keys(source)) {
     if (
@@ -158,7 +158,7 @@ function deepMerge(target: any, source: any): void {
       typeof target[key] === "object" &&
       target[key] !== null
     ) {
-      deepMerge(target[key], source[key]);
+      deepMerge(target[key] as Record<string, unknown>, source[key] as Record<string, unknown>);
     } else {
       target[key] = source[key];
     }

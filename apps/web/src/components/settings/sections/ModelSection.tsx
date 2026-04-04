@@ -10,7 +10,7 @@ import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import { SectionHeading } from "../SectionHeading";
 import type { SettingsProviderId, ReasoningLevel } from "@mcode/contracts";
-import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -205,15 +205,11 @@ export function ModelSection() {
             configKey="provider.cli.codex"
             hint="Path to the Codex CLI binary. Leave empty to auto-discover from PATH."
           >
-            <input
-              type="text"
+            <Input
               value={codexCliPath}
               onChange={(e) => void update({ provider: { cli: { codex: e.target.value } } })}
               placeholder="codex"
-              className={cn(
-                "h-7 w-56 rounded border border-border bg-background px-2 text-xs text-foreground",
-                "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
-              )}
+              className="h-7 w-56 text-xs"
             />
           </SettingRow>
           <SettingRow
@@ -221,15 +217,11 @@ export function ModelSection() {
             configKey="provider.cli.claude"
             hint="Path to the Claude Code CLI binary. Leave empty to auto-discover from PATH."
           >
-            <input
-              type="text"
+            <Input
               value={claudeCliPath}
               onChange={(e) => void update({ provider: { cli: { claude: e.target.value } } })}
               placeholder="claude"
-              className={cn(
-                "h-7 w-56 rounded border border-border bg-background px-2 text-xs text-foreground",
-                "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
-              )}
+              className="h-7 w-56 text-xs"
             />
           </SettingRow>
         </div>

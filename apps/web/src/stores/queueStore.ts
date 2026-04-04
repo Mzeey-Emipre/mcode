@@ -2,15 +2,20 @@ import { create } from "zustand";
 import type { AttachmentMeta, PermissionMode } from "@/transport";
 import type { ReasoningLevel } from "@mcode/contracts";
 
+/** A message waiting to be sent while the thread is busy with another turn. */
 export interface QueuedMessage {
   id: string;
   content: string;
+  /** Optional display-only variant of content (e.g. stripped of internal markup). */
   displayContent?: string;
   attachments: AttachmentMeta[];
   model: string;
   permissionMode: PermissionMode;
+  /** Reasoning effort level to apply when the message is sent. */
   reasoningLevel?: ReasoningLevel;
+  /** Provider to use; undefined means inherit the thread's stored provider. */
   provider?: string;
+  /** Unix timestamp (ms) when this message was enqueued. */
   queuedAt: number;
 }
 
