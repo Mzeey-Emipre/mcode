@@ -93,7 +93,7 @@ export function CliErrorBanner({ error, onDismiss, onOpenSettings }: CliErrorBan
           {/* Settings hint */}
           {settingsHint && (
             <p className="text-[11px] text-muted-foreground/70">
-              {settingsHint.replace(/Settings > Provider > [^\s.]+( CLI path)?\.?/, "").trim()}{" "}
+              {settingsHint.replace(/(?:in |at )?Settings > [^.\n]+\.?/, "").trim()}{" "}
               <button
                 type="button"
                 onClick={onOpenSettings}

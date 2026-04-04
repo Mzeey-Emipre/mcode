@@ -210,12 +210,34 @@ export class AgentService {
       if (this.activeSessionIds.size === 0) {
         this.memoryPressureService.markIdle();
       }
-      this.threadRepo.updateStatus(threadId, "paused");
-      logger.error("Provider send failed, reverted status", {
-        threadId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      // Normalize spawn ENOENT into a user-friendly CLI-not-found message that
+      // the frontend CliErrorBanner can detect and display with setup instructions.
+      const errorMessage = this.normalizeProviderError(rawMessage, provider);
+      logger.error("Provider send failed", { threadId, error: rawMessage });
+
+      // Emit an error event through the provider so the frontend receives it
+      // via the normal agent.event push pipeline and can display the CLI error banner.
+      // Cast to EventEmitter since all providers extend it, but IAgentProvider only exposes on().
+      try {
+        const resolvedProvider = this.providerRegistry.resolve(provider) as unknown as import("events").EventEmitter;
+        resolvedProvider.emit("event", {
+          type: "error",
+          threadId,
+          error: errorMessage,
+        } satisfies AgentEvent);
+        resolvedProvider.emit("event", {
+          type: "ended",
+          threadId,
+        } satisfies AgentEvent);
+      } catch (emitErr) {
+        logger.warn("Failed to emit error event to provider", {
+          threadId,
+          error: emitErr instanceof Error ? emitErr.message : String(emitErr),
+        });
+      }
+
+      this.threadRepo.updateStatus(threadId, "errored");
     }
   }
 
@@ -451,6 +473,25 @@ export class AgentService {
         }
       });
     }
+  }
+
+  /**
+   * Normalize a raw provider error into a user-friendly message.
+   * Converts spawn ENOENT errors (CLI binary not found) into the standardized
+   * "CLI not found" format that the frontend CliErrorBanner can detect.
+   */
+  private normalizeProviderError(message: string, provider: string): string {
+    // Detect spawn ENOENT: the OS-level error when a binary doesn't exist
+    if (message.includes("ENOENT") || message.includes("spawn") && message.includes("ENOENT")) {
+      if (provider === "claude") {
+        return "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code\n\nOr set a custom path in Settings > Model.";
+      }
+      if (provider === "codex") {
+        return "Codex CLI not found. Install it with: npm install -g @openai/codex\n\nOr set a custom path in Settings > Model.";
+      }
+      return `${provider} CLI not found. Check the CLI path in Settings > Model.`;
+    }
+    return message;
   }
 
   /** Buffer a tool call event for later persistence. */
