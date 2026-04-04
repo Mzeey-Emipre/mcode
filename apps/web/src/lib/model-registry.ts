@@ -57,16 +57,29 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
   },
 ];
 
+/**
+ * Finds a model definition by ID, with fallback prefix matching for dated variants
+ * returned by the Anthropic SDK (e.g. `claude-haiku-4-5-20251001` → `claude-haiku-4-5`).
+ */
 export function findModelById(id: string): ModelDefinition | undefined {
   for (const p of MODEL_PROVIDERS) {
     const m = p.models.find((model) => model.id === id);
     if (m) return m;
   }
+  // Dated variants use a hyphen separator, so `claude-haiku-4-5-20251001` starts with
+  // `claude-haiku-4-5-` and should resolve to the base model entry.
+  for (const p of MODEL_PROVIDERS) {
+    const m = p.models.find((model) => id.startsWith(`${model.id}-`));
+    if (m) return m;
+  }
   return undefined;
 }
 
+/** Finds the provider that owns the given model ID, including dated SDK variants. */
 export function findProviderForModel(modelId: string): ModelProvider | undefined {
-  return MODEL_PROVIDERS.find((p) => p.models.some((m) => m.id === modelId));
+  return MODEL_PROVIDERS.find((p) =>
+    p.models.some((m) => m.id === modelId || modelId.startsWith(`${m.id}-`)),
+  );
 }
 
 /** @deprecated Use `getDefaultModelId()` for settings-aware defaults. */
