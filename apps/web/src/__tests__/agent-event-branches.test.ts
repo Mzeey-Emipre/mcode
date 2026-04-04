@@ -152,6 +152,33 @@ describe("session.modelFallback", () => {
     expect(toasts[0].title).toContain("Sonnet");
   });
 
+  it("normalizes dated SDK variant to base model ID when storing", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.modelFallback",
+      params: {
+        requestedModel: "claude-opus-4-6",
+        actualModel: "claude-haiku-4-5-20251001",
+      },
+    });
+
+    const thread = useWorkspaceStore.getState().threads.find((t) => t.id === "thread-1");
+    expect(thread?.model).toBe("claude-haiku-4-5");
+  });
+
+  it("shows human-readable label in toast for dated SDK variant", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.modelFallback",
+      params: {
+        requestedModel: "claude-opus-4-6",
+        actualModel: "claude-haiku-4-5-20251001",
+      },
+    });
+
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts[0].title).toContain("Haiku");
+    expect(toasts[0].title).not.toContain("20251001");
+  });
+
   it("does not show toast for unknown model IDs (uses raw ID)", () => {
     useThreadStore.getState().handleAgentEvent("thread-1", {
       method: "session.modelFallback",
