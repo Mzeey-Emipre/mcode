@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, resolveThreadModelId, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -236,13 +236,15 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           });
         }
       } else {
-        // No saved draft: reset to defaults
+        // No saved draft: use thread's locked model if available, otherwise global default
         setInput("");
         setAttachments([]);
-        setModelId(getDefaultModelId());
+        const nextThread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
+        const resolvedModelId = resolveThreadModelId(nextThread?.model, getDefaultModelId());
+        setModelId(resolvedModelId);
         const defaultReasoning1 = getDefaultReasoningLevel();
         setReasoning(
-          defaultReasoning1 === "max" && !isMaxEffortModel(getDefaultModelId())
+          defaultReasoning1 === "max" && !isMaxEffortModel(resolvedModelId)
             ? "high"
             : defaultReasoning1
         );
