@@ -1,10 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
-import { resolve } from "path";
 
 const EDITOR_SRC = readFileSync(
-  resolve(__dirname, "../components/chat/lexical/ComposerEditor.tsx"),
+  new URL("../components/chat/lexical/ComposerEditor.tsx", import.meta.url),
   "utf-8",
 );
 
