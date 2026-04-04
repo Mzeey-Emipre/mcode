@@ -97,7 +97,7 @@ export const SettingsSchema = lazySchema(() =>
     terminal: z
       .object({
         /** Number of scrollback lines to retain. */
-        scrollback: z.number().int().nonnegative().default(500),
+        scrollback: z.number().int().nonnegative().default(250),
       })
       .default({}),
 
