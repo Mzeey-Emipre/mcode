@@ -84,7 +84,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     const cliPath = settings.provider.cli.codex || "codex";
 
     try {
-      await execFileAsync(cliPath, ["--version"], { timeout: 5000 });
+      // shell: true is required on Windows to resolve .cmd shims from npm global installs
+      await execFileAsync(cliPath, ["--version"], { timeout: 5000, shell: true });
       return null;
     } catch {
       if (cliPath === "codex") {
