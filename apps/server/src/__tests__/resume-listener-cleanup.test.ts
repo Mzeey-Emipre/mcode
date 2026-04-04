@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import { ClaudeProvider } from "../providers/claude/claude-provider.js";
 
