@@ -106,7 +106,7 @@ export class AgentService {
     model = "claude-sonnet-4-6",
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
-    provider = "claude",
+    provider: ProviderId = "claude",
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -181,14 +181,14 @@ export class AgentService {
 
     // Hydrate SDK session ID mapping for resume
     if (isResume && thread.sdk_session_id) {
-      const resolvedProvider = this.providerRegistry.resolve(provider as ProviderId);
+      const resolvedProvider = this.providerRegistry.resolve(provider);
       resolvedProvider.setSdkSessionId(sessionName, thread.sdk_session_id);
     }
 
     this.activeSessionIds.add(threadId);
     this.memoryPressureService.markActive();
     try {
-      const resolvedProvider = this.providerRegistry.resolve(provider as ProviderId);
+      const resolvedProvider = this.providerRegistry.resolve(provider);
       await resolvedProvider.sendMessage({
         sessionId: sessionName,
         message: content,
@@ -234,7 +234,7 @@ export class AgentService {
     existingWorktreePath?: string,
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
-    provider = "claude",
+    provider: ProviderId = "claude",
   ): Promise<Thread> {
     const title = truncateTitle(content);
 

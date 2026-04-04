@@ -39,6 +39,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "codex";
 
   private codex: Codex;
+  private lastCliPath: string | undefined;
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
@@ -75,14 +76,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
   }
 
   /**
-   * Rebuild the Codex SDK client with current settings.
-   * Called before each sendMessage to pick up CLI path changes.
+   * Rebuild the Codex SDK client when the CLI path setting changes.
+   * Only recreates the client if the path actually differs.
    */
   private async refreshClient(): Promise<void> {
     const settings = await this.settingsService.get();
-    const cliPath = settings.provider.cli.codex;
-    const opts = cliPath ? { codexPathOverride: cliPath } : undefined;
-    this.codex = new Codex(opts);
+    const cliPath = settings.provider.cli.codex || undefined;
+    if (cliPath === this.lastCliPath) return;
+    this.lastCliPath = cliPath;
+    this.codex = new Codex(cliPath ? { codexPathOverride: cliPath } : undefined);
   }
 
   /** Start or continue a session by sending a message via the Codex SDK. */
@@ -121,24 +123,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
   }): Promise<void> {
     await this.refreshClient();
 
-    // Probe CLI availability before attempting to start a session
-    const cliError = await this.checkCliAvailable();
-    if (cliError) {
-      const threadId = params.sessionId.startsWith("mcode-")
-        ? params.sessionId.slice(6)
-        : params.sessionId;
-      this.emit("event", {
-        type: "error",
-        threadId,
-        error: cliError,
-      } satisfies AgentEvent);
-      this.emit("event", {
-        type: "ended",
-        threadId,
-      } satisfies AgentEvent);
-      return;
-    }
-
     const { sessionId, message, cwd, model, resume, permissionMode } = params;
 
     if (!this.evictionTimer) {
@@ -159,6 +143,21 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       // Replace abort controller for the new turn
       existing.abortController = new AbortController();
       await this.runTurn(sessionId, threadId, existing.thread, message, existing.abortController.signal);
+      return;
+    }
+
+    // Probe CLI availability only when starting a new session
+    const cliError = await this.checkCliAvailable();
+    if (cliError) {
+      this.emit("event", {
+        type: "error",
+        threadId,
+        error: cliError,
+      } satisfies AgentEvent);
+      this.emit("event", {
+        type: "ended",
+        threadId,
+      } satisfies AgentEvent);
       return;
     }
 
@@ -329,7 +328,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
             const updatedItem = event.item;
             if (updatedItem.type === "agent_message") {
               const text = (updatedItem as { text?: string }).text ?? "";
-              if (text && text !== lastAssistantText) {
+              if (text && text !== lastAssistantText && text.startsWith(lastAssistantText)) {
                 const delta = text.slice(lastAssistantText.length);
                 if (delta) {
                   lastAssistantText = text;
