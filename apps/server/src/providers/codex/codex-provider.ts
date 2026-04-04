@@ -8,7 +8,8 @@
  *   web_search, todo_list, error
  */
 
-import { injectable } from "tsyringe";
+import { injectable, inject } from "tsyringe";
+import { SettingsService } from "../../services/settings-service";
 import { EventEmitter } from "events";
 import { Codex } from "@openai/codex-sdk";
 import type { Thread as CodexThread } from "@openai/codex-sdk";
@@ -37,10 +38,28 @@ interface SessionEntry {
 export class CodexProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "codex";
 
-  private codex = new Codex();
+  private codex: Codex;
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(
+    @inject(SettingsService) private readonly settingsService: SettingsService,
+  ) {
+    super();
+    this.codex = new Codex();
+  }
+
+  /**
+   * Rebuild the Codex SDK client with current settings.
+   * Called before each sendMessage to pick up CLI path changes.
+   */
+  private async refreshClient(): Promise<void> {
+    const settings = await this.settingsService.get();
+    const cliPath = settings.provider.cli.codex;
+    const opts = cliPath ? { codexPathOverride: cliPath } : undefined;
+    this.codex = new Codex(opts);
+  }
 
   /** Start or continue a session by sending a message via the Codex SDK. */
   async sendMessage(params: {
@@ -76,6 +95,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
   }): Promise<void> {
+    await this.refreshClient();
+
     const { sessionId, message, cwd, model, resume, permissionMode } = params;
 
     if (!this.evictionTimer) {
