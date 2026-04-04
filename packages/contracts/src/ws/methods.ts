@@ -31,6 +31,7 @@ export const SendMessageSchema = z.object({
   permissionMode: PermissionModeSchema.optional(),
   attachments: z.array(AttachmentMetaSchema).optional(),
   reasoningLevel: ReasoningLevelSchema.optional(),
+  provider: z.string().optional(),
 });
 
 /** Schema for creating a thread and sending a message in one call. */
@@ -44,6 +45,7 @@ export const CreateAndSendSchema = z.object({
   existingWorktreePath: z.string().optional(),
   attachments: z.array(AttachmentMetaSchema).optional(),
   reasoningLevel: ReasoningLevelSchema.optional(),
+  provider: z.string().optional(),
 });
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
