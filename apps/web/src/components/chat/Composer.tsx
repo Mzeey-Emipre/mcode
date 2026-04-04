@@ -276,8 +276,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
     threadSwitchRef.current = true;
     prevThreadIdRef.current = threadId;
-  }, [threadId]); // saveDraft/getDraft are stable store refs; setters are stable useState refs
-  // Intentionally exclude saveDraft/getDraft (stable store refs) and setters (stable useState refs)
+  }, [threadId, saveDraft, getDraft]);
 
   // Consume pending prefill set by empty-state prompt chips
   useEffect(() => {
