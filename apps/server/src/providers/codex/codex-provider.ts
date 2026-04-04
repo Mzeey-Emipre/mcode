@@ -51,6 +51,30 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
   }
 
   /**
+   * Check whether the Codex CLI binary is reachable.
+   * Attempts to spawn the binary with --version. Returns an error message
+   * if unavailable, or null if the CLI is found.
+   */
+  private async checkCliAvailable(): Promise<string | null> {
+    const { execFile } = await import("child_process");
+    const { promisify } = await import("util");
+    const execFileAsync = promisify(execFile);
+
+    const settings = await this.settingsService.get();
+    const cliPath = settings.provider.cli.codex || "codex";
+
+    try {
+      await execFileAsync(cliPath, ["--version"], { timeout: 5000 });
+      return null;
+    } catch {
+      if (cliPath === "codex") {
+        return "Codex CLI not found. Install it with: npm install -g @openai/codex\n\nOr set a custom path in Settings > Provider > Codex CLI path.";
+      }
+      return `Codex CLI not found at "${cliPath}". Check the path in Settings > Provider > Codex CLI path.`;
+    }
+  }
+
+  /**
    * Rebuild the Codex SDK client with current settings.
    * Called before each sendMessage to pick up CLI path changes.
    */
@@ -96,6 +120,24 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     reasoningLevel?: ReasoningLevel;
   }): Promise<void> {
     await this.refreshClient();
+
+    // Probe CLI availability before attempting to start a session
+    const cliError = await this.checkCliAvailable();
+    if (cliError) {
+      const threadId = params.sessionId.startsWith("mcode-")
+        ? params.sessionId.slice(6)
+        : params.sessionId;
+      this.emit("event", {
+        type: "error",
+        threadId,
+        error: cliError,
+      } satisfies AgentEvent);
+      this.emit("event", {
+        type: "ended",
+        threadId,
+      } satisfies AgentEvent);
+      return;
+    }
 
     const { sessionId, message, cwd, model, resume, permissionMode } = params;
 
