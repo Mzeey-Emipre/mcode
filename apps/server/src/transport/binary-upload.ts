@@ -6,7 +6,7 @@
 
 import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
-import { join } from "path";
+import { join, basename } from "path";
 import { tmpdir } from "os";
 import { getMaxSizeForMime } from "../services/attachment-service";
 
@@ -37,6 +37,8 @@ export async function handleBinaryUpload(
   if (/[/\\\0]/.test(meta.fileName)) {
     throw new Error("fileName must not contain path separators or null bytes");
   }
+  // Normalize to basename to strip any directory components (e.g., Windows drive-relative paths)
+  const safeName = basename(meta.fileName);
 
   // Enforce size limits (shared with AttachmentService)
   const maxSize = getMaxSizeForMime(meta.mimeType);
@@ -50,7 +52,7 @@ export async function handleBinaryUpload(
   const tempDir = join(tmpdir(), "mcode-attachments");
   await mkdir(tempDir, { recursive: true });
   // Prefix with UUID to guarantee uniqueness; retain original name for debuggability.
-  const tempPath = join(tempDir, `${id}-${meta.fileName}`);
+  const tempPath = join(tempDir, `${id}-${safeName}`);
   await writeFile(tempPath, payload);
 
   return {

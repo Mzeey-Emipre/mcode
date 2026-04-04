@@ -54,7 +54,6 @@ import type { ReasoningLevel } from "@mcode/contracts";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 
-
 interface ComposerProps {
   threadId?: string;
   isNewThread?: boolean;

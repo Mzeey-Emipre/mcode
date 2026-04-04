@@ -38,7 +38,7 @@ export function createWsServer(deps: RouterDeps): {
     },
   );
 
-  const wss = new WebSocketServer({ server: httpServer });
+  const wss = new WebSocketServer({ server: httpServer, maxPayload: 33 * 1024 * 1024 });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     // Auth: validate token from query params if configured
@@ -72,12 +72,33 @@ export function createWsServer(deps: RouterDeps): {
           return;
         }
 
+        if (header.method !== "clipboard.saveFile") {
+          logger.warn("Unsupported binary upload method", { method: header.method });
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              id: header.id,
+              error: { code: "UNSUPPORTED_METHOD", message: `Binary upload not supported for method: ${header.method}` },
+            }));
+          }
+          return;
+        }
+
+        const mimeType = header.meta.mimeType;
+        const fileName = header.meta.fileName;
+        if (typeof mimeType !== "string" || !mimeType || typeof fileName !== "string" || !fileName) {
+          logger.warn("Binary upload header missing required meta fields");
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              id: header.id,
+              error: { code: "INVALID_UPLOAD", message: "meta.mimeType and meta.fileName are required strings" },
+            }));
+          }
+          return;
+        }
+
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
 
-        handleBinaryUpload(
-          { mimeType: header.meta.mimeType as string, fileName: header.meta.fileName as string },
-          buffer,
-        )
+        handleBinaryUpload({ mimeType, fileName }, buffer)
           .then((result) => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ id: header.id, result }));
@@ -100,6 +121,17 @@ export function createWsServer(deps: RouterDeps): {
         const parsed = JSON.parse(raw);
         const headerResult = BinaryUploadHeaderSchema.safeParse(parsed);
         if (headerResult.success) {
+          // If a previous header was pending without a binary frame, reject it
+          if (pendingBinaryHeader) {
+            const staleId = pendingBinaryHeader.id;
+            logger.warn("Binary upload header overwritten; previous upload abandoned", { staleId });
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                id: staleId,
+                error: { code: "UPLOAD_ABANDONED", message: "Upload header was overwritten by a subsequent upload" },
+              }));
+            }
+          }
           pendingBinaryHeader = headerResult.data;
           return; // Wait for the next binary frame
         }
