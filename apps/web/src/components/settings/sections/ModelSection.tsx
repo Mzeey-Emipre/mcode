@@ -79,8 +79,9 @@ export function ModelSection() {
     [modelOptions],
   );
 
+  const codexLevels = useMemo(() => getCodexReasoningLevels(modelId), [modelId]);
+
   const reasoningOptions = useMemo(() => {
-    const codexLevels = getCodexReasoningLevels(modelId);
     if (codexLevels) {
       // Codex model: show its specific supported levels
       return codexLevels.map((level) => ({
@@ -93,7 +94,16 @@ export function ModelSection() {
       ...REASONING_OPTIONS_BASE,
       { value: "max", label: "Max", disabled: !isMaxEffortModel(modelId) },
     ];
-  }, [modelId]);
+  }, [modelId, codexLevels]);
+
+  const reasoningHint = useMemo(() => {
+    if (codexLevels) {
+      return codexLevels.includes("xhigh")
+        ? "Reasoning effort for Codex models. X-High is the maximum tier."
+        : "Reasoning effort for Codex models.";
+    }
+    return "Default reasoning level. Max requires Opus 4.6.";
+  }, [codexLevels]);
 
   const handleProviderChange = (v: string) => {
     const newProvider = MODEL_PROVIDERS.find((p) => p.id === v);
@@ -175,7 +185,7 @@ export function ModelSection() {
       <SettingRow
         label="Reasoning effort"
         configKey="model.defaults.reasoning"
-        hint="Default reasoning level. Max requires Opus 4.6."
+        hint={reasoningHint}
       >
         <SegControl
           options={reasoningOptions}

@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, DEFAULT_CONTEXT_WINDOW, findProviderForModel } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, DEFAULT_CONTEXT_WINDOW, findProviderForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -184,9 +184,15 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
   }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission]); // Only sync when settings change
 
-  // Reset "max" reasoning when the selected model does not support it
+  // Reset reasoning when the selected model does not support the current level
   useEffect(() => {
-    if (reasoning === "max" && !isMaxEffortModel(modelId)) {
+    const levels = getCodexReasoningLevels(modelId);
+    if (levels) {
+      // Codex model: clamp to valid levels
+      if (!levels.includes(reasoning as never)) {
+        setReasoning("medium" as ReasoningLevel);
+      }
+    } else if (reasoning === "max" && !isMaxEffortModel(modelId)) {
       setReasoning("high");
     }
   }, [modelId, reasoning]);
@@ -895,9 +901,16 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const toast = useQueueStore((s) => s.toast);
 
-  const reasoningLevels: ReasoningLevel[] = isMaxEffortModel(modelId)
-    ? ["low", "medium", "high", "max"]
-    : ["low", "medium", "high"];
+  /** Display label for a reasoning level value. */
+  const reasoningLabel = (level: string) =>
+    level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+
+  const codexLevels = getCodexReasoningLevels(modelId);
+  const reasoningLevels: ReasoningLevel[] = codexLevels
+    ? (codexLevels as unknown as ReasoningLevel[])
+    : isMaxEffortModel(modelId)
+      ? ["low", "medium", "high", "max"]
+      : ["low", "medium", "high"];
 
   return (
     <div className="relative px-8 py-4">
@@ -1003,7 +1016,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     }}
                     className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
                   >
-                    <span className="text-sm">{reasoning.charAt(0).toUpperCase() + reasoning.slice(1)}</span>
+                    <span className="text-sm">{reasoningLabel(reasoning)}</span>
                     <ChevronDown size={11} />
                   </Button>
                 }
@@ -1021,13 +1034,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                       setShowReasoningPicker(false);
                     }}
                     className={cn(
-                      "flex w-full items-center rounded px-3 py-1.5 text-xs capitalize",
+                      "flex w-full items-center rounded px-3 py-1.5 text-xs",
                       reasoning === level
                         ? "bg-accent text-foreground"
                         : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                     )}
                   >
-                    {level}
+                    {reasoningLabel(level)}
                   </button>
                 ))}
               </div>
