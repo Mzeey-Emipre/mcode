@@ -10,6 +10,7 @@ export interface QueuedMessage {
   model: string;
   permissionMode: PermissionMode;
   reasoningLevel?: ReasoningLevel;
+  provider?: string;
   queuedAt: number;
 }
 
