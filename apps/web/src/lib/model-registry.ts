@@ -36,9 +36,11 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     name: "Codex",
     comingSoon: false,
     models: [
-      { id: "o3", label: "o3", providerId: "codex", contextWindow: 200_000 },
-      { id: "o4-mini", label: "o4-mini", providerId: "codex", contextWindow: 200_000 },
-      { id: "codex-mini", label: "Codex Mini", providerId: "codex", contextWindow: 192_000 },
+      { id: "gpt-5.4", label: "GPT-5.4", providerId: "codex", contextWindow: 272_000 },
+      { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", providerId: "codex", contextWindow: 272_000 },
+      { id: "gpt-5.3-codex", label: "GPT-5.3 Codex", providerId: "codex", contextWindow: 272_000 },
+      { id: "gpt-5.2-codex", label: "GPT-5.2 Codex", providerId: "codex", contextWindow: 272_000 },
+      { id: "gpt-5.1-codex-mini", label: "GPT-5.1 Codex Mini", providerId: "codex", contextWindow: 272_000 },
     ],
   },
   {
