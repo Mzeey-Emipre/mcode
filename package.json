@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
+    "setup": "node scripts/setup-env.mjs",
     "dev": "turbo run dev",
     "dev:desktop": "cd apps/desktop && bun run dev",
     "dev:web": "node scripts/dev-web.mjs",
