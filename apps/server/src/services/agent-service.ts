@@ -399,12 +399,16 @@ export class AgentService {
               existing.length > 0
                 ? existing[existing.length - 1].sequence + 1
                 : 1;
-            this.messageRepo.create(
+            const msg = this.messageRepo.create(
               event.threadId,
               "assistant",
               event.content,
               nextSeq,
             );
+            // Enable dedup on the frontend: in Electron, MessagePort and
+            // WebSocket deliveries are independent, so the same message can
+            // arrive both via push and via loadMessages RPC.
+            (event as Record<string, unknown>).messageId = msg.id;
           } catch (err) {
             logger.error("Failed to persist assistant message", {
               threadId: event.threadId,
@@ -481,6 +485,24 @@ export class AgentService {
               threadId: event.threadId,
               error: err instanceof Error ? err.message : String(err),
             });
+          }
+        }
+
+        // Persist SDK session ID so the thread can be resumed after a
+        // server restart. The Codex provider emits this on thread.started.
+        if (event.type === "system") {
+          const SDK_PREFIX = "sdk_session_id:";
+          if (event.subtype.startsWith(SDK_PREFIX)) {
+            const sdkId = event.subtype.slice(SDK_PREFIX.length);
+            if (!sdkId) return;
+            try {
+              this.threadRepo.updateSdkSessionId(event.threadId, sdkId);
+            } catch (err) {
+              logger.warn("Failed to persist sdk_session_id", {
+                threadId: event.threadId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
           }
         }
 

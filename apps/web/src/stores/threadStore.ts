@@ -531,6 +531,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             streamingPreviewByThread: nextPreview,
           };
           if (state.currentThreadId !== threadId) return trackTurn;
+          // In Electron, MessagePort and WebSocket are independent channels
+          // with no ordering guarantee. Skip if already in messages to prevent
+          // duplicates when both channels deliver the same message.
+          if (state.messages.some((m) => m.id === message.id)) return trackTurn;
           const { messages: capped, evicted } = capMessages([...state.messages, message]);
           return {
             messages: capped,
