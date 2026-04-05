@@ -313,6 +313,7 @@ export class AgentService {
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
     provider: ProviderId = "claude",
+    interactionMode?: InteractionMode,
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
@@ -370,6 +371,7 @@ export class AgentService {
       attachments,
       reasoningLevel,
       provider,
+      interactionMode,
     );
 
     // Re-read from DB to pick up model update applied by sendMessage

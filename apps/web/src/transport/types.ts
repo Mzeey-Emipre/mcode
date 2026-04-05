@@ -94,6 +94,7 @@ export interface McodeTransport {
     attachments?: AttachmentMeta[],
     reasoningLevel?: ReasoningLevel,
     provider?: string,
+    interactionMode?: InteractionMode,
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
   /** Submit answers to a plan-mode question batch and resume the agent session. */

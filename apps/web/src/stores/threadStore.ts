@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
 import type { ReasoningLevel, PlanQuestion, PlanAnswer } from "@mcode/contracts";
+import { PlanQuestionSchema } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
@@ -134,6 +135,42 @@ function capMessages(messages: Message[]): { messages: Message[]; evicted: boole
   };
 }
 
+/**
+ * Scan a message list for an unanswered plan-questions block.
+ * Finds the last assistant message containing a ```plan-questions``` fenced block,
+ * confirms no user message follows it (meaning questions haven't been answered yet),
+ * then parses and validates the JSON array inside the block.
+ * Returns the parsed questions or null if none found.
+ */
+function extractPendingPlanQuestions(messages: Message[]): PlanQuestion[] | null {
+  const PLAN_QUESTIONS_RE = /```plan-questions\n([\s\S]*?)```/;
+
+  // Walk messages in reverse to find the last assistant message with a plan-questions block
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") {
+      // A user message after the assistant message means questions were already answered
+      return null;
+    }
+    if (msg.role === "assistant") {
+      const match = PLAN_QUESTIONS_RE.exec(msg.content);
+      if (!match) return null;
+      try {
+        const raw = JSON.parse(match[1]);
+        if (!Array.isArray(raw)) return null;
+        const validated = raw
+          .map((item) => PlanQuestionSchema.safeParse(item))
+          .filter((r) => r.success)
+          .map((r) => (r as { success: true; data: PlanQuestion }).data);
+        return validated.length > 0 ? validated : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 export const useThreadStore = create<ThreadState>((set, get) => {
   return {
   messages: [],
@@ -263,6 +300,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           .catch((err) => {
             console.debug("[taskHydration] Failed to load tasks for thread %s:", threadId, err);
           });
+
+        // Restore the plan question wizard if an unanswered plan-questions block
+        // exists in the loaded messages. This handles app restart without losing wizard state.
+        const existingStatus = get().planQuestionsStatusByThread[threadId];
+        if (existingStatus !== "pending") {
+          const pendingQuestions = extractPendingPlanQuestions(messages);
+          if (pendingQuestions) {
+            get().setPlanQuestions(threadId, pendingQuestions);
+          }
+        }
       }
     } catch (e) {
       if (get().currentThreadId === threadId) {

@@ -297,6 +297,7 @@ export function createWsTransport(
       attachments?,
       reasoningLevel?,
       provider?,
+      interactionMode?,
     ) =>
       rpc<Thread>("agent.createAndSend", {
         workspaceId,
@@ -309,6 +310,7 @@ export function createWsTransport(
         attachments,
         reasoningLevel,
         provider,
+        interactionMode,
       }),
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
     answerPlanQuestions: (threadId, answers, permissionMode?, reasoningLevel?) =>

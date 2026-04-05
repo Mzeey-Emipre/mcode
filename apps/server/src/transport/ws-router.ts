@@ -273,6 +273,7 @@ async function dispatch(
         params.attachments,
         params.reasoningLevel,
         params.provider,
+        params.interactionMode,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);
