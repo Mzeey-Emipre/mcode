@@ -1,11 +1,12 @@
 import { useEffect, useCallback } from "react";
-import { Github, Terminal, GitCompareArrows } from "lucide-react";
+import { Github, Terminal, FileDiff } from "lucide-react";
 import { OpenInEditorMenu } from "./OpenInEditorMenu";
 import { useBranchPr } from "@/hooks/useBranchPr";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Thread } from "@/transport";
 
 /** Props for {@link HeaderActions}. */
@@ -104,21 +105,29 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
       )}
 
       {/* Diff panel toggle */}
-      <Button
-        variant="ghost"
-        size="xs"
-        onClick={toggleDiff}
-        className={`gap-1 text-xs h-6 ${
-          diffActive
-            ? "text-foreground bg-muted/40"
-            : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
-        }`}
-        aria-label="Toggle changes panel"
-        aria-pressed={diffActive}
-        title="Toggle changes (Ctrl+D)"
-      >
-        <GitCompareArrows size={12} />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={toggleDiff}
+              className={`gap-1 text-xs h-6 ${
+                diffActive
+                  ? "text-foreground bg-muted/40"
+                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
+              }`}
+              aria-label="Toggle changes panel"
+              aria-pressed={diffActive}
+            >
+              <FileDiff size={12} />
+            </Button>
+          }
+        />
+        <TooltipContent side="bottom" className="text-xs">
+          Toggle changes (Ctrl+D)
+        </TooltipContent>
+      </Tooltip>
 
       {/* Terminal toggle */}
       <Button

@@ -25,6 +25,18 @@ export function parseDiffLines(diff: string): ParsedDiffLine[] {
       result.push({ type: "header", content: line, oldLineNo: null, newLineNo: null });
     } else if (line.startsWith("+++") || line.startsWith("---")) {
       result.push({ type: "header", content: line, oldLineNo: null, newLineNo: null });
+    } else if (
+      line.startsWith("diff ") ||
+      line.startsWith("index ") ||
+      line.startsWith("new file") ||
+      line.startsWith("old file") ||
+      line.startsWith("deleted file") ||
+      line.startsWith("similarity") ||
+      line.startsWith("rename") ||
+      line.startsWith("Binary files")
+    ) {
+      // Git metadata lines — mark as header so renderers can skip them
+      result.push({ type: "header", content: line, oldLineNo: null, newLineNo: null });
     } else if (line.startsWith("+")) {
       result.push({ type: "add", content: line.slice(1), oldLineNo: null, newLineNo: newLine });
       newLine++;
