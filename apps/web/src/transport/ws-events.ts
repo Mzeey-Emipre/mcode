@@ -138,6 +138,19 @@ export function startPushListeners(): void {
         filesChanged: string[];
       };
       useThreadStore.getState().handleTurnPersisted(payload);
+
+      // Update diff panel snapshots if this thread is already loaded
+      import("@/stores/diffStore").then(({ useDiffStore }) => {
+        const store = useDiffStore.getState();
+        if (store.snapshotsByThread[payload.threadId] !== undefined) {
+          import("@/transport").then(({ getTransport }) => {
+            getTransport()
+              .listSnapshots(payload.threadId)
+              .then((snapshots) => store.setSnapshots(payload.threadId, snapshots))
+              .catch(() => { /* non-critical */ });
+          });
+        }
+      });
     }),
   );
 
