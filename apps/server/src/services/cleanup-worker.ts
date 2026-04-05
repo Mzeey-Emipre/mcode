@@ -116,9 +116,10 @@ export class CleanupWorker {
 
     try {
       // Validate paths from DB before using them in filesystem operations.
+      // Normalise Windows backslashes so resolve() works on all platforms.
       const worktreeBase = resolve(getMcodeDir(), "worktrees");
-      const resolvedWt = resolve(job.worktree_path);
-      const resolvedWs = resolve(job.workspace_path);
+      const resolvedWt = resolve(job.worktree_path.replace(/\\/g, "/"));
+      const resolvedWs = resolve(job.workspace_path.replace(/\\/g, "/"));
 
       if (!existsSync(resolvedWs)) {
         throw new Error(`workspace_path does not exist: ${resolvedWs}`);
