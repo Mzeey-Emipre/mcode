@@ -6,8 +6,8 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 /** View mode options for the diff panel toolbar. */
 const ALL_VIEW_MODES: { value: DiffViewMode; label: string; worktreeOnly: boolean }[] = [
-  { value: "by-turn", label: "By Turn", worktreeOnly: false },
   { value: "all", label: "All", worktreeOnly: false },
+  { value: "by-turn", label: "By Turn", worktreeOnly: false },
   { value: "commits", label: "Commits", worktreeOnly: true },
 ];
 

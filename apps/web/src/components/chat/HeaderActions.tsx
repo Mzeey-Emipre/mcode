@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from "react";
-import { Github, Terminal, FileDiff } from "lucide-react";
+import { Github, Terminal, Diff } from "lucide-react";
 import { OpenInEditorMenu } from "./OpenInEditorMenu";
 import { useBranchPr } from "@/hooks/useBranchPr";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -104,31 +104,6 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
         </div>
       )}
 
-      {/* Diff panel toggle */}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={toggleDiff}
-              className={`gap-1 text-xs h-6 ${
-                diffActive
-                  ? "text-foreground bg-muted/40"
-                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
-              }`}
-              aria-label="Toggle changes panel"
-              aria-pressed={diffActive}
-            >
-              <FileDiff size={12} />
-            </Button>
-          }
-        />
-        <TooltipContent side="bottom" className="text-xs">
-          Toggle changes (Ctrl+D)
-        </TooltipContent>
-      </Tooltip>
-
       {/* Terminal toggle */}
       <Tooltip>
         <TooltipTrigger
@@ -151,6 +126,31 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
         />
         <TooltipContent side="bottom" className="text-xs">
           Toggle terminal (Ctrl+J)
+        </TooltipContent>
+      </Tooltip>
+
+      {/* Diff panel toggle */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={toggleDiff}
+              className={`gap-1 text-xs h-6 ${
+                diffActive
+                  ? "text-foreground bg-muted/40"
+                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
+              }`}
+              aria-label="Toggle changes panel"
+              aria-pressed={diffActive}
+            >
+              <Diff size={12} />
+            </Button>
+          }
+        />
+        <TooltipContent side="bottom" className="text-xs">
+          Toggle changes (Ctrl+D)
         </TooltipContent>
       </Tooltip>
     </div>
