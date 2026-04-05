@@ -7,11 +7,11 @@ interface FreeTextInputProps {
   placeholder?: string;
 }
 
-/** Optional free-text override. Grounded in a muted container with a focus indicator. */
+/** Optional free-text override grounded in a muted container with a visible focus state. */
 export function FreeTextInput({ value, onChange, placeholder }: FreeTextInputProps) {
   return (
-    <div className="mb-3 rounded-md bg-muted/30 border border-border/50 focus-within:border-border transition-colors px-3 py-2">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40 mb-1.5">
+    <div className="mb-3 rounded-md border border-border/50 bg-muted/20 focus-within:border-border focus-within:bg-muted/30 transition-colors px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/35 mb-1.5 leading-none">
         Your response
       </p>
       <input

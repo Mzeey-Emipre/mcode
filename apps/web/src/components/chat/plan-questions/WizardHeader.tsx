@@ -9,15 +9,15 @@ interface WizardHeaderProps {
   question: string;
 }
 
-/** Counter, category tag, and question text at the top of the plan question wizard. */
+/** Progress counter, category, and question heading. */
 export function WizardHeader({ current, total, category, question }: WizardHeaderProps) {
   return (
-    <div className="mb-3">
+    <div className="mb-4">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-[11px] font-mono text-muted-foreground/50 tabular-nums">
+        <span className="text-[11px] font-mono text-muted-foreground/40 tabular-nums">
           {current}/{total}
         </span>
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/30">
           {category}
         </span>
       </div>

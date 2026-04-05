@@ -17,7 +17,7 @@ interface WizardNavProps {
   totalQuestions?: number;
 }
 
-/** Navigation row: ghost Previous+Cancel on the left, progress dots center, primary pill on the right. */
+/** Navigation row: ghost Previous + Cancel on the left, progress center, primary Submit on the right. */
 export function WizardNav({
   onPrevious,
   onNext,
@@ -28,14 +28,14 @@ export function WizardNav({
   totalQuestions = 1,
 }: WizardNavProps) {
   return (
-    <div className="flex items-center justify-between pt-2 border-t border-border/60">
-      <div className="flex items-center">
+    <div className="flex items-center justify-between pt-3 border-t border-border/60">
+      <div className="flex items-center gap-0.5">
         <Button
           variant="ghost"
           size="sm"
           onClick={onPrevious}
           disabled={!onPrevious || isSubmitting}
-          className="h-7 px-2 text-xs"
+          className="h-7 px-2 text-xs text-muted-foreground/70"
         >
           Previous
         </Button>
@@ -44,7 +44,7 @@ export function WizardNav({
           size="sm"
           onClick={onCancel}
           disabled={isSubmitting}
-          className="h-7 px-2 text-xs text-muted-foreground"
+          className="h-7 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground"
         >
           Cancel
         </Button>
@@ -57,7 +57,7 @@ export function WizardNav({
               key={i}
               className={`rounded-full transition-all duration-200 ${
                 i === currentIndex
-                  ? "w-3 h-1 bg-primary"
+                  ? "w-4 h-1 bg-primary"
                   : "w-1 h-1 bg-muted-foreground/20"
               }`}
             />
@@ -65,13 +65,13 @@ export function WizardNav({
         </div>
       )}
 
-      <button
+      <Button
+        size="sm"
         onClick={onNext}
         disabled={isSubmitting}
-        className="rounded-full px-3 py-1 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {isSubmitting ? "Submitting..." : nextLabel}
-      </button>
+      </Button>
     </div>
   );
 }
