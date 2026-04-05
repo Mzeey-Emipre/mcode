@@ -11,7 +11,7 @@ import { rm } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
-import type { GitBranch, WorktreeInfo } from "@mcode/contracts";
+import type { GitBranch, WorktreeInfo, GitCommit } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 const execFile = promisify(execFileCb);
@@ -217,6 +217,138 @@ export class GitService {
       return worktreePath;
     }
     return workspacePath;
+  }
+
+  /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. */
+  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string): Promise<GitCommit[]> {
+    const workspace = this.requireWorkspace(workspaceId);
+
+    // Auto-detect default branch when baseBranch is omitted but branch is specified
+    const resolvedBase = baseBranch !== undefined
+      ? baseBranch
+      : branch !== undefined
+        ? await this.detectDefaultBranch(workspace.path)
+        : undefined;
+
+    const args = [
+      "-C", workspace.path,
+      "log",
+      "--pretty=format:MCODE_SEP%H|||%h|||%s|||%an|||%aI",
+      "--numstat",
+      `-${limit}`,
+    ];
+    if (resolvedBase && branch) {
+      args.push(`${resolvedBase}..${branch}`);
+    } else if (resolvedBase) {
+      args.push(`${resolvedBase}..HEAD`);
+    } else if (branch) {
+      args.push(branch);
+    }
+
+    const { stdout } = await execFile("git", args, { timeout: 10_000 });
+
+    const commits: GitCommit[] = [];
+    // Each block starts with MCODE_SEP; split on that separator
+    const blocks = stdout.split("MCODE_SEP").filter(Boolean);
+
+    for (const block of blocks) {
+      const lines = block.split("\n");
+      const meta = lines[0];
+      if (!meta) continue;
+
+      const [sha, shortSha, message, author, date] = meta.split("|||");
+      if (!sha) continue;
+
+      // numstat lines have format: additions\tdeletions\tfilename
+      const filesChanged = lines.slice(1).filter((l) => l.includes("\t")).length;
+
+      commits.push({
+        sha: sha ?? "",
+        shortSha: shortSha ?? "",
+        message: message ?? "",
+        author: author ?? "",
+        date: date ?? "",
+        filesChanged,
+      });
+    }
+
+    return commits;
+  }
+
+  /** Get unified diff for a specific git commit. */
+  async commitDiff(
+    workspaceId: string,
+    sha: string,
+    filePath?: string,
+    maxLines?: number,
+  ): Promise<string> {
+    if (!/^[0-9a-fA-F]{4,40}$/.test(sha)) {
+      throw new Error(`Invalid git SHA: ${sha}`);
+    }
+    const workspace = this.requireWorkspace(workspaceId);
+    const args = ["-C", workspace.path, "diff", "--find-renames", `${sha}~1..${sha}`];
+    if (filePath) args.push("--", filePath);
+
+    try {
+      const { stdout } = await execFile("git", args, { timeout: 10_000 });
+      const result = stdout.trim();
+      if (maxLines) {
+        return result.split("\n").slice(0, maxLines).join("\n");
+      }
+      return result;
+    } catch {
+      // Handle root commit (no parent): diff against empty tree
+      try {
+        const emptyTree = "4b825dc642cb6eb9a060e54bf899d69f82049264";
+        const args2 = ["-C", workspace.path, "diff", "--find-renames", `${emptyTree}..${sha}`];
+        if (filePath) args2.push("--", filePath);
+        const { stdout } = await execFile("git", args2, { timeout: 10_000 });
+        return stdout.trim();
+      } catch {
+        return "";
+      }
+    }
+  }
+
+  /** Get the list of files changed in a specific git commit. */
+  async commitFiles(workspaceId: string, sha: string): Promise<string[]> {
+    if (!/^[0-9a-fA-F]{4,40}$/.test(sha)) {
+      throw new Error(`Invalid git SHA: ${sha}`);
+    }
+    const workspace = this.requireWorkspace(workspaceId);
+    const nameOnlyArgs = ["-C", workspace.path, "diff", "--name-only", `${sha}~1..${sha}`];
+    try {
+      const { stdout } = await execFile("git", nameOnlyArgs, { timeout: 5_000 });
+      return stdout.trim().split("\n").filter(Boolean);
+    } catch {
+      // Root commit — diff against empty tree
+      const emptyTree = "4b825dc642cb6eb9a060e54bf899d69f82049264";
+      try {
+        const { stdout } = await execFile(
+          "git",
+          ["-C", workspace.path, "diff", "--name-only", `${emptyTree}..${sha}`],
+          { timeout: 5_000 },
+        );
+        return stdout.trim().split("\n").filter(Boolean);
+      } catch {
+        return [];
+      }
+    }
+  }
+
+  /** Detect the default upstream branch (e.g. main, master) for a repository. */
+  private async detectDefaultBranch(repoPath: string): Promise<string> {
+    try {
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000 },
+      );
+      // Returns "origin/main" → strip the "origin/" prefix
+      return stdout.trim().replace(/^[^/]+\//, "");
+    } catch {
+      return "main";
+    }
   }
 
   private requireWorkspace(workspaceId: string) {

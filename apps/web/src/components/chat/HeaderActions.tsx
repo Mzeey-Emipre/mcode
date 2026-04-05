@@ -1,10 +1,12 @@
-import { useEffect } from "react";
-import { Github, Terminal } from "lucide-react";
+import { useEffect, useCallback } from "react";
+import { Github, Terminal, Diff } from "lucide-react";
 import { OpenInEditorMenu } from "./OpenInEditorMenu";
 import { useBranchPr } from "@/hooks/useBranchPr";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { useDiffStore } from "@/stores/diffStore";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Thread } from "@/transport";
 
 /** Props for {@link HeaderActions}. */
@@ -13,7 +15,7 @@ interface HeaderActionsProps {
 }
 
 /**
- * Renders PR link, editor shortcut, and terminal toggle for the active thread header.
+ * Renders PR link, editor shortcut, terminal toggle, and diff panel toggle for the active thread header.
  * Polls GitHub for the thread's PR and syncs state changes back to the workspace store.
  */
 export function HeaderActions({ thread }: HeaderActionsProps) {
@@ -49,8 +51,22 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     });
   }, [pr, thread.id]);
 
-  const panelVisible = useTerminalStore((s) => s.panelVisible);
-  const togglePanel = useTerminalStore((s) => s.togglePanel);
+  const terminalVisible = useTerminalStore((s) => s.panelVisible);
+  const toggleTerminal = useTerminalStore((s) => s.togglePanel);
+
+  const diffActive = useDiffStore(
+    (s) => s.panelVisible && s.activeTab === "changes",
+  );
+
+  const toggleDiff = useCallback(() => {
+    const store = useDiffStore.getState();
+    if (!store.panelVisible || store.activeTab !== "changes") {
+      store.showPanel();
+      store.setActiveTab("changes");
+    } else {
+      store.hidePanel();
+    }
+  }, []);
 
   const handleOpenPr = () => {
     if (pr?.url) {
@@ -87,21 +103,56 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
           <OpenInEditorMenu dirPath={dirPath} />
         </div>
       )}
-      <Button
-        variant="ghost"
-        size="xs"
-        onClick={togglePanel}
-        className={`gap-1 text-xs h-6 ${
-          panelVisible
-            ? "text-foreground bg-muted/40"
-            : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
-        }`}
-        aria-label="Toggle terminal"
-        aria-pressed={panelVisible}
-        title="Toggle terminal (Ctrl+J)"
-      >
-        <Terminal size={12} />
-      </Button>
+
+      {/* Terminal toggle */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={toggleTerminal}
+              className={`gap-1 text-xs h-6 ${
+                terminalVisible
+                  ? "text-foreground bg-muted/40"
+                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
+              }`}
+              aria-label="Toggle terminal"
+              aria-pressed={terminalVisible}
+            >
+              <Terminal size={12} />
+            </Button>
+          }
+        />
+        <TooltipContent side="bottom" className="text-xs">
+          Toggle terminal (Ctrl+J)
+        </TooltipContent>
+      </Tooltip>
+
+      {/* Diff panel toggle */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={toggleDiff}
+              className={`gap-1 text-xs h-6 ${
+                diffActive
+                  ? "text-foreground bg-muted/40"
+                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
+              }`}
+              aria-label="Toggle changes panel"
+              aria-pressed={diffActive}
+            >
+              <Diff size={12} />
+            </Button>
+          }
+        />
+        <TooltipContent side="bottom" className="text-xs">
+          Toggle changes (Ctrl+D)
+        </TooltipContent>
+      </Tooltip>
     </div>
   );
 }

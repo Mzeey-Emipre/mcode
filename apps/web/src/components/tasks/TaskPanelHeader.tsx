@@ -1,70 +1,81 @@
-import { X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { TaskItem } from "@/stores/taskStore";
 
 /** Props for TaskPanelHeader. */
 interface TaskPanelHeaderProps {
   /** All task items for the active thread, used to compute progress. */
   tasks: readonly TaskItem[];
-  /** Called when the user clicks the close button. */
-  onClose: () => void;
 }
 
 /**
- * Compact header bar for the task panel.
- * Displays a TASKS label, progress counter with state-aware color,
- * a close button, and a thin progress bar rule below the border.
+ * Compact progress header for the task panel.
+ * Shows per-task status dots (completed/active/pending) with a fraction counter.
+ * Falls back to a progress bar when there are more than 24 tasks.
  */
-export function TaskPanelHeader({ tasks, onClose }: TaskPanelHeaderProps) {
+export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
   const completed = tasks.filter((t) => t.status === "completed").length;
   const total = tasks.length;
   const hasActive = tasks.some((t) => t.status === "in_progress");
   const allDone = total > 0 && completed === total;
   const pct = total > 0 ? (completed / total) * 100 : 0;
 
+  if (total === 0) return null;
+
+  const useDots = total <= 24;
+
   return (
-    <div className="flex-none border-b border-border/60">
-      {/* Main row — matches chat header h-11 (44px) */}
-      <div className="flex h-11 items-center justify-between px-3">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold tracking-[0.1em] uppercase text-foreground/50">
-            Tasks
-          </span>
-          {total > 0 && (
-            <span
-              className={`tabular-nums text-[11px] font-medium leading-none transition-colors duration-300 ${
-                hasActive
-                  ? "text-primary/80"
-                  : allDone
-                    ? "text-emerald-500/60"
-                    : "text-muted-foreground/40"
-              }`}
-            >
-              {completed}/{total}
-            </span>
+    <div className="flex-none border-b border-border/20 px-3 py-2">
+      <div className="flex items-center gap-2">
+        {/* Task status visualization */}
+        <div className="flex flex-1 min-w-0 items-center">
+          {useDots ? (
+            <div className="flex flex-wrap gap-[3px]">
+              {tasks.map((task, i) => (
+                <div
+                  key={i}
+                  className={`h-[5px] w-[5px] rounded-sm transition-colors duration-300 ${
+                    task.status === "completed"
+                      ? "bg-emerald-500/55"
+                      : task.status === "in_progress"
+                        ? "bg-primary/70 animate-pulse"
+                        : "bg-muted-foreground/15"
+                  }`}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="relative h-1 flex-1 rounded-full bg-border/30">
+              <div
+                className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out ${
+                  hasActive ? "bg-primary/60" : "bg-emerald-500/50"
+                }`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={onClose}
-          className="h-5 w-5 text-muted-foreground/30 hover:text-foreground/70 hover:bg-transparent transition-colors duration-150"
-          aria-label="Close task panel"
-        >
-          <X size={11} />
-        </Button>
-      </div>
 
-      {/* Progress rule — sits on top of the border */}
-      <div className="relative -mt-px h-px w-full bg-border/30">
-        {total > 0 && (
-          <div
-            className={`absolute inset-y-0 left-0 h-full transition-all duration-700 ease-out ${
-              hasActive ? "bg-primary/50" : "bg-emerald-500/40"
-            }`}
-            style={{ width: `${pct}%` }}
+        {/* Fraction counter with tooltip */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className={`shrink-0 font-mono tabular-nums text-[10px] font-medium leading-none transition-colors duration-300 cursor-help ${
+                  hasActive
+                    ? "text-primary/80"
+                    : allDone
+                      ? "text-emerald-500/70"
+                      : "text-muted-foreground/40"
+                }`}
+              >
+                {completed}/{total}
+              </span>
+            }
           />
-        )}
+          <TooltipContent side="top" className="text-xs">
+            {allDone ? "All tasks completed" : `${completed} of ${total} tasks completed`}
+          </TooltipContent>
+        </Tooltip>
       </div>
     </div>
   );

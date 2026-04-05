@@ -32,6 +32,7 @@ import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
 import { AgentStatusBar } from "./AgentStatusBar";
 import { useTaskStore } from "@/stores/taskStore";
+import { useDiffStore } from "@/stores/diffStore";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
@@ -67,10 +68,16 @@ function TasksToggle({ threadId }: { threadId?: string }) {
   const hasTasks = useTaskStore(
     (s) => !!(threadId && s.tasksByThread[threadId]?.length),
   );
-  const panelVisible = useTaskStore((s) => s.panelVisible);
-  const togglePanel = useTaskStore((s) => s.togglePanel);
+  const panelVisible = useDiffStore((s) => s.panelVisible);
+  const showPanel = useDiffStore((s) => s.showPanel);
+  const setActiveTab = useDiffStore((s) => s.setActiveTab);
 
   if (!hasTasks) return null;
+
+  const handleClick = () => {
+    showPanel();
+    setActiveTab("tasks");
+  };
 
   return (
     <Tooltip>
@@ -79,7 +86,7 @@ function TasksToggle({ threadId }: { threadId?: string }) {
           <Button
             variant="ghost"
             size="xs"
-            onClick={togglePanel}
+            onClick={handleClick}
             className={cn(
               "gap-1.5 transition-colors",
               panelVisible

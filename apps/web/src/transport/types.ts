@@ -12,8 +12,10 @@ import type {
   PermissionMode,
   ReasoningLevel,
   ToolCallRecord,
+  TurnSnapshot,
   Settings,
   PartialSettings,
+  GitCommit,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -32,6 +34,7 @@ export type {
   InteractionMode,
   Settings,
   PartialSettings,
+  GitCommit,
 } from "@mcode/contracts";
 
 export type { PaginatedMessages, ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
@@ -167,6 +170,16 @@ export interface McodeTransport {
   getSnapshotDiff(snapshotId: string, filePath?: string, maxLines?: number): Promise<string>;
   /** Run garbage collection on expired snapshot refs. */
   cleanupSnapshots(): Promise<{ removed: number }>;
+  /** List all turn snapshots for a thread, ordered by creation time. */
+  listSnapshots(threadId: string): Promise<TurnSnapshot[]>;
+  /** Get cumulative diff across all turns for a thread. Implemented in Phase 3. */
+  getCumulativeDiff(threadId: string, filePath?: string, maxLines?: number): Promise<string>;
+  /** Get commit log for a workspace branch. */
+  getGitLog(workspaceId: string, branch?: string, limit?: number, baseBranch?: string): Promise<GitCommit[]>;
+  /** Get unified diff for a specific git commit. Implemented in Phase 4. */
+  getCommitDiff(workspaceId: string, sha: string, filePath?: string, maxLines?: number): Promise<string>;
+  /** Get the list of files changed in a specific git commit. */
+  getCommitFiles(workspaceId: string, sha: string): Promise<string[]>;
 
   // Settings
   /** Fetch the full settings object from the server. */

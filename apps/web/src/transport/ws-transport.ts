@@ -11,8 +11,9 @@ import type {
   PermissionMode,
   ToolCallRecord,
   Settings,
+  GitCommit,
 } from "./types";
-import type { PaginatedMessages } from "@mcode/contracts";
+import type { PaginatedMessages, TurnSnapshot } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
@@ -375,6 +376,16 @@ export function createWsTransport(
       rpc<string>("snapshot.getDiff", { snapshotId, filePath, maxLines }),
     cleanupSnapshots: () =>
       rpc<{ removed: number }>("snapshot.cleanup", {}),
+    listSnapshots: (threadId) =>
+      rpc<TurnSnapshot[]>("snapshot.listByThread", { threadId }),
+    getCumulativeDiff: (threadId, filePath?, maxLines?) =>
+      rpc<string>("snapshot.getCumulativeDiff", { threadId, filePath, maxLines }),
+    getGitLog: (workspaceId, branch?, limit?, baseBranch?) =>
+      rpc<GitCommit[]>("git.log", { workspaceId, branch, limit, baseBranch }),
+    getCommitDiff: (workspaceId, sha, filePath?, maxLines?) =>
+      rpc<string>("git.commitDiff", { workspaceId, sha, filePath, maxLines }),
+    getCommitFiles: (workspaceId, sha) =>
+      rpc<string[]>("git.commitFiles", { workspaceId, sha }),
 
     // Settings
     getSettings: () => rpc<Settings>("settings.get", {}),
