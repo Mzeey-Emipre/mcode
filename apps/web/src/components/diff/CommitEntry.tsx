@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { ChevronRight } from "lucide-react";
+import { Plus, Minus } from "lucide-react";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type { GitCommit } from "@/stores/diffStore";
@@ -85,12 +85,11 @@ export function CommitEntry({ commit }: CommitEntryProps) {
         onClick={() => setExpanded((prev) => !prev)}
         className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/15 transition-colors"
       >
-        <ChevronRight
-          size={11}
-          className={`shrink-0 text-muted-foreground/30 transition-transform duration-150 ${
-            expanded ? "rotate-90" : ""
-          }`}
-        />
+        {expanded ? (
+          <Minus size={11} className="shrink-0 text-muted-foreground/30" />
+        ) : (
+          <Plus size={11} className="shrink-0 text-muted-foreground/30" />
+        )}
 
         {/* Author avatar */}
         <span

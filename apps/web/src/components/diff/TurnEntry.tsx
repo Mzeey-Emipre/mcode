@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { Plus, Minus } from "lucide-react";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { FileList } from "./FileList";
 
@@ -21,12 +21,11 @@ export function TurnEntry({ snapshot, turnNumber }: TurnEntryProps) {
         onClick={() => setExpanded((prev) => !prev)}
         className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/15 transition-colors"
       >
-        <ChevronRight
-          size={11}
-          className={`shrink-0 text-muted-foreground/30 transition-transform duration-150 ${
-            expanded ? "rotate-90" : ""
-          }`}
-        />
+        {expanded ? (
+          <Minus size={11} className="shrink-0 text-muted-foreground/30" />
+        ) : (
+          <Plus size={11} className="shrink-0 text-muted-foreground/30" />
+        )}
 
         {/* Turn pill */}
         <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-widest bg-muted/40 text-muted-foreground/50">

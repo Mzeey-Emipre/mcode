@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Plus, Minus } from "lucide-react";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
@@ -68,15 +68,20 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
   const [expanded, setExpanded] = useState(false);
   const [diffState, setDiffState] = useState<DiffState>(null);
   const renderMode = useDiffStore((s) => s.renderMode);
+  // Tracks whether a load has been kicked off so the effect doesn't cancel itself
+  // when diffState transitions from null → {loading:true}
+  const loadStartedRef = useRef(false);
 
   const basename = getFileBasename(filePath);
   const parent = getParentDir(filePath);
   const ext = getExtension(filePath);
   const extColor = EXT_COLORS[ext] ?? "text-muted-foreground/30";
 
-  // Load diff lazily on first expand
+  // Load diff lazily on first expand. Uses a ref guard so that the state
+  // transition to {loading:true} doesn't re-trigger cleanup and cancel the fetch.
   useEffect(() => {
-    if (!expanded || diffState !== null) return;
+    if (!expanded || loadStartedRef.current) return;
+    loadStartedRef.current = true;
 
     let cancelled = false;
     setDiffState({ loading: true });
@@ -106,7 +111,7 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
     return () => {
       cancelled = true;
     };
-  }, [expanded, diffState, source, id, filePath]);
+  }, [expanded, source, id, filePath]);
 
   const lines = useMemo(
     () =>
