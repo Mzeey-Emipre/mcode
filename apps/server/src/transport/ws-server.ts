@@ -40,6 +40,18 @@ export function createWsServer(deps: RouterDeps): {
 
   const wss = new WebSocketServer({ server: httpServer, maxPayload: 45 * 1024 * 1024 });
 
+  // The ws library forwards httpServer 'error' events to wss via
+  // `error: this.emit.bind(this, 'error')`. Without this listener, an
+  // EADDRINUSE on httpServer would crash the process before listen()'s
+  // EADDRINUSE retry handler in index.ts has a chance to run.
+  wss.on("error", (err) => {
+    logger.error("WebSocketServer error", {
+      error: (err as NodeJS.ErrnoException).message,
+      code: (err as NodeJS.ErrnoException).code,
+      stack: (err as Error).stack,
+    });
+  });
+
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     // Auth: validate token from query params if configured
     if (authToken) {

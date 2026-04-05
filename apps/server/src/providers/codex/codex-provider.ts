@@ -187,6 +187,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
 
     if (existing) {
       existing.lastUsedAt = Date.now();
+      // Abort any in-flight turn before starting a new one, so the old
+      // signal is not orphaned when we replace the controller.
+      existing.abortController.abort();
       // Replace abort controller for the new turn
       existing.abortController = new AbortController();
       // Fire-and-forget: start the turn in the background so the RPC

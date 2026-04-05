@@ -490,6 +490,7 @@ export class AgentService {
           const SDK_PREFIX = "sdk_session_id:";
           if (event.subtype.startsWith(SDK_PREFIX)) {
             const sdkId = event.subtype.slice(SDK_PREFIX.length);
+            if (!sdkId) return;
             try {
               this.threadRepo.updateSdkSessionId(event.threadId, sdkId);
             } catch (err) {
