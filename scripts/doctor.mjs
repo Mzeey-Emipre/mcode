@@ -39,7 +39,7 @@ function hasCommand(cmd) {
 
 console.log('Checking prerequisites...\n');
 
-// 1. Required binaries
+// 1-3. Required binaries
 check('bun in PATH',  () => hasCommand('bun'),  'Install from https://bun.sh');
 check('git in PATH',  () => hasCommand('git'),  'Install from https://git-scm.com');
 check('node in PATH', () => hasCommand('node'), 'Install from https://nodejs.org');

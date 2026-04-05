@@ -67,7 +67,7 @@ All variables are optional — defaults work for local development.
 |----------|---------------|-------------|
 | `MCODE_DATA_DIR` | `~/.mcode-dev` | Root data directory (`~/.mcode` in prod) |
 | `MCODE_DB_PATH` | `$MCODE_DATA_DIR/mcode.db` | SQLite database path override |
-| `MCODE_PORT` | `19400` | HTTP/WS server port (increments on collision, up to 19500) |
+| `MCODE_PORT` | `19400` | HTTP/WS server port (increments on collision, up to 19409) |
 | `MCODE_HOST` | `127.0.0.1` | Server bind host |
 | `MCODE_AUTH_TOKEN` | `""` (empty) | Empty string bypasses auth in dev |
 | `MCODE_VERSION` | `0.0.1` | Reported version string |
@@ -103,7 +103,7 @@ Log files rotate daily and are retained for 14 days.
 The backend server is an HTTP + WebSocket server.
 
 - **Default URL:** `http://127.0.0.1:19400`
-- **Port range:** 19400–19500 (increments on collision; actual port printed to stdout on startup)
+- **Port range:** 19400–19409 (10 attempts; actual port printed to stdout on startup)
 - **Health check:** `GET /health` → `{ "status": "ok", "activeAgents": <number> }`
 - **WebSocket:** `ws://localhost:<port>`
 - **Auth:** In dev, `MCODE_AUTH_TOKEN=""` bypasses authentication entirely.

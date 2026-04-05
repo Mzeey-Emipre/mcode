@@ -13,7 +13,7 @@
   "env": {
     "MCODE_DATA_DIR":          { "default": "~/.mcode-dev",             "description": "Root data directory (dev default; ~/.mcode in prod)" },
     "MCODE_DB_PATH":           { "default": "<MCODE_DATA_DIR>/mcode.db", "description": "SQLite database path override" },
-    "MCODE_PORT":              { "default": "19400",                    "description": "HTTP/WS server port (increments on collision up to 19500)" },
+    "MCODE_PORT":              { "default": "19400",                    "description": "HTTP/WS server port (increments on collision, up to 19409 (10 attempts))" },
     "MCODE_HOST":              { "default": "127.0.0.1",                "description": "Server bind host" },
     "MCODE_AUTH_TOKEN":        { "default": "",                          "description": "Empty string bypasses WebSocket auth in dev" },
     "MCODE_VERSION":           { "default": "0.0.1",                   "description": "Reported version string" },
@@ -36,7 +36,7 @@
   },
   "server": {
     "defaultPort":    19400,
-    "portRange":      [19400, 19500],
+    "portRange":      [19400, 19409],
     "healthEndpoint": "GET /health",
     "healthResponse": { "status": "ok", "activeAgents": "number" }
   },
