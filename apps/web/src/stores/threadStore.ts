@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
-import type { ReasoningLevel } from "@mcode/contracts";
+import type { ReasoningLevel, PlanQuestion, PlanAnswer } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
@@ -51,6 +51,14 @@ interface ThreadState {
   contextByThread: Record<string, { lastTokensIn: number; contextWindow: number }>;
   /** Whether the SDK is currently compacting the context window for a thread. */
   isCompactingByThread: Record<string, boolean>;
+  /** Questions proposed by the model in plan mode, keyed by thread ID. Null when not pending. */
+  planQuestionsByThread: Record<string, PlanQuestion[] | null>;
+  /** User's answers to plan questions, keyed by thread ID then question ID. */
+  planAnswersByThread: Record<string, Map<string, PlanAnswer>>;
+  /** Currently focused question index per thread (0-based). */
+  activeQuestionIndexByThread: Record<string, number>;
+  /** Plan wizard status per thread. */
+  planQuestionsStatusByThread: Record<string, "idle" | "pending" | "answered">;
 
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
@@ -67,6 +75,16 @@ interface ThreadState {
   addMessage: (message: Message) => void;
   clearMessages: () => void;
   isThreadRunning: (threadId: string) => boolean;
+  /** Set questions received from the model and show the wizard. */
+  setPlanQuestions: (threadId: string, questions: PlanQuestion[]) => void;
+  /** Record the user's answer for one question. */
+  setPlanAnswer: (threadId: string, questionId: string, answer: PlanAnswer) => void;
+  /** Navigate to a specific question index. */
+  setActiveQuestionIndex: (threadId: string, index: number) => void;
+  /** Submit all answers to the server and dismiss the wizard. */
+  submitPlanAnswers: (threadId: string) => Promise<void>;
+  /** Reset plan question state for a thread (called on clear/reload). */
+  clearPlanQuestions: (threadId: string) => void;
   handleAgentEvent: (threadId: string, event: Record<string, unknown>) => void;
 
   /** Handle server-side tool call persistence confirmation. */
@@ -139,6 +157,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   loadEpochByThread: {},
   contextByThread: {},
   isCompactingByThread: {},
+  planQuestionsByThread: {},
+  planAnswersByThread: {},
+  activeQuestionIndexByThread: {},
+  planQuestionsStatusByThread: {},
 
   cacheToolCallRecords: (key, records) => {
     get().toolCallRecordCache.set(key, records);
@@ -341,7 +363,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }));
 
     try {
-      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments, reasoningLevel, provider);
+      const { interactionMode } = get().getThreadSettings(threadId);
+      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode);
     } catch (e) {
       set((state) => {
         const next = new Set(state.runningThreadIds);
@@ -423,6 +446,84 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         [threadId]: { ...state.getThreadSettings(threadId), ...settings },
       },
     }));
+  },
+
+  setPlanQuestions: (threadId, questions) => {
+    set((state) => ({
+      planQuestionsByThread: { ...state.planQuestionsByThread, [threadId]: questions },
+      planAnswersByThread: { ...state.planAnswersByThread, [threadId]: new Map() },
+      activeQuestionIndexByThread: { ...state.activeQuestionIndexByThread, [threadId]: 0 },
+      planQuestionsStatusByThread: { ...state.planQuestionsStatusByThread, [threadId]: "pending" },
+    }));
+  },
+
+  setPlanAnswer: (threadId, questionId, answer) => {
+    set((state) => {
+      const existing = state.planAnswersByThread[threadId] ?? new Map<string, PlanAnswer>();
+      const updated = new Map(existing);
+      updated.set(questionId, answer);
+      return {
+        planAnswersByThread: { ...state.planAnswersByThread, [threadId]: updated },
+      };
+    });
+  },
+
+  setActiveQuestionIndex: (threadId, index) => {
+    set((state) => ({
+      activeQuestionIndexByThread: { ...state.activeQuestionIndexByThread, [threadId]: index },
+    }));
+  },
+
+  submitPlanAnswers: async (threadId) => {
+    const state = get();
+    const answersMap = state.planAnswersByThread[threadId] ?? new Map<string, PlanAnswer>();
+    const questions = state.planQuestionsByThread[threadId] ?? [];
+    const { permissionMode } = state.getThreadSettings(threadId);
+
+    // Build an answer for every question; unanswered questions get nulls
+    const answers: PlanAnswer[] = questions.map((q) => {
+      const a = answersMap.get(q.id);
+      return a ?? { questionId: q.id, selectedOptionId: null, freeText: null };
+    });
+
+    // Hide the wizard immediately
+    set((s) => ({
+      planQuestionsStatusByThread: { ...s.planQuestionsStatusByThread, [threadId]: "answered" },
+    }));
+
+    try {
+      await getTransport().answerPlanQuestions(threadId, answers, permissionMode);
+      // Mark thread as running so the streaming indicator appears
+      set((s) => ({
+        runningThreadIds: new Set([...s.runningThreadIds, threadId]),
+        agentStartTimes: { ...s.agentStartTimes, [threadId]: Date.now() },
+      }));
+    } catch (e) {
+      // Revert to pending on error so user can retry
+      set((s) => ({
+        planQuestionsStatusByThread: { ...s.planQuestionsStatusByThread, [threadId]: "pending" },
+        error: String(e),
+      }));
+    }
+  },
+
+  clearPlanQuestions: (threadId) => {
+    set((state) => {
+      const nextQuestions = { ...state.planQuestionsByThread };
+      const nextAnswers = { ...state.planAnswersByThread };
+      const nextIndex = { ...state.activeQuestionIndexByThread };
+      const nextStatus = { ...state.planQuestionsStatusByThread };
+      delete nextQuestions[threadId];
+      delete nextAnswers[threadId];
+      delete nextIndex[threadId];
+      delete nextStatus[threadId];
+      return {
+        planQuestionsByThread: nextQuestions,
+        planAnswersByThread: nextAnswers,
+        activeQuestionIndexByThread: nextIndex,
+        planQuestionsStatusByThread: nextStatus,
+      };
+    });
   },
 
   /**
