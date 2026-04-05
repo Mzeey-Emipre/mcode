@@ -63,6 +63,10 @@ export function MessageList() {
   /** True until initial messages are positioned at the bottom after a thread switch. */
   const isInitialLoadRef = useRef(true);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  /** True when new content arrived while the user was scrolled up. */
+  const [hasNewContent, setHasNewContent] = useState(false);
+  /** Ref mirror of showScrollBtn so scroll-trigger effects avoid stale closures. */
+  const isScrolledUpRef = useRef(false);
   /** Controls container visibility: hidden while positioning to prevent top-to-bottom flash. */
   const [isPositioned, setIsPositioned] = useState(false);
 
@@ -101,7 +105,11 @@ export function MessageList() {
     const el = containerRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowScrollBtn(distanceFromBottom > 200);
+    const scrolledUp = distanceFromBottom > 200;
+    isScrolledUpRef.current = scrolledUp;
+    setShowScrollBtn(scrolledUp);
+    // Clear new-content highlight once the user reaches the bottom
+    if (!scrolledUp) setHasNewContent(false);
 
     // Trigger loading older messages when near the top
     if (
@@ -270,14 +278,24 @@ export function MessageList() {
     });
   }, [items.length, loading, virtualizer]);
 
-  // Discrete events (new message, tool call) -> smooth scroll
+  // Discrete events (new message, tool call) -> scroll if at bottom, else highlight button
   useEffect(() => {
-    if (!isInitialLoadRef.current) scrollToBottom(true);
+    if (isInitialLoadRef.current) return;
+    if (isScrolledUpRef.current) {
+      setHasNewContent(true);
+    } else {
+      scrollToBottom(true);
+    }
   }, [messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
 
-  // Streaming deltas -> instant scroll (no animation lag)
+  // Streaming deltas -> scroll if at bottom, else highlight button
   useEffect(() => {
-    if (streamingText && !isInitialLoadRef.current) scrollToBottom(false);
+    if (!streamingText || isInitialLoadRef.current) return;
+    if (isScrolledUpRef.current) {
+      setHasNewContent(true);
+    } else {
+      scrollToBottom(false);
+    }
   }, [streamingText, scrollToBottom]);
 
   return (
@@ -320,15 +338,22 @@ export function MessageList() {
         </div>
       )}
 
-      {/* Scroll-to-bottom floating button */}
+      {/* Scroll-to-bottom floating button — pulses when new content arrives */}
       {showScrollBtn && (
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          onClick={() => scrollToBottom(true)}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 h-8 w-8 rounded-full bg-muted/80 text-muted-foreground shadow-md ring-1 ring-border/40 backdrop-blur-sm transition-all hover:bg-muted hover:text-foreground"
-          aria-label="Scroll to bottom"
+          onClick={() => {
+            setHasNewContent(false);
+            scrollToBottom(true);
+          }}
+          className={`absolute bottom-4 left-1/2 -translate-x-1/2 h-8 w-8 rounded-full shadow-md ring-1 backdrop-blur-sm transition-all hover:bg-muted hover:text-foreground ${
+            hasNewContent
+              ? "bg-primary text-primary-foreground ring-primary/50 animate-bounce"
+              : "bg-muted/80 text-muted-foreground ring-border/40"
+          }`}
+          aria-label={hasNewContent ? "New messages below" : "Scroll to bottom"}
         >
           <ArrowDown size={14} />
         </Button>
