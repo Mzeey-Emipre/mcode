@@ -1,4 +1,10 @@
+import { useState, useEffect, useMemo } from "react";
+import { ChevronRight } from "lucide-react";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
+import { getTransport } from "@/transport";
+import { parseDiffLines } from "@/lib/diff-parser";
+import { UnifiedDiff } from "./UnifiedDiff";
+import { SideBySideDiff } from "./SideBySideDiff";
 
 /** Props for FileEntry. */
 interface FileEntryProps {
@@ -47,56 +53,160 @@ const EXT_COLORS: Record<string, string> = {
   toml: "text-amber-400/60",
 };
 
-/** Single file row. Click selects the file for diff viewing. */
-export function FileEntry({ filePath, source, id }: FileEntryProps) {
-  const selectedFile = useDiffStore((s) => s.selectedFile);
-  const selectFile = useDiffStore((s) => s.selectFile);
+/**
+ * Diff loading state.
+ * null = not yet started; { loading: true } = in-flight; { loading: false; data } = settled.
+ */
+type DiffState = null | { loading: true } | { loading: false; data: string };
 
-  const isSelected =
-    selectedFile?.filePath === filePath &&
-    selectedFile?.id === id &&
-    selectedFile?.source === source;
+/**
+ * Single file row with an inline expandable diff.
+ * Clicking toggles the diff open/closed directly below the filename.
+ * Diff is loaded lazily on the first expand.
+ */
+export function FileEntry({ filePath, source, id }: FileEntryProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [diffState, setDiffState] = useState<DiffState>(null);
+  const renderMode = useDiffStore((s) => s.renderMode);
 
   const basename = getFileBasename(filePath);
   const parent = getParentDir(filePath);
   const ext = getExtension(filePath);
   const extColor = EXT_COLORS[ext] ?? "text-muted-foreground/30";
 
+  // Load diff lazily on first expand
+  useEffect(() => {
+    if (!expanded || diffState !== null) return;
+
+    let cancelled = false;
+    setDiffState({ loading: true });
+
+    const load = async () => {
+      try {
+        const transport = getTransport();
+        let result: string;
+        if (source === "snapshot") {
+          result = await transport.getSnapshotDiff(id, filePath);
+        } else if (source === "cumulative") {
+          result = await transport.getCumulativeDiff(id, filePath);
+        } else {
+          const { useWorkspaceStore } = await import("@/stores/workspaceStore");
+          const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+          result = workspaceId
+            ? await transport.getCommitDiff(workspaceId, id, filePath)
+            : "";
+        }
+        if (!cancelled) setDiffState({ loading: false, data: result });
+      } catch {
+        if (!cancelled) setDiffState({ loading: false, data: "" });
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, diffState, source, id, filePath]);
+
+  const lines = useMemo(
+    () =>
+      diffState && !diffState.loading && diffState.data
+        ? parseDiffLines(diffState.data)
+        : [],
+    [diffState],
+  );
+
+  const stats = useMemo(
+    () => ({
+      additions: lines.filter((l) => l.type === "add").length,
+      deletions: lines.filter((l) => l.type === "remove").length,
+    }),
+    [lines],
+  );
+
+  const isLoaded = diffState !== null && !diffState.loading;
+
   return (
-    <button
-      type="button"
-      onClick={() => selectFile({ source, id, filePath })}
-      className={`group relative flex w-full items-center gap-2 py-[5px] pl-7 pr-3 text-left transition-colors ${
-        isSelected
-          ? "bg-primary/8 text-foreground"
-          : "text-muted-foreground hover:bg-muted/20 hover:text-foreground/80"
-      }`}
-      title={filePath}
-    >
-      {/* Selected left border */}
-      {isSelected && (
-        <span className="absolute left-0 top-0 bottom-0 w-0.5 rounded-r bg-primary/50" />
-      )}
+    <div className={`border-b border-border/10 ${expanded ? "bg-muted/5" : ""}`}>
+      {/* File header row */}
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className="group flex w-full items-center gap-2 py-[5px] pl-7 pr-3 text-left transition-colors hover:bg-muted/15"
+        title={filePath}
+      >
+        <ChevronRight
+          size={10}
+          className={`shrink-0 text-muted-foreground/25 transition-transform duration-150 ${
+            expanded ? "rotate-90" : ""
+          }`}
+        />
 
-      {/* Change status dot */}
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400/50" />
+        {/* Status dot */}
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400/50" />
 
-      {/* Name + parent dir */}
-      <span className="flex-1 min-w-0">
-        <span className="block truncate font-mono text-[11px]">{basename}</span>
-        {parent && (
-          <span className="block truncate font-mono text-[9px] text-muted-foreground/30">
-            {parent}/
+        {/* Filename + parent dir */}
+        <span className="flex-1 min-w-0">
+          <span className="block truncate font-mono text-[11px] text-foreground/70">
+            {basename}
+          </span>
+          {parent && (
+            <span className="block truncate font-mono text-[9px] text-muted-foreground/30">
+              {parent}/
+            </span>
+          )}
+        </span>
+
+        {/* +/- stats once loaded */}
+        {isLoaded && (stats.additions > 0 || stats.deletions > 0) && (
+          <span className="flex shrink-0 items-center gap-1 font-mono text-[9px]">
+            {stats.additions > 0 && (
+              <span className="text-emerald-400/60">+{stats.additions}</span>
+            )}
+            {stats.deletions > 0 && (
+              <span className="text-red-400/50">-{stats.deletions}</span>
+            )}
           </span>
         )}
-      </span>
 
-      {/* Extension badge */}
-      {ext && (
-        <span className={`shrink-0 font-mono text-[9px] uppercase tracking-wide ${extColor}`}>
-          {ext}
-        </span>
+        {/* Extension badge (hidden while expanded to save space) */}
+        {!expanded && ext && (
+          <span className={`shrink-0 font-mono text-[9px] uppercase tracking-wide ${extColor}`}>
+            {ext}
+          </span>
+        )}
+      </button>
+
+      {/* Inline diff */}
+      {expanded && (
+        <div className="border-t border-border/10">
+          {!isLoaded ? (
+            <div className="flex items-center justify-center gap-1.5 py-3">
+              {[0, 150, 300].map((delay) => (
+                <div
+                  key={delay}
+                  className="h-1 w-1 rounded-full bg-muted-foreground/25 animate-pulse"
+                  style={{ animationDelay: `${delay}ms` }}
+                />
+              ))}
+            </div>
+          ) : lines.length > 0 ? (
+            <div className="overflow-x-auto">
+              {renderMode === "unified" ? (
+                <UnifiedDiff lines={lines} />
+              ) : (
+                <div style={{ height: "240px" }}>
+                  <SideBySideDiff lines={lines} />
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-4">
+              <p className="text-[10px] text-muted-foreground/25">No changes</p>
+            </div>
+          )}
+        </div>
       )}
-    </button>
+    </div>
   );
 }
