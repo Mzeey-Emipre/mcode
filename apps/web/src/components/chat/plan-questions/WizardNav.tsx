@@ -1,3 +1,5 @@
+import { Button } from "@/components/ui/button";
+
 interface WizardNavProps {
   /** Called when the user clicks Previous. Undefined when on the first question. */
   onPrevious?: () => void;
@@ -17,6 +19,7 @@ interface WizardNavProps {
 
 /**
  * Navigation row at the bottom of the plan question wizard.
+ * Uses ghost buttons for Previous/Cancel and the primary action style for Next/Submit.
  */
 export function WizardNav({
   onPrevious,
@@ -28,25 +31,29 @@ export function WizardNav({
   totalQuestions = 1,
 }: WizardNavProps) {
   return (
-    <div className="flex items-center justify-between pt-3 border-t border-border">
-      <div className="flex items-center gap-3">
-        <button
+    <div className="flex items-center justify-between pt-2 border-t border-border">
+      <div className="flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onPrevious}
           disabled={!onPrevious || isSubmitting}
-          className="text-xs text-muted-foreground/60 hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none"
+          className="h-7 px-2 text-xs text-muted-foreground"
         >
           Previous
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onCancel}
           disabled={isSubmitting}
-          className="text-xs text-muted-foreground/60 hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none"
+          className="h-7 px-2 text-xs text-muted-foreground"
         >
           Cancel
-        </button>
+        </Button>
       </div>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1">
         {Array.from({ length: totalQuestions }).map((_, i) => (
           <div
             key={i}
@@ -60,7 +67,7 @@ export function WizardNav({
       <button
         onClick={onNext}
         disabled={isSubmitting}
-        className="text-xs font-medium text-primary hover:text-primary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none"
+        className="rounded-full px-3 py-1 text-xs font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {isSubmitting ? "Submitting..." : nextLabel}
       </button>
