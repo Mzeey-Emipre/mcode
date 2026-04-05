@@ -7,21 +7,19 @@ interface FreeTextInputProps {
   placeholder?: string;
 }
 
-/**
- * Optional free-text override for a plan question.
- */
+/** Optional free-text override. Grounded in a muted container with a focus indicator. */
 export function FreeTextInput({ value, onChange, placeholder }: FreeTextInputProps) {
   return (
-    <div className="mb-4 pl-3 border-l-2 border-l-transparent">
-      <label className="block text-[11px] text-muted-foreground/50 mb-1.5">
-        Your response (optional)
-      </label>
+    <div className="mb-3 rounded-md bg-muted/30 border border-border/50 focus-within:border-border transition-colors px-3 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40 mb-1.5">
+        Your response
+      </p>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder ?? "Add your own response..."}
-        className="w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground/40 border-none outline-none focus:outline-none"
+        className="w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground/30 outline-none"
       />
     </div>
   );

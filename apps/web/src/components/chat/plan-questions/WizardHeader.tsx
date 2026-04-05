@@ -3,27 +3,25 @@ interface WizardHeaderProps {
   current: number;
   /** Total number of questions in the batch. */
   total: number;
-  /** Category label from the question (e.g. "AUTH"). */
+  /** Category label from the question (e.g. "SCOPE"). */
   category: string;
-  /** The question text for display. */
+  /** The question text. */
   question: string;
 }
 
-/**
- * Progress counter and question text at the top of the plan question wizard.
- */
+/** Counter, category tag, and question text at the top of the plan question wizard. */
 export function WizardHeader({ current, total, category, question }: WizardHeaderProps) {
   return (
-    <div className="mb-4 pb-3 border-b border-border">
-      <div className="flex items-center gap-2 mb-1.5">
-        <span className="text-[11px] font-medium text-muted-foreground/50 tabular-nums">
+    <div className="mb-3">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[11px] font-mono text-muted-foreground/50 tabular-nums">
           {current}/{total}
         </span>
-        <span className="text-[11px] text-muted-foreground/40 uppercase tracking-wide">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
           {category}
         </span>
       </div>
-      <p className="text-sm font-medium text-foreground">{question}</p>
+      <p className="text-sm font-semibold text-foreground leading-snug">{question}</p>
     </div>
   );
 }

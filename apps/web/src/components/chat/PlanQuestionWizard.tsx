@@ -85,8 +85,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
   };
 
   return (
-    <div className="border-t border-border px-4 py-3">
-      <div className="border-l-2 border-primary/40 pl-3 transition-colors">
+    <div className="border-t border-border bg-card px-4 py-3">
         <WizardHeader
           current={activeIndex + 1}
           total={questions.length}
@@ -116,7 +115,6 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
           currentIndex={activeIndex}
           totalQuestions={questions.length}
         />
-      </div>
     </div>
   );
 }

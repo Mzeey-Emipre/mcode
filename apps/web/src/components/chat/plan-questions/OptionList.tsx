@@ -12,12 +12,10 @@ interface OptionListProps {
   onSelect: (optionId: string) => void;
 }
 
-/**
- * Renders a vertical list of selectable options with a single divider between each row.
- */
+/** Vertical list of option rows separated by thin dividers. */
 export function OptionList({ options, selectedId, recommendedId, onSelect }: OptionListProps) {
   return (
-    <div role="radiogroup" aria-label="Options" className="mb-5 divide-y divide-border/50">
+    <div role="radiogroup" aria-label="Options" className="divide-y divide-border/40 mb-3">
       {options.map((option) => (
         <OptionCard
           key={option.id}
