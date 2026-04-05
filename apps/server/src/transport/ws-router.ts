@@ -363,6 +363,8 @@ async function dispatch(
       return { removed: deps.turnSnapshotRepo.deleteExpired(
         parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10),
       ) };
+    case "snapshot.listByThread":
+      return deps.turnSnapshotRepo.listByThread(params.threadId);
 
     // Clipboard (legacy JSON-RPC path -- binary upload preferred)
     case "clipboard.saveFile": {

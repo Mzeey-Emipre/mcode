@@ -12,7 +12,7 @@ import type {
   ToolCallRecord,
   Settings,
 } from "./types";
-import type { PaginatedMessages } from "@mcode/contracts";
+import type { PaginatedMessages, TurnSnapshot } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
@@ -375,6 +375,8 @@ export function createWsTransport(
       rpc<string>("snapshot.getDiff", { snapshotId, filePath, maxLines }),
     cleanupSnapshots: () =>
       rpc<{ removed: number }>("snapshot.cleanup", {}),
+    listSnapshots: (threadId) =>
+      rpc<TurnSnapshot[]>("snapshot.listByThread", { threadId }),
 
     // Settings
     getSettings: () => rpc<Settings>("settings.get", {}),

@@ -8,6 +8,7 @@ import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { GitBranchSchema, WorktreeSchema } from "../git.js";
 import { PrInfoSchema, PrDetailSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
+import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import {
   SettingsSchema,
   PartialSettingsSchema,
@@ -237,6 +238,10 @@ export const WS_METHODS = lazySchema(() => ({
   "snapshot.cleanup": {
     params: z.object({}),
     result: z.object({ removed: z.number() }),
+  },
+  "snapshot.listByThread": {
+    params: z.object({ threadId: z.string() }),
+    result: z.array(TurnSnapshotSchema),
   },
   "clipboard.saveFile": {
     params: z.object({

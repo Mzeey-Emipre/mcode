@@ -167,6 +167,8 @@ export interface McodeTransport {
   getSnapshotDiff(snapshotId: string, filePath?: string, maxLines?: number): Promise<string>;
   /** Run garbage collection on expired snapshot refs. */
   cleanupSnapshots(): Promise<{ removed: number }>;
+  /** List all turn snapshots for a thread, ordered by creation time. */
+  listSnapshots(threadId: string): Promise<TurnSnapshot[]>;
 
   // Settings
   /** Fetch the full settings object from the server. */
