@@ -144,7 +144,7 @@ export class AgentService {
         ? existingMessages[existingMessages.length - 1].sequence + 1
         : 1;
 
-    const { stored } = await this.attachmentService.persist(
+    const { stored, persisted } = await this.attachmentService.persist(
       threadId,
       attachments,
     );
@@ -203,7 +203,7 @@ export class AgentService {
         fallbackModel,
         resume: isResume,
         permissionMode,
-        attachments: attachments.length > 0 ? attachments : undefined,
+        attachments: persisted.length > 0 ? persisted : undefined,
         reasoningLevel,
       });
       logger.info("Message sent via provider", {

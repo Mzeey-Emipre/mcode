@@ -14,7 +14,7 @@ import { injectable, inject } from "tsyringe";
 import { SettingsService } from "../../services/settings-service";
 import { EventEmitter } from "events";
 import { Codex } from "@openai/codex-sdk";
-import type { Thread as CodexThread, ModelReasoningEffort } from "@openai/codex-sdk";
+import type { Thread as CodexThread, ModelReasoningEffort, Input as CodexInput, UserInput as CodexUserInput } from "@openai/codex-sdk";
 import { logger } from "@mcode/shared";
 import type {
   IAgentProvider,
@@ -39,6 +39,36 @@ function toCodexReasoningEffort(
   if (!level) return undefined;
   if (level === "max" || level === "xhigh") return "xhigh";
   return level as ModelReasoningEffort;
+}
+
+/**
+ * Build a Codex SDK `Input` from a message string and optional attachments.
+ * Images are passed as `local_image` entries referencing the persisted file path on disk.
+ * Non-image attachments are included as a sanitized text note (name and MIME type only)
+ * without exposing local filesystem paths.
+ */
+function buildCodexInput(message: string, attachments?: AttachmentMeta[]): CodexInput {
+  if (!attachments || attachments.length === 0) return message;
+
+  const inputs: CodexUserInput[] = [];
+
+  for (const att of attachments) {
+    if (att.mimeType.startsWith("image/")) {
+      inputs.push({ type: "local_image", path: att.sourcePath });
+    } else {
+      // Strip control characters (including newlines) from user-supplied strings
+      // to prevent prompt injection. Do not expose internal filesystem paths.
+      const safeName = att.name.replace(/[\x00-\x1f\x7f]/g, "");
+      const safeMime = att.mimeType.replace(/[\x00-\x1f\x7f]/g, "");
+      inputs.push({ type: "text", text: `[Attached file: ${safeName} (${safeMime})]` });
+    }
+  }
+
+  if (message.trim().length > 0) {
+    inputs.push({ type: "text", text: message });
+  }
+
+  return inputs.length > 0 ? inputs : message;
 }
 
 /** Idle TTL before a session is evicted (10 minutes). */
@@ -139,7 +169,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
   }): Promise<void> {
     await this.refreshClient();
 
-    const { sessionId, message, cwd, model, resume, permissionMode, reasoningLevel } = params;
+    const { sessionId, message, cwd, model, resume, permissionMode, reasoningLevel, attachments } = params;
+    const input = buildCodexInput(message, attachments);
 
     if (!this.evictionTimer) {
       this.evictionTimer = setInterval(
@@ -158,7 +189,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       existing.lastUsedAt = Date.now();
       // Replace abort controller for the new turn
       existing.abortController = new AbortController();
-      await this.runTurn(sessionId, threadId, existing.thread, message, existing.abortController.signal);
+      await this.runTurn(sessionId, threadId, existing.thread, input, existing.abortController.signal);
       return;
     }
 
@@ -217,7 +248,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     };
     this.sessions.set(sessionId, entry);
 
-    await this.runTurn(sessionId, threadId, codexThread, message, abortController.signal);
+    await this.runTurn(sessionId, threadId, codexThread, input, abortController.signal);
   }
 
   /** Execute a single turn with streaming, mapping Codex events to AgentEvents. */
@@ -225,13 +256,13 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     sessionId: string,
     threadId: string,
     codexThread: CodexThread,
-    prompt: string,
+    input: CodexInput,
     signal: AbortSignal,
   ): Promise<void> {
     let lastAssistantText = "";
 
     try {
-      const { events } = await codexThread.runStreamed(prompt, { signal });
+      const { events } = await codexThread.runStreamed(input, { signal });
 
       for await (const event of events) {
         const entry = this.sessions.get(sessionId);
