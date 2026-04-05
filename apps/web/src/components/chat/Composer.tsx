@@ -32,6 +32,7 @@ import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
 import { AgentStatusBar } from "./AgentStatusBar";
 import { useTaskStore } from "@/stores/taskStore";
+import { useDiffStore } from "@/stores/diffStore";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
@@ -67,8 +68,8 @@ function TasksToggle({ threadId }: { threadId?: string }) {
   const hasTasks = useTaskStore(
     (s) => !!(threadId && s.tasksByThread[threadId]?.length),
   );
-  const panelVisible = useTaskStore((s) => s.panelVisible);
-  const togglePanel = useTaskStore((s) => s.togglePanel);
+  const panelVisible = useDiffStore((s) => s.panelVisible);
+  const togglePanel = useDiffStore((s) => s.togglePanel);
 
   if (!hasTasks) return null;
 

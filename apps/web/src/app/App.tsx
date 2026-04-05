@@ -4,11 +4,11 @@ import { ChatView } from "@/components/chat/ChatView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { TerminalPanel } from "@/components/terminal";
-import { TaskPanel } from "@/components/tasks";
+import { RightPanel } from "@/components/panels/RightPanel";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalStore } from "@/stores/terminalStore";
-import { useTaskStore } from "@/stores/taskStore";
+import { useDiffStore } from "@/stores/diffStore";
 import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
@@ -70,7 +70,24 @@ export function App() {
       key: "t",
       ctrl: true,
       description: "Toggle task panel",
-      handler: () => useTaskStore.getState().togglePanel(),
+      handler: () => useDiffStore.getState().togglePanel(),
+    });
+
+    const unregCtrlD = registerShortcut({
+      key: "d",
+      ctrl: true,
+      description: "Toggle changes panel",
+      handler: () => {
+        const store = useDiffStore.getState();
+        if (!store.panelVisible) {
+          store.showPanel();
+          store.setActiveTab("changes");
+        } else if (store.activeTab !== "changes") {
+          store.setActiveTab("changes");
+        } else {
+          store.hidePanel();
+        }
+      },
     });
 
     return () => {
@@ -79,6 +96,7 @@ export function App() {
       unregEscape();
       unregCtrlJ();
       unregCtrlT();
+      unregCtrlD();
     };
   }, []);
 
@@ -119,7 +137,7 @@ export function App() {
                   <ChatView />
                 )}
               </main>
-              {!settingsOpen && <TaskPanel />}
+              {!settingsOpen && <RightPanel />}
             </div>
             {!settingsOpen && <TerminalPanel />}
           </div>
