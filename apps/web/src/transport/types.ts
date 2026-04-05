@@ -16,6 +16,8 @@ import type {
   Settings,
   PartialSettings,
   GitCommit,
+  PlanAnswer,
+  InteractionMode,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -35,6 +37,7 @@ export type {
   Settings,
   PartialSettings,
   GitCommit,
+  PlanAnswer,
 } from "@mcode/contracts";
 
 export type { PaginatedMessages, ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
@@ -79,7 +82,7 @@ export interface McodeTransport {
   listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?: InteractionMode): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
     content: string,
@@ -93,6 +96,13 @@ export interface McodeTransport {
     provider?: string,
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
+  /** Submit answers to a plan-mode question batch and resume the agent session. */
+  answerPlanQuestions(
+    threadId: string,
+    answers: PlanAnswer[],
+    permissionMode?: PermissionMode,
+    reasoningLevel?: ReasoningLevel,
+  ): Promise<void>;
   readClipboardImage(): Promise<AttachmentMeta | null>;
   /** Save a clipboard file blob to disk via the server. Returns attachment metadata. */
   saveClipboardFile(data: ArrayBuffer, mimeType: string, fileName: string): Promise<AttachmentMeta | null>;
