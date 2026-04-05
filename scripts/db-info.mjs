@@ -3,33 +3,15 @@
  * Print SQLite database location, schema version, and basic table stats.
  * Opens the database read-only; safe to run while the server is running.
  */
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { resolveMainRoot } from './utils.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const worktreeRoot = resolve(__dirname, '..');
-const require      = createRequire(import.meta.url);
-
-// In a git worktree, node_modules live in the main checkout, not the worktree.
-// Resolve the main checkout root from the git common dir (e.g. /path/to/repo/.git).
-function resolveMainRoot() {
-  try {
-    const commonDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
-      cwd: worktreeRoot, encoding: 'utf8',
-    }).trim();
-    // commonDir is either '.git' (main worktree) or an absolute path (linked worktree)
-    const absCommon = resolve(worktreeRoot, commonDir);
-    return dirname(absCommon); // parent of .git is the repo root
-  } catch {
-    return worktreeRoot;
-  }
-}
-
-const root = resolveMainRoot();
+const require = createRequire(import.meta.url);
+const root    = resolveMainRoot();
 
 const dataDir = process.env.MCODE_DATA_DIR
   ?? join(homedir(), process.env.NODE_ENV === 'production' ? '.mcode' : '.mcode-dev');
@@ -63,6 +45,6 @@ try {
 
   db.close();
 } catch (err) {
-  console.error(`Error    : ${err.message}`);
+  console.error(`Error    : ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }

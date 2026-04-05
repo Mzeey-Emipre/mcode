@@ -3,7 +3,7 @@
  * Safely reset MCODE_DATA_DIR (dev only).
  * Deletes and recreates the data directory. The app re-creates the database on next startup.
  */
-import { join } from 'node:path';
+import { join, resolve, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -16,13 +16,16 @@ if (process.env.NODE_ENV === 'production') {
 const dataDir = process.env.MCODE_DATA_DIR ?? join(homedir(), '.mcode-dev');
 
 // Guard: refuse to reset paths that don't look like mcode data directories
-const home = homedir();
-if (!dataDir.startsWith(home)) {
+const resolvedHome = resolve(homedir());
+const resolvedDir  = resolve(dataDir);
+const rel = relative(resolvedHome, resolvedDir);
+if (rel.startsWith('..')) {
   console.error(`ERROR: Refusing to reset — ${dataDir} is outside the home directory.`);
   process.exit(1);
 }
-if (!dataDir.includes('.mcode')) {
-  console.error(`ERROR: Refusing to reset — ${dataDir} does not look like a mcode data directory (expected path containing ".mcode").`);
+const segments = resolvedDir.replace(/\\/g, '/').split('/');
+if (!segments.some(seg => seg === '.mcode' || seg.startsWith('.mcode-'))) {
+  console.error(`ERROR: Refusing to reset — ${dataDir} does not look like a mcode data directory (expected segment ".mcode" or ".mcode-*").`);
   process.exit(1);
 }
 

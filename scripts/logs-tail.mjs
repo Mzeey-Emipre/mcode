@@ -10,7 +10,8 @@ import { createInterface } from 'node:readline';
 
 const dataDir = process.env.MCODE_DATA_DIR
   ?? join(homedir(), process.env.NODE_ENV === 'production' ? '.mcode' : '.mcode-dev');
-const today   = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+const _d = new Date();
+const today = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, '0')}-${String(_d.getDate()).padStart(2, '0')}`;
 const logPath = join(dataDir, 'logs', `mcode.log.${today}`);
 
 if (!existsSync(logPath)) {

@@ -34,9 +34,9 @@ bun run doctor      # Verify all prerequisites (run this first)
 After cross-package changes (function signatures, shared interfaces), typecheck all packages:
 
 ```sh
-(cd apps/server && npx tsc --noEmit)
-(cd apps/web && npx tsc --noEmit)
-(cd apps/desktop && npx tsc --noEmit)
+(cd apps/server && bun x tsc --noEmit)
+(cd apps/web && bun x tsc --noEmit)
+(cd apps/desktop && bun x tsc --noEmit)
 ```
 
 ---

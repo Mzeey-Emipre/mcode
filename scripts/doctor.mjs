@@ -4,32 +4,14 @@
  * Prints ✓/✗ per check with actionable remediation on failure.
  * Exits 1 if any check fails.
  */
-import { existsSync, mkdirSync, accessSync, constants, readdirSync } from 'node:fs';
+import { existsSync, accessSync, constants } from 'node:fs';
 import { execSync, execFileSync } from 'node:child_process';
-import { resolve, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
+import { resolveMainRoot, scriptRoot as root } from './utils.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = resolve(__dirname, '..');
 const require = createRequire(import.meta.url);
-
-/**
- * Resolve the main checkout root, handling git worktrees where node_modules
- * live in the main checkout rather than the linked worktree directory.
- */
-function resolveMainRoot() {
-  try {
-    const commonDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
-      cwd: root, encoding: 'utf8',
-    }).trim();
-    return resolve(root, commonDir, '..');
-  } catch {
-    return root;
-  }
-}
-
 const mainRoot = resolveMainRoot();
 
 /**
@@ -63,7 +45,7 @@ function check(label, fn, fix) {
 /** Check whether a binary is available on PATH. */
 function hasCommand(cmd) {
   const locator = process.platform === 'win32' ? 'where' : 'which';
-  execSync(`${locator} ${cmd}`, { stdio: 'pipe' });
+  execFileSync(locator, [cmd], { stdio: 'pipe' });
 }
 
 console.log('Checking prerequisites...\n');
@@ -101,10 +83,8 @@ check(
   () => {
     const modulePath = resolveSqliteModule();
     if (!modulePath) throw new Error('not found');
-    const prebuilds = resolve(modulePath, 'prebuilds');
-    if (!existsSync(prebuilds)) throw new Error();
-    const hasElectron = readdirSync(prebuilds).some(e => e.toLowerCase().includes('electron'));
-    if (!hasElectron) throw new Error();
+    const electronBinding = resolve(modulePath, 'build', 'Release', 'better_sqlite3.electron.node');
+    if (!existsSync(electronBinding)) throw new Error();
   },
   'node scripts/postinstall.mjs  (or: SKIP_ELECTRON_REBUILD=1 bun install)'
 );
@@ -115,10 +95,10 @@ const dataDir = process.env.MCODE_DATA_DIR
 check(
   `MCODE_DATA_DIR writable (${dataDir})`,
   () => {
-    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
+    if (!existsSync(dataDir)) throw new Error('directory does not exist — start the app once to create it');
     accessSync(dataDir, constants.W_OK);
   },
-  `Check permissions on ${dataDir}`
+  `Start the server once (bun run dev:web) or create manually: mkdir -p ${dataDir}`
 );
 
 // 8. git hooks path

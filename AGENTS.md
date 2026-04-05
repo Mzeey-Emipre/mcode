@@ -10,8 +10,8 @@ Before working on this repo, read **[docs/agents/runtime.md](docs/agents/runtime
 the canonical list of startup commands, environment variables, runtime artifact locations,
 and agent write boundaries.
 
-Run `bun run doctor` to verify all prerequisites are installed.
 Run `bun run setup` to bootstrap from a fresh clone.
+Run `bun run doctor` to verify all prerequisites are installed.
 
 ## Directory Structure
 
