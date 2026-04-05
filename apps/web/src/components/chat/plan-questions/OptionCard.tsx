@@ -22,6 +22,8 @@ export function OptionCard({ option, index, selected, onSelect }: OptionCardProp
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={selected}
       onClick={() => onSelect(option.id)}
       className={cn(
         "w-full text-left rounded-lg border px-3 py-2.5 mt-2 transition-colors",

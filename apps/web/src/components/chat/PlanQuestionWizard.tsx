@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { WizardHeader } from "./plan-questions/WizardHeader";
 import { OptionList } from "./plan-questions/OptionList";
@@ -27,12 +27,17 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
   const setActiveQuestionIndex = useThreadStore((s) => s.setActiveQuestionIndex);
   const submitPlanAnswers = useThreadStore((s) => s.submitPlanAnswers);
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Ref prevents double-submit between keyboard and button press within the same tick.
+  const isSubmittingRef = useRef(false);
 
   const handleSubmit = useCallback(async () => {
-    setIsSubmitting(true);
-    await submitPlanAnswers(threadId);
-    setIsSubmitting(false);
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    try {
+      await submitPlanAnswers(threadId);
+    } finally {
+      isSubmittingRef.current = false;
+    }
   }, [threadId, submitPlanAnswers]);
 
   // Ctrl+Enter: advance to next question or submit on the last
@@ -100,7 +105,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
         }
         onNext={isLast ? handleSubmit : () => setActiveQuestionIndex(threadId, activeIndex + 1)}
         nextLabel={isLast ? "Submit answers" : "Next question"}
-        isSubmitting={isSubmitting}
+        isSubmitting={false}
       />
     </div>
   );

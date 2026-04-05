@@ -1,3 +1,5 @@
+import { Input } from "@/components/ui/input";
+
 interface FreeTextInputProps {
   /** Current free-text value. */
   value: string;
@@ -13,16 +15,12 @@ interface FreeTextInputProps {
  */
 export function FreeTextInput({ value, onChange, placeholder }: FreeTextInputProps) {
   return (
-    <input
+    <Input
       type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder ?? "Type your own answer, or leave blank to use the selected option"}
-      className={
-        "mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-sm " +
-        "text-foreground placeholder:text-muted-foreground " +
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      }
+      className="mt-3"
     />
   );
 }
