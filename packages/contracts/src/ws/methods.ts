@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { WorkspaceSchema } from "../models/workspace.js";
 import { ThreadSchema } from "../models/thread.js";
-import { ThreadModeSchema, PermissionModeSchema } from "../models/enums.js";
+import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema } from "../models/enums.js";
 import { PaginatedMessagesSchema } from "../models/message.js";
 import { AttachmentMetaSchema } from "../models/attachment.js";
 import { ToolCallRecordSchema } from "../models/tool-call-record.js";
@@ -10,6 +10,7 @@ import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
+import { PlanAnswerSchema } from "../models/plan-questions.js";
 import {
   SettingsSchema,
   PartialSettingsSchema,
@@ -35,6 +36,8 @@ export const SendMessageSchema = z.object({
   attachments: z.array(AttachmentMetaSchema).optional(),
   reasoningLevel: ReasoningLevelSchema.optional(),
   provider: ProviderIdSchema.optional(),
+  /** When "plan", the server wraps the message with the plan-mode question prompt. */
+  interactionMode: InteractionModeSchema.optional(),
 });
 
 /** Schema for creating a thread and sending a message in one call. */
@@ -161,6 +164,15 @@ export const WS_METHODS = lazySchema(() => ({
   "agent.activeCount": {
     params: z.object({}),
     result: z.number(),
+  },
+  "agent.answerQuestions": {
+    params: z.object({
+      threadId: z.string(),
+      answers: z.array(PlanAnswerSchema),
+      permissionMode: PermissionModeSchema.optional(),
+      reasoningLevel: ReasoningLevelSchema.optional(),
+    }),
+    result: z.void(),
   },
   "message.list": {
     params: z.object({
