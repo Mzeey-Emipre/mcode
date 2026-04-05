@@ -1,3 +1,4 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { TaskItem } from "@/stores/taskStore";
 
 /** Props for TaskPanelHeader. */
@@ -54,18 +55,27 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
           )}
         </div>
 
-        {/* Fraction counter */}
-        <span
-          className={`shrink-0 font-mono tabular-nums text-[10px] font-medium leading-none transition-colors duration-300 ${
-            hasActive
-              ? "text-primary/80"
-              : allDone
-                ? "text-emerald-500/70"
-                : "text-muted-foreground/40"
-          }`}
-        >
-          {completed}/{total}
-        </span>
+        {/* Fraction counter with tooltip */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className={`shrink-0 font-mono tabular-nums text-[10px] font-medium leading-none transition-colors duration-300 cursor-help ${
+                  hasActive
+                    ? "text-primary/80"
+                    : allDone
+                      ? "text-emerald-500/70"
+                      : "text-muted-foreground/40"
+                }`}
+              >
+                {completed}/{total}
+              </span>
+            }
+          />
+          <TooltipContent side="top" className="text-xs">
+            {allDone ? "All tasks completed" : `${completed} of ${total} tasks completed`}
+          </TooltipContent>
+        </Tooltip>
       </div>
     </div>
   );
