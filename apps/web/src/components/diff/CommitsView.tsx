@@ -5,10 +5,14 @@ import { useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { CommitEntry } from "./CommitEntry";
 
-/** Git commits list view. Loads commit log on mount when first shown. */
+/** Git commits list view. Shows only commits on the worktree branch not present on the base branch. */
 export function CommitsView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const threadBranch = useWorkspaceStore((s) => {
+    const thread = s.threads.find((t) => t.id === activeThreadId);
+    return thread?.branch ?? undefined;
+  });
   const commits = useDiffStore((s) =>
     activeThreadId ? s.commitsByThread[activeThreadId] : undefined,
   );
@@ -17,14 +21,15 @@ export function CommitsView() {
   const setCommitsLoading = useDiffStore((s) => s.setCommitsLoading);
 
   useEffect(() => {
-    if (!activeThreadId || !activeWorkspaceId) return;
+    if (!activeThreadId || !activeWorkspaceId || !threadBranch) return;
     if (commits !== undefined) return;
 
     let cancelled = false;
     setCommitsLoading(true);
 
+    // Show only commits on the worktree branch that diverge from main
     getTransport()
-      .getGitLog(activeWorkspaceId)
+      .getGitLog(activeWorkspaceId, threadBranch, 100, "main")
       .then((result) => {
         if (!cancelled) {
           setCommits(activeThreadId, result);
@@ -41,7 +46,7 @@ export function CommitsView() {
     return () => {
       cancelled = true;
     };
-  }, [activeThreadId, activeWorkspaceId, commits, setCommits, setCommitsLoading]);
+  }, [activeThreadId, activeWorkspaceId, threadBranch, commits, setCommits, setCommitsLoading]);
 
   if (commitsLoading) {
     return (

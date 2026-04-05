@@ -380,8 +380,8 @@ export function createWsTransport(
       rpc<TurnSnapshot[]>("snapshot.listByThread", { threadId }),
     getCumulativeDiff: (threadId, filePath?, maxLines?) =>
       rpc<string>("snapshot.getCumulativeDiff", { threadId, filePath, maxLines }),
-    getGitLog: (workspaceId, branch?, limit?) =>
-      rpc<GitCommit[]>("git.log", { workspaceId, branch, limit }),
+    getGitLog: (workspaceId, branch?, limit?, baseBranch?) =>
+      rpc<GitCommit[]>("git.log", { workspaceId, branch, limit, baseBranch }),
     getCommitDiff: (workspaceId, sha, filePath?, maxLines?) =>
       rpc<string>("git.commitDiff", { workspaceId, sha, filePath, maxLines }),
 

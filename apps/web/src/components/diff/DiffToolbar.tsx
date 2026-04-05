@@ -2,12 +2,13 @@ import { Columns2, AlignJustify } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDiffStore, type DiffViewMode } from "@/stores/diffStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 /** View mode options for the diff panel toolbar. */
-const VIEW_MODES: { value: DiffViewMode; label: string }[] = [
-  { value: "by-turn", label: "By Turn" },
-  { value: "all", label: "All" },
-  { value: "commits", label: "Commits" },
+const ALL_VIEW_MODES: { value: DiffViewMode; label: string; worktreeOnly: boolean }[] = [
+  { value: "by-turn", label: "By Turn", worktreeOnly: false },
+  { value: "all", label: "All", worktreeOnly: false },
+  { value: "commits", label: "Commits", worktreeOnly: true },
 ];
 
 /** Toolbar for the diff panel: view mode switcher + unified/side-by-side toggle. */
@@ -17,10 +18,18 @@ export function DiffToolbar() {
   const setViewMode = useDiffStore((s) => s.setViewMode);
   const setRenderMode = useDiffStore((s) => s.setRenderMode);
 
+  const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const isWorktree = useWorkspaceStore((s) => {
+    const thread = s.threads.find((t) => t.id === activeThreadId);
+    return thread?.mode === "worktree";
+  });
+
+  const viewModes = ALL_VIEW_MODES.filter((m) => !m.worktreeOnly || isWorktree);
+
   return (
     <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/30">
       <div className="flex items-center gap-0.5 rounded-md bg-muted/30 p-0.5">
-        {VIEW_MODES.map((mode) => (
+        {viewModes.map((mode) => (
           <button
             key={mode.value}
             type="button"

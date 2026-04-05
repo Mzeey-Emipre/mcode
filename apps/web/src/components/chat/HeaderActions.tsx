@@ -130,21 +130,29 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
       </Tooltip>
 
       {/* Terminal toggle */}
-      <Button
-        variant="ghost"
-        size="xs"
-        onClick={toggleTerminal}
-        className={`gap-1 text-xs h-6 ${
-          terminalVisible
-            ? "text-foreground bg-muted/40"
-            : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
-        }`}
-        aria-label="Toggle terminal"
-        aria-pressed={terminalVisible}
-        title="Toggle terminal (Ctrl+J)"
-      >
-        <Terminal size={12} />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={toggleTerminal}
+              className={`gap-1 text-xs h-6 ${
+                terminalVisible
+                  ? "text-foreground bg-muted/40"
+                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
+              }`}
+              aria-label="Toggle terminal"
+              aria-pressed={terminalVisible}
+            >
+              <Terminal size={12} />
+            </Button>
+          }
+        />
+        <TooltipContent side="bottom" className="text-xs">
+          Toggle terminal (Ctrl+J)
+        </TooltipContent>
+      </Tooltip>
     </div>
   );
 }

@@ -219,8 +219,8 @@ export class GitService {
     return workspacePath;
   }
 
-  /** Get commit log for a workspace, optionally filtered by branch. */
-  async log(workspaceId: string, branch?: string, limit = 50): Promise<GitCommit[]> {
+  /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. */
+  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string): Promise<GitCommit[]> {
     const workspace = this.requireWorkspace(workspaceId);
     const args = [
       "-C", workspace.path,
@@ -228,7 +228,13 @@ export class GitService {
       "--format=%H|||%h|||%s|||%an|||%aI",
       `-${limit}`,
     ];
-    if (branch) args.push(branch);
+    if (baseBranch && branch) {
+      args.push(`${baseBranch}..${branch}`);
+    } else if (baseBranch) {
+      args.push(`${baseBranch}..HEAD`);
+    } else if (branch) {
+      args.push(branch);
+    }
 
     const { stdout } = await execFile("git", args, { timeout: 10_000 });
     const lines = stdout.trim().split("\n").filter(Boolean);

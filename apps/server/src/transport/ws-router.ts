@@ -242,7 +242,7 @@ async function dispatch(
       );
       return;
     case "git.log":
-      return deps.gitService.log(params.workspaceId, params.branch, params.limit);
+      return deps.gitService.log(params.workspaceId, params.branch, params.limit, params.baseBranch);
     case "git.commitDiff":
       return deps.gitService.commitDiff(params.workspaceId, params.sha, params.filePath, params.maxLines);
 

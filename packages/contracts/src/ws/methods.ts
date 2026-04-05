@@ -125,6 +125,7 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({
       workspaceId: z.string(),
       branch: z.string().optional(),
+      baseBranch: z.string().optional(),
       limit: z.number().int().min(1).max(500).optional(),
     }),
     result: z.array(GitCommitSchema),
