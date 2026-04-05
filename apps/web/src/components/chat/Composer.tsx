@@ -319,6 +319,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const setThreadSettings = useThreadStore((s) => s.setThreadSettings);
   const contextEntry = useThreadStore((s) => threadId ? s.contextByThread[threadId] : undefined);
   const isCompacting = useThreadStore((s) => !!(threadId && s.isCompactingByThread[threadId]));
+  const planPending = useThreadStore(
+    (s) => !!threadId && (s.planQuestionsStatusByThread[threadId] ?? "idle") === "pending",
+  );
   const isAgentRunning = threadId ? runningThreadIds.has(threadId) : false;
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -961,10 +964,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             onSlashDismiss={slashCommand.onDismiss}
             isSlashPopupOpen={slashCommand.isOpen}
             editorRef={editorRef}
-            disabled={false}
+            disabled={planPending}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
-            placeholder={isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
+            placeholder={planPending ? "Answer the planning questions above" : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
           />
           <FileTagPopup
             files={fileAutocomplete.filteredFiles}
@@ -1150,6 +1153,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     : handleSend
             }
             disabled={
+              planPending ||
               preparingWorktree ||
               (!isAgentRunning && !hasContent)
             }
