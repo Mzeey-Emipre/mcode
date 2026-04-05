@@ -6,6 +6,7 @@ import { PaginatedMessagesSchema } from "../models/message.js";
 import { AttachmentMetaSchema } from "../models/attachment.js";
 import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { GitBranchSchema, WorktreeSchema } from "../git.js";
+import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
@@ -119,6 +120,23 @@ export const WS_METHODS = lazySchema(() => ({
       prNumber: z.number().optional(),
     }),
     result: z.void(),
+  },
+  "git.log": {
+    params: z.object({
+      workspaceId: z.string(),
+      branch: z.string().optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    }),
+    result: z.array(GitCommitSchema),
+  },
+  "git.commitDiff": {
+    params: z.object({
+      workspaceId: z.string(),
+      sha: z.string(),
+      filePath: z.string().optional(),
+      maxLines: z.number().int().positive().optional(),
+    }),
+    result: z.string(),
   },
   "agent.send": {
     params: SendMessageSchema,
@@ -242,6 +260,14 @@ export const WS_METHODS = lazySchema(() => ({
   "snapshot.listByThread": {
     params: z.object({ threadId: z.string() }),
     result: z.array(TurnSnapshotSchema),
+  },
+  "snapshot.getCumulativeDiff": {
+    params: z.object({
+      threadId: z.string(),
+      filePath: z.string().optional(),
+      maxLines: z.number().int().positive().optional(),
+    }),
+    result: z.string(),
   },
   "clipboard.saveFile": {
     params: z.object({

@@ -241,6 +241,10 @@ async function dispatch(
         params.prNumber,
       );
       return;
+    case "git.log":
+      return deps.gitService.log(params.workspaceId, params.branch, params.limit);
+    case "git.commitDiff":
+      return deps.gitService.commitDiff(params.workspaceId, params.sha, params.filePath, params.maxLines);
 
     // Agent
     case "agent.send":
@@ -365,6 +369,29 @@ async function dispatch(
       ) };
     case "snapshot.listByThread":
       return deps.turnSnapshotRepo.listByThread(params.threadId);
+    case "snapshot.getCumulativeDiff": {
+      const snapshots = deps.turnSnapshotRepo.listByThread(params.threadId);
+      if (snapshots.length === 0) return "";
+      const first = snapshots[0];
+      const last = snapshots[snapshots.length - 1];
+      let cwd: string;
+      if (first.worktree_path) {
+        cwd = first.worktree_path;
+      } else {
+        const thread = deps.threadService.findById(params.threadId);
+        if (!thread) throw new Error(`Thread not found: ${params.threadId}`);
+        const ws = deps.workspaceService.findById(thread.workspace_id);
+        if (!ws) throw new Error(`Workspace not found: ${thread.workspace_id}`);
+        cwd = deps.gitService.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
+      }
+      return await deps.snapshotService.getDiff(
+        cwd,
+        first.ref_before,
+        last.ref_after,
+        params.filePath,
+        params.maxLines,
+      );
+    }
 
     // Clipboard (legacy JSON-RPC path -- binary upload preferred)
     case "clipboard.saveFile": {
