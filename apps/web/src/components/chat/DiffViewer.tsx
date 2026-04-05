@@ -1,27 +1,10 @@
 import { useState, useCallback, useMemo } from "react";
 import { ChevronRight, FileText } from "lucide-react";
 import { getTransport } from "@/transport";
+import { parseDiffLines } from "@/lib/diff-parser";
 
 /** Number of lines to request on the initial (truncated) fetch. */
 const MAX_LINES = 500;
-
-/** Parsed diff line with type classification. */
-interface DiffLine {
-  type: "add" | "remove" | "context" | "header";
-  content: string;
-}
-
-/** Parse a unified diff string into typed lines. */
-function parseDiffLines(diff: string): DiffLine[] {
-  return diff.split("\n").map((line) => {
-    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
-      return { type: "header" as const, content: line };
-    }
-    if (line.startsWith("+")) return { type: "add" as const, content: line.slice(1) };
-    if (line.startsWith("-")) return { type: "remove" as const, content: line.slice(1) };
-    return { type: "context" as const, content: line.startsWith(" ") ? line.slice(1) : line };
-  });
-}
 
 /** Props for the DiffViewer component. */
 interface DiffViewerProps {
