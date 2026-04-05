@@ -19,3 +19,5 @@ export const WorktreeSchema = z.object({
 });
 /** Worktree metadata registered in the repository. */
 export type WorktreeInfo = z.infer<typeof WorktreeSchema>;
+
+export { GitCommitSchema, type GitCommit } from "./models/git-commit.js";

@@ -79,8 +79,8 @@ export { AgentEventSchema } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";
 
 // Git / GitHub
-export { GitBranchSchema, WorktreeSchema } from "./git.js";
-export type { GitBranch, WorktreeInfo } from "./git.js";
+export { GitBranchSchema, WorktreeSchema, GitCommitSchema } from "./git.js";
+export type { GitBranch, WorktreeInfo, GitCommit } from "./git.js";
 
 export { PrInfoSchema, PrDetailSchema } from "./github.js";
 export type { PrInfo, PrDetail } from "./github.js";

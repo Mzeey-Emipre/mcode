@@ -11,7 +11,7 @@ import { rm } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
-import type { GitBranch, WorktreeInfo } from "@mcode/contracts";
+import type { GitBranch, WorktreeInfo, GitCommit } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 const execFile = promisify(execFileCb);
@@ -217,6 +217,75 @@ export class GitService {
       return worktreePath;
     }
     return workspacePath;
+  }
+
+  /** Get commit log for a workspace, optionally filtered by branch. */
+  async log(workspaceId: string, branch?: string, limit = 50): Promise<GitCommit[]> {
+    const workspace = this.requireWorkspace(workspaceId);
+    const args = [
+      "-C", workspace.path,
+      "log",
+      "--format=%H|||%h|||%s|||%an|||%aI",
+      `-${limit}`,
+    ];
+    if (branch) args.push(branch);
+
+    const { stdout } = await execFile("git", args, { timeout: 10_000 });
+    const lines = stdout.trim().split("\n").filter(Boolean);
+
+    const commits: GitCommit[] = [];
+    for (const line of lines) {
+      const [sha, shortSha, message, author, date] = line.split("|||");
+      if (!sha) continue;
+
+      let filesChanged = 0;
+      try {
+        const { stdout: statOut } = await execFile(
+          "git",
+          ["-C", workspace.path, "diff", "--name-only", `${sha}~1`, sha],
+          { timeout: 5_000 },
+        );
+        filesChanged = statOut.trim().split("\n").filter(Boolean).length;
+      } catch {
+        // First commit has no parent
+      }
+
+      commits.push({ sha: sha ?? "", shortSha: shortSha ?? "", message: message ?? "", author: author ?? "", date: date ?? "", filesChanged });
+    }
+
+    return commits;
+  }
+
+  /** Get unified diff for a specific git commit. */
+  async commitDiff(
+    workspaceId: string,
+    sha: string,
+    filePath?: string,
+    maxLines?: number,
+  ): Promise<string> {
+    const workspace = this.requireWorkspace(workspaceId);
+    const args = ["-C", workspace.path, "diff", "--find-renames", `${sha}~1..${sha}`];
+    if (filePath) args.push("--", filePath);
+
+    try {
+      const { stdout } = await execFile("git", args, { timeout: 10_000 });
+      const result = stdout.trim();
+      if (maxLines) {
+        return result.split("\n").slice(0, maxLines).join("\n");
+      }
+      return result;
+    } catch {
+      // Handle root commit (no parent): diff against empty tree
+      try {
+        const emptyTree = "4b825dc642cb6eb9a060e54bf899d69f82049264";
+        const args2 = ["-C", workspace.path, "diff", "--find-renames", `${emptyTree}..${sha}`];
+        if (filePath) args2.push("--", filePath);
+        const { stdout } = await execFile("git", args2, { timeout: 10_000 });
+        return stdout.trim();
+      } catch {
+        return "";
+      }
+    }
   }
 
   private requireWorkspace(workspaceId: string) {
