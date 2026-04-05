@@ -1,3 +1,4 @@
+import { GitCompareArrows } from "lucide-react";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { TurnEntry } from "./TurnEntry";
 
@@ -10,8 +11,9 @@ interface TurnTimelineProps {
 export function TurnTimeline({ snapshots }: TurnTimelineProps) {
   if (snapshots.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center py-8">
-        <p className="text-xs text-muted-foreground/40">No changes yet</p>
+      <div className="flex flex-col items-center justify-center gap-3 py-10">
+        <GitCompareArrows size={22} className="text-muted-foreground/15" strokeWidth={1.5} />
+        <p className="text-[11px] text-muted-foreground/30">No changes yet</p>
       </div>
     );
   }

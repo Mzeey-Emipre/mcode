@@ -48,24 +48,34 @@ export function DiffPanel() {
   }, [activeThreadId, snapshots, setSnapshots, setSnapshotsLoading]);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex flex-1 flex-col overflow-hidden min-h-0">
       <DiffToolbar />
 
-      <div className="flex flex-1 flex-col overflow-hidden" style={{ minHeight: 0 }}>
-        {snapshotsLoading ? (
-          <div className="flex flex-1 items-center justify-center">
-            <p className="text-xs text-muted-foreground/40">Loading...</p>
-          </div>
-        ) : (
-          <ScrollArea className="flex-1 min-h-0" style={{ maxHeight: "50%" }}>
-            {viewMode === "by-turn" && <TurnTimeline snapshots={snapshots ?? []} />}
-            {viewMode === "all" && (
-              <CumulativeView snapshots={snapshots ?? []} threadId={activeThreadId ?? ""} />
-            )}
-            {viewMode === "commits" && <CommitsView />}
-          </ScrollArea>
-        )}
+      <div className="flex flex-1 flex-col overflow-hidden min-h-0">
+        {/* File browser: fixed 45% height */}
+        <div className="flex-none overflow-hidden" style={{ height: "45%" }}>
+          {snapshotsLoading ? (
+            <div className="flex h-full items-center justify-center gap-1.5">
+              {[0, 150, 300].map((delay) => (
+                <div
+                  key={delay}
+                  className="h-1 w-1 rounded-full bg-muted-foreground/25 animate-pulse"
+                  style={{ animationDelay: `${delay}ms` }}
+                />
+              ))}
+            </div>
+          ) : (
+            <ScrollArea className="h-full">
+              {viewMode === "by-turn" && <TurnTimeline snapshots={snapshots ?? []} />}
+              {viewMode === "all" && (
+                <CumulativeView snapshots={snapshots ?? []} threadId={activeThreadId ?? ""} />
+              )}
+              {viewMode === "commits" && <CommitsView />}
+            </ScrollArea>
+          )}
+        </div>
 
+        {/* Diff viewer: takes remaining space */}
         <DiffContent />
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { GitCommit } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
@@ -37,21 +38,30 @@ export function CommitsView() {
         }
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [activeThreadId, activeWorkspaceId, commits, setCommits, setCommitsLoading]);
 
   if (commitsLoading) {
     return (
-      <div className="flex flex-1 items-center justify-center py-8">
-        <p className="text-xs text-muted-foreground/40">Loading commits...</p>
+      <div className="flex items-center justify-center gap-1.5 py-10">
+        {[0, 150, 300].map((delay) => (
+          <div
+            key={delay}
+            className="h-1 w-1 rounded-full bg-muted-foreground/25 animate-pulse"
+            style={{ animationDelay: `${delay}ms` }}
+          />
+        ))}
       </div>
     );
   }
 
   if (!commits || commits.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center py-8">
-        <p className="text-xs text-muted-foreground/40">No commits found</p>
+      <div className="flex flex-col items-center justify-center gap-3 py-10">
+        <GitCommit size={22} className="text-muted-foreground/15" strokeWidth={1.5} />
+        <p className="text-[11px] text-muted-foreground/30">No commits found</p>
       </div>
     );
   }

@@ -64,12 +64,18 @@ function buildRows(lines: ParsedDiffLine[]): SideBySideRow[] {
   return rows;
 }
 
-const cellClasses: Record<string, string> = {
-  add: "bg-primary/10 text-primary/70",
-  remove: "bg-destructive/10 text-destructive/70",
-  header: "bg-muted/30 text-muted-foreground/70",
-  context: "text-muted-foreground",
-  empty: "bg-muted/10",
+const LEFT_CELL: Record<string, string> = {
+  remove: "bg-red-950/30 text-red-100/70 hover:bg-red-950/50",
+  context: "text-foreground/60 hover:bg-muted/10",
+  header: "bg-muted/20 text-muted-foreground/40",
+  empty: "bg-muted/5",
+};
+
+const RIGHT_CELL: Record<string, string> = {
+  add: "bg-emerald-950/30 text-emerald-100/80 hover:bg-emerald-950/50",
+  context: "text-foreground/60 hover:bg-muted/10",
+  header: "bg-muted/20 text-muted-foreground/40",
+  empty: "bg-muted/5",
 };
 
 /** Side-by-side diff renderer with synchronized scrolling. */
@@ -89,32 +95,35 @@ export function SideBySideDiff({ lines }: SideBySideDiffProps) {
   }, []);
 
   return (
-    <div className="flex text-[11px] font-mono leading-relaxed select-text h-full">
+    <div className="flex h-full select-text text-[11px] font-mono leading-relaxed">
+      {/* Left (removed) */}
       <div
         ref={leftRef}
         className="flex-1 overflow-auto border-r border-border/20"
         onScroll={() => syncScroll("left")}
       >
         {rows.map((row, i) => (
-          <div key={i} className={cellClasses[row.left.type]}>
-            <span className="inline-block w-8 select-none text-right pr-2 opacity-30 text-[10px]">
+          <div key={i} className={`flex items-stretch ${LEFT_CELL[row.left.type]}`}>
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/20">
               {row.left.lineNo ?? ""}
             </span>
-            {row.left.content}
+            <span className="flex-1 whitespace-pre px-1">{row.left.content}</span>
           </div>
         ))}
       </div>
+
+      {/* Right (added) */}
       <div
         ref={rightRef}
         className="flex-1 overflow-auto"
         onScroll={() => syncScroll("right")}
       >
         {rows.map((row, i) => (
-          <div key={i} className={cellClasses[row.right.type]}>
-            <span className="inline-block w-8 select-none text-right pr-2 opacity-30 text-[10px]">
+          <div key={i} className={`flex items-stretch ${RIGHT_CELL[row.right.type]}`}>
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/20">
               {row.right.lineNo ?? ""}
             </span>
-            {row.right.content}
+            <span className="flex-1 whitespace-pre px-1">{row.right.content}</span>
           </div>
         ))}
       </div>

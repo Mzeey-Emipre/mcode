@@ -15,29 +15,36 @@ export function TurnEntry({ snapshot, turnNumber }: TurnEntryProps) {
   const fileCount = snapshot.files_changed.length;
 
   return (
-    <div className="border-b border-border/20">
+    <div className={`border-b border-border/15 ${expanded ? "bg-muted/5" : ""}`}>
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/20 transition-colors"
+        className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/15 transition-colors"
       >
         <ChevronRight
-          size={12}
-          className={`shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-90" : ""}`}
+          size={11}
+          className={`shrink-0 text-muted-foreground/30 transition-transform duration-150 ${
+            expanded ? "rotate-90" : ""
+          }`}
         />
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted/40 text-[10px] font-medium text-muted-foreground shrink-0">
-          {turnNumber}
+
+        {/* Turn pill */}
+        <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-widest bg-muted/40 text-muted-foreground/50">
+          T{turnNumber}
         </span>
-        <span className="flex-1 truncate text-xs text-foreground/70">
+
+        <span className="flex-1 truncate text-[11px] text-foreground/60">
           Turn {turnNumber}
         </span>
-        <span className="text-[10px] text-muted-foreground/50">
-          {fileCount} file{fileCount !== 1 ? "s" : ""}
+
+        {/* File count chip */}
+        <span className="shrink-0 rounded-full bg-amber-400/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-400/60">
+          {fileCount}
         </span>
       </button>
 
       {expanded && (
-        <div className="pb-1">
+        <div className="pb-0.5">
           <FileList files={snapshot.files_changed} source="snapshot" id={snapshot.id} />
         </div>
       )}
