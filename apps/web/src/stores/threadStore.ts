@@ -570,6 +570,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           // Imported lazily to avoid circular dependency at module evaluation time.
           import("./diffStore").then(({ useDiffStore }) => {
             useDiffStore.getState().showPanel();
+            useDiffStore.getState().setActiveTab("tasks");
           });
         }
       }

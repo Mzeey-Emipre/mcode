@@ -269,6 +269,9 @@ export class GitService {
     filePath?: string,
     maxLines?: number,
   ): Promise<string> {
+    if (!/^[0-9a-fA-F]{4,40}$/.test(sha)) {
+      throw new Error(`Invalid git SHA: ${sha}`);
+    }
     const workspace = this.requireWorkspace(workspaceId);
     const args = ["-C", workspace.path, "diff", "--find-renames", `${sha}~1..${sha}`];
     if (filePath) args.push("--", filePath);

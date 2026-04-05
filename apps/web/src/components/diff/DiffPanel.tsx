@@ -29,21 +29,18 @@ export function DiffPanel() {
     let cancelled = false;
     setSnapshotsLoading(true);
 
-    getTransport()
-      .listSnapshots(activeThreadId)
-      .then((result) => {
-        if (!cancelled) {
-          setSnapshots(activeThreadId, result);
-          setSnapshotsLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSnapshots(activeThreadId, []);
-          setSnapshotsLoading(false);
-        }
-      });
+    const load = async () => {
+      try {
+        const result = await getTransport().listSnapshots(activeThreadId);
+        if (!cancelled) setSnapshots(activeThreadId, result);
+      } catch {
+        if (!cancelled) setSnapshots(activeThreadId, []);
+      } finally {
+        if (!cancelled) setSnapshotsLoading(false);
+      }
+    };
 
+    void load();
     return () => {
       cancelled = true;
     };
@@ -67,8 +64,8 @@ export function DiffPanel() {
         ) : (
           <>
             {viewMode === "by-turn" && <TurnTimeline snapshots={snapshots ?? []} />}
-            {viewMode === "all" && (
-              <CumulativeView snapshots={snapshots ?? []} threadId={activeThreadId ?? ""} />
+            {viewMode === "all" && activeThreadId && (
+              <CumulativeView snapshots={snapshots ?? []} threadId={activeThreadId} />
             )}
             {viewMode === "commits" && <CommitsView />}
           </>

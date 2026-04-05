@@ -12,7 +12,9 @@ interface CommitEntryProps {
 
 /** Format ISO date to a compact relative string. */
 function relativeTime(isoDate: string): string {
-  const diffSec = Math.floor((Date.now() - new Date(isoDate).getTime()) / 1000);
+  const then = new Date(isoDate).getTime();
+  if (!isFinite(then)) return "unknown";
+  const diffSec = Math.floor((Date.now() - then) / 1000);
   if (diffSec < 60) return "now";
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h`;

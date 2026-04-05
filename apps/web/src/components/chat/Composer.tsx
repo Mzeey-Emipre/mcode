@@ -69,9 +69,15 @@ function TasksToggle({ threadId }: { threadId?: string }) {
     (s) => !!(threadId && s.tasksByThread[threadId]?.length),
   );
   const panelVisible = useDiffStore((s) => s.panelVisible);
-  const togglePanel = useDiffStore((s) => s.togglePanel);
+  const showPanel = useDiffStore((s) => s.showPanel);
+  const setActiveTab = useDiffStore((s) => s.setActiveTab);
 
   if (!hasTasks) return null;
+
+  const handleClick = () => {
+    showPanel();
+    setActiveTab("tasks");
+  };
 
   return (
     <Tooltip>
@@ -80,7 +86,7 @@ function TasksToggle({ threadId }: { threadId?: string }) {
           <Button
             variant="ghost"
             size="xs"
-            onClick={togglePanel}
+            onClick={handleClick}
             className={cn(
               "gap-1.5 transition-colors",
               panelVisible

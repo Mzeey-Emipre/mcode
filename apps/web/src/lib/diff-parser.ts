@@ -11,6 +11,8 @@ export interface ParsedDiffLine {
 /** Parse a unified diff string into typed lines with line numbers. */
 export function parseDiffLines(diff: string): ParsedDiffLine[] {
   const lines = diff.split("\n");
+  // Remove the trailing empty element produced by a diff string that ends with \n
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
   const result: ParsedDiffLine[] = [];
   let oldLine = 0;
   let newLine = 0;
