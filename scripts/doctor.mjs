@@ -5,7 +5,7 @@
  * Exits 1 if any check fails.
  */
 import { existsSync, mkdirSync, accessSync, constants, readdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -14,6 +14,35 @@ import { createRequire } from 'node:module';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 const require = createRequire(import.meta.url);
+
+/**
+ * Resolve the main checkout root, handling git worktrees where node_modules
+ * live in the main checkout rather than the linked worktree directory.
+ */
+function resolveMainRoot() {
+  try {
+    const commonDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+      cwd: root, encoding: 'utf8',
+    }).trim();
+    return resolve(root, commonDir, '..');
+  } catch {
+    return root;
+  }
+}
+
+const mainRoot = resolveMainRoot();
+
+/**
+ * Resolve the path to the better-sqlite3 module, checking both the root and
+ * apps/server locations since Bun workspaces may not hoist it to the root.
+ */
+function resolveSqliteModule() {
+  const candidates = [
+    resolve(mainRoot, 'node_modules/better-sqlite3'),
+    resolve(mainRoot, 'apps/server/node_modules/better-sqlite3'),
+  ];
+  return candidates.find(p => existsSync(p)) ?? null;
+}
 
 let passed = 0;
 let failed = 0;
@@ -58,7 +87,11 @@ check(
 // 5. better-sqlite3 Node binding
 check(
   'better-sqlite3 Node binding loads',
-  () => require('better-sqlite3'),
+  () => {
+    const modulePath = resolveSqliteModule();
+    if (!modulePath) throw new Error('not found');
+    require(modulePath);
+  },
   'bun install'
 );
 
@@ -66,7 +99,9 @@ check(
 check(
   'Electron-ABI better-sqlite3 binding exists',
   () => {
-    const prebuilds = resolve(root, 'node_modules/better-sqlite3/prebuilds');
+    const modulePath = resolveSqliteModule();
+    if (!modulePath) throw new Error('not found');
+    const prebuilds = resolve(modulePath, 'prebuilds');
     if (!existsSync(prebuilds)) throw new Error();
     const hasElectron = readdirSync(prebuilds).some(e => e.toLowerCase().includes('electron'));
     if (!hasElectron) throw new Error();
