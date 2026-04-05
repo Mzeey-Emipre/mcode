@@ -531,9 +531,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             streamingPreviewByThread: nextPreview,
           };
           if (state.currentThreadId !== threadId) return trackTurn;
-          // Dedup: skip if a message with this ID was already loaded from DB
-          // by loadMessages. This prevents duplicates when the MessagePort push
-          // and the WebSocket RPC response arrive in unpredictable order.
+          // In Electron, MessagePort and WebSocket are independent channels
+          // with no ordering guarantee. Skip if already in messages to prevent
+          // duplicates when both channels deliver the same message.
           if (state.messages.some((m) => m.id === message.id)) return trackTurn;
           const { messages: capped, evicted } = capMessages([...state.messages, message]);
           return {

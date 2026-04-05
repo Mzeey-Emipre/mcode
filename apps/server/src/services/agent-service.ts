@@ -405,9 +405,9 @@ export class AgentService {
               event.content,
               nextSeq,
             );
-            // Enrich the event with the DB message ID so the broadcast
-            // listener (index.ts) forwards it to the frontend. The frontend
-            // uses this for dedup against messages already loaded by loadMessages.
+            // Enable dedup on the frontend: in Electron, MessagePort and
+            // WebSocket deliveries are independent, so the same message can
+            // arrive both via push and via loadMessages RPC.
             (event as Record<string, unknown>).messageId = msg.id;
           } catch (err) {
             logger.error("Failed to persist assistant message", {
