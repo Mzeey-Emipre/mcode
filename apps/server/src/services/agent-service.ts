@@ -484,6 +484,23 @@ export class AgentService {
           }
         }
 
+        // Persist SDK session ID so the thread can be resumed after a
+        // server restart. The Codex provider emits this on thread.started.
+        if (event.type === "system") {
+          const SDK_PREFIX = "sdk_session_id:";
+          if (event.subtype.startsWith(SDK_PREFIX)) {
+            const sdkId = event.subtype.slice(SDK_PREFIX.length);
+            try {
+              this.threadRepo.updateSdkSessionId(event.threadId, sdkId);
+            } catch (err) {
+              logger.warn("Failed to persist sdk_session_id", {
+                threadId: event.threadId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+        }
+
         if (event.type === "ended") {
           this.trackSessionEnded(event.threadId);
         }

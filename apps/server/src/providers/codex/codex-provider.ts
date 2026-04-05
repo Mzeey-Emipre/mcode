@@ -189,7 +189,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       existing.lastUsedAt = Date.now();
       // Replace abort controller for the new turn
       existing.abortController = new AbortController();
-      await this.runTurn(sessionId, threadId, existing.thread, input, existing.abortController.signal);
+      // Fire-and-forget: start the turn in the background so the RPC
+      // response is not blocked. Matches the Claude provider pattern where
+      // sendMessage returns immediately and events stream via push.
+      void this.runTurn(sessionId, threadId, existing.thread, input, existing.abortController.signal);
       return;
     }
 
@@ -248,7 +251,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     };
     this.sessions.set(sessionId, entry);
 
-    await this.runTurn(sessionId, threadId, codexThread, input, abortController.signal);
+    // Fire-and-forget: start the turn in the background so the RPC
+    // response (and createAndSend's Thread return) is not blocked.
+    // Events stream to the frontend via push channels in real time.
+    void this.runTurn(sessionId, threadId, codexThread, input, abortController.signal);
   }
 
   /** Execute a single turn with streaming, mapping Codex events to AgentEvents. */
