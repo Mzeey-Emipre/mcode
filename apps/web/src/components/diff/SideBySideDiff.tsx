@@ -65,16 +65,16 @@ function buildRows(lines: ParsedDiffLine[]): SideBySideRow[] {
 }
 
 const LEFT_CELL: Record<string, string> = {
-  remove: "bg-red-950/30 text-red-100/70 hover:bg-red-950/50",
+  remove: "bg-red-50 text-red-900 hover:bg-red-100 dark:bg-red-950/30 dark:text-red-100/70 dark:hover:bg-red-950/50",
   context: "text-foreground/60 hover:bg-muted/10",
-  header: "bg-muted/20 text-muted-foreground/40",
+  header: "bg-muted/20 text-muted-foreground/50",
   empty: "bg-muted/5",
 };
 
 const RIGHT_CELL: Record<string, string> = {
-  add: "bg-emerald-950/30 text-emerald-100/80 hover:bg-emerald-950/50",
+  add: "bg-emerald-50 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-100/80 dark:hover:bg-emerald-950/50",
   context: "text-foreground/60 hover:bg-muted/10",
-  header: "bg-muted/20 text-muted-foreground/40",
+  header: "bg-muted/20 text-muted-foreground/50",
   empty: "bg-muted/5",
 };
 

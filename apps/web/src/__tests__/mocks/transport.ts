@@ -112,6 +112,7 @@ export const mockTransport: McodeTransport = {
   getCumulativeDiff: vi.fn().mockResolvedValue(""),
   getGitLog: vi.fn().mockResolvedValue([]),
   getCommitDiff: vi.fn().mockResolvedValue(""),
+  getCommitFiles: vi.fn().mockResolvedValue([]),
   getSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(getDefaultSettings()))),
   updateSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(getDefaultSettings()))),
   setBackground: vi.fn().mockResolvedValue(undefined),

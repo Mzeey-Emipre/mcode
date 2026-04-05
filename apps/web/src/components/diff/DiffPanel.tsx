@@ -18,7 +18,9 @@ export function DiffPanel() {
   const snapshots = useDiffStore((s) =>
     activeThreadId ? s.snapshotsByThread[activeThreadId] : undefined,
   );
-  const snapshotsLoading = useDiffStore((s) => s.snapshotsLoading);
+  const snapshotsLoading = useDiffStore((s) =>
+    activeThreadId ? (s.snapshotsLoadingByThread[activeThreadId] ?? false) : false,
+  );
   const setSnapshots = useDiffStore((s) => s.setSnapshots);
   const setSnapshotsLoading = useDiffStore((s) => s.setSnapshotsLoading);
 
@@ -27,7 +29,7 @@ export function DiffPanel() {
     if (snapshots !== undefined) return;
 
     let cancelled = false;
-    setSnapshotsLoading(true);
+    setSnapshotsLoading(activeThreadId, true);
 
     const load = async () => {
       try {
@@ -36,7 +38,7 @@ export function DiffPanel() {
       } catch {
         if (!cancelled) setSnapshots(activeThreadId, []);
       } finally {
-        if (!cancelled) setSnapshotsLoading(false);
+        if (!cancelled) setSnapshotsLoading(activeThreadId, false);
       }
     };
 

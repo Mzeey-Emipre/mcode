@@ -384,6 +384,8 @@ export function createWsTransport(
       rpc<GitCommit[]>("git.log", { workspaceId, branch, limit, baseBranch }),
     getCommitDiff: (workspaceId, sha, filePath?, maxLines?) =>
       rpc<string>("git.commitDiff", { workspaceId, sha, filePath, maxLines }),
+    getCommitFiles: (workspaceId, sha) =>
+      rpc<string[]>("git.commitFiles", { workspaceId, sha }),
 
     // Settings
     getSettings: () => rpc<Settings>("settings.get", {}),

@@ -1,0 +1,99 @@
+<h2>Where should the diff view live?</h2>
+<p class="subtitle">This is about the primary surface for viewing code changes. Pick the layout that feels right.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Inline in Chat (per-turn)</h3>
+      <p>Diff summaries appear directly in the message stream, attached to each assistant turn. Expand a file to see the diff right there. Like how Claude Code shows file changes inline.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-body" style="font-size: 13px; padding: 12px;">
+          <div style="background: #1a1a2e; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+            <div style="color: #8b8ba7;">User</div>
+            <div style="color: #e0e0e0;">Add a loading spinner to the dashboard</div>
+          </div>
+          <div style="background: #1e1e3a; border-radius: 8px; padding: 12px;">
+            <div style="color: #8b8ba7;">Assistant</div>
+            <div style="color: #e0e0e0; margin-bottom: 8px;">I've added the spinner component...</div>
+            <div style="background: #12121f; border-radius: 6px; padding: 8px; border: 1px solid #2a2a4a;">
+              <div style="display: flex; gap: 8px; align-items: center; color: #a0a0c0; font-size: 12px;">
+                <span style="color: #4ade80;">+</span> src/components/Spinner.tsx
+                <span style="margin-left: auto; color: #6b6b8a;">▼</span>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center; color: #a0a0c0; font-size: 12px; margin-top: 4px;">
+                <span style="color: #f59e0b;">~</span> src/pages/Dashboard.tsx
+                <span style="margin-left: auto; color: #6b6b8a;">▼</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Side Panel (dedicated)</h3>
+      <p>A resizable panel slides out from the right showing all changes. File tree on top, diff below. The chat stays visible on the left. Like GitButler's split layout.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-body" style="font-size: 13px; padding: 12px;">
+          <div style="display: flex; gap: 2px; height: 120px;">
+            <div style="flex: 1; background: #1a1a2e; border-radius: 6px 0 0 6px; padding: 8px;">
+              <div style="color: #6b6b8a; font-size: 11px; margin-bottom: 6px;">CHAT</div>
+              <div style="background: #12121f; border-radius: 4px; padding: 6px; margin-bottom: 4px; font-size: 11px; color: #8b8ba7;">User: Add spinner...</div>
+              <div style="background: #12121f; border-radius: 4px; padding: 6px; font-size: 11px; color: #8b8ba7;">Assistant: Done! I've...</div>
+            </div>
+            <div style="width: 2px; background: #3a3a5c; cursor: col-resize;"></div>
+            <div style="flex: 1; background: #1e1e3a; border-radius: 0 6px 6px 0; padding: 8px;">
+              <div style="color: #6b6b8a; font-size: 11px; margin-bottom: 6px;">CHANGES</div>
+              <div style="font-size: 11px; color: #a0a0c0; margin-bottom: 4px;">
+                <span style="color: #4ade80;">+</span> Spinner.tsx
+              </div>
+              <div style="font-size: 11px; color: #a0a0c0; margin-bottom: 6px;">
+                <span style="color: #f59e0b;">~</span> Dashboard.tsx
+              </div>
+              <div style="background: #12121f; border-radius: 4px; padding: 6px; font-size: 10px; font-family: monospace;">
+                <div style="color: #4ade80;">+ import { Spinner }</div>
+                <div style="color: #4ade80;">+ &lt;Spinner /&gt;</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Both: Inline Summary + Panel for Deep Dive</h3>
+      <p>File change badges appear inline per-turn in chat. Clicking any file (or a "View all changes" button) opens a full side panel with the complete diff. Best of both worlds, but more to build.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-body" style="font-size: 13px; padding: 12px;">
+          <div style="display: flex; gap: 2px; height: 120px;">
+            <div style="flex: 1; background: #1a1a2e; border-radius: 6px 0 0 6px; padding: 8px;">
+              <div style="color: #6b6b8a; font-size: 11px; margin-bottom: 6px;">CHAT</div>
+              <div style="background: #12121f; border-radius: 4px; padding: 6px; font-size: 11px; color: #8b8ba7; margin-bottom: 4px;">Assistant: Done!</div>
+              <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                <span style="background: #2a2a4a; color: #4ade80; font-size: 10px; padding: 2px 6px; border-radius: 3px; cursor: pointer;">+ Spinner.tsx</span>
+                <span style="background: #2a2a4a; color: #f59e0b; font-size: 10px; padding: 2px 6px; border-radius: 3px; cursor: pointer;">~ Dashboard.tsx</span>
+              </div>
+            </div>
+            <div style="width: 2px; background: #3a3a5c;"></div>
+            <div style="flex: 1; background: #1e1e3a; border-radius: 0 6px 6px 0; padding: 8px; opacity: 0.9;">
+              <div style="color: #6b6b8a; font-size: 11px; margin-bottom: 6px;">DIFF PANEL (opened on click)</div>
+              <div style="background: #12121f; border-radius: 4px; padding: 6px; font-size: 10px; font-family: monospace;">
+                <div style="color: #e0e0e0;">Dashboard.tsx</div>
+                <div style="color: #4ade80;">+ import { Spinner }</div>
+                <div style="color: #ef4444;">- // todo: loading</div>
+                <div style="color: #4ade80;">+ &lt;Spinner /&gt;</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

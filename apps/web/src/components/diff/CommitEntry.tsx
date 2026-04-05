@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Plus, Minus } from "lucide-react";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import type { GitCommit } from "@/stores/diffStore";
+import type { GitCommit } from "@mcode/contracts";
 import { FileEntry } from "./FileEntry";
 
 /** Props for CommitEntry. */
@@ -57,15 +57,8 @@ export function CommitEntry({ commit }: CommitEntryProps) {
   const loadFiles = useCallback(async () => {
     if (files !== null || !activeWorkspaceId) return;
     try {
-      const diff = await getTransport().getCommitDiff(activeWorkspaceId, commit.sha);
-      const fileSet = new Set<string>();
-      for (const line of diff.split("\n")) {
-        if (line.startsWith("diff --git")) {
-          const match = line.match(/b\/(.+)$/);
-          if (match) fileSet.add(match[1]);
-        }
-      }
-      setFiles([...fileSet]);
+      const result = await getTransport().getCommitFiles(activeWorkspaceId, commit.sha);
+      setFiles(result);
     } catch {
       setFiles([]);
     }

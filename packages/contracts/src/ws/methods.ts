@@ -139,6 +139,13 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: z.string(),
   },
+  "git.commitFiles": {
+    params: z.object({
+      workspaceId: z.string(),
+      sha: z.string(),
+    }),
+    result: z.array(z.string()),
+  },
   "agent.send": {
     params: SendMessageSchema,
     result: z.void(),

@@ -245,6 +245,8 @@ async function dispatch(
       return deps.gitService.log(params.workspaceId, params.branch, params.limit, params.baseBranch);
     case "git.commitDiff":
       return deps.gitService.commitDiff(params.workspaceId, params.sha, params.filePath, params.maxLines);
+    case "git.commitFiles":
+      return deps.gitService.commitFiles(params.workspaceId, params.sha);
 
     // Agent
     case "agent.send":

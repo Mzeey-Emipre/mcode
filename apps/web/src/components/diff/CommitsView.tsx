@@ -16,7 +16,9 @@ export function CommitsView() {
   const commits = useDiffStore((s) =>
     activeThreadId ? s.commitsByThread[activeThreadId] : undefined,
   );
-  const commitsLoading = useDiffStore((s) => s.commitsLoading);
+  const commitsLoading = useDiffStore((s) =>
+    activeThreadId ? (s.commitsLoadingByThread[activeThreadId] ?? false) : false,
+  );
   const setCommits = useDiffStore((s) => s.setCommits);
   const setCommitsLoading = useDiffStore((s) => s.setCommitsLoading);
 
@@ -25,21 +27,21 @@ export function CommitsView() {
     if (commits !== undefined) return;
 
     let cancelled = false;
-    setCommitsLoading(true);
+    setCommitsLoading(activeThreadId, true);
 
-    // Show only commits on the worktree branch that diverge from main
+    // Show only commits on the worktree branch that diverge from its base branch
     getTransport()
-      .getGitLog(activeWorkspaceId, threadBranch, 100, "main")
+      .getGitLog(activeWorkspaceId, threadBranch, 100)
       .then((result) => {
         if (!cancelled) {
           setCommits(activeThreadId, result);
-          setCommitsLoading(false);
+          setCommitsLoading(activeThreadId, false);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setCommits(activeThreadId, []);
-          setCommitsLoading(false);
+          setCommitsLoading(activeThreadId, false);
         }
       });
 

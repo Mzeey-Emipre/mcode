@@ -222,41 +222,54 @@ export class GitService {
   /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. */
   async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string): Promise<GitCommit[]> {
     const workspace = this.requireWorkspace(workspaceId);
+
+    // Auto-detect default branch when baseBranch is omitted but branch is specified
+    const resolvedBase = baseBranch !== undefined
+      ? baseBranch
+      : branch !== undefined
+        ? await this.detectDefaultBranch(workspace.path)
+        : undefined;
+
     const args = [
       "-C", workspace.path,
       "log",
-      "--format=%H|||%h|||%s|||%an|||%aI",
+      "--pretty=format:MCODE_SEP%H|||%h|||%s|||%an|||%aI",
+      "--numstat",
       `-${limit}`,
     ];
-    if (baseBranch && branch) {
-      args.push(`${baseBranch}..${branch}`);
-    } else if (baseBranch) {
-      args.push(`${baseBranch}..HEAD`);
+    if (resolvedBase && branch) {
+      args.push(`${resolvedBase}..${branch}`);
+    } else if (resolvedBase) {
+      args.push(`${resolvedBase}..HEAD`);
     } else if (branch) {
       args.push(branch);
     }
 
     const { stdout } = await execFile("git", args, { timeout: 10_000 });
-    const lines = stdout.trim().split("\n").filter(Boolean);
 
     const commits: GitCommit[] = [];
-    for (const line of lines) {
-      const [sha, shortSha, message, author, date] = line.split("|||");
+    // Each block starts with MCODE_SEP; split on that separator
+    const blocks = stdout.split("MCODE_SEP").filter(Boolean);
+
+    for (const block of blocks) {
+      const lines = block.split("\n");
+      const meta = lines[0];
+      if (!meta) continue;
+
+      const [sha, shortSha, message, author, date] = meta.split("|||");
       if (!sha) continue;
 
-      let filesChanged = 0;
-      try {
-        const { stdout: statOut } = await execFile(
-          "git",
-          ["-C", workspace.path, "diff", "--name-only", `${sha}~1`, sha],
-          { timeout: 5_000 },
-        );
-        filesChanged = statOut.trim().split("\n").filter(Boolean).length;
-      } catch {
-        // First commit has no parent
-      }
+      // numstat lines have format: additions\tdeletions\tfilename
+      const filesChanged = lines.slice(1).filter((l) => l.includes("\t")).length;
 
-      commits.push({ sha: sha ?? "", shortSha: shortSha ?? "", message: message ?? "", author: author ?? "", date: date ?? "", filesChanged });
+      commits.push({
+        sha: sha ?? "",
+        shortSha: shortSha ?? "",
+        message: message ?? "",
+        author: author ?? "",
+        date: date ?? "",
+        filesChanged,
+      });
     }
 
     return commits;
@@ -294,6 +307,47 @@ export class GitService {
       } catch {
         return "";
       }
+    }
+  }
+
+  /** Get the list of files changed in a specific git commit. */
+  async commitFiles(workspaceId: string, sha: string): Promise<string[]> {
+    if (!/^[0-9a-fA-F]{4,40}$/.test(sha)) {
+      throw new Error(`Invalid git SHA: ${sha}`);
+    }
+    const workspace = this.requireWorkspace(workspaceId);
+    const nameOnlyArgs = ["-C", workspace.path, "diff", "--name-only", `${sha}~1..${sha}`];
+    try {
+      const { stdout } = await execFile("git", nameOnlyArgs, { timeout: 5_000 });
+      return stdout.trim().split("\n").filter(Boolean);
+    } catch {
+      // Root commit — diff against empty tree
+      const emptyTree = "4b825dc642cb6eb9a060e54bf899d69f82049264";
+      try {
+        const { stdout } = await execFile(
+          "git",
+          ["-C", workspace.path, "diff", "--name-only", `${emptyTree}..${sha}`],
+          { timeout: 5_000 },
+        );
+        return stdout.trim().split("\n").filter(Boolean);
+      } catch {
+        return [];
+      }
+    }
+  }
+
+  /** Detect the default upstream branch (e.g. main, master) for a repository. */
+  private async detectDefaultBranch(repoPath: string): Promise<string> {
+    try {
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000 },
+      );
+      // Returns "origin/main" → strip the "origin/" prefix
+      return stdout.trim().replace(/^[^/]+\//, "");
+    } catch {
+      return "main";
     }
   }
 

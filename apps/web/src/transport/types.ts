@@ -178,6 +178,8 @@ export interface McodeTransport {
   getGitLog(workspaceId: string, branch?: string, limit?: number, baseBranch?: string): Promise<GitCommit[]>;
   /** Get unified diff for a specific git commit. Implemented in Phase 4. */
   getCommitDiff(workspaceId: string, sha: string, filePath?: string, maxLines?: number): Promise<string>;
+  /** Get the list of files changed in a specific git commit. */
+  getCommitFiles(workspaceId: string, sha: string): Promise<string[]>;
 
   // Settings
   /** Fetch the full settings object from the server. */

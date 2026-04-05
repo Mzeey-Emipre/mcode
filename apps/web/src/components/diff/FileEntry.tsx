@@ -53,6 +53,9 @@ const EXT_COLORS: Record<string, string> = {
   toml: "text-amber-400/60",
 };
 
+/** Height in pixels for inline side-by-side diff rendering. */
+const INLINE_SIDE_BY_SIDE_HEIGHT = 240;
+
 /**
  * Diff loading state.
  * null = not yet started; { loading: true } = in-flight; { loading: false; data } = settled.
@@ -199,7 +202,7 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
               {renderMode === "unified" ? (
                 <UnifiedDiff lines={lines} />
               ) : (
-                <div style={{ height: "240px" }}>
+                <div style={{ height: `${INLINE_SIDE_BY_SIDE_HEIGHT}px` }}>
                   <SideBySideDiff lines={lines} />
                 </div>
               )}

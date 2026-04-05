@@ -1,15 +1,7 @@
 import { create } from "zustand";
-import type { TurnSnapshot } from "@mcode/contracts";
+import type { TurnSnapshot, GitCommit } from "@mcode/contracts";
 
-/** Git commit metadata returned by the git.log RPC. */
-export interface GitCommit {
-  sha: string;
-  shortSha: string;
-  message: string;
-  author: string;
-  date: string;
-  filesChanged: number;
-}
+export type { GitCommit };
 
 /** Active tab in the right panel. */
 export type RightPanelTab = "tasks" | "changes";
@@ -42,12 +34,12 @@ interface DiffState {
   renderMode: DiffRenderMode;
   /** Turn snapshots keyed by thread ID. */
   snapshotsByThread: Record<string, TurnSnapshot[]>;
-  /** Whether snapshots are currently loading. */
-  snapshotsLoading: boolean;
+  /** Whether snapshots are currently loading, keyed by thread ID. */
+  snapshotsLoadingByThread: Record<string, boolean>;
   /** Git commits keyed by thread ID. */
   commitsByThread: Record<string, GitCommit[]>;
-  /** Whether commits are currently loading. */
-  commitsLoading: boolean;
+  /** Whether commits are currently loading, keyed by thread ID. */
+  commitsLoadingByThread: Record<string, boolean>;
   /** Currently selected file for diff viewing. */
   selectedFile: SelectedFile | null;
   /** Raw unified diff text for the selected file. */
@@ -63,10 +55,9 @@ interface DiffState {
   setViewMode: (mode: DiffViewMode) => void;
   setRenderMode: (mode: DiffRenderMode) => void;
   setSnapshots: (threadId: string, snapshots: TurnSnapshot[]) => void;
-  appendSnapshot: (threadId: string, snapshot: TurnSnapshot) => void;
-  setSnapshotsLoading: (loading: boolean) => void;
+  setSnapshotsLoading: (threadId: string, loading: boolean) => void;
   setCommits: (threadId: string, commits: GitCommit[]) => void;
-  setCommitsLoading: (loading: boolean) => void;
+  setCommitsLoading: (threadId: string, loading: boolean) => void;
   selectFile: (file: SelectedFile | null) => void;
   setDiffContent: (content: string | null) => void;
   setDiffLoading: (loading: boolean) => void;
@@ -91,9 +82,9 @@ export const useDiffStore = create<DiffState>((set) => ({
   viewMode: "by-turn",
   renderMode: "unified",
   snapshotsByThread: {},
-  snapshotsLoading: false,
+  snapshotsLoadingByThread: {},
   commitsByThread: {},
-  commitsLoading: false,
+  commitsLoadingByThread: {},
   selectedFile: null,
   diffContent: null,
   diffLoading: false,
@@ -107,15 +98,12 @@ export const useDiffStore = create<DiffState>((set) => ({
   setRenderMode: (mode) => set({ renderMode: mode }),
   setSnapshots: (threadId, snapshots) =>
     set((s) => ({ snapshotsByThread: { ...s.snapshotsByThread, [threadId]: snapshots } })),
-  appendSnapshot: (threadId, snapshot) =>
-    set((s) => {
-      const existing = s.snapshotsByThread[threadId] ?? [];
-      return { snapshotsByThread: { ...s.snapshotsByThread, [threadId]: [...existing, snapshot] } };
-    }),
-  setSnapshotsLoading: (loading) => set({ snapshotsLoading: loading }),
+  setSnapshotsLoading: (threadId, loading) =>
+    set((s) => ({ snapshotsLoadingByThread: { ...s.snapshotsLoadingByThread, [threadId]: loading } })),
   setCommits: (threadId, commits) =>
     set((s) => ({ commitsByThread: { ...s.commitsByThread, [threadId]: commits } })),
-  setCommitsLoading: (loading) => set({ commitsLoading: loading }),
+  setCommitsLoading: (threadId, loading) =>
+    set((s) => ({ commitsLoadingByThread: { ...s.commitsLoadingByThread, [threadId]: loading } })),
   selectFile: (file) => set({ selectedFile: file, diffContent: null, diffLoading: false }),
   setDiffContent: (content) => set({ diffContent: content, diffLoading: false }),
   setDiffLoading: (loading) => set({ diffLoading: loading }),
@@ -125,6 +113,17 @@ export const useDiffStore = create<DiffState>((set) => ({
       delete nextSnapshots[threadId];
       const nextCommits = { ...s.commitsByThread };
       delete nextCommits[threadId];
-      return { snapshotsByThread: nextSnapshots, commitsByThread: nextCommits, selectedFile: null, diffContent: null };
+      const nextSnapshotsLoading = { ...s.snapshotsLoadingByThread };
+      delete nextSnapshotsLoading[threadId];
+      const nextCommitsLoading = { ...s.commitsLoadingByThread };
+      delete nextCommitsLoading[threadId];
+      return {
+        snapshotsByThread: nextSnapshots,
+        commitsByThread: nextCommits,
+        snapshotsLoadingByThread: nextSnapshotsLoading,
+        commitsLoadingByThread: nextCommitsLoading,
+        selectedFile: null,
+        diffContent: null,
+      };
     }),
 }));
