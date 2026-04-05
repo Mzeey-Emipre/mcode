@@ -16,6 +16,7 @@ import type {
   IProviderRegistry,
   AgentEvent,
   ProviderId,
+  InteractionMode,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -33,6 +34,7 @@ import { broadcast } from "../transport/push";
 // not at AgentService construction time.
 import { ThreadService } from "./thread-service";
 import { SettingsService } from "./settings-service.js";
+import { PlanQuestionParser } from "./plan-question-parser.js";
 
 /** Fallback context window size used when the SDK does not report one. */
 const DEFAULT_CONTEXT_WINDOW = 200_000;
@@ -73,6 +75,8 @@ export class AgentService {
   private turnSortCounters = new Map<string, number>();
   /** Threads currently running persistTurn to prevent concurrent calls. */
   private persistingThreads = new Set<string>();
+  /** Per-thread streaming parsers active while the model is generating questions in plan mode. */
+  private planParsers = new Map<string, PlanQuestionParser>();
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -107,6 +111,7 @@ export class AgentService {
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
     provider?: ProviderId,
+    interactionMode?: InteractionMode,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -155,6 +160,13 @@ export class AgentService {
       nextSeq,
       stored.length > 0 ? stored : undefined,
     );
+
+    // In plan mode, wrap the message with the question-generation prompt
+    // and register a parser to intercept the streaming textDelta output.
+    if (interactionMode === "plan") {
+      content = this.buildPlanPrompt(content);
+      this.planParsers.set(threadId, new PlanQuestionParser());
+    }
 
     this.threadRepo.updateStatus(threadId, "active");
 
@@ -245,6 +257,44 @@ export class AgentService {
 
       this.threadRepo.updateStatus(threadId, "errored");
     }
+  }
+
+  /**
+   * Submit answers to the model's plan questions and resume the session.
+   * Formats answers as a human-readable follow-up message and sends it
+   * without the plan-mode question wrapper so the model generates the plan.
+   */
+  async answerQuestions(
+    threadId: string,
+    answers: Array<{ questionId: string; selectedOptionId: string | null; freeText: string | null }>,
+    permissionMode = "default",
+    reasoningLevel?: ReasoningLevel,
+  ): Promise<void> {
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread) throw new Error(`Thread not found: ${threadId}`);
+
+    const lines: string[] = ["Here are my answers to your planning questions:\n"];
+    for (const a of answers) {
+      if (a.freeText) {
+        lines.push(`- **${a.questionId}**: ${a.freeText}`);
+      } else if (a.selectedOptionId) {
+        lines.push(`- **${a.questionId}**: Selected option ${a.selectedOptionId}`);
+      } else {
+        lines.push(`- **${a.questionId}**: (skipped)`);
+      }
+    }
+    lines.push("\nNow generate the full plan based on these decisions.");
+
+    // interactionMode intentionally omitted — no question wrapping for the answer turn
+    await this.sendMessage(
+      threadId,
+      lines.join("\n"),
+      permissionMode,
+      thread.model ?? "claude-sonnet-4-6",
+      [],
+      reasoningLevel,
+      (thread.provider as ProviderId) ?? "claude",
+    );
   }
 
   /**
@@ -392,6 +442,22 @@ export class AgentService {
 
     for (const provider of this.providerRegistry.resolveAll()) {
       provider.on("event", (event: AgentEvent) => {
+        // Plan mode: feed streaming text to the question parser.
+        // When a valid block is detected, broadcast it and clean up.
+        if (event.type === "textDelta") {
+          const parser = this.planParsers.get(event.threadId);
+          if (parser) {
+            const questions = parser.feed(event.delta);
+            if (questions) {
+              broadcast("plan.questions", {
+                threadId: event.threadId,
+                questions,
+              });
+              this.planParsers.delete(event.threadId);
+            }
+          }
+        }
+
         if (event.type === "message") {
           try {
             const { messages: existing } = this.messageRepo.listByThread(event.threadId, 1);
@@ -464,6 +530,7 @@ export class AgentService {
           } else {
             this.clearTurnState(event.threadId);
           }
+          this.planParsers.delete(event.threadId);
         }
 
         if (event.type === "compacting" && !event.active) {
@@ -508,6 +575,7 @@ export class AgentService {
 
         if (event.type === "ended") {
           this.trackSessionEnded(event.threadId);
+          this.planParsers.delete(event.threadId);
         }
       });
     }
@@ -530,6 +598,35 @@ export class AgentService {
       return `${provider} CLI not found. Check the CLI path in Settings > Model.`;
     }
     return message;
+  }
+
+  /**
+   * Wrap a user message with the plan-mode question-generation prompt.
+   * Instructs the model to emit a fenced plan-questions JSON block before
+   * generating the actual plan.
+   */
+  private buildPlanPrompt(userMessage: string): string {
+    return `[PLAN MODE] You are in planning mode. Before generating your plan, identify 2-5 key architectural decisions that need user input. Output your questions in this exact format:
+
+\`\`\`plan-questions
+[
+  {
+    "id": "q1",
+    "category": "CATEGORY_NAME",
+    "question": "Your question here?",
+    "options": [
+      { "id": "o1", "title": "Option Title", "description": "Brief description.", "recommended": true },
+      { "id": "o2", "title": "Another Option", "description": "Brief description." }
+    ]
+  }
+]
+\`\`\`
+
+Output ONLY the plan-questions block, then stop. Do not generate the plan until you receive the user's answers.
+
+---
+
+${userMessage}`;
   }
 
   /** Buffer a tool call event for later persistence. */
