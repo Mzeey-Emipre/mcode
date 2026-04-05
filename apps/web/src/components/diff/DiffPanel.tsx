@@ -5,6 +5,7 @@ import { getTransport } from "@/transport";
 import { DiffToolbar } from "./DiffToolbar";
 import { TurnTimeline } from "./TurnTimeline";
 import { DiffContent } from "./DiffContent";
+import { CumulativeView } from "./CumulativeView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 /** Main diff panel with toolbar, file browser, and diff viewer. */
@@ -58,9 +59,7 @@ export function DiffPanel() {
           <ScrollArea className="flex-1 min-h-0" style={{ maxHeight: "50%" }}>
             {viewMode === "by-turn" && <TurnTimeline snapshots={snapshots ?? []} />}
             {viewMode === "all" && (
-              <div className="flex items-center justify-center py-8">
-                <p className="text-xs text-muted-foreground/40">Cumulative view - coming in phase 3</p>
-              </div>
+              <CumulativeView snapshots={snapshots ?? []} threadId={activeThreadId ?? ""} />
             )}
             {viewMode === "commits" && (
               <div className="flex items-center justify-center py-8">
