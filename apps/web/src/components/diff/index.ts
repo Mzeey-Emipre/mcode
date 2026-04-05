@@ -6,3 +6,5 @@ export { TurnTimeline } from "./TurnTimeline";
 export { UnifiedDiff } from "./UnifiedDiff";
 export { SideBySideDiff } from "./SideBySideDiff";
 export { CumulativeView } from "./CumulativeView";
+export { CommitsView } from "./CommitsView";
+export { CommitEntry } from "./CommitEntry";

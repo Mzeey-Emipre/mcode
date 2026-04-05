@@ -6,6 +6,7 @@ import { DiffToolbar } from "./DiffToolbar";
 import { TurnTimeline } from "./TurnTimeline";
 import { DiffContent } from "./DiffContent";
 import { CumulativeView } from "./CumulativeView";
+import { CommitsView } from "./CommitsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 /** Main diff panel with toolbar, file browser, and diff viewer. */
@@ -61,11 +62,7 @@ export function DiffPanel() {
             {viewMode === "all" && (
               <CumulativeView snapshots={snapshots ?? []} threadId={activeThreadId ?? ""} />
             )}
-            {viewMode === "commits" && (
-              <div className="flex items-center justify-center py-8">
-                <p className="text-xs text-muted-foreground/40">Commits view - coming in phase 4</p>
-              </div>
-            )}
+            {viewMode === "commits" && <CommitsView />}
           </ScrollArea>
         )}
 
