@@ -1104,8 +1104,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             </span>
           )}
 
-          {/* Inline stop button: visible when agent running AND user has input */}
-          {isAgentRunning && hasContent && (
+          {/* Inline stop button: visible when agent running AND user has input AND wizard not pending */}
+          {isAgentRunning && hasContent && !planPending && (
             <Button
               variant="ghost"
               size="icon-xs"
