@@ -1,0 +1,53 @@
+{
+  "tools": ["bun", "git", "node"],
+  "commands": {
+    "setup":       "bun run setup",
+    "doctor":      "bun run doctor",
+    "devWeb":      "bun run dev:web",
+    "devDesktop":  "bun run dev:desktop",
+    "devServer":   "bun run dev:server",
+    "test":        "bun run test",
+    "typecheck":   "bun run typecheck",
+    "lint":        "bun run lint"
+  },
+  "env": {
+    "MCODE_DATA_DIR":          { "default": "~/.mcode-dev",             "description": "Root data directory (dev default; ~/.mcode in prod)" },
+    "MCODE_DB_PATH":           { "default": "<MCODE_DATA_DIR>/mcode.db", "description": "SQLite database path override" },
+    "MCODE_PORT":              { "default": "19400",                    "description": "HTTP/WS server port (increments on collision up to 19500)" },
+    "MCODE_HOST":              { "default": "127.0.0.1",                "description": "Server bind host" },
+    "MCODE_AUTH_TOKEN":        { "default": "",                          "description": "Empty string bypasses WebSocket auth in dev" },
+    "MCODE_VERSION":           { "default": "0.0.1",                   "description": "Reported version string" },
+    "MCODE_CLAUDE_PATH":       { "default": "claude",                  "description": "Claude CLI binary path" },
+    "MCODE_GIT_PATH":          { "default": "git",                     "description": "git binary path" },
+    "SNAPSHOT_MAX_AGE_DAYS":   { "default": "30",                      "description": "Days before turn snapshot cleanup" },
+    "SKIP_ELECTRON_REBUILD":   { "default": "",                        "description": "Set to 1 to skip Electron ABI rebuild in postinstall" },
+    "NODE_ENV":                { "default": "development",             "description": "Controls data dir suffix (.mcode-dev vs .mcode) and log verbosity" }
+  },
+  "paths": {
+    "worktrees":         ".worktrees",
+    "dataDirEnv":        "MCODE_DATA_DIR",
+    "defaultDataDirDev": "~/.mcode-dev",
+    "defaultDataDirProd":"~/.mcode"
+  },
+  "artifacts": {
+    "logs":        "<MCODE_DATA_DIR>/logs",
+    "db":          "<MCODE_DATA_DIR>/mcode.db",
+    "screenshots": "apps/web/e2e/screenshots"
+  },
+  "server": {
+    "defaultPort":    19400,
+    "portRange":      [19400, 19500],
+    "healthEndpoint": "GET /health",
+    "healthResponse": { "status": "ok", "activeAgents": "number" }
+  },
+  "writeBoundaries": {
+    "allowed":    ["<repo>/**", ".worktrees/**", "<MCODE_DATA_DIR>/**"],
+    "restricted": [".env"]
+  },
+  "debugScripts": {
+    "paths": "bun run state:paths",
+    "logs":  "bun run logs:tail",
+    "reset": "bun run state:reset",
+    "db":    "bun run db:info"
+  }
+}
