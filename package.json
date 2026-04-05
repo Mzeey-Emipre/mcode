@@ -10,15 +10,21 @@
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
-    "dev": "turbo run dev",
+    "setup":       "node scripts/setup-env.mjs",
+    "doctor":      "node scripts/doctor.mjs",
+    "dev":         "turbo run dev",
     "dev:desktop": "cd apps/desktop && bun run dev",
-    "dev:web": "node scripts/dev-web.mjs",
-    "dev:server": "cd apps/server && bun run start",
-    "prod:desktop": "cd apps/desktop && bun run prod",
-    "build": "turbo run build",
-    "test": "turbo run test",
-    "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck"
+    "dev:web":     "node scripts/dev-web.mjs",
+    "dev:server":  "cd apps/server && bun run start",
+    "prod:desktop":"cd apps/desktop && bun run prod",
+    "build":       "turbo run build",
+    "test":        "turbo run test",
+    "lint":        "turbo run lint",
+    "typecheck":   "turbo run typecheck",
+    "logs:tail":   "node scripts/logs-tail.mjs",
+    "state:paths": "node scripts/state-paths.mjs",
+    "state:reset": "node scripts/state-reset.mjs",
+    "db:info":     "node scripts/db-info.mjs"
   },
   "devDependencies": {
     "turbo": "^2.5.0"
