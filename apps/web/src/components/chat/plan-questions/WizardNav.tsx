@@ -17,7 +17,6 @@ interface WizardNavProps {
 
 /**
  * Navigation row at the bottom of the plan question wizard.
- * Shows Previous (when applicable), Cancel, progress dots, and Next/Submit.
  */
 export function WizardNav({
   onPrevious,
@@ -29,46 +28,39 @@ export function WizardNav({
   totalQuestions = 1,
 }: WizardNavProps) {
   return (
-    <div className="flex items-center justify-between pt-4 border-t border-border">
-      {/* Left: Previous + Cancel */}
-      <div className="flex items-center gap-2">
+    <div className="flex items-center justify-between pt-3 border-t border-border">
+      <div className="flex items-center gap-3">
         <button
           onClick={onPrevious}
           disabled={!onPrevious || isSubmitting}
-          className="px-3 py-1.5 text-sm text-muted-foreground border border-border rounded transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed hover:enabled:text-foreground hover:enabled:border-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0891b2]/50"
-          aria-label="Go to previous question"
+          className="text-xs text-muted-foreground/60 hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none"
         >
           Previous
         </button>
         <button
           onClick={onCancel}
           disabled={isSubmitting}
-          className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none"
-          aria-label="Cancel planning questions"
+          className="text-xs text-muted-foreground/60 hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none"
         >
           Cancel
         </button>
       </div>
 
-      {/* Progress dots */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         {Array.from({ length: totalQuestions }).map((_, i) => (
           <div
             key={i}
-            className={`w-1.5 h-1.5 rounded-full transition-colors duration-200 ${
-              i === currentIndex ? "bg-[#0891b2]" : "bg-border"
+            className={`w-1 h-1 rounded-full transition-colors ${
+              i === currentIndex ? "bg-primary" : "bg-muted-foreground/20"
             }`}
-            aria-hidden="true"
           />
         ))}
       </div>
 
-      {/* Next/Submit button */}
       <button
         onClick={onNext}
         disabled={isSubmitting}
-        className="px-3 py-1.5 text-sm font-medium text-white bg-[#0891b2] border border-[#0891b2] rounded transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:enabled:bg-[#0891b2]/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0891b2]/50"
-        aria-label={nextLabel}
+        className="text-xs font-medium text-primary hover:text-primary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none"
       >
         {isSubmitting ? "Submitting..." : nextLabel}
       </button>

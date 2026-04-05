@@ -10,27 +10,20 @@ interface WizardHeaderProps {
 }
 
 /**
- * Progress indicator and question display at the top of the plan question wizard.
- * Uses serif display font for the question, minimal badge for counter, warm gray divider.
- * Implements editorial/brutalist aesthetic with asymmetrical composition.
+ * Progress counter and question text at the top of the plan question wizard.
  */
 export function WizardHeader({ current, total, category, question }: WizardHeaderProps) {
   return (
-    <div className="mb-5 pb-4 border-b border-border">
-      {/* Counter and Category in small caps */}
-      <div className="flex items-baseline gap-3 mb-2">
-        <span className="text-xs font-semibold text-foreground uppercase tracking-[0.15em] tabular-nums">
+    <div className="mb-4 pb-3 border-b border-border">
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-[11px] font-medium text-muted-foreground/50 tabular-nums">
           {current}/{total}
         </span>
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-[0.08em]">
+        <span className="text-[11px] text-muted-foreground/40 uppercase tracking-wide">
           {category}
         </span>
       </div>
-
-      {/* Question text with serif display font */}
-      <h2 className="text-lg leading-snug text-foreground" style={{ fontFamily: "'Crimson Text', 'Playfair Display', serif", fontWeight: 600 }}>
-        {question}
-      </h2>
+      <p className="text-sm font-medium text-foreground">{question}</p>
     </div>
   );
 }
