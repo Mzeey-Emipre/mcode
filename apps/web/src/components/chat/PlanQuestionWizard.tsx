@@ -19,14 +19,17 @@ interface PlanQuestionWizardProps {
  * Supports Ctrl+Enter to advance or submit.
  * Implements editorial/brutalist aesthetic with fade-in animations and left border accents.
  */
+const EMPTY_MAP = new Map<string, PlanAnswer>();
+
 export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
   const questions = useThreadStore((s) => s.planQuestionsByThread[threadId] ?? null);
-  const answersMap = useThreadStore((s) => s.planAnswersByThread[threadId] ?? new Map<string, PlanAnswer>());
+  const answersMap = useThreadStore((s) => s.planAnswersByThread[threadId] ?? EMPTY_MAP);
   const activeIndex = useThreadStore((s) => s.activeQuestionIndexByThread[threadId] ?? 0);
   const status = useThreadStore((s) => s.planQuestionsStatusByThread[threadId] ?? "idle");
   const setPlanAnswer = useThreadStore((s) => s.setPlanAnswer);
   const setActiveQuestionIndex = useThreadStore((s) => s.setActiveQuestionIndex);
   const submitPlanAnswers = useThreadStore((s) => s.submitPlanAnswers);
+  const clearPlanQuestions = useThreadStore((s) => s.clearPlanQuestions);
 
   // Ref prevents double-submit between keyboard and button press within the same tick.
   const isSubmittingRef = useRef(false);
@@ -82,7 +85,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
   };
 
   return (
-    <div className="border-t border-[#e5e1d8] bg-[#f8f8f7] px-5 py-5 animate-fade-in">
+    <div className="border-t border-border bg-card px-5 py-5 animate-fade-in">
       <style>{`
         @keyframes fade-in-scale {
           from {
@@ -154,6 +157,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
               : undefined
           }
           onNext={isLast ? handleSubmit : () => setActiveQuestionIndex(threadId, activeIndex + 1)}
+          onCancel={() => clearPlanQuestions(threadId)}
           nextLabel={isLast ? "Submit answers" : "Next question"}
           isSubmitting={isSubmittingRef.current}
           currentIndex={activeIndex}

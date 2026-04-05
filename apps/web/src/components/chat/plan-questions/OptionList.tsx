@@ -19,7 +19,7 @@ interface OptionListProps {
  */
 export function OptionList({ options, selectedId, recommendedId, onSelect }: OptionListProps) {
   return (
-    <div role="radiogroup" aria-label="Options" className="mb-6">
+    <div role="radiogroup" aria-label="Options" className="mb-5">
       {options.map((option) => (
         <OptionCard
           key={option.id}

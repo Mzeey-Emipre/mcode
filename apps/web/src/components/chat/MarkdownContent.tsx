@@ -86,6 +86,11 @@ function makeComponents(isStreaming: boolean) {
 
       const langMatch = className?.match(/language-(\S+)/);
       const language = langMatch ? langMatch[1] : "";
+
+      // Suppress the fenced block the model emits to signal plan questions —
+      // the wizard renders from the parsed payload, not from raw markdown.
+      if (language === "plan-questions") return null;
+
       const code = String(children).replace(/\n$/, "");
 
       return <CodeBlock code={code} language={language} isStreaming={isStreaming} />;

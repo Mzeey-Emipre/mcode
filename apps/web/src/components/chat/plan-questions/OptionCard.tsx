@@ -25,29 +25,28 @@ export function OptionCard({ option, selected, isRecommended, onSelect }: Option
       aria-checked={selected}
       onClick={() => onSelect(option.id)}
       className={cn(
-        "w-full text-left py-3 px-4 mb-3 transition-all duration-200",
-        "border-l-4 border-r border-b border-t-0 border-[#e5e1d8]",
-        "bg-[#f8f8f7] hover:bg-[#f3f2f0]",
+        "w-full text-left py-3 px-4 mb-2 transition-all duration-200",
+        "border-l-4 border border-border",
+        "bg-card hover:bg-muted/40",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0891b2]/50",
-        "shadow-sm hover:shadow-md",
-        selected || isRecommended
-          ? "border-l-[#0891b2]"
-          : "border-l-[#e5e1d8]",
+        selected
+          ? "border-l-[#0891b2] bg-muted/40"
+          : "border-l-transparent",
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-semibold text-[#0f0f0f] text-sm">
+            <span className="font-semibold text-foreground text-sm">
               {option.title}
             </span>
             {isRecommended && (
-              <span className="inline-block bg-[#0891b2] text-[#f8f8f7] text-xs font-medium px-2 py-0.5 rounded">
+              <span className="inline-block bg-[#0891b2]/15 text-[#0891b2] text-xs font-medium px-1.5 py-0.5 rounded border border-[#0891b2]/30">
                 Recommended
               </span>
             )}
           </div>
-          <p className="text-xs text-[#666] leading-relaxed">
+          <p className="text-xs text-muted-foreground leading-relaxed">
             {option.description}
           </p>
         </div>

@@ -3,6 +3,8 @@ interface WizardNavProps {
   onPrevious?: () => void;
   /** Called when the user clicks Next or Submit. */
   onNext: () => void;
+  /** Called when the user cancels the wizard entirely. */
+  onCancel: () => void;
   /** Label for the right button ("Next question" or "Submit answers"). */
   nextLabel: string;
   /** Whether the next/submit action is in progress. */
@@ -15,28 +17,38 @@ interface WizardNavProps {
 
 /**
  * Navigation row at the bottom of the plan question wizard.
- * Shows Previous (when applicable), minimal progress indicator, and Next/Submit button.
- * Implements brutalist aesthetic with no background, borders only, minimal hover effects.
+ * Shows Previous (when applicable), Cancel, progress dots, and Next/Submit.
  */
 export function WizardNav({
   onPrevious,
   onNext,
+  onCancel,
   nextLabel,
   isSubmitting,
   currentIndex = 0,
   totalQuestions = 1,
 }: WizardNavProps) {
   return (
-    <div className="flex items-center justify-between pt-4 border-t border-[#e5e1d8]">
-      {/* Previous button */}
-      <button
-        onClick={onPrevious}
-        disabled={!onPrevious || isSubmitting}
-        className="px-3 py-1.5 text-sm text-[#666] border border-[#e5e1d8] rounded transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed hover:enabled:text-[#0f0f0f] hover:enabled:border-[#0f0f0f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0891b2]/50"
-        aria-label="Go to previous question"
-      >
-        Previous
-      </button>
+    <div className="flex items-center justify-between pt-4 border-t border-border">
+      {/* Left: Previous + Cancel */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onPrevious}
+          disabled={!onPrevious || isSubmitting}
+          className="px-3 py-1.5 text-sm text-muted-foreground border border-border rounded transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed hover:enabled:text-foreground hover:enabled:border-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0891b2]/50"
+          aria-label="Go to previous question"
+        >
+          Previous
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={isSubmitting}
+          className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none"
+          aria-label="Cancel planning questions"
+        >
+          Cancel
+        </button>
+      </div>
 
       {/* Progress dots */}
       <div className="flex items-center gap-2">
@@ -44,7 +56,7 @@ export function WizardNav({
           <div
             key={i}
             className={`w-1.5 h-1.5 rounded-full transition-colors duration-200 ${
-              i === currentIndex ? "bg-[#0891b2]" : "bg-[#e5e1d8]"
+              i === currentIndex ? "bg-[#0891b2]" : "bg-border"
             }`}
             aria-hidden="true"
           />
@@ -55,7 +67,7 @@ export function WizardNav({
       <button
         onClick={onNext}
         disabled={isSubmitting}
-        className="px-3 py-1.5 text-sm font-medium text-[#f8f8f7] bg-[#0891b2] border border-[#0891b2] rounded transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:enabled:bg-[#0891b2]/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0891b2]/50"
+        className="px-3 py-1.5 text-sm font-medium text-white bg-[#0891b2] border border-[#0891b2] rounded transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:enabled:bg-[#0891b2]/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0891b2]/50"
         aria-label={nextLabel}
       >
         {isSubmitting ? "Submitting..." : nextLabel}

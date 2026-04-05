@@ -16,19 +16,19 @@ interface WizardHeaderProps {
  */
 export function WizardHeader({ current, total, category, question }: WizardHeaderProps) {
   return (
-    <div className="mb-6 pb-4 border-b border-[#e5e1d8]">
+    <div className="mb-5 pb-4 border-b border-border">
       {/* Counter and Category in small caps */}
-      <div className="flex items-baseline gap-3 mb-3">
-        <span className="text-xs font-semibold text-[#0f0f0f] uppercase tracking-[0.15em] tabular-nums">
+      <div className="flex items-baseline gap-3 mb-2">
+        <span className="text-xs font-semibold text-foreground uppercase tracking-[0.15em] tabular-nums">
           {current}/{total}
         </span>
-        <span className="text-xs font-medium text-[#666] uppercase tracking-[0.08em]">
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-[0.08em]">
           {category}
         </span>
       </div>
 
       {/* Question text with serif display font */}
-      <h2 className="text-xl leading-snug text-[#0f0f0f]" style={{ fontFamily: "'Crimson Text', 'Playfair Display', serif", fontWeight: 600 }}>
+      <h2 className="text-lg leading-snug text-foreground" style={{ fontFamily: "'Crimson Text', 'Playfair Display', serif", fontWeight: 600 }}>
         {question}
       </h2>
     </div>
