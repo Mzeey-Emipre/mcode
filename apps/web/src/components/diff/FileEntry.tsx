@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { ChevronRight } from "lucide-react";
+import { Plus, Minus } from "lucide-react";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { parseDiffLines } from "@/lib/diff-parser";
@@ -135,12 +135,11 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
         className="group flex w-full items-center gap-2 py-[5px] pl-7 pr-3 text-left transition-colors hover:bg-muted/15"
         title={filePath}
       >
-        <ChevronRight
-          size={10}
-          className={`shrink-0 text-muted-foreground/25 transition-transform duration-150 ${
-            expanded ? "rotate-90" : ""
-          }`}
-        />
+        {expanded ? (
+          <Minus size={10} className="shrink-0 text-muted-foreground/25" />
+        ) : (
+          <Plus size={10} className="shrink-0 text-muted-foreground/25" />
+        )}
 
         {/* Status dot */}
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400/50" />
