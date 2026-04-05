@@ -399,12 +399,16 @@ export class AgentService {
               existing.length > 0
                 ? existing[existing.length - 1].sequence + 1
                 : 1;
-            this.messageRepo.create(
+            const msg = this.messageRepo.create(
               event.threadId,
               "assistant",
               event.content,
               nextSeq,
             );
+            // Enrich the event with the DB message ID so the broadcast
+            // listener (index.ts) forwards it to the frontend. The frontend
+            // uses this for dedup against messages already loaded by loadMessages.
+            (event as Record<string, unknown>).messageId = msg.id;
           } catch (err) {
             logger.error("Failed to persist assistant message", {
               threadId: event.threadId,

@@ -531,6 +531,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             streamingPreviewByThread: nextPreview,
           };
           if (state.currentThreadId !== threadId) return trackTurn;
+          // Dedup: skip if a message with this ID was already loaded from DB
+          // by loadMessages. This prevents duplicates when the MessagePort push
+          // and the WebSocket RPC response arrive in unpredictable order.
+          if (state.messages.some((m) => m.id === message.id)) return trackTurn;
           const { messages: capped, evicted } = capMessages([...state.messages, message]);
           return {
             messages: capped,
