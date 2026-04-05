@@ -377,6 +377,8 @@ export function createWsTransport(
       rpc<{ removed: number }>("snapshot.cleanup", {}),
     listSnapshots: (threadId) =>
       rpc<TurnSnapshot[]>("snapshot.listByThread", { threadId }),
+    getCumulativeDiff: (_threadId, _filePath?, _maxLines?) => Promise.resolve(""),
+    getCommitDiff: (_workspaceId, _sha, _filePath?, _maxLines?) => Promise.resolve(""),
 
     // Settings
     getSettings: () => rpc<Settings>("settings.get", {}),

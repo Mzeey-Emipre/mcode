@@ -109,6 +109,8 @@ export const mockTransport: McodeTransport = {
   getSnapshotDiff: vi.fn().mockResolvedValue(""),
   cleanupSnapshots: vi.fn().mockResolvedValue({ removed: 0 }),
   listSnapshots: vi.fn().mockResolvedValue([]),
+  getCumulativeDiff: vi.fn().mockResolvedValue(""),
+  getCommitDiff: vi.fn().mockResolvedValue(""),
   getSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(getDefaultSettings()))),
   updateSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(getDefaultSettings()))),
   setBackground: vi.fn().mockResolvedValue(undefined),

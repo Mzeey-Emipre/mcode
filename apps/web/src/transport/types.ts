@@ -170,6 +170,10 @@ export interface McodeTransport {
   cleanupSnapshots(): Promise<{ removed: number }>;
   /** List all turn snapshots for a thread, ordered by creation time. */
   listSnapshots(threadId: string): Promise<TurnSnapshot[]>;
+  /** Get cumulative diff across all turns for a thread. Implemented in Phase 3. */
+  getCumulativeDiff(threadId: string, filePath?: string, maxLines?: number): Promise<string>;
+  /** Get unified diff for a specific git commit. Implemented in Phase 4. */
+  getCommitDiff(workspaceId: string, sha: string, filePath?: string, maxLines?: number): Promise<string>;
 
   // Settings
   /** Fetch the full settings object from the server. */

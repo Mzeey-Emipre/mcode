@@ -7,6 +7,7 @@ import { useTaskStore } from "@/stores/taskStore";
 import { useDiffStore, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH } from "@/stores/diffStore";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TaskPanelHeader } from "@/components/tasks/TaskPanelHeader";
+import { DiffPanel } from "@/components/diff";
 
 /** Right-side panel with tabs for Tasks and Changes. */
 export function RightPanel() {
@@ -123,11 +124,7 @@ export function RightPanel() {
           <TaskPanel />
         </>
       )}
-      {activeTab === "changes" && (
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-xs text-muted-foreground/40">Changes coming soon</p>
-        </div>
-      )}
+      {activeTab === "changes" && <DiffPanel />}
     </div>
   );
 }
