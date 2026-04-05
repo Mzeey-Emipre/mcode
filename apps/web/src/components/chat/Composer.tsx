@@ -734,6 +734,11 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const handleSend = useCallback(async () => {
     if (!hasContent) return;
+    // Prevent double-submission via keyboard while a worktree is being created.
+    // The button is already disabled via `preparingWorktree`, but the keyboard
+    // Enter handler bypasses that. Without this guard, a second Enter press can
+    // trigger a duplicate createAndSendMessage call before the first RPC returns.
+    if (preparingWorktree) return;
     const trimmed = input.trim();
 
     // ---- Queue path: agent is running on this thread ----
@@ -830,7 +835,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
 
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, mode, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, mode, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore, preparingWorktree]);
 
   const handleEditorChange = useCallback((text: string) => {
     setInput(text);
