@@ -13,13 +13,11 @@ interface OptionListProps {
 }
 
 /**
- * Renders a vertical list of selectable OptionCard items for a plan question.
- * Cards have left border accents and breathe in whitespace with minimal separators.
- * Implements brutalist aesthetic with subtle vertical breathing room.
+ * Renders a vertical list of selectable options with a single divider between each row.
  */
 export function OptionList({ options, selectedId, recommendedId, onSelect }: OptionListProps) {
   return (
-    <div role="radiogroup" aria-label="Options" className="mb-5">
+    <div role="radiogroup" aria-label="Options" className="mb-5 divide-y divide-border/50">
       {options.map((option) => (
         <OptionCard
           key={option.id}

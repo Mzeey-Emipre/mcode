@@ -14,8 +14,7 @@ interface OptionCardProps {
 
 /**
  * A single selectable option within a plan question.
- * Uses left border accent (teal when recommended/selected), minimal shadow,
- * and brutalist aesthetic. Implements editorial design with asymmetrical styling.
+ * Renders as a clean list row with a left accent line on selection.
  */
 export function OptionCard({ option, selected, isRecommended, onSelect }: OptionCardProps) {
   return (
@@ -25,35 +24,31 @@ export function OptionCard({ option, selected, isRecommended, onSelect }: Option
       aria-checked={selected}
       onClick={() => onSelect(option.id)}
       className={cn(
-        "w-full text-left py-3 px-4 mb-2 transition-all duration-200",
-        "border-l-4 border border-border",
-        "bg-card hover:bg-muted/40",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0891b2]/50",
+        "w-full text-left px-3 py-2.5 transition-all duration-150",
+        "border-l-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#0891b2]/40",
         selected
-          ? "border-l-[#0891b2] bg-muted/40"
-          : "border-l-transparent",
+          ? "border-l-[#0891b2] bg-[#0891b2]/8"
+          : "border-l-transparent hover:border-l-border hover:bg-muted/30",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="font-semibold text-foreground text-sm">
-              {option.title}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={cn("text-sm font-medium", selected ? "text-foreground" : "text-foreground/80")}>
+            {option.title}
+          </span>
+          {isRecommended && (
+            <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-[#0891b2] border border-[#0891b2]/40 px-1.5 py-px rounded-sm">
+              Recommended
             </span>
-            {isRecommended && (
-              <span className="inline-block bg-[#0891b2]/15 text-[#0891b2] text-xs font-medium px-1.5 py-0.5 rounded border border-[#0891b2]/30">
-                Recommended
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            {option.description}
-          </p>
+          )}
         </div>
         {selected && (
-          <div className="flex-shrink-0 w-4 h-4 rounded-full bg-[#0891b2] mt-1" />
+          <div className="shrink-0 w-3.5 h-3.5 rounded-full bg-[#0891b2] ring-2 ring-[#0891b2]/20" />
         )}
       </div>
+      {option.description && (
+        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{option.description}</p>
+      )}
     </button>
   );
 }
