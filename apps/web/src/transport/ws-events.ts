@@ -24,6 +24,7 @@ let unsubs: (() => void)[] = [];
  * - `turn.persisted` -- tool call persistence confirmation forwarded to threadStore
  * - `settings.changed` -- server-pushed settings updates forwarded to settingsStore
  * - `branch.changed` -- refreshes branch list and updates current branch if not manually overridden
+ * - `plan.questions` -- model-proposed plan questions forwarded to threadStore wizard
  */
 export function startPushListeners(): void {
   // Guard against double-init
@@ -176,6 +177,18 @@ export function startPushListeners(): void {
           }
         }
       });
+    }),
+  );
+
+  // plan.questions: model proposed clarifying questions in plan mode
+  unsubs.push(
+    pushEmitter.on("plan.questions", (data) => {
+      const { threadId, questions } = data as {
+        threadId: string;
+        questions: import("@mcode/contracts").PlanQuestion[];
+      };
+      if (!threadId || !Array.isArray(questions)) return;
+      useThreadStore.getState().setPlanQuestions(threadId, questions);
     }),
   );
 
