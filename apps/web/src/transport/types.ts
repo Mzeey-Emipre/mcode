@@ -12,6 +12,7 @@ import type {
   PermissionMode,
   ReasoningLevel,
   ToolCallRecord,
+  TurnSnapshot,
   Settings,
   PartialSettings,
 } from "@mcode/contracts";
