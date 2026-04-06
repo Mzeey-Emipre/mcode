@@ -19,7 +19,14 @@ export type ChatVirtualItem =
       activeToolCalls: readonly ToolCall[];
     }
   | { key: string; type: "streaming"; text: string }
-  | { key: string; type: "tool-summary"; messageId: string; serverMessageId: string; toolCallCount: number };
+  | { key: string; type: "tool-summary"; messageId: string; serverMessageId: string; toolCallCount: number }
+  | {
+      key: string;
+      type: "turn-changes";
+      messageId: string;
+      filesChanged: string[];
+      isLatestTurn: boolean;
+    };
 
 /**
  * Build the stable segment: messages interleaved with persisted tool summaries.
@@ -29,6 +36,8 @@ export function buildStableItems(
   messages: readonly Message[],
   persistedToolCallCounts?: Record<string, number>,
   serverMessageIds?: Record<string, string>,
+  persistedFilesChanged?: Record<string, string[]>,
+  latestTurnWithChanges?: string | null,
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -46,6 +55,20 @@ export function buildStableItems(
       }
     }
     items.push({ key: msg.id, type: "message", message: msg });
+
+    // File change summary appears after the assistant message
+    if (msg.role === "assistant") {
+      const files = persistedFilesChanged?.[msg.id];
+      if (files && files.length > 0) {
+        items.push({
+          key: `turn-changes-${msg.id}`,
+          type: "turn-changes",
+          messageId: msg.id,
+          filesChanged: files,
+          isLatestTurn: msg.id === latestTurnWithChanges,
+        });
+      }
+    }
   }
   return items;
 }
@@ -213,6 +236,9 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
       return STREAMING_CARD_COLLAPSED_HEIGHT;
     case "tool-summary":
       return 36;
+    case "turn-changes":
+      // Collapsed: ~44px. Expanded: 44px header + 32px per file row.
+      return item.isLatestTurn ? 44 + item.filesChanged.length * 32 : 44;
     default:
       return assertNever(item);
   }
