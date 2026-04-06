@@ -87,7 +87,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
       <span className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
         <Icon size={12} className={iconClass} />
         {shortLabel}
-        <Lock size={10} className="ml-0.5 opacity-60" />
+        <Lock size={10} className="ml-0.5 opacity-75" />
       </span>
     );
   }
@@ -172,7 +172,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
                   className={cn(
                     "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
                     p.comingSoon
-                      ? "cursor-default text-muted-foreground/50"
+                      ? "cursor-default text-muted-foreground/70"
                       : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                 >
