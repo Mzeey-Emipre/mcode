@@ -31,6 +31,7 @@ import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
 import { AgentStatusBar } from "./AgentStatusBar";
+import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
 import { useTaskStore } from "@/stores/taskStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
@@ -1208,7 +1209,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           onModeChange={setComposerMode}
           locked={!isNewThread}
         />
-        <AgentStatusBar />
+        <div className="flex items-center gap-3">
+          <AgentStatusBar />
+          <TerminalStatusIndicator />
+        </div>
         <div className="ml-auto flex items-center gap-1">
           {isNewThread ? (
             composerMode === "direct" ? (
