@@ -224,6 +224,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             }
           });
         }
+        // Restore mode and permission from thread settings (drafts don't save these)
+        const threadSettings = useThreadStore.getState().getThreadSettings(threadId);
+        setMode(threadSettings.interactionMode);
+        setAccess(threadSettings.permissionMode);
       } else {
         // No saved draft: use thread's persisted settings as-is
         setInput("");
@@ -822,26 +826,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setPreparingWorktree(true);
       }
       try {
-        const newThread = await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode);
-        // Persist settings to the newly created thread so they survive page reload
-        if (newThread?.id) {
-          void setThreadSettings(newThread.id, {
-            interactionMode: mode,
-            permissionMode: access,
-            reasoningLevel: reasoning,
-          });
-        }
+        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode);
       } finally {
         setPreparingWorktree(false);
       }
     } else if (threadId) {
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider);
-      // Persist per-thread settings so they survive page reload
-      void setThreadSettings(threadId, {
-        interactionMode: mode,
-        permissionMode: access,
-        reasoningLevel: reasoning,
-      });
     }
 
     // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
