@@ -122,16 +122,31 @@ export function buildVirtualItems(
 
   // Split volatile items: active-tools goes before the last assistant
   // message; streaming and indicator go after it.
-  const lastItem = stableItems[stableItems.length - 1];
+
+  // Find the last assistant message, skipping any trailing turn-changes and tool-summary items
+  let lastAssistantIdx = stableItems.length - 1;
+  while (lastAssistantIdx >= 0) {
+    const item = stableItems[lastAssistantIdx];
+    if (item.type === "turn-changes" || item.type === "tool-summary") {
+      lastAssistantIdx--;
+      continue;
+    }
+    break;
+  }
+
+  const lastItem = stableItems[lastAssistantIdx];
   if (lastItem?.type === "message" && lastItem.message.role === "assistant") {
     const toolItems = volatileItems.filter((v) => v.type === "active-tools");
     const tailItems = volatileItems.filter((v) => v.type !== "active-tools");
-    // Check if the preceding item is a tool-summary for this message
-    const secondLast = stableItems[stableItems.length - 2];
-    const skipSummary =
-      secondLast?.type === "tool-summary" &&
-      secondLast.messageId === lastItem.message.id;
-    const cutAt = skipSummary ? stableItems.length - 2 : stableItems.length - 1;
+    // Also skip the tool-summary that precedes the message
+    let cutAt = lastAssistantIdx;
+    const preceding = stableItems[lastAssistantIdx - 1];
+    if (
+      preceding?.type === "tool-summary" &&
+      preceding.messageId === lastItem.message.id
+    ) {
+      cutAt = lastAssistantIdx - 1;
+    }
     return [
       ...stableItems.slice(0, cutAt),
       ...toolItems,
