@@ -124,7 +124,7 @@ describe("session.modelFallback", () => {
     vi.useRealTimers();
   });
 
-  it("updates thread model in workspaceStore to actualModel", () => {
+  it("stores transient fallback info without mutating thread.model", () => {
     useThreadStore.getState().handleAgentEvent("thread-1", {
       method: "session.modelFallback",
       params: {
@@ -133,8 +133,16 @@ describe("session.modelFallback", () => {
       },
     });
 
+    // thread.model must NOT be changed
     const thread = useWorkspaceStore.getState().threads.find((t) => t.id === "thread-1");
-    expect(thread?.model).toBe("claude-sonnet-4-6");
+    expect(thread?.model).toBe("claude-opus-4-6");
+
+    // Fallback stored transiently
+    const fallback = useThreadStore.getState().lastFallbackByThread["thread-1"];
+    expect(fallback).toEqual({
+      requestedModel: "claude-opus-4-6",
+      actualModel: "claude-sonnet-4-6",
+    });
   });
 
   it("shows an info toast on fallback", () => {
@@ -152,7 +160,7 @@ describe("session.modelFallback", () => {
     expect(toasts[0].title).toContain("Sonnet");
   });
 
-  it("normalizes dated SDK variant to base model ID when storing", () => {
+  it("normalizes dated SDK variant in transient fallback info", () => {
     useThreadStore.getState().handleAgentEvent("thread-1", {
       method: "session.modelFallback",
       params: {
@@ -161,8 +169,13 @@ describe("session.modelFallback", () => {
       },
     });
 
+    // thread.model unchanged
     const thread = useWorkspaceStore.getState().threads.find((t) => t.id === "thread-1");
-    expect(thread?.model).toBe("claude-haiku-4-5");
+    expect(thread?.model).toBe("claude-opus-4-6");
+
+    // Fallback normalized
+    const fallback = useThreadStore.getState().lastFallbackByThread["thread-1"];
+    expect(fallback?.actualModel).toBe("claude-haiku-4-5");
   });
 
   it("shows human-readable label in toast for dated SDK variant", () => {

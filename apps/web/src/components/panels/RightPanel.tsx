@@ -72,7 +72,7 @@ export function RightPanel() {
     >
       {/* Drag handle (left edge) */}
       <div
-        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-muted-foreground/20 z-10"
+        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-muted-foreground/30 z-10"
         onMouseDown={onDragStart}
       />
 
@@ -85,8 +85,8 @@ export function RightPanel() {
               onClick={() => setActiveTab("tasks")}
               className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-semibold tracking-[0.1em] uppercase transition-colors ${
                 activeTab === "tasks"
-                  ? "text-foreground/70 bg-muted/50"
-                  : "text-foreground/30 hover:text-foreground/50"
+                  ? "text-foreground bg-muted/50"
+                  : "text-foreground/70 hover:text-foreground"
               }`}
             >
               <ListChecks size={12} />
@@ -97,8 +97,8 @@ export function RightPanel() {
               onClick={() => setActiveTab("changes")}
               className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-semibold tracking-[0.1em] uppercase transition-colors ${
                 activeTab === "changes"
-                  ? "text-foreground/70 bg-muted/50"
-                  : "text-foreground/30 hover:text-foreground/50"
+                  ? "text-foreground bg-muted/50"
+                  : "text-foreground/70 hover:text-foreground"
               }`}
             >
               <Diff size={12} />
@@ -109,7 +109,7 @@ export function RightPanel() {
             variant="ghost"
             size="icon-xs"
             onClick={hidePanel}
-            className="h-5 w-5 text-muted-foreground/30 hover:text-foreground/70 hover:bg-transparent transition-colors duration-150"
+            className="h-5 w-5 text-muted-foreground/70 hover:text-foreground hover:bg-transparent transition-colors duration-150"
             aria-label="Close panel"
           >
             <X size={11} />

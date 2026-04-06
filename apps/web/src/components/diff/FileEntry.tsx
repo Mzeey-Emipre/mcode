@@ -33,25 +33,25 @@ function getExtension(filePath: string): string {
 }
 
 const EXT_COLORS: Record<string, string> = {
-  ts: "text-blue-400/60",
-  tsx: "text-sky-400/60",
-  js: "text-yellow-400/60",
-  jsx: "text-yellow-400/60",
-  mjs: "text-yellow-400/60",
-  cjs: "text-yellow-400/60",
-  json: "text-orange-400/60",
-  css: "text-pink-400/60",
-  scss: "text-pink-400/60",
-  md: "text-slate-400/60",
-  mdx: "text-slate-400/60",
-  py: "text-green-400/60",
-  go: "text-cyan-400/60",
-  rs: "text-orange-500/60",
-  sql: "text-purple-400/60",
-  sh: "text-emerald-400/60",
-  yaml: "text-amber-400/60",
-  yml: "text-amber-400/60",
-  toml: "text-amber-400/60",
+  ts: "text-blue-600 dark:text-blue-400",
+  tsx: "text-sky-600 dark:text-sky-400",
+  js: "text-yellow-700 dark:text-yellow-400",
+  jsx: "text-yellow-700 dark:text-yellow-400",
+  mjs: "text-yellow-700 dark:text-yellow-400",
+  cjs: "text-yellow-700 dark:text-yellow-400",
+  json: "text-orange-700 dark:text-orange-400",
+  css: "text-pink-600 dark:text-pink-400",
+  scss: "text-pink-600 dark:text-pink-400",
+  md: "text-slate-600 dark:text-slate-400",
+  mdx: "text-slate-600 dark:text-slate-400",
+  py: "text-green-600 dark:text-green-400",
+  go: "text-cyan-600 dark:text-cyan-400",
+  rs: "text-orange-700 dark:text-orange-500",
+  sql: "text-purple-600 dark:text-purple-400",
+  sh: "text-emerald-600 dark:text-emerald-400",
+  yaml: "text-amber-700 dark:text-amber-400",
+  yml: "text-amber-700 dark:text-amber-400",
+  toml: "text-amber-700 dark:text-amber-400",
 };
 
 
@@ -80,7 +80,7 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
     const ex = getExtension(filePath);
     return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath) };
   }, [filePath]);
-  const extColor = EXT_COLORS[ext] ?? "text-muted-foreground/30";
+  const extColor = EXT_COLORS[ext] ?? "text-muted-foreground";
 
   // Load diff lazily on first expand. Uses a ref guard so that the state
   // transition to {loading:true} doesn't re-trigger cleanup and cancel the fetch.
@@ -142,30 +142,30 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
   const isLoaded = diffState !== null && !diffState.loading;
 
   return (
-    <div className={`border-b border-border/10 ${expanded ? "bg-muted/5" : ""}`}>
+    <div className={`border-b border-border/30 ${expanded ? "bg-muted/5" : ""}`}>
       {/* File header row */}
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
-        className="group flex w-full items-center gap-2 py-[5px] pl-7 pr-3 text-left transition-colors hover:bg-muted/15"
+        className="group flex w-full items-center gap-2 py-[5px] pl-7 pr-3 text-left transition-colors hover:bg-muted/20"
         title={filePath}
       >
         {expanded ? (
-          <Minus size={10} className="shrink-0 text-muted-foreground/25" />
+          <Minus size={10} className="shrink-0 text-muted-foreground/70" />
         ) : (
-          <Plus size={10} className="shrink-0 text-muted-foreground/25" />
+          <Plus size={10} className="shrink-0 text-muted-foreground/70" />
         )}
 
         {/* Status dot */}
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400/50" />
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/60" />
 
         {/* Filename + parent dir */}
         <span className="flex-1 min-w-0">
-          <span className="block truncate font-mono text-[11px] text-foreground/70">
+          <span className="block truncate font-mono text-[11px] text-foreground/80">
             {basename}
           </span>
           {parent && (
-            <span className="block truncate font-mono text-[9px] text-muted-foreground/30">
+            <span className="block truncate font-mono text-[9px] text-muted-foreground/70">
               {parent}/
             </span>
           )}
@@ -175,10 +175,10 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
         {isLoaded && (stats.additions > 0 || stats.deletions > 0) && (
           <span className="flex shrink-0 items-center gap-1 font-mono text-[9px]">
             {stats.additions > 0 && (
-              <span className="text-emerald-400/60">+{stats.additions}</span>
+              <span className="text-emerald-600 dark:text-emerald-400">+{stats.additions}</span>
             )}
             {stats.deletions > 0 && (
-              <span className="text-red-400/50">-{stats.deletions}</span>
+              <span className="text-red-600 dark:text-red-400">-{stats.deletions}</span>
             )}
           </span>
         )}
@@ -193,13 +193,13 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
 
       {/* Inline diff */}
       {expanded && (
-        <div className="border-t border-border/10">
+        <div className="border-t border-border/30">
           {!isLoaded ? (
             <div className="flex items-center justify-center gap-1.5 py-3">
               {[0, 150, 300].map((delay) => (
                 <div
                   key={delay}
-                  className="h-1 w-1 rounded-full bg-muted-foreground/25 animate-pulse"
+                  className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse"
                   style={{ animationDelay: `${delay}ms` }}
                 />
               ))}
@@ -214,7 +214,7 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
             </div>
           ) : (
             <div className="flex items-center justify-center py-4">
-              <p className="text-[10px] text-muted-foreground/25">No changes</p>
+              <p className="text-[10px] text-muted-foreground">No changes</p>
             </div>
           )}
         </div>

@@ -132,12 +132,22 @@ export function detectFallbackModel(
   requestedModel: string,
 ): string | null {
   const usedModels = Object.keys(modelUsage);
-  // SDK resolves aliases to dated IDs (e.g. "claude-sonnet-4-6" → "claude-sonnet-4-6-20250514").
-  // A dated variant that starts with the requested alias is the same model, not a fallback.
-  const actualModel = usedModels.find(
-    (m) => m !== requestedModel && !m.startsWith(requestedModel),
+  // SDK resolves aliases to dated snapshot IDs (e.g. "claude-sonnet-4-6" → "claude-sonnet-4-6-20250514").
+  // Only treat a key as the same model when the suffix after the hyphen is exactly 8 digits (YYYYMMDD),
+  // preventing sibling families like "claude-opus-4-6-*" from matching a request for "claude-opus-4".
+  const datedSnapshotSuffix = /^\d{8}$/;
+  const requestedModelRan = usedModels.some(
+    (m) =>
+      m === requestedModel ||
+      (m.startsWith(requestedModel + "-") &&
+        datedSnapshotSuffix.test(m.slice(requestedModel.length + 1))),
   );
-  return actualModel ?? null;
+  // Only report a fallback when the requested model is completely absent from usage.
+  // The SDK may report multiple models (e.g. primary + tool-routing model) in a single
+  // turn; that is NOT a fallback as long as the requested model was used.
+  if (requestedModelRan) return null;
+
+  return usedModels[0] ?? null;
 }
 
 /** Claude Agent SDK adapter implementing IAgentProvider with prompt queue pattern. */
@@ -272,6 +282,12 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         type: "preset" as const,
         preset: "claude_code" as const,
       },
+      // Mcode implements its own plan mode via prompt wrapping and the
+      // PlanQuestionWizard UI.  The SDK's built-in EnterPlanMode /
+      // ExitPlanMode tools conflict because Mcode has no UI to handle
+      // the SDK's "Exit plan mode?" confirmation, causing the model to
+      // get stuck.
+      disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
       permissionMode: sdkPermissionMode,
       ...(isBypass && { allowDangerouslySkipPermissions: true }),
       ...buildReasoningOptions(reasoningLevel, resolvedModel),

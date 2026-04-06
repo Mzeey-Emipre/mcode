@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
-import { GitBranch } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MessageList } from "./MessageList";
@@ -170,12 +169,6 @@ export function ChatView() {
           <Badge variant="secondary">
             {activeWorkspaceName}
           </Badge>
-          {activeThread.branch && (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground/50">
-              <GitBranch size={11} />
-              <span className="max-w-[160px] truncate">{activeThread.branch}</span>
-            </span>
-          )}
         </div>
         <HeaderActions thread={activeThread} />
       </div>

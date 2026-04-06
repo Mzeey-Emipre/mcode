@@ -33,12 +33,12 @@ function getInitials(author: string): string {
 }
 
 const AVATAR_PALETTES = [
-  "bg-violet-500/20 text-violet-300",
-  "bg-blue-500/20 text-blue-300",
-  "bg-emerald-500/20 text-emerald-300",
-  "bg-amber-500/20 text-amber-300",
-  "bg-rose-500/20 text-rose-300",
-  "bg-cyan-500/20 text-cyan-300",
+  "bg-violet-500/20 text-violet-600 dark:text-violet-400",
+  "bg-blue-500/20 text-blue-600 dark:text-blue-400",
+  "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400",
+  "bg-amber-500/20 text-amber-600 dark:text-amber-400",
+  "bg-rose-500/20 text-rose-600 dark:text-rose-400",
+  "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
 ];
 
 /** Deterministic avatar color from an author string. */
@@ -74,16 +74,16 @@ export function CommitEntry({ commit }: CommitEntryProps) {
   const avatarColor = getAvatarColor(commit.author);
 
   return (
-    <div className={`border-b border-border/15 ${expanded ? "bg-muted/5" : ""}`}>
+    <div className={`border-b border-border/30 ${expanded ? "bg-muted/5" : ""}`}>
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
-        className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/15 transition-colors"
+        className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/20 transition-colors"
       >
         {expanded ? (
-          <Minus size={11} className="shrink-0 text-muted-foreground/30" />
+          <Minus size={11} className="shrink-0 text-muted-foreground/70" />
         ) : (
-          <Plus size={11} className="shrink-0 text-muted-foreground/30" />
+          <Plus size={11} className="shrink-0 text-muted-foreground/70" />
         )}
 
         {/* Author avatar */}
@@ -95,14 +95,14 @@ export function CommitEntry({ commit }: CommitEntryProps) {
         </span>
 
         {/* Commit message */}
-        <span className="flex-1 min-w-0 truncate text-[11px] text-foreground/65">
+        <span className="flex-1 min-w-0 truncate text-[11px] text-foreground/80">
           {commit.message}
         </span>
 
         {/* SHA + time */}
         <span className="flex shrink-0 items-center gap-1.5">
-          <span className="font-mono text-[9px] text-muted-foreground/30">{commit.shortSha}</span>
-          <span className="text-[9px] text-muted-foreground/25">{relativeTime(commit.date)}</span>
+          <span className="font-mono text-[9px] text-muted-foreground/80">{commit.shortSha}</span>
+          <span className="text-[9px] text-muted-foreground/70">{relativeTime(commit.date)}</span>
         </span>
       </button>
 
@@ -113,13 +113,13 @@ export function CommitEntry({ commit }: CommitEntryProps) {
               {[0, 150, 300].map((delay) => (
                 <div
                   key={delay}
-                  className="h-1 w-1 rounded-full bg-muted-foreground/25 animate-pulse"
+                  className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse"
                   style={{ animationDelay: `${delay}ms` }}
                 />
               ))}
             </div>
           ) : files.length === 0 ? (
-            <p className="px-7 py-2 text-[10px] text-muted-foreground/30">No files changed</p>
+            <p className="px-7 py-2 text-[10px] text-muted-foreground">No files changed</p>
           ) : (
             files.map((filePath) => (
               <FileEntry key={filePath} filePath={filePath} source="commit" id={commit.sha} />

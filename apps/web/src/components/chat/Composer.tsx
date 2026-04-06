@@ -31,6 +31,7 @@ import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
 import { AgentStatusBar } from "./AgentStatusBar";
+import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
 import { useTaskStore } from "@/stores/taskStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
@@ -162,26 +163,19 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   useEffect(() => {
     if (!settingsLoaded) return;
-    // Only sync when no draft exists (new thread or thread without saved state)
-    const hasDraft = threadId ? getDraft(threadId) != null : false;
-    if (hasDraft) return;
-
-    // Don't override a thread's locked model with the global default
-    if (threadId) {
-      const thread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
-      if (thread?.model && findModelById(thread.model)) return;
-    }
+    // Only sync global defaults for new threads.
+    // Existing threads restore settings from the thread record in the thread-switch effect.
+    if (threadId) return;
 
     const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
     setModelId(validModelId);
     setReasoning(normalizeReasoningLevelForModel(validModelId, settingsDefaultReasoning));
 
-    // Sync mode and access from settings for new threads, unless the user already toggled them
-    if (!threadId && !agentSettingsTouchedRef.current) {
+    if (!agentSettingsTouchedRef.current) {
       setMode(settingsDefaultMode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
       setAccess(settingsDefaultPermission);
     }
-  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission]); // Only sync when settings change
+  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission, threadId]);
 
   // Reset reasoning when the selected model does not support the current level
   useEffect(() => {
@@ -231,14 +225,41 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             }
           });
         }
+        // Restore mode and permission from thread settings (drafts don't save these)
+        const threadSettings = useThreadStore.getState().getThreadSettings(threadId);
+        setMode(threadSettings.interactionMode);
+        setAccess(threadSettings.permissionMode);
       } else {
-        // No saved draft: use thread's locked model if available, otherwise global default
+        // No saved draft: use thread's persisted settings as-is
         setInput("");
         setAttachments([]);
         const nextThread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
         const resolvedModelId = resolveThreadModelId(nextThread?.model, getDefaultModelId());
         setModelId(resolvedModelId);
-        setReasoning(normalizeReasoningLevelForModel(resolvedModelId, getDefaultReasoningLevel()));
+        setReasoning(normalizeReasoningLevelForModel(
+          resolvedModelId,
+          nextThread?.reasoning_level
+            ? (nextThread.reasoning_level as ReasoningLevel)
+            : getDefaultReasoningLevel(),
+        ));
+
+        // Restore mode and permission from thread record
+        const { settings: globalSettings } = useSettingsStore.getState();
+        setMode(
+          nextThread?.interaction_mode === "plan"
+            ? INTERACTION_MODES.PLAN
+            : nextThread?.interaction_mode === "chat"
+              ? INTERACTION_MODES.CHAT
+              : globalSettings.agent.defaults.mode === "plan"
+                ? INTERACTION_MODES.PLAN
+                : INTERACTION_MODES.CHAT,
+        );
+        setAccess(
+          nextThread?.permission_mode
+            ? (nextThread.permission_mode as PermissionMode)
+            : globalSettings.agent.defaults.permission,
+        );
+
         // Reset Lexical editor
         if (editorRef.current) {
           editorRef.current.update(() => {
@@ -348,7 +369,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             ? INTERACTION_MODES.CHAT
             : INTERACTION_MODES.PLAN;
         setMode(next);
-        if (threadId) setThreadSettings(threadId, { interactionMode: next });
+        if (threadId) void setThreadSettings(threadId, { interactionMode: next });
       }
     },
   });
@@ -369,9 +390,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const loadOpenPrs = useWorkspaceStore((s) => s.loadOpenPrs);
   const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
 
-  // Sync modelId when the SDK triggers a model fallback mid-session.
-  // Skip on thread switch (Effect 1 already set the model).
-  // Skip when a draft exists UNLESS the agent is running (server-side override takes priority).
+  // Sync modelId if thread.model changes server-side (e.g. user changed model from another client).
+  // This does NOT fire on SDK model fallback because fallback no longer mutates thread.model --
+  // fallback is stored transiently in lastFallbackByThread. The model picker intentionally
+  // stays at the user's intended model; the fallback toast notifies them of the actual model used.
   useEffect(() => {
     if (!activeThread?.model) return;
     if (threadSwitchRef.current) {
@@ -383,24 +405,6 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     if (hasDraft && !isRunning) return;
     setModelId(activeThread.model);
   }, [activeThread?.model, threadId, getDraft]);
-
-  // Reactive per-thread and global-default slices so the effect re-runs on hydration
-  const perThreadSettings = useThreadStore((s) => threadId ? s.settingsByThread[threadId] : undefined);
-  const settingsAgentDefaults = useSettingsStore((s) => s.settings.agent.defaults);
-
-  // Sync access mode and interaction mode from per-thread settings
-  useEffect(() => {
-    if (threadId) {
-      if (perThreadSettings) {
-        setAccess(perThreadSettings.permissionMode);
-        setMode(perThreadSettings.interactionMode);
-      } else {
-        // No per-thread overrides: use persisted defaults
-        setMode(settingsAgentDefaults.mode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
-        setAccess(settingsAgentDefaults.permission);
-      }
-    }
-  }, [threadId, perThreadSettings, settingsAgentDefaults]);
 
   // Combined setter that keeps local + store in sync
   const setComposerMode = useCallback(
@@ -1029,6 +1033,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     onClick={(e) => {
                       e.stopPropagation();
                       setReasoning(level);
+                      if (threadId) void setThreadSettings(threadId, { reasoningLevel: level });
                       setShowReasoningPicker(false);
                     }}
                     className={cn(
@@ -1056,7 +1061,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
                     setMode(next);
                     agentSettingsTouchedRef.current = true;
-                    if (threadId) setThreadSettings(threadId, { interactionMode: next });
+                    if (threadId) void setThreadSettings(threadId, { interactionMode: next });
                   }}
                   className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
@@ -1079,7 +1084,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
                     setAccess(next);
                     agentSettingsTouchedRef.current = true;
-                    if (threadId) setThreadSettings(threadId, { permissionMode: next });
+                    if (threadId) void setThreadSettings(threadId, { permissionMode: next });
                   }}
                   className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
@@ -1204,7 +1209,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           onModeChange={setComposerMode}
           locked={!isNewThread}
         />
-        <AgentStatusBar />
+        <div className="flex items-center gap-3">
+          <AgentStatusBar />
+          <TerminalStatusIndicator />
+        </div>
         <div className="ml-auto flex items-center gap-1">
           {isNewThread ? (
             composerMode === "direct" ? (
