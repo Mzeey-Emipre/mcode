@@ -282,6 +282,12 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         type: "preset" as const,
         preset: "claude_code" as const,
       },
+      // Mcode implements its own plan mode via prompt wrapping and the
+      // PlanQuestionWizard UI.  The SDK's built-in EnterPlanMode /
+      // ExitPlanMode tools conflict because Mcode has no UI to handle
+      // the SDK's "Exit plan mode?" confirmation, causing the model to
+      // get stuck.
+      disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
       permissionMode: sdkPermissionMode,
       ...(isBypass && { allowDangerouslySkipPermissions: true }),
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
