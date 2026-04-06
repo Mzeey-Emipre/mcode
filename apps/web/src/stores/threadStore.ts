@@ -1225,7 +1225,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           [localMsgId]: payload.filesChanged,
         },
         latestTurnWithChanges:
-          payload.filesChanged.length > 0 ? localMsgId : state.latestTurnWithChanges,
+          payload.filesChanged.length > 0 ? localMsgId : null,
         serverMessageIds: {
           ...state.serverMessageIds,
           [localMsgId]: payload.messageId,
