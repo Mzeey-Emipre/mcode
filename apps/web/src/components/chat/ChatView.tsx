@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
+import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
 import { HeaderActions } from "./HeaderActions";
 import { CliErrorBanner, isCliError } from "./CliErrorBanner";
 
@@ -189,6 +190,9 @@ export function ChatView() {
           <MessageList />
         )}
       </div>
+
+      {/* Plan question wizard — shown while plan questions are pending */}
+      <PlanQuestionWizard threadId={activeThread.id} />
 
       {/* CLI error banner — shown when the provider binary is not found */}
       {showCliError && (

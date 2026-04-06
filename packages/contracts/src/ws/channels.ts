@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AgentEventSchema } from "../events/agent-event.js";
 import { ThreadStatusSchema } from "../models/enums.js";
 import { SettingsSchema } from "../models/settings.js";
+import { PlanQuestionSchema } from "../models/plan-questions.js";
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
@@ -29,6 +30,11 @@ export const WS_CHANNELS = {
     messageId: z.string(),
     toolCallCount: z.number(),
     filesChanged: z.array(z.string()),
+  }),
+  /** Emitted when the model proposes a batch of clarifying questions in plan mode. */
+  "plan.questions": z.object({
+    threadId: z.string(),
+    questions: z.array(PlanQuestionSchema),
   }),
 } as const;
 

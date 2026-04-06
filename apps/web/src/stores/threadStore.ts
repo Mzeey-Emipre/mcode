@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
-import type { ReasoningLevel } from "@mcode/contracts";
+import type { ReasoningLevel, PlanQuestion, PlanAnswer } from "@mcode/contracts";
+import { PlanQuestionSchema } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
@@ -13,6 +14,8 @@ import { findModelById, getContextWindow, DEFAULT_CONTEXT_WINDOW } from "@/lib/m
 export interface ThreadSettings {
   permissionMode: PermissionMode;
   interactionMode: InteractionMode;
+  /** Reasoning level selected for this thread, forwarded on the post-wizard answer turn. */
+  reasoningLevel?: ReasoningLevel;
 }
 
 interface ThreadState {
@@ -51,6 +54,14 @@ interface ThreadState {
   contextByThread: Record<string, { lastTokensIn: number; contextWindow: number }>;
   /** Whether the SDK is currently compacting the context window for a thread. */
   isCompactingByThread: Record<string, boolean>;
+  /** Questions proposed by the model in plan mode, keyed by thread ID. Null when not pending. */
+  planQuestionsByThread: Record<string, PlanQuestion[] | null>;
+  /** User's answers to plan questions, keyed by thread ID then question ID. */
+  planAnswersByThread: Record<string, Map<string, PlanAnswer>>;
+  /** Currently focused question index per thread (0-based). */
+  activeQuestionIndexByThread: Record<string, number>;
+  /** Plan wizard status per thread. */
+  planQuestionsStatusByThread: Record<string, "idle" | "pending" | "answered">;
 
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
@@ -67,6 +78,16 @@ interface ThreadState {
   addMessage: (message: Message) => void;
   clearMessages: () => void;
   isThreadRunning: (threadId: string) => boolean;
+  /** Set questions received from the model and show the wizard. */
+  setPlanQuestions: (threadId: string, questions: PlanQuestion[]) => void;
+  /** Record the user's answer for one question. */
+  setPlanAnswer: (threadId: string, questionId: string, answer: PlanAnswer) => void;
+  /** Navigate to a specific question index. */
+  setActiveQuestionIndex: (threadId: string, index: number) => void;
+  /** Submit all answers to the server and dismiss the wizard. */
+  submitPlanAnswers: (threadId: string) => Promise<void>;
+  /** Reset plan question state for a thread (called on clear/reload). */
+  clearPlanQuestions: (threadId: string) => void;
   handleAgentEvent: (threadId: string, event: Record<string, unknown>) => void;
 
   /** Handle server-side tool call persistence confirmation. */
@@ -116,6 +137,43 @@ function capMessages(messages: Message[]): { messages: Message[]; evicted: boole
   };
 }
 
+/**
+ * Scan a message list for an unanswered plan-questions block.
+ * Finds the last assistant message containing a ```plan-questions``` fenced block,
+ * confirms no user message follows it (meaning questions haven't been answered yet),
+ * then parses and validates the JSON array inside the block.
+ * Returns the parsed questions or null if none found.
+ */
+function extractPendingPlanQuestions(messages: Message[]): PlanQuestion[] | null {
+  const PLAN_QUESTIONS_RE = /```plan-questions\n([\s\S]*?)```/;
+
+  // Walk messages in reverse to find the last assistant message with a plan-questions block
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") {
+      // A user message after the assistant message means questions were already answered
+      return null;
+    }
+    if (msg.role === "assistant") {
+      const match = PLAN_QUESTIONS_RE.exec(msg.content);
+      if (!match) return null;
+      try {
+        const raw = JSON.parse(match[1]);
+        if (!Array.isArray(raw)) return null;
+        const results = raw.map((item) => PlanQuestionSchema.safeParse(item));
+        // Reject the whole batch if any question fails — partial batches break
+        // index continuity between the wizard UI and the answer map keys.
+        if (results.some((r) => !r.success)) return null;
+        const validated = results.map((r) => (r as { success: true; data: PlanQuestion }).data);
+        return validated.length > 0 ? validated : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 export const useThreadStore = create<ThreadState>((set, get) => {
   return {
   messages: [],
@@ -139,6 +197,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   loadEpochByThread: {},
   contextByThread: {},
   isCompactingByThread: {},
+  planQuestionsByThread: {},
+  planAnswersByThread: {},
+  activeQuestionIndexByThread: {},
+  planQuestionsStatusByThread: {},
 
   cacheToolCallRecords: (key, records) => {
     get().toolCallRecordCache.set(key, records);
@@ -241,6 +303,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           .catch((err) => {
             console.debug("[taskHydration] Failed to load tasks for thread %s:", threadId, err);
           });
+
+        // Restore the plan question wizard if an unanswered plan-questions block
+        // exists in the loaded messages. This handles app restart without losing wizard state.
+        const existingStatus = get().planQuestionsStatusByThread[threadId];
+        if (existingStatus !== "pending") {
+          const pendingQuestions = extractPendingPlanQuestions(messages);
+          if (pendingQuestions) {
+            get().setPlanQuestions(threadId, pendingQuestions);
+          }
+        }
       }
     } catch (e) {
       if (get().currentThreadId === threadId) {
@@ -337,11 +409,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         : {}),
       runningThreadIds: new Set([...state.runningThreadIds, threadId]),
       agentStartTimes: { ...state.agentStartTimes, [threadId]: Date.now() },
+      // Persist reasoningLevel so the post-wizard answer turn forwards the same setting
+      settingsByThread: reasoningLevel !== undefined
+        ? { ...state.settingsByThread, [threadId]: { ...state.getThreadSettings(threadId), reasoningLevel } }
+        : state.settingsByThread,
       error: null,
     }));
 
     try {
-      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments, reasoningLevel, provider);
+      const { interactionMode } = get().getThreadSettings(threadId);
+      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode);
     } catch (e) {
       set((state) => {
         const next = new Set(state.runningThreadIds);
@@ -423,6 +500,84 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         [threadId]: { ...state.getThreadSettings(threadId), ...settings },
       },
     }));
+  },
+
+  setPlanQuestions: (threadId, questions) => {
+    set((state) => ({
+      planQuestionsByThread: { ...state.planQuestionsByThread, [threadId]: questions },
+      planAnswersByThread: { ...state.planAnswersByThread, [threadId]: new Map() },
+      activeQuestionIndexByThread: { ...state.activeQuestionIndexByThread, [threadId]: 0 },
+      planQuestionsStatusByThread: { ...state.planQuestionsStatusByThread, [threadId]: "pending" },
+    }));
+  },
+
+  setPlanAnswer: (threadId, questionId, answer) => {
+    set((state) => {
+      const existing = state.planAnswersByThread[threadId] ?? new Map<string, PlanAnswer>();
+      const updated = new Map(existing);
+      updated.set(questionId, answer);
+      return {
+        planAnswersByThread: { ...state.planAnswersByThread, [threadId]: updated },
+      };
+    });
+  },
+
+  setActiveQuestionIndex: (threadId, index) => {
+    set((state) => ({
+      activeQuestionIndexByThread: { ...state.activeQuestionIndexByThread, [threadId]: index },
+    }));
+  },
+
+  submitPlanAnswers: async (threadId) => {
+    const state = get();
+    const answersMap = state.planAnswersByThread[threadId] ?? new Map<string, PlanAnswer>();
+    const questions = state.planQuestionsByThread[threadId] ?? [];
+    const { permissionMode, reasoningLevel } = state.getThreadSettings(threadId);
+
+    // Build an answer for every question; unanswered questions get nulls
+    const answers: PlanAnswer[] = questions.map((q) => {
+      const a = answersMap.get(q.id);
+      return a ?? { questionId: q.id, selectedOptionId: null, freeText: null };
+    });
+
+    // Hide the wizard and mark the thread running before the RPC so the
+    // composer stays disabled for the entire continuation request, not just
+    // after it resolves.
+    set((s) => ({
+      planQuestionsStatusByThread: { ...s.planQuestionsStatusByThread, [threadId]: "answered" },
+      runningThreadIds: new Set([...s.runningThreadIds, threadId]),
+      agentStartTimes: { ...s.agentStartTimes, [threadId]: Date.now() },
+    }));
+
+    try {
+      await getTransport().answerPlanQuestions(threadId, answers, permissionMode, reasoningLevel);
+    } catch (e) {
+      // Revert to pending on error so user can retry
+      set((s) => ({
+        planQuestionsStatusByThread: { ...s.planQuestionsStatusByThread, [threadId]: "pending" },
+        runningThreadIds: new Set([...Array.from(s.runningThreadIds).filter((id) => id !== threadId)]),
+        error: String(e),
+      }));
+    }
+  },
+
+  clearPlanQuestions: (threadId) => {
+    set((state) => {
+      const nextQuestions = { ...state.planQuestionsByThread };
+      const nextAnswers = { ...state.planAnswersByThread };
+      const nextIndex = { ...state.activeQuestionIndexByThread };
+      const nextStatus = { ...state.planQuestionsStatusByThread };
+      delete nextQuestions[threadId];
+      delete nextAnswers[threadId];
+      delete nextIndex[threadId];
+      delete nextStatus[threadId];
+      return {
+        planQuestionsByThread: nextQuestions,
+        planAnswersByThread: nextAnswers,
+        activeQuestionIndexByThread: nextIndex,
+        planQuestionsStatusByThread: nextStatus,
+      };
+    });
   },
 
   /**

@@ -258,6 +258,7 @@ async function dispatch(
         params.attachments,
         params.reasoningLevel,
         params.provider,
+        params.interactionMode,
       );
       return;
     case "agent.createAndSend":
@@ -272,12 +273,21 @@ async function dispatch(
         params.attachments,
         params.reasoningLevel,
         params.provider,
+        params.interactionMode,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);
       return;
     case "agent.activeCount":
       return deps.agentService.activeCount();
+    case "agent.answerQuestions":
+      await deps.agentService.answerQuestions(
+        params.threadId,
+        params.answers,
+        params.permissionMode ?? "default",
+        params.reasoningLevel,
+      );
+      return;
 
     // Messages
     case "message.list":

@@ -16,6 +16,7 @@ import type {
   IProviderRegistry,
   AgentEvent,
   ProviderId,
+  InteractionMode,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -33,6 +34,9 @@ import { broadcast } from "../transport/push";
 // not at AgentService construction time.
 import { ThreadService } from "./thread-service";
 import { SettingsService } from "./settings-service.js";
+import { PlanQuestionParser } from "./plan-question-parser.js";
+import { PlanQuestionSchema } from "@mcode/contracts";
+import { z } from "zod";
 
 /** Fallback context window size used when the SDK does not report one. */
 const DEFAULT_CONTEXT_WINDOW = 200_000;
@@ -89,6 +93,12 @@ export class AgentService {
   private turnSortCounters = new Map<string, number>();
   /** Threads currently running persistTurn to prevent concurrent calls. */
   private persistingThreads = new Set<string>();
+  /** Per-thread streaming parsers active while the model is generating questions in plan mode. */
+  private planParsers = new Map<string, PlanQuestionParser>();
+  /** Buffered plan questions awaiting broadcast until the turn closes (`ended` event).
+   * Broadcasting from `ended` ensures the session is fully closed before the client
+   * can submit answers, preventing overlapping sends on the same thread. */
+  private pendingPlanQuestions = new Map<string, z.infer<typeof PlanQuestionSchema>[]>();
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -123,6 +133,7 @@ export class AgentService {
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
     provider?: ProviderId,
+    interactionMode?: InteractionMode,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -171,6 +182,13 @@ export class AgentService {
       nextSeq,
       stored.length > 0 ? stored : undefined,
     );
+
+    // In plan mode, wrap the message with the question-generation prompt
+    // and register a parser to intercept the streaming textDelta output.
+    if (interactionMode === "plan") {
+      content = this.buildPlanPrompt(content);
+      this.planParsers.set(threadId, new PlanQuestionParser());
+    }
 
     this.threadRepo.updateStatus(threadId, "active");
 
@@ -275,6 +293,51 @@ export class AgentService {
   }
 
   /**
+   * Submit answers to the model's plan questions and resume the session.
+   * Formats answers as a human-readable follow-up message and sends it
+   * without the plan-mode question wrapper so the model generates the plan.
+   */
+  async answerQuestions(
+    threadId: string,
+    answers: Array<{ questionId: string; selectedOptionId: string | null; freeText: string | null }>,
+    permissionMode = "default",
+    reasoningLevel?: ReasoningLevel,
+  ): Promise<void> {
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread) throw new Error(`Thread not found: ${threadId}`);
+
+    // Look up question text and option titles from message history so the
+    // follow-up message is human-readable rather than using opaque IDs.
+    const questionContext = this.buildQuestionContext(threadId);
+
+    const lines: string[] = ["Here are my answers to your planning questions:\n"];
+    for (const a of answers) {
+      const qCtx = questionContext.get(a.questionId);
+      const label = qCtx?.question ?? a.questionId;
+      if (a.freeText) {
+        lines.push(`- **${label}**: ${a.freeText}`);
+      } else if (a.selectedOptionId) {
+        const optionTitle = qCtx?.options.find((o) => o.id === a.selectedOptionId)?.title ?? a.selectedOptionId;
+        lines.push(`- **${label}**: ${optionTitle}`);
+      } else {
+        lines.push(`- **${label}**: (skipped)`);
+      }
+    }
+    lines.push("\nNow generate the full plan based on these decisions.");
+
+    // interactionMode intentionally omitted — no question wrapping for the answer turn
+    await this.sendMessage(
+      threadId,
+      lines.join("\n"),
+      permissionMode,
+      thread.model ?? "claude-sonnet-4-6",
+      [],
+      reasoningLevel,
+      (thread.provider as ProviderId) ?? "claude",
+    );
+  }
+
+  /**
    * Create a new thread and immediately send the first message.
    * Generates a title from the content, creates the thread, sends,
    * and returns the fully-populated Thread object.
@@ -290,6 +353,7 @@ export class AgentService {
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
     provider: ProviderId = "claude",
+    interactionMode?: InteractionMode,
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
@@ -347,6 +411,7 @@ export class AgentService {
       attachments,
       reasoningLevel,
       provider,
+      interactionMode,
     );
 
     // Re-read from DB to pick up model update applied by sendMessage
@@ -419,6 +484,21 @@ export class AgentService {
 
     for (const provider of this.providerRegistry.resolveAll()) {
       provider.on("event", (event: AgentEvent) => {
+        // Plan mode: feed streaming text to the question parser.
+        // Buffer questions until the session closes (`ended`) so the client
+        // cannot submit answers against a still-active session, which would
+        // risk overlapping sends on the same thread.
+        if (event.type === "textDelta") {
+          const parser = this.planParsers.get(event.threadId);
+          if (parser) {
+            const questions = parser.feed(event.delta);
+            if (questions) {
+              this.pendingPlanQuestions.set(event.threadId, questions);
+              this.planParsers.delete(event.threadId);
+            }
+          }
+        }
+
         if (event.type === "message") {
           try {
             const { messages: existing } = this.messageRepo.listByThread(event.threadId, 1);
@@ -513,6 +593,8 @@ export class AgentService {
           } else {
             this.clearTurnState(event.threadId);
           }
+          this.planParsers.delete(event.threadId);
+          this.pendingPlanQuestions.delete(event.threadId);
         }
 
         if (event.type === "compacting" && event.active) {
@@ -567,6 +649,14 @@ export class AgentService {
 
         if (event.type === "ended") {
           this.trackSessionEnded(event.threadId);
+          this.planParsers.delete(event.threadId);
+          // Broadcast buffered plan questions now that the session is fully closed,
+          // ensuring the client cannot submit answers against an active session.
+          const questions = this.pendingPlanQuestions.get(event.threadId);
+          if (questions) {
+            broadcast("plan.questions", { threadId: event.threadId, questions });
+            this.pendingPlanQuestions.delete(event.threadId);
+          }
         }
       });
     }
@@ -589,6 +679,35 @@ export class AgentService {
       return `${provider} CLI not found. Check the CLI path in Settings > Model.`;
     }
     return message;
+  }
+
+  /**
+   * Wrap a user message with the plan-mode question-generation prompt.
+   * Instructs the model to emit a fenced plan-questions JSON block before
+   * generating the actual plan.
+   */
+  private buildPlanPrompt(userMessage: string): string {
+    return `[PLAN MODE] You are in planning mode. Before generating your plan, identify 2-5 key architectural decisions that need user input. Output your questions in this exact format:
+
+\`\`\`plan-questions
+[
+  {
+    "id": "q1",
+    "category": "CATEGORY_NAME",
+    "question": "Your question here?",
+    "options": [
+      { "id": "o1", "title": "Option Title", "description": "Brief description.", "recommended": true },
+      { "id": "o2", "title": "Another Option", "description": "Brief description." }
+    ]
+  }
+]
+\`\`\`
+
+Output ONLY the plan-questions block, then stop. Do not generate the plan until you receive the user's answers.
+
+---
+
+${userMessage}`;
   }
 
   /** Buffer a tool call event for later persistence. */
@@ -763,6 +882,45 @@ export class AgentService {
     this.turnSortCounters.delete(threadId);
     this.agentCallStack.delete(threadId);
     this.persistingThreads.delete(threadId);
+  }
+
+  /**
+   * Parse the most recent plan-questions block from message history to build
+   * a lookup map of question ID → { question text, options }.
+   * Used to produce human-readable answer summaries instead of opaque IDs.
+   */
+  private buildQuestionContext(
+    threadId: string,
+  ): Map<string, { question: string; options: Array<{ id: string; title: string }> }> {
+    const PLAN_QUESTIONS_RE = /```plan-questions\n([\s\S]*?)```/;
+    const map = new Map<string, { question: string; options: Array<{ id: string; title: string }> }>();
+
+    // Fetch recent messages — 50 is more than enough to find the question block
+    const { messages } = this.messageRepo.listByThread(threadId, 50);
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role !== "assistant") continue;
+      const match = PLAN_QUESTIONS_RE.exec(msg.content);
+      if (!match) continue;
+      try {
+        const raw = JSON.parse(match[1]);
+        if (!Array.isArray(raw)) break;
+        for (const q of raw) {
+          if (q && typeof q.id === "string" && typeof q.question === "string") {
+            const options = Array.isArray(q.options)
+              ? q.options
+                  .filter((o: unknown) => o && typeof (o as Record<string, unknown>).id === "string")
+                  .map((o: Record<string, unknown>) => ({ id: String(o.id), title: String(o.title ?? o.id) }))
+              : [];
+            map.set(q.id, { question: q.question, options });
+          }
+        }
+      } catch {
+        // Ignore — opaque IDs will be used as fallback
+      }
+      break;
+    }
+    return map;
   }
 
   /** Generate a human-readable summary of tool input. */

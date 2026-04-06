@@ -78,6 +78,20 @@ export type { FileCategory } from "./models/file-types.js";
 export { AgentEventSchema } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";
 
+// Plan questions
+export {
+  PlanQuestionOptionSchema,
+  PlanQuestionSchema,
+  PlanAnswerSchema,
+  PlanQuestionBatchSchema,
+} from "./models/plan-questions.js";
+export type {
+  PlanQuestionOption,
+  PlanQuestion,
+  PlanAnswer,
+  PlanQuestionBatch,
+} from "./models/plan-questions.js";
+
 // Git / GitHub
 export { GitBranchSchema, WorktreeSchema, GitCommitSchema } from "./git.js";
 export type { GitBranch, WorktreeInfo, GitCommit } from "./git.js";
