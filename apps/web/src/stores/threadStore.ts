@@ -787,29 +787,22 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Update context tracker. Prefer the SDK-reported contextWindow (authoritative)
       // over the local registry. The DB is updated server-side; contextByThread is
       // the live source within a session and loaded from thread.list on cold start.
-      if (tokensIn > 0) {
+      //
+      // Skip context update if the thread is currently compacting. A turnComplete
+      // can fire during compaction (from the compaction API call itself) carrying
+      // the pre-compaction input token count, which would flash near-100% fill.
+      // Compaction cleanup (isCompactingByThread) is handled solely by the
+      // session.compacting handler to keep lifecycle management in one place.
+      if (tokensIn > 0 && !get().isCompactingByThread[threadId]) {
         const sdkContextWindow = params.contextWindow as number | undefined;
         const modelId = useWorkspaceStore.getState().threads.find((t) => t.id === threadId)?.model ?? "claude-sonnet-4-6";
         const contextWindow = sdkContextWindow ?? getContextWindow(modelId);
-        set((state) => {
-          // Only copy isCompactingByThread if the key is actually present to avoid
-          // an unnecessary allocation on every turn for non-compacting threads.
-          const isCompactingByThread =
-            threadId in state.isCompactingByThread
-              ? (() => {
-                  const c = { ...state.isCompactingByThread };
-                  delete c[threadId];
-                  return c;
-                })()
-              : state.isCompactingByThread;
-          return {
-            contextByThread: {
-              ...state.contextByThread,
-              [threadId]: { lastTokensIn: tokensIn, contextWindow },
-            },
-            isCompactingByThread,
-          };
-        });
+        set((state) => ({
+          contextByThread: {
+            ...state.contextByThread,
+            [threadId]: { lastTokensIn: tokensIn, contextWindow },
+          },
+        }));
       }
 
       // Tool calls remain in state (all marked complete). They render as
@@ -860,6 +853,25 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
         }, 400);
         dequeueTimers.set(threadId, timer);
+      }
+      return;
+    }
+
+    if (method === "session.contextEstimate") {
+      const tokensIn = params.tokensIn as number;
+      const ctxWindow = params.contextWindow as number | undefined;
+      // Only apply if not compacting — the compaction-start zero sentinel is
+      // authoritative while compaction is in progress.
+      if (tokensIn > 0 && !get().isCompactingByThread[threadId]) {
+        set((state) => ({
+          contextByThread: {
+            ...state.contextByThread,
+            [threadId]: {
+              lastTokensIn: tokensIn,
+              contextWindow: ctxWindow ?? state.contextByThread[threadId]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+            },
+          },
+        }));
       }
       return;
     }
