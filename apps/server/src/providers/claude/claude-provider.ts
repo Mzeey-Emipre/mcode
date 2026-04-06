@@ -134,10 +134,15 @@ export function detectFallbackModel(
   const usedModels = Object.keys(modelUsage);
   // SDK resolves aliases to dated IDs (e.g. "claude-sonnet-4-6" → "claude-sonnet-4-6-20250514").
   // A dated variant that starts with the requested alias is the same model, not a fallback.
-  const actualModel = usedModels.find(
-    (m) => m !== requestedModel && !m.startsWith(requestedModel),
+  const requestedModelRan = usedModels.some(
+    (m) => m === requestedModel || m.startsWith(requestedModel),
   );
-  return actualModel ?? null;
+  // Only report a fallback when the requested model is completely absent from usage.
+  // The SDK may report multiple models (e.g. primary + tool-routing model) in a single
+  // turn; that is NOT a fallback as long as the requested model was used.
+  if (requestedModelRan) return null;
+
+  return usedModels[0] ?? null;
 }
 
 /** Claude Agent SDK adapter implementing IAgentProvider with prompt queue pattern. */
