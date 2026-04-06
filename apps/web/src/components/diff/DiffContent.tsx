@@ -3,6 +3,7 @@ import { GitCompareArrows } from "lucide-react";
 import { useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { parseDiffLines } from "@/lib/diff-parser";
+import { langFromPath } from "@/lib/lang-from-path";
 import { UnifiedDiff } from "./UnifiedDiff";
 import { SideBySideDiff } from "./SideBySideDiff";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -54,6 +55,11 @@ export function DiffContent() {
   const lines = useMemo(
     () => (diffContent ? parseDiffLines(diffContent) : []),
     [diffContent],
+  );
+
+  const language = useMemo(
+    () => (selectedFile ? langFromPath(selectedFile.filePath) : "text"),
+    [selectedFile],
   );
 
   const stats = useMemo(() => {
@@ -117,9 +123,9 @@ export function DiffContent() {
         <ScrollArea className="flex-1 min-h-0">
           {lines.length > 0 ? (
             renderMode === "unified" ? (
-              <UnifiedDiff lines={lines} />
+              <UnifiedDiff lines={lines} language={language} />
             ) : (
-              <SideBySideDiff lines={lines} />
+              <SideBySideDiff lines={lines} language={language} />
             )
           ) : (
             <div className="flex items-center justify-center py-10">

@@ -1,61 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { ShikiTheme } from "./useTheme";
+import { getWorker, workerGeneration, pending, nextRequestId } from "@/lib/shiki-worker-client";
 
-/** Response from the Shiki Web Worker. */
+/** Response from the Shiki Web Worker for a highlight (codeToHtml) request. */
 interface HighlightResponse {
   id: string;
   html: string;
   error?: string;
 }
-
-let sharedWorker: Worker | null = null;
-let workerGeneration = 0;
-const pending = new Map<string, (html: string | null) => void>();
-
-/** Creates and configures a new Worker instance. */
-function createWorkerInstance(): Worker {
-  const worker = new Worker(
-    new URL("../workers/shiki.worker.ts", import.meta.url),
-    { type: "module" },
-  );
-  worker.onmessage = (e: MessageEvent<HighlightResponse>) => {
-    const { id, html, error } = e.data;
-    if (error) {
-      console.warn("[shiki-worker]", error);
-    }
-    const resolve = pending.get(id);
-    if (resolve) {
-      pending.delete(id);
-      resolve(error ? null : html);
-    }
-  };
-  worker.onerror = () => {
-    // Worker crashed: bump generation so stale responses are ignored
-    sharedWorker = null;
-    workerGeneration++;
-
-    // Resolve all pending requests with null so hooks fall back to plain rendering
-    for (const resolve of pending.values()) {
-      resolve(null);
-    }
-    pending.clear();
-  };
-  return worker;
-}
-
-/**
- * Returns the shared singleton Worker, creating it on first call or after a crash.
- * The Worker is never terminated during normal operation. It persists across thread
- * switches so loaded language grammars and themes stay in memory (bounded at ~4-8 MB).
- */
-function getWorker(): Worker {
-  if (!sharedWorker) {
-    sharedWorker = createWorkerInstance();
-  }
-  return sharedWorker;
-}
-
-let nextId = 0;
 
 /**
  * Sends code to the Shiki Web Worker for highlighting.
@@ -104,21 +56,27 @@ export function useHighlighter(
       return;
     }
 
-    const id = `hl-${nextId++}`;
+    const id = nextRequestId("hl");
     const generationAtRequest = workerGeneration;
     currentRequestId.current = id;
 
-    pending.set(id, (result) => {
+    pending.set(id, (response) => {
       // Only apply if this request is still current and the worker hasn't crashed since
       if (
         currentRequestId.current === id &&
         workerGeneration === generationAtRequest
       ) {
-        setHtml(result);
+        // Guard against stray tokenize responses (which carry a `type` field)
+        if (response && "type" in response) return;
+        const r = response as HighlightResponse | null;
+        if (r?.error) {
+          console.warn("[shiki-worker]", r.error);
+        }
+        setHtml(r && !r.error ? r.html : null);
       }
     });
 
-    worker.postMessage({ id, code, language, theme });
+    worker.postMessage({ id, type: "highlight", code, language, theme });
 
     return () => {
       pending.delete(id);

@@ -3,6 +3,7 @@ import { Plus, Minus } from "lucide-react";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { parseDiffLines } from "@/lib/diff-parser";
+import { langFromPath } from "@/lib/lang-from-path";
 import { UnifiedDiff } from "./UnifiedDiff";
 import { SideBySideDiff } from "./SideBySideDiff";
 
@@ -53,8 +54,6 @@ const EXT_COLORS: Record<string, string> = {
   toml: "text-amber-400/60",
 };
 
-/** Height in pixels for inline side-by-side diff rendering. */
-const INLINE_SIDE_BY_SIDE_HEIGHT = 240;
 
 /**
  * Diff loading state.
@@ -75,9 +74,12 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
   // when diffState transitions from null → {loading:true}
   const loadStartedRef = useRef(false);
 
-  const basename = getFileBasename(filePath);
-  const parent = getParentDir(filePath);
-  const ext = getExtension(filePath);
+  const { basename, parent, ext, language } = useMemo(() => {
+    const bn = getFileBasename(filePath);
+    const pr = getParentDir(filePath);
+    const ex = getExtension(filePath);
+    return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath) };
+  }, [filePath]);
   const extColor = EXT_COLORS[ext] ?? "text-muted-foreground/30";
 
   // Load diff lazily on first expand. Uses a ref guard so that the state
@@ -125,10 +127,15 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
   );
 
   const stats = useMemo(
-    () => ({
-      additions: lines.filter((l) => l.type === "add").length,
-      deletions: lines.filter((l) => l.type === "remove").length,
-    }),
+    () =>
+      lines.reduce(
+        (acc, l) => {
+          if (l.type === "add") acc.additions++;
+          else if (l.type === "remove") acc.deletions++;
+          return acc;
+        },
+        { additions: 0, deletions: 0 },
+      ),
     [lines],
   );
 
@@ -198,13 +205,11 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
               ))}
             </div>
           ) : lines.length > 0 ? (
-            <div className="overflow-x-auto">
+            <div className="max-h-[360px] overflow-auto">
               {renderMode === "unified" ? (
-                <UnifiedDiff lines={lines} />
+                <UnifiedDiff lines={lines} language={language} />
               ) : (
-                <div style={{ height: `${INLINE_SIDE_BY_SIDE_HEIGHT}px` }}>
-                  <SideBySideDiff lines={lines} />
-                </div>
+                <SideBySideDiff lines={lines} language={language} />
               )}
             </div>
           ) : (

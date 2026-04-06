@@ -1,30 +1,34 @@
 import type { ParsedDiffLine } from "@/lib/diff-parser";
+import { useDiffHighlighter } from "@/hooks/useDiffHighlighter";
+import { useShikiTheme } from "@/hooks/useTheme";
+import { HunkSeparator } from "./HunkSeparator";
 
 /** Props for UnifiedDiff. */
 interface UnifiedDiffProps {
   lines: ParsedDiffLine[];
+  /** File language for syntax highlighting (e.g. "typescript"). "text" disables highlighting. */
+  language?: string;
 }
 
-/** Unified diff renderer: line numbers, +/- prefix, light/dark-mode aware colors. */
-export function UnifiedDiff({ lines }: UnifiedDiffProps) {
+/** Unified diff renderer: line numbers, +/- prefix, syntax highlighting, hunk separator bars. */
+export function UnifiedDiff({ lines, language = "text" }: UnifiedDiffProps) {
+  const theme = useShikiTheme();
+  const { getLineTokens } = useDiffHighlighter(lines, language, theme, language !== "text");
+
   return (
     <div className="select-text overflow-x-auto text-[11px] font-mono leading-relaxed">
       {lines.map((line, i) => {
         if (line.type === "header") {
-          // Only render @@ hunk headers as visual dividers; skip git metadata lines
+          // Only render @@ hunk headers; skip git metadata lines
           if (!line.content.startsWith("@@")) return null;
-          return (
-            <div
-              key={i}
-              className="my-0.5 flex items-center border-y border-border/10 bg-muted/20 px-2 py-0.5"
-            >
-              <span className="truncate text-[10px] text-muted-foreground/50">{line.content}</span>
-            </div>
-          );
+          // Skip bars with no hidden lines (hunk starts at line 1)
+          if (!line.hiddenLineCount || line.hiddenLineCount <= 0) return null;
+          return <HunkSeparator key={i} hiddenLineCount={line.hiddenLineCount} />;
         }
 
         const isAdd = line.type === "add";
         const isRemove = line.type === "remove";
+        const tokens = getLineTokens(i);
 
         return (
           <div
@@ -57,17 +61,27 @@ export function UnifiedDiff({ lines }: UnifiedDiffProps) {
             >
               {isAdd ? "+" : isRemove ? "-" : " "}
             </span>
-            {/* Content */}
-            <span
-              className={`flex-1 whitespace-pre px-1 ${
-                isAdd
-                  ? "text-emerald-900 dark:text-emerald-100/80"
-                  : isRemove
-                    ? "text-red-900 dark:text-red-100/70"
-                    : "text-foreground/60"
-              }`}
-            >
-              {line.content}
+            {/* Content: syntax-highlighted tokens when available, plain text fallback */}
+            <span className="flex-1 whitespace-pre px-1">
+              {tokens ? (
+                tokens.map((token, j) => (
+                  <span key={j} style={{ color: token.color }}>
+                    {token.content}
+                  </span>
+                ))
+              ) : (
+                <span
+                  className={
+                    isAdd
+                      ? "text-emerald-900 dark:text-emerald-100/80"
+                      : isRemove
+                        ? "text-red-900 dark:text-red-100/70"
+                        : "text-foreground/60"
+                  }
+                >
+                  {line.content}
+                </span>
+              )}
             </span>
           </div>
         );

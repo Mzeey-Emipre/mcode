@@ -6,6 +6,11 @@ export interface ParsedDiffLine {
   oldLineNo: number | null;
   /** Line number in the new file (null for removals and headers). */
   newLineNo: number | null;
+  /**
+   * Number of file lines hidden before this hunk. Only set on `@@` hunk header
+   * lines. Used to render "N unchanged lines" separator bars in the diff view.
+   */
+  hiddenLineCount?: number;
 }
 
 /** Parse a unified diff string into typed lines with line numbers. */
@@ -16,22 +21,44 @@ export function parseDiffLines(diff: string): ParsedDiffLine[] {
   const result: ParsedDiffLine[] = [];
   let oldLine = 0;
   let newLine = 0;
+  // Tracks the line immediately after the last hunk ended.
+  // Initialised to 1 so that a hunk starting at line 1 produces hiddenLineCount=0.
+  let prevOldEnd = 1;
 
   for (const line of lines) {
     if (line.startsWith("@@")) {
-      const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      const match = line.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
       if (match) {
-        oldLine = parseInt(match[1], 10);
-        newLine = parseInt(match[2], 10);
+        const oldStart = parseInt(match[1], 10);
+        const oldCount = match[2] !== undefined ? parseInt(match[2], 10) : 1;
+        newLine = parseInt(match[3], 10);
+        oldLine = oldStart;
+
+        // Lines hidden between the end of the previous hunk and the start of this one.
+        // For the first hunk, this equals lines before it in the file (oldStart - 1).
+        const hiddenLineCount = Math.max(0, oldStart - prevOldEnd);
+        prevOldEnd = oldStart + oldCount;
+
+        result.push({
+          type: "header",
+          content: line,
+          oldLineNo: null,
+          newLineNo: null,
+          hiddenLineCount,
+        });
+      } else {
+        result.push({ type: "header", content: line, oldLineNo: null, newLineNo: null });
       }
-      result.push({ type: "header", content: line, oldLineNo: null, newLineNo: null });
-    } else if (line.startsWith("+++") || line.startsWith("---")) {
+    } else if (line.startsWith("diff ")) {
+      // New file section in a multi-file diff: reset hunk tracking for the new file
+      prevOldEnd = 1;
       result.push({ type: "header", content: line, oldLineNo: null, newLineNo: null });
     } else if (
-      line.startsWith("diff ") ||
+      line.startsWith("+++") ||
+      line.startsWith("---") ||
       line.startsWith("index ") ||
       line.startsWith("new file") ||
-      line.startsWith("old file") ||
+      line.startsWith("old mode") ||
       line.startsWith("deleted file") ||
       line.startsWith("similarity") ||
       line.startsWith("rename") ||
