@@ -34,6 +34,10 @@ interface ThreadState {
   settingsByThread: Record<string, ThreadSettings>;
   /** Tool call counts per message ID, populated from turn.persisted events and loadMessages. */
   persistedToolCallCounts: Record<string, number>;
+  /** Files changed per message ID, populated from turn.persisted events. Empty array = no changes. */
+  persistedFilesChanged: Record<string, string[]>;
+  /** Message ID of the most recent completed turn with file changes. Only this turn's summary is expanded; older ones auto-collapse. */
+  latestTurnWithChanges: string | null;
   /** Maps client-generated message IDs to server-persisted message IDs for API calls. */
   serverMessageIds: Record<string, string>;
   /** Active subagent count per thread (incremented on Agent toolUse, decremented on Agent toolResult). */
@@ -187,6 +191,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   agentStartTimes: {},
   settingsByThread: {},
   persistedToolCallCounts: {},
+  persistedFilesChanged: {},
+  latestTurnWithChanges: null,
   serverMessageIds: {},
   activeSubagentsByThread: {},
   toolCallRecordCache: new LruCache<string, ToolCallRecord[]>(TOOL_CALL_CACHE_SIZE),
@@ -1179,6 +1185,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ...state.persistedToolCallCounts,
           [localMsgId]: payload.toolCallCount,
         },
+        persistedFilesChanged: {
+          ...state.persistedFilesChanged,
+          [localMsgId]: payload.filesChanged,
+        },
+        latestTurnWithChanges:
+          payload.filesChanged.length > 0 ? localMsgId : state.latestTurnWithChanges,
         serverMessageIds: {
           ...state.serverMessageIds,
           [localMsgId]: payload.messageId,
