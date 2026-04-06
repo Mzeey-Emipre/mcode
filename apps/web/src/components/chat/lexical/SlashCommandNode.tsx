@@ -35,10 +35,10 @@ export interface SerializedSlashCommandNode extends SerializedLexicalNode {
 // ---------------------------------------------------------------------------
 
 const NAMESPACE_STYLES: Record<SlashCommandNamespace, string> = {
-  skill: "bg-emerald-500/20 ring-1 ring-emerald-500/30",
-  mcode: "bg-primary/20 ring-1 ring-primary/30",
-  plugin: "bg-orange-500/20 ring-1 ring-orange-500/30",
-  command: "bg-sky-500/20 ring-1 ring-sky-500/30",
+  skill: "bg-emerald-500/25 ring-1 ring-emerald-500/40",
+  mcode: "bg-primary/25 ring-1 ring-primary/40",
+  plugin: "bg-orange-500/25 ring-1 ring-orange-500/40",
+  command: "bg-sky-500/25 ring-1 ring-sky-500/40",
 };
 
 /** Valid namespace values for deserialisation fallback. */

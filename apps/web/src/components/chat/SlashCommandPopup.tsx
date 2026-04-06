@@ -186,11 +186,11 @@ function CommandRow({
         className={cn(
           "ml-auto flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
           cmd.namespace === "mcode"
-            ? "bg-primary/15 text-primary"
+            ? "bg-primary/20 text-primary"
             : cmd.namespace === "plugin"
-              ? "bg-orange-500/15 text-orange-500"
+              ? "bg-orange-500/20 text-orange-500"
               : cmd.namespace === "command"
-                ? "bg-sky-500/15 text-sky-500"
+                ? "bg-sky-500/20 text-sky-500"
                 : "bg-muted text-muted-foreground",
         )}
       >

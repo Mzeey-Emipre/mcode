@@ -20,7 +20,7 @@ import {
 type IconComponent = ComponentType<{ size?: number; className?: string }>;
 
 const PROVIDER_META: Record<string, { icon: IconComponent; color: string }> = {
-  claude: { icon: ClaudeIcon, color: "text-orange-400/75" },
+  claude: { icon: ClaudeIcon, color: "text-orange-500 dark:text-orange-400" },
   codex: { icon: CodexIcon, color: "text-emerald-400" },
   cursor: { icon: CursorProviderIcon, color: "text-blue-400" },
   opencode: { icon: OpenCodeIcon, color: "text-violet-400" },
