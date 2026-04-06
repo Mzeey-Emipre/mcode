@@ -90,6 +90,19 @@ export const AgentEventSchema = lazySchema(() =>
       /** Elapsed seconds since the tool started, as reported by the SDK. */
       elapsedSeconds: z.number(),
     }),
+    z.object({
+      /**
+       * Incremental context token estimate emitted during a turn (after each
+       * tool result) and immediately after compaction finishes. Replaces the
+       * stale snapshot in contextByThread without waiting for turnComplete.
+       */
+      type: z.literal("contextEstimate"),
+      threadId: z.string(),
+      /** Estimated total tokens currently occupying the context window. */
+      tokensIn: z.number(),
+      /** Model context window size, forwarded from SDK when available. */
+      contextWindow: z.number().optional(),
+    }),
   ]),
 );
 /** Union of all events emitted by an agent provider. */
