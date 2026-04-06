@@ -54,6 +54,8 @@ interface ThreadState {
   contextByThread: Record<string, { lastTokensIn: number; contextWindow: number }>;
   /** Whether the SDK is currently compacting the context window for a thread. */
   isCompactingByThread: Record<string, boolean>;
+  /** Transient fallback state per thread. Cleared when the user sends the next message. */
+  lastFallbackByThread: Record<string, { requestedModel: string; actualModel: string }>;
   /** Questions proposed by the model in plan mode, keyed by thread ID. Null when not pending. */
   planQuestionsByThread: Record<string, PlanQuestion[] | null>;
   /** User's answers to plan questions, keyed by thread ID then question ID. */
@@ -197,6 +199,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   loadEpochByThread: {},
   contextByThread: {},
   isCompactingByThread: {},
+  lastFallbackByThread: {},
   planQuestionsByThread: {},
   planAnswersByThread: {},
   activeQuestionIndexByThread: {},
@@ -413,6 +416,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       settingsByThread: reasoningLevel !== undefined
         ? { ...state.settingsByThread, [threadId]: { ...state.getThreadSettings(threadId), reasoningLevel } }
         : state.settingsByThread,
+      // Clear any transient fallback from the previous turn so the next message uses the intended model
+      lastFallbackByThread: (() => {
+        const next = { ...state.lastFallbackByThread };
+        delete next[threadId];
+        return next;
+      })(),
       error: null,
     }));
 
@@ -1108,18 +1117,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const actualModel = params.actualModel as string;
 
       // Normalize dated SDK variants (e.g. claude-haiku-4-5-20251001 → claude-haiku-4-5)
-      // so the picker always stores and displays the clean base ID.
       const actualDefinition = findModelById(actualModel);
       const normalizedActual = actualDefinition?.id ?? actualModel;
 
-      // Patch workspaceStore so the Composer's model selector updates reactively
-      useWorkspaceStore.setState((ws) => ({
-        threads: ws.threads.map((t) =>
-          t.id === threadId ? { ...t, model: normalizedActual } : t,
-        ),
+      // Store as transient fallback info — do NOT mutate thread.model
+      set((state) => ({
+        lastFallbackByThread: {
+          ...state.lastFallbackByThread,
+          [threadId]: { requestedModel, actualModel: normalizedActual },
+        },
       }));
 
-      // Notify the user which model was actually used
+      // Notify the user
       const actualLabel = actualDefinition?.label ?? normalizedActual;
       const requestedLabel = findModelById(requestedModel)?.label ?? requestedModel;
       useToastStore.getState().show(
