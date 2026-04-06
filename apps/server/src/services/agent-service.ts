@@ -38,6 +38,16 @@ import { SettingsService } from "./settings-service.js";
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
 /**
+ * Rough character-based token estimate (1 token per ~4 chars).
+ * Used to update the context tracker after each tool result without
+ * waiting for the next authoritative turnComplete.
+ * @internal Exported for unit testing only.
+ */
+export function roughTokenEstimate(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+/**
  * Generate a thread title from message content: first line, truncated
  * to 50 characters at a word boundary with "..." appended.
  */
@@ -63,6 +73,10 @@ interface BufferedToolCall extends CreateToolCallRecordInput {
 export class AgentService {
   private readonly activeSessionIds = new Set<string>();
   private initialized = false;
+  /** Running context token estimate, per thread. Reset on compaction start; overwritten on turnComplete. */
+  private lastContextByThread = new Map<string, number>();
+  /** Most recent SDK-reported context window size, per thread. */
+  private lastContextWindowByThread = new Map<string, number>();
   /** Per-thread buffer of tool calls accumulated during the current turn. */
   private turnToolCalls = new Map<string, BufferedToolCall[]>();
   /** Per-thread ref_before captured at sendMessage time. */
@@ -419,6 +433,18 @@ export class AgentService {
 
         if (event.type === "toolResult") {
           this.updateBufferedToolCallOutput(event.threadId, event.toolCallId, event.output, event.isError);
+
+          const baseline = this.lastContextByThread.get(event.threadId) ?? 0;
+          if (baseline > 0) {
+            const newEstimate = baseline + roughTokenEstimate(event.output);
+            this.lastContextByThread.set(event.threadId, newEstimate);
+            broadcast("agent.event", {
+              type: "contextEstimate",
+              threadId: event.threadId,
+              tokensIn: newEstimate,
+              contextWindow: this.lastContextWindowByThread.get(event.threadId),
+            });
+          }
         }
 
         if (event.type === "turnComplete") {
@@ -441,6 +467,13 @@ export class AgentService {
               });
             }
           }
+
+          // Update running baseline so tool-result estimates start from the
+          // correct post-turn value.
+          this.lastContextByThread.set(event.threadId, event.tokensIn);
+          if (event.contextWindow) {
+            this.lastContextWindowByThread.set(event.threadId, event.contextWindow);
+          }
         }
 
         if (event.type === "error") {
@@ -460,6 +493,12 @@ export class AgentService {
           } else {
             this.clearTurnState(event.threadId);
           }
+        }
+
+        if (event.type === "compacting" && event.active) {
+          // Compaction is consuming the entire conversation as input.
+          // Zero the baseline so no tool-result estimate fires during compaction.
+          this.lastContextByThread.set(event.threadId, 0);
         }
 
         if (event.type === "compacting" && !event.active) {
