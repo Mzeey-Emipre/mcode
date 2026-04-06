@@ -57,7 +57,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
                   ) : (
                     <File size={18} className="shrink-0 text-muted-foreground" />
                   )}
-                  <span className="truncate text-xs font-medium text-foreground/90">
+                  <span className="truncate text-xs font-medium text-foreground">
                     {att.name}
                   </span>
                 </div>

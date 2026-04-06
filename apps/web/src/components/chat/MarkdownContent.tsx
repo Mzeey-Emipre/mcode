@@ -30,7 +30,7 @@ const staticComponents = {
     return (
       <a
         href={safeHref}
-        className="text-primary underline hover:text-primary/80"
+        className="text-primary underline hover:text-primary"
         target="_blank"
         rel="noopener noreferrer"
       >

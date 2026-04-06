@@ -33,7 +33,7 @@ export function BashRenderer({ toolCall, isActive }: ToolRendererProps) {
           <div>
             <pre
               className={`max-h-64 overflow-auto rounded bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground font-mono ${
-                toolCall.isError ? "border-l-2 border-red-500/50" : ""
+                toolCall.isError ? "border-l-2 border-red-500/70" : ""
               }`}
             >
               {visible.join("\n")}
