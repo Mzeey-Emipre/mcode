@@ -188,14 +188,14 @@ export function ToolCallSummary({ messageId, toolCallCount }: ToolCallSummaryPro
         type="button"
         onClick={handleToggle}
         aria-expanded={expanded}
-        className="group flex items-center gap-1.5 py-1 text-xs text-muted-foreground hover:text-muted-foreground transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary rounded-sm"
+        className="group flex items-center gap-1.5 py-1 text-xs text-muted-foreground transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary rounded-sm"
       >
         <ChevronDown
           size={12}
           className={`shrink-0 transition-transform ${expanded ? "" : "-rotate-90"}`}
         />
         <span>{topLabel}</span>
-        {loading && <span className="text-xs opacity-50 ml-1">...</span>}
+        {loading && <span className="text-xs text-muted-foreground/70 ml-1">...</span>}
       </button>
 
       {expanded && visibleSteps && visibleSteps.length > 0 && (
