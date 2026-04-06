@@ -284,11 +284,11 @@ export class ThreadRepo {
 
     const now = new Date().toISOString();
     fields.push("updated_at = ?");
-    values.push(now, id);
+    values.push(now);
 
     const result = this.db
       .prepare(`UPDATE threads SET ${fields.join(", ")} WHERE id = ?`)
-      .run(...values);
+      .run(...values, id);
     return result.changes > 0;
   }
 
