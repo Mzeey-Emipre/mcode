@@ -66,10 +66,10 @@ function RecordRow({ record }: { record: ToolCallRecord }) {
 
   return (
     <div className="flex items-center gap-2 rounded-md pl-3 pr-1 py-1 text-xs transition-colors hover:bg-muted/20">
-      <Icon size={13} className="shrink-0 text-muted-foreground/50" />
-      <span className="font-medium text-foreground/60">{label}</span>
+      <Icon size={13} className="shrink-0 text-muted-foreground" />
+      <span className="font-medium text-foreground/80">{label}</span>
       {record.input_summary && (
-        <span className="min-w-0 truncate text-xs text-muted-foreground/40 font-mono">
+        <span className="min-w-0 truncate text-xs text-muted-foreground/70 font-mono">
           {record.input_summary}
         </span>
       )}
@@ -107,12 +107,12 @@ function StepRow({ step }: { step: Step }) {
         onClick={() => setExpanded((p) => !p)}
         className="flex w-full items-center gap-2 rounded-md pl-3 pr-1 py-1 text-left text-xs cursor-pointer hover:bg-muted/20 transition-colors"
       >
-        <Icon size={13} className="shrink-0 text-muted-foreground/50" />
-        <span className="font-medium text-foreground/60 dark:text-foreground/50">{step.label}</span>
-        <span className="text-xs text-muted-foreground/40">({count})</span>
+        <Icon size={13} className="shrink-0 text-muted-foreground" />
+        <span className="font-medium text-foreground/80 dark:text-foreground/70">{step.label}</span>
+        <span className="text-xs text-muted-foreground/70">({count})</span>
         <ChevronRight
           size={11}
-          className={`ml-auto shrink-0 text-muted-foreground/30 transition-transform ${
+          className={`ml-auto shrink-0 text-muted-foreground/70 transition-transform ${
             expanded ? "rotate-90" : ""
           }`}
         />
@@ -188,7 +188,7 @@ export function ToolCallSummary({ messageId, toolCallCount }: ToolCallSummaryPro
         type="button"
         onClick={handleToggle}
         aria-expanded={expanded}
-        className="group flex items-center gap-1.5 py-1 text-xs text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary rounded-sm"
+        className="group flex items-center gap-1.5 py-1 text-xs text-muted-foreground hover:text-muted-foreground transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary rounded-sm"
       >
         <ChevronDown
           size={12}
@@ -211,7 +211,7 @@ export function ToolCallSummary({ messageId, toolCallCount }: ToolCallSummaryPro
               <button
                 type="button"
                 onClick={() => setShowAll((p) => !p)}
-                className="py-1.5 pl-3 text-xs text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors cursor-pointer"
+                className="py-1.5 pl-3 text-xs text-muted-foreground/70 hover:text-muted-foreground transition-colors cursor-pointer"
               >
                 {showAll ? "Show less" : `+${hiddenCount} more`}
               </button>
