@@ -15,7 +15,10 @@
   "packages": {
     ".": {
       "release-type": "node",
-      "component": "mcode"
+      "component": "mcode",
+      "extra-files": [
+        "apps/desktop/package.json"
+      ]
     }
   }
 }
