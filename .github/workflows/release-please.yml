@@ -3,8 +3,6 @@ name: Release Please
 on:
   push:
     branches: [main]
-    paths:
-      - '.release-please-manifest.json'
   workflow_dispatch:
 
 permissions:
