@@ -85,7 +85,7 @@ export function RightPanel() {
               onClick={() => setActiveTab("tasks")}
               className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-semibold tracking-[0.1em] uppercase transition-colors ${
                 activeTab === "tasks"
-                  ? "text-foreground/70 bg-muted/50"
+                  ? "text-foreground bg-muted/50"
                   : "text-foreground/70 hover:text-foreground"
               }`}
             >
@@ -97,7 +97,7 @@ export function RightPanel() {
               onClick={() => setActiveTab("changes")}
               className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-semibold tracking-[0.1em] uppercase transition-colors ${
                 activeTab === "changes"
-                  ? "text-foreground/70 bg-muted/50"
+                  ? "text-foreground bg-muted/50"
                   : "text-foreground/70 hover:text-foreground"
               }`}
             >
