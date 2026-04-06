@@ -227,4 +227,21 @@ describe("ProjectTree double-click rename", () => {
     // Still one textbox (not duplicated).
     expect(screen.getAllByRole("textbox")).toHaveLength(1);
   });
+
+  it("pressing Enter navigates immediately without delay", () => {
+    const setActiveThread = vi.fn();
+    setupStoreMocks({ setActiveThread });
+
+    render(<ProjectTree />);
+
+    const threadButton = screen.getByRole("button", { name: /My Thread/i });
+
+    // Focus and press Enter on the thread row.
+    threadButton.focus();
+    fireEvent.keyDown(threadButton, { key: "Enter" });
+
+    // Navigation must fire immediately (no timer advance needed).
+    expect(setActiveThread).toHaveBeenCalledWith("thread-1");
+    expect(setActiveThread).toHaveBeenCalledTimes(1);
+  });
 });

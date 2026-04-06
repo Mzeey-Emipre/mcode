@@ -36,6 +36,9 @@ function setExpandedState(state: Record<string, boolean>) {
 /** Maximum threads shown before "Show more" appears. */
 const THREAD_LIST_CAP = 6;
 
+/** Time in ms to wait for a potential second click before treating a click as a single-click navigation */
+const DOUBLE_CLICK_THRESHOLD_MS = 250;
+
 /** Read per-workspace "show all threads" state from localStorage. */
 function getThreadListExpanded(): Record<string, boolean> {
   try {
@@ -544,7 +547,7 @@ function VirtualizedThreadList({
     const existing = clickTimeoutIdRef.current.get(threadId);
     if (existing) clearTimeout(existing);
 
-    if (elapsed < 250) {
+    if (elapsed < DOUBLE_CLICK_THRESHOLD_MS) {
       // Double-click: cancel the pending navigation and enter inline rename.
       lastClickTimeRef.current.delete(threadId);
       clickTimeoutIdRef.current.delete(threadId);
@@ -556,7 +559,7 @@ function VirtualizedThreadList({
         onSelectThread(threadId);
         lastClickTimeRef.current.delete(threadId);
         clickTimeoutIdRef.current.delete(threadId);
-      }, 250);
+      }, DOUBLE_CLICK_THRESHOLD_MS);
       clickTimeoutIdRef.current.set(threadId, id);
     }
   }, [inlineEdit, onSelectThread, onStartInlineEdit]);
@@ -606,6 +609,8 @@ function VirtualizedThreadList({
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (isEditing) return;
+                  // Keyboard navigation fires immediately — no double-click semantics for keyboard users.
+                  // Enter/Space always navigates; rename must be triggered via mouse double-click.
                   if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
                     e.preventDefault();
                     onSelectThread(thread.id);
