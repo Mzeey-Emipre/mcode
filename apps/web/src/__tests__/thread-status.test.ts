@@ -23,6 +23,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     deleted_at: null,
     last_context_tokens: null,
     context_window: null,
+    reasoning_level: null,
+    interaction_mode: null,
+    permission_mode: null,
     ...overrides,
   };
 }

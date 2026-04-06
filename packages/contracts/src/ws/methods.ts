@@ -89,6 +89,15 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ threadId: z.string(), title: z.string() }),
     result: z.boolean(),
   },
+  "thread.updateSettings": {
+    params: z.object({
+      threadId: z.string(),
+      reasoning_level: z.string().optional(),
+      interaction_mode: z.string().optional(),
+      permission_mode: z.string().optional(),
+    }),
+    result: z.boolean(),
+  },
   "thread.markViewed": {
     params: z.object({ threadId: z.string() }),
     result: z.void(),

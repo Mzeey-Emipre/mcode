@@ -272,6 +272,8 @@ export function createWsTransport(
       rpc<boolean>("thread.delete", { threadId, cleanupWorktree }),
     updateThreadTitle: (threadId, title) =>
       rpc<boolean>("thread.updateTitle", { threadId, title }),
+    updateThreadSettings: (threadId, settings) =>
+      rpc<boolean>("thread.updateSettings", { threadId, ...settings }),
     markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
     syncThreadPrs: (workspaceId) =>
       rpc<Array<{ threadId: string; prNumber: number; prStatus: string }>>("thread.syncPrs", { workspaceId }),

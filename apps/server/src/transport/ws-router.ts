@@ -192,6 +192,12 @@ async function dispatch(
         params.threadId,
         params.title,
       );
+    case "thread.updateSettings":
+      return deps.threadService.updateSettings(params.threadId, {
+        reasoning_level: params.reasoning_level,
+        interaction_mode: params.interaction_mode,
+        permission_mode: params.permission_mode,
+      });
     case "thread.markViewed":
       deps.threadService.markViewed(params.threadId);
       return;
