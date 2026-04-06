@@ -10,6 +10,7 @@ import { ToolCallCard } from "./ToolCallCard";
 import { StreamingIndicator } from "./StreamingIndicator";
 import { StreamingCard } from "./StreamingCard";
 import { ToolCallSummary } from "./ToolCallSummary";
+import { TurnChangeSummary } from "./TurnChangeSummary";
 import {
   buildStableItems,
   buildVolatileItems,
@@ -46,6 +47,14 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({ item }: { item: 
         <ToolCallSummary
           messageId={item.serverMessageId}
           toolCallCount={item.toolCallCount}
+        />
+      );
+    case "turn-changes":
+      return (
+        <TurnChangeSummary
+          messageId={item.messageId}
+          filesChanged={item.filesChanged}
+          isLatestTurn={item.isLatestTurn}
         />
       );
   }
@@ -90,6 +99,12 @@ export function MessageList() {
   const serverMessageIds = useThreadStore(
     useShallow((s) => s.serverMessageIds),
   );
+  const persistedFilesChanged = useThreadStore(
+    useShallow((s) => s.persistedFilesChanged),
+  );
+  const latestTurnWithChanges = useThreadStore(
+    (s) => s.latestTurnWithChanges,
+  );
   const hasMore = useThreadStore((s) =>
     activeThreadId ? s.hasMoreMessages[activeThreadId] ?? false : false,
   );
@@ -123,8 +138,8 @@ export function MessageList() {
   }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages]);
 
   const stableItems = useMemo(
-    () => buildStableItems(messages, persistedToolCallCounts, serverMessageIds),
-    [messages, persistedToolCallCounts, serverMessageIds],
+    () => buildStableItems(messages, persistedToolCallCounts, serverMessageIds, persistedFilesChanged, latestTurnWithChanges),
+    [messages, persistedToolCallCounts, serverMessageIds, persistedFilesChanged, latestTurnWithChanges],
   );
 
   const volatileItems = useMemo(
