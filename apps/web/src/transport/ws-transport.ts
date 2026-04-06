@@ -275,9 +275,9 @@ export function createWsTransport(
     updateThreadSettings: (threadId, settings) =>
       rpc<boolean>("thread.updateSettings", {
         threadId,
-        reasoning_level: settings.reasoningLevel,
-        interaction_mode: settings.interactionMode,
-        permission_mode: settings.permissionMode,
+        reasoningLevel: settings.reasoningLevel,
+        interactionMode: settings.interactionMode,
+        permissionMode: settings.permissionMode,
       }),
     markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
     syncThreadPrs: (workspaceId) =>

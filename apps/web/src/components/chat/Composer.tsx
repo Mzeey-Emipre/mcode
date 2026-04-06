@@ -385,9 +385,10 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const loadOpenPrs = useWorkspaceStore((s) => s.loadOpenPrs);
   const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
 
-  // Sync modelId when the SDK triggers a model fallback mid-session.
-  // Skip on thread switch (Effect 1 already set the model).
-  // Skip when a draft exists UNLESS the agent is running (server-side override takes priority).
+  // Sync modelId if thread.model changes server-side (e.g. user changed model from another client).
+  // This does NOT fire on SDK model fallback because fallback no longer mutates thread.model --
+  // fallback is stored transiently in lastFallbackByThread. The model picker intentionally
+  // stays at the user's intended model; the fallback toast notifies them of the actual model used.
   useEffect(() => {
     if (!activeThread?.model) return;
     if (threadSwitchRef.current) {
@@ -821,7 +822,15 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode);
+        const newThread = await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode);
+        // Persist settings to the newly created thread so they survive page reload
+        if (newThread?.id) {
+          setThreadSettings(newThread.id, {
+            interactionMode: mode,
+            permissionMode: access,
+            reasoningLevel: reasoning,
+          });
+        }
       } finally {
         setPreparingWorktree(false);
       }

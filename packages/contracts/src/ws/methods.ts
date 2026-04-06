@@ -92,9 +92,9 @@ export const WS_METHODS = lazySchema(() => ({
   "thread.updateSettings": {
     params: z.object({
       threadId: z.string(),
-      reasoning_level: ReasoningLevelSchema.optional(),
-      interaction_mode: InteractionModeSchema.optional(),
-      permission_mode: PermissionModeSchema.optional(),
+      reasoningLevel: ReasoningLevelSchema.optional(),
+      interactionMode: InteractionModeSchema.optional(),
+      permissionMode: PermissionModeSchema.optional(),
     }),
     result: z.boolean(),
   },
