@@ -46,7 +46,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
   useEffect(() => {
     if (!totalQuestions || status !== "pending") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === "Enter") {
+      if (e.ctrlKey && e.key === "Enter" && !isSubmitting) {
         e.preventDefault();
         const isLast = activeIndex === totalQuestions - 1;
         if (isLast) handleSubmit();
@@ -55,7 +55,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [totalQuestions, status, activeIndex, threadId, setActiveQuestionIndex, handleSubmit]);
+  }, [totalQuestions, status, activeIndex, isSubmitting, threadId, setActiveQuestionIndex, handleSubmit]);
 
   if (!questions || status !== "pending") return null;
 

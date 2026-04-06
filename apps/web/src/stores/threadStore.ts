@@ -14,6 +14,8 @@ import { findModelById, getContextWindow, DEFAULT_CONTEXT_WINDOW } from "@/lib/m
 export interface ThreadSettings {
   permissionMode: PermissionMode;
   interactionMode: InteractionMode;
+  /** Reasoning level selected for this thread, forwarded on the post-wizard answer turn. */
+  reasoningLevel?: ReasoningLevel;
 }
 
 interface ThreadState {
@@ -407,6 +409,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         : {}),
       runningThreadIds: new Set([...state.runningThreadIds, threadId]),
       agentStartTimes: { ...state.agentStartTimes, [threadId]: Date.now() },
+      // Persist reasoningLevel so the post-wizard answer turn forwards the same setting
+      settingsByThread: reasoningLevel !== undefined
+        ? { ...state.settingsByThread, [threadId]: { ...state.getThreadSettings(threadId), reasoningLevel } }
+        : state.settingsByThread,
       error: null,
     }));
 
@@ -526,7 +532,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const state = get();
     const answersMap = state.planAnswersByThread[threadId] ?? new Map<string, PlanAnswer>();
     const questions = state.planQuestionsByThread[threadId] ?? [];
-    const { permissionMode } = state.getThreadSettings(threadId);
+    const { permissionMode, reasoningLevel } = state.getThreadSettings(threadId);
 
     // Build an answer for every question; unanswered questions get nulls
     const answers: PlanAnswer[] = questions.map((q) => {
@@ -534,22 +540,22 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return a ?? { questionId: q.id, selectedOptionId: null, freeText: null };
     });
 
-    // Hide the wizard immediately
+    // Hide the wizard and mark the thread running before the RPC so the
+    // composer stays disabled for the entire continuation request, not just
+    // after it resolves.
     set((s) => ({
       planQuestionsStatusByThread: { ...s.planQuestionsStatusByThread, [threadId]: "answered" },
+      runningThreadIds: new Set([...s.runningThreadIds, threadId]),
+      agentStartTimes: { ...s.agentStartTimes, [threadId]: Date.now() },
     }));
 
     try {
-      await getTransport().answerPlanQuestions(threadId, answers, permissionMode);
-      // Mark thread as running so the streaming indicator appears
-      set((s) => ({
-        runningThreadIds: new Set([...s.runningThreadIds, threadId]),
-        agentStartTimes: { ...s.agentStartTimes, [threadId]: Date.now() },
-      }));
+      await getTransport().answerPlanQuestions(threadId, answers, permissionMode, reasoningLevel);
     } catch (e) {
       // Revert to pending on error so user can retry
       set((s) => ({
         planQuestionsStatusByThread: { ...s.planQuestionsStatusByThread, [threadId]: "pending" },
+        runningThreadIds: new Set([...Array.from(s.runningThreadIds).filter((id) => id !== threadId)]),
         error: String(e),
       }));
     }

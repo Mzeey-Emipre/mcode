@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PlanQuestionParser } from "../services/plan-question-parser.js";
+import { PlanQuestionParser } from "./plan-question-parser.js";
 
 const VALID_BLOCK = `
 \`\`\`plan-questions

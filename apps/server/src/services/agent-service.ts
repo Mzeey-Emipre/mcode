@@ -35,6 +35,8 @@ import { broadcast } from "../transport/push";
 import { ThreadService } from "./thread-service";
 import { SettingsService } from "./settings-service.js";
 import { PlanQuestionParser } from "./plan-question-parser.js";
+import { PlanQuestionSchema } from "@mcode/contracts";
+import { z } from "zod";
 
 /** Fallback context window size used when the SDK does not report one. */
 const DEFAULT_CONTEXT_WINDOW = 200_000;
@@ -77,6 +79,10 @@ export class AgentService {
   private persistingThreads = new Set<string>();
   /** Per-thread streaming parsers active while the model is generating questions in plan mode. */
   private planParsers = new Map<string, PlanQuestionParser>();
+  /** Buffered plan questions awaiting broadcast until the turn closes (`ended` event).
+   * Broadcasting from `ended` ensures the session is fully closed before the client
+   * can submit answers, preventing overlapping sends on the same thread. */
+  private pendingPlanQuestions = new Map<string, z.infer<typeof PlanQuestionSchema>[]>();
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -452,16 +458,15 @@ export class AgentService {
     for (const provider of this.providerRegistry.resolveAll()) {
       provider.on("event", (event: AgentEvent) => {
         // Plan mode: feed streaming text to the question parser.
-        // When a valid block is detected, broadcast it and clean up.
+        // Buffer questions until the session closes (`ended`) so the client
+        // cannot submit answers against a still-active session, which would
+        // risk overlapping sends on the same thread.
         if (event.type === "textDelta") {
           const parser = this.planParsers.get(event.threadId);
           if (parser) {
             const questions = parser.feed(event.delta);
             if (questions) {
-              broadcast("plan.questions", {
-                threadId: event.threadId,
-                questions,
-              });
+              this.pendingPlanQuestions.set(event.threadId, questions);
               this.planParsers.delete(event.threadId);
             }
           }
@@ -540,6 +545,7 @@ export class AgentService {
             this.clearTurnState(event.threadId);
           }
           this.planParsers.delete(event.threadId);
+          this.pendingPlanQuestions.delete(event.threadId);
         }
 
         if (event.type === "compacting" && !event.active) {
@@ -585,6 +591,13 @@ export class AgentService {
         if (event.type === "ended") {
           this.trackSessionEnded(event.threadId);
           this.planParsers.delete(event.threadId);
+          // Broadcast buffered plan questions now that the session is fully closed,
+          // ensuring the client cannot submit answers against an active session.
+          const questions = this.pendingPlanQuestions.get(event.threadId);
+          if (questions) {
+            broadcast("plan.questions", { threadId: event.threadId, questions });
+            this.pendingPlanQuestions.delete(event.threadId);
+          }
         }
       });
     }
