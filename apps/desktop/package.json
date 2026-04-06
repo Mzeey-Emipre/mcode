@@ -18,6 +18,7 @@
     "@electron/rebuild": "^3.7.1",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
+    "electron-updater": "^6.8.3",
     "uuid": "^11.1.0",
     "which": "^5.0.0"
   },
