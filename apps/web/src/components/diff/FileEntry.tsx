@@ -34,11 +34,11 @@ function getExtension(filePath: string): string {
 const EXT_COLORS: Record<string, string> = {
   ts: "text-blue-600 dark:text-blue-400",
   tsx: "text-sky-600 dark:text-sky-400",
-  js: "text-yellow-600 dark:text-yellow-400",
-  jsx: "text-yellow-600 dark:text-yellow-400",
-  mjs: "text-yellow-600 dark:text-yellow-400",
-  cjs: "text-yellow-600 dark:text-yellow-400",
-  json: "text-orange-600 dark:text-orange-400",
+  js: "text-yellow-700 dark:text-yellow-400",
+  jsx: "text-yellow-700 dark:text-yellow-400",
+  mjs: "text-yellow-700 dark:text-yellow-400",
+  cjs: "text-yellow-700 dark:text-yellow-400",
+  json: "text-orange-700 dark:text-orange-400",
   css: "text-pink-600 dark:text-pink-400",
   scss: "text-pink-600 dark:text-pink-400",
   md: "text-slate-600 dark:text-slate-400",
@@ -48,9 +48,9 @@ const EXT_COLORS: Record<string, string> = {
   rs: "text-orange-700 dark:text-orange-500",
   sql: "text-purple-600 dark:text-purple-400",
   sh: "text-emerald-600 dark:text-emerald-400",
-  yaml: "text-amber-600 dark:text-amber-400",
-  yml: "text-amber-600 dark:text-amber-400",
-  toml: "text-amber-600 dark:text-amber-400",
+  yaml: "text-amber-700 dark:text-amber-400",
+  yml: "text-amber-700 dark:text-amber-400",
+  toml: "text-amber-700 dark:text-amber-400",
 };
 
 /** Height in pixels for inline side-by-side diff rendering. */

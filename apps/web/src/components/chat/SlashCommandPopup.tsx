@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { Terminal, Zap, Puzzle } from "lucide-react";
+import { NAMESPACE_BADGE_STYLES } from "@/lib/slash-command-styles";
 import type { Command } from "./useSlashCommand";
 
 const ITEM_HEIGHT = 44; // px per row
@@ -185,13 +186,7 @@ function CommandRow({
       <span
         className={cn(
           "ml-auto flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-          cmd.namespace === "mcode"
-            ? "bg-primary/20 text-primary"
-            : cmd.namespace === "plugin"
-              ? "bg-orange-500/20 text-orange-500"
-              : cmd.namespace === "command"
-                ? "bg-sky-500/20 text-sky-500"
-                : "bg-muted text-muted-foreground",
+          NAMESPACE_BADGE_STYLES[cmd.namespace],
         )}
       >
         {cmd.namespace}

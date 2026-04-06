@@ -15,6 +15,7 @@ import {
 } from "lexical";
 import { Terminal, Zap, Puzzle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NAMESPACE_CHIP_STYLES } from "@/lib/slash-command-styles";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,12 +35,6 @@ export interface SerializedSlashCommandNode extends SerializedLexicalNode {
 // Namespace styling
 // ---------------------------------------------------------------------------
 
-const NAMESPACE_STYLES: Record<SlashCommandNamespace, string> = {
-  skill: "bg-emerald-500/25 ring-1 ring-emerald-500/40",
-  mcode: "bg-primary/25 ring-1 ring-primary/40",
-  plugin: "bg-orange-500/25 ring-1 ring-orange-500/40",
-  command: "bg-sky-500/25 ring-1 ring-sky-500/40",
-};
 
 /** Valid namespace values for deserialisation fallback. */
 const VALID_NAMESPACES = new Set<SlashCommandNamespace>(["skill", "mcode", "plugin", "command"]);
@@ -67,7 +62,7 @@ function SlashCommandChip({
 }): JSX.Element {
   const Icon = NAMESPACE_ICONS[namespace];
   return (
-    <span className={cn(CHIP_BASE, NAMESPACE_STYLES[namespace])}>
+    <span className={cn(CHIP_BASE, NAMESPACE_CHIP_STYLES[namespace])}>
       <Icon className="size-3.5" />
       /{commandName}
     </span>
