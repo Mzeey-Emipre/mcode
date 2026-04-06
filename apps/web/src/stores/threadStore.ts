@@ -54,6 +54,8 @@ interface ThreadState {
   contextByThread: Record<string, { lastTokensIn: number; contextWindow: number }>;
   /** Whether the SDK is currently compacting the context window for a thread. */
   isCompactingByThread: Record<string, boolean>;
+  /** Transient fallback state per thread. Cleared when the user sends the next message. */
+  lastFallbackByThread: Record<string, { requestedModel: string; actualModel: string }>;
   /** Questions proposed by the model in plan mode, keyed by thread ID. Null when not pending. */
   planQuestionsByThread: Record<string, PlanQuestion[] | null>;
   /** User's answers to plan questions, keyed by thread ID then question ID. */
@@ -95,7 +97,8 @@ interface ThreadState {
 
   // Per-thread settings
   getThreadSettings: (threadId: string) => ThreadSettings;
-  setThreadSettings: (threadId: string, settings: Partial<ThreadSettings>) => void;
+  /** Merge partial settings and persist to server. Resolves to false if RPC fails or patch is empty. */
+  setThreadSettings: (threadId: string, settings: Partial<ThreadSettings>) => Promise<boolean>;
 }
 
 /** Pending dequeue timers per thread, so duplicate turnComplete events don't double-dequeue. */
@@ -197,6 +200,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   loadEpochByThread: {},
   contextByThread: {},
   isCompactingByThread: {},
+  lastFallbackByThread: {},
   planQuestionsByThread: {},
   planAnswersByThread: {},
   activeQuestionIndexByThread: {},
@@ -413,6 +417,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       settingsByThread: reasoningLevel !== undefined
         ? { ...state.settingsByThread, [threadId]: { ...state.getThreadSettings(threadId), reasoningLevel } }
         : state.settingsByThread,
+      // Clear any transient fallback from the previous turn so the next message uses the intended model
+      lastFallbackByThread: (() => {
+        const next = { ...state.lastFallbackByThread };
+        delete next[threadId];
+        return next;
+      })(),
       error: null,
     }));
 
@@ -487,19 +497,51 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     return get().runningThreadIds.has(threadId);
   },
 
-  /** Return per-thread settings (permission mode, interaction mode), falling back to defaults. */
+  /** Return per-thread settings, preferring in-memory overrides then DB-persisted values then defaults. */
   getThreadSettings: (threadId) => {
-    return get().settingsByThread[threadId] ?? DEFAULT_THREAD_SETTINGS;
+    const inMemory = get().settingsByThread[threadId];
+    if (inMemory) return inMemory;
+
+    // Hydrate from the thread's DB-persisted fields
+    const thread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
+    if (thread) {
+      return {
+        permissionMode: (thread.permission_mode as PermissionMode) ?? DEFAULT_THREAD_SETTINGS.permissionMode,
+        interactionMode: (thread.interaction_mode as InteractionMode) ?? DEFAULT_THREAD_SETTINGS.interactionMode,
+        reasoningLevel: thread.reasoning_level !== null
+          ? (thread.reasoning_level as ReasoningLevel)
+          : undefined,
+      };
+    }
+
+    return DEFAULT_THREAD_SETTINGS;
   },
 
-  /** Merge partial settings into the per-thread settings record. */
+  /**
+   * Merge partial settings into the per-thread settings record and persist to the server.
+   * Returns a Promise that resolves to true on success or false if the RPC fails.
+   * undefined values in `settings` mean "don't change", not "clear".
+   */
   setThreadSettings: (threadId, settings) => {
+    // Build a clean patch with only explicitly-provided fields.
+    // undefined means "don't change", not "clear". If we naively spread
+    // settings, undefined values would overwrite the existing in-memory
+    // state without being sent to the DB, causing divergence on reload.
+    const patch: Partial<ThreadSettings> = {};
+    if (settings.permissionMode !== undefined) patch.permissionMode = settings.permissionMode;
+    if (settings.interactionMode !== undefined) patch.interactionMode = settings.interactionMode;
+    if (settings.reasoningLevel !== undefined) patch.reasoningLevel = settings.reasoningLevel;
+
+    if (Object.keys(patch).length === 0) return Promise.resolve(false);
+
     set((state) => ({
       settingsByThread: {
         ...state.settingsByThread,
-        [threadId]: { ...state.getThreadSettings(threadId), ...settings },
+        [threadId]: { ...state.getThreadSettings(threadId), ...patch },
       },
     }));
+
+    return getTransport().updateThreadSettings(threadId, patch).catch(() => false);
   },
 
   setPlanQuestions: (threadId, questions) => {
@@ -950,7 +992,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // session.compacting handler to keep lifecycle management in one place.
       if (tokensIn > 0 && !get().isCompactingByThread[threadId]) {
         const sdkContextWindow = params.contextWindow as number | undefined;
-        const modelId = useWorkspaceStore.getState().threads.find((t) => t.id === threadId)?.model ?? "claude-sonnet-4-6";
+        // Prefer the actual model that ran (post-fallback) so context window
+        // sizing reflects Haiku's limits rather than the requested Opus model.
+        const fallback = get().lastFallbackByThread[threadId];
+        const modelId = fallback?.actualModel
+          ?? useWorkspaceStore.getState().threads.find((t) => t.id === threadId)?.model
+          ?? "claude-sonnet-4-6";
         const contextWindow = sdkContextWindow ?? getContextWindow(modelId);
         set((state) => ({
           contextByThread: {
@@ -1084,18 +1131,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const actualModel = params.actualModel as string;
 
       // Normalize dated SDK variants (e.g. claude-haiku-4-5-20251001 → claude-haiku-4-5)
-      // so the picker always stores and displays the clean base ID.
       const actualDefinition = findModelById(actualModel);
       const normalizedActual = actualDefinition?.id ?? actualModel;
 
-      // Patch workspaceStore so the Composer's model selector updates reactively
-      useWorkspaceStore.setState((ws) => ({
-        threads: ws.threads.map((t) =>
-          t.id === threadId ? { ...t, model: normalizedActual } : t,
-        ),
+      // Store as transient fallback info — do NOT mutate thread.model
+      set((state) => ({
+        lastFallbackByThread: {
+          ...state.lastFallbackByThread,
+          [threadId]: { requestedModel, actualModel: normalizedActual },
+        },
       }));
 
-      // Notify the user which model was actually used
+      // Notify the user
       const actualLabel = actualDefinition?.label ?? normalizedActual;
       const requestedLabel = findModelById(requestedModel)?.label ?? requestedModel;
       useToastStore.getState().show(

@@ -6,7 +6,7 @@
 import { randomUUID } from "crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
-import type { Thread, ThreadMode, ThreadStatus } from "@mcode/contracts";
+import type { Thread, ThreadMode, ThreadStatus, ReasoningLevel, InteractionMode, PermissionMode } from "@mcode/contracts";
 
 interface ThreadRow {
   id: string;
@@ -28,6 +28,9 @@ interface ThreadRow {
   deleted_at: string | null;
   last_context_tokens: number | null;
   context_window: number | null;
+  reasoning_level: string | null;
+  interaction_mode: string | null;
+  permission_mode: string | null;
 }
 
 function rowToThread(row: ThreadRow): Thread {
@@ -51,11 +54,14 @@ function rowToThread(row: ThreadRow): Thread {
     deleted_at: row.deleted_at,
     last_context_tokens: row.last_context_tokens ?? null,
     context_window: row.context_window ?? null,
+    reasoning_level: (row.reasoning_level ?? null) as ReasoningLevel | null,
+    interaction_mode: (row.interaction_mode ?? null) as InteractionMode | null,
+    permission_mode: (row.permission_mode ?? null) as PermissionMode | null,
   };
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window";
+  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode";
 
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
@@ -112,6 +118,9 @@ export class ThreadRepo {
       deleted_at: null,
       last_context_tokens: null,
       context_window: null,
+      reasoning_level: null,
+      interaction_mode: null,
+      permission_mode: null,
     };
   }
 
@@ -245,6 +254,41 @@ export class ThreadRepo {
       )
       .run(lastContextTokens, contextWindow, now, id);
 
+    return result.changes > 0;
+  }
+
+  /** Persist per-thread composer settings (reasoning, mode, permission). */
+  updateSettings(
+    id: string,
+    settings: {
+      reasoning_level?: string;
+      interaction_mode?: string;
+      permission_mode?: string;
+    },
+  ): boolean {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (settings.reasoning_level !== undefined) {
+      fields.push("reasoning_level = ?");
+      values.push(settings.reasoning_level);
+    }
+    if (settings.interaction_mode !== undefined) {
+      fields.push("interaction_mode = ?");
+      values.push(settings.interaction_mode);
+    }
+    if (settings.permission_mode !== undefined) {
+      fields.push("permission_mode = ?");
+      values.push(settings.permission_mode);
+    }
+    if (fields.length === 0) return false;
+
+    const now = new Date().toISOString();
+    fields.push("updated_at = ?");
+    values.push(now);
+
+    const result = this.db
+      .prepare(`UPDATE threads SET ${fields.join(", ")} WHERE id = ?`)
+      .run(...values, id);
     return result.changes > 0;
   }
 

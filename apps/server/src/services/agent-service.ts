@@ -226,6 +226,12 @@ export class AgentService {
     if (provider !== undefined) {
       this.threadRepo.updateProvider(threadId, effectiveProvider);
     }
+    // Persist per-thread composer settings alongside the model
+    this.threadRepo.updateSettings(threadId, {
+      ...(reasoningLevel !== undefined && { reasoning_level: reasoningLevel }),
+      ...(interactionMode !== undefined && { interaction_mode: interactionMode }),
+      ...(permissionMode !== undefined && permissionMode !== "default" && { permission_mode: permissionMode }),
+    });
 
     const sessionName = `mcode-${threadId}`;
     const isResume = nextSeq > 1;

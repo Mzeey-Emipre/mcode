@@ -89,6 +89,18 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ threadId: z.string(), title: z.string() }),
     result: z.boolean(),
   },
+  "thread.updateSettings": {
+    params: z.object({
+      threadId: z.string(),
+      reasoningLevel: ReasoningLevelSchema.optional(),
+      interactionMode: InteractionModeSchema.optional(),
+      permissionMode: PermissionModeSchema.optional(),
+    }).refine(
+      (data) => data.reasoningLevel !== undefined || data.interactionMode !== undefined || data.permissionMode !== undefined,
+      { message: "Must provide at least one setting to update" },
+    ),
+    result: z.boolean(),
+  },
   "thread.markViewed": {
     params: z.object({ threadId: z.string() }),
     result: z.void(),

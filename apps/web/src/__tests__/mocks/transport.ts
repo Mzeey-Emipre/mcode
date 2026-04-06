@@ -44,6 +44,9 @@ export function createMockThread(overrides?: Partial<Thread>): Thread {
     deleted_at: null,
     last_context_tokens: null,
     context_window: null,
+    reasoning_level: null,
+    interaction_mode: null,
+    permission_mode: null,
     ...overrides,
   };
 }
@@ -83,6 +86,7 @@ export const mockTransport: McodeTransport = {
   getMessages: vi.fn().mockResolvedValue({ messages: [], hasMore: false }),
   createAndSendMessage: vi.fn(),
   updateThreadTitle: vi.fn().mockResolvedValue(true),
+  updateThreadSettings: vi.fn().mockResolvedValue(true),
   markThreadViewed: vi.fn().mockResolvedValue(undefined),
   syncThreadPrs: vi.fn().mockResolvedValue([]),
   discoverConfig: vi.fn().mockResolvedValue({}),

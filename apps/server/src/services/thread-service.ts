@@ -158,6 +158,18 @@ export class ThreadService {
     return this.threadRepo.updateTitle(threadId, title);
   }
 
+  /** Persist per-thread composer settings (reasoning, mode, permission). */
+  updateSettings(
+    threadId: string,
+    settings: {
+      reasoning_level?: string;
+      interaction_mode?: string;
+      permission_mode?: string;
+    },
+  ): boolean {
+    return this.threadRepo.updateSettings(threadId, settings);
+  }
+
   /** Link a GitHub PR to a thread by updating pr_number and pr_status. Throws on failure. */
   linkPr(threadId: string, prNumber: number, prStatus: string): void {
     const ok = this.threadRepo.updatePr(threadId, prNumber, prStatus);

@@ -238,4 +238,15 @@ function runMigrations(db: Database.Database): void {
     );
     db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(11);
   }
+
+  if (currentVersion < 12) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE threads ADD COLUMN reasoning_level TEXT DEFAULT NULL;
+        ALTER TABLE threads ADD COLUMN interaction_mode TEXT DEFAULT NULL;
+        ALTER TABLE threads ADD COLUMN permission_mode TEXT DEFAULT NULL;
+      `);
+      db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(12);
+    })();
+  }
 }

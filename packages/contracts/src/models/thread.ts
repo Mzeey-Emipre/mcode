@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ThreadStatusSchema, ThreadModeSchema } from "./enums.js";
+import { ThreadStatusSchema, ThreadModeSchema, InteractionModeSchema, PermissionModeSchema } from "./enums.js";
+import { ReasoningLevelSchema } from "./settings.js";
 
 /** Thread schema matching the SQLite row shape. */
 export const ThreadSchema = z.object({
@@ -27,6 +28,12 @@ export const ThreadSchema = z.object({
   last_context_tokens: z.number().int().nonnegative().nullable(),
   /** Model's context window size from the most recent turn. */
   context_window: z.number().int().nonnegative().nullable(),
+  /** Reasoning effort level last used in this thread. */
+  reasoning_level: ReasoningLevelSchema.nullable(),
+  /** Interaction mode last used (chat or plan). */
+  interaction_mode: InteractionModeSchema.nullable(),
+  /** Permission mode last used (full or supervised). */
+  permission_mode: PermissionModeSchema.nullable(),
 });
 /** Thread record from the database. */
 export type Thread = z.infer<typeof ThreadSchema>;
