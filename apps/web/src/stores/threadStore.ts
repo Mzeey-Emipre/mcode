@@ -404,6 +404,26 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         hasMoreMessages: { ...s.hasMoreMessages, [threadId]: hasMore },
         isLoadingMore: { ...s.isLoadingMore, [threadId]: false },
       }));
+
+      // Hydrate file change data for older messages from snapshots
+      const olderMsgIds = new Set(olderMessages.map((m) => m.id));
+      getTransport()
+        .listSnapshots(threadId)
+        .then((snapshots) => {
+          const relevant = snapshots.filter(
+            (s) => s.files_changed.length > 0 && olderMsgIds.has(s.message_id),
+          );
+          if (relevant.length === 0) return;
+          set((state) => {
+            if (state.currentThreadId !== threadId) return {};
+            const nextFilesChanged = { ...state.persistedFilesChanged };
+            for (const snap of relevant) {
+              nextFilesChanged[snap.message_id] = snap.files_changed;
+            }
+            return { persistedFilesChanged: nextFilesChanged };
+          });
+        })
+        .catch(() => {});
     } catch {
       // Silent failure: reset loading guard so next scroll can retry
       set((s) => ({

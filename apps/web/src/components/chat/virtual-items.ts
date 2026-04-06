@@ -251,9 +251,12 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
       return STREAMING_CARD_COLLAPSED_HEIGHT;
     case "tool-summary":
       return 36;
-    case "turn-changes":
-      // Collapsed: ~44px. Expanded: 44px header + 32px per file row.
-      return item.isLatestTurn ? 44 + item.filesChanged.length * 32 : 44;
+    case "turn-changes": {
+      // Collapsed: ~44px. Expanded: 44px header + 32px per file row (capped at 50) + overflow link.
+      const visibleFiles = Math.min(item.filesChanged.length, 50);
+      const overflowRow = item.filesChanged.length > 50 ? 28 : 0;
+      return item.isLatestTurn ? 44 + visibleFiles * 32 + overflowRow : 44;
+    }
     default:
       return assertNever(item);
   }

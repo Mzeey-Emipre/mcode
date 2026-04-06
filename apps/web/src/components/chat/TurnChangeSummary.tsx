@@ -11,6 +11,8 @@ interface TurnChangeSummaryProps {
   messageId: string;
   filesChanged: string[];
   isLatestTurn: boolean;
+  /** Ref-stable map of messageId -> manual expanded override, survives virtualizer remounts. */
+  manualExpandRef?: React.RefObject<Map<string, boolean>>;
 }
 
 /** Extract just the filename from a path for display. */
@@ -26,24 +28,36 @@ function parentDir(filePath: string): string {
   return parts.slice(0, -1).join("/");
 }
 
+/** Cap displayed files to avoid DOM bloat on massive turns. */
+const MAX_DISPLAYED_FILES = 50;
+
 /**
  * Inline banner showing files changed in an agent turn.
  * Collapsed: single-line bar with file count and expand chevron.
  * Expanded: file list with per-file "Diff" button and a "View All Diffs" button.
  */
-export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn }: TurnChangeSummaryProps) {
-  const [expanded, setExpanded] = useState(isLatestTurn);
+export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manualExpandRef }: TurnChangeSummaryProps) {
+  // Restore manual override from ref if the virtualizer remounted this component
+  const manualOverride = manualExpandRef?.current?.get(messageId);
+  const [expanded, setExpanded] = useState(manualOverride ?? isLatestTurn);
   const fileCount = filesChanged.length;
+  const displayedFiles = filesChanged.slice(0, MAX_DISPLAYED_FILES);
+  const hiddenCount = fileCount - displayedFiles.length;
 
-  // Sync expanded state when isLatestTurn changes (e.g. a new turn completes and this
-  // one is no longer the latest), so the banner auto-collapses as intended.
+  // Sync expanded state when isLatestTurn changes (auto-collapse older turns),
+  // and clear any manual override since auto-collapse is authoritative.
   useEffect(() => {
     setExpanded(isLatestTurn);
-  }, [isLatestTurn]);
+    manualExpandRef?.current?.delete(messageId);
+  }, [isLatestTurn, messageId, manualExpandRef]);
 
   const handleToggle = useCallback(() => {
-    setExpanded((prev) => !prev);
-  }, []);
+    setExpanded((prev) => {
+      const next = !prev;
+      manualExpandRef?.current?.set(messageId, next);
+      return next;
+    });
+  }, [messageId, manualExpandRef]);
 
   /** Open the diff panel focused on the Changes tab, scrolled to this turn's snapshot. */
   const handleViewAllDiffs = useCallback(() => {
@@ -60,7 +74,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn }: Tur
       getTransport()
         .listSnapshots(threadId)
         .then((snapshots) => useDiffStore.getState().setSnapshots(threadId, snapshots))
-        .catch(() => {});
+        .catch((err) => console.warn("[TurnChangeSummary] Failed to load snapshots:", err));
     }
   }, []);
 
@@ -93,7 +107,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn }: Tur
               useDiffStore.getState().selectFile({ source: "snapshot", id: snap.id, filePath });
             }
           })
-          .catch(() => {});
+          .catch((err) => console.warn("[TurnChangeSummary] Failed to load snapshots for file diff:", err));
       }
     },
     [messageId],
@@ -134,7 +148,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn }: Tur
         {/* File list — only rendered when expanded */}
         {expanded && (
           <div className="border-t border-border/30 px-1 py-1">
-            {filesChanged.map((filePath) => {
+            {displayedFiles.map((filePath) => {
               const name = fileName(filePath);
               const dir = parentDir(filePath);
               return (
@@ -161,6 +175,16 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn }: Tur
                 </div>
               );
             })}
+            {hiddenCount > 0 && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={handleViewAllDiffs}
+                className="w-full justify-center text-muted-foreground/60 hover:text-foreground/80 mt-0.5"
+              >
+                +{hiddenCount} more file{hiddenCount !== 1 ? "s" : ""} — View All Diffs
+              </Button>
+            )}
           </div>
         )}
       </div>
