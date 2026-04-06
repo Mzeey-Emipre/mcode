@@ -323,6 +323,37 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             get().setPlanQuestions(threadId, pendingQuestions);
           }
         }
+
+        // Populate file change summaries from persisted snapshots
+        getTransport()
+          .listSnapshots(threadId)
+          .then((snapshots) => {
+            if (snapshots.length === 0) return;
+            set((state) => {
+              const nextFilesChanged = { ...state.persistedFilesChanged };
+              let latestMsgId = state.latestTurnWithChanges;
+              let latestTime = "";
+
+              for (const snap of snapshots) {
+                if (snap.files_changed.length === 0) continue;
+                // Map server message_id to local message ID if possible
+                const localId = Object.entries(state.serverMessageIds).find(
+                  ([, serverId]) => serverId === snap.message_id,
+                )?.[0] ?? snap.message_id;
+                nextFilesChanged[localId] = snap.files_changed;
+                if (snap.created_at > latestTime) {
+                  latestTime = snap.created_at;
+                  latestMsgId = localId;
+                }
+              }
+
+              return {
+                persistedFilesChanged: nextFilesChanged,
+                latestTurnWithChanges: latestMsgId,
+              };
+            });
+          })
+          .catch(() => {});
       }
     } catch (e) {
       if (get().currentThreadId === threadId) {
