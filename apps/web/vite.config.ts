@@ -38,6 +38,7 @@ export default defineConfig({
       "@shikijs/langs/swift",
       "@shikijs/langs/toml",
       "@shikijs/langs/typescript",
+      "@shikijs/langs/vue",
       "@shikijs/langs/yaml",
       "@shikijs/themes/github-dark",
       "@shikijs/themes/github-light",

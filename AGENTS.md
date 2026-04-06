@@ -110,6 +110,15 @@ Keep commits atomic. Each commit represents one logical change.
 
 When adding or modifying user-facing settings, follow the schema conventions in **[docs/guides/settings-schema.md](docs/guides/settings-schema.md)**. All settings use nested JSON with a max depth of 3 levels. See **[docs/settings/reference.md](docs/settings/reference.md)** for the full settings reference.
 
+## Shiki in the Web Worker
+
+Syntax highlighting runs in `apps/web/src/workers/shiki.worker.ts` via `@shikijs/langs/*` dynamic imports. Language grammars are lazy-loaded on demand and registered with a singleton highlighter.
+
+**Do not add new `@shikijs/langs/*` imports without also declaring them in `optimizeDeps` in `apps/web/vite.config.ts`.** Vite's dep pre-bundler discovers dynamic imports at runtime in dev mode — any grammar not listed upfront causes Vite to re-run its optimizer mid-session, which forces a full page reload. To avoid this, either:
+
+- Add the new lang to `optimizeDeps.include` (pre-bundle it at startup), or
+- Keep all shiki packages under `optimizeDeps.exclude` (skip bundling entirely — what shiki's own docs recommend)
+
 ## Key Documentation
 
 - **Architecture:** [ARCHITECTURE.md](ARCHITECTURE.md)
