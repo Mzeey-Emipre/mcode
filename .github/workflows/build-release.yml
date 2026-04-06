@@ -36,8 +36,6 @@ jobs:
 
       - name: Build & Package
         run: bun run --cwd apps/desktop dist
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload release artifacts
         uses: softprops/action-gh-release@v2

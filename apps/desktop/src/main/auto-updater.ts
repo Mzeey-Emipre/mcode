@@ -18,32 +18,39 @@ export function initAutoUpdater(): void {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
-  autoUpdater.on("update-downloaded", (info) => {
-    const window = BrowserWindow.getFocusedWindow();
+  autoUpdater.on("update-downloaded", async (info) => {
+    const window =
+      BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
     if (!window) return;
 
-    dialog
-      .showMessageBox(window, {
-        type: "info",
-        title: "Update Ready",
-        message: `Version ${info.version} has been downloaded. Restart to apply.`,
-        buttons: ["Restart Now", "Later"],
-        defaultId: 0,
-      })
-      .then(({ response }) => {
-        if (response === 0) {
-          autoUpdater.quitAndInstall();
-        }
-      });
+    const { response } = await dialog.showMessageBox(window, {
+      type: "info",
+      title: "Update Ready",
+      message: `Version ${info.version} has been downloaded. Restart to apply.`,
+      buttons: ["Restart Now", "Later"],
+      defaultId: 0,
+    });
+
+    if (response === 0) {
+      autoUpdater.quitAndInstall();
+    }
   });
 
   autoUpdater.on("error", (err) => {
     console.error("[auto-updater] Error checking for updates:", err.message);
   });
 
+  const checkForUpdates = async (): Promise<void> => {
+    try {
+      await autoUpdater.checkForUpdates();
+    } catch (err) {
+      console.error("[auto-updater] checkForUpdates failed:", err);
+    }
+  };
+
   // Initial check shortly after launch (give the window time to load)
-  setTimeout(() => autoUpdater.checkForUpdates(), 10_000);
+  setTimeout(checkForUpdates, 10_000);
 
   // Periodic checks
-  setInterval(() => autoUpdater.checkForUpdates(), CHECK_INTERVAL_MS);
+  setInterval(checkForUpdates, CHECK_INTERVAL_MS);
 }
