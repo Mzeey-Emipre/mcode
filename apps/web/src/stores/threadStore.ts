@@ -487,12 +487,27 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     return get().runningThreadIds.has(threadId);
   },
 
-  /** Return per-thread settings (permission mode, interaction mode), falling back to defaults. */
+  /** Return per-thread settings, preferring in-memory overrides then DB-persisted values then defaults. */
   getThreadSettings: (threadId) => {
-    return get().settingsByThread[threadId] ?? DEFAULT_THREAD_SETTINGS;
+    const inMemory = get().settingsByThread[threadId];
+    if (inMemory) return inMemory;
+
+    // Hydrate from the thread's DB-persisted fields
+    const thread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
+    if (thread) {
+      return {
+        permissionMode: (thread.permission_mode as PermissionMode) ?? DEFAULT_THREAD_SETTINGS.permissionMode,
+        interactionMode: (thread.interaction_mode as InteractionMode) ?? DEFAULT_THREAD_SETTINGS.interactionMode,
+        reasoningLevel: thread.reasoning_level !== null
+          ? (thread.reasoning_level as ReasoningLevel)
+          : undefined,
+      };
+    }
+
+    return DEFAULT_THREAD_SETTINGS;
   },
 
-  /** Merge partial settings into the per-thread settings record. */
+  /** Merge partial settings into the per-thread settings record and persist to the server. */
   setThreadSettings: (threadId, settings) => {
     set((state) => ({
       settingsByThread: {
@@ -500,6 +515,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         [threadId]: { ...state.getThreadSettings(threadId), ...settings },
       },
     }));
+
+    // Fire-and-forget: persist to server
+    const rpcPayload: { reasoningLevel?: ReasoningLevel; interactionMode?: InteractionMode; permissionMode?: PermissionMode } = {};
+    if (settings.permissionMode !== undefined) rpcPayload.permissionMode = settings.permissionMode;
+    if (settings.interactionMode !== undefined) rpcPayload.interactionMode = settings.interactionMode;
+    if (settings.reasoningLevel !== undefined) rpcPayload.reasoningLevel = settings.reasoningLevel;
+    if (Object.keys(rpcPayload).length > 0) {
+      void getTransport().updateThreadSettings(threadId, rpcPayload);
+    }
   },
 
   setPlanQuestions: (threadId, questions) => {
