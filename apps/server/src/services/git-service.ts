@@ -338,6 +338,7 @@ export class GitService {
 
   /** Detect the default upstream branch (e.g. main, master) for a repository. */
   private async detectDefaultBranch(repoPath: string): Promise<string> {
+    // 1. Ask the remote tracking ref (works when origin/HEAD is configured)
     try {
       const { stdout } = await execFile(
         "git",
@@ -346,6 +347,35 @@ export class GitService {
       );
       // Returns "origin/main" → strip the "origin/" prefix
       return stdout.trim().replace(/^[^/]+\//, "");
+    } catch {
+      // origin/HEAD not set — fall through
+    }
+
+    // 2. Try to set origin/HEAD automatically, then re-read it
+    try {
+      await execFile(
+        "git",
+        ["-C", repoPath, "remote", "set-head", "origin", "--auto"],
+        { timeout: 5_000 },
+      );
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000 },
+      );
+      return stdout.trim().replace(/^[^/]+\//, "");
+    } catch {
+      // no remote or can't reach it — fall through
+    }
+
+    // 3. Last resort: use whatever HEAD currently points at
+    try {
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"],
+        { timeout: 5_000 },
+      );
+      return stdout.trim();
     } catch {
       return "main";
     }
