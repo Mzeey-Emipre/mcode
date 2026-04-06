@@ -115,9 +115,9 @@ export interface McodeTransport {
   updateThreadSettings(
     threadId: string,
     settings: {
-      reasoning_level?: string;
-      interaction_mode?: string;
-      permission_mode?: string;
+      reasoningLevel?: ReasoningLevel;
+      interactionMode?: InteractionMode;
+      permissionMode?: PermissionMode;
     },
   ): Promise<boolean>;
   /** Clear the "completed" badge for a thread. Transitions completed -> paused in the DB. */
