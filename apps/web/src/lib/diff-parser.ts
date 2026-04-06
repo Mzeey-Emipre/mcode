@@ -58,6 +58,7 @@ export function parseDiffLines(diff: string): ParsedDiffLine[] {
       line.startsWith("---") ||
       line.startsWith("index ") ||
       line.startsWith("new file") ||
+      line.startsWith("new mode") ||
       line.startsWith("old mode") ||
       line.startsWith("deleted file") ||
       line.startsWith("similarity") ||

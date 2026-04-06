@@ -149,9 +149,14 @@ async function resolveLanguage(
       // Coalesce concurrent loads for the same language via shared promise
       let loadPromise = languageLoading.get(lang);
       if (!loadPromise) {
-        loadPromise = importFn()
-          .then((mod) => highlighter.loadLanguage(mod.default as ShikiLang))
-          .finally(() => languageLoading.delete(lang));
+        loadPromise = (async () => {
+          try {
+            const mod = await importFn();
+            await highlighter.loadLanguage(mod.default as ShikiLang);
+          } finally {
+            languageLoading.delete(lang);
+          }
+        })();
         languageLoading.set(lang, loadPromise);
       }
       try {

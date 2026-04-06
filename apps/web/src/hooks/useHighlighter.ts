@@ -5,6 +5,7 @@ import { getWorker, workerGeneration, pending, nextRequestId } from "@/lib/shiki
 /** Response from the Shiki Web Worker for a highlight (codeToHtml) request. */
 interface HighlightResponse {
   id: string;
+  type: "highlight";
   html: string;
   error?: string;
 }
@@ -66,9 +67,8 @@ export function useHighlighter(
         currentRequestId.current === id &&
         workerGeneration === generationAtRequest
       ) {
-        // Guard against stray tokenize responses (which carry a `type` field)
-        if (response && "type" in response) return;
         const r = response as HighlightResponse | null;
+        if (!r || r.type !== "highlight") return;
         if (r?.error) {
           console.warn("[shiki-worker]", r.error);
         }

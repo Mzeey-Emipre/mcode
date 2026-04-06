@@ -63,8 +63,9 @@ const BASENAME_TO_LANG: Record<string, string> = {
 export function langFromPath(filePath: string): string {
   const basename = filePath.split("/").pop() ?? filePath;
 
-  // Check exact basename match first (Dockerfile, Makefile, etc.)
-  if (BASENAME_TO_LANG[basename]) {
+  // Check exact basename match first (Dockerfile, Makefile, etc.).
+  // hasOwn avoids matching prototype-chain keys like "__proto__".
+  if (Object.prototype.hasOwnProperty.call(BASENAME_TO_LANG, basename)) {
     return BASENAME_TO_LANG[basename];
   }
 
