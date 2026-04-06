@@ -1,41 +1,36 @@
 import { Button } from "@/components/ui/button";
+import { ArrowRight } from "lucide-react";
 
 interface WizardNavProps {
-  /** Called when the user clicks Previous. Undefined when on the first question. */
   onPrevious?: () => void;
-  /** Called when the user clicks Next or Submit. */
   onNext: () => void;
-  /** Called when the user cancels the wizard. */
   onCancel: () => void;
-  /** Label for the right button. */
-  nextLabel: string;
-  /** Whether a submit is in progress. */
   isSubmitting?: boolean;
-  /** 0-based index of the current question. */
   currentIndex?: number;
-  /** Total number of questions. */
   totalQuestions?: number;
 }
 
-/** Navigation row: ghost Previous + Cancel on the left, progress center, primary Submit on the right. */
+/** Bottom nav: ghost secondary actions on the left, step pills center, primary action right. */
 export function WizardNav({
   onPrevious,
   onNext,
   onCancel,
-  nextLabel,
   isSubmitting,
   currentIndex = 0,
   totalQuestions = 1,
 }: WizardNavProps) {
+  const isLast = currentIndex === totalQuestions - 1;
+
   return (
-    <div className="flex items-center justify-between pt-3 border-t border-border/60">
-      <div className="flex items-center gap-0.5">
+    <div className="flex items-center justify-between pt-2.5 border-t border-border/40">
+      {/* Secondary actions */}
+      <div className="flex items-center">
         <Button
           variant="ghost"
           size="sm"
           onClick={onPrevious}
           disabled={!onPrevious || isSubmitting}
-          className="h-7 px-2 text-xs text-muted-foreground/70"
+          className="h-7 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground"
         >
           Previous
         </Button>
@@ -44,12 +39,13 @@ export function WizardNav({
           size="sm"
           onClick={onCancel}
           disabled={isSubmitting}
-          className="h-7 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground"
+          className="h-7 px-2 text-xs text-muted-foreground/35 hover:text-muted-foreground/60"
         >
           Cancel
         </Button>
       </div>
 
+      {/* Step progress */}
       {totalQuestions > 1 && (
         <div className="flex items-center gap-1">
           {Array.from({ length: totalQuestions }).map((_, i) => (
@@ -57,20 +53,25 @@ export function WizardNav({
               key={i}
               className={`rounded-full transition-all duration-200 ${
                 i === currentIndex
-                  ? "w-4 h-1 bg-primary"
-                  : "w-1 h-1 bg-muted-foreground/20"
+                  ? "w-3 h-1 bg-primary/60"
+                  : i < currentIndex
+                    ? "w-1 h-1 bg-primary/30"
+                    : "w-1 h-1 bg-muted-foreground/15"
               }`}
             />
           ))}
         </div>
       )}
 
+      {/* Primary action */}
       <Button
         size="sm"
         onClick={onNext}
         disabled={isSubmitting}
+        className="h-7 gap-1.5 px-3 text-xs"
       >
-        {isSubmitting ? "Submitting..." : nextLabel}
+        {isSubmitting ? "Submitting..." : isLast ? "Submit answers" : "Next"}
+        {!isSubmitting && !isLast && <ArrowRight className="w-3 h-3" />}
       </Button>
     </div>
   );

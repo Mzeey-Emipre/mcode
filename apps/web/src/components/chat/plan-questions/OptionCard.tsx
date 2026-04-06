@@ -1,18 +1,15 @@
 import { cn } from "@/lib/utils";
+import { Check } from "lucide-react";
 import type { PlanQuestionOption } from "@mcode/contracts";
 
 interface OptionCardProps {
-  /** The option data. */
   option: PlanQuestionOption;
-  /** Whether this option is currently selected. */
   selected: boolean;
-  /** Whether this option is recommended by the model. */
   isRecommended?: boolean;
-  /** Called when the user clicks this option. */
   onSelect: (optionId: string) => void;
 }
 
-/** Selectable option row with a clear selected state using the app's primary accent. */
+/** Single selectable option row. */
 export function OptionCard({ option, selected, isRecommended, onSelect }: OptionCardProps) {
   return (
     <button
@@ -21,43 +18,47 @@ export function OptionCard({ option, selected, isRecommended, onSelect }: Option
       aria-checked={selected}
       onClick={() => onSelect(option.id)}
       className={cn(
-        "w-full text-left px-3 py-3 transition-colors duration-100",
-        "border-l-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "group w-full text-left rounded-md px-3 py-2.5 transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         selected
-          ? "border-l-primary bg-primary/10"
-          : "border-l-transparent hover:bg-muted/30",
+          ? "bg-primary/10"
+          : "hover:bg-muted/40",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start gap-3">
+        {/* Radio indicator */}
+        <div className={cn(
+          "mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors",
+          selected
+            ? "border-primary bg-primary"
+            : "border-muted-foreground/25 group-hover:border-muted-foreground/50",
+        )}>
+          {selected && <Check className="w-2.5 h-2.5 text-primary-foreground" strokeWidth={3} />}
+        </div>
+
+        {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-0.5">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className={cn(
-              "text-xs font-medium leading-none",
-              selected ? "text-foreground" : "text-foreground/70",
+              "text-sm leading-none",
+              selected ? "font-medium text-foreground" : "text-foreground/75",
             )}>
               {option.title}
             </span>
             {isRecommended && (
-              <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-primary/60 border border-primary/20 px-1.5 py-px rounded-sm leading-none">
+              <span className="inline-flex items-center text-[10px] font-medium text-primary/70 bg-primary/10 border border-primary/20 rounded px-1.5 py-0.5 leading-none">
                 recommended
               </span>
             )}
           </div>
           {option.description && (
             <p className={cn(
-              "text-[11px] leading-relaxed mt-1",
-              selected ? "text-muted-foreground/70" : "text-muted-foreground/40",
+              "text-xs mt-1 leading-relaxed",
+              selected ? "text-muted-foreground/80" : "text-muted-foreground/45",
             )}>
               {option.description}
             </p>
           )}
         </div>
-        <div className={cn(
-          "shrink-0 mt-0.5 w-3.5 h-3.5 rounded-full border-2 transition-colors",
-          selected
-            ? "border-primary bg-primary"
-            : "border-muted-foreground/20 bg-transparent",
-        )} />
       </div>
     </button>
   );

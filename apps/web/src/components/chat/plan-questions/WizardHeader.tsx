@@ -1,23 +1,20 @@
 interface WizardHeaderProps {
-  /** 1-based index of the current question. */
   current: number;
-  /** Total number of questions in the batch. */
   total: number;
-  /** Category label from the question (e.g. "SCOPE"). */
   category: string;
-  /** The question text. */
   question: string;
 }
 
-/** Progress counter, category, and question heading. */
+/** Step counter, category label, and question text. */
 export function WizardHeader({ current, total, category, question }: WizardHeaderProps) {
   return (
-    <div className="mb-4">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-[11px] font-mono text-muted-foreground/40 tabular-nums">
+    <div className="mb-3">
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="text-[11px] text-muted-foreground/40 tabular-nums font-mono">
           {current}/{total}
         </span>
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/30">
+        <span className="text-muted-foreground/25">·</span>
+        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground/35">
           {category}
         </span>
       </div>

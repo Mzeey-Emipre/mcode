@@ -85,7 +85,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
   };
 
   return (
-    <div className="border-t border-border bg-card px-5 py-4">
+    <div className="border-t border-border/60 bg-card px-4 py-3.5">
         <WizardHeader
           current={activeIndex + 1}
           total={questions.length}
@@ -110,7 +110,6 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
           }
           onNext={isLast ? handleSubmit : () => setActiveQuestionIndex(threadId, activeIndex + 1)}
           onCancel={() => clearPlanQuestions(threadId)}
-          nextLabel={isLast ? "Submit answers" : "Next question"}
           isSubmitting={isSubmittingRef.current}
           currentIndex={activeIndex}
           totalQuestions={questions.length}
