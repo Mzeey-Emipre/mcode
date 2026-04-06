@@ -18,6 +18,7 @@
     "@electron/rebuild": "^3.7.1",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
+    "electron-updater": "^6.8.3",
     "uuid": "^11.1.0",
     "which": "^5.0.0"
   },
@@ -44,12 +45,23 @@
       "dist/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "mzeey-empire",
+      "repo": "mcode"
+    },
     "mac": {
       "target": ["dmg", "zip"],
       "category": "public.app-category.developer-tools"
     },
     "win": {
       "target": ["nsis", "zip"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
     },
     "linux": {
       "target": ["AppImage", "deb"],

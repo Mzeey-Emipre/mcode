@@ -28,6 +28,7 @@ import { getExtension as bundledGetExtension } from "@mcode/contracts";
 /** Use snapshot-provided module when available (V8 snapshot skips re-init). */
 const getExtension = globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 import { ServerManager } from "./server-manager.js";
+import { initAutoUpdater } from "./auto-updater.js";
 
 // ---------------------------------------------------------------------------
 // Editor detection (inlined from editors.ts)
@@ -554,6 +555,9 @@ app.whenReady().then(async () => {
       setupCloseHandler();
     }
   });
+
+  // Initialize auto-updater (no-op in dev — guarded by app.isPackaged)
+  initAutoUpdater();
 
   console.log(`[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
 });

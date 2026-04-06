@@ -4,6 +4,13 @@ on:
   release:
     types: [published]
 
+  # Allow manual trigger for testing the workflow
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+
 jobs:
   build:
     strategy:
@@ -11,10 +18,12 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-          - os: macos-latest
           - os: ubuntu-22.04
+          # Uncomment when ready to spend macOS CI minutes:
+          # - os: macos-latest
 
     runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -25,17 +34,24 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build
-        run: bun run --cwd apps/desktop build
-
-      - name: Package
+      - name: Build & Package
         run: bun run --cwd apps/desktop dist
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload artifacts
+      - name: Upload release artifacts
         uses: softprops/action-gh-release@v2
         with:
-          files: apps/desktop/release/*
+          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
+          files: |
+            apps/desktop/release/**/*.exe
+            apps/desktop/release/**/*.exe.blockmap
+            apps/desktop/release/**/*.dmg
+            apps/desktop/release/**/*.dmg.blockmap
+            apps/desktop/release/**/*.zip
+            apps/desktop/release/**/*.zip.blockmap
+            apps/desktop/release/**/*.AppImage
+            apps/desktop/release/**/*.deb
+            apps/desktop/release/**/latest.yml
+            apps/desktop/release/**/latest-mac.yml
+            apps/desktop/release/**/latest-linux.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
