@@ -65,16 +65,16 @@ function buildRows(lines: ParsedDiffLine[]): SideBySideRow[] {
 }
 
 const LEFT_CELL: Record<string, string> = {
-  remove: "bg-red-50 text-red-900 hover:bg-red-100 dark:bg-red-950/30 dark:text-red-100/70 dark:hover:bg-red-950/50",
-  context: "text-foreground/60 hover:bg-muted/10",
-  header: "bg-muted/20 text-muted-foreground/50",
+  remove: "bg-red-50 text-red-900 hover:bg-red-100 dark:bg-red-950/30 dark:text-red-100 dark:hover:bg-red-950/50",
+  context: "text-foreground/80 hover:bg-muted/10",
+  header: "bg-muted/20 text-muted-foreground/80",
   empty: "bg-muted/5",
 };
 
 const RIGHT_CELL: Record<string, string> = {
-  add: "bg-emerald-50 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-100/80 dark:hover:bg-emerald-950/50",
-  context: "text-foreground/60 hover:bg-muted/10",
-  header: "bg-muted/20 text-muted-foreground/50",
+  add: "bg-emerald-50 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/50",
+  context: "text-foreground/80 hover:bg-muted/10",
+  header: "bg-muted/20 text-muted-foreground/80",
   empty: "bg-muted/5",
 };
 
@@ -99,12 +99,12 @@ export function SideBySideDiff({ lines }: SideBySideDiffProps) {
       {/* Left (removed) */}
       <div
         ref={leftRef}
-        className="flex-1 overflow-auto border-r border-border/20"
+        className="flex-1 overflow-auto border-r border-border/40"
         onScroll={() => syncScroll("left")}
       >
         {rows.map((row, i) => (
           <div key={i} className={`flex items-stretch ${LEFT_CELL[row.left.type]}`}>
-            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/20">
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/70">
               {row.left.lineNo ?? ""}
             </span>
             <span className="flex-1 whitespace-pre px-1">{row.left.content}</span>
@@ -120,7 +120,7 @@ export function SideBySideDiff({ lines }: SideBySideDiffProps) {
       >
         {rows.map((row, i) => (
           <div key={i} className={`flex items-stretch ${RIGHT_CELL[row.right.type]}`}>
-            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/20">
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/70">
               {row.right.lineNo ?? ""}
             </span>
             <span className="flex-1 whitespace-pre px-1">{row.right.content}</span>
