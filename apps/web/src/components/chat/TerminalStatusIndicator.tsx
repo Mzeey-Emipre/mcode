@@ -4,7 +4,7 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 const SLOW_SPIN_STYLE = { animationDuration: "2s" } as const;
 
-/** Shows a clickable "Running N terminal(s)" chip when PTYs are active on the current thread. */
+/** Shows a clickable "N active terminal(s)" chip when PTYs exist on the current thread. */
 export function TerminalStatusIndicator() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const count = useTerminalStore((s) =>
@@ -27,7 +27,7 @@ export function TerminalStatusIndicator() {
         style={SLOW_SPIN_STYLE}
       />
       <span className="animate-shimmer-text font-medium">
-        Running {count} terminal{count !== 1 ? "s" : ""}
+        {count} active terminal{count !== 1 ? "s" : ""}
       </span>
     </button>
   );

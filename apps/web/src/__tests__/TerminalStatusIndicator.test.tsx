@@ -32,7 +32,7 @@ describe("TerminalStatusIndicator", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("shows 'Running 1 terminal' when one terminal is active", () => {
+  it("shows '1 active terminal' when one terminal is active", () => {
     useTerminalStore.setState({
       terminals: {
         "thread-1": [{ id: "pty-1", threadId: "thread-1", label: "Terminal 1" }],
@@ -40,10 +40,10 @@ describe("TerminalStatusIndicator", () => {
     });
 
     render(<TerminalStatusIndicator />);
-    expect(screen.getByText("Running 1 terminal")).toBeInTheDocument();
+    expect(screen.getByText("1 active terminal")).toBeInTheDocument();
   });
 
-  it("shows 'Running 2 terminals' when two terminals are active", () => {
+  it("shows '2 active terminals' when two terminals are active", () => {
     useTerminalStore.setState({
       terminals: {
         "thread-1": [
@@ -54,7 +54,7 @@ describe("TerminalStatusIndicator", () => {
     });
 
     render(<TerminalStatusIndicator />);
-    expect(screen.getByText("Running 2 terminals")).toBeInTheDocument();
+    expect(screen.getByText("2 active terminals")).toBeInTheDocument();
   });
 
   it("only counts terminals for the active thread", () => {
@@ -69,7 +69,7 @@ describe("TerminalStatusIndicator", () => {
     });
 
     render(<TerminalStatusIndicator />);
-    expect(screen.getByText("Running 1 terminal")).toBeInTheDocument();
+    expect(screen.getByText("1 active terminal")).toBeInTheDocument();
   });
 
   it("toggles terminal panel when clicked", () => {
