@@ -44,12 +44,23 @@
       "dist/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "mzeey-empire",
+      "repo": "mcode"
+    },
     "mac": {
       "target": ["dmg", "zip"],
       "category": "public.app-category.developer-tools"
     },
     "win": {
       "target": ["nsis", "zip"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
     },
     "linux": {
       "target": ["AppImage", "deb"],
