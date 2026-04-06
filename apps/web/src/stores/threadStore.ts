@@ -325,9 +325,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         }
 
         // Populate file change summaries from persisted snapshots
-        getTransport()
-          .listSnapshots(threadId)
-          .then((snapshots) => {
+        void (async () => {
+          try {
+            const snapshots = await getTransport().listSnapshots(threadId);
             if (snapshots.length === 0) return;
             set((state) => {
               if (state.currentThreadId !== threadId) return {}; // discard stale response
@@ -350,8 +350,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 latestTurnWithChanges: latestMsgId,
               };
             });
-          })
-          .catch(() => {});
+          } catch {
+            // Silently ignore — file change summaries are best-effort
+          }
+        })();
       }
     } catch (e) {
       if (get().currentThreadId === threadId) {
@@ -1244,8 +1246,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ...state.persistedFilesChanged,
           [localMsgId]: payload.filesChanged,
         },
+        // Only update latestTurnWithChanges for the active thread — background
+        // thread completions must not collapse the active thread's latest banner.
         latestTurnWithChanges:
-          payload.filesChanged.length > 0 ? localMsgId : null,
+          state.currentThreadId === payload.threadId
+            ? payload.filesChanged.length > 0 ? localMsgId : null
+            : state.latestTurnWithChanges,
         serverMessageIds: {
           ...state.serverMessageIds,
           [localMsgId]: payload.messageId,

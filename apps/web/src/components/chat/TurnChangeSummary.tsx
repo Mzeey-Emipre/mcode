@@ -44,11 +44,12 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
   const displayedFiles = filesChanged.slice(0, MAX_DISPLAYED_FILES);
   const hiddenCount = fileCount - displayedFiles.length;
 
-  // Sync expanded state when isLatestTurn changes (auto-collapse older turns),
-  // and clear any manual override since auto-collapse is authoritative.
+  // Sync expanded state when isLatestTurn changes (auto-collapse older turns).
+  // Prefer any stored manual override; only fall back to isLatestTurn when the
+  // user hasn't explicitly toggled this banner.
   useEffect(() => {
-    setExpanded(isLatestTurn);
-    manualExpandRef?.current?.delete(messageId);
+    const override = manualExpandRef?.current?.get(messageId);
+    setExpanded(override ?? isLatestTurn);
   }, [isLatestTurn, messageId, manualExpandRef]);
 
   const handleToggle = useCallback(() => {
@@ -60,7 +61,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
   }, [messageId, manualExpandRef]);
 
   /** Open the diff panel focused on the Changes tab, scrolled to this turn's snapshot. */
-  const handleViewAllDiffs = useCallback(() => {
+  const handleViewAllDiffs = useCallback(async () => {
     const threadId = useWorkspaceStore.getState().activeThreadId;
     if (!threadId) return;
 
@@ -71,16 +72,18 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
 
     // Ensure snapshots are loaded so the panel can display this turn
     if (!store.snapshotsByThread[threadId]) {
-      getTransport()
-        .listSnapshots(threadId)
-        .then((snapshots) => useDiffStore.getState().setSnapshots(threadId, snapshots))
-        .catch((err) => console.warn("[TurnChangeSummary] Failed to load snapshots:", err));
+      try {
+        const snapshots = await getTransport().listSnapshots(threadId);
+        useDiffStore.getState().setSnapshots(threadId, snapshots);
+      } catch (err) {
+        console.warn("[TurnChangeSummary] Failed to load snapshots:", err);
+      }
     }
   }, []);
 
   /** Open the diff panel focused on a specific file from this turn's snapshot. */
   const handleFileDiff = useCallback(
-    (filePath: string) => {
+    async (filePath: string) => {
       const threadId = useWorkspaceStore.getState().activeThreadId;
       if (!threadId) return;
 
@@ -98,16 +101,16 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
         store.selectFile({ source: "snapshot", id: snapshot.id, filePath });
       } else {
         // Snapshots not loaded yet; load them, then select
-        getTransport()
-          .listSnapshots(threadId)
-          .then((loaded) => {
-            useDiffStore.getState().setSnapshots(threadId, loaded);
-            const snap = loaded.find((s) => s.message_id === serverMsgId);
-            if (snap) {
-              useDiffStore.getState().selectFile({ source: "snapshot", id: snap.id, filePath });
-            }
-          })
-          .catch((err) => console.warn("[TurnChangeSummary] Failed to load snapshots for file diff:", err));
+        try {
+          const loaded = await getTransport().listSnapshots(threadId);
+          useDiffStore.getState().setSnapshots(threadId, loaded);
+          const snap = loaded.find((s) => s.message_id === serverMsgId);
+          if (snap) {
+            useDiffStore.getState().selectFile({ source: "snapshot", id: snap.id, filePath });
+          }
+        } catch (err) {
+          console.warn("[TurnChangeSummary] Failed to load snapshots for file diff:", err);
+        }
       }
     },
     [messageId],
@@ -168,7 +171,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
                     variant="ghost"
                     size="xs"
                     onClick={() => handleFileDiff(filePath)}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground/60 hover:text-foreground/80"
+                    className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground/60 hover:text-foreground/80"
                   >
                     Diff
                   </Button>
