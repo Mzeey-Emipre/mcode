@@ -72,6 +72,7 @@ export function ThreadTitleEditor({
   return (
     <Input
       ref={inputRef}
+      data-testid="chat-header-title-input"
       type="text"
       defaultValue={title}
       onKeyDown={handleKeyDown}
