@@ -38,11 +38,11 @@ export function UnifiedDiff({ lines }: UnifiedDiffProps) {
             }`}
           >
             {/* Old line number */}
-            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/70">
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/20 pr-2 text-[10px] text-muted-foreground/70">
               {line.oldLineNo ?? ""}
             </span>
             {/* New line number */}
-            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/70">
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/20 pr-2 text-[10px] text-muted-foreground/70">
               {line.newLineNo ?? ""}
             </span>
             {/* Sign */}

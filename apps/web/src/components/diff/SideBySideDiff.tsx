@@ -104,7 +104,7 @@ export function SideBySideDiff({ lines }: SideBySideDiffProps) {
       >
         {rows.map((row, i) => (
           <div key={i} className={`flex items-stretch ${LEFT_CELL[row.left.type]}`}>
-            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/70">
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/20 pr-2 text-[10px] text-muted-foreground/70">
               {row.left.lineNo ?? ""}
             </span>
             <span className="flex-1 whitespace-pre px-1">{row.left.content}</span>
@@ -120,7 +120,7 @@ export function SideBySideDiff({ lines }: SideBySideDiffProps) {
       >
         {rows.map((row, i) => (
           <div key={i} className={`flex items-stretch ${RIGHT_CELL[row.right.type]}`}>
-            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/70">
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/20 pr-2 text-[10px] text-muted-foreground/70">
               {row.right.lineNo ?? ""}
             </span>
             <span className="flex-1 whitespace-pre px-1">{row.right.content}</span>
