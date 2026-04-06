@@ -95,7 +95,10 @@ export const WS_METHODS = lazySchema(() => ({
       reasoningLevel: ReasoningLevelSchema.optional(),
       interactionMode: InteractionModeSchema.optional(),
       permissionMode: PermissionModeSchema.optional(),
-    }),
+    }).refine(
+      (data) => data.reasoningLevel !== undefined || data.interactionMode !== undefined || data.permissionMode !== undefined,
+      { message: "Must provide at least one setting to update" },
+    ),
     result: z.boolean(),
   },
   "thread.markViewed": {

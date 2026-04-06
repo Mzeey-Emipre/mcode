@@ -42,4 +42,13 @@ describe("detectFallbackModel", () => {
     const usage = { "claude-haiku-4-5-20251001": { inputTokens: 100, outputTokens: 50 } };
     expect(detectFallbackModel(usage, "claude-sonnet-4-6")).toBe("claude-haiku-4-5-20251001");
   });
+
+  it("does not confuse sibling model families (claude-opus-4 vs claude-opus-4-6)", () => {
+    expect(
+      detectFallbackModel(
+        { "claude-opus-4-6-20250514": {} },
+        "claude-opus-4",
+      ),
+    ).toBe("claude-opus-4-6-20250514");
+  });
 });

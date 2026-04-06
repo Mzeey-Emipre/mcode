@@ -6,7 +6,7 @@
 import { randomUUID } from "crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
-import type { Thread, ThreadMode, ThreadStatus } from "@mcode/contracts";
+import type { Thread, ThreadMode, ThreadStatus, ReasoningLevel, InteractionMode, PermissionMode } from "@mcode/contracts";
 
 interface ThreadRow {
   id: string;
@@ -54,9 +54,9 @@ function rowToThread(row: ThreadRow): Thread {
     deleted_at: row.deleted_at,
     last_context_tokens: row.last_context_tokens ?? null,
     context_window: row.context_window ?? null,
-    reasoning_level: row.reasoning_level ?? null,
-    interaction_mode: row.interaction_mode ?? null,
-    permission_mode: row.permission_mode ?? null,
+    reasoning_level: (row.reasoning_level ?? null) as ReasoningLevel | null,
+    interaction_mode: (row.interaction_mode ?? null) as InteractionMode | null,
+    permission_mode: (row.permission_mode ?? null) as PermissionMode | null,
   };
 }
 
