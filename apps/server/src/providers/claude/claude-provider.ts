@@ -373,6 +373,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         let sessionInitialized = false;
         /** Tracks whether the SDK has signalled compaction is active for this stream. */
         let sessionCompacting = false;
+        /** Tracks the last known context window size for post-compaction estimation. */
+        let lastContextWindow: number | undefined = undefined;
 
         for await (const msg of q) {
           const entry = this.sessions.get(sessionId);
@@ -520,10 +522,13 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 cache_read_input_tokens?: number;
                 cache_creation_input_tokens?: number;
               };
+              // Output tokens become input context on the next turn, so include
+              // them so the tracker reflects the true next-turn fill.
               const totalInputTokens =
                 (usage.input_tokens ?? 0) +
                 (usage.cache_read_input_tokens ?? 0) +
-                (usage.cache_creation_input_tokens ?? 0);
+                (usage.cache_creation_input_tokens ?? 0) +
+                (usage.output_tokens ?? 0);
 
               this.emit("event", {
                 type: "turnComplete",
@@ -538,6 +543,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 tokensOut: usage.output_tokens ?? 0,
                 contextWindow: sdkContextWindow,
               } satisfies AgentEvent);
+
+              lastContextWindow = sdkContextWindow;
 
               lastAssistantText = "";
               break;
@@ -564,6 +571,19 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                     threadId,
                     active: false,
                   } satisfies AgentEvent);
+                  // Emit a rough post-compaction estimate so the tracker
+                  // reappears immediately. The SDK typically compacts to ~50%
+                  // of the context window. This is overwritten by the next
+                  // authoritative turnComplete.
+                  const ctxWindow = lastContextWindow ?? 200_000;
+                  if (ctxWindow > 0) {
+                    this.emit("event", {
+                      type: "contextEstimate",
+                      threadId,
+                      tokensIn: Math.round(ctxWindow * 0.5),
+                      contextWindow: ctxWindow,
+                    } satisfies AgentEvent);
+                  }
                 }
               } else {
                 this.emit("event", {
