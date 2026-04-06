@@ -330,20 +330,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           .then((snapshots) => {
             if (snapshots.length === 0) return;
             set((state) => {
+              if (state.currentThreadId !== threadId) return {}; // discard stale response
               const nextFilesChanged = { ...state.persistedFilesChanged };
               let latestMsgId = state.latestTurnWithChanges;
               let latestTime = "";
 
               for (const snap of snapshots) {
                 if (snap.files_changed.length === 0) continue;
-                // Map server message_id to local message ID if possible
-                const localId = Object.entries(state.serverMessageIds).find(
-                  ([, serverId]) => serverId === snap.message_id,
-                )?.[0] ?? snap.message_id;
-                nextFilesChanged[localId] = snap.files_changed;
+                // snap.message_id matches m.id for DB-loaded messages directly
+                nextFilesChanged[snap.message_id] = snap.files_changed;
                 if (snap.created_at > latestTime) {
                   latestTime = snap.created_at;
-                  latestMsgId = localId;
+                  latestMsgId = snap.message_id;
                 }
               }
 
