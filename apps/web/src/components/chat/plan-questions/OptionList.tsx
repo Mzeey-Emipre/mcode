@@ -14,7 +14,6 @@ const OTHER_OPTION: PlanQuestionOption = {
 interface OptionListProps {
   options: PlanQuestionOption[];
   selectedId: string | null;
-  recommendedId?: string;
   onSelect: (optionId: string) => void;
   /** Current free-text value for the "Other" option. */
   otherText: string;
@@ -26,7 +25,6 @@ interface OptionListProps {
 export function OptionList({
   options,
   selectedId,
-  recommendedId,
   onSelect,
   otherText,
   onOtherTextChange,
@@ -38,7 +36,7 @@ export function OptionList({
           key={option.id}
           option={option}
           selected={selectedId === option.id}
-          isRecommended={recommendedId === option.id || option.recommended}
+          isRecommended={option.recommended}
           onSelect={onSelect}
         />
       ))}

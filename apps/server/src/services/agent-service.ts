@@ -273,14 +273,21 @@ export class AgentService {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
 
+    // Look up question text and option titles from message history so the
+    // follow-up message is human-readable rather than using opaque IDs.
+    const questionContext = this.buildQuestionContext(threadId);
+
     const lines: string[] = ["Here are my answers to your planning questions:\n"];
     for (const a of answers) {
+      const qCtx = questionContext.get(a.questionId);
+      const label = qCtx?.question ?? a.questionId;
       if (a.freeText) {
-        lines.push(`- **${a.questionId}**: ${a.freeText}`);
+        lines.push(`- **${label}**: ${a.freeText}`);
       } else if (a.selectedOptionId) {
-        lines.push(`- **${a.questionId}**: Selected option ${a.selectedOptionId}`);
+        const optionTitle = qCtx?.options.find((o) => o.id === a.selectedOptionId)?.title ?? a.selectedOptionId;
+        lines.push(`- **${label}**: ${optionTitle}`);
       } else {
-        lines.push(`- **${a.questionId}**: (skipped)`);
+        lines.push(`- **${label}**: (skipped)`);
       }
     }
     lines.push("\nNow generate the full plan based on these decisions.");
@@ -803,6 +810,45 @@ ${userMessage}`;
     this.turnSortCounters.delete(threadId);
     this.agentCallStack.delete(threadId);
     this.persistingThreads.delete(threadId);
+  }
+
+  /**
+   * Parse the most recent plan-questions block from message history to build
+   * a lookup map of question ID → { question text, options }.
+   * Used to produce human-readable answer summaries instead of opaque IDs.
+   */
+  private buildQuestionContext(
+    threadId: string,
+  ): Map<string, { question: string; options: Array<{ id: string; title: string }> }> {
+    const PLAN_QUESTIONS_RE = /```plan-questions\n([\s\S]*?)```/;
+    const map = new Map<string, { question: string; options: Array<{ id: string; title: string }> }>();
+
+    // Fetch recent messages — 50 is more than enough to find the question block
+    const { messages } = this.messageRepo.listByThread(threadId, 50);
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role !== "assistant") continue;
+      const match = PLAN_QUESTIONS_RE.exec(msg.content);
+      if (!match) continue;
+      try {
+        const raw = JSON.parse(match[1]);
+        if (!Array.isArray(raw)) break;
+        for (const q of raw) {
+          if (q && typeof q.id === "string" && typeof q.question === "string") {
+            const options = Array.isArray(q.options)
+              ? q.options
+                  .filter((o: unknown) => o && typeof (o as Record<string, unknown>).id === "string")
+                  .map((o: Record<string, unknown>) => ({ id: String(o.id), title: String(o.title ?? o.id) }))
+              : [];
+            map.set(q.id, { question: q.question, options });
+          }
+        }
+      } catch {
+        // Ignore — opaque IDs will be used as fallback
+      }
+      break;
+    }
+    return map;
   }
 
   /** Generate a human-readable summary of tool input. */

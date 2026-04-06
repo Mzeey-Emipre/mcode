@@ -18,6 +18,9 @@ const MAX_QUESTIONS = 15;
 export class PlanQuestionParser {
   private buffer = "";
   private _hasQuestions = false;
+  /** Buffer offset past which to start scanning on the next feed() call.
+   * Advances past failed blocks so the same malformed content is never retried. */
+  private _scanFrom = 0;
 
   /**
    * Append a streaming text delta to the internal buffer and attempt to
@@ -29,13 +32,17 @@ export class PlanQuestionParser {
 
     this.buffer += delta;
 
-    const openIdx = this.buffer.indexOf(OPEN_MARKER);
+    const openIdx = this.buffer.indexOf(OPEN_MARKER, this._scanFrom);
     if (openIdx === -1) return null;
 
     const jsonStart = openIdx + OPEN_MARKER.length;
     // The close marker must appear AFTER the JSON content, not at jsonStart
     const closeIdx = this.buffer.indexOf(CLOSE_MARKER, jsonStart + 1);
     if (closeIdx === -1) return null;
+
+    // Advance scan past this block regardless of parse outcome so the
+    // same block is never retried if it fails.
+    this._scanFrom = closeIdx + CLOSE_MARKER.length;
 
     const jsonStr = this.buffer.slice(jsonStart, closeIdx).trim();
 

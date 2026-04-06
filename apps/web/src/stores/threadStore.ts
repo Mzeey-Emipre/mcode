@@ -158,10 +158,11 @@ function extractPendingPlanQuestions(messages: Message[]): PlanQuestion[] | null
       try {
         const raw = JSON.parse(match[1]);
         if (!Array.isArray(raw)) return null;
-        const validated = raw
-          .map((item) => PlanQuestionSchema.safeParse(item))
-          .filter((r) => r.success)
-          .map((r) => (r as { success: true; data: PlanQuestion }).data);
+        const results = raw.map((item) => PlanQuestionSchema.safeParse(item));
+        // Reject the whole batch if any question fails — partial batches break
+        // index continuity between the wizard UI and the answer map keys.
+        if (results.some((r) => !r.success)) return null;
+        const validated = results.map((r) => (r as { success: true; data: PlanQuestion }).data);
         return validated.length > 0 ? validated : null;
       } catch {
         return null;

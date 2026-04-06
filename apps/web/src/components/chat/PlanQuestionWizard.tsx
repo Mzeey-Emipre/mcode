@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { WizardHeader } from "./plan-questions/WizardHeader";
 import { OptionList, OTHER_OPTION_ID } from "./plan-questions/OptionList";
@@ -18,6 +18,8 @@ const EMPTY_MAP = new Map<string, PlanAnswer>();
 
 export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
   const questions = useThreadStore((s) => s.planQuestionsByThread[threadId] ?? null);
+  // Stable primitive — avoids re-registering the keyboard listener on every new array reference
+  const totalQuestions = useThreadStore((s) => s.planQuestionsByThread[threadId]?.length ?? 0);
   const answersMap = useThreadStore((s) => s.planAnswersByThread[threadId] ?? EMPTY_MAP);
   const activeIndex = useThreadStore((s) => s.activeQuestionIndexByThread[threadId] ?? 0);
   const status = useThreadStore((s) => s.planQuestionsStatusByThread[threadId] ?? "idle");
@@ -26,36 +28,39 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
   const submitPlanAnswers = useThreadStore((s) => s.submitPlanAnswers);
   const clearPlanQuestions = useThreadStore((s) => s.clearPlanQuestions);
 
-  const isSubmittingRef = useRef(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = useCallback(async () => {
-    if (isSubmittingRef.current) return;
-    isSubmittingRef.current = true;
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       await submitPlanAnswers(threadId);
     } finally {
-      isSubmittingRef.current = false;
+      setIsSubmitting(false);
     }
-  }, [threadId, submitPlanAnswers]);
+  }, [isSubmitting, threadId, submitPlanAnswers]);
 
-  // Ctrl+Enter: advance to next question or submit on the last
+  // Ctrl+Enter: advance to next question or submit on the last.
+  // Depends on totalQuestions (primitive) rather than the questions array reference
+  // to avoid re-registering the listener whenever the store produces a new array.
   useEffect(() => {
-    if (!questions || status !== "pending") return;
+    if (!totalQuestions || status !== "pending") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === "Enter") {
         e.preventDefault();
-        const isLast = activeIndex === questions.length - 1;
+        const isLast = activeIndex === totalQuestions - 1;
         if (isLast) handleSubmit();
         else setActiveQuestionIndex(threadId, activeIndex + 1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [questions, status, activeIndex, threadId, setActiveQuestionIndex, handleSubmit]);
+  }, [totalQuestions, status, activeIndex, threadId, setActiveQuestionIndex, handleSubmit]);
 
   if (!questions || status !== "pending") return null;
 
   const q = questions[activeIndex];
+  if (!q) return null;
   const answer = answersMap.get(q.id);
   const isLast = activeIndex === questions.length - 1;
 
@@ -87,7 +92,6 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
       <OptionList
         options={q.options}
         selectedId={answer?.selectedOptionId ?? null}
-        recommendedId={q.options.find((o) => o.recommended)?.id}
         onSelect={handleSelectOption}
         otherText={answer?.freeText ?? ""}
         onOtherTextChange={handleOtherText}
@@ -100,7 +104,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
         }
         onNext={isLast ? handleSubmit : () => setActiveQuestionIndex(threadId, activeIndex + 1)}
         onCancel={() => clearPlanQuestions(threadId)}
-        isSubmitting={isSubmittingRef.current}
+        isSubmitting={isSubmitting}
         currentIndex={activeIndex}
         totalQuestions={questions.length}
       />
