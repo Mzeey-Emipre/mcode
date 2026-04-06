@@ -22,7 +22,7 @@ export function WizardNav({
   const isLast = currentIndex === totalQuestions - 1;
 
   return (
-    <div className="flex items-center justify-between pt-2.5 border-t border-border/40">
+    <div className="flex items-center justify-between pt-2.5">
       {/* Secondary actions */}
       <div className="flex items-center">
         <Button
@@ -39,7 +39,7 @@ export function WizardNav({
           size="sm"
           onClick={onCancel}
           disabled={isSubmitting}
-          className="h-7 px-2 text-xs text-muted-foreground/35 hover:text-muted-foreground/60"
+          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
         >
           Cancel
         </Button>

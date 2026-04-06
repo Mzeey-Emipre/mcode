@@ -40,8 +40,10 @@ export function OptionCard({
       aria-checked={selected}
       onClick={() => onSelect(option.id)}
       className={cn(
-        "group w-full text-left rounded-md px-3 py-2.5 transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        selected ? "bg-primary/10" : "hover:bg-muted/40",
+        "group w-full text-left px-3 py-2.5 transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer border-b border-border/20 last:border-b-0",
+        selected
+          ? "bg-primary/8"
+          : "hover:bg-muted/50",
       )}
     >
       <div className="flex items-start gap-3">
@@ -50,7 +52,7 @@ export function OptionCard({
           "mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors",
           selected
             ? "border-primary bg-primary"
-            : "border-muted-foreground/25 group-hover:border-muted-foreground/50",
+            : "border-muted-foreground/50 group-hover:border-primary/60",
         )}>
           {selected && <Check className="w-2.5 h-2.5 text-primary-foreground" strokeWidth={3} />}
         </div>

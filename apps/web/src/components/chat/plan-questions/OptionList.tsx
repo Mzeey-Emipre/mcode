@@ -32,7 +32,7 @@ export function OptionList({
   onOtherTextChange,
 }: OptionListProps) {
   return (
-    <div role="radiogroup" aria-label="Options" className="flex flex-col gap-0.5 mb-3">
+    <div role="radiogroup" aria-label="Options" className="flex flex-col mb-3 rounded-md border border-border/30 overflow-hidden">
       {options.map((option) => (
         <OptionCard
           key={option.id}
