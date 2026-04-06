@@ -39,8 +39,8 @@ function ImageThumbnail({ src, name, single }: { src: string; name: string; sing
     >
       {failed ? (
         <div className="flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-2.5">
-          <ImageIcon size={14} className="shrink-0 text-muted-foreground/60" />
-          <span className="truncate text-xs text-muted-foreground/70">{name}</span>
+          <ImageIcon size={14} className="shrink-0 text-muted-foreground" />
+          <span className="truncate text-xs text-muted-foreground">{name}</span>
         </div>
       ) : (
         <img
@@ -78,7 +78,7 @@ function CopyButton({ content }: { content: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground/50 opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover/msg:opacity-100"
+      className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover/msg:opacity-100"
       aria-label="Copy message"
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}
@@ -148,11 +148,11 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
                   {fileAttachments.map((file) => (
                     <div key={file.id} className="flex items-center gap-1.5 rounded-md bg-primary-foreground/10 px-2 py-1">
                       {file.mimeType === "application/pdf" ? (
-                        <FileText size={14} className="text-primary-foreground/70" />
+                        <FileText size={14} className="text-primary-foreground/80" />
                       ) : (
-                        <File size={14} className="text-primary-foreground/70" />
+                        <File size={14} className="text-primary-foreground/80" />
                       )}
-                      <span className="truncate text-xs text-primary-foreground/80">{file.name}</span>
+                      <span className="truncate text-xs text-primary-foreground/90">{file.name}</span>
                     </div>
                   ))}
                 </div>
@@ -165,7 +165,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
 
           <div className="flex items-center justify-end gap-1.5 pr-1">
             {textContent.trim() && <CopyButton content={textContent} />}
-            <span className="text-[11px] text-muted-foreground/40">{formattedTime}</span>
+            <span className="text-[11px] text-muted-foreground/80">{formattedTime}</span>
           </div>
         </div>
       </div>
@@ -181,16 +181,16 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
       <div className="flex items-center gap-3 px-1">
         <CopyButton content={textContent} />
         {message.tokens_used != null && (
-          <span className="text-xs text-muted-foreground/50 transition-opacity group-hover/msg:text-muted-foreground/80">
+          <span className="text-xs text-muted-foreground/70 transition-opacity group-hover/msg:text-muted-foreground">
             {message.tokens_used.toLocaleString()} tokens
           </span>
         )}
         {message.cost_usd != null && (
-          <span className="text-xs text-muted-foreground/50 transition-opacity group-hover/msg:text-muted-foreground/80">
+          <span className="text-xs text-muted-foreground/70 transition-opacity group-hover/msg:text-muted-foreground">
             ${message.cost_usd.toFixed(4)}
           </span>
         )}
-        <span className="text-xs text-muted-foreground/50 transition-opacity group-hover/msg:text-muted-foreground/80">
+        <span className="text-xs text-muted-foreground/70 transition-opacity group-hover/msg:text-muted-foreground">
           {formattedTime}
         </span>
       </div>

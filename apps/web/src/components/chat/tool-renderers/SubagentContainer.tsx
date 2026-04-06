@@ -6,9 +6,9 @@ import { TOOL_LABELS, TOOL_ICONS, DEFAULT_ICON } from "./constants";
 import type { ToolCallRecord } from "@/transport/types";
 
 const STATUS_COLORS = {
-  completed: "text-primary/60",
-  failed: "text-destructive/70",
-  running: "text-yellow-500/60",
+  completed: "text-primary",
+  failed: "text-destructive",
+  running: "text-yellow-600 dark:text-yellow-500",
 } as const;
 
 /** Props for the SubagentContainer component. */
@@ -26,10 +26,10 @@ function ChildRecordRow({ record }: { record: ToolCallRecord }) {
 
   return (
     <div className="flex items-center gap-2 pl-3 pr-1 py-1.5 text-xs">
-      <Icon size={13} className="shrink-0 text-muted-foreground/50" />
-      <span className="font-medium text-foreground/60 dark:text-foreground/50">{label}</span>
+      <Icon size={13} className="shrink-0 text-muted-foreground" />
+      <span className="font-medium text-foreground/80 dark:text-foreground/70">{label}</span>
       {record.input_summary && (
-        <span className="min-w-0 truncate text-[11px] text-muted-foreground/40 font-mono">
+        <span className="min-w-0 truncate text-[11px] text-muted-foreground font-mono">
           {record.input_summary}
         </span>
       )}
@@ -87,13 +87,13 @@ export function SubagentContainer({
             className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
           />
         )}
-        <Bot className="h-3.5 w-3.5 shrink-0 text-purple-400/60" />
-        <span className="truncate text-foreground/60 dark:text-foreground/50">{description || "Subagent"}</span>
+        <Bot className="h-3.5 w-3.5 shrink-0 text-purple-600 dark:text-purple-400" />
+        <span className="truncate text-foreground/80 dark:text-foreground/70">{description || "Subagent"}</span>
         <span className={`text-[10px] ${statusColor}`}>
           {status}
         </span>
         {children !== null && (
-          <span className={`ml-auto text-[10px] text-muted-foreground/40 transition-opacity duration-300 ${
+          <span className={`ml-auto text-[10px] text-muted-foreground/70 transition-opacity duration-300 ${
             hasChildren ? "opacity-100" : "opacity-0"
           }`}>
             {children.length} call{children.length !== 1 ? "s" : ""}

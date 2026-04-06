@@ -16,9 +16,9 @@ export function UnifiedDiff({ lines }: UnifiedDiffProps) {
           return (
             <div
               key={i}
-              className="my-0.5 flex items-center border-y border-border/10 bg-muted/20 px-2 py-0.5"
+              className="my-0.5 flex items-center border-y border-border/30 bg-muted/20 px-2 py-0.5"
             >
-              <span className="truncate text-[10px] text-muted-foreground/50">{line.content}</span>
+              <span className="truncate text-[10px] text-muted-foreground/80">{line.content}</span>
             </div>
           );
         }
@@ -38,20 +38,20 @@ export function UnifiedDiff({ lines }: UnifiedDiffProps) {
             }`}
           >
             {/* Old line number */}
-            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/30">
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/20 pr-2 text-[10px] text-muted-foreground/70">
               {line.oldLineNo ?? ""}
             </span>
             {/* New line number */}
-            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/30">
+            <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/20 pr-2 text-[10px] text-muted-foreground/70">
               {line.newLineNo ?? ""}
             </span>
             {/* Sign */}
             <span
               className={`inline-flex w-5 shrink-0 select-none items-center justify-center text-[11px] ${
                 isAdd
-                  ? "text-emerald-600 dark:text-emerald-400/70"
+                  ? "text-emerald-600 dark:text-emerald-400"
                   : isRemove
-                    ? "text-red-600 dark:text-red-400/70"
+                    ? "text-red-600 dark:text-red-400"
                     : "text-transparent"
               }`}
             >
@@ -61,10 +61,10 @@ export function UnifiedDiff({ lines }: UnifiedDiffProps) {
             <span
               className={`flex-1 whitespace-pre px-1 ${
                 isAdd
-                  ? "text-emerald-900 dark:text-emerald-100/80"
+                  ? "text-emerald-900 dark:text-emerald-100"
                   : isRemove
-                    ? "text-red-900 dark:text-red-100/70"
-                    : "text-foreground/60"
+                    ? "text-red-900 dark:text-red-100"
+                    : "text-foreground/80"
               }`}
             >
               {line.content}
