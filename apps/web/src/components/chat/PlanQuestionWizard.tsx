@@ -1,8 +1,7 @@
 import { useRef, useEffect, useCallback } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { WizardHeader } from "./plan-questions/WizardHeader";
-import { OptionList } from "./plan-questions/OptionList";
-import { FreeTextInput } from "./plan-questions/FreeTextInput";
+import { OptionList, OTHER_OPTION_ID } from "./plan-questions/OptionList";
 import { WizardNav } from "./plan-questions/WizardNav";
 import type { PlanAnswer } from "@/transport";
 
@@ -12,12 +11,8 @@ interface PlanQuestionWizardProps {
 }
 
 /**
- * Full-width wizard rendered between the message list and the Composer when
- * the model has proposed clarifying questions in plan mode.
- *
- * Renders only when `planQuestionsStatusByThread[threadId] === "pending"`.
- * Supports Ctrl+Enter to advance or submit.
- * Implements editorial/brutalist aesthetic with fade-in animations and left border accents.
+ * Wizard rendered between the message list and Composer when the model proposes
+ * clarifying questions in plan mode. Renders only when status === "pending".
  */
 const EMPTY_MAP = new Map<string, PlanAnswer>();
 
@@ -31,7 +26,6 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
   const submitPlanAnswers = useThreadStore((s) => s.submitPlanAnswers);
   const clearPlanQuestions = useThreadStore((s) => s.clearPlanQuestions);
 
-  // Ref prevents double-submit between keyboard and button press within the same tick.
   const isSubmittingRef = useRef(false);
 
   const handleSubmit = useCallback(async () => {
@@ -51,11 +45,8 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
       if (e.ctrlKey && e.key === "Enter") {
         e.preventDefault();
         const isLast = activeIndex === questions.length - 1;
-        if (isLast) {
-          handleSubmit();
-        } else {
-          setActiveQuestionIndex(threadId, activeIndex + 1);
-        }
+        if (isLast) handleSubmit();
+        else setActiveQuestionIndex(threadId, activeIndex + 1);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -72,48 +63,47 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
     setPlanAnswer(threadId, q.id, {
       questionId: q.id,
       selectedOptionId: optionId,
-      freeText: answer?.freeText ?? null,
+      // Clear free text when switching away from "Other"
+      freeText: optionId === OTHER_OPTION_ID ? (answer?.freeText ?? null) : null,
     });
   };
 
-  const handleFreeText = (text: string) => {
+  const handleOtherText = (text: string) => {
     setPlanAnswer(threadId, q.id, {
       questionId: q.id,
-      selectedOptionId: answer?.selectedOptionId ?? null,
+      selectedOptionId: OTHER_OPTION_ID,
       freeText: text || null,
     });
   };
 
   return (
     <div className="border-t border-border/60 bg-card px-4 py-3.5">
-        <WizardHeader
-          current={activeIndex + 1}
-          total={questions.length}
-          category={q.category}
-          question={q.question}
-        />
-        <OptionList
-          options={q.options}
-          selectedId={answer?.selectedOptionId ?? null}
-          recommendedId={q.options.find((o) => o.recommended)?.id}
-          onSelect={handleSelectOption}
-        />
-        <FreeTextInput
-          value={answer?.freeText ?? ""}
-          onChange={handleFreeText}
-        />
-        <WizardNav
-          onPrevious={
-            activeIndex > 0
-              ? () => setActiveQuestionIndex(threadId, activeIndex - 1)
-              : undefined
-          }
-          onNext={isLast ? handleSubmit : () => setActiveQuestionIndex(threadId, activeIndex + 1)}
-          onCancel={() => clearPlanQuestions(threadId)}
-          isSubmitting={isSubmittingRef.current}
-          currentIndex={activeIndex}
-          totalQuestions={questions.length}
-        />
+      <WizardHeader
+        current={activeIndex + 1}
+        total={questions.length}
+        category={q.category}
+        question={q.question}
+      />
+      <OptionList
+        options={q.options}
+        selectedId={answer?.selectedOptionId ?? null}
+        recommendedId={q.options.find((o) => o.recommended)?.id}
+        onSelect={handleSelectOption}
+        otherText={answer?.freeText ?? ""}
+        onOtherTextChange={handleOtherText}
+      />
+      <WizardNav
+        onPrevious={
+          activeIndex > 0
+            ? () => setActiveQuestionIndex(threadId, activeIndex - 1)
+            : undefined
+        }
+        onNext={isLast ? handleSubmit : () => setActiveQuestionIndex(threadId, activeIndex + 1)}
+        onCancel={() => clearPlanQuestions(threadId)}
+        isSubmitting={isSubmittingRef.current}
+        currentIndex={activeIndex}
+        totalQuestions={questions.length}
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import { Check } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { PlanQuestionOption } from "@mcode/contracts";
 
 interface OptionCardProps {
@@ -7,10 +8,31 @@ interface OptionCardProps {
   selected: boolean;
   isRecommended?: boolean;
   onSelect: (optionId: string) => void;
+  /** When true, shows an inline text input instead of description when selected. */
+  isOtherCard?: boolean;
+  otherText?: string;
+  onOtherTextChange?: (text: string) => void;
 }
 
-/** Single selectable option row. */
-export function OptionCard({ option, selected, isRecommended, onSelect }: OptionCardProps) {
+/** Selectable option row. When isOtherCard and selected, renders an inline text input. */
+export function OptionCard({
+  option,
+  selected,
+  isRecommended,
+  onSelect,
+  isOtherCard,
+  otherText = "",
+  onOtherTextChange,
+}: OptionCardProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus the text input when "Other" is selected
+  useEffect(() => {
+    if (isOtherCard && selected) {
+      inputRef.current?.focus();
+    }
+  }, [isOtherCard, selected]);
+
   return (
     <button
       type="button"
@@ -19,9 +41,7 @@ export function OptionCard({ option, selected, isRecommended, onSelect }: Option
       onClick={() => onSelect(option.id)}
       className={cn(
         "group w-full text-left rounded-md px-3 py-2.5 transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        selected
-          ? "bg-primary/10"
-          : "hover:bg-muted/40",
+        selected ? "bg-primary/10" : "hover:bg-muted/40",
       )}
     >
       <div className="flex items-start gap-3">
@@ -50,13 +70,27 @@ export function OptionCard({ option, selected, isRecommended, onSelect }: Option
               </span>
             )}
           </div>
-          {option.description && (
-            <p className={cn(
-              "text-xs mt-1 leading-relaxed",
-              selected ? "text-muted-foreground/80" : "text-muted-foreground/45",
-            )}>
-              {option.description}
-            </p>
+
+          {/* Inline text input for "Other" when selected */}
+          {isOtherCard && selected ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={otherText}
+              onChange={(e) => onOtherTextChange?.(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              placeholder="Describe your response..."
+              className="mt-2 w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground/40 outline-none border-b border-border/50 pb-0.5 focus:border-primary/50 transition-colors"
+            />
+          ) : (
+            option.description && !isOtherCard && (
+              <p className={cn(
+                "text-xs mt-1 leading-relaxed",
+                selected ? "text-muted-foreground/80" : "text-muted-foreground/45",
+              )}>
+                {option.description}
+              </p>
+            )
           )}
         </div>
       </div>

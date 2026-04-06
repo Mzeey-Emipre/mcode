@@ -1,15 +1,36 @@
 import { OptionCard } from "./OptionCard";
 import type { PlanQuestionOption } from "@mcode/contracts";
 
+/** Sentinel ID for the user-written "Other" option. */
+export const OTHER_OPTION_ID = "__other__";
+
+const OTHER_OPTION: PlanQuestionOption = {
+  id: OTHER_OPTION_ID,
+  title: "Other...",
+  description: "",
+  recommended: false,
+};
+
 interface OptionListProps {
   options: PlanQuestionOption[];
   selectedId: string | null;
   recommendedId?: string;
   onSelect: (optionId: string) => void;
+  /** Current free-text value for the "Other" option. */
+  otherText: string;
+  /** Called when the user types in the "Other" inline input. */
+  onOtherTextChange: (text: string) => void;
 }
 
-/** Vertical list of option rows with no dividers — spacing does the separation. */
-export function OptionList({ options, selectedId, recommendedId, onSelect }: OptionListProps) {
+/** Options list with an appended "Other..." row that expands an inline input on selection. */
+export function OptionList({
+  options,
+  selectedId,
+  recommendedId,
+  onSelect,
+  otherText,
+  onOtherTextChange,
+}: OptionListProps) {
   return (
     <div role="radiogroup" aria-label="Options" className="flex flex-col gap-0.5 mb-3">
       {options.map((option) => (
@@ -21,6 +42,14 @@ export function OptionList({ options, selectedId, recommendedId, onSelect }: Opt
           onSelect={onSelect}
         />
       ))}
+      <OptionCard
+        option={OTHER_OPTION}
+        selected={selectedId === OTHER_OPTION_ID}
+        onSelect={onSelect}
+        isOtherCard
+        otherText={otherText}
+        onOtherTextChange={onOtherTextChange}
+      />
     </div>
   );
 }
