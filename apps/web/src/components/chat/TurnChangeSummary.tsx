@@ -1,5 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ChevronRight, FileText, ExternalLink } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -33,6 +34,12 @@ function parentDir(filePath: string): string {
 export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn }: TurnChangeSummaryProps) {
   const [expanded, setExpanded] = useState(isLatestTurn);
   const fileCount = filesChanged.length;
+
+  // Sync expanded state when isLatestTurn changes (e.g. a new turn completes and this
+  // one is no longer the latest), so the banner auto-collapses as intended.
+  useEffect(() => {
+    setExpanded(isLatestTurn);
+  }, [isLatestTurn]);
 
   const handleToggle = useCallback(() => {
     setExpanded((prev) => !prev);
@@ -94,114 +101,68 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn }: Tur
 
   return (
     <div className="my-1">
-      {expanded ? (
-        /* Expanded: full banner with file list inside */
-        <div className="rounded-lg border border-border/40 bg-muted/30 overflow-hidden">
-          {/* Header row */}
+      <div className="rounded-lg border border-border/40 bg-muted/30 overflow-hidden">
+        {/* Header row: toggle and "View All Diffs" are siblings to avoid nested buttons */}
+        <div className="flex w-full items-center justify-between px-3.5 py-2 text-xs text-muted-foreground">
           <button
             type="button"
             onClick={handleToggle}
-            className="flex w-full items-center justify-between px-3.5 py-2 text-xs text-muted-foreground hover:bg-muted/50 transition-colors cursor-pointer"
+            aria-expanded={expanded}
+            className="flex items-center gap-2 hover:text-foreground/80 transition-colors cursor-pointer"
           >
-            <div className="flex items-center gap-2">
-              <FileText size={13} className="shrink-0 text-muted-foreground/60" />
-              <span>
-                {fileCount} file{fileCount !== 1 ? "s" : ""} changed
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleViewAllDiffs();
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.stopPropagation();
-                    handleViewAllDiffs();
-                  }
-                }}
-                className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground/70 hover:bg-muted hover:text-foreground/80 transition-colors"
-              >
-                <ExternalLink size={10} />
-                View All Diffs
-              </span>
-              <ChevronRight
-                size={12}
-                className="shrink-0 text-muted-foreground/40 rotate-90 transition-transform"
-              />
-            </div>
-          </button>
-
-          {/* File list */}
-          <div className="border-t border-border/30 px-1 py-1">
-            {filesChanged.map((filePath) => (
-              <div
-                key={filePath}
-                className="flex items-center justify-between rounded-md px-2.5 py-1 text-xs hover:bg-muted/40 transition-colors group"
-              >
-                <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
-                  <span className="font-medium text-foreground/80 truncate">
-                    {fileName(filePath)}
-                  </span>
-                  {parentDir(filePath) && (
-                    <span className="text-muted-foreground/40 truncate font-mono text-[11px]">
-                      {parentDir(filePath)}
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleFileDiff(filePath)}
-                  className="shrink-0 rounded border border-border/40 bg-transparent px-1.5 py-0.5 text-[11px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:bg-muted/60 hover:text-foreground/80 transition-all cursor-pointer"
-                >
-                  Diff
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
-        /* Collapsed: single-line bar */
-        <button
-          type="button"
-          onClick={handleToggle}
-          className="flex w-full items-center justify-between rounded-lg border border-border/40 bg-muted/30 px-3.5 py-2 text-xs text-muted-foreground hover:bg-muted/50 transition-colors cursor-pointer"
-        >
-          <div className="flex items-center gap-2">
             <FileText size={13} className="shrink-0 text-muted-foreground/60" />
             <span>
               {fileCount} file{fileCount !== 1 ? "s" : ""} changed
             </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              role="button"
-              tabIndex={0}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleViewAllDiffs();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.stopPropagation();
-                  handleViewAllDiffs();
-                }
-              }}
-              className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground/70 hover:bg-muted hover:text-foreground/80 transition-colors"
-            >
-              <ExternalLink size={10} />
-              View All Diffs
-            </span>
             <ChevronRight
               size={12}
-              className="shrink-0 text-muted-foreground/40 transition-transform"
+              className={`shrink-0 text-muted-foreground/40 transition-transform ${expanded ? "rotate-90" : ""}`}
             />
+          </button>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={handleViewAllDiffs}
+            className="gap-1 text-muted-foreground/70"
+          >
+            <ExternalLink size={10} />
+            View All Diffs
+          </Button>
+        </div>
+
+        {/* File list — only rendered when expanded */}
+        {expanded && (
+          <div className="border-t border-border/30 px-1 py-1">
+            {filesChanged.map((filePath) => {
+              const name = fileName(filePath);
+              const dir = parentDir(filePath);
+              return (
+                <div
+                  key={filePath}
+                  className="flex items-center justify-between rounded-md px-2.5 py-1 text-xs hover:bg-muted/40 transition-colors group"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+                    <span className="font-medium text-foreground/80 truncate">{name}</span>
+                    {dir && (
+                      <span className="text-muted-foreground/40 truncate font-mono text-xs">
+                        {dir}
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => handleFileDiff(filePath)}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground/60 hover:text-foreground/80"
+                  >
+                    Diff
+                  </Button>
+                </div>
+              );
+            })}
           </div>
-        </button>
-      )}
+        )}
+      </div>
     </div>
   );
 }
