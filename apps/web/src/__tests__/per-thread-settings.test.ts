@@ -106,4 +106,27 @@ describe("per-thread settings", () => {
       permissionMode: "supervised",
     });
   });
+
+  it("partial setThreadSettings does not clear other persisted settings", () => {
+    // Seed thread with all three settings in DB
+    useWorkspaceStore.setState({
+      threads: [
+        createMockThread({
+          id: "thread-1",
+          reasoning_level: "high",
+          interaction_mode: "plan",
+          permission_mode: "supervised",
+        }),
+      ],
+    });
+
+    // Set only interactionMode
+    useThreadStore.getState().setThreadSettings("thread-1", { interactionMode: "chat" });
+
+    // Other settings should be preserved from DB, not cleared
+    const settings = useThreadStore.getState().getThreadSettings("thread-1");
+    expect(settings.interactionMode).toBe("chat");
+    expect(settings.reasoningLevel).toBe("high");
+    expect(settings.permissionMode).toBe("supervised");
+  });
 });

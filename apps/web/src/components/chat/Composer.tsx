@@ -364,7 +364,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             ? INTERACTION_MODES.CHAT
             : INTERACTION_MODES.PLAN;
         setMode(next);
-        if (threadId) setThreadSettings(threadId, { interactionMode: next });
+        if (threadId) void setThreadSettings(threadId, { interactionMode: next });
       }
     },
   });
@@ -825,7 +825,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         const newThread = await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode);
         // Persist settings to the newly created thread so they survive page reload
         if (newThread?.id) {
-          setThreadSettings(newThread.id, {
+          void setThreadSettings(newThread.id, {
             interactionMode: mode,
             permissionMode: access,
             reasoningLevel: reasoning,
@@ -837,7 +837,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     } else if (threadId) {
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider);
       // Persist per-thread settings so they survive page reload
-      setThreadSettings(threadId, {
+      void setThreadSettings(threadId, {
         interactionMode: mode,
         permissionMode: access,
         reasoningLevel: reasoning,
@@ -1042,7 +1042,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     onClick={(e) => {
                       e.stopPropagation();
                       setReasoning(level);
-                      if (threadId) setThreadSettings(threadId, { reasoningLevel: level });
+                      if (threadId) void setThreadSettings(threadId, { reasoningLevel: level });
                       setShowReasoningPicker(false);
                     }}
                     className={cn(
@@ -1070,7 +1070,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
                     setMode(next);
                     agentSettingsTouchedRef.current = true;
-                    if (threadId) setThreadSettings(threadId, { interactionMode: next });
+                    if (threadId) void setThreadSettings(threadId, { interactionMode: next });
                   }}
                   className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
@@ -1093,7 +1093,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
                     setAccess(next);
                     agentSettingsTouchedRef.current = true;
-                    if (threadId) setThreadSettings(threadId, { permissionMode: next });
+                    if (threadId) void setThreadSettings(threadId, { permissionMode: next });
                   }}
                   className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
