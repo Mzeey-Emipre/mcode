@@ -827,6 +827,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       }
     } else if (threadId) {
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider);
+      // Persist per-thread settings so they survive page reload
+      setThreadSettings(threadId, {
+        interactionMode: mode,
+        permissionMode: access,
+        reasoningLevel: reasoning,
+      });
     }
 
     // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
