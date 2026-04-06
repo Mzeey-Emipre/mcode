@@ -289,7 +289,7 @@ export function ProjectTree() {
       </div>
 
       <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
-        <div className="px-1">
+        <div className="px-1" data-testid="thread-list">
           {workspaces.map((ws) => (
             <ProjectNode
               key={ws.id}
@@ -596,6 +596,8 @@ function VirtualizedThreadList({
           <div
             key={thread.id}
             data-index={virtualItem.index}
+            data-testid="thread-item"
+            data-thread-id={thread.id}
             style={{
               position: "absolute",
               top: 0,
@@ -672,7 +674,7 @@ function VirtualizedThreadList({
                     className="flex-1 border-ring"
                   />
                 ) : (
-                  <span className="truncate flex-1 text-sm">
+                  <span className="truncate flex-1 text-sm" data-testid="thread-title">
                     {thread.title}
                   </span>
                 )}

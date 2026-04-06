@@ -169,7 +169,7 @@ export function ChatView() {
   const showEmptyState = !hasMessages && !isAgentRunning;
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full flex-col bg-background" data-testid="chat-view">
       {/* Header */}
       <div className="flex h-11 items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-2">
