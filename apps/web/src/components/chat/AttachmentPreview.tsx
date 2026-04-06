@@ -53,7 +53,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
               <div className="flex h-[72px] w-[140px] flex-col justify-center gap-1 px-3">
                 <div className="flex items-center gap-2">
                   {isPdf ? (
-                    <FileText size={18} className="shrink-0 text-red-400" />
+                    <FileText size={18} className="shrink-0 text-red-600 dark:text-red-400" />
                   ) : (
                     <File size={18} className="shrink-0 text-muted-foreground" />
                   )}
