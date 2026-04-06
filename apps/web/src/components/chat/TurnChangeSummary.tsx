@@ -104,11 +104,12 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn }: Tur
       <div className="rounded-lg border border-border/40 bg-muted/30 overflow-hidden">
         {/* Header row: toggle and "View All Diffs" are siblings to avoid nested buttons */}
         <div className="flex w-full items-center justify-between px-3.5 py-2 text-xs text-muted-foreground">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={handleToggle}
             aria-expanded={expanded}
-            className="flex items-center gap-2 hover:text-foreground/80 transition-colors cursor-pointer"
+            className="gap-2 px-0 hover:bg-transparent text-muted-foreground hover:text-foreground/80"
           >
             <FileText size={13} className="shrink-0 text-muted-foreground/60" />
             <span>
@@ -118,7 +119,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn }: Tur
               size={12}
               className={`shrink-0 text-muted-foreground/40 transition-transform ${expanded ? "rotate-90" : ""}`}
             />
-          </button>
+          </Button>
           <Button
             variant="ghost"
             size="xs"
