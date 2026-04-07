@@ -265,7 +265,7 @@ export function CreatePrDialog({
         showCloseButton={!isDisabled}
       >
         {/* Header */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/50">
+        <div className="flex items-center gap-3 pl-5 pr-12 py-4 border-b border-border/50">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40">
             <GitPullRequest className="size-3.5 text-muted-foreground" aria-hidden="true" />
           </div>
