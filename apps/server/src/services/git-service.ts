@@ -146,6 +146,8 @@ export class GitService {
     try {
       await execFile(
         "git",
+        // Double --force: the second flag tells git to remove even if the
+        // worktree directory is locked (e.g. held by a Windows process).
         ["-C", repoPath, "worktree", "remove", wtPath, "--force", "--force"],
         { timeout: 30_000 },
       );
@@ -174,6 +176,7 @@ export class GitService {
         { wtPath },
       );
       try {
+        // maxRetries handles transient EBUSY locks from antivirus/indexers on Windows.
         await rm(wtPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       } catch (err) {
         logger.error("Fallback fs.rm failed", {
