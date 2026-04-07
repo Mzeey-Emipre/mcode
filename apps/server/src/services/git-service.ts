@@ -469,7 +469,7 @@ function listBranchesForPath(repoPath: string): GitBranch[] {
       repoPath,
       "branch",
       "-a",
-      "--format=%(refname:short)|||%(objectname:short)|||%(HEAD)|||%(worktreepath)",
+      "--format=%(refname)|||%(refname:short)|||%(objectname:short)|||%(HEAD)|||%(worktreepath)",
     ],
     { stdio: "pipe", encoding: "utf-8" },
   );
@@ -480,13 +480,14 @@ function listBranchesForPath(repoPath: string): GitBranch[] {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    const [refname, shortSha, head, worktreepath] = trimmed.split("|||");
-    if (!refname || refname === "origin/HEAD") continue;
+    const [fullRefname, refname, shortSha, head, worktreepath] = trimmed.split("|||");
+    // Skip remote HEAD symrefs (refs/remotes/*/HEAD)
+    if (!fullRefname || !refname || /\/HEAD$/.test(fullRefname)) continue;
 
     let type: GitBranch["type"];
     if (worktreepath && worktreepath.length > 0) {
       type = "worktree";
-    } else if (refname.startsWith("origin/")) {
+    } else if (fullRefname.startsWith("refs/remotes/")) {
       type = "remote";
     } else {
       type = "local";
