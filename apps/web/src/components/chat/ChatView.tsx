@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { GitBranch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
@@ -61,6 +62,7 @@ export function ChatView() {
   const pendingNewThread = useWorkspaceStore((s) => s.pendingNewThread);
   const threads = useWorkspaceStore((s) => s.threads);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
+  const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const loadMessages = useThreadStore((s) => s.loadMessages);
   const clearMessages = useThreadStore((s) => s.clearMessages);
@@ -191,6 +193,20 @@ export function ChatView() {
           <Badge variant="secondary">
             {activeWorkspaceName}
           </Badge>
+          {activeThread.parent_thread_id && (
+            <button
+              type="button"
+              onClick={() => {
+                const parent = threads.find((t) => t.id === activeThread.parent_thread_id);
+                if (parent) setActiveThread(parent.id);
+              }}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              title="Navigate to parent thread"
+            >
+              <GitBranch size={11} />
+              <span>Branched</span>
+            </button>
+          )}
         </div>
         <HeaderActions thread={activeThread} />
       </div>
