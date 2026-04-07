@@ -118,6 +118,7 @@ const FileRow = memo(function FileRow({
   const Icon = getFileIcon(filePath);
   return (
     <button
+      type="button"
       role="option"
       aria-selected={selected}
       data-file-item
@@ -178,7 +179,7 @@ export function FileTagPopup({
         (el as HTMLElement).scrollIntoView({ block: "nearest" });
       }
     }
-  }, [selectedIndex, isOpen, isVirtualized]);
+  }, [selectedIndex, isOpen, isVirtualized, files]);
 
   if (!isOpen || files.length === 0) return null;
 
