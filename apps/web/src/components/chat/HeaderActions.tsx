@@ -1,6 +1,7 @@
-import { useEffect, useCallback } from "react";
-import { Github, Terminal, Diff } from "lucide-react";
+import { useEffect, useCallback, useState } from "react";
+import { Github, Terminal, Diff, GitPullRequest } from "lucide-react";
 import { OpenInEditorMenu } from "./OpenInEditorMenu";
+import { CreatePrDialog } from "./CreatePrDialog";
 import { useBranchPr } from "@/hooks/useBranchPr";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalStore } from "@/stores/terminalStore";
@@ -19,6 +20,8 @@ interface HeaderActionsProps {
  * Polls GitHub for the thread's PR and syncs state changes back to the workspace store.
  */
 export function HeaderActions({ thread }: HeaderActionsProps) {
+  const [createPrOpen, setCreatePrOpen] = useState(false);
+
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === thread.workspace_id),
   );
@@ -100,6 +103,17 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
               <div className="w-px h-4 bg-border/30" />
             </>
           )}
+          {!pr && shouldPollPr && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6"
+              onClick={() => setCreatePrOpen(true)}
+            >
+              <GitPullRequest size={12} />
+              <span>Create PR</span>
+            </Button>
+          )}
           <OpenInEditorMenu dirPath={dirPath} />
         </div>
       )}
@@ -153,6 +167,16 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
           Toggle changes (Ctrl+D)
         </TooltipContent>
       </Tooltip>
+
+      {shouldPollPr && (
+        <CreatePrDialog
+          open={createPrOpen}
+          onOpenChange={setCreatePrOpen}
+          threadId={thread.id}
+          workspaceId={thread.workspace_id}
+          branch={thread.branch}
+        />
+      )}
     </div>
   );
 }
