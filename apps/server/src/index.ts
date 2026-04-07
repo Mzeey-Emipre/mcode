@@ -258,7 +258,7 @@ async function shutdown(): Promise<void> {
   settingsService.dispose();
 
   // 6. Shutdown terminal service
-  terminalService.shutdown();
+  await terminalService.shutdown();
 
   // 7. Dispose all git HEAD file watchers
   gitWatcherService.dispose();

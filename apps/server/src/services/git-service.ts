@@ -7,7 +7,7 @@
 import { injectable, inject } from "tsyringe";
 import { execFileSync, execFile as execFileCb } from "child_process";
 import { promisify } from "util";
-import { rm } from "fs/promises";
+import { rm, rename } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
@@ -15,6 +15,12 @@ import type { GitBranch, WorktreeInfo, GitCommit } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 const execFile = promisify(execFileCb);
+
+/**
+ * Options for fs.rm when removing worktree directories.
+ * maxRetries handles transient EBUSY locks from antivirus/indexers on Windows.
+ */
+const RM_RETRY_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 } as const;
 
 /** Resolve the worktree base directory path under the mcode data dir. */
 function getWorktreeBaseDir(repoPath: string): string {
@@ -146,7 +152,9 @@ export class GitService {
     try {
       await execFile(
         "git",
-        ["-C", repoPath, "worktree", "remove", wtPath, "--force"],
+        // Double --force: the second flag tells git to remove even if the
+        // worktree directory is locked (e.g. held by a Windows process).
+        ["-C", repoPath, "worktree", "remove", wtPath, "--force", "--force"],
         { timeout: 30_000 },
       );
     } catch (err) {
@@ -167,14 +175,14 @@ export class GitService {
       });
     }
 
-    // 3. Fallback: remove directory manually if git didn't clean it up
+    // 3. Fallback: remove directory manually if git didn't clean it up.
     if (existsSync(wtPath)) {
       logger.warn(
         "Worktree directory still exists after git remove, falling back to fs.rm",
         { wtPath },
       );
       try {
-        await rm(wtPath, { recursive: true, force: true });
+        await rm(wtPath, RM_RETRY_OPTIONS);
       } catch (err) {
         logger.error("Fallback fs.rm failed", {
           wtPath,
@@ -183,13 +191,40 @@ export class GitService {
       }
     }
 
-    // 4. Verify cleanup
+    // 4. Rename-then-delete: atomically unblock the path even if deletion is slow.
+    // Renaming succeeds even when the directory has open handles, so the original
+    // path becomes available immediately while the OS drains remaining handles.
+    if (existsSync(wtPath)) {
+      // Use a timestamp suffix to avoid collision with stale .deleting directories
+      // left by previous crashed cleanup attempts.
+      const pendingPath = `${wtPath}.deleting-${Date.now()}`;
+      try {
+        await rename(wtPath, pendingPath);
+        logger.info("Renamed stuck worktree for deferred deletion", { wtPath, pendingPath });
+        // Best-effort: fire-and-forget deletion of the renamed directory.
+        rm(pendingPath, RM_RETRY_OPTIONS).catch(
+          (err) => {
+            logger.warn("Deferred deletion of renamed worktree failed", {
+              pendingPath,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          },
+        );
+      } catch (err) {
+        logger.error("Rename-then-delete fallback failed", {
+          wtPath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 5. Verify cleanup
     if (existsSync(wtPath)) {
       logger.error("Worktree directory could not be removed", { wtPath });
       return false;
     }
 
-    // 5. Delete the branch
+    // 6. Delete the branch
     try {
       await execFile("git", ["-C", repoPath, "branch", "-d", branch], {
         timeout: 10_000,

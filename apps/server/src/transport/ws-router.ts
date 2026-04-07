@@ -349,10 +349,10 @@ async function dispatch(
       );
       return;
     case "terminal.kill":
-      deps.terminalService.kill(params.ptyId);
+      await deps.terminalService.kill(params.ptyId);
       return;
     case "terminal.killByThread":
-      deps.terminalService.killByThread(params.threadId);
+      await deps.terminalService.killByThread(params.threadId);
       return;
 
     // Tool Call Records

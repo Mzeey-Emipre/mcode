@@ -2,9 +2,10 @@ import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 
-const { mockExecFile, mockRm, mockExistsSync, mockLogger } = vi.hoisted(() => ({
+const { mockExecFile, mockRm, mockRename, mockExistsSync, mockLogger } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
   mockRm: vi.fn(),
+  mockRename: vi.fn(),
   mockExistsSync: vi.fn(),
   mockLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
@@ -25,6 +26,7 @@ vi.mock("fs", () => ({
 
 vi.mock("fs/promises", () => ({
   rm: mockRm,
+  rename: mockRename,
 }));
 
 vi.mock("@mcode/shared", () => ({
@@ -64,6 +66,7 @@ describe("GitService.removeWorktree", () => {
         "remove",
         expect.stringContaining("my-worktree"),
         "--force",
+        "--force",
       ],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
@@ -87,7 +90,7 @@ describe("GitService.removeWorktree", () => {
 
     expect(mockRm).toHaveBeenCalledWith(
       expect.stringContaining("my-worktree"),
-      { recursive: true, force: true },
+      expect.objectContaining({ maxRetries: 5, retryDelay: 200 }),
     );
     expect(result).toBe(true);
     expect(mockLogger.warn).toHaveBeenCalled();
@@ -119,5 +122,66 @@ describe("GitService.removeWorktree", () => {
 
     expect(result).toBe(true);
     expect(mockLogger.warn).toHaveBeenCalled();
+  });
+
+  it("passes maxRetries and retryDelay to fs.rm", async () => {
+    mockExecFile.mockRejectedValueOnce(new Error("git failed")); // worktree remove
+    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // prune
+    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
+    mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    mockRm.mockResolvedValue(undefined);
+
+    await gitService.removeWorktree("/repo", "my-worktree");
+
+    expect(mockRm).toHaveBeenCalledWith(
+      expect.stringContaining("my-worktree"),
+      expect.objectContaining({ maxRetries: 5, retryDelay: 200 }),
+    );
+  });
+
+  it("uses double --force for git worktree remove", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    await gitService.removeWorktree("/repo", "my-worktree", "feat/test");
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/repo", "worktree", "remove", expect.stringContaining("my-worktree"), "--force", "--force"],
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+  });
+
+  it("renames directory then deletes when fs.rm fails on first path", async () => {
+    mockExecFile.mockRejectedValueOnce(new Error("git failed")); // worktree remove
+    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // prune
+    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
+    // fs.rm fails on original path
+    mockRm.mockRejectedValueOnce(Object.assign(new Error("EBUSY"), { code: "EBUSY" }));
+    mockRename.mockResolvedValue(undefined);
+    // existsSync: true (before rm attempt), true (after rm failure, before rename), false (final verification)
+    mockExistsSync
+      .mockReturnValueOnce(true)  // check before fallback rm
+      .mockReturnValueOnce(true)  // check after rm failure -> try rename
+      .mockReturnValueOnce(false); // final verification
+
+    const result = await gitService.removeWorktree("/repo", "my-worktree");
+
+    expect(mockRename).toHaveBeenCalledWith(
+      expect.stringContaining("my-worktree"),
+      expect.stringMatching(/my-worktree\.deleting-\d+$/),
+    );
+    expect(result).toBe(true);
+  });
+
+  it("returns false when both fs.rm and rename-then-delete fail", async () => {
+    mockExecFile.mockRejectedValue(new Error("git failed"));
+    mockRm.mockRejectedValue(Object.assign(new Error("EBUSY"), { code: "EBUSY" }));
+    mockRename.mockRejectedValue(new Error("rename failed"));
+    mockExistsSync.mockReturnValue(true);
+
+    const result = await gitService.removeWorktree("/repo", "my-worktree");
+
+    expect(result).toBe(false);
   });
 });
