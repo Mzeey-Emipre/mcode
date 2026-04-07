@@ -34,6 +34,8 @@ export const AgentEventSchema = lazySchema(() =>
       tokensOut: z.number(),
       /** Model's max context window reported by the SDK, if available. */
       contextWindow: z.number().optional(),
+      /** Accumulated total tokens processed across all API calls in the session. */
+      totalProcessedTokens: z.number().optional(),
     }),
     z.object({
       type: z.literal("error"),
