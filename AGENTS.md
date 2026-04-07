@@ -88,6 +88,22 @@ When working on frontend code, follow the component registry and rules in **[doc
 
 Always add JSDoc/TSDoc docstrings to all exported functions, components, types, and interfaces. AI-powered code reviews depend on these for context. At minimum include a one-line summary of what the symbol does.
 
+## Zod Schemas in `packages/contracts`
+
+All non-trivial Zod schemas must be wrapped with `lazySchema` to defer construction until first use, reducing module-load cost.
+
+```ts
+import { lazySchema } from "../utils/lazySchema.js";
+
+export const MySchema = lazySchema(() =>
+  z.object({ ... }),
+);
+
+export type MyType = z.infer<ReturnType<typeof MySchema>>;
+```
+
+Call sites invoke the schema as a function: `MySchema()`. See `AgentEventSchema`, `SettingsSchema`, and `WS_METHODS` for examples.
+
 ## Cross-Package Changes
 
 This is a monorepo. When changing a function signature, return type, or shared interface, you must typecheck ALL packages that import it, not just the one you modified. Use `grep` to find all call sites across the monorepo before considering the change complete.
