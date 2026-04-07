@@ -278,7 +278,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "snapshot.getDiffStats": {
     params: z.object({ snapshotId: z.string() }),
-    result: z.array(DiffStatsSchema),
+    result: z.array(DiffStatsSchema()),
   },
   "snapshot.cleanup": {
     params: z.object({}),
