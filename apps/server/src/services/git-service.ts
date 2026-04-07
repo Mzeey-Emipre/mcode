@@ -371,6 +371,25 @@ export class GitService {
     }
   }
 
+  /** Push a branch to the origin remote, creating the upstream tracking ref if needed. */
+  async push(repoPath: string, branch: string): Promise<void> {
+    await execFile(
+      "git",
+      ["-C", repoPath, "push", "--set-upstream", "origin", branch],
+      { timeout: 60_000 },
+    );
+  }
+
+  /** Return a diff stat summary between two refs. */
+  async diffStat(repoPath: string, base: string, head: string): Promise<string> {
+    const { stdout } = await execFile(
+      "git",
+      ["-C", repoPath, "diff", "--stat", `${base}...${head}`],
+      { timeout: 30_000 },
+    );
+    return stdout.trim();
+  }
+
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */
   private readonly defaultBranchCache = new Map<string, string>();
 
