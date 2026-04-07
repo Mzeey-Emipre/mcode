@@ -385,6 +385,11 @@ export function createWsTransport(
     // Snapshots
     getSnapshotDiff: (snapshotId, filePath?, maxLines?) =>
       rpc<string>("snapshot.getDiff", { snapshotId, filePath, maxLines }),
+    getSnapshotDiffStats: (snapshotId) =>
+      rpc<{ filePath: string; additions: number; deletions: number }[]>(
+        "snapshot.getDiffStats",
+        { snapshotId },
+      ),
     cleanupSnapshots: () =>
       rpc<{ removed: number }>("snapshot.cleanup", {}),
     listSnapshots: (threadId) =>

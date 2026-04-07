@@ -188,6 +188,8 @@ export interface McodeTransport {
   // Snapshots
   /** Get a unified diff for a specific file from a turn snapshot. */
   getSnapshotDiff(snapshotId: string, filePath?: string, maxLines?: number): Promise<string>;
+  /** Get per-file addition/deletion counts for a turn snapshot. */
+  getSnapshotDiffStats(snapshotId: string): Promise<{ filePath: string; additions: number; deletions: number }[]>;
   /** Run garbage collection on expired snapshot refs. */
   cleanupSnapshots(): Promise<{ removed: number }>;
   /** List all turn snapshots for a thread, ordered by creation time. */

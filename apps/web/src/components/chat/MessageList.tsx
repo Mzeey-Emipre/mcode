@@ -10,6 +10,7 @@ import { ToolCallCard } from "./ToolCallCard";
 import { StreamingIndicator } from "./StreamingIndicator";
 import { StreamingCard } from "./StreamingCard";
 import { ToolCallSummary } from "./ToolCallSummary";
+import { TurnChangeSummary } from "./TurnChangeSummary";
 import {
   buildStableItems,
   buildVolatileItems,
@@ -26,7 +27,13 @@ const DEFAULT_ITEM_HEIGHT = 80;
 const PAGINATION_THRESHOLD = 200;
 
 /** Renders a single virtual item based on its type discriminant. */
-const VirtualItemRenderer = memo(function VirtualItemRenderer({ item }: { item: ChatVirtualItem }) {
+const VirtualItemRenderer = memo(function VirtualItemRenderer({
+  item,
+  turnExpandRef,
+}: {
+  item: ChatVirtualItem;
+  turnExpandRef?: React.RefObject<Map<string, boolean>>;
+}) {
   switch (item.type) {
     case "message":
       return <MessageBubble message={item.message} />;
@@ -48,12 +55,27 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({ item }: { item: 
           toolCallCount={item.toolCallCount}
         />
       );
+    case "turn-changes":
+      return (
+        <TurnChangeSummary
+          messageId={item.messageId}
+          filesChanged={item.filesChanged}
+          isLatestTurn={item.isLatestTurn}
+          manualExpandRef={turnExpandRef}
+        />
+      );
   }
-}, (prev, next) => prev.item.key === next.item.key && prev.item === next.item);
+}, (prev, next) =>
+  prev.item.key === next.item.key
+  && prev.item === next.item
+  && prev.turnExpandRef === next.turnExpandRef,
+);
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
 export function MessageList() {
   const containerRef = useRef<HTMLDivElement>(null);
+  /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
+  const turnExpandRef = useRef<Map<string, boolean>>(new Map());
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const itemsLengthRef = useRef(0);
   const prevMessageCountRef = useRef(0);
@@ -90,6 +112,12 @@ export function MessageList() {
   const serverMessageIds = useThreadStore(
     useShallow((s) => s.serverMessageIds),
   );
+  const persistedFilesChanged = useThreadStore(
+    useShallow((s) => s.persistedFilesChanged),
+  );
+  const latestTurnWithChanges = useThreadStore(
+    (s) => s.latestTurnWithChanges,
+  );
   const hasMore = useThreadStore((s) =>
     activeThreadId ? s.hasMoreMessages[activeThreadId] ?? false : false,
   );
@@ -123,8 +151,8 @@ export function MessageList() {
   }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages]);
 
   const stableItems = useMemo(
-    () => buildStableItems(messages, persistedToolCallCounts, serverMessageIds),
-    [messages, persistedToolCallCounts, serverMessageIds],
+    () => buildStableItems(messages, persistedToolCallCounts, serverMessageIds, persistedFilesChanged, latestTurnWithChanges),
+    [messages, persistedToolCallCounts, serverMessageIds, persistedFilesChanged, latestTurnWithChanges],
   );
 
   const volatileItems = useMemo(
@@ -211,6 +239,7 @@ export function MessageList() {
   useEffect(() => {
     isInitialLoadRef.current = true;
     setIsPositioned(false);
+    turnExpandRef.current.clear();
     virtualizer.measure();
   }, [activeThreadId, virtualizer]);
 
@@ -321,7 +350,7 @@ export function MessageList() {
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className="mx-auto w-full max-w-4xl">
-                  <VirtualItemRenderer item={item} />
+                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} />
                 </div>
               </div>
             );

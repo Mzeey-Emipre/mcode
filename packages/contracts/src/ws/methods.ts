@@ -11,6 +11,7 @@ import { PrInfoSchema, PrDetailSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
+import { DiffStatsSchema } from "../models/diff-stats.js";
 import {
   SettingsSchema,
   PartialSettingsSchema,
@@ -286,6 +287,10 @@ export const WS_METHODS = lazySchema(() => ({
       maxLines: z.number().int().positive().optional(),
     }),
     result: z.string(),
+  },
+  "snapshot.getDiffStats": {
+    params: z.object({ snapshotId: z.string() }),
+    result: z.array(DiffStatsSchema()),
   },
   "snapshot.cleanup": {
     params: z.object({}),

@@ -34,6 +34,10 @@ interface ThreadState {
   settingsByThread: Record<string, ThreadSettings>;
   /** Tool call counts per message ID, populated from turn.persisted events and loadMessages. */
   persistedToolCallCounts: Record<string, number>;
+  /** Files changed per message ID, populated from turn.persisted events. Empty array = no changes. */
+  persistedFilesChanged: Record<string, string[]>;
+  /** Message ID of the most recent completed turn with file changes. Only this turn's summary is expanded; older ones auto-collapse. */
+  latestTurnWithChanges: string | null;
   /** Maps client-generated message IDs to server-persisted message IDs for API calls. */
   serverMessageIds: Record<string, string>;
   /** Active subagent count per thread (incremented on Agent toolUse, decremented on Agent toolResult). */
@@ -190,6 +194,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   agentStartTimes: {},
   settingsByThread: {},
   persistedToolCallCounts: {},
+  persistedFilesChanged: {},
+  latestTurnWithChanges: null,
   serverMessageIds: {},
   activeSubagentsByThread: {},
   toolCallRecordCache: new LruCache<string, ToolCallRecord[]>(TOOL_CALL_CACHE_SIZE),
@@ -249,6 +255,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           currentThreadId: threadId,
           messages: [],
           persistedToolCallCounts: {},
+          persistedFilesChanged: {},
+          latestTurnWithChanges: null,
           isLoadingMore: {},
           loadEpochByThread: { ...state.loadEpochByThread, [threadId]: (state.loadEpochByThread[threadId] ?? 0) + 1 },
           toolCallsByThread: nextToolCalls,
@@ -265,6 +273,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         currentThreadId: threadId,
         messages: [],
         persistedToolCallCounts: {},
+        persistedFilesChanged: {},
+        latestTurnWithChanges: null,
         isLoadingMore: {},
         loadEpochByThread: { ...state.loadEpochByThread, [threadId]: (state.loadEpochByThread[threadId] ?? 0) + 1 },
       }));
@@ -317,6 +327,37 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             get().setPlanQuestions(threadId, pendingQuestions);
           }
         }
+
+        // Populate file change summaries from persisted snapshots
+        void (async () => {
+          try {
+            const snapshots = await getTransport().listSnapshots(threadId);
+            if (snapshots.length === 0) return;
+            set((state) => {
+              if (state.currentThreadId !== threadId) return {}; // discard stale response
+              const nextFilesChanged = { ...state.persistedFilesChanged };
+              let latestMsgId = state.latestTurnWithChanges;
+              let latestTime = "";
+
+              for (const snap of snapshots) {
+                if (snap.files_changed.length === 0) continue;
+                // snap.message_id matches m.id for DB-loaded messages directly
+                nextFilesChanged[snap.message_id] = snap.files_changed;
+                if (snap.created_at > latestTime) {
+                  latestTime = snap.created_at;
+                  latestMsgId = snap.message_id;
+                }
+              }
+
+              return {
+                persistedFilesChanged: nextFilesChanged,
+                latestTurnWithChanges: latestMsgId,
+              };
+            });
+          } catch {
+            // Silently ignore — file change summaries are best-effort
+          }
+        })();
       }
     } catch (e) {
       if (get().currentThreadId === threadId) {
@@ -369,6 +410,26 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         hasMoreMessages: { ...s.hasMoreMessages, [threadId]: hasMore },
         isLoadingMore: { ...s.isLoadingMore, [threadId]: false },
       }));
+
+      // Hydrate file change data for older messages from snapshots
+      const olderMsgIds = new Set(olderMessages.map((m) => m.id));
+      getTransport()
+        .listSnapshots(threadId)
+        .then((snapshots) => {
+          const relevant = snapshots.filter(
+            (s) => s.files_changed.length > 0 && olderMsgIds.has(s.message_id),
+          );
+          if (relevant.length === 0) return;
+          set((state) => {
+            if (state.currentThreadId !== threadId) return {};
+            const nextFilesChanged = { ...state.persistedFilesChanged };
+            for (const snap of relevant) {
+              nextFilesChanged[snap.message_id] = snap.files_changed;
+            }
+            return { persistedFilesChanged: nextFilesChanged };
+          });
+        })
+        .catch(() => {});
     } catch {
       // Silent failure: reset loading guard so next scroll can retry
       set((s) => ({
@@ -482,6 +543,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       streamingPreviewByThread: {},
       toolCallsByThread: {},
       persistedToolCallCounts: {},
+      persistedFilesChanged: {},
+      latestTurnWithChanges: null,
       serverMessageIds: {},
       currentTurnMessageIdByThread: {},
       oldestLoadedSequence: {},
@@ -1226,6 +1289,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ...state.persistedToolCallCounts,
           [localMsgId]: payload.toolCallCount,
         },
+        persistedFilesChanged: {
+          ...state.persistedFilesChanged,
+          [localMsgId]: payload.filesChanged,
+        },
+        // Only update latestTurnWithChanges for the active thread — background
+        // thread completions must not collapse the active thread's latest banner.
+        latestTurnWithChanges:
+          state.currentThreadId === payload.threadId
+            ? payload.filesChanged.length > 0 ? localMsgId : null
+            : state.latestTurnWithChanges,
         serverMessageIds: {
           ...state.serverMessageIds,
           [localMsgId]: payload.messageId,
