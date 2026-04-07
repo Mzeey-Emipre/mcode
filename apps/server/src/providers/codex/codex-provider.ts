@@ -416,7 +416,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
               input_tokens?: number;
               cached_input_tokens?: number;
               output_tokens?: number;
+              /** Snake-case variant (future SDK versions). */
               model_context_window?: number;
+              /** Camel-case variant observed at runtime. */
+              modelContextWindow?: number;
             } | undefined;
 
             const totalInputTokens =
@@ -435,7 +438,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
               costUsd: null,
               tokensIn: totalInputTokens,
               tokensOut: usage?.output_tokens ?? 0,
-              contextWindow: usage?.model_context_window,
+              contextWindow: usage?.model_context_window ?? usage?.modelContextWindow,
               totalProcessedTokens,
             } satisfies AgentEvent);
 
