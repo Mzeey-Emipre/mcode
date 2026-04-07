@@ -1,13 +1,16 @@
 // apps/web/src/components/chat/FileTagPopup.tsx
-import { useRef, useEffect, useCallback, useState } from "react";
+import { useRef, useEffect, useCallback, useState, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { getFileIcon, getFileIconColor } from "@/lib/file-icons";
 
 const ITEM_HEIGHT = 28; // px per row (py-1.5 + 14px icon)
 const VISIBLE_ITEMS = 8;
+// Virtualizing below this count adds more overhead (scroll listeners, index
+// math) than it saves; native rendering of ≤20 rows has no measurable cost.
 const VIRTUAL_THRESHOLD = 20;
 
+/** Options for the useFileTagPopup keyboard-navigation hook. */
 interface FileTagPopupOptions {
   files: string[];
   query: string;
@@ -16,11 +19,14 @@ interface FileTagPopupOptions {
   onDismiss: () => void;
 }
 
+/** Props for the FileTagPopup display component. */
 interface FileTagPopupProps {
   files: string[];
   isOpen: boolean;
   onSelect: (filePath: string) => void;
+  /** Ref forwarded from useFileTagPopup — used by the parent for focus management. */
   listRef: React.RefObject<HTMLDivElement | null>;
+  /** Controlled selection index driven by useFileTagPopup state. */
   selectedIndex: number;
 }
 
@@ -41,10 +47,14 @@ export function useFileTagPopup({
 }: FileTagPopupOptions) {
   const listRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  // Mirror of selectedIndex read by event handlers — avoids stale closure
+  // when Enter/Tab fires in the same synchronous batch as a preceding Arrow key.
+  const selectedIndexRef = useRef(0);
 
   // Reset selection when files or query change
   useEffect(() => {
     setSelectedIndex(0);
+    selectedIndexRef.current = 0;
   }, [files, query]);
 
   const handleKeyDown = useCallback(
@@ -53,17 +63,27 @@ export function useFileTagPopup({
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setSelectedIndex((prev) => Math.min(prev + 1, files.length - 1));
+        setSelectedIndex((prev) => {
+          const next = Math.min(prev + 1, files.length - 1);
+          selectedIndexRef.current = next;
+          return next;
+        });
         return true;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setSelectedIndex((prev) => Math.max(prev - 1, 0));
+        setSelectedIndex((prev) => {
+          const next = Math.max(prev - 1, 0);
+          selectedIndexRef.current = next;
+          return next;
+        });
         return true;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        const selected = files[selectedIndex];
+        // Read from ref so we get the value set by a preceding Arrow key in
+        // the same synchronous event batch, not the stale closure snapshot.
+        const selected = files[selectedIndexRef.current];
         if (selected) onSelect(selected);
         return true;
       }
@@ -74,14 +94,18 @@ export function useFileTagPopup({
       }
       return false;
     },
-    [isOpen, files, selectedIndex, onSelect, onDismiss],
+    [isOpen, files, onSelect, onDismiss],
   );
 
   return { handleKeyDown, listRef, selectedIndex };
 }
 
-/** Single file row in the popup list. */
-function FileRow({
+/**
+ * Single file row rendered in both the virtual and non-virtual list paths.
+ * Memoized so only the two rows whose `selected` prop flips re-render on
+ * each navigation keypress.
+ */
+const FileRow = memo(function FileRow({
   filePath,
   selected,
   onSelect,
@@ -111,7 +135,7 @@ function FileRow({
       </span>
     </button>
   );
-}
+});
 
 /** Dropdown popup displaying file suggestions for @ tagging. */
 export function FileTagPopup({
@@ -122,21 +146,31 @@ export function FileTagPopup({
   selectedIndex,
 }: FileTagPopupProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const useVirtual = files.length > VIRTUAL_THRESHOLD;
+  const isVirtualized = files.length > VIRTUAL_THRESHOLD;
 
   const virtualizer = useVirtualizer({
-    count: useVirtual ? files.length : 0,
+    count: isVirtualized ? files.length : 0,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ITEM_HEIGHT,
     overscan: 4,
   });
 
-  // Scroll selected item into view
+  // Keep a stable ref to the virtualizer so the scroll effect below doesn't
+  // re-run on every render — the virtualizer object reference can change each
+  // render even though the instance is effectively the same.
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
+
   useEffect(() => {
     if (!isOpen) return;
-    if (useVirtual) {
-      virtualizer.scrollToIndex(selectedIndex, { align: "auto" });
+    if (isVirtualized) {
+      // Virtual path: delegate to the virtualizer, which maps indices to scroll
+      // offsets without querying the DOM.
+      virtualizerRef.current.scrollToIndex(selectedIndex, { align: "auto" });
     } else {
+      // Non-virtual path: target the wrapper div by data-index attribute.
+      // We use the wrapper div (not the button) because scrollIntoView on a
+      // fixed-height container works best on the outermost positioned element.
       const el = scrollRef.current?.querySelector(
         `[data-index="${selectedIndex}"]`,
       );
@@ -144,7 +178,7 @@ export function FileTagPopup({
         (el as HTMLElement).scrollIntoView({ block: "nearest" });
       }
     }
-  }, [selectedIndex, isOpen, useVirtual, virtualizer]);
+  }, [selectedIndex, isOpen, isVirtualized]);
 
   if (!isOpen || files.length === 0) return null;
 
@@ -165,7 +199,7 @@ export function FileTagPopup({
         className="p-1"
         style={{ maxHeight, overflowY: "auto" }}
       >
-        {useVirtual ? (
+        {isVirtualized ? (
           <div
             role="presentation"
             style={{

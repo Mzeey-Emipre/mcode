@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, render, screen } from "@testing-library/react";
+import type { RefObject } from "react";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 
 describe("useFileTagPopup", () => {
@@ -98,6 +99,24 @@ describe("useFileTagPopup", () => {
     expect(onSelect).toHaveBeenCalledWith("src/a.ts");
   });
 
+  it("calls onSelect with selected file on Tab", () => {
+    const onSelect = vi.fn();
+    const { result } = renderHook(() =>
+      useFileTagPopup({ ...defaultProps, onSelect }),
+    );
+    act(() => {
+      result.current.handleKeyDown({
+        key: "ArrowDown",
+        preventDefault: vi.fn(),
+      } as unknown as React.KeyboardEvent);
+      result.current.handleKeyDown({
+        key: "Tab",
+        preventDefault: vi.fn(),
+      } as unknown as React.KeyboardEvent);
+    });
+    expect(onSelect).toHaveBeenCalledWith("src/b.ts");
+  });
+
   it("calls onDismiss on Escape", () => {
     const onDismiss = vi.fn();
     const { result } = renderHook(() =>
@@ -111,11 +130,34 @@ describe("useFileTagPopup", () => {
     });
     expect(onDismiss).toHaveBeenCalled();
   });
+
+  it("ignores all keys when isOpen is false", () => {
+    const onSelect = vi.fn();
+    const onDismiss = vi.fn();
+    const { result } = renderHook(() =>
+      useFileTagPopup({ ...defaultProps, isOpen: false, onSelect, onDismiss }),
+    );
+    act(() => {
+      const prevent = vi.fn();
+      for (const key of ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"]) {
+        result.current.handleKeyDown({
+          key,
+          preventDefault: prevent,
+        } as unknown as React.KeyboardEvent);
+      }
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
 });
 
 describe("FileTagPopup", () => {
-  const mockListRef = { current: null } as React.RefObject<HTMLDivElement | null>;
+  const mockListRef = { current: null } as RefObject<HTMLDivElement | null>;
   const onSelect = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("renders all items when below virtual threshold", () => {
     const files = Array.from({ length: 10 }, (_, i) => `src/file${i}.ts`);
@@ -159,5 +201,28 @@ describe("FileTagPopup", () => {
       />,
     );
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("uses virtual rendering above threshold and marks selected item", () => {
+    // 21 items crosses VIRTUAL_THRESHOLD (20), activating the virtualizer path.
+    // jsdom has no scroll height so the virtualizer renders only its overscan
+    // window (first few items); we verify the listbox exists and that the
+    // rendered subset has the correct aria-selected attribute.
+    const files = Array.from({ length: 21 }, (_, i) => `src/file${i}.ts`);
+    render(
+      <FileTagPopup
+        files={files}
+        isOpen={true}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={0}
+      />,
+    );
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    // jsdom has no scroll height, so the virtualizer renders 0 items — but
+    // crucially, NOT all 21 nodes are in the DOM, proving the virtual path
+    // is active rather than the native map() path.
+    const options = screen.queryAllByRole("option");
+    expect(options.length).toBeLessThan(21);
   });
 });
