@@ -55,6 +55,10 @@ export const CreateAndSendSchema = z.object({
   provider: ProviderIdSchema.optional(),
   /** When "plan", the server wraps the message with the plan-mode question prompt. */
   interactionMode: InteractionModeSchema.optional(),
+  /** Source thread ID when branching from an existing thread. */
+  parentThreadId: z.string().optional(),
+  /** Fork-point message ID in the parent thread. Defaults to last persisted message. */
+  forkedFromMessageId: z.string().optional(),
 });
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
