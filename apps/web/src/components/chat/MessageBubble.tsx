@@ -4,6 +4,8 @@ import { FileText, File, ImageIcon, RotateCcw, Copy, Check } from "lucide-react"
 import { cn } from "@/lib/utils";
 import { MarkdownContent } from "./MarkdownContent";
 import { stripInjectedFiles } from "@/lib/file-tags";
+import { isHandoffMessage } from "./handoff-utils";
+import { HandoffCard } from "./HandoffCard";
 
 /** Props for {@link MessageBubble}. */
 interface MessageBubbleProps {
@@ -104,6 +106,10 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
   const textContent = useMemo(() => stripInjectedFiles(message.content), [message.content]);
 
   if (message.role === "system") {
+    if (isHandoffMessage(message.role, message.content)) {
+      return <HandoffCard content={message.content} />;
+    }
+
     return (
       <div className="flex items-center gap-3 py-2">
         <div className="h-px flex-1 bg-border" />
