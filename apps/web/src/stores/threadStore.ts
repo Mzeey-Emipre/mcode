@@ -1141,6 +1141,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             [threadId]: {
               lastTokensIn: tokensIn,
               contextWindow: ctxWindow ?? state.contextByThread[threadId]?.contextWindow,
+              totalProcessedTokens: state.contextByThread[threadId]?.totalProcessedTokens,
             },
           },
         }));

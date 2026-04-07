@@ -38,7 +38,6 @@ import { PlanQuestionParser } from "./plan-question-parser.js";
 import { PlanQuestionSchema } from "@mcode/contracts";
 import { z } from "zod";
 
-
 /**
  * Generate a thread title from message content: first line, truncated
  * to 50 characters at a word boundary with "..." appended.
@@ -538,8 +537,9 @@ export class AgentService {
           // reloads to resurrect the wrong (near-100%) context fill.
           if (event.tokensIn > 0 && !this.compactionInProgressByThread.has(event.threadId)) {
             try {
-              if (event.contextWindow) {
-                this.threadRepo.updateContextUsage(event.threadId, event.tokensIn, event.contextWindow);
+              const ctxWindow = event.contextWindow ?? this.lastContextWindowByThread.get(event.threadId);
+              if (ctxWindow) {
+                this.threadRepo.updateContextUsage(event.threadId, event.tokensIn, ctxWindow);
               }
             } catch (err) {
               logger.warn("Context usage not persisted", {
