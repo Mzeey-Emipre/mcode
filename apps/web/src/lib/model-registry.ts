@@ -30,18 +30,15 @@ export interface ModelDefinition {
   defaultReasoningLevel?: CodexReasoningLevel;
 }
 
-/** Fallback context window size used when a model's limit is not yet registered. */
-export const DEFAULT_CONTEXT_WINDOW = 200_000;
-
 export const MODEL_PROVIDERS: readonly ModelProvider[] = [
   {
     id: "claude",
     name: "Claude",
     comingSoon: false,
     models: [
-      { id: "claude-opus-4-6", label: "Claude Opus 4.6", providerId: "claude", contextWindow: DEFAULT_CONTEXT_WINDOW },
-      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", providerId: "claude", contextWindow: DEFAULT_CONTEXT_WINDOW },
-      { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", providerId: "claude", contextWindow: DEFAULT_CONTEXT_WINDOW },
+      { id: "claude-opus-4-6", label: "Claude Opus 4.6", providerId: "claude" },
+      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", providerId: "claude" },
+      { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", providerId: "claude" },
     ],
   },
   {
@@ -53,7 +50,6 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
         id: "gpt-5.4",
         label: "GPT-5.4",
         providerId: "codex",
-        contextWindow: 272_000,
         supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
         defaultReasoningLevel: "medium",
       },
@@ -61,7 +57,6 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
         id: "gpt-5.4-mini",
         label: "GPT-5.4 Mini",
         providerId: "codex",
-        contextWindow: 272_000,
         // Not yet in models.json catalog; assume same range as gpt-5.4
         supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
         defaultReasoningLevel: "medium",
@@ -70,7 +65,6 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
         id: "gpt-5.3-codex",
         label: "GPT-5.3 Codex",
         providerId: "codex",
-        contextWindow: 272_000,
         supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
         defaultReasoningLevel: "medium",
       },
@@ -78,7 +72,6 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
         id: "gpt-5.2-codex",
         label: "GPT-5.2 Codex",
         providerId: "codex",
-        contextWindow: 272_000,
         supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
         defaultReasoningLevel: "medium",
       },
@@ -86,7 +79,6 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
         id: "gpt-5.1-codex-mini",
         label: "GPT-5.1 Codex Mini",
         providerId: "codex",
-        contextWindow: 272_000,
         // gpt-5.1-codex-mini treated same as gpt-5.1-codex: up to high, no xhigh
         supportedReasoningLevels: ["low", "medium", "high"],
         defaultReasoningLevel: "medium",
@@ -224,9 +216,9 @@ export function normalizeReasoningLevelForModel(
   return level;
 }
 
-/** Returns the context window size for a model, falling back to DEFAULT_CONTEXT_WINDOW. */
-export function getContextWindow(modelId: string): number {
-  return findModelById(modelId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+/** Returns the context window size for a model, if statically known. */
+export function getContextWindow(modelId: string): number | undefined {
+  return findModelById(modelId)?.contextWindow;
 }
 
 /**
