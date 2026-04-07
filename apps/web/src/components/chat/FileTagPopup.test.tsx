@@ -168,7 +168,7 @@ describe("FileTagPopup", () => {
       getVirtualItems: () => [],
       getTotalSize: () => 0,
       scrollToIndex: vi.fn(),
-    } as ReturnType<typeof useVirtualizer>);
+    } as unknown as ReturnType<typeof useVirtualizer>);
   });
 
   it("renders all items when below virtual threshold", () => {
@@ -242,7 +242,7 @@ describe("FileTagPopup", () => {
       ],
       getTotalSize: () => 588,
       scrollToIndex: vi.fn(),
-    } as ReturnType<typeof useVirtualizer>);
+    } as unknown as ReturnType<typeof useVirtualizer>);
 
     const files = Array.from({ length: 21 }, (_, i) => `src/file${i}.ts`);
     render(
