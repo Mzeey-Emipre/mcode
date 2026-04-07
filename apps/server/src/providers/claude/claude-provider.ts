@@ -604,19 +604,18 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                     threadId,
                     active: false,
                   } satisfies AgentEvent);
-                  // Emit a rough post-compaction estimate so the tracker
-                  // reappears immediately. The SDK typically compacts to ~50%
-                  // of the context window. This is overwritten by the next
-                  // authoritative turnComplete.
-                  const ctxWindow = lastContextWindow ?? 200_000;
-                  if (ctxWindow > 0) {
-                    this.emit("event", {
-                      type: "contextEstimate",
-                      threadId,
-                      tokensIn: Math.round(ctxWindow * 0.5),
-                      contextWindow: ctxWindow,
-                    } satisfies AgentEvent);
-                  }
+                  // Ring hides during compaction (lastTokensIn: 0 sentinel).
+                  // It stays hidden until the next authoritative turnComplete
+                  // or stream_event message_start provides real usage data.
+                }
+              } else if ((anyMsg.subtype as string) === "compact_boundary") {
+                const metadata = (anyMsg as { compact_metadata?: { pre_tokens?: number; trigger?: string } }).compact_metadata;
+                if (metadata) {
+                  logger.info("Compact boundary received", {
+                    threadId,
+                    preTokens: metadata.pre_tokens,
+                    trigger: metadata.trigger,
+                  });
                 }
               } else {
                 this.emit("event", {
