@@ -261,7 +261,7 @@ export function CreatePrDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-4xl w-[min(90vw,900px)] p-0 gap-0 overflow-hidden"
+        className="sm:max-w-4xl w-[min(90vw,900px)] p-0 gap-0"
         showCloseButton={!isDisabled}
       >
         {/* Header */}
@@ -371,7 +371,7 @@ export function CreatePrDialog({
           </div>
 
           {/* Right: description */}
-          <div className="flex-1 flex flex-col gap-2 p-5 min-w-0 overflow-hidden">
+          <div className="flex-1 flex flex-col gap-2 p-5 min-w-0">
             {state === "loading" ? (
               <div className="flex-1 flex items-center justify-center gap-2 text-muted-foreground text-sm">
                 <Loader2 className="size-4 animate-spin" />
