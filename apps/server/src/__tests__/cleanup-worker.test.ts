@@ -333,6 +333,35 @@ describe("CleanupWorker", () => {
         "mcode/win",
       );
     });
+
+    it("waits at least 1500ms for handle release on Windows before fs operations", async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32" });
+      try {
+        const delays: number[] = [];
+        vi.spyOn(globalThis, "setTimeout").mockImplementation((fn, ms?) => {
+          if (ms && ms >= 1000) delays.push(ms);
+          if (typeof fn === "function") fn();
+          return 0 as unknown as ReturnType<typeof setTimeout>;
+        });
+
+        const ws = workspaceRepo.create("test", "/repo");
+        insertThread("t-delay", ws.id, "mcode/delay", wt("feat-delay"));
+        cleanupJobRepo.insert({
+          thread_id: "t-delay",
+          workspace_path: "/repo",
+          worktree_path: wt("feat-delay"),
+          branch: "mcode/delay",
+        });
+
+        await worker.poll();
+
+        expect(delays).toContain(1500);
+      } finally {
+        vi.restoreAllMocks();
+        Object.defineProperty(process, "platform", { value: originalPlatform });
+      }
+    });
   });
 
   describe("start / dispose", () => {

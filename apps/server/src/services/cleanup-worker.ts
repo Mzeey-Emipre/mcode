@@ -23,8 +23,10 @@ const POLL_INTERVAL_MS = 5_000;
 /**
  * Grace period after signalling process termination on Windows.
  * Gives the OS time to release directory handles before fs operations.
+ * 1.5 s gives Windows enough time to release directory handles after process
+ * termination, including antivirus scans triggered by the process exit.
  */
-const HANDLE_RELEASE_DELAY_MS = 500;
+const HANDLE_RELEASE_DELAY_MS = 1_500;
 
 /**
  * Timeout waiting for the SDK subprocess to acknowledge close()
