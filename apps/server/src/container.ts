@@ -38,6 +38,7 @@ import { SettingsService } from "./services/settings-service";
 import { GitWatcherService } from "./services/git-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
 import { CleanupWorker } from "./services/cleanup-worker";
+import { PrDraftService } from "./services/pr-draft-service";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(): typeof container {
@@ -212,6 +213,14 @@ export function setupContainer(): typeof container {
     { useClass: CleanupWorker },
     { lifecycle: Lifecycle.Singleton },
   );
+  container.register(
+    PrDraftService,
+    { useClass: PrDraftService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("PrDraftService", {
+    useFactory: (c) => c.resolve(PrDraftService),
+  });
 
   return container;
 }
