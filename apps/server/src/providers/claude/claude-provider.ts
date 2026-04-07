@@ -535,21 +535,30 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 (u) => typeof u.contextWindow === "number",
               )?.contextWindow;
 
-              // With prompt caching, input_tokens is only the uncached portion.
-              // Sum all input token categories for the true context window fill.
               const usage = (anyMsg.usage ?? {}) as {
                 input_tokens?: number;
                 output_tokens?: number;
                 cache_read_input_tokens?: number;
                 cache_creation_input_tokens?: number;
               };
-              // Output tokens become input context on the next turn, so include
-              // them so the tracker reflects the true next-turn fill.
-              const totalInputTokens =
+
+              // Accumulated total tokens processed across all API calls this session.
+              // result.usage is accumulated (like total_cost_usd and num_turns),
+              // so this already includes all previous API calls in the turn.
+              const totalProcessedTokens =
                 (usage.input_tokens ?? 0) +
                 (usage.cache_read_input_tokens ?? 0) +
                 (usage.cache_creation_input_tokens ?? 0) +
                 (usage.output_tokens ?? 0);
+
+              // Current context fill: prefer the last stream_event message_start
+              // usage (per-API-call, authoritative). Fall back to a heuristic
+              // from result.usage only if stream events were not captured.
+              const tokensIn = lastStreamInputTokens ?? (
+                (usage.input_tokens ?? 0) +
+                (usage.cache_read_input_tokens ?? 0) +
+                (usage.cache_creation_input_tokens ?? 0)
+              );
 
               this.emit("event", {
                 type: "turnComplete",
@@ -560,12 +569,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   "end_turn",
                 costUsd:
                   (anyMsg.total_cost_usd as number) ?? null,
-                tokensIn: totalInputTokens,
+                tokensIn,
                 tokensOut: usage.output_tokens ?? 0,
                 contextWindow: sdkContextWindow,
+                totalProcessedTokens,
               } satisfies AgentEvent);
 
               lastContextWindow = sdkContextWindow;
+              // Reset for next turn
+              lastStreamInputTokens = undefined;
 
               lastAssistantText = "";
               break;
