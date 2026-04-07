@@ -978,6 +978,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             isOpen={fileAutocomplete.isOpen}
             onSelect={handleFileSelect}
             listRef={filePopup.listRef}
+            selectedIndex={filePopup.selectedIndex}
           />
         </div>
 
