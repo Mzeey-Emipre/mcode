@@ -1,49 +1,79 @@
-type ShortcutHandler = () => void;
+// apps/web/src/lib/shortcuts.ts
+//
+// Thin integration layer: on each keydown, finds the matching keybinding,
+// checks the "when" clause, and executes the associated command.
 
-interface Shortcut {
-  key: string;
-  ctrl?: boolean;
-  meta?: boolean;
-  shift?: boolean;
-  description: string;
-  handler: ShortcutHandler;
+import {
+  parseKeybinding,
+  matchesKeyEvent,
+  getKeybindings,
+  loadKeybindings,
+  type Keybinding,
+} from "./keybinding-manager";
+import { evaluateWhen, setContext } from "./context-tracker";
+import { executeCommand } from "./command-registry";
+import defaultKeybindings from "@/config/default-keybindings.json";
+
+/** Detect whether an element is an input that should set the inputFocused context. */
+function isInputElement(el: Element | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return true;
+  if ((el as HTMLElement).isContentEditable) return true;
+  return false;
 }
 
-let shortcuts: readonly Shortcut[] = [];
-
-export function registerShortcut(shortcut: Shortcut): () => void {
-  shortcuts = [...shortcuts, shortcut];
-  return () => {
-    shortcuts = shortcuts.filter((s) => s !== shortcut);
-  };
+/** Detect whether the active element is inside xterm. */
+function isTerminalFocused(el: Element | null): boolean {
+  if (!el) return false;
+  return (
+    !!el.closest(".xterm") ||
+    el.classList.contains("xterm-helper-textarea")
+  );
 }
 
-export function handleKeyDown(e: KeyboardEvent): void {
-  // Don't intercept keystrokes when a terminal (xterm) has focus
-  const target = e.target as HTMLElement | null;
-  if (target?.closest(".xterm") || target?.classList.contains("xterm-helper-textarea")) {
-    return;
-  }
+/** Update the inputFocused and terminalFocused context based on the active element. */
+function updateFocusContext(): void {
+  const active = document.activeElement;
+  setContext("inputFocused", isInputElement(active));
+  setContext("terminalFocused", isTerminalFocused(active));
+}
 
-  for (const shortcut of shortcuts) {
-    const ctrlOrMeta = shortcut.ctrl || shortcut.meta;
-    const keyMatches = e.key.toLowerCase() === shortcut.key.toLowerCase();
-    const modifierMatches = ctrlOrMeta ? e.ctrlKey || e.metaKey : true;
-    const shiftMatches = shortcut.shift ? e.shiftKey : !e.shiftKey;
+function handleKeyDown(e: KeyboardEvent): void {
+  // Refresh focus context right before matching
+  updateFocusContext();
 
-    if (keyMatches && modifierMatches && shiftMatches) {
+  // Never intercept keystrokes when a terminal has focus
+  if (isTerminalFocused(document.activeElement)) return;
+
+  for (const binding of getKeybindings()) {
+    const parsed = parseKeybinding(binding.key);
+    if (matchesKeyEvent(parsed, e) && evaluateWhen(binding.when)) {
       e.preventDefault();
-      shortcut.handler();
+      executeCommand(binding.command);
       return;
     }
   }
 }
 
-export function getShortcuts(): readonly Shortcut[] {
-  return shortcuts;
+/**
+ * Initialize the keybinding system.
+ * Loads default keybindings, attaches the global keydown listener,
+ * and sets up focus tracking.
+ */
+export function initShortcuts(): () => void {
+  loadKeybindings(defaultKeybindings as Keybinding[]);
+  document.addEventListener("keydown", handleKeyDown);
+  document.addEventListener("focusin", updateFocusContext);
+  document.addEventListener("focusout", updateFocusContext);
+
+  return () => {
+    document.removeEventListener("keydown", handleKeyDown);
+    document.removeEventListener("focusin", updateFocusContext);
+    document.removeEventListener("focusout", updateFocusContext);
+  };
 }
 
-export function initShortcuts(): () => void {
-  document.addEventListener("keydown", handleKeyDown);
-  return () => document.removeEventListener("keydown", handleKeyDown);
-}
+// Re-export for backward compat with tests and any remaining consumers
+export { getKeybindings, loadKeybindings } from "./keybinding-manager";
+export { getAllCommands, registerCommand } from "./command-registry";

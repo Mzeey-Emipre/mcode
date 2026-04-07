@@ -1,5 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { registerShortcut, handleKeyDown, getShortcuts } from "@/lib/shortcuts";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { initShortcuts, getKeybindings, loadKeybindings } from "@/lib/shortcuts";
+import { registerCommand, clearCommands } from "@/lib/command-registry";
+import { clearKeybindings } from "@/lib/keybinding-manager";
+import { resetContext, setContext } from "@/lib/context-tracker";
 
 function createKeyEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
   const event = new KeyboardEvent("keydown", {
@@ -7,78 +10,65 @@ function createKeyEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
     ctrlKey: overrides.ctrlKey ?? false,
     metaKey: overrides.metaKey ?? false,
     shiftKey: overrides.shiftKey ?? false,
+    bubbles: true,
+    cancelable: true,
   });
   vi.spyOn(event, "preventDefault");
   return event;
 }
 
-describe("Shortcuts", () => {
+describe("shortcuts integration", () => {
+  let cleanup: () => void;
+
   beforeEach(() => {
-    // Clear all shortcuts by unregistering
-    for (const s of [...getShortcuts()]) {
-      registerShortcut(s)(); // register returns unregister, which we call immediately
-    }
+    clearKeybindings();
+    clearCommands();
+    resetContext();
+    loadKeybindings([]);
+    cleanup = initShortcuts();
   });
 
-  it("registerShortcut adds to list and returns unregister fn", () => {
-    const handler = vi.fn();
-    const unregister = registerShortcut({ key: "k", ctrl: true, description: "test", handler });
-    expect(getShortcuts().length).toBeGreaterThanOrEqual(1);
-    unregister();
+  afterEach(() => {
+    cleanup();
   });
 
-  it("unregister function removes shortcut", () => {
+  it("fires a registered command when its keybinding matches", () => {
     const handler = vi.fn();
-    const unregister = registerShortcut({ key: "k", ctrl: true, description: "test", handler });
-    const lengthBefore = getShortcuts().length;
-    unregister();
-    expect(getShortcuts().length).toBe(lengthBefore - 1);
-  });
+    registerCommand({ id: "test.cmd", title: "Test", category: "Test", handler });
+    loadKeybindings([{ key: "mod+k", command: "test.cmd" }]);
 
-  it("handleKeyDown fires matching handler and prevents default", () => {
-    const handler = vi.fn();
-    const unregister = registerShortcut({ key: "k", ctrl: true, description: "test", handler });
     const event = createKeyEvent({ key: "k", ctrlKey: true });
-    handleKeyDown(event);
+    document.dispatchEvent(event);
+
     expect(handler).toHaveBeenCalled();
     expect(event.preventDefault).toHaveBeenCalled();
-    unregister();
   });
 
-  it("handleKeyDown respects ctrl/meta modifier", () => {
+  it("does not fire when key does not match", () => {
     const handler = vi.fn();
-    const unregister = registerShortcut({ key: "k", ctrl: true, description: "test", handler });
-    // Without ctrl - should not fire
-    handleKeyDown(createKeyEvent({ key: "k" }));
+    registerCommand({ id: "test.cmd", title: "Test", category: "Test", handler });
+    loadKeybindings([{ key: "mod+k", command: "test.cmd" }]);
+
+    document.dispatchEvent(createKeyEvent({ key: "j", ctrlKey: true }));
     expect(handler).not.toHaveBeenCalled();
-    // With meta - should fire (ctrl/meta are interchangeable)
-    handleKeyDown(createKeyEvent({ key: "k", metaKey: true }));
+  });
+
+  it("respects when clause: !inputFocused blocks when input is focused", () => {
+    const handler = vi.fn();
+    registerCommand({ id: "test.cmd", title: "Test", category: "Test", handler });
+    loadKeybindings([{ key: "mod+n", command: "test.cmd", when: "!inputFocused" }]);
+
+    setContext("inputFocused", true);
+    document.dispatchEvent(createKeyEvent({ key: "n", ctrlKey: true }));
+    expect(handler).not.toHaveBeenCalled();
+
+    setContext("inputFocused", false);
+    document.dispatchEvent(createKeyEvent({ key: "n", ctrlKey: true }));
     expect(handler).toHaveBeenCalled();
-    unregister();
   });
 
-  it("handleKeyDown respects shift modifier", () => {
-    const handler = vi.fn();
-    const unregister = registerShortcut({ key: "k", shift: true, description: "test", handler });
-    handleKeyDown(createKeyEvent({ key: "k", shiftKey: false }));
-    expect(handler).not.toHaveBeenCalled();
-    handleKeyDown(createKeyEvent({ key: "k", shiftKey: true }));
-    expect(handler).toHaveBeenCalled();
-    unregister();
-  });
-
-  it("no match: handler not called", () => {
-    const handler = vi.fn();
-    const unregister = registerShortcut({ key: "k", ctrl: true, description: "test", handler });
-    handleKeyDown(createKeyEvent({ key: "j", ctrlKey: true }));
-    expect(handler).not.toHaveBeenCalled();
-    unregister();
-  });
-
-  it("getShortcuts returns current list", () => {
-    const handler = vi.fn();
-    const unregister = registerShortcut({ key: "x", description: "test", handler });
-    expect(getShortcuts().some((s) => s.key === "x")).toBe(true);
-    unregister();
+  it("getKeybindings returns active bindings", () => {
+    loadKeybindings([{ key: "mod+k", command: "commandPalette.toggle" }]);
+    expect(getKeybindings().length).toBe(1);
   });
 });
