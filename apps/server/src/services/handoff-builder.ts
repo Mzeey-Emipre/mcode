@@ -5,7 +5,7 @@
  * 2. JSON metadata in an HTML comment for UI parsing
  */
 
-import type { Thread } from "@mcode/contracts";
+import type { Thread, Message } from "@mcode/contracts";
 
 /** Marker used to detect handoff system messages in both server and client. */
 export const HANDOFF_MARKER = "<!-- mcode-handoff";
@@ -35,6 +35,57 @@ export interface HandoffInput {
 }
 
 const MAX_ASSISTANT_TEXT = 2000;
+
+/**
+ * Rough char budget for the conversation replay injected into the provider.
+ * Uses 15% of the model's known context window at ~4 chars/token,
+ * leaving headroom for the new conversation.
+ */
+export function replayBudgetChars(modelId: string): number {
+  // Claude models: 200K token context window
+  if (modelId.startsWith("claude")) return 120_000; // 200_000 * 0.15 * 4
+  // Conservative default for other models (~100K chars / ~25K tokens)
+  return 100_000;
+}
+
+/**
+ * Build a conversation transcript from a slice of parent messages.
+ * Includes only user and assistant turns; skips system messages and tool noise.
+ * Prioritizes recent messages when the transcript exceeds the char budget.
+ */
+export function buildConversationReplay(messages: Message[], maxChars: number): string {
+  const turns = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  if (turns.length === 0) return "";
+
+  const formatted = turns.map((m) => {
+    const label = m.role === "user" ? "User" : "Assistant";
+    return `${label}: ${m.content}`;
+  });
+
+  // Walk backwards from the most recent turn, accumulating within budget.
+  const result: string[] = [];
+  let used = 0;
+  for (let i = formatted.length - 1; i >= 0; i--) {
+    const chunk = formatted[i];
+    const cost = chunk.length + (result.length > 0 ? 2 : 0); // +2 for "\n\n" separator
+    if (used + cost > maxChars) break;
+    result.unshift(chunk);
+    used += cost;
+  }
+
+  if (result.length === 0) {
+    // Even the latest turn exceeds budget — truncate it.
+    return formatted[formatted.length - 1].slice(0, maxChars);
+  }
+
+  const omittedCount = turns.length - result.length;
+  const prefix =
+    omittedCount > 0
+      ? `[${omittedCount} earlier message${omittedCount === 1 ? "" : "s"} omitted]\n\n`
+      : "";
+
+  return prefix + result.join("\n\n");
+}
 
 /**
  * Build the full handoff system message content.
@@ -106,8 +157,8 @@ export function parseHandoffJson(content: string): HandoffMetadata | null {
   if (startIdx === -1) return null;
 
   const jsonStart = startIdx + HANDOFF_MARKER.length;
-  const endIdx = content.indexOf("-->", jsonStart);
-  if (endIdx === -1) return null;
+  const endIdx = content.lastIndexOf("-->");
+  if (endIdx === -1 || endIdx < jsonStart) return null;
 
   const jsonStr = content.slice(jsonStart, endIdx).trim();
   try {

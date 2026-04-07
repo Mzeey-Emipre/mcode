@@ -1,7 +1,13 @@
 import "reflect-metadata";
 import { describe, it, expect } from "vitest";
-import { buildHandoffContent, parseHandoffJson, HANDOFF_MARKER } from "../services/handoff-builder.js";
-import type { Thread } from "@mcode/contracts";
+import {
+  buildHandoffContent,
+  buildConversationReplay,
+  parseHandoffJson,
+  replayBudgetChars,
+  HANDOFF_MARKER,
+} from "../services/handoff-builder.js";
+import type { Thread, Message } from "@mcode/contracts";
 
 const baseThread: Thread = {
   id: "parent-1",
@@ -116,5 +122,120 @@ describe("parseHandoffJson", () => {
 describe("HANDOFF_MARKER", () => {
   it("matches the expected marker string", () => {
     expect(HANDOFF_MARKER).toBe("<!-- mcode-handoff");
+  });
+});
+
+// Helper to create minimal Message fixtures without the full DB layer.
+function makeMsg(
+  id: string,
+  role: "user" | "assistant" | "system",
+  content: string,
+  seq = 1,
+): Message {
+  return {
+    id,
+    thread_id: "t-1",
+    role,
+    content,
+    tool_calls: null,
+    files_changed: null,
+    cost_usd: null,
+    tokens_used: null,
+    timestamp: "2026-04-08T00:00:00Z",
+    sequence: seq,
+    attachments: null,
+  };
+}
+
+describe("buildConversationReplay", () => {
+  it("returns empty string for empty message list", () => {
+    expect(buildConversationReplay([], 100_000)).toBe("");
+  });
+
+  it("skips system messages", () => {
+    const msgs = [
+      makeMsg("1", "system", "You are an agent"),
+      makeMsg("2", "user", "Fix the bug"),
+      makeMsg("3", "assistant", "I fixed it"),
+    ];
+    const result = buildConversationReplay(msgs, 100_000);
+    expect(result).not.toContain("You are an agent");
+    expect(result).toContain("User: Fix the bug");
+    expect(result).toContain("Assistant: I fixed it");
+  });
+
+  it("formats turns as 'User: ...' and 'Assistant: ...'", () => {
+    const msgs = [
+      makeMsg("1", "user", "Hello"),
+      makeMsg("2", "assistant", "World"),
+    ];
+    const result = buildConversationReplay(msgs, 100_000);
+    expect(result).toBe("User: Hello\n\nAssistant: World");
+  });
+
+  it("omits oldest turns when over budget and notes the omission", () => {
+    const msgs = [
+      makeMsg("1", "user", "First turn"),
+      makeMsg("2", "assistant", "First response"),
+      makeMsg("3", "user", "Second turn"),
+      makeMsg("4", "assistant", "Second response"),
+    ];
+    // Budget just enough for the last two turns
+    const budget = "User: Second turn\n\nAssistant: Second response".length + 10;
+    const result = buildConversationReplay(msgs, budget);
+    expect(result).toContain("[2 earlier messages omitted]");
+    expect(result).toContain("User: Second turn");
+    expect(result).toContain("Assistant: Second response");
+    expect(result).not.toContain("First turn");
+  });
+
+  it("uses plural 'messages' for multiple omitted turns", () => {
+    const msgs = [
+      makeMsg("1", "user", "First"),
+      makeMsg("2", "user", "Second"),
+      makeMsg("3", "user", "Third"),
+    ];
+    const budget = "User: Third".length + 5;
+    const result = buildConversationReplay(msgs, budget);
+    expect(result).toContain("[2 earlier messages omitted]");
+  });
+
+  it("truncates if even the latest turn exceeds budget", () => {
+    const msgs = [makeMsg("1", "user", "A".repeat(200))];
+    const result = buildConversationReplay(msgs, 50);
+    expect(result.length).toBeLessThanOrEqual(50);
+  });
+});
+
+describe("replayBudgetChars", () => {
+  it("returns 120000 for claude models", () => {
+    expect(replayBudgetChars("claude-sonnet-4-6")).toBe(120_000);
+    expect(replayBudgetChars("claude-opus-4-6")).toBe(120_000);
+  });
+
+  it("returns 100000 for unknown models", () => {
+    expect(replayBudgetChars("some-future-model")).toBe(100_000);
+  });
+});
+
+describe("parseHandoffJson - --> inside JSON values", () => {
+  it("still parses when a JSON string contains -->", () => {
+    const metadata = {
+      parentThreadId: "p-1",
+      parentTitle: "A --> B migration",
+      forkedFromMessageId: "msg-1",
+      sourceProvider: "claude",
+      sourceModel: null,
+      sourceBranch: "main",
+      sourceWorktreePath: null,
+      sourceHead: null,
+      recentFilesChanged: [],
+      openTasks: [{ content: "migrate A --> B", status: "pending" }],
+    };
+    const content = `${HANDOFF_MARKER}\n${JSON.stringify(metadata, null, 2)}\n-->`;
+    const parsed = parseHandoffJson(content);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.parentTitle).toBe("A --> B migration");
+    expect(parsed!.openTasks[0].content).toBe("migrate A --> B");
   });
 });
