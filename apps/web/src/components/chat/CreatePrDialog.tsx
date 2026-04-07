@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Loader2, GitPullRequest } from "lucide-react";
+import { Loader2, GitPullRequest, GitBranch, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -166,22 +167,22 @@ export function CreatePrDialog({
 
         {/* Form — shown in ready, submitting, and error states */}
         {state !== "loading" && (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
             {/* Error banner */}
             {error && (
               <div
                 role="alert"
-                className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2"
+                className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2"
               >
                 {error}
               </div>
             )}
 
             {/* Title */}
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1">
               <label
                 htmlFor="pr-title"
-                className="text-xs font-medium text-foreground"
+                className="text-xs text-muted-foreground"
               >
                 Title
               </label>
@@ -194,59 +195,68 @@ export function CreatePrDialog({
               />
             </div>
 
-            {/* Base branch */}
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="pr-base-branch"
-                className="text-xs font-medium text-foreground"
-              >
-                Base branch
-              </label>
-              <select
-                id="pr-base-branch"
-                value={baseBranch}
-                onChange={(e) => setBaseBranch(e.target.value)}
-                disabled={isDisabled || localBranches.length === 0}
-                className={cn(
-                  "flex h-8 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors",
-                  "focus-visible:border-ring focus-visible:outline-none",
-                  "disabled:cursor-not-allowed disabled:opacity-50",
-                )}
-              >
-                {localBranches.length === 0 && (
-                  <option value={baseBranch}>{baseBranch}</option>
-                )}
-                {localBranches.map((b) => (
-                  <option key={b.name} value={b.name}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Base branch + Draft row */}
+            <div className="flex items-end gap-3">
+              <div className="flex flex-col gap-1 flex-1">
+                <label
+                  htmlFor="pr-base-branch"
+                  className="text-xs text-muted-foreground flex items-center gap-1"
+                >
+                  <GitBranch className="size-3" aria-hidden="true" />
+                  Base branch
+                </label>
+                <div className="relative">
+                  <select
+                    id="pr-base-branch"
+                    value={baseBranch}
+                    onChange={(e) => setBaseBranch(e.target.value)}
+                    disabled={isDisabled || localBranches.length === 0}
+                    className={cn(
+                      "flex h-8 w-full appearance-none rounded-lg border border-input bg-background pl-3 pr-8 py-1 text-sm shadow-xs transition-colors",
+                      "focus-visible:border-ring focus-visible:outline-none",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                    )}
+                  >
+                    {localBranches.length === 0 && (
+                      <option value={baseBranch}>{baseBranch}</option>
+                    )}
+                    {localBranches.map((b) => (
+                      <option key={b.name} value={b.name}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                </div>
+              </div>
 
-            {/* Draft checkbox */}
-            <div className="flex items-center gap-2">
-              <input
-                id="pr-is-draft"
-                type="checkbox"
-                checked={isDraft}
-                onChange={(e) => setIsDraft(e.target.checked)}
-                disabled={isDisabled}
-                className="h-4 w-4 rounded border-input accent-primary disabled:cursor-not-allowed disabled:opacity-50"
-              />
-              <label
-                htmlFor="pr-is-draft"
-                className="text-xs font-medium text-foreground select-none cursor-pointer"
-              >
-                Draft PR
-              </label>
+              {/* Draft toggle */}
+              <div className="flex flex-col gap-1 pb-px">
+                <label
+                  htmlFor="pr-is-draft"
+                  className="text-xs text-muted-foreground select-none"
+                >
+                  Draft PR
+                </label>
+                <div className="flex items-center h-8">
+                  <Switch
+                    id="pr-is-draft"
+                    checked={isDraft}
+                    onCheckedChange={setIsDraft}
+                    disabled={isDisabled}
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Description */}
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1">
               <label
                 htmlFor="pr-body"
-                className="text-xs font-medium text-foreground"
+                className="text-xs text-muted-foreground"
               >
                 Description
               </label>
