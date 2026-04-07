@@ -36,6 +36,9 @@ function setExpandedState(state: Record<string, boolean>) {
 /** Maximum threads shown before "Show more" appears. */
 const THREAD_LIST_CAP = 6;
 
+/** Time in ms to wait for a potential second click before treating a click as a single-click navigation */
+const DOUBLE_CLICK_THRESHOLD_MS = 250;
+
 /** Read per-workspace "show all threads" state from localStorage. */
 function getThreadListExpanded(): Record<string, boolean> {
   try {
@@ -268,6 +271,10 @@ export function ProjectTree() {
     }
   }, [wsDeleteDialog, deleteWorkspace]);
 
+  const handleStartInlineEdit = useCallback((threadId: string, title: string) => {
+    setInlineEdit({ threadId, title, originalTitle: title });
+  }, []);
+
   const scrollViewportRef = useRef<HTMLDivElement>(null);
 
   return (
@@ -282,7 +289,7 @@ export function ProjectTree() {
       </div>
 
       <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
-        <div className="px-1">
+        <div className="px-1" data-testid="thread-list">
           {workspaces.map((ws) => (
             <ProjectNode
               key={ws.id}
@@ -301,6 +308,7 @@ export function ProjectTree() {
               }
               onInlineEditCommit={handleInlineEditCommit}
               onInlineEditCancel={() => setInlineEdit(null)}
+              onStartInlineEdit={handleStartInlineEdit}
               onToggle={() => toggleExpand(ws.id)}
               onSelectThread={(id) => {
                 setActiveWorkspace(ws.id);
@@ -493,6 +501,8 @@ interface VirtualizedThreadListProps {
   onInlineEditChange: (title: string) => void;
   onInlineEditCommit: () => void;
   onInlineEditCancel: () => void;
+  /** Start an inline rename for the given thread. */
+  onStartInlineEdit: (threadId: string, title: string) => void;
   onSelectThread: (id: string) => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
 }
@@ -508,11 +518,51 @@ function VirtualizedThreadList({
   onInlineEditChange,
   onInlineEditCommit,
   onInlineEditCancel,
+  onStartInlineEdit,
   onSelectThread,
   onThreadContextMenu,
 }: VirtualizedThreadListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
+
+  // Per-thread timestamps and pending timeout IDs for the 250ms click-delay pattern.
+  const lastClickTimeRef = useRef<Map<string, number>>(new Map());
+  const clickTimeoutIdRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Clear all pending click timeouts on unmount to prevent stale navigation.
+  useEffect(() => {
+    return () => {
+      clickTimeoutIdRef.current.forEach((id) => clearTimeout(id));
+    };
+  }, []);
+
+  const handleThreadClick = useCallback((threadId: string, title: string) => {
+    // If already editing this thread, clicks are absorbed to avoid conflicting with the input.
+    if (inlineEdit?.threadId === threadId) return;
+
+    const now = Date.now();
+    const last = lastClickTimeRef.current.get(threadId) ?? 0;
+    const elapsed = now - last;
+
+    const existing = clickTimeoutIdRef.current.get(threadId);
+    if (existing) clearTimeout(existing);
+
+    if (elapsed < DOUBLE_CLICK_THRESHOLD_MS) {
+      // Double-click: cancel the pending navigation and enter inline rename.
+      lastClickTimeRef.current.delete(threadId);
+      clickTimeoutIdRef.current.delete(threadId);
+      onStartInlineEdit(threadId, title);
+    } else {
+      // Single click: delay navigation so a second click can intercept it.
+      lastClickTimeRef.current.set(threadId, now);
+      const id = setTimeout(() => {
+        onSelectThread(threadId);
+        lastClickTimeRef.current.delete(threadId);
+        clickTimeoutIdRef.current.delete(threadId);
+      }, DOUBLE_CLICK_THRESHOLD_MS);
+      clickTimeoutIdRef.current.set(threadId, id);
+    }
+  }, [inlineEdit, onSelectThread, onStartInlineEdit]);
 
   // Recompute offset from the outer scroll viewport after each layout pass.
   // Stays in sync when workspaces above expand/collapse.
@@ -546,6 +596,8 @@ function VirtualizedThreadList({
           <div
             key={thread.id}
             data-index={virtualItem.index}
+            data-testid="thread-item"
+            data-thread-id={thread.id}
             style={{
               position: "absolute",
               top: 0,
@@ -559,14 +611,14 @@ function VirtualizedThreadList({
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (isEditing) return;
+                  // Keyboard navigation fires immediately — no double-click semantics for keyboard users.
+                  // Enter/Space always navigates; rename must be triggered via mouse double-click.
                   if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
                     e.preventDefault();
                     onSelectThread(thread.id);
                   }
                 }}
-                onClick={() => {
-                  if (!isEditing) onSelectThread(thread.id);
-                }}
+                onClick={() => handleThreadClick(thread.id, thread.title)}
                 onContextMenu={(e) => onThreadContextMenu(e, thread)}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer transition-colors",
@@ -622,7 +674,7 @@ function VirtualizedThreadList({
                     className="flex-1 border-ring"
                   />
                 ) : (
-                  <span className="truncate flex-1 text-sm">
+                  <span className="truncate flex-1 text-sm" data-testid="thread-title">
                     {thread.title}
                   </span>
                 )}
@@ -661,6 +713,8 @@ interface ProjectNodeProps {
   onInlineEditChange: (title: string) => void;
   onInlineEditCommit: () => void;
   onInlineEditCancel: () => void;
+  /** Start an inline rename for the given thread. */
+  onStartInlineEdit: (threadId: string, title: string) => void;
   onToggle: () => void;
   onSelectThread: (id: string) => void;
   onCreateThread: () => void;
@@ -683,6 +737,7 @@ function ProjectNode({
   onInlineEditChange,
   onInlineEditCommit,
   onInlineEditCancel,
+  onStartInlineEdit,
   onToggle,
   onSelectThread,
   onCreateThread,
@@ -750,6 +805,7 @@ function ProjectNode({
               onInlineEditChange={onInlineEditChange}
               onInlineEditCommit={onInlineEditCommit}
               onInlineEditCancel={onInlineEditCancel}
+              onStartInlineEdit={onStartInlineEdit}
               onSelectThread={onSelectThread}
               onThreadContextMenu={onThreadContextMenu}
             />

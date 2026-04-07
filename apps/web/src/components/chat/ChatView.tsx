@@ -9,6 +9,7 @@ import { Composer } from "./Composer";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
 import { HeaderActions } from "./HeaderActions";
 import { CliErrorBanner, isCliError } from "./CliErrorBanner";
+import { ThreadTitleEditor } from "./ThreadTitleEditor";
 
 /** Prompt suggestions shown in the empty state. */
 const PROMPT_CHIPS = [
@@ -59,6 +60,8 @@ export function ChatView() {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const pendingNewThread = useWorkspaceStore((s) => s.pendingNewThread);
   const threads = useWorkspaceStore((s) => s.threads);
+  const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const loadMessages = useThreadStore((s) => s.loadMessages);
   const clearMessages = useThreadStore((s) => s.clearMessages);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
@@ -79,6 +82,11 @@ export function ChatView() {
   // Reset dismissed state when the active thread changes
   useEffect(() => {
     setDismissedError(null);
+  }, [activeThreadId]);
+
+  // Reset edit mode when the active thread changes
+  useEffect(() => {
+    setEditingThreadId(null);
   }, [activeThreadId]);
 
   const handleOpenSettings = useCallback(() => {
@@ -161,11 +169,25 @@ export function ChatView() {
   const showEmptyState = !hasMessages && !isAgentRunning;
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full flex-col bg-background" data-testid="chat-view">
       {/* Header */}
       <div className="flex h-11 items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">{activeThread.title}</span>
+          <div
+            data-testid="chat-header-title"
+            onDoubleClick={() => setEditingThreadId(activeThread.id)}
+            className="cursor-text"
+          >
+            <ThreadTitleEditor
+              title={activeThread.title}
+              isEditing={editingThreadId === activeThread.id}
+              onSave={(newTitle) => {
+                updateThreadTitle(activeThread.id, newTitle);
+                setEditingThreadId(null);
+              }}
+              onCancel={() => setEditingThreadId(null)}
+            />
+          </div>
           <Badge variant="secondary">
             {activeWorkspaceName}
           </Badge>
