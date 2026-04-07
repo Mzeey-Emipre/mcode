@@ -18,6 +18,8 @@ import type {
   GitCommit,
   PlanAnswer,
   InteractionMode,
+  PrDraft,
+  CreatePrResult,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -204,6 +206,23 @@ export interface McodeTransport {
   getCommitDiff(workspaceId: string, sha: string, filePath?: string, maxLines?: number): Promise<string>;
   /** Get the list of files changed in a specific git commit. */
   getCommitFiles(workspaceId: string, sha: string): Promise<string[]>;
+
+  // GitHub PR (advanced)
+  /** Push a branch to the remote. */
+  push(workspaceId: string, branch: string): Promise<{ success: boolean }>;
+
+  /** Generate an AI-powered PR draft from commit history and conversation context. */
+  generatePrDraft(workspaceId: string, threadId: string, baseBranch: string): Promise<PrDraft>;
+
+  /** Push the branch (if needed) and create a GitHub PR. */
+  createPr(
+    workspaceId: string,
+    threadId: string,
+    title: string,
+    body: string,
+    baseBranch: string,
+    isDraft: boolean,
+  ): Promise<CreatePrResult>;
 
   // Settings
   /** Fetch the full settings object from the server. */

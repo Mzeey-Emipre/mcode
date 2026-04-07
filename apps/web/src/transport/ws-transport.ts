@@ -13,7 +13,7 @@ import type {
   Settings,
   GitCommit,
 } from "./types";
-import type { PaginatedMessages, TurnSnapshot } from "@mcode/contracts";
+import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
@@ -406,6 +406,27 @@ export function createWsTransport(
       rpc<string>("git.commitDiff", { workspaceId, sha, filePath, maxLines }),
     getCommitFiles: (workspaceId, sha) =>
       rpc<string[]>("git.commitFiles", { workspaceId, sha }),
+
+    // GitHub PR (advanced)
+    push: (workspaceId, branch) =>
+      rpc<{ success: boolean }>("git.push", { workspaceId, branch }),
+
+    generatePrDraft: (workspaceId, threadId, baseBranch) =>
+      rpc<PrDraft>("github.generatePrDraft", {
+        workspaceId,
+        threadId,
+        baseBranch,
+      }),
+
+    createPr: (workspaceId, threadId, title, body, baseBranch, isDraft) =>
+      rpc<CreatePrResult>("github.createPr", {
+        workspaceId,
+        threadId,
+        title,
+        body,
+        baseBranch,
+        isDraft,
+      }),
 
     // Settings
     getSettings: () => rpc<Settings>("settings.get", {}),
