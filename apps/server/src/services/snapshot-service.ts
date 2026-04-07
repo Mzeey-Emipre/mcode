@@ -1,12 +1,15 @@
 /**
  * Snapshot service for capturing git working tree state.
- * Creates unreachable commits from the working tree and provides diff utilities
+ * Creates tree objects from the working tree and provides diff utilities
  * for comparing snapshots.
  */
 
 import { injectable } from "tsyringe";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
+import { unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 const execFile = promisify(execFileCb);
 
@@ -14,36 +17,64 @@ const execFile = promisify(execFileCb);
 @injectable()
 export class SnapshotService {
   /**
-   * Capture the current working tree state as an unreachable commit.
-   * Returns the SHA of the stash commit, or HEAD if the tree is clean.
+   * Capture the current working tree state as a tree object SHA.
+   *
+   * Uses a temporary git index (via GIT_INDEX_FILE) to stage all working tree
+   * changes including untracked files without touching the real index. Returns
+   * the tree SHA directly - no commit object is created, so no git identity
+   * configuration is required.
+   *
+   * Identical working trees produce identical tree SHAs (content-addressable),
+   * so consecutive calls on a clean tree return the same value.
+   *
+   * For unborn repos (no commits yet), read-tree is skipped and the tree is
+   * built from scratch. Throws on non-recoverable failures (disk full,
+   * permissions, not a git repo) so the caller can skip snapshot creation.
    */
   async captureRef(cwd: string): Promise<string> {
-    let stashSha = "";
-    try {
-      const { stdout: stashOut } = await execFile(
-        "git",
-        ["-C", cwd, "stash", "create", "-u"],
-        { timeout: 10_000 },
-      );
-      stashSha = stashOut.trim();
-    } catch {
-      // stash create can fail in bare repos or with corrupt index
-    }
-    if (stashSha) {
-      return stashSha;
-    }
+    const timeout = 10_000;
+    let tmpIndex = "";
 
-    // Working tree is clean; fall back to HEAD
-    const { stdout: headOut } = await execFile(
+    // Resolve the git dir so the temp index lives on the same volume (Windows compatibility)
+    const { stdout: gitDirOut } = await execFile(
       "git",
-      ["-C", cwd, "rev-parse", "HEAD"],
-      { timeout: 10_000 },
+      ["-C", cwd, "rev-parse", "--git-dir"],
+      { timeout },
     );
+    const gitDirRaw = gitDirOut.trim();
+    // rev-parse --git-dir may return a relative path on some git versions
+    const gitDir = gitDirRaw.startsWith("/") || /^[A-Za-z]:/.test(gitDirRaw)
+      ? gitDirRaw
+      : join(cwd, gitDirRaw);
 
-    return headOut.trim();
+    tmpIndex = `${gitDir}/mcode-index-${randomUUID()}`;
+    const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+
+    try {
+      // Seed from HEAD tree; swallow failure for unborn repos (no commits yet)
+      try {
+        await execFile("git", ["-C", cwd, "read-tree", "HEAD"], { timeout, env });
+      } catch {
+        // Unborn repo or corrupt HEAD - proceed with empty index
+      }
+
+      // Stage all working tree changes including untracked files
+      await execFile("git", ["-C", cwd, "add", "-A"], { timeout, env });
+
+      // Write the staged index as a tree object and return the SHA
+      const { stdout: treeOut } = await execFile(
+        "git",
+        ["-C", cwd, "write-tree"],
+        { timeout, env },
+      );
+      return treeOut.trim();
+    } finally {
+      // Fire-and-forget cleanup - no await to prevent hangs on locked files
+      unlink(tmpIndex).catch(() => {});
+    }
   }
 
-  /** Get list of files changed between two refs. */
+  /** Get list of files changed between two refs (tree or commit SHAs). */
   async getFilesChanged(cwd: string, refBefore: string, refAfter: string): Promise<string[]> {
     if (refBefore === refAfter) {
       return [];
@@ -68,7 +99,7 @@ export class SnapshotService {
   }
 
   /**
-   * Get a unified diff between two refs.
+   * Get a unified diff between two refs (tree or commit SHAs).
    * Optionally scoped to a single file path.
    * @param maxLines - If provided, truncate output to this many lines.
    */
@@ -79,7 +110,7 @@ export class SnapshotService {
     filePath?: string,
     maxLines?: number,
   ): Promise<string> {
-    const args = ["-C", cwd, "diff", "--find-renames", `${refBefore}..${refAfter}`];
+    const args = ["-C", cwd, "diff", "--find-renames", refBefore, refAfter];
 
     if (filePath) {
       args.push("--", filePath);
@@ -111,7 +142,7 @@ export class SnapshotService {
     }
   }
 
-  /** Get per-file line addition/deletion counts between two refs using git diff --numstat. */
+  /** Get per-file line addition/deletion counts between two refs (tree or commit SHAs). */
   async getDiffStats(
     cwd: string,
     refBefore: string,
