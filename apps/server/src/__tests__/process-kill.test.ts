@@ -9,15 +9,17 @@ vi.mock("child_process", () => ({
   execFile: vi.fn(),
 }));
 
-vi.mock("util", () => ({
-  promisify: () => mockExecFile,
-}));
+vi.mock("util", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("util")>();
+  return { ...actual, promisify: () => mockExecFile };
+});
 
 vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), debug: vi.fn() },
 }));
 
 import { killProcessTree } from "../services/process-kill";
+import { logger } from "@mcode/shared";
 
 describe("killProcessTree", () => {
   beforeEach(() => {
@@ -27,48 +29,70 @@ describe("killProcessTree", () => {
   it("calls taskkill with /T /F on Windows", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    try {
+      mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
 
-    await killProcessTree(1234);
+      await killProcessTree(1234);
 
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "taskkill",
-      ["/T", "/F", "/PID", "1234"],
-      expect.objectContaining({ timeout: expect.any(Number) }),
-    );
-    Object.defineProperty(process, "platform", { value: originalPlatform });
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "taskkill",
+        ["/T", "/F", "/PID", "1234"],
+        expect.objectContaining({ timeout: expect.any(Number) }),
+      );
+      expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+    }
   });
 
   it("does not throw when taskkill fails (process already exited)", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
-    mockExecFile.mockRejectedValue(new Error("process not found"));
+    try {
+      mockExecFile.mockRejectedValue(new Error("process not found"));
 
-    await expect(killProcessTree(1234)).resolves.toBeUndefined();
-    Object.defineProperty(process, "platform", { value: originalPlatform });
+      await expect(killProcessTree(1234)).resolves.toBeUndefined();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ pid: 1234 }),
+      );
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+    }
   });
 
   it("sends SIGKILL to process group on Unix", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "linux" });
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    try {
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
 
-    await killProcessTree(5678);
+      await killProcessTree(5678);
 
-    expect(killSpy).toHaveBeenCalledWith(-5678, "SIGKILL");
-    killSpy.mockRestore();
-    Object.defineProperty(process, "platform", { value: originalPlatform });
+      expect(killSpy).toHaveBeenCalledWith(-5678, "SIGKILL");
+      expect(mockExecFile).not.toHaveBeenCalled();
+      killSpy.mockRestore();
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+    }
   });
 
   it("does not throw when Unix kill fails (process already exited)", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "linux" });
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
-      throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
-    });
+    try {
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+        throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+      });
 
-    await expect(killProcessTree(5678)).resolves.toBeUndefined();
-    killSpy.mockRestore();
-    Object.defineProperty(process, "platform", { value: originalPlatform });
+      await expect(killProcessTree(5678)).resolves.toBeUndefined();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ pid: 5678 }),
+      );
+      killSpy.mockRestore();
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+    }
   });
 });
