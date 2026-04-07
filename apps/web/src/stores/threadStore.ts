@@ -9,7 +9,7 @@ import { LruCache } from "@/lib/lru-cache";
 import { useTaskStore, coerceTaskStatus } from "./taskStore";
 import type { TaskItem } from "./taskStore";
 import { useToastStore } from "./toastStore";
-import { findModelById, getContextWindow, DEFAULT_CONTEXT_WINDOW } from "@/lib/model-registry";
+import { findModelById, getContextWindow } from "@/lib/model-registry";
 
 export interface ThreadSettings {
   permissionMode: PermissionMode;
@@ -55,7 +55,7 @@ interface ThreadState {
   /** Monotonic counter incremented on each loadMessages call, used to discard stale loadOlderMessages responses. */
   loadEpochByThread: Record<string, number>;
   /** Last known token usage and context window size per thread, updated on turn completion. */
-  contextByThread: Record<string, { lastTokensIn: number; contextWindow: number }>;
+  contextByThread: Record<string, { lastTokensIn: number; contextWindow?: number; totalProcessedTokens?: number }>;
   /** Whether the SDK is currently compacting the context window for a thread. */
   isCompactingByThread: Record<string, boolean>;
   /** Transient fallback state per thread. Cleared when the user sends the next message. */
@@ -1055,17 +1055,24 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // session.compacting handler to keep lifecycle management in one place.
       if (tokensIn > 0 && !get().isCompactingByThread[threadId]) {
         const sdkContextWindow = params.contextWindow as number | undefined;
+        const totalProcessedTokens = params.totalProcessedTokens as number | undefined;
         // Prefer the actual model that ran (post-fallback) so context window
         // sizing reflects Haiku's limits rather than the requested Opus model.
         const fallback = get().lastFallbackByThread[threadId];
         const modelId = fallback?.actualModel
           ?? useWorkspaceStore.getState().threads.find((t) => t.id === threadId)?.model
           ?? "claude-sonnet-4-6";
-        const contextWindow = sdkContextWindow ?? getContextWindow(modelId);
+        // Prefer SDK value, fall back to static registry, then preserve last known value.
+        // Uses get() (not state) because this runs outside the set() callback.
+        const contextWindow = sdkContextWindow ?? getContextWindow(modelId) ?? get().contextByThread[threadId]?.contextWindow;
         set((state) => ({
           contextByThread: {
             ...state.contextByThread,
-            [threadId]: { lastTokensIn: tokensIn, contextWindow },
+            [threadId]: {
+              lastTokensIn: tokensIn,
+              contextWindow,
+              totalProcessedTokens,
+            },
           },
         }));
       }
@@ -1133,7 +1140,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             ...state.contextByThread,
             [threadId]: {
               lastTokensIn: tokensIn,
-              contextWindow: ctxWindow ?? state.contextByThread[threadId]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+              contextWindow: ctxWindow ?? state.contextByThread[threadId]?.contextWindow,
             },
           },
         }));
@@ -1181,7 +1188,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         const nextCtx = active
           ? {
               ...state.contextByThread,
-              [threadId]: { lastTokensIn: 0, contextWindow: state.contextByThread[threadId]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW },
+              [threadId]: { lastTokensIn: 0, contextWindow: state.contextByThread[threadId]?.contextWindow },
             }
           : state.contextByThread;
         return { isCompactingByThread: next, contextByThread: nextCtx };
