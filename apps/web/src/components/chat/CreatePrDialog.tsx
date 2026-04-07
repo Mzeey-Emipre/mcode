@@ -170,15 +170,27 @@ export function CreatePrDialog({
   const [isDraft, setIsDraft] = useState(false);
   const [descMode, setDescMode] = useState<"write" | "preview">("write");
 
-  // Default base branch to "main" or the first local branch that isn't current.
-  const localBranches = useMemo(
-    () => branches.filter((b) => b.type === "local" && b.name !== branch),
-    [branches, branch],
-  );
+  // Include local + remote branches as base branch candidates.
+  // Remote branches have their "remotename/" prefix stripped so the value sent
+  // to GitHub is a plain branch name (e.g. "main", not "origin/main").
+  // Duplicates (same clean name from both local and remote) are deduplicated.
+  const baseBranches = useMemo(() => {
+    const seen = new Set<string>();
+    const result: GitBranchType[] = [];
+    for (const b of branches) {
+      if (b.type === "worktree") continue;
+      const name = b.type === "remote" ? b.name.replace(/^[^/]+\//, "") : b.name;
+      if (name === branch || seen.has(name)) continue;
+      seen.add(name);
+      result.push({ ...b, name });
+    }
+    return result;
+  }, [branches, branch]);
+
   const defaultBase =
-    localBranches.find((b) => b.name === "main") ??
-    localBranches.find((b) => b.name === "master") ??
-    localBranches[0];
+    baseBranches.find((b) => b.name === "main") ??
+    baseBranches.find((b) => b.name === "master") ??
+    baseBranches[0];
 
   const [baseBranch, setBaseBranch] = useState<string>(
     defaultBase?.name ?? "main",
@@ -186,10 +198,10 @@ export function CreatePrDialog({
 
   // Keep baseBranch in sync when branches load and current value becomes unavailable.
   useEffect(() => {
-    if (localBranches.length > 0 && !localBranches.some((b) => b.name === baseBranch)) {
-      setBaseBranch(localBranches[0].name);
+    if (baseBranches.length > 0 && !baseBranches.some((b) => b.name === baseBranch)) {
+      setBaseBranch(baseBranches[0].name);
     }
-  }, [localBranches, baseBranch]);
+  }, [baseBranches, baseBranch]);
 
   // Load branches when the dialog opens.
   useEffect(() => {
@@ -311,7 +323,7 @@ export function CreatePrDialog({
                 Base branch
               </label>
               <BaseBranchSelect
-                branches={localBranches}
+                branches={baseBranches}
                 value={baseBranch}
                 onChange={setBaseBranch}
                 disabled={isDisabled}
