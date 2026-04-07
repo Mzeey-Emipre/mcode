@@ -7,7 +7,7 @@ import { AttachmentMetaSchema } from "../models/attachment.js";
 import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { GitBranchSchema, WorktreeSchema } from "../git.js";
 import { GitCommitSchema } from "../models/git-commit.js";
-import { PrInfoSchema, PrDetailSchema } from "../github.js";
+import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
@@ -230,6 +230,32 @@ export const WS_METHODS = lazySchema(() => ({
   "github.prByUrl": {
     params: z.object({ url: z.string() }),
     result: PrDetailSchema.nullable(),
+  },
+  "git.push": {
+    params: z.object({
+      workspaceId: z.string(),
+      branch: z.string(),
+    }),
+    result: z.object({ success: z.boolean() }),
+  },
+  "github.generatePrDraft": {
+    params: z.object({
+      workspaceId: z.string(),
+      threadId: z.string(),
+      baseBranch: z.string(),
+    }),
+    result: PrDraftSchema,
+  },
+  "github.createPr": {
+    params: z.object({
+      workspaceId: z.string(),
+      threadId: z.string(),
+      title: z.string(),
+      body: z.string(),
+      baseBranch: z.string(),
+      isDraft: z.boolean().default(false),
+    }),
+    result: CreatePrResultSchema,
   },
   "config.discover": {
     params: z.object({ workspacePath: z.string() }),
