@@ -12,6 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { SegControl } from "@/components/settings/SegControl";
+import { MarkdownContent } from "./MarkdownContent";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -53,6 +55,7 @@ export function CreatePrDialog({
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [isDraft, setIsDraft] = useState(false);
+  const [descMode, setDescMode] = useState<"write" | "preview">("write");
 
   // Default base branch to "main" or the first local branch that isn't current.
   const localBranches = useMemo(
@@ -92,6 +95,7 @@ export function CreatePrDialog({
       setBody("");
       setIsDraft(false);
       setError(null);
+      setDescMode("write");
       return;
     }
     let cancelled = false;
@@ -254,27 +258,51 @@ export function CreatePrDialog({
 
             {/* Description */}
             <div className="flex flex-col gap-1">
-              <label
-                htmlFor="pr-body"
-                className="text-xs text-muted-foreground"
-              >
-                Description
-              </label>
-              <textarea
-                id="pr-body"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={12}
-                disabled={isDisabled}
-                placeholder="PR description"
-                className={cn(
-                  "flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-xs transition-colors",
-                  "font-mono resize-y",
-                  "placeholder:text-muted-foreground",
-                  "focus-visible:border-ring focus-visible:outline-none",
-                  "disabled:cursor-not-allowed disabled:opacity-50",
-                )}
-              />
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor="pr-body"
+                  className="text-xs text-muted-foreground"
+                >
+                  Description
+                </label>
+                <SegControl
+                  options={[
+                    { value: "write", label: "Write" },
+                    { value: "preview", label: "Preview" },
+                  ]}
+                  value={descMode}
+                  onChange={(v) => setDescMode(v as "write" | "preview")}
+                />
+              </div>
+              {descMode === "write" ? (
+                <textarea
+                  id="pr-body"
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  rows={12}
+                  disabled={isDisabled}
+                  placeholder="PR description"
+                  className={cn(
+                    "flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-xs transition-colors",
+                    "font-mono resize-y",
+                    "placeholder:text-muted-foreground",
+                    "focus-visible:border-ring focus-visible:outline-none",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                />
+              ) : (
+                <div
+                  className={cn(
+                    "min-h-48 overflow-y-auto rounded-lg border border-input bg-background px-3 py-2 text-sm",
+                  )}
+                >
+                  {body.trim() ? (
+                    <MarkdownContent content={body} />
+                  ) : (
+                    <span className="text-muted-foreground italic">Nothing to preview.</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
