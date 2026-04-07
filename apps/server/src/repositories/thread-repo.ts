@@ -31,6 +31,8 @@ interface ThreadRow {
   reasoning_level: string | null;
   interaction_mode: string | null;
   permission_mode: string | null;
+  parent_thread_id: string | null;
+  forked_from_message_id: string | null;
 }
 
 function rowToThread(row: ThreadRow): Thread {
@@ -57,11 +59,13 @@ function rowToThread(row: ThreadRow): Thread {
     reasoning_level: (row.reasoning_level ?? null) as ReasoningLevel | null,
     interaction_mode: (row.interaction_mode ?? null) as InteractionMode | null,
     permission_mode: (row.permission_mode ?? null) as PermissionMode | null,
+    parent_thread_id: row.parent_thread_id,
+    forked_from_message_id: row.forked_from_message_id,
   };
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode";
+  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, parent_thread_id, forked_from_message_id";
 
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
@@ -76,6 +80,10 @@ export class ThreadRepo {
     branch: string,
     worktreeManaged = true,
     provider = "claude",
+    lineage?: {
+      parentThreadId: string;
+      forkedFromMessageId: string;
+    },
   ): Thread {
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -83,7 +91,7 @@ export class ThreadRepo {
 
     this.db
       .prepare(
-        "INSERT INTO threads (id, workspace_id, title, status, mode, branch, worktree_managed, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO threads (id, workspace_id, title, status, mode, branch, worktree_managed, provider, parent_thread_id, forked_from_message_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id,
@@ -94,6 +102,8 @@ export class ThreadRepo {
         branch,
         managedInt,
         provider,
+        lineage?.parentThreadId ?? null,
+        lineage?.forkedFromMessageId ?? null,
         now,
         now,
       );
@@ -121,6 +131,8 @@ export class ThreadRepo {
       reasoning_level: null,
       interaction_mode: null,
       permission_mode: null,
+      parent_thread_id: lineage?.parentThreadId ?? null,
+      forked_from_message_id: lineage?.forkedFromMessageId ?? null,
     };
   }
 
@@ -307,6 +319,15 @@ export class ThreadRepo {
       .prepare("UPDATE threads SET title = ?, updated_at = ? WHERE id = ?")
       .run(title, now, id);
 
+    return result.changes > 0;
+  }
+
+  /** Set lineage fields on a thread. Used when thread creation is handled by ThreadService. */
+  updateLineage(id: string, parentThreadId: string, forkedFromMessageId: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare("UPDATE threads SET parent_thread_id = ?, forked_from_message_id = ?, updated_at = ? WHERE id = ?")
+      .run(parentThreadId, forkedFromMessageId, now, id);
     return result.changes > 0;
   }
 }
