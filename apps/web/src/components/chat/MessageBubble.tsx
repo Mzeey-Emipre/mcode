@@ -1,6 +1,6 @@
 import { memo, useMemo, useState, useCallback, useRef, useEffect } from "react";
 import type { Message } from "@/transport";
-import { FileText, File, ImageIcon, RotateCcw, Copy, Check } from "lucide-react";
+import { FileText, File, ImageIcon, RotateCcw, Copy, Check, GitBranch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarkdownContent } from "./MarkdownContent";
 import { stripInjectedFiles } from "@/lib/file-tags";
@@ -11,6 +11,8 @@ import { HandoffCard } from "./HandoffCard";
 interface MessageBubbleProps {
   /** The message object to render. */
   message: Message;
+  /** Called when the user clicks the branch icon on this message. */
+  onBranch?: (messageId: string) => void;
 }
 
 /** Maps a MIME type to a file extension for attachment URLs. */
@@ -88,8 +90,23 @@ function CopyButton({ content }: { content: string }) {
   );
 }
 
+/** Branch button visible on hover, matching CopyButton style. */
+function BranchButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover/msg:opacity-100"
+      aria-label="Branch from this message"
+      title="Branch from here"
+    >
+      <GitBranch size={14} />
+    </button>
+  );
+}
+
 /** Renders a single chat message (system, user, or assistant). Memoized to prevent re-renders when the message ref is unchanged. */
-export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message, onBranch }: MessageBubbleProps) {
   const formattedTime = useMemo(
     () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     [message.timestamp],
@@ -170,6 +187,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
           )}
 
           <div className="flex items-center justify-end gap-1.5 pr-1">
+            {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
             {textContent.trim() && <CopyButton content={textContent} />}
             <span className="text-[11px] text-muted-foreground/80">{formattedTime}</span>
           </div>
@@ -185,6 +203,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
         <MarkdownContent content={message.content} isStreaming={false} />
       </div>
       <div className="flex items-center gap-3 px-1">
+        {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
         <CopyButton content={textContent} />
         {message.tokens_used != null && (
           <span className="text-xs text-muted-foreground/70 transition-opacity group-hover/msg:text-muted-foreground">

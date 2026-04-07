@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useLayoutEffect, useCallback, useState, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
@@ -79,6 +79,47 @@ interface InlineEditState {
   threadId: string;
   title: string;
   originalTitle: string;
+}
+
+/** A thread with its nesting depth in the sidebar tree. */
+interface ThreadTreeItem {
+  thread: Thread;
+  depth: number;
+}
+
+/** Builds a depth-first flattened tree from a flat list of threads, ordered by parent-child relationships. */
+function buildThreadTree(threads: Thread[]): ThreadTreeItem[] {
+  const childrenByParent = new Map<string, Thread[]>();
+  const roots: Thread[] = [];
+  const threadIds = new Set(threads.map((t) => t.id));
+
+  for (const thread of threads) {
+    if (!thread.parent_thread_id || !threadIds.has(thread.parent_thread_id)) {
+      // Root thread, or orphan whose parent isn't in this list
+      roots.push(thread);
+    } else {
+      const siblings = childrenByParent.get(thread.parent_thread_id) ?? [];
+      siblings.push(thread);
+      childrenByParent.set(thread.parent_thread_id, siblings);
+    }
+  }
+
+  const result: ThreadTreeItem[] = [];
+  function walk(thread: Thread, depth: number) {
+    result.push({ thread, depth });
+    const children = childrenByParent.get(thread.id);
+    if (children) {
+      for (const child of children) {
+        walk(child, depth + 1);
+      }
+    }
+  }
+
+  for (const root of roots) {
+    walk(root, 0);
+  }
+
+  return result;
 }
 
 /** Sidebar tree listing workspaces and their threads with CRUD actions. */
@@ -550,6 +591,9 @@ function VirtualizedThreadList({
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
 
+  // Build nested tree from flat thread list
+  const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
+
   // Per-thread timestamps and pending timeout IDs for the 250ms click-delay pattern.
   const lastClickTimeRef = useRef<Map<string, number>>(new Map());
   const clickTimeoutIdRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -598,7 +642,7 @@ function VirtualizedThreadList({
     });
   });
 
-  const visibleCount = Math.min(threads.length, maxVisible);
+  const visibleCount = Math.min(treeItems.length, maxVisible);
 
   const virtualizer = useVirtualizer({
     count: visibleCount,
@@ -614,7 +658,7 @@ function VirtualizedThreadList({
       style={{ height: virtualizer.getTotalSize(), position: "relative" }}
     >
       {virtualizer.getVirtualItems().map((virtualItem) => {
-        const thread = threads[virtualItem.index];
+        const { thread, depth } = treeItems[virtualItem.index];
         const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
         const isEditing = inlineEdit?.threadId === thread.id;
         return (
@@ -646,11 +690,12 @@ function VirtualizedThreadList({
                 onClick={() => handleThreadClick(thread.id, thread.title)}
                 onContextMenu={(e) => onThreadContextMenu(e, thread)}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer transition-colors",
+                  "flex items-center gap-2 rounded-md pr-2 py-1 text-sm cursor-pointer transition-colors",
                   activeThreadId === thread.id
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                 )}
+                style={{ paddingLeft: `${8 + depth * 16}px` }}
               >
                 {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
@@ -699,12 +744,7 @@ function VirtualizedThreadList({
                     className="flex-1 border-ring"
                   />
                 ) : (
-                  <span className="truncate flex-1 text-sm flex items-center gap-1" data-testid="thread-title">
-                    {thread.parent_thread_id && (
-                      <span title="Branched thread" className="shrink-0 inline-flex">
-                        <GitBranch size={11} className="text-muted-foreground/60" />
-                      </span>
-                    )}
+                  <span className="truncate flex-1 text-sm" data-testid="thread-title">
                     {thread.title}
                   </span>
                 )}

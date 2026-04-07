@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
+import { BranchThreadDialog } from "./BranchThreadDialog";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
 import { HeaderActions } from "./HeaderActions";
 import { CliErrorBanner, isCliError } from "./CliErrorBanner";
@@ -64,6 +65,8 @@ export function ChatView() {
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [branchDialogOpen, setBranchDialogOpen] = useState(false);
+  const [branchFromMessageId, setBranchFromMessageId] = useState<string | undefined>(undefined);
   const loadMessages = useThreadStore((s) => s.loadMessages);
   const clearMessages = useThreadStore((s) => s.clearMessages);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
@@ -93,6 +96,12 @@ export function ChatView() {
 
   const handleOpenSettings = useCallback(() => {
     window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: { section: "model" } }));
+  }, []);
+
+  /** Opens the branch dialog targeting a specific message. */
+  const handleBranch = useCallback((messageId: string) => {
+    setBranchFromMessageId(messageId);
+    setBranchDialogOpen(true);
   }, []);
 
   const showCliError =
@@ -218,7 +227,7 @@ export function ChatView() {
             <EmptyState onPromptSelect={setPendingPrefill} />
           </div>
         ) : (
-          <MessageList />
+          <MessageList onBranch={handleBranch} />
         )}
       </div>
 
@@ -236,6 +245,14 @@ export function ChatView() {
 
       {/* Composer */}
       <Composer threadId={activeThread.id} workspaceId={activeWorkspaceId ?? undefined} />
+
+      {/* Branch dialog triggered from per-message branch icons */}
+      <BranchThreadDialog
+        thread={activeThread}
+        open={branchDialogOpen}
+        onOpenChange={setBranchDialogOpen}
+        forkedFromMessageId={branchFromMessageId}
+      />
     </div>
   );
 }
