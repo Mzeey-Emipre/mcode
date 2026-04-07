@@ -280,6 +280,8 @@ async function dispatch(
         params.reasoningLevel,
         params.provider,
         params.interactionMode,
+        params.parentThreadId,
+        params.forkedFromMessageId,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);
