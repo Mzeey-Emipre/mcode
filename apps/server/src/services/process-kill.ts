@@ -20,16 +20,16 @@ const TASKKILL_TIMEOUT_MS = 5_000;
  * Best-effort: never throws. The process may already be dead.
  */
 export async function killProcessTree(pid: number): Promise<void> {
+  // Guard against invalid PIDs on all platforms: taskkill with PID 0 targets the
+  // System Idle Process on Windows; process.kill(0) sends to the server's own group.
+  if (pid <= 0) return;
   try {
     if (process.platform === "win32") {
       await execFile("taskkill", ["/T", "/F", "/PID", String(pid)], {
         timeout: TASKKILL_TIMEOUT_MS,
       });
     } else {
-      // Guard against pid <= 0: process.kill(0) would kill the server's own group.
-      if (pid > 0) {
-        process.kill(-pid, "SIGKILL");
-      }
+      process.kill(-pid, "SIGKILL");
     }
   } catch (err) {
     logger.warn("killProcessTree: process may already be dead", {
