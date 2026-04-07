@@ -64,15 +64,14 @@ describe("killProcessTree", () => {
   it("sends SIGKILL to process group on Unix", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "linux" });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
     try {
-      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-
       await killProcessTree(5678);
 
       expect(killSpy).toHaveBeenCalledWith(-5678, "SIGKILL");
       expect(mockExecFile).not.toHaveBeenCalled();
-      killSpy.mockRestore();
     } finally {
+      killSpy.mockRestore();
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
   });
@@ -80,18 +79,17 @@ describe("killProcessTree", () => {
   it("does not throw when Unix kill fails (process already exited)", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "linux" });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+    });
     try {
-      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
-        throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
-      });
-
       await expect(killProcessTree(5678)).resolves.toBeUndefined();
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({ pid: 5678 }),
       );
-      killSpy.mockRestore();
     } finally {
+      killSpy.mockRestore();
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
   });
@@ -99,14 +97,39 @@ describe("killProcessTree", () => {
   it("does nothing when pid is 0 on Unix", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "linux" });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
     try {
-      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-
       await killProcessTree(0);
 
       expect(killSpy).not.toHaveBeenCalled();
-      killSpy.mockRestore();
     } finally {
+      killSpy.mockRestore();
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+    }
+  });
+
+  it("does nothing when pid is 0 on Windows", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      await killProcessTree(0);
+
+      expect(mockExecFile).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+    }
+  });
+
+  it("does nothing when pid is negative on Unix", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "linux" });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    try {
+      await killProcessTree(-1);
+
+      expect(killSpy).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
   });
