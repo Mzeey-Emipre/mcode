@@ -537,9 +537,12 @@ export class AgentService {
           // reloads to resurrect the wrong (near-100%) context fill.
           if (event.tokensIn > 0 && !this.compactionInProgressByThread.has(event.threadId)) {
             try {
-              const ctxWindow = event.contextWindow ?? this.lastContextWindowByThread.get(event.threadId);
-              if (ctxWindow) {
-                this.threadRepo.updateContextUsage(event.threadId, event.tokensIn, ctxWindow);
+              // Only persist when the SDK explicitly reports a context window.
+              // Avoid falling back to a cached value: it may be stale data written
+              // by the old hardcoded DEFAULT_CONTEXT_WINDOW for providers (e.g.
+              // Codex) that do not expose a context window at all.
+              if (event.contextWindow) {
+                this.threadRepo.updateContextUsage(event.threadId, event.tokensIn, event.contextWindow);
               }
             } catch (err) {
               logger.warn("Context usage not persisted", {

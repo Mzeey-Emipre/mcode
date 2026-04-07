@@ -249,4 +249,15 @@ function runMigrations(db: Database.Database): void {
       db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(12);
     })();
   }
+
+  if (currentVersion < 13) {
+    // Clear context_window for non-Claude threads. Earlier code wrote a
+    // hardcoded DEFAULT_CONTEXT_WINDOW (200 000) for all providers, including
+    // Codex which does not expose a context window. Those stale rows cause the
+    // context tracker ring to render with an incorrect denominator.
+    db.prepare(
+      "UPDATE threads SET context_window = NULL WHERE provider != 'claude'",
+    ).run();
+    db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(13);
+  }
 }
