@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
@@ -116,50 +117,47 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
   );
 
   return (
-    <div className="my-2 select-none">
-      {/* Horizontal-rule separator with inline count — no card wrapper */}
-      <div className="flex items-center gap-2">
-        <div className="h-px w-3 shrink-0 bg-border/25" />
-
+    <div className="my-1 border-l-2 border-border/30 transition-colors hover:border-border/50">
+      {/* Header row — mirrors StreamingCard's trigger layout */}
+      <div className="flex items-center justify-between pl-3 pr-1 py-1.5">
         <Button
           variant="ghost"
           size="xs"
           onClick={handleToggle}
           aria-expanded={expanded}
-          className="h-auto gap-1 px-0 py-0 font-mono text-[11px] font-normal tracking-tight text-muted-foreground/40 hover:bg-transparent hover:text-muted-foreground/70"
+          className="h-auto gap-1.5 px-0 py-0 text-xs text-muted-foreground/50 hover:bg-transparent hover:text-foreground/70"
         >
-          {/* Unicode triangle: no icon dependency, pure terminal aesthetic */}
-          <span className="text-[9px]">{expanded ? "▾" : "▸"}</span>
+          <ChevronRight
+            size={11}
+            className={`shrink-0 text-muted-foreground/30 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+          />
           <span className="tabular-nums">{fileCount}</span>
-          <span>changed</span>
+          <span>file{fileCount !== 1 ? "s" : ""} changed</span>
         </Button>
-
-        <div className="h-px flex-1 bg-border/25" />
-
         <Button
           variant="ghost"
           size="xs"
           onClick={handleViewAllDiffs}
-          className="h-auto px-0 py-0 font-mono text-[10px] font-normal text-muted-foreground/25 hover:bg-transparent hover:text-muted-foreground/55"
+          className="h-auto px-1 py-0 font-mono text-[11px] text-muted-foreground/35 hover:bg-transparent hover:text-muted-foreground/65"
         >
           diff ↗
         </Button>
       </div>
 
-      {/* File list — rendered below the rule when expanded */}
+      {/* File list — only rendered when expanded */}
       {expanded && (
-        <div className="ml-5 mt-0.5">
+        <div className="pb-1.5 pl-3 pr-1">
           {displayedFiles.map((filePath) => {
             const name = fileName(filePath);
             const dir = parentDir(filePath);
             return (
               <div
                 key={filePath}
-                className="group flex items-baseline gap-2 border-l border-border/20 py-[3px] pl-2.5 text-[11px] transition-colors hover:border-border/50"
+                className="group -mx-1.5 flex items-baseline gap-1.5 rounded-md px-1.5 py-0.5 text-xs transition-colors hover:bg-muted/20"
               >
-                <span className="shrink-0 font-mono font-medium text-foreground/60">{name}</span>
+                <span className="shrink-0 font-medium text-foreground/60">{name}</span>
                 {dir && (
-                  <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/25">
+                  <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/30">
                     {dir}
                   </span>
                 )}
@@ -167,7 +165,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
                   variant="ghost"
                   size="xs"
                   onClick={() => handleFileDiff(filePath)}
-                  className="ml-auto h-auto shrink-0 px-0 py-0 font-mono text-[10px] font-normal text-muted-foreground/20 opacity-0 hover:bg-transparent hover:text-muted-foreground/60 focus-visible:opacity-100 group-hover:opacity-100"
+                  className="ml-auto h-auto shrink-0 px-1 py-0 font-mono text-[10px] text-muted-foreground/40 opacity-0 hover:bg-transparent hover:text-muted-foreground/70 focus-visible:opacity-100 group-hover:opacity-100"
                 >
                   diff
                 </Button>
@@ -179,7 +177,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
               variant="ghost"
               size="xs"
               onClick={handleViewAllDiffs}
-              className="mt-0.5 h-auto border-l border-border/20 px-0 py-[3px] pl-2.5 font-mono text-[10px] font-normal text-muted-foreground/25 hover:bg-transparent hover:text-muted-foreground/55"
+              className="mt-0.5 h-auto px-1 py-0.5 font-mono text-[10px] text-muted-foreground/30 hover:bg-transparent hover:text-muted-foreground/60"
             >
               +{hiddenCount} more → view all
             </Button>
