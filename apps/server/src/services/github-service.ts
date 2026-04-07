@@ -110,6 +110,65 @@ export class GithubService {
     });
   }
 
+  /** Input for creating a new GitHub pull request. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // (interface kept inline to avoid extra exports)
+
+  /**
+   * Create a GitHub pull request via the gh CLI.
+   * Returns the new PR's number and URL.
+   */
+  createPr(input: {
+    cwd: string;
+    title: string;
+    body: string;
+    baseBranch: string;
+    isDraft: boolean;
+  }): Promise<{ number: number; url: string }> {
+    const args = [
+      "pr",
+      "create",
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+      "--base",
+      input.baseBranch,
+      "--json",
+      "number,url",
+    ];
+    if (input.isDraft) {
+      args.push("--draft");
+    }
+
+    return new Promise((resolve, reject) => {
+      execFile(
+        "gh",
+        args,
+        { cwd: input.cwd, encoding: "utf-8", timeout: 30_000 },
+        (error, stdout) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(stdout);
+          } catch {
+            reject(new Error("Invalid JSON response from gh CLI"));
+            return;
+          }
+          const data = parsed as Record<string, unknown>;
+          if (typeof data.number !== "number" || typeof data.url !== "string") {
+            reject(new Error("Invalid gh response: missing or malformed number/url"));
+            return;
+          }
+          resolve({ number: data.number, url: data.url });
+        },
+      );
+    });
+  }
+
   /** Look up a PR by its GitHub URL. */
   getPrByUrl(url: string): Promise<PrDetail | null> {
     const match = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
