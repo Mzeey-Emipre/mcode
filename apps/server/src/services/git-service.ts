@@ -146,7 +146,7 @@ export class GitService {
     try {
       await execFile(
         "git",
-        ["-C", repoPath, "worktree", "remove", wtPath, "--force"],
+        ["-C", repoPath, "worktree", "remove", wtPath, "--force", "--force"],
         { timeout: 30_000 },
       );
     } catch (err) {
@@ -174,7 +174,7 @@ export class GitService {
         { wtPath },
       );
       try {
-        await rm(wtPath, { recursive: true, force: true });
+        await rm(wtPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       } catch (err) {
         logger.error("Fallback fs.rm failed", {
           wtPath,

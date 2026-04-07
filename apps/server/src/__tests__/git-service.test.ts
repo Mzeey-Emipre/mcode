@@ -64,6 +64,7 @@ describe("GitService.removeWorktree", () => {
         "remove",
         expect.stringContaining("my-worktree"),
         "--force",
+        "--force",
       ],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
@@ -87,7 +88,7 @@ describe("GitService.removeWorktree", () => {
 
     expect(mockRm).toHaveBeenCalledWith(
       expect.stringContaining("my-worktree"),
-      { recursive: true, force: true },
+      { recursive: true, force: true, maxRetries: 5, retryDelay: 200 },
     );
     expect(result).toBe(true);
     expect(mockLogger.warn).toHaveBeenCalled();
@@ -119,5 +120,33 @@ describe("GitService.removeWorktree", () => {
 
     expect(result).toBe(true);
     expect(mockLogger.warn).toHaveBeenCalled();
+  });
+
+  it("passes maxRetries and retryDelay to fs.rm", async () => {
+    mockExecFile.mockRejectedValueOnce(new Error("git failed")); // worktree remove
+    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // prune
+    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
+    mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    mockRm.mockResolvedValue(undefined);
+
+    await gitService.removeWorktree("/repo", "my-worktree");
+
+    expect(mockRm).toHaveBeenCalledWith(
+      expect.stringContaining("my-worktree"),
+      { recursive: true, force: true, maxRetries: 5, retryDelay: 200 },
+    );
+  });
+
+  it("uses double --force for git worktree remove", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    await gitService.removeWorktree("/repo", "my-worktree", "feat/test");
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/repo", "worktree", "remove", expect.stringContaining("my-worktree"), "--force", "--force"],
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
   });
 });
