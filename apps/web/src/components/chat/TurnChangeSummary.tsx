@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, FileText, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
@@ -117,73 +117,80 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
   );
 
   return (
-    <div className="my-1 border-l-2 border-border/30 transition-colors hover:border-border/50">
-      {/* Header row — mirrors StreamingCard's trigger layout */}
-      <div className="flex items-center justify-between pl-3 pr-1 py-1.5">
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={handleToggle}
-          aria-expanded={expanded}
-          className="h-auto gap-1.5 px-0 py-0 text-xs text-muted-foreground/50 hover:bg-transparent hover:text-foreground/70"
-        >
-          <ChevronRight
-            size={11}
-            className={`shrink-0 text-muted-foreground/30 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
-          />
-          <span className="tabular-nums">{fileCount}</span>
-          <span>file{fileCount !== 1 ? "s" : ""} changed</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={handleViewAllDiffs}
-          className="h-auto px-1 py-0 font-mono text-[11px] text-muted-foreground/35 hover:bg-transparent hover:text-muted-foreground/65"
-        >
-          diff ↗
-        </Button>
-      </div>
-
-      {/* File list — only rendered when expanded */}
-      {expanded && (
-        <div className="pb-1.5 pl-3 pr-1">
-          {displayedFiles.map((filePath) => {
-            const name = fileName(filePath);
-            const dir = parentDir(filePath);
-            return (
-              <div
-                key={filePath}
-                className="group -mx-1.5 flex items-baseline gap-1.5 rounded-md px-1.5 py-0.5 text-xs transition-colors hover:bg-muted/20"
-              >
-                <span className="shrink-0 font-medium text-foreground/60">{name}</span>
-                {dir && (
-                  <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/30">
-                    {dir}
-                  </span>
-                )}
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => handleFileDiff(filePath)}
-                  className="ml-auto h-auto shrink-0 px-1 py-0 font-mono text-[10px] text-muted-foreground/40 opacity-0 hover:bg-transparent hover:text-muted-foreground/70 focus-visible:opacity-100 group-hover:opacity-100"
-                >
-                  diff
-                </Button>
-              </div>
-            );
-          })}
-          {hiddenCount > 0 && (
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={handleViewAllDiffs}
-              className="mt-0.5 h-auto px-1 py-0.5 font-mono text-[10px] text-muted-foreground/30 hover:bg-transparent hover:text-muted-foreground/60"
-            >
-              +{hiddenCount} more → view all
-            </Button>
-          )}
+    <div className="my-1">
+      <div className="rounded-lg border border-border/40 bg-muted/30 overflow-hidden">
+        {/* Header row: toggle and "View All Diffs" are siblings to avoid nested buttons */}
+        <div className="flex w-full items-center justify-between px-3.5 py-2 text-xs text-muted-foreground">
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={handleToggle}
+            aria-expanded={expanded}
+            className="gap-2 px-0 hover:bg-transparent text-muted-foreground hover:text-foreground/80"
+          >
+            <FileText size={13} className="shrink-0 text-muted-foreground/60" />
+            <span>
+              {fileCount} file{fileCount !== 1 ? "s" : ""} changed
+            </span>
+            <ChevronRight
+              size={12}
+              className={`shrink-0 text-muted-foreground/40 transition-transform ${expanded ? "rotate-90" : ""}`}
+            />
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={handleViewAllDiffs}
+            className="gap-1 text-muted-foreground/70"
+          >
+            <ExternalLink size={10} />
+            View All Diffs
+          </Button>
         </div>
-      )}
+
+        {/* File list — only rendered when expanded */}
+        {expanded && (
+          <div className="border-t border-border/30 px-1 py-1">
+            {displayedFiles.map((filePath) => {
+              const name = fileName(filePath);
+              const dir = parentDir(filePath);
+              return (
+                <div
+                  key={filePath}
+                  className="flex items-center justify-between rounded-md px-2.5 py-1 text-xs hover:bg-muted/40 transition-colors group"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+                    <span className="font-medium text-foreground/80 truncate">{name}</span>
+                    {dir && (
+                      <span className="text-muted-foreground/40 truncate font-mono text-xs">
+                        {dir}
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => handleFileDiff(filePath)}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground/60 hover:text-foreground/80"
+                  >
+                    Diff
+                  </Button>
+                </div>
+              );
+            })}
+            {hiddenCount > 0 && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={handleViewAllDiffs}
+                className="w-full justify-center text-muted-foreground/60 hover:text-foreground/80 mt-0.5"
+              >
+                +{hiddenCount} more file{hiddenCount !== 1 ? "s" : ""} — View All Diffs
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
