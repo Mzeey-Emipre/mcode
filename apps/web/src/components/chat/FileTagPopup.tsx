@@ -1,5 +1,5 @@
 // apps/web/src/components/chat/FileTagPopup.tsx
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
 import { getFileIcon, getFileIconColor } from "@/lib/file-icons";
 
@@ -34,56 +34,30 @@ export function useFileTagPopup({
   onDismiss,
 }: FileTagPopupOptions) {
   const listRef = useRef<HTMLDivElement>(null);
-  const selectedIndexRef = useRef(0);
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   // Reset selection when files or query change
   useEffect(() => {
-    selectedIndexRef.current = 0;
-    if (listRef.current) {
-      const items = listRef.current.querySelectorAll("[data-file-item]");
-      items.forEach((item, i) => {
-        const el = item as HTMLElement;
-        el.dataset.selected = i === 0 ? "true" : "false";
-        el.setAttribute("aria-selected", i === 0 ? "true" : "false");
-      });
-    }
+    setSelectedIndex(0);
   }, [files, query]);
 
-  const updateSelection = useCallback((newIndex: number) => {
-    if (!listRef.current) return;
-    const items = listRef.current.querySelectorAll("[data-file-item]");
-    if (items.length === 0) return;
-    const clamped = Math.max(0, Math.min(newIndex, items.length - 1));
-    selectedIndexRef.current = clamped;
-
-    items.forEach((item, i) => {
-      const el = item as HTMLElement;
-      el.dataset.selected = i === clamped ? "true" : "false";
-      el.setAttribute("aria-selected", i === clamped ? "true" : "false");
-    });
-
-    // Scroll into view
-    items[clamped]?.scrollIntoView({ block: "nearest" });
-  }, []);
-
-  // Keyboard handler - called from Composer's onKeyDown
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent): boolean => {
       if (!isOpen || files.length === 0) return false;
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        updateSelection(selectedIndexRef.current + 1);
+        setSelectedIndex((prev) => Math.min(prev + 1, files.length - 1));
         return true;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        updateSelection(selectedIndexRef.current - 1);
+        setSelectedIndex((prev) => Math.max(prev - 1, 0));
         return true;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        const selected = files[selectedIndexRef.current];
+        const selected = files[selectedIndex];
         if (selected) onSelect(selected);
         return true;
       }
@@ -94,10 +68,10 @@ export function useFileTagPopup({
       }
       return false;
     },
-    [isOpen, files, onSelect, onDismiss, updateSelection],
+    [isOpen, files, selectedIndex, onSelect, onDismiss],
   );
 
-  return { handleKeyDown, listRef };
+  return { handleKeyDown, listRef, selectedIndex };
 }
 
 /** Dropdown popup displaying file suggestions for @ tagging. */
