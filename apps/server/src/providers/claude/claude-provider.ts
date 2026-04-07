@@ -391,7 +391,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         let sessionCompacting = false;
         /** Tracks the last known context window size for post-compaction estimation. */
         let lastContextWindow: number | undefined = undefined;
-        /** Per-API-call input token count from the most recent stream_event message_start. */
+        /** Per-API-call input token count from the most recent stream_event message_start.
+         * Consumed by the result handler to use as tokensIn on turnComplete (authoritative
+         * context fill vs. the accumulated result.usage which inflates across API calls).
+         * Reset to undefined after each turnComplete. */
         let lastStreamInputTokens: number | undefined = undefined;
 
         for await (const msg of q) {
@@ -672,6 +675,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   (u.cache_creation_input_tokens ?? 0);
 
                 // Emit mid-turn context estimate so the ring updates on each API call.
+                // contextWindow is undefined on the very first API call of a session
+                // because lastContextWindow is only populated after the first result.
+                // contextEstimate.contextWindow is optional and consumers handle undefined
+                // gracefully via their own lastContextWindowByThread map.
                 if (lastStreamInputTokens > 0) {
                   this.emit("event", {
                     type: "contextEstimate",
