@@ -104,6 +104,41 @@ describe("PrDraftService", () => {
     // Uses `message` field from GitCommit schema, not `subject`
   });
 
+  it("retries log without range when baseBranch does not exist in repo", async () => {
+    mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
+    // First log call (with range "main..master") fails; second (no range) succeeds
+    mockGitService.log
+      .mockRejectedValueOnce(
+        new Error(
+          "Command failed: git log main..master fatal: ambiguous argument 'main..master': unknown revision",
+        ),
+      )
+      .mockResolvedValueOnce([{ message: "feat: add widget", sha: "abc123" }]);
+    mockGitService.diffStat.mockResolvedValue("2 files changed");
+    mockGitService.getCurrentBranch.mockReturnValue("master");
+    mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
+    mockCreate.mockResolvedValue({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            title: "feat: add widget",
+            body: "## What\nAdded widget",
+          }),
+        },
+      ],
+    });
+
+    const result = await service.generateDraft("ws-1", "thread-1", "main");
+
+    // Should succeed despite invalid baseBranch
+    expect(result.title).toBe("feat: add widget");
+    // log called twice: once with range (failed), once without
+    expect(mockGitService.log).toHaveBeenCalledTimes(2);
+    expect(mockGitService.log).toHaveBeenNthCalledWith(1, "ws-1", "master", 50, "main");
+    expect(mockGitService.log).toHaveBeenNthCalledWith(2, "ws-1", "master", 50);
+  });
+
   it("uses repo PR template when available", async () => {
     mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
     mockGitService.log.mockResolvedValue([

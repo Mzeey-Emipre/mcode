@@ -59,10 +59,31 @@ export class PrDraftService {
     // getCurrentBranch is synchronous
     const headBranch = this.gitService.getCurrentBranch(workspaceId);
 
-    // Gather context in parallel
+    // Gather context in parallel.
+    // log() and diffStat() fall back gracefully when baseBranch doesn't exist
+    // locally (e.g. the client sent "main" before branches finished loading and
+    // this repo only has "master").
     const [commits, diffStat, messagesResult] = await Promise.all([
-      this.gitService.log(workspaceId, headBranch, 50, baseBranch),
-      this.gitService.diffStat(repoPath, baseBranch, headBranch),
+      this.gitService.log(workspaceId, headBranch, 50, baseBranch).catch(
+        (err: unknown) => {
+          logger.warn("git log with base branch failed, retrying without range", {
+            baseBranch,
+            headBranch,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return this.gitService.log(workspaceId, headBranch, 50);
+        },
+      ),
+      this.gitService.diffStat(repoPath, baseBranch, headBranch).catch(
+        (err: unknown) => {
+          logger.warn("git diff --stat failed, skipping diff context", {
+            baseBranch,
+            headBranch,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return "";
+        },
+      ),
       Promise.resolve(this.messageRepo.listByThread(threadId, 100)),
     ]);
 
