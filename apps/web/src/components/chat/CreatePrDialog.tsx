@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useToastStore } from "@/stores/toastStore";
 import type { PrDraft } from "@mcode/contracts";
 
 /** Possible states for the PR creation flow. */
@@ -120,7 +121,7 @@ export function CreatePrDialog({
     setState("submitting");
     setError(null);
     try {
-      await getTransport().createPr(
+      const result = await getTransport().createPr(
         workspaceId,
         threadId,
         title,
@@ -129,6 +130,7 @@ export function CreatePrDialog({
         isDraft,
       );
       onOpenChange(false);
+      useToastStore.getState().show("info", "Pull request created", `PR #${result.number} opened on GitHub`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "PR creation failed";
       setError(message);
