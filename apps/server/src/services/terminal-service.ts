@@ -11,6 +11,7 @@ import { spawn } from "node-pty";
 import type { IPty, IDisposable } from "node-pty";
 import { v4 as uuid } from "uuid";
 import { logger } from "@mcode/shared";
+import { killProcessTree } from "./process-kill.js";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitService } from "./git-service";
@@ -153,33 +154,33 @@ export class TerminalService {
   }
 
   /** Kill a single PTY session. No-op if the ID is unknown. */
-  kill(ptyId: string): void {
+  async kill(ptyId: string): Promise<void> {
     const session = this.sessions.get(ptyId);
     if (!session) return;
-    this.destroyPty(session);
+    await this.destroyPty(session);
     this.removePty(ptyId);
   }
 
   /** Kill all PTY sessions for a given thread. */
-  killByThread(threadId: string): void {
+  async killByThread(threadId: string): Promise<void> {
     const ptys = this.threadIndex.get(threadId);
     if (!ptys || ptys.size === 0) return;
     const ids = [...ptys];
     for (const ptyId of ids) {
-      this.kill(ptyId);
+      await this.kill(ptyId);
     }
     logger.info("All PTYs killed for thread", { threadId });
   }
 
   /** Kill all PTY sessions across all threads. */
-  shutdown(): void {
+  async shutdown(): Promise<void> {
     const ids = [...this.sessions.keys()];
     for (const ptyId of ids) {
-      this.kill(ptyId);
+      await this.kill(ptyId);
     }
   }
 
-  private destroyPty(session: PtySession): void {
+  private async destroyPty(session: PtySession): Promise<void> {
     try {
       session.dataDisposable.dispose();
     } catch (err) {
@@ -196,6 +197,10 @@ export class TerminalService {
         error: err,
       });
     }
+    // Kill the entire process tree (grandchildren like git, npm) before the PTY
+    // shell itself. On Windows, pty.kill() only kills the direct shell process;
+    // grandchildren survive and keep the worktree directory locked.
+    await killProcessTree(session.pty.pid);
     try {
       session.pty.kill();
     } catch (err) {

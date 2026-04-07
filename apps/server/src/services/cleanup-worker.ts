@@ -136,7 +136,7 @@ export class CleanupWorker {
 
       // 2. Kill PTY terminal sessions for this thread (idempotent).
       try {
-        this.terminalService.killByThread(job.thread_id);
+        await this.terminalService.killByThread(job.thread_id);
       } catch (err) {
         logger.warn("CleanupWorker terminal sessions killed with error", {
           jobId: job.id,
