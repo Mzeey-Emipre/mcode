@@ -96,8 +96,8 @@ export type {
 export { GitBranchSchema, WorktreeSchema, GitCommitSchema } from "./git.js";
 export type { GitBranch, WorktreeInfo, GitCommit } from "./git.js";
 
-export { PrInfoSchema, PrDetailSchema } from "./github.js";
-export type { PrInfo, PrDetail } from "./github.js";
+export { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrParamsSchema, CreatePrResultSchema } from "./github.js";
+export type { PrInfo, PrDetail, PrDraft, CreatePrParams, CreatePrResult } from "./github.js";
 
 // Skills
 export { SkillInfoSchema } from "./skills.js";
