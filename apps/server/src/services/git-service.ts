@@ -336,17 +336,61 @@ export class GitService {
     }
   }
 
+  /** Per-repo cache: avoids re-running mutating git commands on every log call. */
+  private readonly defaultBranchCache = new Map<string, string>();
+
   /** Detect the default upstream branch (e.g. main, master) for a repository. */
   private async detectDefaultBranch(repoPath: string): Promise<string> {
+    const cached = this.defaultBranchCache.get(repoPath);
+    if (cached !== undefined) return cached;
+
+    const result = await this.resolveDefaultBranch(repoPath);
+    this.defaultBranchCache.set(repoPath, result);
+    return result;
+  }
+
+  /** Resolve the default branch by probing git refs in order of cheapness. */
+  private async resolveDefaultBranch(repoPath: string): Promise<string> {
+    // 1. Ask the remote tracking ref (fast, no network, works if origin/HEAD is set)
     try {
       const { stdout } = await execFile(
         "git",
         ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
         { timeout: 5_000 },
       );
-      // Returns "origin/main" → strip the "origin/" prefix
       return stdout.trim().replace(/^[^/]+\//, "");
-    } catch {
+    } catch (err) {
+      logger.debug("[detectDefaultBranch] origin/HEAD not set, trying set-head", { repoPath, err });
+    }
+
+    // 2. Ask the remote to set origin/HEAD, then re-read it.
+    // Timeout is short (1 500 ms) so an unreachable remote doesn't block the caller.
+    try {
+      await execFile(
+        "git",
+        ["-C", repoPath, "remote", "set-head", "origin", "--auto"],
+        { timeout: 1_500 },
+      );
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000 },
+      );
+      return stdout.trim().replace(/^[^/]+\//, "");
+    } catch (err) {
+      logger.debug("[detectDefaultBranch] set-head failed, falling back to HEAD", { repoPath, err });
+    }
+
+    // 3. Last resort: use whatever HEAD currently points at (works for local-only repos)
+    try {
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"],
+        { timeout: 5_000 },
+      );
+      return stdout.trim();
+    } catch (err) {
+      logger.debug("[detectDefaultBranch] rev-parse failed, defaulting to main", { repoPath, err });
       return "main";
     }
   }

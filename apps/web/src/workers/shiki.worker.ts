@@ -1,20 +1,53 @@
 import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
-/** Message sent from main thread to request highlighting. */
+/** Highlight (codeToHtml) request — produces an HTML string. */
 interface HighlightRequest {
   id: string;
+  type: "highlight";
   code: string;
   language: string;
   theme: "github-dark" | "github-light";
 }
 
-/** Message sent back from worker with highlighted HTML. */
+/** Highlight response. */
 interface HighlightResponse {
   id: string;
+  type: "highlight";
   html: string;
   error?: string;
 }
+
+/** A single syntax token with its display color. */
+export interface TokenSpan {
+  content: string;
+  color: string;
+}
+
+/** Tokenize (codeToTokens) request — produces per-line token arrays for diff highlighting. */
+interface TokenizeRequest {
+  id: string;
+  type: "tokenize";
+  blocks: Array<{
+    blockId: string;
+    code: string;
+    language: string;
+    theme: "github-dark" | "github-light";
+  }>;
+}
+
+/** Tokenize response. */
+interface TokenizeResponse {
+  id: string;
+  type: "tokenize";
+  results: Array<{
+    blockId: string;
+    lines: TokenSpan[][];
+    error?: string;
+  }>;
+}
+
+type WorkerRequest = HighlightRequest | TokenizeRequest;
 
 /** Shiki language parameter type derived from the core highlighter's loadLanguage signature. */
 type ShikiLang = Parameters<
@@ -50,6 +83,7 @@ const LANG_IMPORTS: Record<string, () => Promise<{ default: unknown }>> = {
   cpp: () => import("@shikijs/langs/cpp"),
   swift: () => import("@shikijs/langs/swift"),
   kotlin: () => import("@shikijs/langs/kotlin"),
+  vue: () => import("@shikijs/langs/vue"),
 };
 
 /**
@@ -98,57 +132,116 @@ function getHighlighter() {
   return highlighterPromise;
 }
 
-self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
-  const { id, code, language, theme } = e.data;
+/**
+ * Resolves language alias and ensures the grammar is loaded.
+ * Returns the resolved language name, falling back to "text" on failure.
+ */
+async function resolveLanguage(
+  highlighter: Awaited<ReturnType<typeof createHighlighterCore>>,
+  language: string,
+): Promise<string> {
+  let lang = LANG_ALIASES[language] ?? language;
+  const loadedLangs = highlighter.getLoadedLanguages();
 
-  try {
-    const highlighter = await getHighlighter();
-    const loadedLangs = highlighter.getLoadedLanguages();
-    // Resolve common markdown aliases (e.g. "ts" -> "typescript") before lookup
-    let lang = LANG_ALIASES[language] ?? language;
-
-    if (!loadedLangs.includes(lang)) {
-      const importFn = LANG_IMPORTS[lang];
-      if (importFn) {
-        // Coalesce concurrent loads for the same language via shared promise
-        let loadPromise = languageLoading.get(lang);
-        if (!loadPromise) {
-          loadPromise = importFn()
-            .then((mod) =>
-              highlighter.loadLanguage(mod.default as ShikiLang),
-            )
-            .finally(() => languageLoading.delete(lang));
-          languageLoading.set(lang, loadPromise);
-        }
-        try {
-          await loadPromise;
-        } catch {
-          lang = "text";
-        }
-      } else {
+  if (!loadedLangs.includes(lang)) {
+    const importFn = LANG_IMPORTS[lang];
+    if (importFn) {
+      // Coalesce concurrent loads for the same language via shared promise
+      let loadPromise = languageLoading.get(lang);
+      if (!loadPromise) {
+        loadPromise = (async () => {
+          try {
+            const mod = await importFn();
+            await highlighter.loadLanguage(mod.default as ShikiLang);
+          } finally {
+            languageLoading.delete(lang);
+          }
+        })();
+        languageLoading.set(lang, loadPromise);
+      }
+      try {
+        await loadPromise;
+      } catch {
         lang = "text";
       }
+    } else {
+      lang = "text";
     }
+  }
+  return lang;
+}
 
-    // codeToHtml may throw if "text" is not a registered language in shiki/core.
-    // Fall back to pre-escaped HTML in that case.
-    let html: string;
+self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
+  const req = e.data;
+
+  if (req.type === "highlight") {
+    const { id, code, language, theme } = req;
     try {
-      html = highlighter.codeToHtml(code, { lang, theme });
-    } catch {
-      const escaped = code
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-      html = `<pre class="shiki"><code>${escaped}</code></pre>`;
-    }
+      const highlighter = await getHighlighter();
+      const lang = await resolveLanguage(highlighter, language);
 
-    self.postMessage({ id, html } satisfies HighlightResponse);
-  } catch (err) {
-    self.postMessage({
-      id,
-      html: "",
-      error: err instanceof Error ? err.message : "Unknown error",
-    } satisfies HighlightResponse);
+      let html: string;
+      try {
+        html = highlighter.codeToHtml(code, { lang, theme });
+      } catch {
+        const escaped = code
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+        html = `<pre class="shiki"><code>${escaped}</code></pre>`;
+      }
+
+      self.postMessage({ id, type: "highlight", html } satisfies HighlightResponse);
+    } catch (err) {
+      self.postMessage({
+        id,
+        type: "highlight",
+        html: "",
+        error: err instanceof Error ? err.message : "Unknown error",
+      } satisfies HighlightResponse);
+    }
+    return;
+  }
+
+  if (req.type === "tokenize") {
+    const { id, blocks } = req;
+    try {
+      const highlighter = await getHighlighter();
+      const results: TokenizeResponse["results"] = [];
+
+      for (const block of blocks) {
+        try {
+          const lang = await resolveLanguage(highlighter, block.language);
+          const { tokens } = highlighter.codeToTokens(block.code, {
+            lang,
+            theme: block.theme,
+          });
+          // Map ThemedToken[][] → TokenSpan[][]
+          const lines: TokenSpan[][] = tokens.map((lineTokens) =>
+            lineTokens.map((t) => ({
+              content: t.content,
+              // Fall back to inherit so the diff text color applies
+              color: t.color ?? "inherit",
+            })),
+          );
+          results.push({ blockId: block.blockId, lines });
+        } catch (err) {
+          results.push({
+            blockId: block.blockId,
+            lines: [],
+            error: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
+      }
+
+      self.postMessage({ id, type: "tokenize", results } satisfies TokenizeResponse);
+    } catch (err) {
+      self.postMessage({
+        id,
+        type: "tokenize",
+        results: [],
+        error: err instanceof Error ? err.message : "Unknown error",
+      } as TokenizeResponse & { error: string });
+    }
   }
 };
