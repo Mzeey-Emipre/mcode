@@ -113,41 +113,6 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
     }
   }, []);
 
-  /** Open the diff panel focused on a specific file from this turn's snapshot. */
-  const handleFileDiff = useCallback(
-    async (filePath: string) => {
-      const threadId = useWorkspaceStore.getState().activeThreadId;
-      if (!threadId) return;
-
-      const store = useDiffStore.getState();
-      store.showPanel();
-      store.setActiveTab("changes");
-      store.setViewMode("by-turn");
-
-      // Find the snapshot for this message to select the file
-      const snapshots = store.snapshotsByThread[threadId];
-      const serverMsgId = useThreadStore.getState().serverMessageIds[messageId] ?? messageId;
-      const snapshot = snapshots?.find((s) => s.message_id === serverMsgId);
-
-      if (snapshot) {
-        store.selectFile({ source: "snapshot", id: snapshot.id, filePath });
-      } else {
-        // Snapshots not loaded yet; load them, then select
-        try {
-          const loaded = await getTransport().listSnapshots(threadId);
-          useDiffStore.getState().setSnapshots(threadId, loaded);
-          const snap = loaded.find((s) => s.message_id === serverMsgId);
-          if (snap) {
-            useDiffStore.getState().selectFile({ source: "snapshot", id: snap.id, filePath });
-          }
-        } catch (err) {
-          console.warn("[TurnChangeSummary] Failed to load snapshots for file diff:", err);
-        }
-      }
-    },
-    [messageId],
-  );
-
   return (
     <div className="my-1">
       <div className="rounded-lg border border-border/40 bg-muted/30 overflow-hidden">
@@ -190,7 +155,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
               return (
                 <div
                   key={filePath}
-                  className="flex items-center justify-between rounded-md px-2.5 py-1 text-xs hover:bg-muted/40 transition-colors group"
+                  className="flex items-center justify-between rounded-md px-2.5 py-1 text-xs hover:bg-muted/40 transition-colors"
                 >
                   <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
                     <span className="font-medium text-foreground/80 truncate">{name}</span>
@@ -200,23 +165,13 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {stat && (
-                      <span className="font-mono text-[10px] tabular-nums text-muted-foreground/40">
-                        <span className="text-green-500/60">+{stat.additions}</span>
-                        <span className="text-muted-foreground/30"> / </span>
-                        <span className="text-red-500/60">-{stat.deletions}</span>
-                      </span>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => handleFileDiff(filePath)}
-                      className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground/60 hover:text-foreground/80"
-                    >
-                      Diff
-                    </Button>
-                  </div>
+                  {stat && (
+                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground/40 shrink-0">
+                      <span className="text-green-500/60">+{stat.additions}</span>
+                      <span className="text-muted-foreground/30"> / </span>
+                      <span className="text-red-500/60">-{stat.deletions}</span>
+                    </span>
+                  )}
                 </div>
               );
             })}
