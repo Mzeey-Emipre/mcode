@@ -38,8 +38,6 @@ import { PlanQuestionParser } from "./plan-question-parser.js";
 import { PlanQuestionSchema } from "@mcode/contracts";
 import { z } from "zod";
 
-/** Fallback context window size used when the SDK does not report one. */
-const DEFAULT_CONTEXT_WINDOW = 200_000;
 
 /**
  * Generate a thread title from message content: first line, truncated
@@ -540,8 +538,9 @@ export class AgentService {
           // reloads to resurrect the wrong (near-100%) context fill.
           if (event.tokensIn > 0 && !this.compactionInProgressByThread.has(event.threadId)) {
             try {
-              const ctxWindow = event.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-              this.threadRepo.updateContextUsage(event.threadId, event.tokensIn, ctxWindow);
+              if (event.contextWindow) {
+                this.threadRepo.updateContextUsage(event.threadId, event.tokensIn, event.contextWindow);
+              }
             } catch (err) {
               logger.warn("Context usage not persisted", {
                 threadId: event.threadId,
