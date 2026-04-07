@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, render, screen } from "@testing-library/react";
 import type { RefObject } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
+
+// Mock the virtualizer so component tests control which virtual items are
+// "rendered" without needing real scroll dimensions from jsdom.
+vi.mock("@tanstack/react-virtual");
 
 describe("useFileTagPopup", () => {
   const defaultProps = {
@@ -157,6 +162,13 @@ describe("FileTagPopup", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default stub: virtualizer renders no items (mirrors jsdom behavior).
+    // Individual tests override this when they need to inspect virtual output.
+    vi.mocked(useVirtualizer).mockReturnValue({
+      getVirtualItems: () => [],
+      getTotalSize: () => 0,
+      scrollToIndex: vi.fn(),
+    } as ReturnType<typeof useVirtualizer>);
   });
 
   it("renders all items when below virtual threshold", () => {
@@ -203,12 +215,9 @@ describe("FileTagPopup", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("uses virtual rendering above threshold and marks selected item", () => {
-    // 21 items crosses VIRTUAL_THRESHOLD (20), activating the virtualizer path.
-    // jsdom has no scroll height so the virtualizer renders only its overscan
-    // window (first few items); we verify the listbox exists and that the
-    // rendered subset has the correct aria-selected attribute.
-    const files = Array.from({ length: 21 }, (_, i) => `src/file${i}.ts`);
+  it("uses native rendering at threshold boundary (20 items)", () => {
+    // 20 items == VIRTUAL_THRESHOLD: strict > check means this is non-virtual.
+    const files = Array.from({ length: 20 }, (_, i) => `src/file${i}.ts`);
     render(
       <FileTagPopup
         files={files}
@@ -218,11 +227,38 @@ describe("FileTagPopup", () => {
         selectedIndex={0}
       />,
     );
-    expect(screen.getByRole("listbox")).toBeInTheDocument();
-    // jsdom has no scroll height, so the virtualizer renders 0 items — but
-    // crucially, NOT all 21 nodes are in the DOM, proving the virtual path
-    // is active rather than the native map() path.
-    const options = screen.queryAllByRole("option");
-    expect(options.length).toBeLessThan(21);
+    expect(screen.getAllByRole("option")).toHaveLength(20);
+  });
+
+  it("uses virtual rendering above threshold and marks selected item", () => {
+    // 21 items crosses VIRTUAL_THRESHOLD (20). Override the mock to return a
+    // controlled window of virtual rows so we can assert aria-selected without
+    // relying on jsdom scroll dimensions.
+    vi.mocked(useVirtualizer).mockReturnValueOnce({
+      getVirtualItems: () => [
+        { key: "0", index: 0, start: 0, size: 28 },
+        { key: "1", index: 1, start: 28, size: 28 },
+        { key: "2", index: 2, start: 56, size: 28 },
+      ],
+      getTotalSize: () => 588,
+      scrollToIndex: vi.fn(),
+    } as ReturnType<typeof useVirtualizer>);
+
+    const files = Array.from({ length: 21 }, (_, i) => `src/file${i}.ts`);
+    render(
+      <FileTagPopup
+        files={files}
+        isOpen={true}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={1}
+      />,
+    );
+
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(3);
+    expect(options[0]).toHaveAttribute("aria-selected", "false");
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+    expect(options[2]).toHaveAttribute("aria-selected", "false");
   });
 });
