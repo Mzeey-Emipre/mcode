@@ -52,12 +52,14 @@ export function replayBudgetChars(modelId: string): number {
  * Build a conversation transcript from a slice of parent messages.
  * Includes only user and assistant turns; skips system messages and tool noise.
  * Prioritizes recent messages when the transcript exceeds the char budget.
+ * Prepends an omission notice when older turns are dropped.
  */
 export function buildConversationReplay(messages: Message[], maxChars: number): string {
   const turns = messages.filter((m) => m.role === "user" || m.role === "assistant");
-  if (turns.length === 0) return "";
+  const nonEmptyTurns = turns.filter((m) => m.content.trim() !== "");
+  if (nonEmptyTurns.length === 0) return "";
 
-  const formatted = turns.map((m) => {
+  const formatted = nonEmptyTurns.map((m) => {
     const label = m.role === "user" ? "User" : "Assistant";
     return `${label}: ${m.content}`;
   });
@@ -78,7 +80,7 @@ export function buildConversationReplay(messages: Message[], maxChars: number): 
     return formatted[formatted.length - 1].slice(0, maxChars);
   }
 
-  const omittedCount = turns.length - result.length;
+  const omittedCount = nonEmptyTurns.length - result.length;
   const prefix =
     omittedCount > 0
       ? `[${omittedCount} earlier message${omittedCount === 1 ? "" : "s"} omitted]\n\n`

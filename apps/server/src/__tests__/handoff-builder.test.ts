@@ -200,6 +200,18 @@ describe("buildConversationReplay", () => {
     expect(result).toContain("[2 earlier messages omitted]");
   });
 
+  it("uses singular 'message' for exactly 1 omitted turn", () => {
+    const msgs = [
+      makeMsg("1", "user", "First"),
+      makeMsg("2", "user", "Second"),
+    ];
+    // Budget only fits "Second"
+    const budget = "User: Second".length + 5;
+    const result = buildConversationReplay(msgs, budget);
+    expect(result).toContain("[1 earlier message omitted]");
+    expect(result).not.toContain("[1 earlier messages omitted]");
+  });
+
   it("truncates if even the latest turn exceeds budget", () => {
     const msgs = [makeMsg("1", "user", "A".repeat(200))];
     const result = buildConversationReplay(msgs, 50);
