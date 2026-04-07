@@ -432,7 +432,12 @@ export class AgentService {
     return updated ?? thread;
   }
 
-  /** Create a child thread branched from a parent, with handoff context. */
+  /**
+   * Create a child thread branched from a parent at a specific message.
+   * Injects a conversation replay into the provider's first turn for continuity.
+   * The handoff system message (seq 1) is stored in the DB for the UI; the replay
+   * is sent only to the provider via providerContentOverride.
+   */
   private async createBranchedThread(params: {
     workspaceId: string;
     content: string;
@@ -471,7 +476,12 @@ export class AgentService {
     }
 
     // Resolve fork point
-    const { messages: parentMessages } = this.messageRepo.listByThread(parentThreadId, 1000);
+    // Cap of 1000 messages: if the parent thread is longer, the oldest messages are silently
+    // excluded. A fork point beyond the window will produce a misleading "not found" error.
+    const { messages: parentMessages, hasMore } = this.messageRepo.listByThread(parentThreadId, 1000);
+    if (hasMore) {
+      logger.warn("createBranchedThread: parent thread exceeds 1000-message window; oldest messages are excluded from fork resolution", { parentThreadId });
+    }
     let resolvedForkMessageId = forkedFromMessageId;
     if (!resolvedForkMessageId && parentMessages.length > 0) {
       resolvedForkMessageId = parentMessages[parentMessages.length - 1].id;
@@ -498,7 +508,6 @@ export class AgentService {
     // without replaying history — use latest parent state for now.
     const snapshots = this.turnSnapshotRepo.listByThread(parentThreadId);
     const latestSnapshot = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
-    // files_changed is already parsed as string[] by TurnSnapshotRepo.listByThread()
     const recentFilesChanged: string[] = latestSnapshot?.files_changed ?? [];
     const sourceHead = latestSnapshot?.ref_after ?? null;
 
@@ -558,11 +567,16 @@ export class AgentService {
     const budget = replayBudgetChars(model);
     const replay = buildConversationReplay(forkedMessages, budget);
     const replayHeader = `You are continuing work from a previous thread titled "${parentThread.title}". Here is the conversation history up to the fork point:\n\n`;
+    // When replay is empty (system-only or all-blank parent history), send the prompt alone.
+    // The seq-1 handoff message still provides context via its prose summary.
     const stitchedContent = replay
       ? `${replayHeader}${replay}\n\n---\n\n${content}`
       : content;
 
-    // Set provider content override so sendMessage uses stitched content
+    // Set provider content override so sendMessage uses stitched content.
+    // IMPORTANT: sendMessage deletes this override before its try block, so the override
+    // is always consumed on the next call. Do not add any await between this set and the
+    // sendMessage call below, or the override could be consumed by an unrelated invocation.
     this.providerContentOverride.set(thread.id, stitchedContent);
 
     // sendMessage will persist the clean user prompt at seq 2 and send stitched content to provider
