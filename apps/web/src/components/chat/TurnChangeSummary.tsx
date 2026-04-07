@@ -120,13 +120,13 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
     <div className="my-1">
       <div className="rounded-lg border border-border/40 bg-muted/30 overflow-hidden">
         {/* Header row: toggle and "View All Diffs" are siblings to avoid nested buttons */}
-        <div className="flex w-full items-center justify-between px-3.5 py-2 text-xs text-muted-foreground">
+        <div className="flex w-full items-center justify-between px-3 py-1.5 text-xs text-muted-foreground">
           <Button
             variant="ghost"
             size="xs"
             onClick={handleToggle}
             aria-expanded={expanded}
-            className="gap-2 px-0 hover:bg-transparent text-muted-foreground hover:text-foreground/80"
+            className="gap-2 px-1.5 hover:bg-transparent text-muted-foreground hover:text-foreground/80"
           >
             <FileText size={13} className="shrink-0 text-muted-foreground/60" />
             <span>
