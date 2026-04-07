@@ -422,6 +422,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
               (usage?.input_tokens ?? 0) +
               (usage?.cached_input_tokens ?? 0);
 
+            // Codex usage is per-turn (not accumulated like Claude's result.usage),
+            // so totalProcessedTokens equals the sum of input + output for this turn.
+            const totalProcessedTokens =
+              totalInputTokens + (usage?.output_tokens ?? 0);
+
             this.emit("event", {
               type: "turnComplete",
               threadId,
@@ -429,6 +434,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
               costUsd: null,
               tokensIn: totalInputTokens,
               tokensOut: usage?.output_tokens ?? 0,
+              contextWindow: undefined,
+              totalProcessedTokens,
             } satisfies AgentEvent);
 
             lastAssistantText = "";

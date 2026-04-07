@@ -245,15 +245,23 @@ export class ThreadRepo {
     return result.changes > 0;
   }
 
-  /** Persist the latest context window usage for a thread. */
-  updateContextUsage(id: string, lastContextTokens: number, contextWindow: number): boolean {
+  /** Persist the latest context window usage for a thread.
+   * Always updates last_context_tokens. Only updates context_window when provided. */
+  updateContextUsage(id: string, lastContextTokens: number, contextWindow?: number): boolean {
     const now = new Date().toISOString();
+    if (contextWindow !== undefined) {
+      const result = this.db
+        .prepare(
+          "UPDATE threads SET last_context_tokens = ?, context_window = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(lastContextTokens, contextWindow, now, id);
+      return result.changes > 0;
+    }
     const result = this.db
       .prepare(
-        "UPDATE threads SET last_context_tokens = ?, context_window = ?, updated_at = ? WHERE id = ?",
+        "UPDATE threads SET last_context_tokens = ?, updated_at = ? WHERE id = ?",
       )
-      .run(lastContextTokens, contextWindow, now, id);
-
+      .run(lastContextTokens, now, id);
     return result.changes > 0;
   }
 

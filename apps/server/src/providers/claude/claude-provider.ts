@@ -391,6 +391,11 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         let sessionCompacting = false;
         /** Tracks the last known context window size for post-compaction estimation. */
         let lastContextWindow: number | undefined = undefined;
+        /** Per-API-call input token count from the most recent stream_event message_start.
+         * Consumed by the result handler to use as tokensIn on turnComplete (authoritative
+         * context fill vs. the accumulated result.usage which inflates across API calls).
+         * Reset to undefined after each turnComplete. */
+        let lastStreamInputTokens: number | undefined = undefined;
 
         for await (const msg of q) {
           const entry = this.sessions.get(sessionId);
@@ -530,21 +535,30 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 (u) => typeof u.contextWindow === "number",
               )?.contextWindow;
 
-              // With prompt caching, input_tokens is only the uncached portion.
-              // Sum all input token categories for the true context window fill.
               const usage = (anyMsg.usage ?? {}) as {
                 input_tokens?: number;
                 output_tokens?: number;
                 cache_read_input_tokens?: number;
                 cache_creation_input_tokens?: number;
               };
-              // Output tokens become input context on the next turn, so include
-              // them so the tracker reflects the true next-turn fill.
-              const totalInputTokens =
+
+              // Accumulated total tokens processed across all API calls this session.
+              // result.usage is accumulated (like total_cost_usd and num_turns),
+              // so this already includes all previous API calls in the turn.
+              const totalProcessedTokens =
                 (usage.input_tokens ?? 0) +
                 (usage.cache_read_input_tokens ?? 0) +
                 (usage.cache_creation_input_tokens ?? 0) +
                 (usage.output_tokens ?? 0);
+
+              // Current context fill: prefer the last stream_event message_start
+              // usage (per-API-call, authoritative). Fall back to a heuristic
+              // from result.usage only if stream events were not captured.
+              const tokensIn = lastStreamInputTokens ?? (
+                (usage.input_tokens ?? 0) +
+                (usage.cache_read_input_tokens ?? 0) +
+                (usage.cache_creation_input_tokens ?? 0)
+              );
 
               this.emit("event", {
                 type: "turnComplete",
@@ -555,12 +569,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   "end_turn",
                 costUsd:
                   (anyMsg.total_cost_usd as number) ?? null,
-                tokensIn: totalInputTokens,
+                tokensIn,
                 tokensOut: usage.output_tokens ?? 0,
                 contextWindow: sdkContextWindow,
+                totalProcessedTokens,
               } satisfies AgentEvent);
 
               lastContextWindow = sdkContextWindow;
+              // Reset for next turn
+              lastStreamInputTokens = undefined;
 
               lastAssistantText = "";
               break;
@@ -587,19 +604,18 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                     threadId,
                     active: false,
                   } satisfies AgentEvent);
-                  // Emit a rough post-compaction estimate so the tracker
-                  // reappears immediately. The SDK typically compacts to ~50%
-                  // of the context window. This is overwritten by the next
-                  // authoritative turnComplete.
-                  const ctxWindow = lastContextWindow ?? 200_000;
-                  if (ctxWindow > 0) {
-                    this.emit("event", {
-                      type: "contextEstimate",
-                      threadId,
-                      tokensIn: Math.round(ctxWindow * 0.5),
-                      contextWindow: ctxWindow,
-                    } satisfies AgentEvent);
-                  }
+                  // Ring hides during compaction (lastTokensIn: 0 sentinel).
+                  // It stays hidden until the next authoritative turnComplete
+                  // or stream_event message_start provides real usage data.
+                }
+              } else if ((anyMsg.subtype as string) === "compact_boundary") {
+                const metadata = (anyMsg as { compact_metadata?: { pre_tokens?: number; trigger?: string } }).compact_metadata;
+                if (metadata) {
+                  logger.info("Compact boundary received", {
+                    threadId,
+                    preTokens: metadata.pre_tokens,
+                    trigger: metadata.trigger,
+                  });
                 }
               } else {
                 this.emit("event", {
@@ -654,7 +670,35 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               const streamEvent = anyMsg.event as {
                 type?: string;
                 delta?: { type?: string; text?: string; partial_json?: string };
+                message?: {
+                  usage?: {
+                    input_tokens?: number;
+                    cache_read_input_tokens?: number;
+                    cache_creation_input_tokens?: number;
+                  };
+                };
               };
+              if (streamEvent?.type === "message_start" && streamEvent.message?.usage) {
+                const u = streamEvent.message.usage;
+                lastStreamInputTokens =
+                  (u.input_tokens ?? 0) +
+                  (u.cache_read_input_tokens ?? 0) +
+                  (u.cache_creation_input_tokens ?? 0);
+
+                // Emit mid-turn context estimate so the ring updates on each API call.
+                // contextWindow is undefined on the very first API call of a session
+                // because lastContextWindow is only populated after the first result.
+                // contextEstimate.contextWindow is optional and consumers handle undefined
+                // gracefully via their own lastContextWindowByThread map.
+                if (lastStreamInputTokens > 0) {
+                  this.emit("event", {
+                    type: "contextEstimate",
+                    threadId,
+                    tokensIn: lastStreamInputTokens,
+                    contextWindow: lastContextWindow,
+                  } satisfies AgentEvent);
+                }
+              }
               if (streamEvent?.type === "content_block_delta") {
                 if (
                   streamEvent.delta?.type === "text_delta" &&

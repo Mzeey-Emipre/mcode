@@ -38,19 +38,6 @@ import { PlanQuestionParser } from "./plan-question-parser.js";
 import { PlanQuestionSchema } from "@mcode/contracts";
 import { z } from "zod";
 
-/** Fallback context window size used when the SDK does not report one. */
-const DEFAULT_CONTEXT_WINDOW = 200_000;
-
-/**
- * Rough character-based token estimate (1 token per ~4 chars).
- * Used to update the context tracker after each tool result without
- * waiting for the next authoritative turnComplete.
- * @internal Exported for unit testing only.
- */
-export function roughTokenEstimate(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
 /**
  * Generate a thread title from message content: first line, truncated
  * to 50 characters at a word boundary with "..." appended.
@@ -206,12 +193,10 @@ export class AgentService {
     this.turnSortCounters.set(threadId, 0);
     this.agentCallStack.set(threadId, []);
 
-    // Seed the running context baseline so tool-result estimates during this turn
-    // have a starting point. For resume turns, last_context_tokens is the
-    // authoritative count from the previous turnComplete; for the very first
-    // turn it is null (treated as 0). Adding a rough estimate of the new
-    // message avoids emitting 0-baseline estimates early in the turn.
-    const contextSeed = (thread.last_context_tokens ?? 0) + roughTokenEstimate(content);
+    // Initialize context tracking from the previous turn's final count.
+    // For resume turns, last_context_tokens is the authoritative count from
+    // the previous turnComplete; for the very first turn it is null (treated as 0).
+    const contextSeed = thread.last_context_tokens ?? 0;
     this.lastContextByThread.set(threadId, contextSeed);
     if (thread.context_window) {
       this.lastContextWindowByThread.set(threadId, thread.context_window);
@@ -536,18 +521,6 @@ export class AgentService {
 
         if (event.type === "toolResult") {
           this.updateBufferedToolCallOutput(event.threadId, event.toolCallId, event.output, event.isError);
-
-          const baseline = this.lastContextByThread.get(event.threadId) ?? 0;
-          if (baseline > 0) {
-            const newEstimate = baseline + roughTokenEstimate(event.output);
-            this.lastContextByThread.set(event.threadId, newEstimate);
-            broadcast("agent.event", {
-              type: "contextEstimate",
-              threadId: event.threadId,
-              tokensIn: newEstimate,
-              contextWindow: this.lastContextWindowByThread.get(event.threadId),
-            });
-          }
         }
 
         if (event.type === "turnComplete") {
@@ -564,8 +537,10 @@ export class AgentService {
           // reloads to resurrect the wrong (near-100%) context fill.
           if (event.tokensIn > 0 && !this.compactionInProgressByThread.has(event.threadId)) {
             try {
-              const ctxWindow = event.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-              this.threadRepo.updateContextUsage(event.threadId, event.tokensIn, ctxWindow);
+              // Always persist tokensIn. contextWindow is only written when the
+              // SDK reports it — providers that don't expose a context window
+              // (e.g. Codex) leave that column unchanged.
+              this.threadRepo.updateContextUsage(event.threadId, event.tokensIn, event.contextWindow);
             } catch (err) {
               logger.warn("Context usage not persisted", {
                 threadId: event.threadId,
