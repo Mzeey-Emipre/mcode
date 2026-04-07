@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Loader2, GitPullRequest, GitBranch, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -9,13 +9,128 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { SegControl } from "@/components/settings/SegControl";
 import { MarkdownContent } from "./MarkdownContent";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
-import type { PrDraft } from "@mcode/contracts";
+import type { PrDraft, GitBranch as GitBranchType } from "@mcode/contracts";
+
+// ---------------------------------------------------------------------------
+// BaseBranchSelect — searchable local-branch picker for the PR dialog sidebar
+// ---------------------------------------------------------------------------
+
+interface BaseBranchSelectProps {
+  branches: GitBranchType[];
+  value: string;
+  onChange: (name: string) => void;
+  disabled?: boolean;
+}
+
+/**
+ * Searchable dropdown for picking the PR base branch.
+ * Renders a styled trigger button that opens a popover with a search input
+ * and a scrollable list of local branches.
+ */
+function BaseBranchSelect({ branches, value, onChange, disabled }: BaseBranchSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      setSearch("");
+      requestAnimationFrame(() => searchRef.current?.focus());
+    }
+  }, [open]);
+
+  const filtered = useMemo(
+    () => branches.filter((b) => b.name.toLowerCase().includes(search.toLowerCase())),
+    [branches, search],
+  );
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => { if (!disabled) setOpen((o) => !o); }}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={cn(
+          "flex h-8 w-full items-center justify-between rounded-lg border border-input bg-background pl-3 pr-2.5 text-sm shadow-xs transition-colors",
+          "focus-visible:border-ring focus-visible:outline-none",
+          "disabled:cursor-not-allowed disabled:opacity-50",
+          open && "border-ring",
+        )}
+      >
+        <span className="truncate">{value}</span>
+        <ChevronDown
+          className={cn("size-3.5 text-muted-foreground transition-transform duration-150", open && "rotate-180")}
+          aria-hidden="true"
+        />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-label="Base branch"
+          className="absolute top-full left-0 z-50 mt-1 w-full min-w-[200px] rounded-lg border border-border bg-popover shadow-lg"
+        >
+          <div className="p-1.5">
+            <Input
+              ref={searchRef}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search branches…"
+              size="sm"
+              className="text-popover-foreground"
+            />
+          </div>
+          <div className="max-h-[200px] overflow-y-auto p-1">
+            {filtered.length === 0 ? (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">No branches match</p>
+            ) : (
+              filtered.map((b) => (
+                <button
+                  key={b.name}
+                  type="button"
+                  role="option"
+                  aria-selected={b.name === value}
+                  onClick={() => { onChange(b.name); setOpen(false); }}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs transition-colors",
+                    b.name === value
+                      ? "bg-accent text-foreground"
+                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground",
+                  )}
+                >
+                  <span className="truncate">{b.name}</span>
+                  {b.isCurrent && (
+                    <Badge variant="secondary" size="sm" className="ml-2 shrink-0">current</Badge>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Possible states for the PR creation flow. */
 type DialogState = "loading" | "ready" | "submitting" | "error";
@@ -191,39 +306,16 @@ export function CreatePrDialog({
 
             {/* Base branch */}
             <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="pr-base-branch"
-                className="text-xs text-muted-foreground flex items-center gap-1"
-              >
+              <label className="text-xs text-muted-foreground flex items-center gap-1">
                 <GitBranch className="size-3" aria-hidden="true" />
                 Base branch
               </label>
-              <div className="relative">
-                <select
-                  id="pr-base-branch"
-                  value={baseBranch}
-                  onChange={(e) => setBaseBranch(e.target.value)}
-                  disabled={isDisabled || localBranches.length === 0}
-                  className={cn(
-                    "flex h-8 w-full appearance-none rounded-lg border border-input bg-background pl-3 pr-8 py-1 text-sm shadow-xs transition-colors",
-                    "focus-visible:border-ring focus-visible:outline-none",
-                    "disabled:cursor-not-allowed disabled:opacity-50",
-                  )}
-                >
-                  {localBranches.length === 0 && (
-                    <option value={baseBranch}>{baseBranch}</option>
-                  )}
-                  {localBranches.map((b) => (
-                    <option key={b.name} value={b.name}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground"
-                  aria-hidden="true"
-                />
-              </div>
+              <BaseBranchSelect
+                branches={localBranches}
+                value={baseBranch}
+                onChange={setBaseBranch}
+                disabled={isDisabled}
+              />
             </div>
 
             {/* Draft toggle */}
