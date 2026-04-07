@@ -140,17 +140,34 @@ export function startPushListeners(): void {
       };
       useThreadStore.getState().handleTurnPersisted(payload);
 
-      // Update diff panel snapshots if this thread is already loaded
+      // Update diff panel snapshots and commits if this thread is already loaded
       import("@/stores/diffStore").then(({ useDiffStore }) => {
         const store = useDiffStore.getState();
-        if (store.snapshotsByThread[payload.threadId] !== undefined) {
-          import("@/transport").then(({ getTransport }) => {
+        import("@/transport").then(({ getTransport }) => {
+          if (store.snapshotsByThread[payload.threadId] !== undefined) {
             getTransport()
               .listSnapshots(payload.threadId)
               .then((snapshots) => store.setSnapshots(payload.threadId, snapshots))
               .catch(() => { /* non-critical */ });
-          });
-        }
+          }
+
+          const cached = store.commitsByThread[payload.threadId];
+          if (cached !== undefined) {
+            import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
+              const ws = useWorkspaceStore.getState();
+              const thread = ws.threads.find((t) => t.id === payload.threadId);
+              if (!thread || !ws.activeWorkspaceId) return;
+              getTransport()
+                .getGitLog(ws.activeWorkspaceId, thread.branch, 100)
+                .then((commits) => {
+                  // Skip store update if the commit list hasn't changed
+                  if (commits.length === cached.length && commits.every((c, i) => c.sha === cached[i].sha)) return;
+                  store.setCommits(payload.threadId, commits);
+                })
+                .catch(() => { /* non-critical */ });
+            });
+          }
+        });
       });
     }),
   );
