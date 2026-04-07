@@ -1189,7 +1189,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         const nextCtx = active
           ? {
               ...state.contextByThread,
-              [threadId]: { lastTokensIn: 0, contextWindow: state.contextByThread[threadId]?.contextWindow },
+              [threadId]: { lastTokensIn: 0, contextWindow: state.contextByThread[threadId]?.contextWindow, totalProcessedTokens: state.contextByThread[threadId]?.totalProcessedTokens },
             }
           : state.contextByThread;
         return { isCompactingByThread: next, contextByThread: nextCtx };
