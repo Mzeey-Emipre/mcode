@@ -142,27 +142,31 @@ export function startPushListeners(): void {
 
       // Update diff panel snapshots and commits if this thread is already loaded
       import("@/stores/diffStore").then(({ useDiffStore }) => {
-        const store = useDiffStore.getState();
+        const snap = useDiffStore.getState();
+        const hasSnapshots = snap.snapshotsByThread[payload.threadId] !== undefined;
+        const hasCommits = snap.commitsByThread[payload.threadId] !== undefined;
+        // Skip transport import entirely when neither panel has data for this thread
+        if (!hasSnapshots && !hasCommits) return;
+
         import("@/transport").then(({ getTransport }) => {
-          if (store.snapshotsByThread[payload.threadId] !== undefined) {
+          if (hasSnapshots) {
             getTransport()
               .listSnapshots(payload.threadId)
-              .then((snapshots) => store.setSnapshots(payload.threadId, snapshots))
+              .then((snapshots) => useDiffStore.getState().setSnapshots(payload.threadId, snapshots))
               .catch(() => { /* non-critical */ });
           }
 
-          const cached = store.commitsByThread[payload.threadId];
-          if (cached !== undefined) {
+          if (hasCommits) {
             import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
-              const ws = useWorkspaceStore.getState();
-              const thread = ws.threads.find((t) => t.id === payload.threadId);
-              if (!thread || !ws.activeWorkspaceId) return;
+              const thread = useWorkspaceStore.getState().threads.find((t) => t.id === payload.threadId);
+              if (!thread) return;
               getTransport()
-                .getGitLog(ws.activeWorkspaceId, thread.branch, 100)
+                .getGitLog(thread.workspace_id, thread.branch, 100)
                 .then((commits) => {
-                  // Skip store update if the commit list hasn't changed
-                  if (commits.length === cached.length && commits.every((c, i) => c.sha === cached[i].sha)) return;
-                  store.setCommits(payload.threadId, commits);
+                  // Re-read current state at write time to avoid stale-closure races
+                  const current = useDiffStore.getState().commitsByThread[payload.threadId];
+                  if (current && commits.length === current.length && commits.every((c, i) => c.sha === current[i].sha)) return;
+                  useDiffStore.getState().setCommits(payload.threadId, commits);
                 })
                 .catch(() => { /* non-critical */ });
             });
