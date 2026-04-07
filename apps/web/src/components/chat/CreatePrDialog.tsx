@@ -287,7 +287,7 @@ export function CreatePrDialog({
         </div>
 
         {/* Two-column body */}
-        <div className="flex min-h-[480px]">
+        <div className="flex h-[480px]">
           {/* Left sidebar: metadata + actions */}
           <div className="w-64 shrink-0 flex flex-col gap-4 border-r border-border/50 p-5">
             {/* Title */}
