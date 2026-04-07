@@ -234,11 +234,13 @@ describe("CleanupWorker", () => {
     });
 
     it("skips jobs with attempts >= MAX_CLEANUP_ATTEMPTS", async () => {
+      const ws = workspaceRepo.create("test", "/repo");
+      insertThread("t-max", ws.id, "mcode/feat-max", wt("feat-max"));
       const job = cleanupJobRepo.insert({
         thread_id: "t-max",
         workspace_path: "/repo",
-        worktree_path: "/repo/.worktrees/feat-max",
-        branch: null,
+        worktree_path: wt("feat-max"),
+        branch: "mcode/feat-max",
       });
       db.prepare("UPDATE cleanup_jobs SET attempts = ? WHERE id = ?").run(MAX_CLEANUP_ATTEMPTS, job.id);
 

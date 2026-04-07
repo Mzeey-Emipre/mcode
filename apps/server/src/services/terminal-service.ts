@@ -161,23 +161,18 @@ export class TerminalService {
     this.removePty(ptyId);
   }
 
-  /** Kill all PTY sessions for a given thread. */
+  /** Kill all PTY sessions for a given thread, concurrently. */
   async killByThread(threadId: string): Promise<void> {
     const ptys = this.threadIndex.get(threadId);
     if (!ptys || ptys.size === 0) return;
-    const ids = [...ptys];
-    for (const ptyId of ids) {
-      await this.kill(ptyId);
-    }
+    // Kill all PTYs concurrently: each killProcessTree is independent.
+    await Promise.all([...ptys].map((ptyId) => this.kill(ptyId)));
     logger.info("All PTYs killed for thread", { threadId });
   }
 
   /** Kill all PTY sessions across all threads. */
   async shutdown(): Promise<void> {
-    const ids = [...this.sessions.keys()];
-    for (const ptyId of ids) {
-      await this.kill(ptyId);
-    }
+    await Promise.all([...this.sessions.keys()].map((ptyId) => this.kill(ptyId)));
   }
 
   private async destroyPty(session: PtySession): Promise<void> {

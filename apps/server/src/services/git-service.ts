@@ -16,6 +16,12 @@ import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 const execFile = promisify(execFileCb);
 
+/**
+ * Options for fs.rm when removing worktree directories.
+ * maxRetries handles transient EBUSY locks from antivirus/indexers on Windows.
+ */
+const RM_RETRY_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 } as const;
+
 /** Resolve the worktree base directory path under the mcode data dir. */
 function getWorktreeBaseDir(repoPath: string): string {
   return join(getMcodeDir(), "worktrees", worktreeSlug(repoPath));
@@ -176,8 +182,7 @@ export class GitService {
         { wtPath },
       );
       try {
-        // maxRetries handles transient EBUSY locks from antivirus/indexers on Windows.
-        await rm(wtPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        await rm(wtPath, RM_RETRY_OPTIONS);
       } catch (err) {
         logger.error("Fallback fs.rm failed", {
           wtPath,
@@ -190,12 +195,14 @@ export class GitService {
     // Renaming succeeds even when the directory has open handles, so the original
     // path becomes available immediately while the OS drains remaining handles.
     if (existsSync(wtPath)) {
-      const pendingPath = `${wtPath}.deleting`;
+      // Use a timestamp suffix to avoid collision with stale .deleting directories
+      // left by previous crashed cleanup attempts.
+      const pendingPath = `${wtPath}.deleting-${Date.now()}`;
       try {
         await rename(wtPath, pendingPath);
         logger.info("Renamed stuck worktree for deferred deletion", { wtPath, pendingPath });
         // Best-effort: fire-and-forget deletion of the renamed directory.
-        rm(pendingPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(
+        rm(pendingPath, RM_RETRY_OPTIONS).catch(
           (err) => {
             logger.warn("Deferred deletion of renamed worktree failed", {
               pendingPath,

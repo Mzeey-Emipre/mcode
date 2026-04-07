@@ -95,4 +95,19 @@ describe("killProcessTree", () => {
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
   });
+
+  it("does nothing when pid is 0 on Unix", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "linux" });
+    try {
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+      await killProcessTree(0);
+
+      expect(killSpy).not.toHaveBeenCalled();
+      killSpy.mockRestore();
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+    }
+  });
 });

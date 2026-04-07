@@ -90,7 +90,7 @@ describe("GitService.removeWorktree", () => {
 
     expect(mockRm).toHaveBeenCalledWith(
       expect.stringContaining("my-worktree"),
-      { recursive: true, force: true, maxRetries: 5, retryDelay: 200 },
+      expect.objectContaining({ maxRetries: 5, retryDelay: 200 }),
     );
     expect(result).toBe(true);
     expect(mockLogger.warn).toHaveBeenCalled();
@@ -135,7 +135,7 @@ describe("GitService.removeWorktree", () => {
 
     expect(mockRm).toHaveBeenCalledWith(
       expect.stringContaining("my-worktree"),
-      { recursive: true, force: true, maxRetries: 5, retryDelay: 200 },
+      expect.objectContaining({ maxRetries: 5, retryDelay: 200 }),
     );
   });
 
@@ -169,7 +169,7 @@ describe("GitService.removeWorktree", () => {
 
     expect(mockRename).toHaveBeenCalledWith(
       expect.stringContaining("my-worktree"),
-      expect.stringMatching(/my-worktree\.deleting$/),
+      expect.stringMatching(/my-worktree\.deleting-\d+$/),
     );
     expect(result).toBe(true);
   });

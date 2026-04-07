@@ -26,7 +26,10 @@ export async function killProcessTree(pid: number): Promise<void> {
         timeout: TASKKILL_TIMEOUT_MS,
       });
     } else {
-      process.kill(-pid, "SIGKILL");
+      // Guard against pid <= 0: process.kill(0) would kill the server's own group.
+      if (pid > 0) {
+        process.kill(-pid, "SIGKILL");
+      }
     }
   } catch (err) {
     logger.warn("killProcessTree: process may already be dead", {
