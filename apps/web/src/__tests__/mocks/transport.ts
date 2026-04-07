@@ -47,6 +47,8 @@ export function createMockThread(overrides?: Partial<Thread>): Thread {
     reasoning_level: null,
     interaction_mode: null,
     permission_mode: null,
+    parent_thread_id: null,
+    forked_from_message_id: null,
     ...overrides,
   };
 }
