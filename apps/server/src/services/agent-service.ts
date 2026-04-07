@@ -35,7 +35,7 @@ import { broadcast } from "../transport/push";
 import { ThreadService } from "./thread-service";
 import { SettingsService } from "./settings-service.js";
 import { PlanQuestionParser } from "./plan-question-parser.js";
-import { buildHandoffContent, HANDOFF_MARKER } from "./handoff-builder.js";
+import { buildHandoffContent, buildConversationReplay, replayBudgetChars } from "./handoff-builder.js";
 import { PlanQuestionSchema } from "@mcode/contracts";
 import { z } from "zod";
 
@@ -480,12 +480,22 @@ export class AgentService {
       throw new Error("No messages in parent thread to branch from");
     }
 
+    const forkIdx = parentMessages.findIndex((m) => m.id === resolvedForkMessageId);
+    if (forkIdx === -1) {
+      throw new Error(`Fork message not found in parent thread: ${resolvedForkMessageId}`);
+    }
+    // Slice to exactly the state visible at the fork point.
+    const forkedMessages = parentMessages.slice(0, forkIdx + 1);
+
     // Gather handoff data
-    const lastAssistantMsg = [...parentMessages]
+    // lastAssistantText comes from forkedMessages so it never leaks post-fork state.
+    const lastAssistantMsg = [...forkedMessages]
       .reverse()
       .find((m) => m.role === "assistant");
     const lastAssistantText = lastAssistantMsg?.content ?? null;
 
+    // Snapshots and task state cannot be reconstructed at an arbitrary fork point
+    // without replaying history — use latest parent state for now.
     const snapshots = this.turnSnapshotRepo.listByThread(parentThreadId);
     const latestSnapshot = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
     // files_changed is already parsed as string[] by TurnSnapshotRepo.listByThread()
@@ -542,10 +552,15 @@ export class AgentService {
     // Insert synthetic system handoff message as sequence 1
     this.messageRepo.create(thread.id, "system", handoffContent, 1);
 
-    // Build stitched content for the provider
-    const proseEnd = handoffContent.indexOf(HANDOFF_MARKER);
-    const handoffProse = proseEnd !== -1 ? handoffContent.slice(0, proseEnd).trim() : handoffContent;
-    const stitchedContent = `${handoffProse}\n\n---\n\n${content}`;
+    // Build the conversation replay for the provider.
+    // This gives the AI real conversation history instead of a lossy summary.
+    // The handoffContent (prose + JSON metadata) is stored in the DB for the UI only.
+    const budget = replayBudgetChars(model);
+    const replay = buildConversationReplay(forkedMessages, budget);
+    const replayHeader = `You are continuing work from a previous thread titled "${parentThread.title}". Here is the conversation history up to the fork point:\n\n`;
+    const stitchedContent = replay
+      ? `${replayHeader}${replay}\n\n---\n\n${content}`
+      : content;
 
     // Set provider content override so sendMessage uses stitched content
     this.providerContentOverride.set(thread.id, stitchedContent);
