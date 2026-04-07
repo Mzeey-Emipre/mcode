@@ -4,10 +4,8 @@ import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
   DialogDescription,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -148,46 +146,38 @@ export function CreatePrDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-2xl"
+        className="sm:max-w-4xl w-[min(90vw,900px)] p-0 gap-0 overflow-hidden"
         showCloseButton={!isDisabled}
       >
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
-            Create pull request
-          </DialogTitle>
-          <DialogDescription>
-            Opening a PR from <span className="font-mono text-xs">{branch}</span>.
-          </DialogDescription>
-        </DialogHeader>
-
-        {/* Loading state */}
-        {state === "loading" && (
-          <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Generating PR draft...
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/50">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40">
+            <GitPullRequest className="size-3.5 text-muted-foreground" aria-hidden="true" />
           </div>
-        )}
+          <div className="min-w-0 flex-1">
+            <DialogTitle className="text-sm font-medium leading-none">
+              Create pull request
+            </DialogTitle>
+            <DialogDescription className="mt-1 flex items-center gap-1.5 text-xs">
+              <span className="font-mono max-w-[200px] truncate text-foreground/80">{branch}</span>
+              <span className="text-muted-foreground/50">→</span>
+              <span className="font-mono max-w-[200px] truncate text-muted-foreground">{baseBranch}</span>
+            </DialogDescription>
+          </div>
+          {isDraft && (
+            <span className="text-xs text-muted-foreground bg-muted/60 border border-border/50 rounded px-2 py-0.5 shrink-0">
+              Draft
+            </span>
+          )}
+        </div>
 
-        {/* Form — shown in ready, submitting, and error states */}
-        {state !== "loading" && (
-          <div className="flex flex-col gap-3">
-            {/* Error banner */}
-            {error && (
-              <div
-                role="alert"
-                className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2"
-              >
-                {error}
-              </div>
-            )}
-
+        {/* Two-column body */}
+        <div className="flex min-h-[480px]">
+          {/* Left sidebar: metadata + actions */}
+          <div className="w-64 shrink-0 flex flex-col gap-4 border-r border-border/50 p-5">
             {/* Title */}
-            <div className="flex flex-col gap-1">
-              <label
-                htmlFor="pr-title"
-                className="text-xs text-muted-foreground"
-              >
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="pr-title" className="text-xs text-muted-foreground">
                 Title
               </label>
               <Input
@@ -199,132 +189,147 @@ export function CreatePrDialog({
               />
             </div>
 
-            {/* Base branch + Draft row */}
-            <div className="flex items-end gap-3">
-              <div className="flex flex-col gap-1 flex-1">
-                <label
-                  htmlFor="pr-base-branch"
-                  className="text-xs text-muted-foreground flex items-center gap-1"
-                >
-                  <GitBranch className="size-3" aria-hidden="true" />
-                  Base branch
-                </label>
-                <div className="relative">
-                  <select
-                    id="pr-base-branch"
-                    value={baseBranch}
-                    onChange={(e) => setBaseBranch(e.target.value)}
-                    disabled={isDisabled || localBranches.length === 0}
-                    className={cn(
-                      "flex h-8 w-full appearance-none rounded-lg border border-input bg-background pl-3 pr-8 py-1 text-sm shadow-xs transition-colors",
-                      "focus-visible:border-ring focus-visible:outline-none",
-                      "disabled:cursor-not-allowed disabled:opacity-50",
-                    )}
-                  >
-                    {localBranches.length === 0 && (
-                      <option value={baseBranch}>{baseBranch}</option>
-                    )}
-                    {localBranches.map((b) => (
-                      <option key={b.name} value={b.name}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown
-                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground"
-                    aria-hidden="true"
-                  />
-                </div>
-              </div>
-
-              {/* Draft toggle */}
-              <div className="flex flex-col gap-1 pb-px">
-                <label
-                  htmlFor="pr-is-draft"
-                  className="text-xs text-muted-foreground select-none"
-                >
-                  Draft PR
-                </label>
-                <div className="flex items-center h-8">
-                  <Switch
-                    id="pr-is-draft"
-                    checked={isDraft}
-                    onCheckedChange={setIsDraft}
-                    disabled={isDisabled}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Description */}
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="pr-body"
-                  className="text-xs text-muted-foreground"
-                >
-                  Description
-                </label>
-                <SegControl
-                  options={[
-                    { value: "write", label: "Write" },
-                    { value: "preview", label: "Preview" },
-                  ]}
-                  value={descMode}
-                  onChange={(v) => setDescMode(v as "write" | "preview")}
-                />
-              </div>
-              {descMode === "write" ? (
-                <textarea
-                  id="pr-body"
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  rows={12}
-                  disabled={isDisabled}
-                  placeholder="PR description"
+            {/* Base branch */}
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="pr-base-branch"
+                className="text-xs text-muted-foreground flex items-center gap-1"
+              >
+                <GitBranch className="size-3" aria-hidden="true" />
+                Base branch
+              </label>
+              <div className="relative">
+                <select
+                  id="pr-base-branch"
+                  value={baseBranch}
+                  onChange={(e) => setBaseBranch(e.target.value)}
+                  disabled={isDisabled || localBranches.length === 0}
                   className={cn(
-                    "flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-xs transition-colors",
-                    "font-mono resize-y",
-                    "placeholder:text-muted-foreground",
+                    "flex h-8 w-full appearance-none rounded-lg border border-input bg-background pl-3 pr-8 py-1 text-sm shadow-xs transition-colors",
                     "focus-visible:border-ring focus-visible:outline-none",
                     "disabled:cursor-not-allowed disabled:opacity-50",
                   )}
-                />
-              ) : (
-                <div
-                  className={cn(
-                    "min-h-48 overflow-y-auto rounded-lg border border-input bg-background px-3 py-2 text-sm",
-                  )}
                 >
-                  {body.trim() ? (
-                    <MarkdownContent content={body} />
-                  ) : (
-                    <span className="text-muted-foreground italic">Nothing to preview.</span>
+                  {localBranches.length === 0 && (
+                    <option value={baseBranch}>{baseBranch}</option>
                   )}
-                </div>
-              )}
+                  {localBranches.map((b) => (
+                    <option key={b.name} value={b.name}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </div>
+            </div>
+
+            {/* Draft toggle */}
+            <div className="flex items-center justify-between">
+              <label
+                htmlFor="pr-is-draft"
+                className="text-xs text-muted-foreground select-none cursor-pointer"
+              >
+                Draft PR
+              </label>
+              <Switch
+                id="pr-is-draft"
+                checked={isDraft}
+                onCheckedChange={setIsDraft}
+                disabled={isDisabled}
+              />
+            </div>
+
+            {/* Spacer */}
+            <div className="flex-1" />
+
+            {/* Error banner */}
+            {error && (
+              <div
+                role="alert"
+                className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2"
+              >
+                {error}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex flex-col gap-2">
+              <Button
+                onClick={handleSubmit}
+                disabled={isDisabled || !title.trim()}
+                className="w-full"
+              >
+                {state === "submitting" && (
+                  <Loader2 className="size-3.5 animate-spin" />
+                )}
+                Create PR
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => onOpenChange(false)}
+                disabled={isDisabled}
+                className="w-full"
+              >
+                Cancel
+              </Button>
             </div>
           </div>
-        )}
 
-        <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={isDisabled}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={isDisabled || !title.trim()}
-          >
-            {state === "submitting" && (
-              <Loader2 className="h-4 w-4 animate-spin mr-1" />
+          {/* Right: description */}
+          <div className="flex-1 flex flex-col gap-2 p-5 min-w-0">
+            {state === "loading" ? (
+              <div className="flex-1 flex items-center justify-center gap-2 text-muted-foreground text-sm">
+                <Loader2 className="size-4 animate-spin" />
+                Generating PR draft…
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <label htmlFor="pr-body" className="text-xs text-muted-foreground">
+                    Description
+                  </label>
+                  <SegControl
+                    options={[
+                      { value: "write", label: "Write" },
+                      { value: "preview", label: "Preview" },
+                    ]}
+                    value={descMode}
+                    onChange={(v) => setDescMode(v as "write" | "preview")}
+                  />
+                </div>
+                {descMode === "write" ? (
+                  <textarea
+                    id="pr-body"
+                    value={body}
+                    onChange={(e) => setBody(e.target.value)}
+                    disabled={isDisabled}
+                    placeholder="PR description"
+                    className={cn(
+                      "flex-1 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm shadow-xs transition-colors",
+                      "font-mono resize-none",
+                      "placeholder:text-muted-foreground",
+                      "focus-visible:border-ring focus-visible:outline-none",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                    )}
+                  />
+                ) : (
+                  <div
+                    className="flex-1 overflow-y-auto rounded-lg border border-input bg-background px-3 py-2.5 text-sm"
+                  >
+                    {body.trim() ? (
+                      <MarkdownContent content={body} />
+                    ) : (
+                      <span className="text-muted-foreground italic">Nothing to preview.</span>
+                    )}
+                  </div>
+                )}
+              </>
             )}
-            Create PR
-          </Button>
-        </DialogFooter>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
