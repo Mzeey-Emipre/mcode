@@ -409,7 +409,7 @@ export function CreatePrDialog({
                   />
                 ) : (
                   <div
-                    className="flex-1 overflow-y-auto rounded-lg border border-input bg-background px-3 py-2.5 text-sm"
+                    className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-input bg-background px-3 py-2.5 text-sm"
                   >
                     {body.trim() ? (
                       <MarkdownContent content={body} />
