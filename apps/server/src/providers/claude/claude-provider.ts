@@ -391,6 +391,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         let sessionCompacting = false;
         /** Tracks the last known context window size for post-compaction estimation. */
         let lastContextWindow: number | undefined = undefined;
+        /** Per-API-call input token count from the most recent stream_event message_start. */
+        let lastStreamInputTokens: number | undefined = undefined;
 
         for await (const msg of q) {
           const entry = this.sessions.get(sessionId);
@@ -654,7 +656,31 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               const streamEvent = anyMsg.event as {
                 type?: string;
                 delta?: { type?: string; text?: string; partial_json?: string };
+                message?: {
+                  usage?: {
+                    input_tokens?: number;
+                    cache_read_input_tokens?: number;
+                    cache_creation_input_tokens?: number;
+                  };
+                };
               };
+              if (streamEvent?.type === "message_start" && streamEvent.message?.usage) {
+                const u = streamEvent.message.usage;
+                lastStreamInputTokens =
+                  (u.input_tokens ?? 0) +
+                  (u.cache_read_input_tokens ?? 0) +
+                  (u.cache_creation_input_tokens ?? 0);
+
+                // Emit mid-turn context estimate so the ring updates on each API call.
+                if (lastStreamInputTokens > 0) {
+                  this.emit("event", {
+                    type: "contextEstimate",
+                    threadId,
+                    tokensIn: lastStreamInputTokens,
+                    contextWindow: lastContextWindow,
+                  } satisfies AgentEvent);
+                }
+              }
               if (streamEvent?.type === "content_block_delta") {
                 if (
                   streamEvent.delta?.type === "text_delta" &&
