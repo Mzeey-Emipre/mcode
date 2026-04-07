@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { renderHook, act } from "@testing-library/react";
-import { useFileTagPopup } from "./FileTagPopup";
+import { renderHook, act, render, screen } from "@testing-library/react";
+import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 
 describe("useFileTagPopup", () => {
   const defaultProps = {
@@ -110,5 +110,54 @@ describe("useFileTagPopup", () => {
       } as unknown as React.KeyboardEvent);
     });
     expect(onDismiss).toHaveBeenCalled();
+  });
+});
+
+describe("FileTagPopup", () => {
+  const mockListRef = { current: null } as React.RefObject<HTMLDivElement | null>;
+  const onSelect = vi.fn();
+
+  it("renders all items when below virtual threshold", () => {
+    const files = Array.from({ length: 10 }, (_, i) => `src/file${i}.ts`);
+    render(
+      <FileTagPopup
+        files={files}
+        isOpen={true}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={0}
+      />,
+    );
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(10);
+  });
+
+  it("accepts selectedIndex prop and marks the correct item", () => {
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
+    render(
+      <FileTagPopup
+        files={files}
+        isOpen={true}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={1}
+      />,
+    );
+    const options = screen.getAllByRole("option");
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+    expect(options[0]).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("renders nothing when closed", () => {
+    render(
+      <FileTagPopup
+        files={["src/a.ts"]}
+        isOpen={false}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={0}
+      />,
+    );
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 });

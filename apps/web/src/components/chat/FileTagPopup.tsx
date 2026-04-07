@@ -1,7 +1,12 @@
 // apps/web/src/components/chat/FileTagPopup.tsx
 import { useRef, useEffect, useCallback, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { getFileIcon, getFileIconColor } from "@/lib/file-icons";
+
+const ITEM_HEIGHT = 28; // px per row (py-1.5 + 14px icon)
+const VISIBLE_ITEMS = 8;
+const VIRTUAL_THRESHOLD = 20;
 
 interface FileTagPopupOptions {
   files: string[];
@@ -16,6 +21,7 @@ interface FileTagPopupProps {
   isOpen: boolean;
   onSelect: (filePath: string) => void;
   listRef: React.RefObject<HTMLDivElement | null>;
+  selectedIndex: number;
 }
 
 /** Split a file path into directory + filename for styled rendering. */
@@ -74,43 +80,130 @@ export function useFileTagPopup({
   return { handleKeyDown, listRef, selectedIndex };
 }
 
+/** Single file row in the popup list. */
+function FileRow({
+  filePath,
+  selected,
+  onSelect,
+}: {
+  filePath: string;
+  selected: boolean;
+  onSelect: (filePath: string) => void;
+}) {
+  const { dir, name } = splitPath(filePath);
+  const Icon = getFileIcon(filePath);
+  return (
+    <button
+      role="option"
+      aria-selected={selected}
+      data-file-item
+      onClick={() => onSelect(filePath)}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
+        "hover:bg-accent hover:text-accent-foreground",
+        selected && "bg-accent text-accent-foreground",
+      )}
+    >
+      <Icon size={14} className={cn("shrink-0", getFileIconColor(filePath))} />
+      <span className="truncate">
+        <span className="text-muted-foreground">{dir}</span>
+        <span className="font-medium">{name}</span>
+      </span>
+    </button>
+  );
+}
+
 /** Dropdown popup displaying file suggestions for @ tagging. */
-export function FileTagPopup({ files, isOpen, onSelect, listRef }: FileTagPopupProps) {
+export function FileTagPopup({
+  files,
+  isOpen,
+  onSelect,
+  listRef,
+  selectedIndex,
+}: FileTagPopupProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const useVirtual = files.length > VIRTUAL_THRESHOLD;
+
+  const virtualizer = useVirtualizer({
+    count: useVirtual ? files.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ITEM_HEIGHT,
+    overscan: 4,
+  });
+
+  // Scroll selected item into view
+  useEffect(() => {
+    if (!isOpen) return;
+    if (useVirtual) {
+      virtualizer.scrollToIndex(selectedIndex, { align: "auto" });
+    } else {
+      const el = scrollRef.current?.querySelector(
+        `[data-index="${selectedIndex}"]`,
+      );
+      if (el && typeof (el as HTMLElement).scrollIntoView === "function") {
+        (el as HTMLElement).scrollIntoView({ block: "nearest" });
+      }
+    }
+  }, [selectedIndex, isOpen, useVirtual, virtualizer]);
+
   if (!isOpen || files.length === 0) return null;
+
+  const maxHeight = Math.min(
+    VISIBLE_ITEMS * ITEM_HEIGHT,
+    files.length * ITEM_HEIGHT,
+  );
 
   return (
     <div
       ref={listRef}
       role="listbox"
       aria-label="File suggestions"
-      className="absolute bottom-full left-0 z-50 mb-1 w-full max-h-[240px] overflow-y-auto rounded-lg border border-border bg-popover shadow-lg"
+      className="absolute bottom-full left-0 z-50 mb-1 w-full overflow-hidden rounded-lg border border-border bg-popover shadow-lg"
     >
-      <div className="p-1">
-        {files.map((filePath, index) => {
-          const { dir, name } = splitPath(filePath);
-          const Icon = getFileIcon(filePath);
-          return (
-            <button
-              key={filePath}
-              role="option"
-              aria-selected={index === 0 ? "true" : "false"}
-              data-file-item
-              data-selected={index === 0 ? "true" : "false"}
-              onClick={() => onSelect(filePath)}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
-                "hover:bg-accent hover:text-accent-foreground",
-                "data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground",
-              )}
-            >
-              <Icon size={14} className={cn("shrink-0", getFileIconColor(filePath))} />
-              <span className="truncate">
-                <span className="text-muted-foreground">{dir}</span>
-                <span className="font-medium">{name}</span>
-              </span>
-            </button>
-          );
-        })}
+      <div
+        ref={scrollRef}
+        className="p-1"
+        style={{ maxHeight, overflowY: "auto" }}
+      >
+        {useVirtual ? (
+          <div
+            role="presentation"
+            style={{
+              height: virtualizer.getTotalSize(),
+              position: "relative",
+            }}
+          >
+            {virtualizer.getVirtualItems().map((vi) => (
+              <div
+                key={vi.key}
+                role="presentation"
+                data-index={vi.index}
+                style={{
+                  position: "absolute",
+                  top: vi.start,
+                  width: "100%",
+                  height: vi.size,
+                }}
+              >
+                <FileRow
+                  filePath={files[vi.index]}
+                  selected={vi.index === selectedIndex}
+                  onSelect={onSelect}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
+          files.map((filePath, i) => (
+            <div key={filePath} role="presentation" data-index={i}>
+              <FileRow
+                filePath={filePath}
+                selected={i === selectedIndex}
+                onSelect={onSelect}
+              />
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
