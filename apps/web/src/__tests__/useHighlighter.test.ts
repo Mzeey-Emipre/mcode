@@ -78,7 +78,7 @@ describe("useHighlighter", () => {
     act(() => {
       mockWorkerInstance.onmessage?.(
         new MessageEvent("message", {
-          data: { id: sentId, html: '<pre class="shiki">highlighted</pre>' },
+          data: { id: sentId, type: "highlight", html: '<pre class="shiki">highlighted</pre>' },
         }),
       );
     });
