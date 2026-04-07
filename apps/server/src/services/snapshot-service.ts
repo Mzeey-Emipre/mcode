@@ -110,4 +110,37 @@ export class SnapshotService {
       return false;
     }
   }
+
+  /** Get per-file line addition/deletion counts between two refs using git diff --numstat. */
+  async getDiffStats(
+    cwd: string,
+    refBefore: string,
+    refAfter: string,
+  ): Promise<{ filePath: string; additions: number; deletions: number }[]> {
+    if (refBefore === refAfter) return [];
+
+    try {
+      const { stdout } = await execFile(
+        "git",
+        ["-C", cwd, "diff", "--numstat", "--find-renames", refBefore, refAfter],
+        { timeout: 10_000 },
+      );
+
+      return stdout
+        .trim()
+        .split("\n")
+        .filter((line) => line.includes("\t"))
+        .map((line) => {
+          const [addStr, delStr, ...pathParts] = line.split("\t");
+          return {
+            filePath: pathParts.join("\t"),
+            // Binary files show "-" instead of a number
+            additions: addStr === "-" ? 0 : parseInt(addStr ?? "0", 10),
+            deletions: delStr === "-" ? 0 : parseInt(delStr ?? "0", 10),
+          };
+        });
+    } catch {
+      return [];
+    }
+  }
 }

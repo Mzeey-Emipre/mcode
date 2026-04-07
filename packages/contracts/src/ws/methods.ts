@@ -275,6 +275,16 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: z.string(),
   },
+  "snapshot.getDiffStats": {
+    params: z.object({ snapshotId: z.string() }),
+    result: z.array(
+      z.object({
+        filePath: z.string(),
+        additions: z.number().int().nonnegative(),
+        deletions: z.number().int().nonnegative(),
+      }),
+    ),
+  },
   "snapshot.cleanup": {
     params: z.object({}),
     result: z.object({ removed: z.number() }),

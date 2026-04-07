@@ -375,6 +375,21 @@ async function dispatch(
       }
       return await deps.snapshotService.getDiff(snapshotCwd, snapshot.ref_before, snapshot.ref_after, params.filePath, params.maxLines);
     }
+    case "snapshot.getDiffStats": {
+      const snapshot = deps.turnSnapshotRepo.getById(params.snapshotId);
+      if (!snapshot) throw new Error(`Snapshot not found: ${params.snapshotId}`);
+      let snapshotCwd: string;
+      if (snapshot.worktree_path) {
+        snapshotCwd = snapshot.worktree_path;
+      } else {
+        const snapshotThread = deps.threadService.findById(snapshot.thread_id);
+        if (!snapshotThread) throw new Error(`Thread not found for snapshot: ${snapshot.thread_id}`);
+        const ws = deps.workspaceService.findById(snapshotThread.workspace_id);
+        if (!ws) throw new Error(`Workspace not found: ${snapshotThread.workspace_id}`);
+        snapshotCwd = deps.gitService.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
+      }
+      return await deps.snapshotService.getDiffStats(snapshotCwd, snapshot.ref_before, snapshot.ref_after);
+    }
     case "snapshot.cleanup":
       return { removed: deps.turnSnapshotRepo.deleteExpired(
         parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10),

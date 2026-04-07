@@ -40,6 +40,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
   // Restore manual override from ref if the virtualizer remounted this component
   const manualOverride = manualExpandRef?.current?.get(messageId);
   const [expanded, setExpanded] = useState(manualOverride ?? isLatestTurn);
+  const [diffStats, setDiffStats] = useState<Map<string, { additions: number; deletions: number }> | null>(null);
   const fileCount = filesChanged.length;
   const displayedFiles = filesChanged.slice(0, MAX_DISPLAYED_FILES);
   const hiddenCount = fileCount - displayedFiles.length;
@@ -59,6 +60,37 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
       return next;
     });
   }, [messageId, manualExpandRef]);
+
+  // Fetch per-file diff stats when the banner is expanded
+  useEffect(() => {
+    if (!expanded || diffStats !== null) return;
+
+    void (async () => {
+      try {
+        const threadId = useWorkspaceStore.getState().activeThreadId;
+        if (!threadId) return;
+
+        const serverMsgId = useThreadStore.getState().serverMessageIds[messageId] ?? messageId;
+
+        // Resolve snapshot — load from server if not cached in diffStore
+        let snapshots = useDiffStore.getState().snapshotsByThread[threadId];
+        if (!snapshots) {
+          snapshots = await getTransport().listSnapshots(threadId);
+          useDiffStore.getState().setSnapshots(threadId, snapshots);
+        }
+        const snapshot = snapshots.find((s) => s.message_id === serverMsgId);
+        if (!snapshot) return;
+
+        const stats = await getTransport().getSnapshotDiffStats(snapshot.id);
+        const statsMap = new Map(
+          stats.map((s) => [s.filePath, { additions: s.additions, deletions: s.deletions }]),
+        );
+        setDiffStats(statsMap);
+      } catch {
+        // Best-effort: stats are decorative, don't block the file list
+      }
+    })();
+  }, [expanded, diffStats, messageId]);
 
   /** Open the diff panel focused on the Changes tab, scrolled to this turn's snapshot. */
   const handleViewAllDiffs = useCallback(async () => {
@@ -154,6 +186,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
             {displayedFiles.map((filePath) => {
               const name = fileName(filePath);
               const dir = parentDir(filePath);
+              const stat = diffStats?.get(filePath);
               return (
                 <div
                   key={filePath}
@@ -167,14 +200,23 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
                       </span>
                     )}
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => handleFileDiff(filePath)}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground/60 hover:text-foreground/80"
-                  >
-                    Diff
-                  </Button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {stat && (
+                      <span className="font-mono text-[10px] tabular-nums text-muted-foreground/40">
+                        <span className="text-green-500/60">+{stat.additions}</span>
+                        <span className="text-muted-foreground/30"> / </span>
+                        <span className="text-red-500/60">-{stat.deletions}</span>
+                      </span>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => handleFileDiff(filePath)}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground/60 hover:text-foreground/80"
+                    >
+                      Diff
+                    </Button>
+                  </div>
                 </div>
               );
             })}
