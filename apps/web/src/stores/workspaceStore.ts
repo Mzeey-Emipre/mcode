@@ -329,6 +329,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (params.mode === "worktree") {
       transportMode = "worktree";
     } else if (params.mode === "existing-worktree") {
+      if (!params.existingWorktreePath) {
+        throw new Error("existingWorktreePath is required for existing-worktree mode");
+      }
       transportMode = "worktree";
       existingWorktreePath = params.existingWorktreePath;
     }

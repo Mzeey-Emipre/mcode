@@ -2,6 +2,7 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+/** Styled label element for form controls. */
 function Label({ className, ...props }: React.ComponentProps<"label">) {
   return (
     <label

@@ -20,6 +20,8 @@ export const HandoffCard = memo(function HandoffCard({ content }: HandoffCardPro
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
+        aria-controls={`handoff-${metadata.parentThreadId}`}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <GitBranch size={14} className="shrink-0" />
@@ -28,7 +30,7 @@ export const HandoffCard = memo(function HandoffCard({ content }: HandoffCardPro
       </button>
 
       {expanded && (
-        <div className="border-t border-border/40 px-3 py-2 text-xs text-muted-foreground space-y-1.5">
+        <div id={`handoff-${metadata.parentThreadId}`} className="border-t border-border/40 px-3 py-2 text-xs text-muted-foreground space-y-1.5">
           <div className="flex gap-4">
             {metadata.sourceProvider && (
               <span>Provider: <span className="text-foreground">{metadata.sourceProvider}</span></span>

@@ -4,7 +4,7 @@ import { FileText, File, ImageIcon, RotateCcw, Copy, Check, GitBranch } from "lu
 import { cn } from "@/lib/utils";
 import { MarkdownContent } from "./MarkdownContent";
 import { stripInjectedFiles } from "@/lib/file-tags";
-import { isHandoffMessage } from "./handoff-utils";
+import { isHandoffMessage, parseHandoffJson } from "./handoff-utils";
 import { HandoffCard } from "./HandoffCard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -131,7 +131,10 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
 
   if (message.role === "system") {
     if (isHandoffMessage(message.role, message.content)) {
-      return <HandoffCard content={message.content} />;
+      if (parseHandoffJson(message.content)) {
+        return <HandoffCard content={message.content} />;
+      }
+      // Malformed handoff JSON: fall through to normal system-message rendering.
     }
 
     return (

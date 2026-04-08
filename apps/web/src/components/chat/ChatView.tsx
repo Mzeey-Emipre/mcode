@@ -202,13 +202,10 @@ export function ChatView() {
           <Badge variant="secondary">
             {activeWorkspaceName}
           </Badge>
-          {activeThread.parent_thread_id && (
+          {activeThread.parent_thread_id && threads.some((t) => t.id === activeThread.parent_thread_id) && (
             <button
               type="button"
-              onClick={() => {
-                const parent = threads.find((t) => t.id === activeThread.parent_thread_id);
-                if (parent) setActiveThread(parent.id);
-              }}
+              onClick={() => setActiveThread(activeThread.parent_thread_id!)}
               className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
               title="Navigate to parent thread"
             >

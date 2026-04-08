@@ -821,10 +821,12 @@ function ProjectNode({
   onDelete,
   onThreadContextMenu,
 }: ProjectNodeProps) {
-  const needsCap = threads.length > THREAD_LIST_CAP;
+  // Use the flattened tree order (same order VirtualizedThreadList renders) for cap decisions.
+  const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
+  const needsCap = treeItems.length > THREAD_LIST_CAP;
 
   // Auto-expand when the active thread sits beyond the cap (temporary, not persisted).
-  const activeIndex = activeThreadId ? threads.findIndex((t) => t.id === activeThreadId) : -1;
+  const activeIndex = activeThreadId ? treeItems.findIndex((item) => item.thread.id === activeThreadId) : -1;
   const forceExpand = activeIndex >= THREAD_LIST_CAP;
   const maxVisible = (!needsCap || isThreadListExpanded || forceExpand) ? Infinity : THREAD_LIST_CAP;
 

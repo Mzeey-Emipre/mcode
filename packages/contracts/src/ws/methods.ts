@@ -59,7 +59,10 @@ export const CreateAndSendSchema = z.object({
   parentThreadId: z.string().optional(),
   /** Fork-point message ID in the parent thread. Defaults to last persisted message. */
   forkedFromMessageId: z.string().optional(),
-});
+}).refine(
+  (d) => !d.forkedFromMessageId || d.parentThreadId,
+  { message: "forkedFromMessageId requires parentThreadId", path: ["forkedFromMessageId"] },
+);
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
 export const WS_METHODS = lazySchema(() => ({
