@@ -8,7 +8,7 @@ import { injectable } from "tsyringe";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
-import type { Query, SDKUserMessage, HookInput, PostCompactHookInput } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage, PostCompactHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
 import type {
   IAgentProvider,
@@ -295,8 +295,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       includePartialMessages: true,
       hooks: {
         PostCompact: [{
-          hooks: [async (input: HookInput) => {
-            const { compact_summary } = input as PostCompactHookInput;
+          // @ts-expect-error: HookCallback accepts 3 params but we only need input
+          hooks: [async (input) => {
+            const { compact_summary } = (input as PostCompactHookInput);
             // Derive threadId the same way startStreamLoop does.
             const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
             this.emit("event", {
