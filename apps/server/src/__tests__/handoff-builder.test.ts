@@ -225,9 +225,13 @@ describe("buildConversationReplay", () => {
       makeMsg("3", "user", "Second turn"),
       makeMsg("4", "assistant", "Second response"),
     ];
-    // Budget only fits last two turns
-    const budget = "User: Second turn\n\nAssistant: Second response".length + 10;
-    const result = buildConversationReplay(msgs, budget, "Summary of early work.");
+    const summary = "Summary of early work.";
+    // Budget must cover the summary + separator + last two turns.
+    // The summary reservation is deducted from the turn budget, so the total budget
+    // must be large enough for both the summary and the turns we want to include.
+    const lastTwoTurns = "User: Second turn\n\nAssistant: Second response";
+    const budget = summary.length + 2 + lastTwoTurns.length + 10;
+    const result = buildConversationReplay(msgs, budget, summary);
     expect(result).toContain("Summary of early work.");
     expect(result).toContain("User: Second turn");
     expect(result).not.toContain("[2 earlier messages omitted]");
@@ -249,6 +253,40 @@ describe("buildConversationReplay", () => {
     const result = buildConversationReplay(msgs, 100_000, "Some summary.");
     expect(result).toBe("User: Short");
     expect(result).not.toContain("Some summary.");
+  });
+
+  it("reserves space for compact summary within the char budget", () => {
+    const msgs = [
+      makeMsg("1", "user", "First turn"),
+      makeMsg("2", "assistant", "First response"),
+      makeMsg("3", "user", "Second turn"),
+      makeMsg("4", "assistant", "Second response"),
+    ];
+    const summary = "A".repeat(200);
+    // Budget that fits last two turns (~50 chars) plus the summary (200 chars + 2 for \n\n)
+    // but NOT the first two turns as well.
+    const budget = summary.length + 2 + "User: Second turn\n\nAssistant: Second response".length + 10;
+    const result = buildConversationReplay(msgs, budget, summary);
+
+    // The total output must not exceed the budget
+    expect(result.length).toBeLessThanOrEqual(budget);
+    // The summary must still be present
+    expect(result).toContain(summary);
+    // Recent turns must still be present
+    expect(result).toContain("Second turn");
+  });
+
+  it("truncates compact summary when it alone exceeds the budget", () => {
+    const msgs = [
+      makeMsg("1", "user", "Hello"),
+      makeMsg("2", "assistant", "World"),
+    ];
+    const summary = "S".repeat(500);
+    const budget = 100;
+    const result = buildConversationReplay(msgs, budget, summary);
+
+    expect(result.length).toBeLessThanOrEqual(budget);
+    expect(result).toBe(summary.slice(0, budget));
   });
 });
 

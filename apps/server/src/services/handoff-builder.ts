@@ -70,20 +70,30 @@ export function buildConversationReplay(
     return `${label}: ${m.content}`;
   });
 
+  // Reserve space for the compact summary prefix so it doesn't blow the budget.
+  // +2 accounts for the "\n\n" separator between the prefix and the first turn.
+  const summaryReservation = compactSummary ? compactSummary.length + 2 : 0;
+  const turnBudget = maxChars - summaryReservation;
+
+  // If the summary alone exceeds the budget, fall back to truncating the summary.
+  if (turnBudget <= 0) {
+    return compactSummary ? compactSummary.slice(0, maxChars) : "";
+  }
+
   // Walk backwards from the most recent turn, accumulating within budget.
   const result: string[] = [];
   let used = 0;
   for (let i = formatted.length - 1; i >= 0; i--) {
     const chunk = formatted[i];
     const cost = chunk.length + (result.length > 0 ? 2 : 0); // +2 for "\n\n" separator
-    if (used + cost > maxChars) break;
+    if (used + cost > turnBudget) break;
     result.unshift(chunk);
     used += cost;
   }
 
   if (result.length === 0) {
-    // Even the latest turn exceeds budget — truncate it.
-    return formatted[formatted.length - 1].slice(0, maxChars);
+    // Truncate to turnBudget (not maxChars) so prepending the summary stays within budget.
+    return formatted[formatted.length - 1].slice(0, turnBudget);
   }
 
   const omittedCount = nonEmptyTurns.length - result.length;
