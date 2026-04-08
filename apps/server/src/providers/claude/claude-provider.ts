@@ -187,42 +187,81 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   }
 
   /**
-   * One-shot text completion using the same Claude Agent SDK query() as chat.
-   * Passes a string prompt (not AsyncIterable), disables tools, and limits to
-   * one turn so the subprocess exits cleanly after the first response.
+   * One-shot text completion using the same prompt queue pattern as chat.
+   * Spawns an ephemeral SDK subprocess (not persisted to disk) with tools
+   * disabled and maxTurns: 1, collects the response text, then tears down.
    */
   async complete(prompt: string, model: string, cwd: string): Promise<string> {
+    const queue = createPromptQueue();
+    const ephemeralId = `complete-${crypto.randomUUID()}`;
+
     const q = sdkQuery({
-      prompt,
+      prompt: queue.iterable,
       options: {
         cwd,
         model,
         maxTurns: 1,
         tools: [],
+        systemPrompt: "Respond with exactly what is requested. No questions, no commentary.",
         settingSources: [],
         permissionMode: "default" as const,
+        persistSession: false,
+        includePartialMessages: true,
       },
     });
 
-    // Collect text from both result and assistant events as fallback
+    queue.push(toUserMessage(prompt, ephemeralId));
+    // Close immediately: the message is already queued. This signals end-of-input
+    // so the SDK subprocess exits after processing instead of blocking on the
+    // next read from the queue (which would deadlock the for-await loop below).
+    queue.close();
+
     let resultText = "";
     let assistantText = "";
-    for await (const msg of q) {
-      const anyMsg = msg as Record<string, unknown>;
-      if (anyMsg.type === "result" && typeof anyMsg.result === "string") {
-        resultText = anyMsg.result as string;
-      }
-      if (anyMsg.type === "assistant") {
-        const content =
-          (anyMsg.message as { content?: Array<{ type: string; text?: string }> })
-            ?.content ?? [];
-        for (const block of content) {
-          if (block.type === "text" && block.text) assistantText += block.text;
+    let deltaText = "";
+
+    try {
+      for await (const msg of q) {
+        const anyMsg = msg as Record<string, unknown>;
+
+        if (anyMsg.type === "result") {
+          if (anyMsg.is_error) {
+            const errors = (anyMsg.errors as string[]) ?? [];
+            throw new Error(`Claude SDK error: ${errors.join(", ") || "unknown error"}`);
+          }
+          const res = anyMsg.result;
+          if (typeof res === "string" && res) resultText = res;
+        }
+
+        if (anyMsg.type === "assistant") {
+          const content =
+            (anyMsg.message as { content?: Array<{ type: string; text?: string }> })
+              ?.content ?? [];
+          for (const block of content) {
+            if (block.type === "text" && block.text) assistantText += block.text;
+          }
+        }
+
+        // Collect incremental text deltas as a third fallback source
+        if (anyMsg.type === "stream_event") {
+          const streamEvent = anyMsg.event as {
+            type?: string;
+            delta?: { type?: string; text?: string };
+          };
+          if (
+            streamEvent?.type === "content_block_delta" &&
+            streamEvent.delta?.type === "text_delta" &&
+            streamEvent.delta.text
+          ) {
+            deltaText += streamEvent.delta.text;
+          }
         }
       }
+    } finally {
+      queue.close();
     }
 
-    const text = resultText || assistantText;
+    const text = resultText || assistantText || deltaText;
     if (!text) throw new Error("Claude SDK returned no text content");
     return text.trim();
   }
