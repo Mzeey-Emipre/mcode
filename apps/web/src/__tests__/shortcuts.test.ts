@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { initShortcuts, getKeybindings, loadKeybindings } from "@/lib/shortcuts";
 import { registerCommand, clearCommands } from "@/lib/command-registry";
 import { clearKeybindings } from "@/lib/keybinding-manager";
-import { resetContext, setContext } from "@/lib/context-tracker";
+import { resetContext } from "@/lib/context-tracker";
 
 function createKeyEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
   const event = new KeyboardEvent("keydown", {
