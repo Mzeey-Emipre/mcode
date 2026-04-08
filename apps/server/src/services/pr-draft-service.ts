@@ -94,24 +94,33 @@ export class PrDraftService {
       .map((c: { message: string }) => `- ${c.message}`)
       .join("\n");
 
+    const aiContext = { commitLog, diffStat, conversationSummary, repoTemplate, headBranch, baseBranch, repoPath };
+
     try {
-      return await this.generateWithAI({
-        commitLog,
-        diffStat,
-        conversationSummary,
-        repoTemplate,
-        headBranch,
-        baseBranch,
-        repoPath,
-        provider,
-        model,
-      });
+      return await this.generateWithAI({ ...aiContext, provider, model });
     } catch (error) {
-      logger.warn("AI PR draft generation failed, using commit-only fallback", {
-        provider,
-        model,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      // If the configured provider's CLI is unavailable, retry with Claude before giving up.
+      // Claude is always required by the app, so it's a safe fallback.
+      if (provider !== "claude") {
+        const claudeModel = this.resolveModel(settings.prDraft.model, "claude");
+        logger.warn("Configured provider unavailable for PR draft, retrying with Claude", {
+          provider,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        try {
+          return await this.generateWithAI({ ...aiContext, provider: "claude", model: claudeModel });
+        } catch (claudeError) {
+          logger.warn("Claude fallback also failed, using commit-only draft", {
+            error: claudeError instanceof Error ? claudeError.message : String(claudeError),
+          });
+        }
+      } else {
+        logger.warn("AI PR draft generation failed, using commit-only fallback", {
+          provider,
+          model,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       return this.buildFallbackDraft(commits, diffStat);
     }
   }
