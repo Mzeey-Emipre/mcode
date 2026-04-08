@@ -6,6 +6,7 @@ import { MarkdownContent } from "./MarkdownContent";
 import { stripInjectedFiles } from "@/lib/file-tags";
 import { isHandoffMessage } from "./handoff-utils";
 import { HandoffCard } from "./HandoffCard";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** Props for {@link MessageBubble}. */
 interface MessageBubbleProps {
@@ -93,15 +94,21 @@ function CopyButton({ content }: { content: string }) {
 /** Branch button visible on hover, matching CopyButton style. */
 function BranchButton({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover/msg:opacity-100"
-      aria-label="Branch from this message"
-      title="Branch from here"
-    >
-      <GitBranch size={14} />
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onClick}
+            className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover/msg:opacity-100"
+            aria-label="Branch from this message"
+          >
+            <GitBranch size={14} />
+          </button>
+        }
+      />
+      <TooltipContent side="top" className="text-xs">Branch from here</TooltipContent>
+    </Tooltip>
   );
 }
 
