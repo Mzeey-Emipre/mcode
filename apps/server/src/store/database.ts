@@ -270,4 +270,9 @@ function runMigrations(db: Database.Database): void {
       db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(14);
     })();
   }
+
+  if (currentVersion < 15) {
+    db.exec("ALTER TABLE threads ADD COLUMN last_compact_summary TEXT DEFAULT NULL");
+    db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(15);
+  }
 }

@@ -33,6 +33,7 @@ interface ThreadRow {
   permission_mode: string | null;
   parent_thread_id: string | null;
   forked_from_message_id: string | null;
+  last_compact_summary: string | null;
 }
 
 function rowToThread(row: ThreadRow): Thread {
@@ -61,11 +62,12 @@ function rowToThread(row: ThreadRow): Thread {
     permission_mode: (row.permission_mode ?? null) as PermissionMode | null,
     parent_thread_id: row.parent_thread_id,
     forked_from_message_id: row.forked_from_message_id,
+    last_compact_summary: row.last_compact_summary,
   };
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, parent_thread_id, forked_from_message_id";
+  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, parent_thread_id, forked_from_message_id, last_compact_summary";
 
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
@@ -133,6 +135,7 @@ export class ThreadRepo {
       permission_mode: null,
       parent_thread_id: lineage?.parentThreadId ?? null,
       forked_from_message_id: lineage?.forkedFromMessageId ?? null,
+      last_compact_summary: null,
     };
   }
 
@@ -320,6 +323,13 @@ export class ThreadRepo {
       .run(title, now, id);
 
     return result.changes > 0;
+  }
+
+  /** Persist the latest compaction summary for a thread. Overwrites any previous value. */
+  updateCompactSummary(threadId: string, summary: string): void {
+    this.db
+      .prepare("UPDATE threads SET last_compact_summary = ?, updated_at = ? WHERE id = ?")
+      .run(summary, new Date().toISOString(), threadId);
   }
 
   /** Set lineage fields on a thread. Used when thread creation is handled by ThreadService. */

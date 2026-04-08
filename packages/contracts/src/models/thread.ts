@@ -38,6 +38,8 @@ export const ThreadSchema = z.object({
   parent_thread_id: z.string().nullable(),
   /** ID of the message in the parent thread that marks the fork point. */
   forked_from_message_id: z.string().nullable(),
+  /** Most recent compaction summary from the AI provider. Used to seed branched thread replays. */
+  last_compact_summary: z.string().nullable().optional(),
 });
 /** Thread record from the database. */
 export type Thread = z.infer<typeof ThreadSchema>;

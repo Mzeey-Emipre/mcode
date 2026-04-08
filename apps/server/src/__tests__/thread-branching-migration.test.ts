@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect } from "vitest";
 import { openMemoryDatabase } from "../store/database.js";
+import { ThreadRepo } from "../repositories/thread-repo.js";
 
 describe("V014 migration - thread lineage columns", () => {
   it("adds parent_thread_id and forked_from_message_id columns", () => {
@@ -21,5 +22,31 @@ describe("V014 migration - thread lineage columns", () => {
     const row = db.prepare("SELECT parent_thread_id, forked_from_message_id FROM threads WHERE id = ?").get("t-1") as Record<string, unknown>;
     expect(row.parent_thread_id).toBeNull();
     expect(row.forked_from_message_id).toBeNull();
+  });
+});
+
+describe("V015 - last_compact_summary column", () => {
+  it("column exists and updateCompactSummary round-trips", () => {
+    const db = openMemoryDatabase();
+    const repo = new ThreadRepo(db);
+    db.prepare("INSERT INTO workspaces (id, name, path) VALUES (?, ?, ?)").run("ws-1", "t", "/t");
+    const thread = repo.create("ws-1", "test", "direct", "main");
+
+    expect(thread.last_compact_summary).toBeNull();
+
+    repo.updateCompactSummary(thread.id, "Summary of earlier work.");
+
+    const updated = repo.findById(thread.id);
+    expect(updated?.last_compact_summary).toBe("Summary of earlier work.");
+  });
+
+  it("updateCompactSummary overwrites a previous summary", () => {
+    const db = openMemoryDatabase();
+    const repo = new ThreadRepo(db);
+    db.prepare("INSERT INTO workspaces (id, name, path) VALUES (?, ?, ?)").run("ws-1", "t", "/t");
+    const thread = repo.create("ws-1", "test", "direct", "main");
+    repo.updateCompactSummary(thread.id, "First summary.");
+    repo.updateCompactSummary(thread.id, "Second summary.");
+    expect(repo.findById(thread.id)?.last_compact_summary).toBe("Second summary.");
   });
 });
