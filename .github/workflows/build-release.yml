@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0)"
-        required: true
+        description: "Release tag to attach artifacts to (e.g. v0.1.0). Leave empty to build without uploading."
+        required: false
 
 jobs:
   build:
@@ -38,6 +38,7 @@ jobs:
         run: bun run --cwd apps/desktop dist
 
       - name: Upload release artifacts
+        if: github.event.release.tag_name || inputs.tag
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.release.tag_name || inputs.tag }}
