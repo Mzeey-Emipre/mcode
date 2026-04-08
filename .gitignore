@@ -15,6 +15,9 @@ apps/desktop/release/
 apps/desktop/package-lock.json
 apps/desktop/.npmrc
 
+# Server build intermediates
+apps/server/dist-tsc/
+
 # Frontend
 apps/web/dist/
 
