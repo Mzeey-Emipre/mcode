@@ -57,10 +57,7 @@ export default async function afterPack(context) {
     );
   } else {
     snapshotDest = join(appOutDir, "browser_v8_context_snapshot.bin");
-    electronBinary = join(
-      appOutDir,
-      context.packager.appInfo.productFilename.toLowerCase(),
-    );
+    electronBinary = join(appOutDir, context.packager.executableName);
   }
 
   console.log(`[after-pack] Copying snapshot to ${snapshotDest}`);
