@@ -11,6 +11,8 @@ out/
 # Electron
 apps/desktop/dist/
 apps/desktop/out/
+apps/desktop/release/
+apps/desktop/package-lock.json
 
 # Frontend
 apps/web/dist/

@@ -41,26 +41,7 @@ jobs:
         run: bun apps/desktop/scripts/generate-snapshot.mjs
 
       - name: Package with electron-builder
-        shell: bash
-        run: |
-          cd apps/desktop
-
-          # esbuild bundles all production deps into main.cjs (only electron is
-          # external), so electron-builder's npm install step is unnecessary.
-          # Zero out dependencies to prevent npm from failing on workspace:*
-          # protocol and to avoid shipping a redundant node_modules.
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
-            pkg.dependencies = {};
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-
-          # electron-builder detects bun from PATH/lockfile and incorrectly
-          # invokes the binary via Node.js. Remove bun from PATH so it falls
-          # back to npm.
-          export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '/\.bun/' | tr '\n' ':' | sed 's/:$//')
-          npx electron-builder --publish never
+        run: node apps/desktop/scripts/ci-package.mjs
 
       - name: Upload release artifacts
         if: github.event.release.tag_name || inputs.tag
