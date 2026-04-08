@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type { PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
@@ -517,6 +517,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   }, [input, prDismissed, isNewThread]);
 
   const hasContent = input.trim().length > 0 || attachments.length > 0;
+
+  // Detect stale worktree: thread is a worktree thread but its directory no longer exists.
+  const isStaleWorktree = useMemo(() => {
+    if (!activeThread?.worktree_path || activeThread.mode !== "worktree") return false;
+    const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+    return !worktrees.some((wt) => norm(wt.path) === norm(activeThread.worktree_path!));
+  }, [activeThread, worktrees]);
 
   // Full lock when agent running, provider lock when thread has a model
   const isModelFullyLocked = isAgentRunning;
@@ -1060,10 +1067,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             onSlashDismiss={slashCommand.onDismiss}
             isSlashPopupOpen={slashCommand.isOpen}
             editorRef={editorRef}
-            disabled={planPending}
+            disabled={planPending || isStaleWorktree}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
-            placeholder={planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
+            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
           />
           <FileTagPopup
             files={fileAutocomplete.filteredFiles}
@@ -1251,6 +1258,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                     : handleSend
             }
             disabled={
+              isStaleWorktree ||
               planPending ||
               preparingWorktree ||
               (!isAgentRunning && !hasContent)

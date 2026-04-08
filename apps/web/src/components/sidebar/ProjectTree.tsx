@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useCallback, useState, useRef, useMemo } fr
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
-import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2 } from "lucide-react";
+import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2, XCircle } from "lucide-react";
 import { getPrVisual } from "@/lib/pr-status";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -570,6 +570,16 @@ function VirtualizedThreadList({
   // Build nested tree from flat thread list
   const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
 
+  // Normalized set of existing worktree paths for stale detection.
+  const worktrees = useWorkspaceStore((s) => s.worktrees);
+  const validWorktreePaths = useMemo(() => {
+    const set = new Set<string>();
+    for (const wt of worktrees) {
+      set.add(wt.path.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase());
+    }
+    return set;
+  }, [worktrees]);
+
   // Per-thread timestamps and pending timeout IDs for the 250ms click-delay pattern.
   const lastClickTimeRef = useRef<Map<string, number>>(new Map());
   const clickTimeoutIdRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -637,6 +647,9 @@ function VirtualizedThreadList({
         const { thread, depth } = treeItems[virtualItem.index];
         const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
         const isEditing = inlineEdit?.threadId === thread.id;
+        // Worktree thread whose directory no longer exists on disk.
+        const isStaleWorktree = thread.mode === "worktree" && !!thread.worktree_path
+          && !validWorktreePaths.has(thread.worktree_path.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase());
         return (
           <div
             key={thread.id}
@@ -720,7 +733,8 @@ function VirtualizedThreadList({
                     className="flex-1 border-ring"
                   />
                 ) : (
-                  <span className="truncate flex-1 text-sm" data-testid="thread-title">
+                  <span className={cn("truncate flex-1 text-sm", isStaleWorktree && "text-destructive line-through")} data-testid="thread-title">
+                    {isStaleWorktree && <XCircle size={12} className="inline mr-1 align-text-bottom" />}
                     {thread.title}
                   </span>
                 )}
