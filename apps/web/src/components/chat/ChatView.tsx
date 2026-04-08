@@ -99,10 +99,11 @@ export function ChatView() {
 
   /** Activates inline branch mode on the composer for the given message. */
   const handleBranch = useCallback((messageId: string) => {
-    const msg = messages.find((m) => m.id === messageId);
+    // Read messages from store at call time to avoid re-creating this callback on every streaming token.
+    const msg = useThreadStore.getState().messages.find((m) => m.id === messageId);
     setBranchFromMessageId(messageId);
     setBranchFromMessageContent(msg?.content);
-  }, [messages]);
+  }, []);
 
   const showCliError =
     !!sessionError &&

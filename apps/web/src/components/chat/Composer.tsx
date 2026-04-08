@@ -325,7 +325,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       loadBranches(workspaceId);
       loadWorktrees(workspaceId);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branchFromMessageId]);
 
   // Consume pending prefill set by empty-state prompt chips
