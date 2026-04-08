@@ -175,10 +175,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     const settings = await this.settingsService.get();
     const cliPath = settings.provider.cli.codex || "codex";
 
+    // shell: true is required on Windows to resolve .cmd/.sh shims from npm global installs
     const { stdout } = await execFileAsync(
       cliPath,
       ["-q", prompt, "--model", model],
-      { cwd, timeout: 60_000 },
+      { cwd, timeout: 60_000, shell: true },
     );
 
     return stdout.trim();
