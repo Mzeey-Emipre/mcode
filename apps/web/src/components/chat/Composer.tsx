@@ -318,7 +318,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         activeThread?.mode === "worktree" ? "existing-worktree" : "direct";
       setBranchExecMode(defaultExecMode);
       setBranchTargetBranch(activeThread?.branch ?? "");
-      setBranchWorktreePath("");
+      // Pre-select the parent's worktree so the user doesn't have to pick it manually.
+      setBranchWorktreePath(activeThread?.worktree_path ?? "");
       setBranchNamingMode("auto");
       setBranchCustomName("");
       loadBranches(workspaceId);
