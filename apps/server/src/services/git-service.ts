@@ -282,8 +282,10 @@ export class GitService {
       "--numstat",
       `-${limit}`,
     ];
-    if (resolvedBase && branch) {
-      args.push(`${resolvedBase}..${branch}`);
+    // When running from a worktree path, HEAD is the checked-out branch — no need to name it.
+    const headRef = repoPath ? "HEAD" : branch;
+    if (resolvedBase && headRef) {
+      args.push(`${resolvedBase}..${headRef}`);
     } else if (resolvedBase) {
       args.push(`${resolvedBase}..HEAD`);
     } else if (branch) {
