@@ -475,27 +475,27 @@ export class AgentService {
       throw new Error("Cannot branch from a deleted thread");
     }
 
-    // Resolve fork point
-    // Cap of 1000 messages: if the parent thread is longer, the oldest messages are silently
-    // excluded. A fork point beyond the window will produce a misleading "not found" error.
-    const { messages: parentMessages, hasMore } = this.messageRepo.listByThread(parentThreadId, 1000);
-    if (hasMore) {
-      logger.warn("createBranchedThread: parent thread exceeds 1000-message window; oldest messages are excluded from fork resolution", { parentThreadId });
-    }
+    // Resolve the fork message ID. When not specified, use the last message.
     let resolvedForkMessageId = forkedFromMessageId;
-    if (!resolvedForkMessageId && parentMessages.length > 0) {
-      resolvedForkMessageId = parentMessages[parentMessages.length - 1].id;
-    }
     if (!resolvedForkMessageId) {
-      throw new Error("No messages in parent thread to branch from");
+      const { messages: tail } = this.messageRepo.listByThread(parentThreadId, 1);
+      if (tail.length === 0) {
+        throw new Error("No messages in parent thread to branch from");
+      }
+      resolvedForkMessageId = tail[tail.length - 1].id;
     }
 
-    const forkIdx = parentMessages.findIndex((m) => m.id === resolvedForkMessageId);
-    if (forkIdx === -1) {
+    // Look up the fork message to get its sequence number.
+    const forkMessage = this.messageRepo.findByIdInThread(parentThreadId, resolvedForkMessageId);
+    if (!forkMessage) {
       throw new Error(`Fork message not found in parent thread: ${resolvedForkMessageId}`);
     }
-    // Slice to exactly the state visible at the fork point.
-    const forkedMessages = parentMessages.slice(0, forkIdx + 1);
+
+    // Load all messages up to and including the fork point — no row cap.
+    const forkedMessages = this.messageRepo.listByThreadUpToSequence(
+      parentThreadId,
+      forkMessage.sequence,
+    );
 
     // Gather handoff data
     // lastAssistantText comes from forkedMessages so it never leaks post-fork state.
