@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
-import { GitBranch, Loader2 } from "lucide-react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { GitBranch, Loader2, ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -30,6 +30,8 @@ interface BranchThreadDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Specific message ID to branch from. When omitted, branches from the latest message. */
   forkedFromMessageId?: string;
+  /** Preview text of the message being branched from, shown as context. */
+  forkedFromMessageContent?: string;
 }
 
 /** Generate a random branch ID matching the Composer's pattern. */
@@ -37,12 +39,18 @@ function generateBranchId(): string {
   return `mcode-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Dialog for creating a branched child thread. Two-column layout with sidebar controls and prompt area. */
+/**
+ * Chat-style dialog for creating a branched child thread.
+ * Shows the forked message as a quoted reference and focuses on the composer,
+ * rather than a form layout. Config (model, execution, branch) lives in a
+ * collapsible row below the quote so it stays accessible but out of the way.
+ */
 export function BranchThreadDialog({
   thread,
   open,
   onOpenChange,
   forkedFromMessageId,
+  forkedFromMessageContent,
 }: BranchThreadDialogProps) {
   const branchThread = useWorkspaceStore((s) => s.branchThread);
   const branches = useWorkspaceStore((s) => s.branches);
@@ -66,26 +74,27 @@ export function BranchThreadDialog({
   const [customBranchName, setCustomBranchName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Derive provider from selected model
   const provider = useMemo(() => {
     const p = findProviderForModel(modelId);
     return p?.id ?? thread.provider;
   }, [modelId, thread.provider]);
 
-  // Initialize mode from parent thread
   useEffect(() => {
     if (open) {
-      const initial: ComposerMode = thread.mode === "worktree" ? "direct" : "direct";
-      setComposerMode(initial);
+      setComposerMode("direct");
       setSelectedBranch(thread.branch);
       setModelId(defaultModel);
       setPrompt("");
       setError(null);
+      setConfigOpen(false);
+      // Focus textarea after dialog animation
+      setTimeout(() => textareaRef.current?.focus(), 80);
     }
-  }, [open, thread.mode, thread.branch, defaultModel]);
+  }, [open, thread.branch, defaultModel]);
 
-  // Load branches and worktrees when dialog opens
   useEffect(() => {
     if (open && activeWorkspaceId) {
       loadBranches(activeWorkspaceId);
@@ -149,7 +158,6 @@ export function BranchThreadDialog({
     provider, thread, branchThread, onOpenChange, forkedFromMessageId,
   ]);
 
-  // Submit on Ctrl/Cmd+Enter
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -160,194 +168,199 @@ export function BranchThreadDialog({
     [handleSubmit],
   );
 
+  // Auto-resize textarea
+  const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setPrompt(e.target.value);
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, []);
+
   const isMac = navigator.platform.includes("Mac");
+  const submitKey = isMac ? "⌘" : "Ctrl";
+
+  // Truncate message preview for quote display
+  const messagePreview = forkedFromMessageContent
+    ? forkedFromMessageContent.slice(0, 120) + (forkedFromMessageContent.length > 120 ? "…" : "")
+    : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-3xl w-[min(90vw,780px)] p-0 gap-0"
+        className="sm:max-w-lg w-[min(90vw,520px)] p-0 gap-0 overflow-hidden"
         showCloseButton={!submitting}
       >
-        {/* Header */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/50">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40">
-            <GitBranch className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <DialogTitle className="text-sm font-medium leading-none">
-              Branch thread
-            </DialogTitle>
-            <DialogDescription className="mt-1 flex items-center gap-1.5 text-xs">
-              <span className="text-muted-foreground">from</span>
-              <span className="font-medium max-w-[280px] truncate text-foreground/80">
-                {thread.title}
-              </span>
-              {thread.branch && (
-                <>
-                  <span className="text-muted-foreground/40">·</span>
-                  <span className="font-mono max-w-[160px] truncate text-muted-foreground">
-                    {thread.branch}
+        {/* Accessible title/description (visually hidden, required for a11y) */}
+        <DialogTitle className="sr-only">Branch thread</DialogTitle>
+        <DialogDescription className="sr-only">
+          Create a child thread branching from {thread.title}
+        </DialogDescription>
+
+        {/* Quoted message context */}
+        <div className="px-4 pt-4">
+          <div className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2.5 relative">
+            {/* Left accent line */}
+            <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-border/70" />
+            <div className="pl-2">
+              <div className="flex items-center gap-1.5 mb-1">
+                <GitBranch className="size-3 text-muted-foreground/60 shrink-0" aria-hidden="true" />
+                <span className="text-[11px] font-medium text-muted-foreground/60 truncate">
+                  {thread.title}
+                </span>
+                {thread.branch && (
+                  <span className="text-[10px] font-mono text-muted-foreground/40 truncate shrink-0">
+                    · {thread.branch}
                   </span>
-                </>
+                )}
+              </div>
+              {messagePreview ? (
+                <p className="text-xs text-muted-foreground/80 leading-relaxed line-clamp-2">
+                  {messagePreview}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground/50 italic">
+                  {forkedFromMessageId ? "Branching from selected message" : "Branching from latest message"}
+                </p>
               )}
-            </DialogDescription>
+            </div>
           </div>
-          {forkedFromMessageId && (
-            <span className="text-xs text-muted-foreground bg-muted/60 border border-border/50 rounded px-2 py-0.5 shrink-0">
-              From message
-            </span>
-          )}
         </div>
 
-        {/* Two-column body */}
-        <div className="flex min-h-[400px]">
-          {/* Left sidebar: controls + actions */}
-          <div className="w-64 shrink-0 flex flex-col gap-4 border-r border-border/50 p-5">
-            {/* Model */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs text-muted-foreground">Model</label>
-              <ModelSelector
-                selectedModelId={modelId}
-                onSelect={setModelId}
-                locked={false}
-              />
-            </div>
-
-            {/* Execution mode */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs text-muted-foreground">Execution</label>
-              <ModeSelector
-                mode={composerMode}
-                onModeChange={setComposerMode}
-                locked={false}
-              />
-            </div>
-
-            {/* Branch controls - conditional on mode */}
-            {composerMode === "direct" && (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs text-muted-foreground flex items-center gap-1">
-                  <GitBranch className="size-3" aria-hidden="true" />
-                  Branch
-                </label>
-                <BranchPicker
-                  branches={branches}
-                  selectedBranch={selectedBranch}
-                  onSelect={setSelectedBranch}
-                  loading={branchesLoading}
-                  locked={true}
-                />
-              </div>
-            )}
-
-            {composerMode === "worktree" && (
+        {/* Config row (collapsible) */}
+        <div className="px-4 pt-2">
+          <button
+            type="button"
+            onClick={() => setConfigOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          >
+            {configOpen ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+            <span className="font-medium">{modelId}</span>
+            <span className="text-muted-foreground/30">·</span>
+            <span>{composerMode === "direct" ? "Local" : composerMode === "worktree" ? "New worktree" : "Existing worktree"}</span>
+            {composerMode === "direct" && selectedBranch && (
               <>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-muted-foreground flex items-center gap-1">
-                    <GitBranch className="size-3" aria-hidden="true" />
-                    Base branch
+                <span className="text-muted-foreground/30">·</span>
+                <span className="font-mono">{selectedBranch}</span>
+              </>
+            )}
+          </button>
+
+          {configOpen && (
+            <div className="mt-2 mb-1 rounded-lg border border-border/40 bg-muted/20 p-3 flex flex-col gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-muted-foreground/60">Model</label>
+                  <ModelSelector selectedModelId={modelId} onSelect={setModelId} locked={false} />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-muted-foreground/60">Execution</label>
+                  <ModeSelector mode={composerMode} onModeChange={setComposerMode} locked={false} />
+                </div>
+              </div>
+
+              {composerMode === "direct" && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
+                    <GitBranch className="size-2.5" aria-hidden="true" /> Branch
                   </label>
                   <BranchPicker
                     branches={branches}
                     selectedBranch={selectedBranch}
                     onSelect={setSelectedBranch}
                     loading={branchesLoading}
-                    locked={false}
+                    locked={true}
                   />
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-muted-foreground">Branch name</label>
-                  <div className="flex flex-wrap items-center gap-1">
-                    <NamingModeSelector mode={namingMode} onModeChange={setNamingMode} />
-                    <BranchNameInput
-                      namingMode={namingMode}
-                      autoPreview={autoPreview}
-                      customValue={customBranchName}
-                      onCustomChange={setCustomBranchName}
+              )}
+
+              {composerMode === "worktree" && (
+                <>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
+                      <GitBranch className="size-2.5" aria-hidden="true" /> Base branch
+                    </label>
+                    <BranchPicker
+                      branches={branches}
+                      selectedBranch={selectedBranch}
+                      onSelect={setSelectedBranch}
+                      loading={branchesLoading}
+                      locked={false}
                     />
                   </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground/60">Branch name</label>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <NamingModeSelector mode={namingMode} onModeChange={setNamingMode} />
+                      <BranchNameInput
+                        namingMode={namingMode}
+                        autoPreview={autoPreview}
+                        customValue={customBranchName}
+                        onCustomChange={setCustomBranchName}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {composerMode === "existing-worktree" && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-muted-foreground/60">Worktree</label>
+                  <WorktreePicker
+                    worktrees={worktrees}
+                    selectedPath={selectedWorktreePath}
+                    onSelect={(wt) => setSelectedWorktreePath(wt.path)}
+                    loading={worktreesLoading}
+                  />
                 </div>
-              </>
-            )}
-
-            {composerMode === "existing-worktree" && (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs text-muted-foreground">Worktree</label>
-                <WorktreePicker
-                  worktrees={worktrees}
-                  selectedPath={selectedWorktreePath}
-                  onSelect={(wt) => setSelectedWorktreePath(wt.path)}
-                  loading={worktreesLoading}
-                />
-              </div>
-            )}
-
-            {/* Spacer */}
-            <div className="flex-1" />
-
-            {/* Error banner */}
-            {error && (
-              <div
-                role="alert"
-                className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2"
-              >
-                {error}
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex flex-col gap-2">
-              <Button
-                onClick={handleSubmit}
-                disabled={!prompt.trim() || submitting}
-                className="w-full"
-              >
-                {submitting && (
-                  <Loader2 className="size-3.5 animate-spin" />
-                )}
-                Create branch
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => onOpenChange(false)}
-                disabled={submitting}
-                className="w-full"
-              >
-                Cancel
-              </Button>
+              )}
             </div>
-          </div>
+          )}
+        </div>
 
-          {/* Right: prompt area */}
-          <div className="flex-1 flex flex-col gap-2 p-5 min-w-0">
-            <label htmlFor="branch-prompt" className="text-xs text-muted-foreground">
-              Prompt
-            </label>
+        {/* Composer */}
+        <div className="px-4 pt-3 pb-4">
+          {error && (
+            <div role="alert" className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2 mb-2">
+              {error}
+            </div>
+          )}
+          <div
+            className={cn(
+              "flex items-end gap-2 rounded-xl border bg-background px-3 py-2.5 transition-colors",
+              "border-input focus-within:border-ring",
+            )}
+          >
             <textarea
-              id="branch-prompt"
+              ref={textareaRef}
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
               placeholder="What should the child thread work on?"
-              autoFocus
               disabled={submitting}
+              rows={1}
               className={cn(
-                "flex-1 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm shadow-xs transition-colors",
-                "resize-none",
-                "placeholder:text-muted-foreground",
-                "focus-visible:border-ring focus-visible:outline-none",
+                "flex-1 min-h-[24px] max-h-[200px] resize-none bg-transparent text-sm leading-6",
+                "placeholder:text-muted-foreground/50",
+                "focus-visible:outline-none",
                 "disabled:cursor-not-allowed disabled:opacity-50",
               )}
             />
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground/50">
-                Parent context will be included automatically
-              </span>
-              <kbd className="text-[10px] font-mono text-muted-foreground/40">
-                {isMac ? "\u2318" : "Ctrl"}+Enter
-              </kbd>
-            </div>
+            <Button
+              size="icon"
+              onClick={handleSubmit}
+              disabled={!prompt.trim() || submitting}
+              className="size-7 shrink-0 rounded-lg"
+              title={`Create branch (${submitKey}+Enter)`}
+            >
+              {submitting
+                ? <Loader2 className="size-3.5 animate-spin" />
+                : <ArrowUp className="size-3.5" />
+              }
+            </Button>
           </div>
+          <p className="mt-1.5 text-[10px] text-muted-foreground/40">
+            Parent context included automatically · {submitKey}+Enter to send
+          </p>
         </div>
       </DialogContent>
     </Dialog>

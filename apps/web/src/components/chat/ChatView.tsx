@@ -67,6 +67,7 @@ export function ChatView() {
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [branchDialogOpen, setBranchDialogOpen] = useState(false);
   const [branchFromMessageId, setBranchFromMessageId] = useState<string | undefined>(undefined);
+  const [branchFromMessageContent, setBranchFromMessageContent] = useState<string | undefined>(undefined);
   const loadMessages = useThreadStore((s) => s.loadMessages);
   const clearMessages = useThreadStore((s) => s.clearMessages);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
@@ -100,9 +101,11 @@ export function ChatView() {
 
   /** Opens the branch dialog targeting a specific message. */
   const handleBranch = useCallback((messageId: string) => {
+    const msg = messages.find((m) => m.id === messageId);
     setBranchFromMessageId(messageId);
+    setBranchFromMessageContent(msg?.content);
     setBranchDialogOpen(true);
-  }, []);
+  }, [messages]);
 
   const showCliError =
     !!sessionError &&
@@ -252,6 +255,7 @@ export function ChatView() {
         open={branchDialogOpen}
         onOpenChange={setBranchDialogOpen}
         forkedFromMessageId={branchFromMessageId}
+        forkedFromMessageContent={branchFromMessageContent}
       />
     </div>
   );
