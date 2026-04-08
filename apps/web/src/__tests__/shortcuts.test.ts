@@ -58,13 +58,19 @@ describe("shortcuts integration", () => {
     registerCommand({ id: "test.cmd", title: "Test", category: "Test", handler });
     loadKeybindings([{ key: "mod+n", command: "test.cmd", when: "!inputFocused" }]);
 
-    setContext("inputFocused", true);
+    // handleKeyDown calls updateFocusContext() which reads document.activeElement,
+    // so we need an actual input element to simulate input focus
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
     document.dispatchEvent(createKeyEvent({ key: "n", ctrlKey: true }));
     expect(handler).not.toHaveBeenCalled();
 
-    setContext("inputFocused", false);
+    input.blur();
     document.dispatchEvent(createKeyEvent({ key: "n", ctrlKey: true }));
     expect(handler).toHaveBeenCalled();
+
+    document.body.removeChild(input);
   });
 
   it("getKeybindings returns active bindings", () => {
