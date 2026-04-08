@@ -795,6 +795,18 @@ export class AgentService {
           }
         }
 
+        if (event.type === "compactSummary") {
+          try {
+            this.threadRepo.updateCompactSummary(event.threadId, event.summary);
+            logger.info("Persisted compaction summary", { threadId: event.threadId, summaryLength: event.summary.length });
+          } catch (err) {
+            logger.error("Failed to persist compaction summary", {
+              threadId: event.threadId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
         // Persist SDK session ID so the thread can be resumed after a
         // server restart. The Codex provider emits this on thread.started.
         if (event.type === "system") {
