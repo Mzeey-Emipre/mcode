@@ -54,22 +54,29 @@ jobs:
           tag="${{ github.event.release.tag_name || inputs.tag }}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-          shopt -s globstar nullglob
+          shopt -s nullglob
           files=()
+          # Only collect top-level release artifacts. Exclude *-unpacked dirs
+          # (contain bare executables without supporting files) and NSIS helpers
+          # like elevate.exe that are not distributable artifacts.
           for pattern in \
-            apps/desktop/release/**/*.exe \
-            apps/desktop/release/**/*.exe.blockmap \
-            apps/desktop/release/**/*.dmg \
-            apps/desktop/release/**/*.dmg.blockmap \
-            apps/desktop/release/**/*.zip \
-            apps/desktop/release/**/*.zip.blockmap \
-            apps/desktop/release/**/*.AppImage \
-            apps/desktop/release/**/*.deb \
-            apps/desktop/release/**/latest.yml \
-            apps/desktop/release/**/latest-mac.yml \
-            apps/desktop/release/**/latest-linux.yml; do
+            apps/desktop/release/*.exe \
+            apps/desktop/release/*.exe.blockmap \
+            apps/desktop/release/*.dmg \
+            apps/desktop/release/*.dmg.blockmap \
+            apps/desktop/release/*.zip \
+            apps/desktop/release/*.zip.blockmap \
+            apps/desktop/release/*.AppImage \
+            apps/desktop/release/*.deb \
+            apps/desktop/release/latest.yml \
+            apps/desktop/release/latest-mac.yml \
+            apps/desktop/release/latest-linux.yml; do
             for f in $pattern; do
-              [ -f "$f" ] && files+=("$f")
+              [ -f "$f" ] || continue
+              base=$(basename "$f")
+              # Skip NSIS helper binaries
+              [[ "$base" == "elevate.exe" ]] && continue
+              files+=("$f")
             done
           done
 
