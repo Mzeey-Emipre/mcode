@@ -2,7 +2,10 @@
   "name": "mcode-desktop",
   "version": "0.1.0",
   "description": "Mcode AI agent orchestration desktop app",
-  "author": "Mzeey Empire",
+  "author": {
+    "name": "Mzeey Empire",
+    "email": "mzeey.empire@gmail.com"
+  },
   "homepage": "https://github.com/Mzeey-Emipre/mcode",
   "main": "dist/main/main.cjs",
   "type": "module",
