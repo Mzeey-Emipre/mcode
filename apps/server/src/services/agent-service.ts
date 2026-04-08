@@ -377,7 +377,7 @@ export class AgentService {
       if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
       const knownWorktrees = this.gitService.listWorktrees(workspaceId);
       const normalize = (p: string) =>
-        p.replace(/\\/g, "/").toLowerCase();
+        p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
       const normalizedInput = normalize(existingWorktreePath);
       const matched = knownWorktrees.find(
         (wt) => normalize(wt.path) === normalizedInput,
@@ -535,7 +535,7 @@ export class AgentService {
       const workspace = this.workspaceRepo.findById(workspaceId);
       if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
       const knownWorktrees = this.gitService.listWorktrees(workspaceId);
-      const normalize = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+      const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
       const normalizedInput = normalize(existingWorktreePath);
       const matched = knownWorktrees.find((wt) => normalize(wt.path) === normalizedInput);
       if (!matched) throw new Error("Path is not a recognized worktree");
@@ -588,16 +588,21 @@ export class AgentService {
     this.providerContentOverride.set(thread.id, stitchedContent);
 
     // sendMessage will persist the clean user prompt at seq 2 and send stitched content to provider
-    await this.sendMessage(
-      thread.id,
-      content,
-      permissionMode,
-      model,
-      attachments,
-      reasoningLevel,
-      provider,
-      interactionMode,
-    );
+    try {
+      await this.sendMessage(
+        thread.id,
+        content,
+        permissionMode,
+        model,
+        attachments,
+        reasoningLevel,
+        provider,
+        interactionMode,
+      );
+    } finally {
+      // Ensure override is cleaned up even if sendMessage throws before consuming it.
+      this.providerContentOverride.delete(thread.id);
+    }
 
     const updated = this.threadRepo.findById(thread.id);
     return updated ?? thread;

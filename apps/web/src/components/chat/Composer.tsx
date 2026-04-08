@@ -901,6 +901,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         content: messageContent,
         model: modelId,
         provider,
+        permissionMode: access,
+        reasoningLevel: reasoning,
         mode: branchMode,
         branch: branchBranch,
         existingWorktreePath: branchWorktree,
