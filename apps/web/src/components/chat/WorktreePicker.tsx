@@ -14,6 +14,11 @@ interface WorktreePickerProps {
   loading: boolean;
 }
 
+/** Normalize a path for comparison: lowercase, forward slashes, no trailing slash. */
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+}
+
 /** Searchable dropdown listing managed worktrees for attaching to an existing one. */
 export function WorktreePicker({
   worktrees,
@@ -23,7 +28,8 @@ export function WorktreePicker({
 }: WorktreePickerProps) {
   const [open, setOpen] = useState(false);
 
-  const matched = worktrees.find((w) => w.path === selectedPath);
+  const normalizedSelected = normalizePath(selectedPath);
+  const matched = worktrees.find((w) => normalizePath(w.path) === normalizedSelected);
   // When a path is pre-selected but the list hasn't loaded yet, show a spinner
   // rather than "Select worktree" so the user knows something is already chosen.
   const selectedName = matched?.name ?? (loading && selectedPath ? null : "Select worktree");
@@ -74,7 +80,7 @@ export function WorktreePicker({
                       }}
                       className={cn(
                         "flex flex-col items-start px-3 py-1.5 text-xs",
-                        w.path === selectedPath
+                        normalizePath(w.path) === normalizedSelected
                           ? "bg-accent text-foreground"
                           : "text-popover-foreground",
                       )}
