@@ -3,6 +3,7 @@ import { Github, Terminal, Diff, GitPullRequest } from "lucide-react";
 import { OpenInEditorMenu } from "./OpenInEditorMenu";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { useBranchPr } from "@/hooks/useBranchPr";
+import { useHasCommitsAhead } from "@/hooks/useHasCommitsAhead";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useDiffStore } from "@/stores/diffStore";
@@ -33,6 +34,12 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   const cwd = workspace?.path ?? null;
   const shouldPollPr = thread.branch !== "main" && thread.branch !== "master";
   const pr = useBranchPr(shouldPollPr ? thread.branch : null, cwd);
+
+  // Check if the branch has commits ahead of main (disable Create PR when it doesn't)
+  const hasCommitsAhead = useHasCommitsAhead(
+    shouldPollPr ? thread.workspace_id : "",
+    shouldPollPr ? thread.branch : null,
+  );
 
   // Sync polled PR state back to the workspace store so the project tree
   // icon reflects state changes (e.g. OPEN -> MERGED) in realtime.
@@ -109,6 +116,8 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
               size="xs"
               className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6"
               onClick={() => setCreatePrOpen(true)}
+              disabled={!hasCommitsAhead}
+              title={hasCommitsAhead === false ? "No commits ahead of base branch" : undefined}
             >
               <GitPullRequest size={12} />
               <span>Create PR</span>
