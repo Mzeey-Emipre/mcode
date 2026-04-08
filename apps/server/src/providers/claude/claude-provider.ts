@@ -154,6 +154,8 @@ export function detectFallbackModel(
 @injectable()
 export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "claude";
+  /** Claude supports one-shot text completion via sdkQuery with maxTurns: 1. */
+  readonly supportsCompletion = true;
 
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();

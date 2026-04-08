@@ -86,6 +86,8 @@ interface SessionEntry {
 @injectable()
 export class CodexProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "codex";
+  /** Codex CLI is an agentic tool with no one-shot text completion mode. */
+  readonly supportsCompletion = false;
 
   private codex: Codex | null = null;
   private lastCliPath: string | undefined;
@@ -164,14 +166,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       });
       throw e;
     }
-  }
-
-  /**
-   * Codex CLI is an agentic coding tool with no one-shot text completion mode.
-   * Throws so that callers (e.g. PrDraftService) fall back to the Claude provider.
-   */
-  async complete(_prompt: string, _model: string, _cwd: string): Promise<string> {
-    throw new Error("Codex CLI does not support one-shot text completion");
   }
 
   private async doSendMessage(params: {

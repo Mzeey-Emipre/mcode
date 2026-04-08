@@ -9,6 +9,12 @@ export type ProviderId = "claude" | "codex" | "gemini" | "copilot";
 export interface IAgentProvider {
   readonly id: ProviderId;
 
+  /**
+   * Whether this provider supports one-shot text completion (e.g. PR draft generation).
+   * Use `isCompletionCapable()` to narrow to `ICompletionCapable` before calling `complete()`.
+   */
+  readonly supportsCompletion: boolean;
+
   /** Start or continue a session by sending a message. */
   sendMessage(params: {
     sessionId: string;
@@ -23,13 +29,6 @@ export interface IAgentProvider {
     reasoningLevel?: ReasoningLevel;
   }): void | Promise<void>;
 
-  /**
-   * One-shot text completion for non-agentic use cases (e.g. PR draft generation).
-   * Returns the raw text response from the underlying CLI.
-   * Throws if the provider does not support one-shot completion.
-   */
-  complete(prompt: string, model: string, cwd: string): Promise<string>;
-
   /** Abort a running session. */
   stopSession(sessionId: string): void;
 
@@ -43,6 +42,24 @@ export interface IAgentProvider {
   on(event: "event", handler: (event: AgentEvent) => void): void;
   /** Subscribe to provider-level errors. */
   on(event: "error", handler: (error: Error) => void): void;
+}
+
+/**
+ * Narrowed view of an agent provider that supports one-shot text completion.
+ * Use `isCompletionCapable()` to narrow an `IAgentProvider` to this type.
+ */
+export interface ICompletionCapable extends IAgentProvider {
+  readonly supportsCompletion: true;
+  /** Run a one-shot prompt and return the raw text response. */
+  complete(prompt: string, model: string, cwd: string): Promise<string>;
+}
+
+/**
+ * Type guard: returns true when the provider implements one-shot text completion.
+ * Narrows `IAgentProvider` to `ICompletionCapable` so `complete()` is callable without casting.
+ */
+export function isCompletionCapable(provider: IAgentProvider): provider is ICompletionCapable {
+  return provider.supportsCompletion === true && typeof (provider as ICompletionCapable).complete === "function";
 }
 
 /** Registry that resolves provider instances by ID. */
