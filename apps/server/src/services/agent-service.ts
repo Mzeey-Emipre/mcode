@@ -608,11 +608,17 @@ export class AgentService {
       ? `${replayHeader}${replay}\n\n---\n\n${content}`
       : content;
 
-    // Set provider content override so sendMessage uses stitched content.
+    // In plan mode, wrap the stitched content so the provider receives
+    // buildPlanPrompt(replay + userPrompt) on the first branch turn.
+    // The DB still stores the clean user prompt at seq 2 (written by sendMessage).
+    const providerInput =
+      interactionMode === "plan" ? this.buildPlanPrompt(stitchedContent) : stitchedContent;
+
+    // Set provider content override so sendMessage uses the prepared content.
     // IMPORTANT: sendMessage deletes this override before its try block, so the override
     // is always consumed on the next call. Do not add any await between this set and the
     // sendMessage call below, or the override could be consumed by an unrelated invocation.
-    this.providerContentOverride.set(thread.id, stitchedContent);
+    this.providerContentOverride.set(thread.id, providerInput);
 
     // sendMessage will persist the clean user prompt at seq 2 and send stitched content to provider
     try {
