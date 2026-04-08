@@ -195,8 +195,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
   /**
    * One-shot text completion using the Claude CLI print mode.
-   * Uses stream-json output and extracts text from assistant events because
-   * the CLI's `result` field is empty in v2.x print mode.
+   * Tools are disabled (`--tools ""`) to prevent the agent from reading files
+   * instead of generating the requested text. Uses stream-json output and
+   * extracts text from assistant events because the CLI's `result` field is
+   * empty in v2.x print mode.
    */
   async complete(prompt: string, model: string, cwd: string): Promise<string> {
     const settings = await this.settingsService.get();
@@ -204,7 +206,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
     const { stdout } = await execFileAsync(
       cliPath,
-      ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose"],
+      ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", "--tools", ""],
       { cwd, timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
     );
 
