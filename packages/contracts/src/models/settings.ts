@@ -151,6 +151,18 @@ export const SettingsSchema = lazySchema(() =>
           .default({}),
       })
       .default({}),
+
+    /** PR draft generation settings. */
+    prDraft: z
+      .object({
+        /**
+         * Model used for AI-powered PR draft generation.
+         * Empty string selects a provider-appropriate default at runtime
+         * (claude-haiku-4-5-20251001 for Claude, o4-mini for Codex).
+         */
+        model: z.string().default(""),
+      })
+      .default({}),
   }),
 );
 
@@ -242,6 +254,11 @@ export const PartialSettingsSchema = lazySchema(() =>
             claude: z.string().optional(),
           })
           .optional(),
+      })
+      .optional(),
+    prDraft: z
+      .object({
+        model: z.string().optional(),
       })
       .optional(),
   }),
