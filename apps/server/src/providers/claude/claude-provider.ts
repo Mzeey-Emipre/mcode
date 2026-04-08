@@ -4,7 +4,9 @@
  * Migrated from apps/desktop/src/main/sidecar/client.ts.
  */
 
-import { injectable } from "tsyringe";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { injectable, inject } from "tsyringe";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
@@ -17,7 +19,10 @@ import type {
   AgentEvent,
   AttachmentMeta,
 } from "@mcode/contracts";
+import { SettingsService } from "../../services/settings-service.js";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Idle TTL before a session is evicted (10 minutes). */
 const IDLE_TTL_MS = 10 * 60 * 1000;
@@ -159,6 +164,12 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
 
+  constructor(
+    @inject(SettingsService) private readonly settingsService: SettingsService,
+  ) {
+    super();
+  }
+
   /** Start or continue a session by sending a message via the SDK. */
   async sendMessage(params: {
     sessionId: string;
@@ -180,6 +191,24 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       });
       throw e;
     }
+  }
+
+  /**
+   * One-shot text completion using the Claude CLI print mode.
+   * Spawns `claude -p "<prompt>" --model <model> --output-format text` in the given cwd.
+   * Uses the CLI path from settings (empty = auto-discover from PATH).
+   */
+  async complete(prompt: string, model: string, cwd: string): Promise<string> {
+    const settings = await this.settingsService.get();
+    const cliPath = settings.provider.cli.claude || "claude";
+
+    const { stdout } = await execFileAsync(
+      cliPath,
+      ["-p", prompt, "--model", model, "--output-format", "text"],
+      { cwd, timeout: 60_000 },
+    );
+
+    return stdout.trim();
   }
 
   private async doSendMessage(params: {
