@@ -47,12 +47,16 @@ writeFileSync(
 console.log("[ci-package] Created minimal package-lock.json");
 
 // ---------------------------------------------------------------------------
-// 3. Disable npm workspace mode so npm does not walk up to the monorepo root
-//    and try to resolve workspace:* references from sibling packages
+// 3. Strip workspaces from root package.json so npm does not detect a
+//    workspace context and try to resolve workspace:* references from
+//    sibling packages. Safe to do in CI after bun install has completed.
 // ---------------------------------------------------------------------------
 
-writeFileSync(resolve(desktopRoot, ".npmrc"), "workspaces=false\n");
-console.log("[ci-package] Created .npmrc with workspaces=false");
+const rootPkgPath = resolve(desktopRoot, "../../package.json");
+const rootPkg = JSON.parse(readFileSync(rootPkgPath, "utf8"));
+delete rootPkg.workspaces;
+writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + "\n");
+console.log("[ci-package] Stripped workspaces from root package.json");
 
 // ---------------------------------------------------------------------------
 // 4. Remove bun from PATH so electron-builder falls back to npm
