@@ -4,9 +4,7 @@
  * Migrated from apps/desktop/src/main/sidecar/client.ts.
  */
 
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { injectable, inject } from "tsyringe";
+import { injectable } from "tsyringe";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
@@ -19,10 +17,7 @@ import type {
   AgentEvent,
   AttachmentMeta,
 } from "@mcode/contracts";
-import { SettingsService } from "../../services/settings-service.js";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
-
-const execFileAsync = promisify(execFile);
 
 /** Idle TTL before a session is evicted (10 minutes). */
 const IDLE_TTL_MS = 10 * 60 * 1000;
@@ -164,9 +159,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(
-    @inject(SettingsService) private readonly settingsService: SettingsService,
-  ) {
+  constructor() {
     super();
   }
 
@@ -194,42 +187,45 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   }
 
   /**
-   * One-shot text completion using the Claude CLI print mode.
-   * Tools are disabled (`--tools ""`) to prevent the agent from reading files
-   * instead of generating the requested text. Uses stream-json output and
-   * extracts text from assistant events because the CLI's `result` field is
-   * empty in v2.x print mode.
+   * One-shot text completion using the same Claude Agent SDK as chat.
+   * Spawns a disposable query() session with no tools and no project settings,
+   * collects the assistant text, then tears down the subprocess.
    */
   async complete(prompt: string, model: string, cwd: string): Promise<string> {
-    const settings = await this.settingsService.get();
-    const cliPath = settings.provider.cli.claude || "claude";
+    const sessionId = `pr-draft-${Date.now()}`;
+    const queue = createPromptQueue();
 
-    const { stdout } = await execFileAsync(
-      cliPath,
-      ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", "--tools", ""],
-      { cwd, timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
-    );
+    const q = sdkQuery({
+      prompt: queue.iterable,
+      options: {
+        cwd,
+        model,
+        sessionId,
+        permissionMode: "default" as const,
+        // Skip project/user settings to avoid loading CLAUDE.md agent instructions
+        settingSources: [],
+        // No tools — pure text generation, no file reading or code execution
+        tools: [],
+      },
+    });
 
-    // Parse NDJSON stream and extract text blocks from assistant messages.
+    queue.push(toUserMessage(prompt, sessionId));
+    queue.close();
+
     let text = "";
-    for (const line of stdout.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const event = JSON.parse(line) as {
-          type?: string;
-          message?: { content?: Array<{ type: string; text?: string }> };
-        };
-        if (event.type === "assistant" && event.message?.content) {
-          for (const block of event.message.content) {
-            if (block.type === "text" && block.text) text += block.text;
-          }
+    for await (const msg of q) {
+      const anyMsg = msg as Record<string, unknown>;
+      if (anyMsg.type === "assistant") {
+        const content =
+          (anyMsg.message as { content?: Array<{ type: string; text?: string }> })
+            ?.content ?? [];
+        for (const block of content) {
+          if (block.type === "text" && block.text) text += block.text;
         }
-      } catch {
-        // Skip non-JSON lines (e.g. blank lines, partial output)
       }
     }
 
-    if (!text) throw new Error("Claude CLI returned no text content");
+    if (!text) throw new Error("Claude SDK returned no text content");
     return text.trim();
   }
 
