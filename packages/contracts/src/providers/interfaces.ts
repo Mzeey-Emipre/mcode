@@ -23,6 +23,13 @@ export interface IAgentProvider {
     reasoningLevel?: ReasoningLevel;
   }): void | Promise<void>;
 
+  /**
+   * One-shot text completion for non-agentic use cases (e.g. PR draft generation).
+   * Returns the raw text response from the underlying CLI.
+   * Throws if the provider does not support one-shot completion.
+   */
+  complete(prompt: string, model: string, cwd: string): Promise<string>;
+
   /** Abort a running session. */
   stopSession(sessionId: string): void;
 
