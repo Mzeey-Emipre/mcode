@@ -89,9 +89,11 @@ export function ChatView() {
     setDismissedError(null);
   }, [activeThreadId]);
 
-  // Reset edit mode when the active thread changes
+  // Reset edit mode and branch state when the active thread changes
   useEffect(() => {
     setEditingThreadId(null);
+    setBranchFromMessageId(undefined);
+    setBranchFromMessageContent(undefined);
   }, [activeThreadId]);
 
   const handleOpenSettings = useCallback(() => {
