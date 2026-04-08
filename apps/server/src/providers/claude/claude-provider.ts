@@ -187,44 +187,42 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   }
 
   /**
-   * One-shot text completion using the same Claude Agent SDK as chat.
-   * Spawns a disposable query() session with no tools and no project settings,
-   * collects the assistant text, then tears down the subprocess.
+   * One-shot text completion using the same Claude Agent SDK query() as chat.
+   * Passes a string prompt (not AsyncIterable), disables tools, and limits to
+   * one turn so the subprocess exits cleanly after the first response.
    */
   async complete(prompt: string, model: string, cwd: string): Promise<string> {
-    const sessionId = `pr-draft-${Date.now()}`;
-    const queue = createPromptQueue();
-
     const q = sdkQuery({
-      prompt: queue.iterable,
+      prompt,
       options: {
         cwd,
         model,
-        sessionId,
-        permissionMode: "default" as const,
-        // Skip project/user settings to avoid loading CLAUDE.md agent instructions
-        settingSources: [],
-        // No tools — pure text generation, no file reading or code execution
+        maxTurns: 1,
         tools: [],
+        settingSources: [],
+        permissionMode: "default" as const,
       },
     });
 
-    queue.push(toUserMessage(prompt, sessionId));
-    queue.close();
-
-    let text = "";
+    // Collect text from both result and assistant events as fallback
+    let resultText = "";
+    let assistantText = "";
     for await (const msg of q) {
       const anyMsg = msg as Record<string, unknown>;
+      if (anyMsg.type === "result" && typeof anyMsg.result === "string") {
+        resultText = anyMsg.result as string;
+      }
       if (anyMsg.type === "assistant") {
         const content =
           (anyMsg.message as { content?: Array<{ type: string; text?: string }> })
             ?.content ?? [];
         for (const block of content) {
-          if (block.type === "text" && block.text) text += block.text;
+          if (block.type === "text" && block.text) assistantText += block.text;
         }
       }
     }
 
+    const text = resultText || assistantText;
     if (!text) throw new Error("Claude SDK returned no text content");
     return text.trim();
   }
