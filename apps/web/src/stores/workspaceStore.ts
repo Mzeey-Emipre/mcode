@@ -303,6 +303,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeThreadId: thread.id,
         pendingNewThread: false,
         branchManuallySelected: false,
+        // Invalidate worktree cache so the new worktree is included in the
+        // stale-worktree check. ProjectTree's effect will reload the list.
+        ...(mode === "worktree" ? { worktreesLoadedForWorkspace: null } : {}),
       }));
 
       // Mark the new thread as running in the threadStore so the
@@ -360,6 +363,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeThreadId: thread.id,
         pendingNewThread: false,
         branchManuallySelected: false,
+        // Invalidate worktree cache so the branched worktree is included in
+        // the stale-worktree check. ProjectTree's effect will reload the list.
+        ...(transportMode === "worktree" ? { worktreesLoadedForWorkspace: null } : {}),
       }));
 
       useThreadStore.setState((state) => ({
