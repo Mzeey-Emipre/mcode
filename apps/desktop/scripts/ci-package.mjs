@@ -11,7 +11,7 @@
  * Usage: node apps/desktop/scripts/ci-package.mjs
  */
 
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
@@ -57,11 +57,13 @@ const filteredPath = process.env.PATH.split(sep)
 
 console.log("[ci-package] Running electron-builder (npm fallback)...");
 
-// Resolve electron-builder CLI from local node_modules to avoid npx overhead
-const ebCli = resolve(desktopRoot, "node_modules/.bin/electron-builder");
-const ext = process.platform === "win32" ? ".cmd" : "";
+// Run the electron-builder CLI entry point via node directly. This avoids
+// platform-specific .bin shim issues (.cmd on Windows, hoisting to root).
+const localCli = resolve(desktopRoot, "node_modules/electron-builder/out/cli/cli.js");
+const rootCli = resolve(desktopRoot, "../../node_modules/electron-builder/out/cli/cli.js");
+const ebCli = existsSync(localCli) ? localCli : rootCli;
 
-execFileSync(ebCli + ext, ["--publish", "never"], {
+execFileSync(process.execPath, [ebCli, "--publish", "never"], {
   cwd: desktopRoot,
   stdio: "inherit",
   env: { ...process.env, PATH: filteredPath },
