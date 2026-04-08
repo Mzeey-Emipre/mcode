@@ -195,8 +195,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
   /**
    * One-shot text completion using the Claude CLI print mode.
-   * Spawns `claude -p "<prompt>" --model <model> --output-format text` in the given cwd.
-   * Uses the CLI path from settings (empty = auto-discover from PATH).
+   * Uses stream-json output and extracts text from assistant events because
+   * the CLI's `result` field is empty in v2.x print mode.
    */
   async complete(prompt: string, model: string, cwd: string): Promise<string> {
     const settings = await this.settingsService.get();
@@ -204,11 +204,31 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
     const { stdout } = await execFileAsync(
       cliPath,
-      ["-p", prompt, "--model", model, "--output-format", "text"],
-      { cwd, timeout: 60_000 },
+      ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose"],
+      { cwd, timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
     );
 
-    return stdout.trim();
+    // Parse NDJSON stream and extract text blocks from assistant messages.
+    let text = "";
+    for (const line of stdout.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line) as {
+          type?: string;
+          message?: { content?: Array<{ type: string; text?: string }> };
+        };
+        if (event.type === "assistant" && event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === "text" && block.text) text += block.text;
+          }
+        }
+      } catch {
+        // Skip non-JSON lines (e.g. blank lines, partial output)
+      }
+    }
+
+    if (!text) throw new Error("Claude CLI returned no text content");
+    return text.trim();
   }
 
   private async doSendMessage(params: {
