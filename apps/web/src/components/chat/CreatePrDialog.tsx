@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Loader2, GitPullRequest, GitBranch, ChevronDown } from "lucide-react";
+import { Loader2, GitPullRequest, GitBranch, ChevronDown, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -165,6 +165,7 @@ export function CreatePrDialog({
 
   const [state, setState] = useState<DialogState>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [isDraft, setIsDraft] = useState(false);
@@ -267,6 +268,21 @@ export function CreatePrDialog({
       setState("ready");
     }
   }, [workspaceId, threadId, title, body, baseBranch, isDraft, onOpenChange]);
+
+  /** Re-run AI draft generation with the current base branch, keeping existing content visible. */
+  const handleRegenerate = useCallback(async () => {
+    setIsRegenerating(true);
+    setError(null);
+    try {
+      const draft = await getTransport().generatePrDraft(workspaceId, threadId, baseBranch);
+      setTitle(draft.title);
+      setBody(draft.body);
+    } catch (err) {
+      setError(`Draft generation failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setIsRegenerating(false);
+    }
+  }, [workspaceId, threadId, baseBranch]);
 
   const isDisabled = state === "loading" || state === "submitting";
 
@@ -395,21 +411,37 @@ export function CreatePrDialog({
                   <label htmlFor="pr-body" className="text-xs text-muted-foreground">
                     Description
                   </label>
-                  <SegControl
-                    options={[
-                      { value: "write", label: "Write" },
-                      { value: "preview", label: "Preview" },
-                    ]}
-                    value={descMode}
-                    onChange={(v) => setDescMode(v as "write" | "preview")}
-                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRegenerate}
+                      disabled={isDisabled || isRegenerating}
+                      className="h-6 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      {isRegenerating ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="size-3" />
+                      )}
+                      Regenerate
+                    </Button>
+                    <SegControl
+                      options={[
+                        { value: "write", label: "Write" },
+                        { value: "preview", label: "Preview" },
+                      ]}
+                      value={descMode}
+                      onChange={(v) => setDescMode(v as "write" | "preview")}
+                    />
+                  </div>
                 </div>
                 {descMode === "write" ? (
                   <textarea
                     id="pr-body"
                     value={body}
                     onChange={(e) => setBody(e.target.value)}
-                    disabled={isDisabled}
+                    disabled={isDisabled || isRegenerating}
                     placeholder="PR description"
                     className={cn(
                       "flex-1 min-h-0 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm shadow-xs transition-colors",
