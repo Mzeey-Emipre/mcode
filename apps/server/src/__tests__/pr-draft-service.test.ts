@@ -1,16 +1,10 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { mockCreate, mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
-  mockCreate: vi.fn(),
+const { mockComplete, mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
+  mockComplete: vi.fn(),
   mockExistsSync: vi.fn().mockReturnValue(false),
   mockReadFileSync: vi.fn(),
-}));
-
-vi.mock("@anthropic-ai/sdk", () => ({
-  default: class {
-    messages = { create: mockCreate };
-  },
 }));
 
 vi.mock("fs", () => ({
@@ -38,13 +32,29 @@ describe("PrDraftService", () => {
   const mockWorkspaceRepo = {
     findById: vi.fn(),
   };
+  const mockSettingsService = {
+    get: vi.fn().mockResolvedValue({
+      model: { defaults: { provider: "claude" } },
+      prDraft: { model: "" },
+    }),
+  };
+  const mockProviderRegistry = {
+    resolve: vi.fn().mockReturnValue({ complete: mockComplete }),
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSettingsService.get.mockResolvedValue({
+      model: { defaults: { provider: "claude" } },
+      prDraft: { model: "" },
+    });
+    mockProviderRegistry.resolve.mockReturnValue({ complete: mockComplete });
     service = new PrDraftService(
       mockGitService as any,
       mockMessageRepo as any,
       mockWorkspaceRepo as any,
+      mockSettingsService as any,
+      mockProviderRegistry as any,
     );
   });
 
@@ -62,23 +72,19 @@ describe("PrDraftService", () => {
       ],
       hasMore: false,
     });
-    mockCreate.mockResolvedValue({
-      content: [{ type: "text", text: JSON.stringify({
-        title: "feat: add dashboard widget",
-        body: "## What\nAdded a widget\n\n## Why\nUser requested dashboard widget\n\n## Key Changes\n- Added widget component",
-      })}],
-    });
+    mockComplete.mockResolvedValue(JSON.stringify({
+      title: "feat: add dashboard widget",
+      body: "## What\nAdded a widget\n\n## Why\nUser requested dashboard widget\n\n## Key Changes\n- Added widget component",
+    }));
 
     const result = await service.generateDraft("ws-1", "thread-1", "main");
 
     expect(result.title).toBe("feat: add dashboard widget");
     expect(result.body).toContain("## What");
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        model: expect.stringContaining("claude"),
-        messages: expect.any(Array),
-        system: expect.any(String),
-      }),
+    expect(mockComplete).toHaveBeenCalledWith(
+      expect.stringContaining("Generate a pull request title"),
+      expect.stringContaining("claude-haiku"),
+      "/repo",
     );
   });
 
@@ -94,7 +100,7 @@ describe("PrDraftService", () => {
       messages: [],
       hasMore: false,
     });
-    mockCreate.mockRejectedValue(new Error("API key invalid"));
+    mockComplete.mockRejectedValue(new Error("API key invalid"));
 
     const result = await service.generateDraft("ws-1", "thread-1", "main");
 
@@ -117,17 +123,10 @@ describe("PrDraftService", () => {
     mockGitService.diffStat.mockResolvedValue("2 files changed");
     mockGitService.getCurrentBranch.mockReturnValue("master");
     mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            title: "feat: add widget",
-            body: "## What\nAdded widget",
-          }),
-        },
-      ],
-    });
+    mockComplete.mockResolvedValue(JSON.stringify({
+      title: "feat: add widget",
+      body: "## What\nAdded widget",
+    }));
 
     const result = await service.generateDraft("ws-1", "thread-1", "main");
 
@@ -156,17 +155,15 @@ describe("PrDraftService", () => {
     mockReadFileSync.mockReturnValue(
       "## Summary\n\n## Testing\n\n## Screenshots\n",
     );
-    mockCreate.mockResolvedValue({
-      content: [{ type: "text", text: JSON.stringify({
-        title: "feat: thing",
-        body: "## Summary\nDid thing\n\n## Testing\nUnit tests\n\n## Screenshots\nN/A",
-      })}],
-    });
+    mockComplete.mockResolvedValue(JSON.stringify({
+      title: "feat: thing",
+      body: "## Summary\nDid thing\n\n## Testing\nUnit tests\n\n## Screenshots\nN/A",
+    }));
 
     const result = await service.generateDraft("ws-1", "thread-1", "main");
 
-    // Verify the AI system prompt included the repo template structure
-    const aiCall = mockCreate.mock.calls[0][0];
-    expect(aiCall.system).toContain("## Summary");
+    // Verify the AI prompt included the repo template structure
+    const promptArg = mockComplete.mock.calls[0][0];
+    expect(promptArg).toContain("## Summary");
   });
 });
