@@ -11,12 +11,14 @@
  */
 
 import { build } from "esbuild";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
+import { existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
+const serverRoot = resolve(desktopRoot, "..", "server");
 const webRoot = resolve(desktopRoot, "..", "web");
 
 /** Shared esbuild options for both entry points. */
@@ -46,7 +48,38 @@ await Promise.all([
 
 console.log("Build complete: dist/main/main.cjs, dist/preload/preload.cjs");
 
-// Step 2: Build web renderer for Electron (cross-platform env var)
+// Step 2: Bundle the server into dist/server/server.cjs
+// Phase 2a: tsc compiles TypeScript to ESM JS, preserving emitDecoratorMetadata
+// (esbuild does not support emitDecoratorMetadata natively; tsc does it correctly).
+// Resolve tsc from the server's local node_modules or fall back to root — the
+// `typescript/bin/tsc` JS file works on all platforms without .cmd shims.
+const localTsc = resolve(serverRoot, "node_modules/typescript/bin/tsc");
+const rootTsc = resolve(serverRoot, "../../node_modules/typescript/bin/tsc");
+const tscBin = existsSync(localTsc) ? localTsc : rootTsc;
+console.log("Compiling server TypeScript...");
+execFileSync(process.execPath, [tscBin, "--project", resolve(serverRoot, "tsconfig.build.json")], {
+  cwd: serverRoot,
+  stdio: "inherit",
+});
+
+// Phase 2b: esbuild bundles the tsc output into a single CJS file.
+// better-sqlite3 and node-pty are marked external because they contain native
+// bindings that cannot be inlined and must be asarUnpack'd by electron-builder.
+await build({
+  ...shared,
+  entryPoints: [resolve(serverRoot, "dist-tsc/index.js")],
+  outfile: "dist/server/server.cjs",
+  external: ["better-sqlite3", "node-pty", "electron"],
+  define: {
+    // esbuild converts import.meta.url to __filename in CJS output,
+    // but some deps check for it — ensure it resolves predictably.
+    "import.meta.url": "__filename",
+  },
+});
+
+console.log("Server bundle complete: dist/server/server.cjs");
+
+// Step 3: Build web renderer for Electron (cross-platform env var)
 const rendererOutDir = resolve(desktopRoot, "dist", "renderer");
 
 console.log("Building renderer...");

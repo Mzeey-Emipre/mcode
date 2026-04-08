@@ -12,12 +12,19 @@ import { getMcodeDir } from "@mcode/shared";
 /**
  * Resolve the correct native binding for better-sqlite3 based on runtime.
  *
- * When running under Electron, returns the path to the Electron-specific
- * prebuild (`better_sqlite3.electron.node`). Under plain Node.js (e.g.
- * vitest), returns `undefined` so better-sqlite3 falls back to its default
- * `bindings` resolution (the Node.js prebuild).
+ * Priority:
+ * 1. `BETTER_SQLITE3_BINDING` env var — set by server-manager when the app is
+ *    packaged, pointing to the asarUnpack'd `.node` file outside the asar archive.
+ * 2. Electron runtime path resolution — used in dev mode when running under
+ *    Electron with the source tree present.
+ * 3. `undefined` — falls back to better-sqlite3's default binding resolution
+ *    for plain Node.js (e.g. vitest).
  */
 function resolveNativeBinding(): string | undefined {
+  if (process.env.BETTER_SQLITE3_BINDING) {
+    return process.env.BETTER_SQLITE3_BINDING;
+  }
+
   if (!process.versions.electron) return undefined;
 
   const localRequire = createRequire(import.meta.url);

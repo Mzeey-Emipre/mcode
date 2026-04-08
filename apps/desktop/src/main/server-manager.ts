@@ -11,18 +11,44 @@ import { app, utilityProcess, type UtilityProcess, MessageChannelMain } from "el
 import { readFileSync } from "fs";
 import { createServer, type AddressInfo } from "net";
 import { randomUUID } from "crypto";
-import { resolve, join } from "path";
+import { resolve, join, dirname } from "path";
 import { getMcodeDir } from "@mcode/shared";
 import { SettingsSchema as BundledSettingsSchema } from "@mcode/contracts";
 
 /** Use snapshot-provided schema when available (V8 snapshot pre-initializes Zod). */
 const SettingsSchema = globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? BundledSettingsSchema;
 
-/** Absolute path to the server package directory. */
-const SERVER_DIR = resolve(__dirname, "../../../server");
+/**
+ * Resolve the server entry point and working directory based on whether the
+ * app is packaged or running from source. In packaged mode, the server is a
+ * single CJS bundle at `dist/server/server.cjs`; in dev mode it uses the
+ * tsx bootstrap at `src/entry.mjs`.
+ *
+ * Also returns the native binding path for better-sqlite3 when packaged so
+ * the server utility process can find it outside the asar archive.
+ */
+function getServerPaths(): {
+  entry: string;
+  cwd: string;
+  nativeBindingPath?: string;
+} {
+  if (app.isPackaged) {
+    const serverBundle = resolve(__dirname, "../../server/server.cjs");
+    const nativeBindingPath = resolve(
+      process.resourcesPath,
+      "app.asar.unpacked",
+      "node_modules",
+      "better-sqlite3",
+      "build",
+      "Release",
+      "better_sqlite3.electron.node",
+    );
+    return { entry: serverBundle, cwd: dirname(serverBundle), nativeBindingPath };
+  }
 
-/** Absolute path to the server bootstrap entry (registers tsx for utilityProcess). */
-const SERVER_ENTRY = resolve(SERVER_DIR, "src/entry.mjs");
+  const serverDir = resolve(__dirname, "../../../server");
+  return { entry: resolve(serverDir, "src/entry.mjs"), cwd: serverDir };
+}
 
 /**
  * Port range to scan for an available port.
@@ -136,11 +162,13 @@ export class ServerManager {
     const heapMb = readServerHeapMb();
     console.log(`Starting server with --max-old-space-size=${heapMb}`);
 
+    const { entry, cwd, nativeBindingPath } = getServerPaths();
+
     // V8 flags are processed at engine level before JS runs, so they work
     // in utilityProcess. Module loader flags (--import) do NOT work here;
     // tsx registration is handled by the entry.mjs bootstrap instead.
-    const child = utilityProcess.fork(SERVER_ENTRY, [], {
-      cwd: SERVER_DIR,
+    const child = utilityProcess.fork(entry, [], {
+      cwd,
       execArgv: [
         `--max-old-space-size=${heapMb}`,
         "--max-semi-space-size=2",
@@ -154,6 +182,7 @@ export class ServerManager {
         MCODE_DATA_DIR: getMcodeDir(),
         MCODE_TEMP_DIR: app.getPath("temp"),
         MCODE_VERSION: app.getVersion(),
+        ...(nativeBindingPath ? { BETTER_SQLITE3_BINDING: nativeBindingPath } : {}),
       },
       stdio: "pipe",
     });
