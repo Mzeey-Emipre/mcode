@@ -6,6 +6,7 @@
   { "key": "mod+j", "command": "terminal.toggle", "when": "!inputFocused" },
   { "key": "mod+,", "command": "settings.open", "when": "!inputFocused" },
   { "key": "mod+?", "command": "shortcuts.help", "when": "!inputFocused" },
+  { "key": "mod+o", "command": "explorer.open", "when": "!inputFocused" },
   { "key": "Escape", "command": "escape.handle" },
   { "key": "mod+t", "command": "tasks.toggle", "when": "!inputFocused" },
   { "key": "mod+d", "command": "changes.toggle", "when": "!inputFocused" },
