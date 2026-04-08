@@ -263,19 +263,20 @@ export class GitService {
     return workspacePath;
   }
 
-  /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. */
-  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string): Promise<GitCommit[]> {
+  /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. Pass repoPath to run from a worktree directory instead of the workspace root. */
+  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string, repoPath?: string): Promise<GitCommit[]> {
     const workspace = this.requireWorkspace(workspaceId);
+    const effectivePath = repoPath ?? workspace.path;
 
     // Auto-detect default branch when baseBranch is omitted but branch is specified
     const resolvedBase = baseBranch !== undefined
       ? baseBranch
       : branch !== undefined
-        ? await this.detectDefaultBranch(workspace.path)
+        ? await this.detectDefaultBranch(effectivePath)
         : undefined;
 
     const args = [
-      "-C", workspace.path,
+      "-C", effectivePath,
       "log",
       "--pretty=format:MCODE_SEP%H|||%h|||%s|||%an|||%aI",
       "--numstat",

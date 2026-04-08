@@ -73,14 +73,14 @@ export class PrDraftService {
     const headBranch = this.gitService.getCurrentBranchAt(repoPath);
 
     const [commits, diffStat, messagesResult, settings] = await Promise.all([
-      this.gitService.log(workspaceId, headBranch, 50, baseBranch).catch(
+      this.gitService.log(workspaceId, headBranch, 50, baseBranch, repoPath).catch(
         (err: unknown) => {
           logger.warn("git log with base branch failed, retrying without range", {
             baseBranch,
             headBranch,
             error: err instanceof Error ? err.message : String(err),
           });
-          return this.gitService.log(workspaceId, headBranch, 50);
+          return this.gitService.log(workspaceId, headBranch, 50, undefined, repoPath);
         },
       ),
       this.gitService.diffStat(repoPath, baseBranch, headBranch).catch(
