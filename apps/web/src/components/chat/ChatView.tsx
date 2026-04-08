@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
-import { BranchThreadDialog } from "./BranchThreadDialog";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
 import { HeaderActions } from "./HeaderActions";
 import { CliErrorBanner, isCliError } from "./CliErrorBanner";
@@ -65,7 +64,6 @@ export function ChatView() {
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
-  const [branchDialogOpen, setBranchDialogOpen] = useState(false);
   const [branchFromMessageId, setBranchFromMessageId] = useState<string | undefined>(undefined);
   const [branchFromMessageContent, setBranchFromMessageContent] = useState<string | undefined>(undefined);
   const loadMessages = useThreadStore((s) => s.loadMessages);
@@ -99,12 +97,11 @@ export function ChatView() {
     window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: { section: "model" } }));
   }, []);
 
-  /** Opens the branch dialog targeting a specific message. */
+  /** Activates inline branch mode on the composer for the given message. */
   const handleBranch = useCallback((messageId: string) => {
     const msg = messages.find((m) => m.id === messageId);
     setBranchFromMessageId(messageId);
     setBranchFromMessageContent(msg?.content);
-    setBranchDialogOpen(true);
   }, [messages]);
 
   const showCliError =
@@ -246,16 +243,16 @@ export function ChatView() {
         />
       )}
 
-      {/* Composer */}
-      <Composer threadId={activeThread.id} workspaceId={activeWorkspaceId ?? undefined} />
-
-      {/* Branch dialog triggered from per-message branch icons */}
-      <BranchThreadDialog
-        thread={activeThread}
-        open={branchDialogOpen}
-        onOpenChange={setBranchDialogOpen}
-        forkedFromMessageId={branchFromMessageId}
-        forkedFromMessageContent={branchFromMessageContent}
+      {/* Composer — enters branch mode inline when a message bubble's branch action is used */}
+      <Composer
+        threadId={activeThread.id}
+        workspaceId={activeWorkspaceId ?? undefined}
+        branchFromMessageId={branchFromMessageId}
+        branchFromMessageContent={branchFromMessageContent}
+        onBranchModeExit={() => {
+          setBranchFromMessageId(undefined);
+          setBranchFromMessageContent(undefined);
+        }}
       />
     </div>
   );

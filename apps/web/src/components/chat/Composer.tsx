@@ -13,6 +13,8 @@ import {
   Loader2,
   Check,
   ListTodo,
+  GitBranch,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -60,6 +62,12 @@ interface ComposerProps {
   threadId?: string;
   isNewThread?: boolean;
   workspaceId?: string;
+  /** When set, the composer is in branch mode — submit branches instead of sends. */
+  branchFromMessageId?: string;
+  /** Preview content of the message being branched from, shown as a quote. */
+  branchFromMessageContent?: string;
+  /** Called when the user exits branch mode (X button or Escape). */
+  onBranchModeExit?: () => void;
 }
 
 type AccessMode = PermissionMode;
@@ -116,7 +124,7 @@ function TasksToggle({ threadId }: { threadId?: string }) {
  * - **Existing worktree:** `[Worktree v]` … `[Select worktree v]`
  * - **Locked (existing thread):** read-only branch badge
  */
-export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) {
+export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit }: ComposerProps) {
   const [input, setInput] = useState("");
   const [modelId, setModelId] = useState(getDefaultModelId());
   const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
@@ -336,6 +344,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   });
   const sendMessage = useThreadStore((s) => s.sendMessage);
   const stopAgent = useThreadStore((s) => s.stopAgent);
+  const branchThread = useWorkspaceStore((s) => s.branchThread);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const setThreadSettings = useThreadStore((s) => s.setThreadSettings);
   const contextEntry = useThreadStore((s) => threadId ? s.contextByThread[threadId] : undefined);
@@ -831,6 +840,18 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       } finally {
         setPreparingWorktree(false);
       }
+    } else if (branchFromMessageId && threadId) {
+      // Branch mode: create a child thread from the quoted message instead of sending.
+      await branchThread({
+        sourceThreadId: threadId,
+        content: messageContent,
+        model: modelId,
+        provider,
+        mode: "direct",
+        branch: threads.find((t) => t.id === threadId)?.branch ?? "",
+        forkedFromMessageId: branchFromMessageId,
+      });
+      onBranchModeExit?.();
     } else if (threadId) {
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider);
     }
@@ -898,8 +919,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       slashCommand.onKeyDown(fakeEvent);
       return key === "ArrowDown" || key === "ArrowUp";
     }
+    if (key === "Escape" && branchFromMessageId) {
+      onBranchModeExit?.();
+      return true;
+    }
     return false;
-  }, [fileAutocomplete.isOpen, filePopup, slashCommand, handleSlashSelect]);
+  }, [fileAutocomplete.isOpen, filePopup, slashCommand, handleSlashSelect, branchFromMessageId, onBranchModeExit]);
 
   const toast = useQueueStore((s) => s.toast);
 
@@ -940,6 +965,29 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
+        {/* Branch mode quote bar */}
+        {branchFromMessageId && (
+          <div className="flex items-start gap-2 border-b border-border/20 px-3 py-2">
+            <GitBranch className="size-3.5 shrink-0 mt-0.5 text-primary/70" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-medium text-primary/70 leading-none mb-0.5">Branching from message</p>
+              {branchFromMessageContent && (
+                <p className="text-xs text-muted-foreground/70 truncate leading-relaxed">
+                  {branchFromMessageContent.slice(0, 100)}{branchFromMessageContent.length > 100 ? "…" : ""}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onBranchModeExit}
+              className="shrink-0 text-muted-foreground/50 hover:text-foreground transition-colors"
+              aria-label="Exit branch mode"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* PR URL detection card */}
         {detectedPr && !prDismissed && (
           <PrDetectedCard
@@ -971,7 +1019,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             disabled={planPending}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
-            placeholder={planPending ? "Answer the planning questions above" : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
+            placeholder={planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
           />
           <FileTagPopup
             files={fileAutocomplete.filteredFiles}
