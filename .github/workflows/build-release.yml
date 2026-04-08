@@ -43,6 +43,10 @@ jobs:
       - name: Generate V8 snapshot
         run: bun apps/desktop/scripts/generate-snapshot.mjs
 
+      - name: Install Python setuptools (node-gyp on Python 3.12+ needs it)
+        if: runner.os == 'Windows'
+        run: pip install setuptools
+
       - name: Package with electron-builder
         run: node apps/desktop/scripts/ci-package.mjs
 
