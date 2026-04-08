@@ -312,7 +312,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   // Reset branch-specific exec state and load branch/worktree data when branch mode activates.
   useEffect(() => {
     if (branchFromMessageId && workspaceId) {
-      setBranchExecMode("direct");
+      // Default to the same execution mode as the parent thread so the child
+      // stays in the same context by default (worktree → existing-worktree, local → direct).
+      const defaultExecMode: ComposerMode =
+        activeThread?.mode === "worktree" ? "existing-worktree" : "direct";
+      setBranchExecMode(defaultExecMode);
       setBranchTargetBranch(activeThread?.branch ?? "");
       setBranchWorktreePath("");
       setBranchNamingMode("auto");
@@ -515,7 +519,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   // Full lock when agent running, provider lock when thread has a model
   const isModelFullyLocked = isAgentRunning;
-  const isProviderLocked = !isNewThread && activeThread?.model != null;
+  // Allow provider switching when creating a new thread or branching (child thread can use any provider).
+  const isProviderLocked = !isNewThread && !branchFromMessageId && activeThread?.model != null;
 
   // Close dropdowns on click outside
   useEffect(() => {
