@@ -13,6 +13,7 @@ apps/desktop/dist/
 apps/desktop/out/
 apps/desktop/release/
 apps/desktop/package-lock.json
+apps/desktop/.npmrc
 
 # Frontend
 apps/web/dist/

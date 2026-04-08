@@ -47,7 +47,15 @@ writeFileSync(
 console.log("[ci-package] Created minimal package-lock.json");
 
 // ---------------------------------------------------------------------------
-// 3. Remove bun from PATH so electron-builder falls back to npm
+// 3. Disable npm workspace mode so npm does not walk up to the monorepo root
+//    and try to resolve workspace:* references from sibling packages
+// ---------------------------------------------------------------------------
+
+writeFileSync(resolve(desktopRoot, ".npmrc"), "workspaces=false\n");
+console.log("[ci-package] Created .npmrc with workspaces=false");
+
+// ---------------------------------------------------------------------------
+// 4. Remove bun from PATH so electron-builder falls back to npm
 // ---------------------------------------------------------------------------
 
 const sep = process.platform === "win32" ? ";" : ":";
