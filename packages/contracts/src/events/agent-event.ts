@@ -59,6 +59,13 @@ export const AgentEventSchema = lazySchema(() =>
       active: z.boolean(),
     }),
     z.object({
+      /** Emitted when a provider completes context compaction, carrying the generated summary. */
+      type: z.literal("compactSummary"),
+      threadId: z.string(),
+      /** Full compaction summary text produced by the SDK. Used to seed branched thread replays. */
+      summary: z.string(),
+    }),
+    z.object({
       /** Emitted when the SDK fell back to an alternate model. */
       type: z.literal("modelFallback"),
       threadId: z.string(),

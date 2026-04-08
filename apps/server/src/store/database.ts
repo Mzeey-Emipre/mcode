@@ -260,4 +260,21 @@ function runMigrations(db: Database.Database): void {
     ).run();
     db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(13);
   }
+
+  if (currentVersion < 14) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE threads ADD COLUMN parent_thread_id TEXT DEFAULT NULL;
+        ALTER TABLE threads ADD COLUMN forked_from_message_id TEXT DEFAULT NULL;
+      `);
+      db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(14);
+    })();
+  }
+
+  if (currentVersion < 15) {
+    db.transaction(() => {
+      db.exec("ALTER TABLE threads ADD COLUMN last_compact_summary TEXT DEFAULT NULL");
+      db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(15);
+    })();
+  }
 }

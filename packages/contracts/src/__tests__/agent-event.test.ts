@@ -38,3 +38,20 @@ describe("AgentEventSchema", () => {
     expect(result.success).toBe(true);
   });
 });
+
+describe("compactSummary event", () => {
+  it("validates a well-formed compactSummary event", () => {
+    const event = {
+      type: "compactSummary",
+      threadId: "t-1",
+      summary: "The assistant fixed the auth middleware and added tests.",
+    };
+    const result = AgentEventSchema().safeParse(event);
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects compactSummary missing summary", () => {
+    const result = AgentEventSchema().safeParse({ type: "compactSummary", threadId: "t-1" });
+    expect(result.success).toBe(false);
+  });
+});

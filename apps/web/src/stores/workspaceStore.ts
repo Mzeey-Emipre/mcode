@@ -35,6 +35,8 @@ interface WorkspaceState {
   newThreadBranch: string;
   worktrees: WorktreeInfo[];
   worktreesLoading: boolean;
+  /** The workspace ID whose worktrees are currently in the `worktrees` array. Null before any load. */
+  worktreesLoadedForWorkspace: string | null;
   namingMode: NamingMode;
   customBranchName: string;
   autoPreviewBranch: string;
@@ -59,6 +61,21 @@ interface WorkspaceState {
     branch: string,
   ) => Promise<Thread>;
   createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?: InteractionMode) => Promise<Thread>;
+  /** Branch an existing thread into a new child with handoff context. */
+  branchThread: (params: {
+    sourceThreadId: string;
+    content: string;
+    model: string;
+    provider?: string;
+    mode: "direct" | "worktree" | "existing-worktree";
+    branch?: string;
+    existingWorktreePath?: string;
+    forkedFromMessageId?: string;
+    permissionMode?: PermissionMode;
+    reasoningLevel?: ReasoningLevel;
+    attachments?: AttachmentMeta[];
+    interactionMode?: InteractionMode;
+  }) => Promise<Thread>;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
   setPendingNewThread: (value: boolean) => void;
@@ -99,6 +116,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   newThreadBranch: "",
   worktrees: [],
   worktreesLoading: false,
+  worktreesLoadedForWorkspace: null,
   namingMode: "auto" as const,
   customBranchName: "",
   autoPreviewBranch: generateBranchId(),
@@ -176,6 +194,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       newThreadBranch: "",
       worktrees: [],
       worktreesLoading: false,
+      worktreesLoadedForWorkspace: null,
       selectedWorktree: null,
       openPrs: [],
       openPrsLoading: false,
@@ -288,6 +307,61 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
       // Mark the new thread as running in the threadStore so the
       // "Working for Xs" timer appears for the first message too.
+      useThreadStore.setState((state) => ({
+        runningThreadIds: new Set([...state.runningThreadIds, thread.id]),
+        agentStartTimes: { ...state.agentStartTimes, [thread.id]: Date.now() },
+      }));
+
+      return thread;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  branchThread: async (params) => {
+    const workspaceId = get().activeWorkspaceId;
+    if (!workspaceId) throw new Error("No workspace selected");
+
+    let transportMode: "direct" | "worktree" = "direct";
+    const branch = params.branch ?? "main";
+    let existingWorktreePath: string | undefined;
+
+    if (params.mode === "worktree") {
+      transportMode = "worktree";
+    } else if (params.mode === "existing-worktree") {
+      if (!params.existingWorktreePath) {
+        throw new Error("existingWorktreePath is required for existing-worktree mode");
+      }
+      transportMode = "worktree";
+      existingWorktreePath = params.existingWorktreePath;
+    }
+
+    set({ error: null });
+    try {
+      const thread = await getTransport().createAndSendMessage(
+        workspaceId,
+        params.content,
+        params.model,
+        params.permissionMode,
+        transportMode,
+        branch,
+        existingWorktreePath,
+        params.attachments,
+        params.reasoningLevel,
+        params.provider,
+        params.interactionMode,
+        params.sourceThreadId,
+        params.forkedFromMessageId,
+      );
+
+      set((state) => ({
+        threads: [thread, ...state.threads],
+        activeThreadId: thread.id,
+        pendingNewThread: false,
+        branchManuallySelected: false,
+      }));
+
       useThreadStore.setState((state) => ({
         runningThreadIds: new Set([...state.runningThreadIds, thread.id]),
         agentStartTimes: { ...state.agentStartTimes, [thread.id]: Date.now() },
@@ -413,7 +487,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const worktrees = await getTransport().listWorktrees(workspaceId);
       if (get().activeWorkspaceId !== workspaceId) return;
-      set({ worktrees, worktreesLoading: false, error: null });
+      set({ worktrees, worktreesLoading: false, worktreesLoadedForWorkspace: workspaceId, error: null });
     } catch (e) {
       if (get().activeWorkspaceId !== workspaceId) return;
       set({ worktreesLoading: false, error: String(e) });

@@ -30,13 +30,15 @@ const PAGINATION_THRESHOLD = 200;
 const VirtualItemRenderer = memo(function VirtualItemRenderer({
   item,
   turnExpandRef,
+  onBranch,
 }: {
   item: ChatVirtualItem;
   turnExpandRef?: React.RefObject<Map<string, boolean>>;
+  onBranch?: (messageId: string) => void;
 }) {
   switch (item.type) {
     case "message":
-      return <MessageBubble message={item.message} />;
+      return <MessageBubble message={item.message} onBranch={onBranch} />;
     case "active-tools":
       return <ToolCallCard toolCalls={item.toolCalls} />;
     case "indicator":
@@ -68,11 +70,18 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
 }, (prev, next) =>
   prev.item.key === next.item.key
   && prev.item === next.item
-  && prev.turnExpandRef === next.turnExpandRef,
+  && prev.turnExpandRef === next.turnExpandRef
+  && prev.onBranch === next.onBranch,
 );
 
+/** Props for {@link MessageList}. */
+interface MessageListProps {
+  /** Called when the user clicks the branch icon on a message. */
+  onBranch?: (messageId: string) => void;
+}
+
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
-export function MessageList() {
+export function MessageList({ onBranch }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
   const turnExpandRef = useRef<Map<string, boolean>>(new Map());
@@ -350,7 +359,7 @@ export function MessageList() {
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className="mx-auto w-full max-w-4xl">
-                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} />
+                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} />
                 </div>
               </div>
             );

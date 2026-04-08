@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { GitBranch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
@@ -61,7 +63,10 @@ export function ChatView() {
   const pendingNewThread = useWorkspaceStore((s) => s.pendingNewThread);
   const threads = useWorkspaceStore((s) => s.threads);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
+  const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [branchFromMessageId, setBranchFromMessageId] = useState<string | undefined>(undefined);
+  const [branchFromMessageContent, setBranchFromMessageContent] = useState<string | undefined>(undefined);
   const loadMessages = useThreadStore((s) => s.loadMessages);
   const clearMessages = useThreadStore((s) => s.clearMessages);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
@@ -84,13 +89,23 @@ export function ChatView() {
     setDismissedError(null);
   }, [activeThreadId]);
 
-  // Reset edit mode when the active thread changes
+  // Reset edit mode and branch state when the active thread changes
   useEffect(() => {
     setEditingThreadId(null);
+    setBranchFromMessageId(undefined);
+    setBranchFromMessageContent(undefined);
   }, [activeThreadId]);
 
   const handleOpenSettings = useCallback(() => {
     window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: { section: "model" } }));
+  }, []);
+
+  /** Activates inline branch mode on the composer for the given message. */
+  const handleBranch = useCallback((messageId: string) => {
+    // Read messages from store at call time to avoid re-creating this callback on every streaming token.
+    const msg = useThreadStore.getState().messages.find((m) => m.id === messageId);
+    setBranchFromMessageId(messageId);
+    setBranchFromMessageContent(msg?.content);
   }, []);
 
   const showCliError =
@@ -191,6 +206,23 @@ export function ChatView() {
           <Badge variant="secondary">
             {activeWorkspaceName}
           </Badge>
+          {activeThread.parent_thread_id && threads.some((t) => t.id === activeThread.parent_thread_id) && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={() => setActiveThread(activeThread.parent_thread_id!)}
+                    className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                  >
+                    <GitBranch size={10} />
+                    <span>Branched</span>
+                  </button>
+                }
+              />
+              <TooltipContent side="bottom" className="text-xs">Go to parent thread</TooltipContent>
+            </Tooltip>
+          )}
         </div>
         <HeaderActions thread={activeThread} />
       </div>
@@ -202,7 +234,7 @@ export function ChatView() {
             <EmptyState onPromptSelect={setPendingPrefill} />
           </div>
         ) : (
-          <MessageList />
+          <MessageList onBranch={handleBranch} />
         )}
       </div>
 
@@ -218,8 +250,17 @@ export function ChatView() {
         />
       )}
 
-      {/* Composer */}
-      <Composer threadId={activeThread.id} workspaceId={activeWorkspaceId ?? undefined} />
+      {/* Composer — enters branch mode inline when a message bubble's branch action is used */}
+      <Composer
+        threadId={activeThread.id}
+        workspaceId={activeWorkspaceId ?? undefined}
+        branchFromMessageId={branchFromMessageId}
+        branchFromMessageContent={branchFromMessageContent}
+        onBranchModeExit={() => {
+          setBranchFromMessageId(undefined);
+          setBranchFromMessageContent(undefined);
+        }}
+      />
     </div>
   );
 }

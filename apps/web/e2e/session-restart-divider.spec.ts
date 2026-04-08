@@ -48,6 +48,14 @@ const FAKE_THREAD: Thread = {
   deleted_at: null,
   worktree_managed: false,
   sdk_session_id: null,
+  provider: "claude",
+  last_context_tokens: null,
+  context_window: null,
+  reasoning_level: null,
+  interaction_mode: null,
+  permission_mode: null,
+  parent_thread_id: null,
+  forked_from_message_id: null,
 };
 
 function makeMessage(

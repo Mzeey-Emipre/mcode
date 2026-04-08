@@ -35,6 +35,7 @@ import { broadcast } from "../transport/push";
 import { ThreadService } from "./thread-service";
 import { SettingsService } from "./settings-service.js";
 import { PlanQuestionParser } from "./plan-question-parser.js";
+import { buildHandoffContent, buildConversationReplay, replayBudgetChars } from "./handoff-builder.js";
 import { PlanQuestionSchema } from "@mcode/contracts";
 import { z } from "zod";
 
@@ -52,6 +53,14 @@ function truncateTitle(content: string): string {
   const lastSpace = truncated.lastIndexOf(" ");
   const cutPoint = lastSpace > 0 ? lastSpace : 50;
   return truncated.slice(0, cutPoint) + "...";
+}
+
+/** Array.findLastIndex polyfill for ES2022 targets that lack it. */
+function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (predicate(arr[i])) return i;
+  }
+  return -1;
 }
 
 /** Buffered tool call with raw input preserved for deferred summarization. */
@@ -86,6 +95,9 @@ export class AgentService {
    * Broadcasting from `ended` ensures the session is fully closed before the client
    * can submit answers, preventing overlapping sends on the same thread. */
   private pendingPlanQuestions = new Map<string, z.infer<typeof PlanQuestionSchema>[]>();
+  /** Per-thread override for the content sent to the provider on the next sendMessage call.
+   * Used by branching to stitch handoff prose into the first turn without polluting the DB. */
+  private providerContentOverride = new Map<string, string>();
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -172,7 +184,8 @@ export class AgentService {
 
     // In plan mode, wrap the message with the question-generation prompt
     // and register a parser to intercept the streaming textDelta output.
-    if (interactionMode === "plan") {
+    // Skip when a provider content override is set (branching handles its own prompt).
+    if (interactionMode === "plan" && !this.providerContentOverride.has(threadId)) {
       content = this.buildPlanPrompt(content);
       this.planParsers.set(threadId, new PlanQuestionParser());
     }
@@ -219,7 +232,9 @@ export class AgentService {
     });
 
     const sessionName = `mcode-${threadId}`;
-    const isResume = nextSeq > 1;
+    // A branched child has a system handoff at seq 1 but no sdk_session_id.
+    // Only treat as resume if there is actually a session to resume.
+    const isResume = nextSeq > 1 && !!thread.sdk_session_id;
 
     // Hydrate SDK session ID mapping for resume
     if (isResume && thread.sdk_session_id) {
@@ -229,11 +244,16 @@ export class AgentService {
 
     this.activeSessionIds.add(threadId);
     this.memoryPressureService.markActive();
+
+    // Check for branching content override (stitched handoff + user prompt)
+    const providerMessage = this.providerContentOverride.get(threadId) ?? content;
+    this.providerContentOverride.delete(threadId);
+
     try {
       const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
       await resolvedProvider.sendMessage({
         sessionId: sessionName,
-        message: content,
+        message: providerMessage,
         cwd,
         model: resolvedModel,
         fallbackModel,
@@ -345,8 +365,18 @@ export class AgentService {
     reasoningLevel?: ReasoningLevel,
     provider: ProviderId = "claude",
     interactionMode?: InteractionMode,
+    parentThreadId?: string,
+    forkedFromMessageId?: string,
   ): Promise<Thread> {
     const title = truncateTitle(content);
+
+    if (parentThreadId) {
+      return this.createBranchedThread({
+        workspaceId, content, model, permissionMode, mode, branch,
+        existingWorktreePath, attachments, reasoningLevel, provider,
+        interactionMode, parentThreadId, forkedFromMessageId, title,
+      });
+    }
 
     let thread: Thread;
     if (existingWorktreePath) {
@@ -355,7 +385,7 @@ export class AgentService {
       if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
       const knownWorktrees = this.gitService.listWorktrees(workspaceId);
       const normalize = (p: string) =>
-        p.replace(/\\/g, "/").toLowerCase();
+        p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
       const normalizedInput = normalize(existingWorktreePath);
       const matched = knownWorktrees.find(
         (wt) => normalize(wt.path) === normalizedInput,
@@ -406,6 +436,198 @@ export class AgentService {
     );
 
     // Re-read from DB to pick up model update applied by sendMessage
+    const updated = this.threadRepo.findById(thread.id);
+    return updated ?? thread;
+  }
+
+  /**
+   * Create a child thread branched from a parent at a specific message.
+   * Injects a conversation replay into the provider's first turn for continuity.
+   * The handoff system message (seq 1) is stored in the DB for the UI; the replay
+   * is sent only to the provider via providerContentOverride.
+   */
+  private async createBranchedThread(params: {
+    workspaceId: string;
+    content: string;
+    model: string;
+    permissionMode: string;
+    mode: "direct" | "worktree";
+    branch: string;
+    existingWorktreePath?: string;
+    attachments: AttachmentMeta[];
+    reasoningLevel?: ReasoningLevel;
+    provider: ProviderId;
+    interactionMode?: InteractionMode;
+    parentThreadId: string;
+    forkedFromMessageId?: string;
+    title: string;
+  }): Promise<Thread> {
+    const {
+      workspaceId, content, model, permissionMode, mode, branch,
+      existingWorktreePath, attachments, reasoningLevel, provider,
+      interactionMode, parentThreadId, forkedFromMessageId, title,
+    } = params;
+
+    // Branching + plan mode is not supported in v1
+    if (interactionMode === "plan") {
+      throw new Error("Plan mode is not supported when branching threads");
+    }
+
+    // Validate parent
+    const parentThread = this.threadRepo.findById(parentThreadId);
+    if (!parentThread) throw new Error(`Parent thread not found: ${parentThreadId}`);
+    if (parentThread.workspace_id !== workspaceId) {
+      throw new Error("Cannot branch across workspaces");
+    }
+    if (parentThread.deleted_at != null) {
+      throw new Error("Cannot branch from a deleted thread");
+    }
+
+    // Resolve the fork message ID. When not specified, use the last message.
+    let resolvedForkMessageId = forkedFromMessageId;
+    if (!resolvedForkMessageId) {
+      const { messages: tail } = this.messageRepo.listByThread(parentThreadId, 1);
+      if (tail.length === 0) {
+        throw new Error("No messages in parent thread to branch from");
+      }
+      resolvedForkMessageId = tail[tail.length - 1].id;
+    }
+
+    // Look up the fork message to get its sequence number.
+    const forkMessage = this.messageRepo.findByIdInThread(parentThreadId, resolvedForkMessageId);
+    if (!forkMessage) {
+      throw new Error(`Fork message not found in parent thread: ${resolvedForkMessageId}`);
+    }
+
+    // Load all messages up to and including the fork point — no row cap.
+    const forkedMessages = this.messageRepo.listByThreadUpToSequence(
+      parentThreadId,
+      forkMessage.sequence,
+    );
+
+    // Gather handoff data
+    // lastAssistantText comes from forkedMessages so it never leaks post-fork state.
+    const lastAssistantMsg = [...forkedMessages]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    const lastAssistantText = lastAssistantMsg?.content ?? null;
+
+    // Snapshots and task state cannot be reconstructed at an arbitrary fork point
+    // without replaying history — use latest parent state for now.
+    const snapshots = this.turnSnapshotRepo.listByThread(parentThreadId);
+    const latestSnapshot = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
+    const recentFilesChanged: string[] = latestSnapshot?.files_changed ?? [];
+    const sourceHead = latestSnapshot?.ref_after ?? null;
+
+    const rawTasks = this.taskRepo.get(parentThreadId);
+    const openTasks = (rawTasks ?? []).map((t) => ({
+      content: t.content,
+      status: t.status,
+    }));
+
+    // Build handoff content
+    const handoffContent = buildHandoffContent({
+      parentThread,
+      forkMessageId: resolvedForkMessageId,
+      lastAssistantText,
+      recentFilesChanged,
+      openTasks,
+      sourceHead,
+    });
+
+    // Create child thread with lineage
+    const lineage = { parentThreadId, forkedFromMessageId: resolvedForkMessageId };
+    let thread: Thread;
+
+    if (existingWorktreePath) {
+      const workspace = this.workspaceRepo.findById(workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+      const knownWorktrees = this.gitService.listWorktrees(workspaceId);
+      const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+      const normalizedInput = normalize(existingWorktreePath);
+      const matched = knownWorktrees.find((wt) => normalize(wt.path) === normalizedInput);
+      if (!matched) throw new Error("Path is not a recognized worktree");
+
+      thread = this.threadRepo.create(workspaceId, title, "worktree", matched.branch, false, provider, lineage);
+      this.threadRepo.updateWorktreePath(thread.id, existingWorktreePath);
+      thread = { ...thread, worktree_path: existingWorktreePath, branch: matched.branch };
+    } else if (mode === "worktree") {
+      thread = await this.threadService.create(workspaceId, title, "worktree", branch);
+      // Patch lineage + provider atomically. If either fails, delete the orphan thread.
+      try {
+        this.threadRepo.updateLineage(thread.id, parentThreadId, resolvedForkMessageId);
+        this.threadRepo.updateProvider(thread.id, provider);
+      } catch (patchErr) {
+        this.threadRepo.softDelete(thread.id);
+        throw patchErr;
+      }
+      thread = { ...thread, provider, parent_thread_id: parentThreadId, forked_from_message_id: resolvedForkMessageId };
+    } else {
+      thread = this.threadRepo.create(workspaceId, title, "direct", branch, true, provider, lineage);
+    }
+
+    // Insert synthetic system handoff message as sequence 1
+    this.messageRepo.create(thread.id, "system", handoffContent, 1);
+
+    // Build the conversation replay for the provider.
+    // This gives the AI real conversation history instead of a lossy summary.
+    // The handoffContent (prose + JSON metadata) is stored in the DB for the UI only.
+    const budget = replayBudgetChars(model);
+    // The `last_compact_summary` on the thread is a single rolling value that
+    // gets overwritten on each compaction. It is only safe to use when the most
+    // recent compaction in the entire thread falls within our forked range;
+    // otherwise the summary describes turns that happened after the fork point.
+    let compactSummary: string | null = null;
+    if (parentThread.last_compact_summary) {
+      const lastForkCompactionIdx = findLastIndex(
+        forkedMessages,
+        (m) => m.role === "system" && m.content === "Context compacted",
+      );
+      if (lastForkCompactionIdx !== -1) {
+        // Check whether any compaction markers exist after the fork point.
+        const { messages: postForkWindow } = this.messageRepo.listByThread(parentThreadId, 100);
+        const postForkCompaction = postForkWindow.some(
+          (m) =>
+            m.role === "system" &&
+            m.content === "Context compacted" &&
+            m.sequence > forkMessage.sequence,
+        );
+        if (!postForkCompaction) {
+          compactSummary = parentThread.last_compact_summary;
+        }
+      }
+    }
+    const replay = buildConversationReplay(forkedMessages, budget, compactSummary);
+    const replayHeader = `You are continuing work from a previous thread titled "${parentThread.title}". Here is the conversation history up to the fork point:\n\n`;
+    // When replay is empty (system-only or all-blank parent history), send the prompt alone.
+    // The seq-1 handoff message still provides context via its prose summary.
+    const stitchedContent = replay
+      ? `${replayHeader}${replay}\n\n---\n\n${content}`
+      : content;
+
+    // Set provider content override so sendMessage uses stitched content.
+    // IMPORTANT: sendMessage deletes this override before its try block, so the override
+    // is always consumed on the next call. Do not add any await between this set and the
+    // sendMessage call below, or the override could be consumed by an unrelated invocation.
+    this.providerContentOverride.set(thread.id, stitchedContent);
+
+    // sendMessage will persist the clean user prompt at seq 2 and send stitched content to provider
+    try {
+      await this.sendMessage(
+        thread.id,
+        content,
+        permissionMode,
+        model,
+        attachments,
+        reasoningLevel,
+        provider,
+        interactionMode,
+      );
+    } finally {
+      // Ensure override is cleaned up even if sendMessage throws before consuming it.
+      this.providerContentOverride.delete(thread.id);
+    }
+
     const updated = this.threadRepo.findById(thread.id);
     return updated ?? thread;
   }
@@ -604,6 +826,18 @@ export class AgentService {
             );
           } catch (err) {
             logger.error("Failed to persist compaction system message", {
+              threadId: event.threadId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        if (event.type === "compactSummary") {
+          try {
+            this.threadRepo.updateCompactSummary(event.threadId, event.summary);
+            logger.info("Persisted compaction summary", { threadId: event.threadId, summaryLength: event.summary.length });
+          } catch (err) {
+            logger.error("Failed to persist compaction summary", {
               threadId: event.threadId,
               error: err instanceof Error ? err.message : String(err),
             });
