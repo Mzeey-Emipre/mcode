@@ -34,8 +34,20 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build & Package
-        run: bun run --cwd apps/desktop dist
+      - name: Build main & renderer
+        run: bun run --cwd apps/desktop build
+
+      - name: Generate V8 snapshot
+        run: bun apps/desktop/scripts/generate-snapshot.mjs
+
+      - name: Package with electron-builder
+        shell: bash
+        run: |
+          # electron-builder detects bun from PATH/lockfile and incorrectly
+          # invokes the binary via Node.js, causing a SyntaxError. Remove bun
+          # directories from PATH so it falls back to npm.
+          export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '/\.bun/' | tr '\n' ':' | sed 's/:$//')
+          cd apps/desktop && npx electron-builder --publish never
 
       - name: Upload release artifacts
         if: github.event.release.tag_name || inputs.tag
