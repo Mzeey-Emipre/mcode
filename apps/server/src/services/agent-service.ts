@@ -35,7 +35,7 @@ import { broadcast } from "../transport/push";
 import { ThreadService } from "./thread-service";
 import { SettingsService } from "./settings-service.js";
 import { PlanQuestionParser } from "./plan-question-parser.js";
-import { buildHandoffContent, buildConversationReplay, replayBudgetChars } from "./handoff-builder.js";
+import { buildHandoffContent, buildConversationReplay, replayBudgetChars, resolveForkSnapshot } from "./handoff-builder.js";
 import { PlanQuestionSchema } from "@mcode/contracts";
 import { z } from "zod";
 
@@ -182,12 +182,15 @@ export class AgentService {
       stored.length > 0 ? stored : undefined,
     );
 
-    // In plan mode, wrap the message with the question-generation prompt
-    // and register a parser to intercept the streaming textDelta output.
-    // Skip when a provider content override is set (branching handles its own prompt).
-    if (interactionMode === "plan" && !this.providerContentOverride.has(threadId)) {
-      content = this.buildPlanPrompt(content);
+    // In plan mode, register the parser so the wizard flow works regardless of
+    // whether a provider content override exists. When branching (override present),
+    // the override already carries the plan-wrapped stitched content; only wrap the
+    // plain content when there is no override.
+    if (interactionMode === "plan") {
       this.planParsers.set(threadId, new PlanQuestionParser());
+      if (!this.providerContentOverride.has(threadId)) {
+        content = this.buildPlanPrompt(content);
+      }
     }
 
     this.threadRepo.updateStatus(threadId, "active");
@@ -468,11 +471,6 @@ export class AgentService {
       interactionMode, parentThreadId, forkedFromMessageId, title,
     } = params;
 
-    // Branching + plan mode is not supported in v1
-    if (interactionMode === "plan") {
-      throw new Error("Plan mode is not supported when branching threads");
-    }
-
     // Validate parent
     const parentThread = this.threadRepo.findById(parentThreadId);
     if (!parentThread) throw new Error(`Parent thread not found: ${parentThreadId}`);
@@ -512,13 +510,18 @@ export class AgentService {
       .find((m) => m.role === "assistant");
     const lastAssistantText = lastAssistantMsg?.content ?? null;
 
-    // Snapshots and task state cannot be reconstructed at an arbitrary fork point
-    // without replaying history — use latest parent state for now.
-    const snapshots = this.turnSnapshotRepo.listByThread(parentThreadId);
-    const latestSnapshot = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
-    const recentFilesChanged: string[] = latestSnapshot?.files_changed ?? [];
-    const sourceHead = latestSnapshot?.ref_after ?? null;
+    // Resolve the snapshot at the fork point for historical fidelity.
+    // Only snapshots whose message_id falls within the forked message range are
+    // considered, preventing post-fork file changes and HEAD refs from leaking
+    // into the child thread's handoff context.
+    const allSnapshots = this.turnSnapshotRepo.listByThread(parentThreadId);
+    const forkedMessageIds = new Set(forkedMessages.map((m) => m.id));
+    const forkSnapshot = resolveForkSnapshot(allSnapshots, forkedMessageIds);
+    const recentFilesChanged: string[] = forkSnapshot?.files_changed ?? [];
+    const sourceHead = forkSnapshot?.ref_after ?? null;
 
+    // Task state has no historical version; include current tasks as best-effort context.
+    // Post-fork tasks on the parent may be included — this is a known limitation.
     const rawTasks = this.taskRepo.get(parentThreadId);
     const openTasks = (rawTasks ?? []).map((t) => ({
       content: t.content,
@@ -605,11 +608,17 @@ export class AgentService {
       ? `${replayHeader}${replay}\n\n---\n\n${content}`
       : content;
 
-    // Set provider content override so sendMessage uses stitched content.
+    // In plan mode, wrap the stitched content so the provider receives
+    // buildPlanPrompt(replay + userPrompt) instead of the raw stitched string.
+    // The DB still stores the clean user prompt at seq 2 (written by sendMessage).
+    const providerInput =
+      interactionMode === "plan" ? this.buildPlanPrompt(stitchedContent) : stitchedContent;
+
+    // Set provider content override so sendMessage uses the prepared content.
     // IMPORTANT: sendMessage deletes this override before its try block, so the override
     // is always consumed on the next call. Do not add any await between this set and the
     // sendMessage call below, or the override could be consumed by an unrelated invocation.
-    this.providerContentOverride.set(thread.id, stitchedContent);
+    this.providerContentOverride.set(thread.id, providerInput);
 
     // sendMessage will persist the clean user prompt at seq 2 and send stitched content to provider
     try {
@@ -725,10 +734,10 @@ export class AgentService {
               event.content,
               nextSeq,
             );
-            // Enable dedup on the frontend: in Electron, MessagePort and
-            // WebSocket deliveries are independent, so the same message can
-            // arrive both via push and via loadMessages RPC.
-            (event as Record<string, unknown>).messageId = msg.id;
+            // Carry the persisted message ID so the broadcast schema passes it
+            // through to the client. The client uses it for stable message identity
+            // (branching, dedup across Electron's dual MessagePort+WebSocket channels).
+            event.messageId = msg.id;
           } catch (err) {
             logger.error("Failed to persist assistant message", {
               threadId: event.threadId,
@@ -978,7 +987,10 @@ ${userMessage}`;
           try {
             this.taskRepo.upsert(threadId, cleanedTodos);
           } catch (err) {
-            logger.warn("Failed to persist TodoWrite tasks for thread %s: %s", threadId, err);
+            logger.warn("TodoWrite tasks not persisted", {
+              threadId,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         }
       }

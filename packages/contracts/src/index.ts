@@ -131,6 +131,10 @@ export type { WsChannelName } from "./ws/channels.js";
 // Utilities
 export { lazySchema } from "./utils/lazySchema.js";
 
+// Handoff contract
+export { HANDOFF_MARKER, parseHandoffJson } from "./handoff.js";
+export type { HandoffMetadata } from "./handoff.js";
+
 // Provider interfaces
 export type {
   ProviderId,

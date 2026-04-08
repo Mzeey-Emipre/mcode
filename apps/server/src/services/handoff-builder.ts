@@ -5,24 +5,10 @@
  * 2. JSON metadata in an HTML comment for UI parsing
  */
 
-import type { Thread, Message } from "@mcode/contracts";
-
-/** Marker used to detect handoff system messages in both server and client. */
-export const HANDOFF_MARKER = "<!-- mcode-handoff";
-
-/** Structured handoff metadata embedded in the HTML comment. */
-export interface HandoffMetadata {
-  parentThreadId: string;
-  parentTitle: string;
-  forkedFromMessageId: string;
-  sourceProvider: string;
-  sourceModel: string | null;
-  sourceBranch: string;
-  sourceWorktreePath: string | null;
-  sourceHead: string | null;
-  recentFilesChanged: string[];
-  openTasks: Array<{ content: string; status: string }>;
-}
+import type { Thread, Message, TurnSnapshot, HandoffMetadata } from "@mcode/contracts";
+import { HANDOFF_MARKER } from "@mcode/contracts";
+export { HANDOFF_MARKER, parseHandoffJson } from "@mcode/contracts";
+export type { HandoffMetadata } from "@mcode/contracts";
 
 /** Input for building handoff content. */
 export interface HandoffInput {
@@ -172,21 +158,29 @@ export function buildHandoffContent(input: HandoffInput): string {
 }
 
 /**
- * Extract and parse the HandoffMetadata JSON from a message content string.
- * Returns null if the content does not contain a valid handoff block.
+ * From a chronological list of turn snapshots (ordered ASC by created_at),
+ * return the most recent one whose message_id is contained in the provided
+ * set of forked message IDs.
+ *
+ * This is used to ensure that handoff context (files changed, HEAD ref)
+ * reflects the state at the fork point, not the latest parent state.
+ * Returns null when no snapshot falls within the fork range.
+ *
+ * @param snapshots - All snapshots for the parent thread, ASC by created_at.
+ * @param forkedMessageIds - The complete set of message IDs up to and including
+ *   the fork point (not just the fork message itself). Snapshots whose
+ *   message_id is NOT in this set are post-fork and must be excluded.
  */
-export function parseHandoffJson(content: string): HandoffMetadata | null {
-  const startIdx = content.indexOf(HANDOFF_MARKER);
-  if (startIdx === -1) return null;
-
-  const jsonStart = startIdx + HANDOFF_MARKER.length;
-  const endIdx = content.lastIndexOf("-->");
-  if (endIdx === -1 || endIdx < jsonStart) return null;
-
-  const jsonStr = content.slice(jsonStart, endIdx).trim();
-  try {
-    return JSON.parse(jsonStr) as HandoffMetadata;
-  } catch {
-    return null;
+export function resolveForkSnapshot(
+  snapshots: TurnSnapshot[],
+  forkedMessageIds: Set<string>,
+): TurnSnapshot | null {
+  let result: TurnSnapshot | null = null;
+  for (const s of snapshots) {
+    if (forkedMessageIds.has(s.message_id)) {
+      result = s;
+    }
   }
+  return result;
 }
+
