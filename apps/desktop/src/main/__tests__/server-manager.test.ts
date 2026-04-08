@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const refs = vi.hoisted(() => {
   let exitCallback: ((code: number | null) => void) | null = null;
+  let isPackaged = false;
 
   const mockUtilityProcess = {
     stdout: { on: vi.fn() },
@@ -23,11 +24,14 @@ const refs = vi.hoisted(() => {
     mockUtilityProcess,
     getExitCallback: () => exitCallback,
     resetExitCallback: () => { exitCallback = null; },
+    setIsPackaged: (v: boolean) => { isPackaged = v; },
+    getIsPackaged: () => isPackaged,
   };
 });
 
 vi.mock("electron", () => ({
   app: {
+    get isPackaged() { return refs.getIsPackaged(); },
     getPath: vi.fn().mockReturnValue("/tmp"),
     getVersion: vi.fn().mockReturnValue("0.1.0-test"),
   },
@@ -102,6 +106,8 @@ describe("ServerManager", () => {
     manager.shutdown();
     globalThis.fetch = originalFetch;
     delete process.env.MCODE_SERVER_HEAP_MB;
+    refs.setIsPackaged(false);
+    delete (process as Record<string, unknown>).resourcesPath;
   });
 
   it("starts the server by forking a utility process", async () => {
@@ -241,5 +247,47 @@ describe("ServerManager", () => {
     const exitCb = refs.getExitCallback();
     exitCb!(0);
     expect(onCrash).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // Packaged vs dev entry path branching
+  // -----------------------------------------------------------------------
+
+  it("forks the dev entry.mjs when app.isPackaged is false", async () => {
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    expect(forkCall[0]).toContain("entry.mjs");
+  });
+
+  it("forks the bundled server.cjs when app.isPackaged is true", async () => {
+    refs.setIsPackaged(true);
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    expect(forkCall[0]).toContain("server.cjs");
+  });
+
+  it("passes BETTER_SQLITE3_BINDING env var when app.isPackaged is true", async () => {
+    refs.setIsPackaged(true);
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const env = forkCall[2]?.env as Record<string, string>;
+    expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.electron.node");
+  });
+
+  it("does not pass BETTER_SQLITE3_BINDING env var when app.isPackaged is false", async () => {
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const env = forkCall[2]?.env as Record<string, string>;
+    expect(env.BETTER_SQLITE3_BINDING).toBeUndefined();
   });
 });

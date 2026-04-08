@@ -4,9 +4,10 @@
  * Solves two problems:
  *  1. electron-builder detects bun from PATH/lockfile and incorrectly invokes
  *     it via Node.js. We strip bun directories from PATH so it falls back to npm.
- *  2. npm does not support bun's workspace:* protocol. Since esbuild already bundles
- *     all production deps into main.cjs (only electron is external), we zero out
- *     dependencies and create a minimal package-lock.json so npm has nothing to install.
+ *  2. npm does not support bun's workspace:* protocol. We strip workspace:*
+ *     references but keep real-versioned deps (better-sqlite3, node-pty) so
+ *     electron-builder can install and rebuild the native bindings for the
+ *     target platform.
  *
  * Usage: node apps/desktop/scripts/ci-package.mjs
  */
@@ -21,13 +22,21 @@ const desktopRoot = resolve(__dirname, "..");
 const pkgPath = resolve(desktopRoot, "package.json");
 
 // ---------------------------------------------------------------------------
-// 1. Zero out dependencies (everything is bundled by esbuild)
+// 1. Strip workspace:* deps — npm cannot install them. Keep real-versioned
+//    deps (better-sqlite3, node-pty) so electron-builder installs and rebuilds
+//    their native bindings. All other server JS is bundled into server.cjs.
 // ---------------------------------------------------------------------------
 
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-pkg.dependencies = {};
+const filteredDeps = {};
+for (const [name, version] of Object.entries(pkg.dependencies ?? {})) {
+  if (!String(version).startsWith("workspace:")) {
+    filteredDeps[name] = version;
+  }
+}
+pkg.dependencies = filteredDeps;
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-console.log("[ci-package] Zeroed production dependencies in package.json");
+console.log("[ci-package] Stripped workspace:* dependencies from package.json");
 
 // ---------------------------------------------------------------------------
 // 2. Create a minimal package-lock.json to anchor npm in this directory and

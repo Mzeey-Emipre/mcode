@@ -23,7 +23,9 @@
     "@electron/rebuild": "^3.7.1",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
+    "better-sqlite3": "^12.0.0",
     "electron-updater": "^6.8.3",
+    "node-pty": "^1.0.0",
     "uuid": "^11.1.0",
     "which": "^5.0.0"
   },
@@ -49,6 +51,10 @@
     "files": [
       "dist/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**",
+      "node_modules/node-pty/**"
     ],
     "publish": {
       "provider": "github",
