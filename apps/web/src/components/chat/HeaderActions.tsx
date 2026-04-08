@@ -39,6 +39,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   const hasCommitsAhead = useHasCommitsAhead(
     shouldPollPr ? thread.workspace_id : "",
     shouldPollPr ? thread.branch : null,
+    shouldPollPr ? thread.id : undefined,
   );
 
   // Sync polled PR state back to the workspace store so the project tree

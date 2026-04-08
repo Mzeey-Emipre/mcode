@@ -211,6 +211,8 @@ const { httpServer, wss } = createWsServer({
   memoryPressureService,
   taskRepo,
   prDraftService,
+  threadRepo,
+  workspaceRepo,
 });
 
 /**

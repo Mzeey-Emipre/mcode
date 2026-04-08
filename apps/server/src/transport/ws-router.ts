@@ -36,6 +36,8 @@ import type { SettingsService } from "../services/settings-service";
 import type { GitWatcherService } from "../services/git-watcher-service";
 import type { MemoryPressureService } from "../services/memory-pressure-service";
 import type { PrDraftService } from "../services/pr-draft-service";
+import type { ThreadRepo } from "../repositories/thread-repo";
+import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import { broadcast } from "./push";
 
 /** Service dependencies for the router. */
@@ -61,6 +63,10 @@ export interface RouterDeps {
   taskRepo: TaskRepo;
   /** Generates AI-powered PR draft titles and bodies. */
   prDraftService: PrDraftService;
+  /** Thread repository for resolving worktree paths in git operations. */
+  threadRepo: ThreadRepo;
+  /** Workspace repository for resolving repo paths in git operations. */
+  workspaceRepo: WorkspaceRepo;
 }
 
 /**
@@ -251,8 +257,17 @@ async function dispatch(
         params.prNumber,
       );
       return;
-    case "git.log":
-      return deps.gitService.log(params.workspaceId, params.branch, params.limit, params.baseBranch);
+    case "git.log": {
+      let repoPath: string | undefined;
+      if (params.threadId) {
+        const t = deps.threadRepo.findById(params.threadId);
+        const ws = t ? deps.workspaceRepo.findById(t.workspace_id) : null;
+        if (t && ws) {
+          repoPath = deps.gitService.resolveWorkingDir(ws.path, t.mode, t.worktree_path);
+        }
+      }
+      return deps.gitService.log(params.workspaceId, params.branch, params.limit, params.baseBranch, repoPath);
+    }
     case "git.commitDiff":
       return deps.gitService.commitDiff(params.workspaceId, params.sha, params.filePath, params.maxLines);
     case "git.commitFiles":
