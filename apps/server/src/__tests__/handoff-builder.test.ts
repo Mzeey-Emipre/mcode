@@ -217,6 +217,39 @@ describe("buildConversationReplay", () => {
     const result = buildConversationReplay(msgs, 50);
     expect(result.length).toBeLessThanOrEqual(50);
   });
+
+  it("uses compact summary as prefix when turns are omitted and summary is provided", () => {
+    const msgs = [
+      makeMsg("1", "user", "First turn"),
+      makeMsg("2", "assistant", "First response"),
+      makeMsg("3", "user", "Second turn"),
+      makeMsg("4", "assistant", "Second response"),
+    ];
+    // Budget only fits last two turns
+    const budget = "User: Second turn\n\nAssistant: Second response".length + 10;
+    const result = buildConversationReplay(msgs, budget, "Summary of early work.");
+    expect(result).toContain("Summary of early work.");
+    expect(result).toContain("User: Second turn");
+    expect(result).not.toContain("[2 earlier messages omitted]");
+  });
+
+  it("falls back to omission notice when no compact summary is provided", () => {
+    const msgs = [
+      makeMsg("1", "user", "First turn"),
+      makeMsg("2", "user", "Second turn"),
+    ];
+    const budget = "User: Second turn".length + 5;
+    const result = buildConversationReplay(msgs, budget);
+    expect(result).toContain("[1 earlier message omitted]");
+    expect(result).not.toContain("Summary");
+  });
+
+  it("does not use compact summary when no turns are omitted", () => {
+    const msgs = [makeMsg("1", "user", "Short")];
+    const result = buildConversationReplay(msgs, 100_000, "Some summary.");
+    expect(result).toBe("User: Short");
+    expect(result).not.toContain("Some summary.");
+  });
 });
 
 describe("replayBudgetChars", () => {

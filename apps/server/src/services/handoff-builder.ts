@@ -53,8 +53,14 @@ export function replayBudgetChars(modelId: string): number {
  * Includes only user and assistant turns; skips system messages and tool noise.
  * Prioritizes recent messages when the transcript exceeds the char budget.
  * Prepends an omission notice when older turns are dropped.
+ * If a compactSummary is provided, it replaces the generic omission notice with
+ * the model-generated summary for higher fidelity context.
  */
-export function buildConversationReplay(messages: Message[], maxChars: number): string {
+export function buildConversationReplay(
+  messages: Message[],
+  maxChars: number,
+  compactSummary?: string | null,
+): string {
   const turns = messages.filter((m) => m.role === "user" || m.role === "assistant");
   const nonEmptyTurns = turns.filter((m) => m.content.trim() !== "");
   if (nonEmptyTurns.length === 0) return "";
@@ -81,10 +87,15 @@ export function buildConversationReplay(messages: Message[], maxChars: number): 
   }
 
   const omittedCount = nonEmptyTurns.length - result.length;
-  const prefix =
-    omittedCount > 0
-      ? `[${omittedCount} earlier message${omittedCount === 1 ? "" : "s"} omitted]\n\n`
-      : "";
+  if (omittedCount === 0) {
+    // All turns fit — no prefix needed regardless of summary availability.
+    return result.join("\n\n");
+  }
+
+  // Turns were dropped. Use compact summary if available; fall back to omission notice.
+  const prefix = compactSummary
+    ? `${compactSummary}\n\n`
+    : `[${omittedCount} earlier message${omittedCount === 1 ? "" : "s"} omitted]\n\n`;
 
   return prefix + result.join("\n\n");
 }
