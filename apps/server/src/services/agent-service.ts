@@ -565,7 +565,15 @@ export class AgentService {
     // This gives the AI real conversation history instead of a lossy summary.
     // The handoffContent (prose + JSON metadata) is stored in the DB for the UI only.
     const budget = replayBudgetChars(model);
-    const replay = buildConversationReplay(forkedMessages, budget);
+    // The compact summary is only safe to use when the fork is after a compaction
+    // boundary. If the fork predates compaction, the summary may describe turns
+    // between the fork point and the actual compaction, leaking post-fork state.
+    const forkIsPostCompaction = forkedMessages.some(
+      (m) => m.role === "system" && m.content === "Context compacted",
+    );
+    const compactSummary =
+      forkIsPostCompaction ? (parentThread.last_compact_summary ?? null) : null;
+    const replay = buildConversationReplay(forkedMessages, budget, compactSummary);
     const replayHeader = `You are continuing work from a previous thread titled "${parentThread.title}". Here is the conversation history up to the fork point:\n\n`;
     // When replay is empty (system-only or all-blank parent history), send the prompt alone.
     // The seq-1 handoff message still provides context via its prose summary.
