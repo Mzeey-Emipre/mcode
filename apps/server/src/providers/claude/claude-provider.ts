@@ -8,7 +8,7 @@ import { injectable } from "tsyringe";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
-import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage, HookInput, PostCompactHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
 import type {
   IAgentProvider,
@@ -293,6 +293,21 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
       includePartialMessages: true,
+      hooks: {
+        PostCompact: [{
+          hooks: [async (input: HookInput) => {
+            const { compact_summary } = input as PostCompactHookInput;
+            // Derive threadId the same way startStreamLoop does.
+            const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+            this.emit("event", {
+              type: "compactSummary",
+              threadId: tid,
+              summary: compact_summary,
+            } satisfies AgentEvent);
+            return {};
+          }],
+        }],
+      },
     };
     const options = resume
       ? { ...baseOptions, resume: resumeId }
