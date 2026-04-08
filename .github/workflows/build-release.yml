@@ -11,6 +11,9 @@ on:
         description: "Release tag to attach artifacts to (e.g. v0.1.0). Leave empty to build without uploading."
         required: false
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
