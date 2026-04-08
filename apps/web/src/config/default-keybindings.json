@@ -1,5 +1,5 @@
 [
-  { "key": "mod+k", "command": "commandPalette.toggle" },
+  { "key": "mod+p", "command": "commandPalette.toggle" },
   { "key": "mod+n", "command": "thread.new", "when": "!inputFocused" },
   { "key": "mod+shift+n", "command": "workspace.new", "when": "!inputFocused" },
   { "key": "mod+\\", "command": "sidebar.toggle", "when": "!inputFocused" },
