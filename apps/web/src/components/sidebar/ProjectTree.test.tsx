@@ -128,7 +128,6 @@ function setupStoreMocks({
   };
 
   // Cast via unknown to avoid requiring every field of WorkspaceState in the fixture.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (useWorkspaceStore as unknown as { mockImplementation: (fn: (selector: (s: unknown) => unknown) => unknown) => void }).mockImplementation(
     (selector) => selector(state)
   );

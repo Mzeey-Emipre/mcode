@@ -323,7 +323,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!workspaceId) throw new Error("No workspace selected");
 
     let transportMode: "direct" | "worktree" = "direct";
-    let branch = params.branch ?? "main";
+    const branch = params.branch ?? "main";
     let existingWorktreePath: string | undefined;
 
     if (params.mode === "worktree") {
