@@ -167,11 +167,22 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
   }
 
   /**
-   * Codex CLI is an agentic coding tool with no one-shot text completion mode.
-   * Throws so that PrDraftService falls back to the Claude provider.
+   * One-shot text completion using the Codex CLI quiet mode.
+   * Spawns `codex -q "<prompt>" --model <model>` in the given cwd.
+   * Uses the CLI path from settings (empty = auto-discover from PATH).
    */
-  async complete(_prompt: string, _model: string, _cwd: string): Promise<string> {
-    throw new Error("Codex CLI does not support one-shot text completion");
+  async complete(prompt: string, model: string, cwd: string): Promise<string> {
+    const settings = await this.settingsService.get();
+    const cliPath = settings.provider.cli.codex || "codex";
+
+    // shell: true is required on Windows to resolve .cmd/.sh shims from npm global installs
+    const { stdout } = await execFileAsync(
+      cliPath,
+      ["-q", prompt, "--model", model],
+      { cwd, timeout: 60_000, shell: true },
+    );
+
+    return stdout.trim();
   }
 
   private async doSendMessage(params: {
