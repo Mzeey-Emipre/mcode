@@ -9,6 +9,8 @@ export const AgentEventSchema = lazySchema(() =>
       threadId: z.string(),
       content: z.string(),
       tokens: z.number().nullable(),
+      /** Server-assigned message ID, injected after DB persistence. Used by the client for stable branching. */
+      messageId: z.string().optional(),
     }),
     z.object({
       type: z.literal("toolUse"),

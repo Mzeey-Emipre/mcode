@@ -528,8 +528,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     return !worktrees.some((wt) => norm(wt.path) === norm(activeThread.worktree_path!));
   }, [activeThread, worktrees, worktreesLoadedForWorkspace]);
 
-  // Full lock when agent running, provider lock when thread has a model
-  const isModelFullyLocked = isAgentRunning;
+  // Full lock when agent running, unless the user is branching (child thread is independent).
+  const isModelFullyLocked = isAgentRunning && !branchFromMessageId;
   // Allow provider switching when creating a new thread or branching (child thread can use any provider).
   const isProviderLocked = !isNewThread && !branchFromMessageId && activeThread?.model != null;
 
