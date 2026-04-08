@@ -26,8 +26,8 @@ export function parseHandoffJson(content: string): HandoffMetadata | null {
   if (startIdx === -1) return null;
 
   const jsonStart = startIdx + HANDOFF_MARKER.length;
-  const endIdx = content.indexOf("-->", jsonStart);
-  if (endIdx === -1) return null;
+  const endIdx = content.lastIndexOf("-->");
+  if (endIdx === -1 || endIdx < jsonStart) return null;
 
   const jsonStr = content.slice(jsonStart, endIdx).trim();
   try {
