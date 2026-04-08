@@ -55,6 +55,14 @@ function truncateTitle(content: string): string {
   return truncated.slice(0, cutPoint) + "...";
 }
 
+/** Array.findLastIndex polyfill for ES2022 targets that lack it. */
+function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (predicate(arr[i])) return i;
+  }
+  return -1;
+}
+
 /** Buffered tool call with raw input preserved for deferred summarization. */
 interface BufferedToolCall extends CreateToolCallRecordInput {
   _rawToolInput?: Record<string, unknown>;
@@ -565,14 +573,30 @@ export class AgentService {
     // This gives the AI real conversation history instead of a lossy summary.
     // The handoffContent (prose + JSON metadata) is stored in the DB for the UI only.
     const budget = replayBudgetChars(model);
-    // The compact summary is only safe to use when the fork is after a compaction
-    // boundary. If the fork predates compaction, the summary may describe turns
-    // between the fork point and the actual compaction, leaking post-fork state.
-    const forkIsPostCompaction = forkedMessages.some(
-      (m) => m.role === "system" && m.content === "Context compacted",
-    );
-    const compactSummary =
-      forkIsPostCompaction ? (parentThread.last_compact_summary ?? null) : null;
+    // The `last_compact_summary` on the thread is a single rolling value that
+    // gets overwritten on each compaction. It is only safe to use when the most
+    // recent compaction in the entire thread falls within our forked range;
+    // otherwise the summary describes turns that happened after the fork point.
+    let compactSummary: string | null = null;
+    if (parentThread.last_compact_summary) {
+      const lastForkCompactionIdx = findLastIndex(
+        forkedMessages,
+        (m) => m.role === "system" && m.content === "Context compacted",
+      );
+      if (lastForkCompactionIdx !== -1) {
+        // Check whether any compaction markers exist after the fork point.
+        const { messages: postForkWindow } = this.messageRepo.listByThread(parentThreadId, 100);
+        const postForkCompaction = postForkWindow.some(
+          (m) =>
+            m.role === "system" &&
+            m.content === "Context compacted" &&
+            m.sequence > forkMessage.sequence,
+        );
+        if (!postForkCompaction) {
+          compactSummary = parentThread.last_compact_summary;
+        }
+      }
+    }
     const replay = buildConversationReplay(forkedMessages, budget, compactSummary);
     const replayHeader = `You are continuing work from a previous thread titled "${parentThread.title}". Here is the conversation history up to the fork point:\n\n`;
     // When replay is empty (system-only or all-blank parent history), send the prompt alone.
