@@ -44,7 +44,7 @@ describe("PrDraftService", () => {
     }),
   };
   const mockProviderRegistry = {
-    resolve: vi.fn().mockReturnValue({ complete: mockComplete }),
+    resolve: vi.fn().mockReturnValue({ complete: mockComplete, supportsCompletion: true }),
   };
 
   beforeEach(() => {
@@ -53,7 +53,7 @@ describe("PrDraftService", () => {
       model: { defaults: { provider: "claude" } },
       prDraft: { model: "" },
     });
-    mockProviderRegistry.resolve.mockReturnValue({ complete: mockComplete });
+    mockProviderRegistry.resolve.mockReturnValue({ complete: mockComplete, supportsCompletion: true });
     // Default: direct thread in workspace ws-1
     mockThreadRepo.findById.mockReturnValue({
       id: "thread-1",
@@ -233,6 +233,22 @@ describe("PrDraftService", () => {
 
     await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
       "Thread thread-1 does not belong to workspace ws-1",
+    );
+  });
+
+  it("throws when configured provider does not support completion", async () => {
+    mockSettingsService.get.mockResolvedValue({
+      model: { defaults: { provider: "codex" } },
+      prDraft: { provider: "codex", model: "" },
+    });
+    mockProviderRegistry.resolve.mockReturnValue({ supportsCompletion: false });
+    mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
+    mockGitService.log.mockResolvedValue([{ message: "feat: x", sha: "aaa" }]);
+    mockGitService.diffStat.mockResolvedValue("1 file changed");
+    mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
+
+    await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
+      /does not support.*completion/i,
     );
   });
 

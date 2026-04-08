@@ -13,7 +13,9 @@ import type { MessageRepo } from "../repositories/message-repo.js";
 import type { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import type { ThreadRepo } from "../repositories/thread-repo.js";
 import { SettingsService } from "./settings-service.js";
+import { isCompletionCapable } from "@mcode/contracts";
 import type { IProviderRegistry, ProviderId, PrDraft } from "@mcode/contracts";
+import { parseCompletionDraft } from "./pr-draft-parser.js";
 
 /** Candidate paths for a repo-level PR template, checked in order. */
 const PR_TEMPLATE_PATHS = [
@@ -96,7 +98,11 @@ export class PrDraftService {
     ]);
 
     const provider = (settings.prDraft.provider || settings.model.defaults.provider) as ProviderId;
-    const model = this.resolveModel(settings.prDraft.model, provider);
+    const modelDefaults: Record<string, string> = {
+      claude: "claude-haiku-4-5-20251001",
+      codex: "gpt-5.1-codex-mini",
+    };
+    const model = settings.prDraft.model || modelDefaults[provider] || "claude-haiku-4-5-20251001";
 
     const repoTemplate = this.detectPrTemplate(repoPath);
     const conversationSummary = this.buildConversationSummary(
@@ -116,46 +122,33 @@ export class PrDraftService {
     try {
       return await this.generateWithAI({ ...aiContext, provider, model });
     } catch (error) {
-      // If the configured provider's CLI is unavailable, retry with Claude before giving up.
-      // Claude is always required by the app, so it's a safe fallback.
-      if (provider !== "claude") {
-        const claudeModel = this.resolveModel(settings.prDraft.model, "claude");
-        logger.warn("Configured provider unavailable for PR draft, retrying with Claude", {
-          provider,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        try {
-          return await this.generateWithAI({ ...aiContext, provider: "claude", model: claudeModel });
-        } catch (claudeError) {
-          logger.warn("Claude fallback also failed, using commit-only draft", {
-            error: claudeError instanceof Error ? claudeError.message : String(claudeError),
-          });
-        }
-      } else {
-        logger.warn("AI PR draft generation failed, using commit-only fallback", {
+      const message = error instanceof Error ? error.message : String(error);
+
+      // Capability errors and malformed model output are non-recoverable bugs — surface them.
+      if (
+        message.includes("does not support") ||
+        message.includes("no valid JSON") ||
+        message.includes("failed validation")
+      ) {
+        logger.error("PR draft generation failed with a non-recoverable error", {
           provider,
           model,
-          error: error instanceof Error ? error.message : String(error),
+          error: message,
         });
+        throw error;
       }
+
+      // Provider unavailable (auth, network, CLI missing) — fall back to commit-only draft.
+      logger.warn("AI PR draft generation failed, using commit-only fallback", {
+        provider,
+        model,
+        error: message,
+      });
       return this.buildFallbackDraft(commits, diffStat);
     }
   }
 
-  /**
-   * Resolve the model to use for PR draft generation.
-   * Falls back to a provider-appropriate mini model when the user has not configured one.
-   */
-  private resolveModel(configured: string, provider: ProviderId): string {
-    if (configured) return configured;
-    const defaults: Record<string, string> = {
-      claude: "claude-haiku-4-5-20251001",
-      codex: "gpt-5.1-codex-mini",
-    };
-    return defaults[provider] ?? "claude-haiku-4-5-20251001";
-  }
-
-  /** Call the configured provider to produce a structured PR title and body. */
+  /** Call the configured provider's one-shot completion and parse the structured result. */
   private async generateWithAI(context: {
     commitLog: string;
     diffStat: string;
@@ -167,6 +160,15 @@ export class PrDraftService {
     provider: ProviderId;
     model: string;
   }): Promise<PrDraft> {
+    const agentProvider = this.providerRegistry.resolve(context.provider);
+
+    if (!isCompletionCapable(agentProvider)) {
+      throw new Error(
+        `Provider '${context.provider}' does not support one-shot completion. ` +
+        `Configure 'claude' as the PR draft provider in settings.`,
+      );
+    }
+
     const formatInstruction = context.repoTemplate
       ? `Follow this PR template structure from the repository:\n\n${context.repoTemplate}`
       : `Use this structure:\n\n${DEFAULT_FORMAT}`;
@@ -189,24 +191,8 @@ export class PrDraftService {
       context.conversationSummary || "(no conversation history)",
     ].join("\n\n");
 
-    const agentProvider = this.providerRegistry.resolve(context.provider);
     const text = await agentProvider.complete(prompt, context.model, context.repoPath);
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("AI response contained no valid JSON");
-
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-    } catch {
-      throw new Error("Failed to parse AI response JSON");
-    }
-
-    if (typeof parsed.title !== "string" || typeof parsed.body !== "string") {
-      throw new Error("AI response JSON missing required fields: title (string), body (string)");
-    }
-
-    return { title: parsed.title, body: parsed.body };
+    return parseCompletionDraft(text);
   }
 
   /** Scan common template paths and return the first one found, or null. */

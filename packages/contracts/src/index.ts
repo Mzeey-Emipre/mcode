@@ -139,5 +139,7 @@ export type { HandoffMetadata } from "./handoff.js";
 export type {
   ProviderId,
   IAgentProvider,
+  ICompletionCapable,
   IProviderRegistry,
 } from "./providers/interfaces.js";
+export { isCompletionCapable } from "./providers/interfaces.js";
