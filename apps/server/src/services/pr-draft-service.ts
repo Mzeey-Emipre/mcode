@@ -133,7 +133,7 @@ export class PrDraftService {
     if (configured) return configured;
     const defaults: Record<string, string> = {
       claude: "claude-haiku-4-5-20251001",
-      codex: "o4-mini",
+      codex: "gpt-5.1-codex-mini",
     };
     return defaults[provider] ?? "claude-haiku-4-5-20251001";
   }

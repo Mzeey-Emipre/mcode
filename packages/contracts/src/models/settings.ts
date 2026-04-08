@@ -158,7 +158,7 @@ export const SettingsSchema = lazySchema(() =>
         /**
          * Model used for AI-powered PR draft generation.
          * Empty string selects a provider-appropriate default at runtime
-         * (claude-haiku-4-5-20251001 for Claude, o4-mini for Codex).
+         * (claude-haiku-4-5-20251001 for Claude, gpt-5.1-codex-mini for Codex).
          */
         model: z.string().default(""),
       })
