@@ -156,6 +156,11 @@ export const SettingsSchema = lazySchema(() =>
     prDraft: z
       .object({
         /**
+         * AI provider for PR draft generation.
+         * Empty string inherits from `model.defaults.provider` at runtime.
+         */
+        provider: ProviderIdSchema.or(z.literal("")).default(""),
+        /**
          * Model used for AI-powered PR draft generation.
          * Empty string selects a provider-appropriate default at runtime
          * (claude-haiku-4-5-20251001 for Claude, gpt-5.1-codex-mini for Codex).
@@ -258,6 +263,7 @@ export const PartialSettingsSchema = lazySchema(() =>
       .optional(),
     prDraft: z
       .object({
+        provider: ProviderIdSchema.or(z.literal("")).optional(),
         model: z.string().optional(),
       })
       .optional(),

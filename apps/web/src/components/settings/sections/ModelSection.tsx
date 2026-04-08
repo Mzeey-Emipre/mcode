@@ -37,6 +37,12 @@ const PROVIDER_OPTIONS = MODEL_PROVIDERS.map((p) => ({
   title: p.comingSoon ? "Coming soon" : undefined,
 }));
 
+/** Provider options for PR draft: "Auto" inherits from default, plus all providers. */
+const PR_DRAFT_PROVIDER_OPTIONS = [
+  { value: "", label: "Auto" },
+  ...PROVIDER_OPTIONS,
+];
+
 const REASONING_OPTIONS_BASE = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
@@ -65,9 +71,16 @@ export function ModelSection() {
   const reasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
   const codexCliPath = useSettingsStore((s) => s.settings.provider.cli.codex);
   const claudeCliPath = useSettingsStore((s) => s.settings.provider.cli.claude);
+  const prDraftProvider = useSettingsStore((s) => s.settings.prDraft.provider);
+  const prDraftModel = useSettingsStore((s) => s.settings.prDraft.model);
   const update = useSettingsStore((s) => s.update);
 
   const activeProvider = MODEL_PROVIDERS.find((p) => p.id === provider);
+
+  // Effective provider for PR draft: explicit selection or inherit from default
+  const prDraftEffectiveProvider = MODEL_PROVIDERS.find(
+    (p) => p.id === (prDraftProvider || provider),
+  );
 
   const modelOptions = useMemo(
     () => (activeProvider?.models ?? []).map((m) => ({ value: m.id, label: m.label })),
@@ -77,6 +90,15 @@ export function ModelSection() {
   const fallbackOptions = useMemo(
     () => [{ value: "", label: "Off" }, ...modelOptions],
     [modelOptions],
+  );
+
+  // PR draft model options: "Auto" (provider default) + all models for the effective provider
+  const prDraftModelOptions = useMemo(
+    () => [
+      { value: "", label: "Auto" },
+      ...(prDraftEffectiveProvider?.models ?? []).map((m) => ({ value: m.id, label: m.label })),
+    ],
+    [prDraftEffectiveProvider],
   );
 
   const codexLevels = useMemo(() => getCodexReasoningLevels(modelId), [modelId]);
@@ -195,6 +217,53 @@ export function ModelSection() {
           }
         />
       </SettingRow>
+      </div>
+
+      <div className="mt-8">
+        <SectionHeading>PR Draft</SectionHeading>
+        <div>
+          <SettingRow
+            label="Provider"
+            configKey="prDraft.provider"
+            hint="AI provider for PR draft generation. Auto inherits from the default provider above."
+          >
+            <SegControl
+              options={PR_DRAFT_PROVIDER_OPTIONS}
+              value={prDraftProvider}
+              onChange={(v) => void update({ prDraft: { provider: v as SettingsProviderId | "", model: "" } })}
+            />
+          </SettingRow>
+          <SettingRow
+            label="Model"
+            configKey="prDraft.model"
+            hint="Model for AI-generated PR titles and descriptions. Auto uses a provider-appropriate default."
+          >
+            {prDraftModel ? (
+              <select
+                value={prDraftModel}
+                onChange={(e) => void update({ prDraft: { model: e.target.value } })}
+                className="h-7 w-56 cursor-pointer rounded-[min(var(--radius-md),12px)] border border-input bg-background px-2 py-0.5 text-xs text-foreground focus-visible:border-ring focus-visible:outline-none"
+              >
+                {prDraftModelOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  const firstModel = prDraftEffectiveProvider?.models[0];
+                  if (firstModel) void update({ prDraft: { model: firstModel.id } });
+                }}
+                className="h-7 w-56 cursor-pointer rounded-[min(var(--radius-md),12px)] border border-input bg-background px-2 py-0.5 text-left text-xs text-muted-foreground"
+              >
+                Auto
+              </button>
+            )}
+          </SettingRow>
+        </div>
       </div>
 
       <div className="mt-8">

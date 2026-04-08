@@ -83,7 +83,7 @@ export class PrDraftService {
       this.settingsService.get(),
     ]);
 
-    const provider = settings.model.defaults.provider;
+    const provider = (settings.prDraft.provider || settings.model.defaults.provider) as ProviderId;
     const model = this.resolveModel(settings.prDraft.model, provider);
 
     const repoTemplate = this.detectPrTemplate(repoPath);
@@ -93,6 +93,11 @@ export class PrDraftService {
     const commitLog = commits
       .map((c: { message: string }) => `- ${c.message}`)
       .join("\n");
+
+    // Skip AI generation when there's nothing to draft from
+    if (commits.length === 0) {
+      return this.buildFallbackDraft(commits, diffStat);
+    }
 
     const aiContext = { commitLog, diffStat, conversationSummary, repoTemplate, headBranch, baseBranch, repoPath };
 
