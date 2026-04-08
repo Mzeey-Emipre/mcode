@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useCallback, useState, useRef, useMemo } fr
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
-import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2, XCircle } from "lucide-react";
+import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2, AlertTriangle } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { getPrVisual } from "@/lib/pr-status";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -750,8 +751,13 @@ function VirtualizedThreadList({
                     className="flex-1 border-ring"
                   />
                 ) : (
-                  <span className={cn("truncate flex-1 text-sm", isStaleWorktree && "text-destructive line-through")} data-testid="thread-title">
-                    {isStaleWorktree && <XCircle size={12} className="inline mr-1 align-text-bottom" />}
+                  <span className={cn("truncate flex-1 text-sm", isStaleWorktree && "text-destructive/80 line-through")} data-testid="thread-title">
+                    {isStaleWorktree && (
+                      <Tooltip>
+                        <TooltipTrigger render={<AlertTriangle size={11} className="inline mr-1 align-text-bottom text-destructive/70" />} />
+                        <TooltipContent side="right" className="text-xs">Worktree directory no longer exists</TooltipContent>
+                      </Tooltip>
+                    )}
                     {thread.title}
                   </span>
                 )}

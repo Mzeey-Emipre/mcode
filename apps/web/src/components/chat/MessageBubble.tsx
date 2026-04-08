@@ -100,7 +100,7 @@ function BranchButton({ onClick }: { onClick: () => void }) {
           <button
             type="button"
             onClick={onClick}
-            className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover/msg:opacity-100"
+            className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground opacity-0 scale-90 transition-all duration-150 hover:bg-primary/10 hover:text-primary group-hover/msg:opacity-100 group-hover/msg:scale-100"
             aria-label="Branch from this message"
           >
             <GitBranch size={14} />

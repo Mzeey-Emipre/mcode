@@ -1024,20 +1024,20 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       >
         {/* Branch mode quote bar */}
         {branchFromMessageId && (
-          <div className="flex items-start gap-2 border-b border-border/20 px-3 py-2">
+          <div className="flex items-start gap-2 border-b border-border/20 border-l-2 border-l-primary/50 px-3 py-2 animate-fade-up-in">
             <GitBranch className="size-3.5 shrink-0 mt-0.5 text-primary/70" aria-hidden="true" />
             <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-medium text-primary/70 leading-none mb-0.5">Branching from message</p>
+              <p className="text-[11px] font-semibold text-primary/80 leading-none mb-1">Branching from message</p>
               {branchFromMessageContent && (
-                <p className="text-xs text-muted-foreground/70 truncate leading-relaxed">
-                  {branchFromMessageContent.slice(0, 100)}{branchFromMessageContent.length > 100 ? "…" : ""}
+                <p className="text-xs text-muted-foreground/60 truncate leading-relaxed italic">
+                  {branchFromMessageContent.slice(0, 120)}{branchFromMessageContent.length > 120 ? "…" : ""}
                 </p>
               )}
             </div>
             <button
               type="button"
               onClick={onBranchModeExit}
-              className="shrink-0 text-muted-foreground/50 hover:text-foreground transition-colors"
+              className="shrink-0 rounded p-0.5 text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-colors"
               aria-label="Exit branch mode"
             >
               <X className="size-3.5" />

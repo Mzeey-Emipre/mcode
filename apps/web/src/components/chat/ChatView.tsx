@@ -5,6 +5,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
@@ -204,15 +205,21 @@ export function ChatView() {
             {activeWorkspaceName}
           </Badge>
           {activeThread.parent_thread_id && threads.some((t) => t.id === activeThread.parent_thread_id) && (
-            <button
-              type="button"
-              onClick={() => setActiveThread(activeThread.parent_thread_id!)}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-              title="Navigate to parent thread"
-            >
-              <GitBranch size={11} />
-              <span>Branched</span>
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={() => setActiveThread(activeThread.parent_thread_id!)}
+                    className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                  >
+                    <GitBranch size={10} />
+                    <span>Branched</span>
+                  </button>
+                }
+              />
+              <TooltipContent side="bottom" className="text-xs">Go to parent thread</TooltipContent>
+            </Tooltip>
           )}
         </div>
         <HeaderActions thread={activeThread} />
