@@ -46,22 +46,44 @@ jobs:
       - name: Package with electron-builder
         run: node apps/desktop/scripts/ci-package.mjs
 
-      - name: Upload release artifacts
+      - name: Collect release artifacts
         if: github.event.release.tag_name || inputs.tag
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
-          files: |
-            apps/desktop/release/**/*.exe
-            apps/desktop/release/**/*.exe.blockmap
-            apps/desktop/release/**/*.dmg
-            apps/desktop/release/**/*.dmg.blockmap
-            apps/desktop/release/**/*.zip
-            apps/desktop/release/**/*.zip.blockmap
-            apps/desktop/release/**/*.AppImage
-            apps/desktop/release/**/*.deb
-            apps/desktop/release/**/latest.yml
-            apps/desktop/release/**/latest-mac.yml
-            apps/desktop/release/**/latest-linux.yml
+        id: artifacts
+        shell: bash
+        run: |
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          shopt -s globstar nullglob
+          files=()
+          for pattern in \
+            apps/desktop/release/**/*.exe \
+            apps/desktop/release/**/*.exe.blockmap \
+            apps/desktop/release/**/*.dmg \
+            apps/desktop/release/**/*.dmg.blockmap \
+            apps/desktop/release/**/*.zip \
+            apps/desktop/release/**/*.zip.blockmap \
+            apps/desktop/release/**/*.AppImage \
+            apps/desktop/release/**/*.deb \
+            apps/desktop/release/**/latest.yml \
+            apps/desktop/release/**/latest-mac.yml \
+            apps/desktop/release/**/latest-linux.yml; do
+            for f in $pattern; do
+              [ -f "$f" ] && files+=("$f")
+            done
+          done
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No artifacts found to upload"
+            exit 0
+          fi
+
+          printf '%s\n' "${files[@]}"
+          printf '%s\n' "${files[@]}" > artifact-list.txt
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release artifacts
+        if: steps.artifacts.outputs.count > 0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ steps.artifacts.outputs.tag }}" $(cat artifact-list.txt) --clobber
