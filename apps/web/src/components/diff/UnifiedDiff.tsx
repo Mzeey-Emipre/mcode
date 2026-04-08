@@ -17,6 +17,7 @@ export function UnifiedDiff({ lines, language = "text" }: UnifiedDiffProps) {
 
   return (
     <div className="select-text overflow-x-auto text-[11px] font-mono leading-relaxed">
+      <div className="w-fit min-w-full">
       {lines.map((line, i) => {
         if (line.type === "header") {
           // Only render @@ hunk headers; skip git metadata lines
@@ -86,6 +87,7 @@ export function UnifiedDiff({ lines, language = "text" }: UnifiedDiffProps) {
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
