@@ -130,7 +130,7 @@ export function ProjectTree() {
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
   const loadThreads = useWorkspaceStore((s) => s.loadThreads);
   const loadWorktrees = useWorkspaceStore((s) => s.loadWorktrees);
-  const worktreesLoaded = useWorkspaceStore((s) => s.worktreesLoaded);
+  const worktreesLoadedForWorkspace = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
@@ -179,12 +179,14 @@ export function ProjectTree() {
 
   // Auto-load worktrees for the active workspace so stale-worktree detection has data.
   useEffect(() => {
-    if (!activeWorkspaceId || worktreesLoaded) return;
-    const hasWorktreeThreads = threads.some((t) => t.mode === "worktree" && t.worktree_path);
+    if (!activeWorkspaceId || worktreesLoadedForWorkspace === activeWorkspaceId) return;
+    const hasWorktreeThreads = threads.some(
+      (t) => t.workspace_id === activeWorkspaceId && t.mode === "worktree" && t.worktree_path,
+    );
     if (hasWorktreeThreads) {
       loadWorktrees(activeWorkspaceId);
     }
-  }, [activeWorkspaceId, threads, worktreesLoaded, loadWorktrees]);
+  }, [activeWorkspaceId, threads, worktreesLoadedForWorkspace, loadWorktrees]);
 
   const toggleThreadList = useCallback((wsId: string) => {
     setThreadListExpandedState((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
@@ -583,7 +585,7 @@ function VirtualizedThreadList({
 
   // Normalized set of existing worktree paths for stale detection.
   const worktrees = useWorkspaceStore((s) => s.worktrees);
-  const staleWorktreesLoaded = useWorkspaceStore((s) => s.worktreesLoaded);
+  const worktreesLoadedFor = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
   const validWorktreePaths = useMemo(() => {
     const set = new Set<string>();
     for (const wt of worktrees) {
@@ -660,8 +662,10 @@ function VirtualizedThreadList({
         const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
         const isEditing = inlineEdit?.threadId === thread.id;
         // Worktree thread whose directory no longer exists on disk.
-        // Only check after worktrees have been loaded to avoid false positives.
-        const isStaleWorktree = staleWorktreesLoaded && thread.mode === "worktree" && !!thread.worktree_path
+        // Only check threads from the workspace whose worktrees are loaded — comparing
+        // against a different workspace's worktree list would produce false positives.
+        const isStaleWorktree = worktreesLoadedFor === thread.workspace_id
+          && thread.mode === "worktree" && !!thread.worktree_path
           && !validWorktreePaths.has(thread.worktree_path.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase());
         return (
           <div

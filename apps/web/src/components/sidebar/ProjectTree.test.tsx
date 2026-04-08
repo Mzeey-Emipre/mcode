@@ -22,6 +22,9 @@ vi.mock("@/stores/workspaceStore", () => ({
       deleteThread: vi.fn(),
       setPendingNewThread: vi.fn(),
       updateThreadTitle: vi.fn(),
+      loadWorktrees: vi.fn(),
+      worktrees: [],
+      worktreesLoadedForWorkspace: null,
       error: null,
     })
   ),
@@ -118,6 +121,9 @@ function setupStoreMocks({
     deleteThread: vi.fn(),
     setPendingNewThread: vi.fn(),
     updateThreadTitle,
+    loadWorktrees: vi.fn(),
+    worktrees: [],
+    worktreesLoadedForWorkspace: null,
     error: null,
   };
 

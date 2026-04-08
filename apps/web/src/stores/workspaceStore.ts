@@ -35,8 +35,8 @@ interface WorkspaceState {
   newThreadBranch: string;
   worktrees: WorktreeInfo[];
   worktreesLoading: boolean;
-  /** True after the first successful loadWorktrees call. Prevents false stale-worktree detection before data is available. */
-  worktreesLoaded: boolean;
+  /** The workspace ID whose worktrees are currently in the `worktrees` array. Null before any load. */
+  worktreesLoadedForWorkspace: string | null;
   namingMode: NamingMode;
   customBranchName: string;
   autoPreviewBranch: string;
@@ -115,7 +115,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   newThreadBranch: "",
   worktrees: [],
   worktreesLoading: false,
-  worktreesLoaded: false,
+  worktreesLoadedForWorkspace: null,
   namingMode: "auto" as const,
   customBranchName: "",
   autoPreviewBranch: generateBranchId(),
@@ -193,7 +193,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       newThreadBranch: "",
       worktrees: [],
       worktreesLoading: false,
-      worktreesLoaded: false,
+      worktreesLoadedForWorkspace: null,
       selectedWorktree: null,
       openPrs: [],
       openPrsLoading: false,
@@ -483,7 +483,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const worktrees = await getTransport().listWorktrees(workspaceId);
       if (get().activeWorkspaceId !== workspaceId) return;
-      set({ worktrees, worktreesLoading: false, worktreesLoaded: true, error: null });
+      set({ worktrees, worktreesLoading: false, worktreesLoadedForWorkspace: workspaceId, error: null });
     } catch (e) {
       if (get().activeWorkspaceId !== workspaceId) return;
       set({ worktreesLoading: false, error: String(e) });
