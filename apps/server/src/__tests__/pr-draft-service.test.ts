@@ -25,11 +25,16 @@ describe("PrDraftService", () => {
     log: vi.fn(),
     diffStat: vi.fn(),
     getCurrentBranch: vi.fn(),
+    getCurrentBranchAt: vi.fn(),
+    resolveWorkingDir: vi.fn(),
   };
   const mockMessageRepo = {
     listByThread: vi.fn(),
   };
   const mockWorkspaceRepo = {
+    findById: vi.fn(),
+  };
+  const mockThreadRepo = {
     findById: vi.fn(),
   };
   const mockSettingsService = {
@@ -49,10 +54,20 @@ describe("PrDraftService", () => {
       prDraft: { model: "" },
     });
     mockProviderRegistry.resolve.mockReturnValue({ complete: mockComplete });
+    // Default: direct thread in workspace ws-1
+    mockThreadRepo.findById.mockReturnValue({
+      id: "thread-1",
+      workspace_id: "ws-1",
+      mode: "direct",
+      worktree_path: null,
+    });
+    mockGitService.resolveWorkingDir.mockReturnValue("/repo");
+    mockGitService.getCurrentBranchAt.mockReturnValue("feat/add-widget");
     service = new PrDraftService(
       mockGitService as any,
       mockMessageRepo as any,
       mockWorkspaceRepo as any,
+      mockThreadRepo as any,
       mockSettingsService as any,
       mockProviderRegistry as any,
     );
@@ -64,7 +79,6 @@ describe("PrDraftService", () => {
       { message: "feat: add widget", sha: "abc123" },
     ]);
     mockGitService.diffStat.mockResolvedValue("2 files changed, 50 insertions(+)");
-    mockGitService.getCurrentBranch.mockReturnValue("feat/add-widget");
     mockMessageRepo.listByThread.mockReturnValue({
       messages: [
         { role: "user", content: "Add a widget to the dashboard" },
@@ -95,7 +109,6 @@ describe("PrDraftService", () => {
       { message: "fix: widget sizing", sha: "def456" },
     ]);
     mockGitService.diffStat.mockResolvedValue("3 files changed");
-    mockGitService.getCurrentBranch.mockReturnValue("feat/add-widget");
     mockMessageRepo.listByThread.mockReturnValue({
       messages: [],
       hasMore: false,
@@ -107,12 +120,11 @@ describe("PrDraftService", () => {
     expect(result.title).toBe("feat: add widget");
     expect(result.body).toContain("feat: add widget");
     expect(result.body).toContain("fix: widget sizing");
-    // Uses `message` field from GitCommit schema, not `subject`
   });
 
   it("retries log without range when baseBranch does not exist in repo", async () => {
     mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
-    // First log call (with range "main..master") fails; second (no range) succeeds
+    mockGitService.getCurrentBranchAt.mockReturnValue("master");
     mockGitService.log
       .mockRejectedValueOnce(
         new Error(
@@ -121,7 +133,6 @@ describe("PrDraftService", () => {
       )
       .mockResolvedValueOnce([{ message: "feat: add widget", sha: "abc123" }]);
     mockGitService.diffStat.mockResolvedValue("2 files changed");
-    mockGitService.getCurrentBranch.mockReturnValue("master");
     mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
     mockComplete.mockResolvedValue(JSON.stringify({
       title: "feat: add widget",
@@ -130,9 +141,7 @@ describe("PrDraftService", () => {
 
     const result = await service.generateDraft("ws-1", "thread-1", "main");
 
-    // Should succeed despite invalid baseBranch
     expect(result.title).toBe("feat: add widget");
-    // log called twice: once with range (failed), once without
     expect(mockGitService.log).toHaveBeenCalledTimes(2);
     expect(mockGitService.log).toHaveBeenNthCalledWith(1, "ws-1", "master", 50, "main");
     expect(mockGitService.log).toHaveBeenNthCalledWith(2, "ws-1", "master", 50);
@@ -144,7 +153,6 @@ describe("PrDraftService", () => {
       { message: "feat: thing", sha: "aaa" },
     ]);
     mockGitService.diffStat.mockResolvedValue("1 file changed");
-    mockGitService.getCurrentBranch.mockReturnValue("feat/thing");
     mockMessageRepo.listByThread.mockReturnValue({
       messages: [],
       hasMore: false,
@@ -162,8 +170,69 @@ describe("PrDraftService", () => {
 
     const result = await service.generateDraft("ws-1", "thread-1", "main");
 
-    // Verify the AI prompt included the repo template structure
     const promptArg = mockComplete.mock.calls[0][0];
     expect(promptArg).toContain("## Summary");
+  });
+
+  it("uses worktree path for git operations when thread is in worktree mode", async () => {
+    const worktreePath = "/worktrees/feat-my-feature";
+    mockThreadRepo.findById.mockReturnValue({
+      id: "thread-wt",
+      workspace_id: "ws-1",
+      mode: "worktree",
+      worktree_path: worktreePath,
+    });
+    mockGitService.resolveWorkingDir.mockReturnValue(worktreePath);
+    mockGitService.getCurrentBranchAt.mockReturnValue("feat/my-feature");
+    mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
+    mockGitService.log.mockResolvedValue([{ message: "feat: my feature", sha: "aaa" }]);
+    mockGitService.diffStat.mockResolvedValue("1 file changed");
+    mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
+    mockComplete.mockResolvedValue(JSON.stringify({ title: "feat: my feature", body: "body" }));
+
+    await service.generateDraft("ws-1", "thread-wt", "main");
+
+    // resolveWorkingDir must be called with the worktree arguments
+    expect(mockGitService.resolveWorkingDir).toHaveBeenCalledWith("/repo", "worktree", worktreePath);
+    // Branch detection and diff must use the worktree path, not the workspace root
+    expect(mockGitService.getCurrentBranchAt).toHaveBeenCalledWith(worktreePath);
+    expect(mockGitService.diffStat).toHaveBeenCalledWith(worktreePath, "main", "feat/my-feature");
+    // complete() must also receive the worktree path as cwd
+    expect(mockComplete).toHaveBeenCalledWith(expect.any(String), expect.any(String), worktreePath);
+  });
+
+  it("uses workspace root for git operations when thread is in direct mode", async () => {
+    mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
+    mockGitService.log.mockResolvedValue([{ message: "fix: thing", sha: "bbb" }]);
+    mockGitService.diffStat.mockResolvedValue("1 file changed");
+    mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
+    mockComplete.mockResolvedValue(JSON.stringify({ title: "fix: thing", body: "body" }));
+
+    await service.generateDraft("ws-1", "thread-1", "main");
+
+    expect(mockGitService.resolveWorkingDir).toHaveBeenCalledWith("/repo", "direct", null);
+    expect(mockGitService.getCurrentBranchAt).toHaveBeenCalledWith("/repo");
+    expect(mockGitService.diffStat).toHaveBeenCalledWith("/repo", "main", "feat/add-widget");
+  });
+
+  it("throws when thread is not found", async () => {
+    mockThreadRepo.findById.mockReturnValue(null);
+
+    await expect(service.generateDraft("ws-1", "missing-thread", "main")).rejects.toThrow(
+      "Thread missing-thread not found",
+    );
+  });
+
+  it("throws when thread does not belong to the requested workspace", async () => {
+    mockThreadRepo.findById.mockReturnValue({
+      id: "thread-1",
+      workspace_id: "ws-other",
+      mode: "direct",
+      worktree_path: null,
+    });
+
+    await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
+      "Thread thread-1 does not belong to workspace ws-1",
+    );
   });
 });

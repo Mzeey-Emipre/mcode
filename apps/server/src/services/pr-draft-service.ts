@@ -11,6 +11,7 @@ import { logger } from "@mcode/shared";
 import type { GitService } from "./git-service.js";
 import type { MessageRepo } from "../repositories/message-repo.js";
 import type { WorkspaceRepo } from "../repositories/workspace-repo.js";
+import type { ThreadRepo } from "../repositories/thread-repo.js";
 import { SettingsService } from "./settings-service.js";
 import type { IProviderRegistry, ProviderId, PrDraft } from "@mcode/contracts";
 
@@ -39,6 +40,7 @@ export class PrDraftService {
     @inject("GitService") private readonly gitService: GitService,
     @inject("MessageRepo") private readonly messageRepo: MessageRepo,
     @inject("WorkspaceRepo") private readonly workspaceRepo: WorkspaceRepo,
+    @inject("ThreadRepo") private readonly threadRepo: ThreadRepo,
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("IProviderRegistry") private readonly providerRegistry: IProviderRegistry,
   ) {}
@@ -52,11 +54,21 @@ export class PrDraftService {
     threadId: string,
     baseBranch: string,
   ): Promise<PrDraft> {
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread) throw new Error(`Thread ${threadId} not found`);
+    if (thread.workspace_id !== workspaceId) {
+      throw new Error(`Thread ${threadId} does not belong to workspace ${workspaceId}`);
+    }
+
     const workspace = this.workspaceRepo.findById(workspaceId);
     if (!workspace) throw new Error(`Workspace ${workspaceId} not found`);
 
-    const repoPath = workspace.path;
-    const headBranch = this.gitService.getCurrentBranch(workspaceId);
+    const repoPath = this.gitService.resolveWorkingDir(
+      workspace.path,
+      thread.mode,
+      thread.worktree_path,
+    );
+    const headBranch = this.gitService.getCurrentBranchAt(repoPath);
 
     const [commits, diffStat, messagesResult, settings] = await Promise.all([
       this.gitService.log(workspaceId, headBranch, 50, baseBranch).catch(

@@ -69,6 +69,15 @@ export class GitService {
     return getCurrentBranchForPath(workspace.path);
   }
 
+  /**
+   * Get the current branch name for an arbitrary repo path.
+   * Use this instead of getCurrentBranch when you already have the resolved path
+   * (e.g. a worktree directory that may differ from the workspace root).
+   */
+  getCurrentBranchAt(repoPath: string): string {
+    return getCurrentBranchForPath(repoPath);
+  }
+
   /** Checkout an existing branch in the workspace repository. */
   checkout(workspaceId: string, branch: string): void {
     const workspace = this.requireWorkspace(workspaceId);
