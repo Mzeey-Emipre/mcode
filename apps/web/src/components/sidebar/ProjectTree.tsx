@@ -129,6 +129,8 @@ export function ProjectTree() {
   const threads = useWorkspaceStore((s) => s.threads);
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
   const loadThreads = useWorkspaceStore((s) => s.loadThreads);
+  const loadWorktrees = useWorkspaceStore((s) => s.loadWorktrees);
+  const worktreesLoaded = useWorkspaceStore((s) => s.worktreesLoaded);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
@@ -174,6 +176,15 @@ export function ProjectTree() {
   useEffect(() => {
     setThreadListExpanded(threadListExpanded);
   }, [threadListExpanded]);
+
+  // Auto-load worktrees for the active workspace so stale-worktree detection has data.
+  useEffect(() => {
+    if (!activeWorkspaceId || worktreesLoaded) return;
+    const hasWorktreeThreads = threads.some((t) => t.mode === "worktree" && t.worktree_path);
+    if (hasWorktreeThreads) {
+      loadWorktrees(activeWorkspaceId);
+    }
+  }, [activeWorkspaceId, threads, worktreesLoaded, loadWorktrees]);
 
   const toggleThreadList = useCallback((wsId: string) => {
     setThreadListExpandedState((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
@@ -572,6 +583,7 @@ function VirtualizedThreadList({
 
   // Normalized set of existing worktree paths for stale detection.
   const worktrees = useWorkspaceStore((s) => s.worktrees);
+  const staleWorktreesLoaded = useWorkspaceStore((s) => s.worktreesLoaded);
   const validWorktreePaths = useMemo(() => {
     const set = new Set<string>();
     for (const wt of worktrees) {
@@ -648,7 +660,8 @@ function VirtualizedThreadList({
         const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
         const isEditing = inlineEdit?.threadId === thread.id;
         // Worktree thread whose directory no longer exists on disk.
-        const isStaleWorktree = thread.mode === "worktree" && !!thread.worktree_path
+        // Only check after worktrees have been loaded to avoid false positives.
+        const isStaleWorktree = staleWorktreesLoaded && thread.mode === "worktree" && !!thread.worktree_path
           && !validWorktreePaths.has(thread.worktree_path.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase());
         return (
           <div

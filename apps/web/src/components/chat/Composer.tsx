@@ -519,11 +519,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const hasContent = input.trim().length > 0 || attachments.length > 0;
 
   // Detect stale worktree: thread is a worktree thread but its directory no longer exists.
+  // Only check after worktrees have been loaded to avoid false positives on initial render.
+  const worktreesLoaded = useWorkspaceStore((s) => s.worktreesLoaded);
   const isStaleWorktree = useMemo(() => {
+    if (!worktreesLoaded) return false;
     if (!activeThread?.worktree_path || activeThread.mode !== "worktree") return false;
     const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
     return !worktrees.some((wt) => norm(wt.path) === norm(activeThread.worktree_path!));
-  }, [activeThread, worktrees]);
+  }, [activeThread, worktrees, worktreesLoaded]);
 
   // Full lock when agent running, provider lock when thread has a model
   const isModelFullyLocked = isAgentRunning;

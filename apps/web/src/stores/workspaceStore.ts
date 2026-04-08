@@ -35,6 +35,8 @@ interface WorkspaceState {
   newThreadBranch: string;
   worktrees: WorktreeInfo[];
   worktreesLoading: boolean;
+  /** True after the first successful loadWorktrees call. Prevents false stale-worktree detection before data is available. */
+  worktreesLoaded: boolean;
   namingMode: NamingMode;
   customBranchName: string;
   autoPreviewBranch: string;
@@ -113,6 +115,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   newThreadBranch: "",
   worktrees: [],
   worktreesLoading: false,
+  worktreesLoaded: false,
   namingMode: "auto" as const,
   customBranchName: "",
   autoPreviewBranch: generateBranchId(),
@@ -190,6 +193,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       newThreadBranch: "",
       worktrees: [],
       worktreesLoading: false,
+      worktreesLoaded: false,
       selectedWorktree: null,
       openPrs: [],
       openPrsLoading: false,
@@ -479,7 +483,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const worktrees = await getTransport().listWorktrees(workspaceId);
       if (get().activeWorkspaceId !== workspaceId) return;
-      set({ worktrees, worktreesLoading: false, error: null });
+      set({ worktrees, worktreesLoading: false, worktreesLoaded: true, error: null });
     } catch (e) {
       if (get().activeWorkspaceId !== workspaceId) return;
       set({ worktreesLoading: false, error: String(e) });
