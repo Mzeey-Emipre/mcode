@@ -195,8 +195,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
   /**
    * One-shot text completion using the Claude CLI print mode.
-   * Uses stream-json output and extracts text from assistant events because
-   * the CLI's `result` field is empty in v2.x print mode.
+   * Uses `--output-format json` which returns a single JSON object with a `result` field.
    */
   async complete(prompt: string, model: string, cwd: string): Promise<string> {
     const settings = await this.settingsService.get();
@@ -204,31 +203,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
     const { stdout } = await execFileAsync(
       cliPath,
-      ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose"],
+      ["-p", prompt, "--model", model, "--output-format", "json"],
       { cwd, timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
     );
 
-    // Parse NDJSON stream and extract text blocks from assistant messages.
-    let text = "";
-    for (const line of stdout.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const event = JSON.parse(line) as {
-          type?: string;
-          message?: { content?: Array<{ type: string; text?: string }> };
-        };
-        if (event.type === "assistant" && event.message?.content) {
-          for (const block of event.message.content) {
-            if (block.type === "text" && block.text) text += block.text;
-          }
-        }
-      } catch {
-        // Skip non-JSON lines (e.g. blank lines, partial output)
-      }
+    const parsed = JSON.parse(stdout) as { result?: string; is_error?: boolean };
+    if (parsed.is_error) throw new Error("Claude CLI returned an error response");
+    if (typeof parsed.result !== "string" || !parsed.result) {
+      throw new Error("Claude CLI returned no text content");
     }
-
-    if (!text) throw new Error("Claude CLI returned no text content");
-    return text.trim();
+    return parsed.result.trim();
   }
 
   private async doSendMessage(params: {
