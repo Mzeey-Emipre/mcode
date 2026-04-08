@@ -380,6 +380,21 @@ function registerIpcHandlers(): void {
     }
     return "";
   });
+
+  // Open keybindings.json in the default system editor
+  ipcMain.handle("open-keybindings-file", async () => {
+    const dir = getMcodeDir();
+    const filePath = join(dir, "keybindings.json");
+    if (!existsSync(filePath)) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(filePath, "[]\n", "utf8");
+    }
+    const err = await shell.openPath(filePath);
+    if (err) {
+      throw new Error(`Failed to open keybindings.json: ${err}`);
+    }
+    return "";
+  });
 }
 
 // ---------------------------------------------------------------------------

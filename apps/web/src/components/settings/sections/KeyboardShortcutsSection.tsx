@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useUiStore } from "@/stores/uiStore";
 import { getAllCommands } from "@/lib/command-registry";
 import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";
+import { useToastStore } from "@/stores/toastStore";
 
 const isMac = navigator.platform.toUpperCase().includes("MAC");
 
@@ -18,21 +19,38 @@ export function KeyboardShortcutsSection() {
   const commands = getAllCommands().filter((c) => c.id !== "escape.handle");
   const boundCommands = commands.filter((c) => getKeybindingForCommand(c.id));
 
+  const handleOpenKeybindings = () => {
+    window.desktopBridge?.openKeybindingsFile().catch((err) => {
+      useToastStore
+        .getState()
+        .show("error", "Could not open keybindings file", String(err?.message ?? err));
+    });
+  };
+
   return (
     <div>
       <SectionHeading>Keyboard Shortcuts</SectionHeading>
 
       <SettingRow
         label="Custom keybindings"
-        hint={`Create ${configPath} to override default shortcuts. The file uses the same format as the built-in defaults.`}
+        hint={`Override default shortcuts by editing ${configPath}.`}
       >
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShortcutHelpOpen(true)}
-        >
-          View All Shortcuts
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleOpenKeybindings}
+          >
+            Edit keybindings.json
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShortcutHelpOpen(true)}
+          >
+            View All Shortcuts
+          </Button>
+        </div>
       </SettingRow>
 
       <div className="mt-4 space-y-1">
