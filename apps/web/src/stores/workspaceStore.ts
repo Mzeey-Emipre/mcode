@@ -73,6 +73,7 @@ interface WorkspaceState {
     forkedFromMessageId?: string;
     permissionMode?: PermissionMode;
     reasoningLevel?: ReasoningLevel;
+    attachments?: AttachmentMeta[];
     interactionMode?: InteractionMode;
   }) => Promise<Thread>;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
@@ -346,7 +347,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         transportMode,
         branch,
         existingWorktreePath,
-        undefined,
+        params.attachments,
         params.reasoningLevel,
         params.provider,
         params.interactionMode,

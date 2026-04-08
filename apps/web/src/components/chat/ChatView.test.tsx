@@ -81,6 +81,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     permission_mode: null,
     parent_thread_id: null,
     forked_from_message_id: null,
+    last_compact_summary: null,
     ...overrides,
   };
 }

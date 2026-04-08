@@ -902,6 +902,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         provider,
         permissionMode: access,
         reasoningLevel: reasoning,
+        attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
         mode: branchMode,
         branch: branchBranch,
         existingWorktreePath: branchWorktree,
