@@ -18,7 +18,6 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay, getNotificationDot } from "@/lib/thread-status";
-import { BranchThreadDialog } from "../chat/BranchThreadDialog";
 import type { Workspace, Thread } from "@/transport/types";
 
 // Persist expand/collapse in localStorage
@@ -143,8 +142,6 @@ export function ProjectTree() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
   const [threadListExpanded, setThreadListExpandedState] = useState<Record<string, boolean>>(getThreadListExpanded);
   const [isCreating, setIsCreating] = useState(false);
-  const [branchDialogOpen, setBranchDialogOpen] = useState(false);
-  const [branchSourceThread, setBranchSourceThread] = useState<Thread | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
@@ -419,17 +416,6 @@ export function ProjectTree() {
                 navigator.clipboard.writeText(contextMenu.threadId);
               },
             },
-            {
-              label: "Branch Thread",
-              onClick: () => {
-                const allThreads = useWorkspaceStore.getState().threads;
-                const thread = allThreads.find((t) => t.id === contextMenu.threadId);
-                if (thread) {
-                  setBranchSourceThread(thread);
-                  setBranchDialogOpen(true);
-                }
-              },
-            },
             { label: "", onClick: () => {}, divider: true },
             {
               label: "Delete",
@@ -540,16 +526,6 @@ export function ProjectTree() {
         </DialogContent>
       </Dialog>
 
-      {branchSourceThread && (
-        <BranchThreadDialog
-          thread={branchSourceThread}
-          open={branchDialogOpen}
-          onOpenChange={(open) => {
-            setBranchDialogOpen(open);
-            if (!open) setBranchSourceThread(null);
-          }}
-        />
-      )}
     </div>
   );
 }

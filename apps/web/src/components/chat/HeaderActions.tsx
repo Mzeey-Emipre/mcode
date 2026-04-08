@@ -1,6 +1,5 @@
-import { useEffect, useCallback, useState } from "react";
-import { Github, Terminal, Diff, GitBranch } from "lucide-react";
-import { BranchThreadDialog } from "./BranchThreadDialog";
+import { useEffect, useCallback } from "react";
+import { Github, Terminal, Diff } from "lucide-react";
 import { OpenInEditorMenu } from "./OpenInEditorMenu";
 import { useBranchPr } from "@/hooks/useBranchPr";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -20,8 +19,6 @@ interface HeaderActionsProps {
  * Polls GitHub for the thread's PR and syncs state changes back to the workspace store.
  */
 export function HeaderActions({ thread }: HeaderActionsProps) {
-  const [branchDialogOpen, setBranchDialogOpen] = useState(false);
-
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === thread.workspace_id),
   );
@@ -106,31 +103,6 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
           <OpenInEditorMenu dirPath={dirPath} />
         </div>
       )}
-
-      {/* Branch thread */}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => setBranchDialogOpen(true)}
-              className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6"
-              aria-label="Branch Thread"
-            >
-              <GitBranch size={12} />
-            </Button>
-          }
-        />
-        <TooltipContent side="bottom" className="text-xs">
-          Branch Thread
-        </TooltipContent>
-      </Tooltip>
-      <BranchThreadDialog
-        thread={thread}
-        open={branchDialogOpen}
-        onOpenChange={setBranchDialogOpen}
-      />
 
       {/* Terminal toggle */}
       <Tooltip>
