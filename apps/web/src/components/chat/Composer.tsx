@@ -1014,7 +1014,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       {/* Main composer container - dark bg, rounded */}
       <div
         className={cn(
-          "relative rounded-xl bg-muted/50 ring-1 ring-border/60 shadow-lg shadow-black/20 focus-within:ring-2 focus-within:ring-primary/70",
+          "relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 shadow-lg shadow-black/20 focus-within:ring-2 focus-within:ring-primary/70",
           isDragOver && "ring-2 ring-primary"
         )}
         onDragEnter={handleDragEnter}
@@ -1024,12 +1024,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       >
         {/* Branch mode quote bar */}
         {branchFromMessageId && (
-          <div className="flex items-start gap-2 border-b border-border/20 border-l-2 border-l-primary/50 px-3 py-2 animate-fade-up-in">
-            <GitBranch className="size-3.5 shrink-0 mt-0.5 text-primary/70" aria-hidden="true" />
+          <div className="relative flex items-start gap-2.5 rounded-tl-xl border-l-2 border-l-primary/50 bg-gradient-to-r from-primary/[0.04] to-transparent px-3 py-2.5 animate-fade-up-in">
+            {/* Gradient separator — starts warm at the accent, fades right */}
+            <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-primary/25 to-border/20" />
+            <GitBranch className="size-3.5 shrink-0 mt-0.5 text-primary/60" aria-hidden="true" />
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-semibold text-primary/80 leading-none mb-1">Branching from message</p>
               {branchFromMessageContent && (
-                <p className="text-xs text-muted-foreground/60 truncate leading-relaxed italic">
+                <p className="text-xs text-muted-foreground/55 truncate italic">
                   {branchFromMessageContent.slice(0, 120)}{branchFromMessageContent.length > 120 ? "…" : ""}
                 </p>
               )}
@@ -1037,7 +1039,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             <button
               type="button"
               onClick={onBranchModeExit}
-              className="shrink-0 rounded p-0.5 text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-colors"
+              className="shrink-0 rounded p-0.5 text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/40 transition-colors"
               aria-label="Exit branch mode"
             >
               <X className="size-3.5" />

@@ -16,7 +16,7 @@ export const HandoffCard = memo(function HandoffCard({ content }: HandoffCardPro
   if (!metadata) return null;
 
   return (
-    <div className="my-3 overflow-hidden rounded-lg border border-border/50 bg-muted/20 shadow-sm">
+    <div className="my-3 overflow-hidden rounded-lg border-t border-r border-b border-border/50 bg-muted/20 shadow-sm">
       {/* Accent strip + header */}
       <button
         type="button"
@@ -37,7 +37,7 @@ export const HandoffCard = memo(function HandoffCard({ content }: HandoffCardPro
       {/* Expandable detail panel */}
       <div
         id={`handoff-${metadata.parentThreadId}`}
-        className={`grid transition-[grid-template-rows] duration-200 ease-out ${expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+        className={`border-l-2 border-l-primary/25 grid transition-[grid-template-rows] duration-200 ease-out ${expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
       >
         <div className="overflow-hidden">
           <div className="border-t border-border/30 px-3 py-2.5 text-xs space-y-2">
