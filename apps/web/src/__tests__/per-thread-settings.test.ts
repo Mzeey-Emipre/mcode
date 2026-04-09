@@ -15,7 +15,7 @@ describe("per-thread settings", () => {
       messages: [],
       runningThreadIds: new Set(),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       toolCallsByThread: {},
       currentThreadId: null,

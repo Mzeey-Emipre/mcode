@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useThreadStore } from "@/stores/threadStore";
 import {
   mockTransport,
   createMockWorkspace,
@@ -206,5 +207,99 @@ describe("Workspace Behavior", () => {
     expect(state.threads).toHaveLength(1);
     expect(state.threads[0].id).toBe("t-2");
     expect(state.activeThreadId).toBeNull();
+  });
+
+  // ── deleteThread → clearThreadState integration ──────────────────────
+
+  describe("deleteThread clears threadStore per-thread state", () => {
+    it("removes deleted thread from all per-thread maps in threadStore", async () => {
+      const ws = createMockWorkspace();
+      const thread = createMockThread({ workspace_id: ws.id, id: "t-del" });
+
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: ws.id,
+        threads: [thread],
+        activeThreadId: null,
+      });
+
+      // Seed per-thread maps so we can verify they get pruned.
+      useThreadStore.setState({
+        runningThreadIds: new Set(["t-del"]),
+        errorByThread: { "t-del": "some error" },
+        streamingByThread: { "t-del": "some text" },
+        toolCallsByThread: { "t-del": [] },
+        agentStartTimes: { "t-del": Date.now() },
+        currentThreadId: null,
+      });
+
+      await useWorkspaceStore.getState().deleteThread("t-del", false);
+
+      const ts = useThreadStore.getState();
+      expect(ts.runningThreadIds.has("t-del")).toBe(false);
+      expect(ts.errorByThread["t-del"]).toBeUndefined();
+      expect(ts.streamingByThread["t-del"]).toBeUndefined();
+      expect(ts.toolCallsByThread["t-del"]).toBeUndefined();
+      expect(ts.agentStartTimes["t-del"]).toBeUndefined();
+    });
+
+    it("preserves per-thread maps for other threads when deleting one", async () => {
+      const ws = createMockWorkspace();
+      const t1 = createMockThread({ workspace_id: ws.id, id: "t-keep" });
+      const t2 = createMockThread({ workspace_id: ws.id, id: "t-del" });
+
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: ws.id,
+        threads: [t1, t2],
+        activeThreadId: null,
+      });
+
+      useThreadStore.setState({
+        runningThreadIds: new Set(["t-keep", "t-del"]),
+        errorByThread: { "t-keep": "keep error", "t-del": "del error" },
+        currentThreadId: null,
+      });
+
+      await useWorkspaceStore.getState().deleteThread("t-del", false);
+
+      const ts = useThreadStore.getState();
+      // Deleted thread is gone.
+      expect(ts.errorByThread["t-del"]).toBeUndefined();
+      expect(ts.runningThreadIds.has("t-del")).toBe(false);
+      // Other thread is preserved.
+      expect(ts.errorByThread["t-keep"]).toBe("keep error");
+      expect(ts.runningThreadIds.has("t-keep")).toBe(true);
+    });
+
+    it("clears all per-thread maps for all threads when deleting a workspace", async () => {
+      const ws = createMockWorkspace({ id: "ws-del" });
+      const t1 = createMockThread({ workspace_id: "ws-del", id: "t-1" });
+      const t2 = createMockThread({ workspace_id: "ws-del", id: "t-2" });
+
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: "ws-del",
+        threads: [t1, t2],
+        activeThreadId: null,
+      });
+
+      useThreadStore.setState({
+        runningThreadIds: new Set(["t-1", "t-2"]),
+        errorByThread: { "t-1": "err-1", "t-2": "err-2" },
+        streamingByThread: { "t-1": "text-1", "t-2": "text-2" },
+        currentThreadId: null,
+      });
+
+      await useWorkspaceStore.getState().deleteWorkspace("ws-del");
+
+      const ts = useThreadStore.getState();
+      expect(ts.runningThreadIds.has("t-1")).toBe(false);
+      expect(ts.runningThreadIds.has("t-2")).toBe(false);
+      expect(ts.errorByThread["t-1"]).toBeUndefined();
+      expect(ts.errorByThread["t-2"]).toBeUndefined();
+      expect(ts.streamingByThread["t-1"]).toBeUndefined();
+      expect(ts.streamingByThread["t-2"]).toBeUndefined();
+    });
   });
 });

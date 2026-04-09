@@ -536,6 +536,7 @@ app.whenReady().then(async () => {
     // invoke get-server-url as soon as it loads, without racing the handler.
     registerIpcHandlers();
 
+
     // Create window
     createWindow();
     console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);

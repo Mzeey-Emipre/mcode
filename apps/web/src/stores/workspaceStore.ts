@@ -161,6 +161,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         draftStore.clearDraft(tid);
         taskStore.clearTasks(tid);
       }
+      // Remove threads from store FIRST (same ordering as deleteThread) so
+      // any in-flight timer callbacks see threads as gone before timers are cancelled.
       set((state) => ({
         workspaces: state.workspaces.filter((w) => w.id !== id),
         activeWorkspaceId:
@@ -172,6 +174,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             ? null
             : state.activeThreadId,
       }));
+      // One batched Zustand set() for all threads instead of N sequential calls.
+      useThreadStore.getState().clearThreadStateMany(deletedThreadIds);
     } catch (e) {
       set({ error: String(e) });
       throw e;
@@ -388,10 +392,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       useQueueStore.getState().clearQueue(threadId);
       useComposerDraftStore.getState().clearDraft(threadId);
       useTaskStore.getState().clearTasks(threadId);
+      // Remove from threads[] FIRST so any in-flight dequeue timer callback's
+      // threadExists guard sees the thread as deleted before clearThreadState
+      // cancels the timer. This closes the race window between the timer
+      // callback checking membership and the timer being cancelled.
       set((state) => ({
         threads: state.threads.filter((t) => t.id !== threadId),
         activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
       }));
+      useThreadStore.getState().clearThreadState(threadId);
     } catch (e) {
       set({ error: String(e) });
       throw e;
