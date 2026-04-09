@@ -32,6 +32,7 @@ import { GitWatcherService } from "./services/git-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
 import { WorkspaceRepo } from "./repositories/workspace-repo";
 import { CleanupWorker } from "./services/cleanup-worker";
+import { PrDraftService } from "./services/pr-draft-service";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
 import type { AgentEvent } from "@mcode/contracts";
@@ -75,6 +76,7 @@ const memoryPressureService = container.resolve(MemoryPressureService);
 const taskRepo = container.resolve(TaskRepo);
 const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup watcher initialization
 const cleanupWorker = container.resolve(CleanupWorker);
+const prDraftService = container.resolve(PrDraftService);
 const db = container.resolve<Database.Database>("Database");
 
 const portPush = new PortPush();
@@ -213,6 +215,9 @@ const { httpServer, wss } = createWsServer({
   gitWatcherService,
   memoryPressureService,
   taskRepo,
+  prDraftService,
+  threadRepo,
+  workspaceRepo,
 });
 
 /**

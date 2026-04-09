@@ -69,6 +69,15 @@ export class GitService {
     return getCurrentBranchForPath(workspace.path);
   }
 
+  /**
+   * Get the current branch name for an arbitrary repo path.
+   * Use this instead of getCurrentBranch when you already have the resolved path
+   * (e.g. a worktree directory that may differ from the workspace root).
+   */
+  getCurrentBranchAt(repoPath: string): string {
+    return getCurrentBranchForPath(repoPath);
+  }
+
   /** Checkout an existing branch in the workspace repository. */
   checkout(workspaceId: string, branch: string): void {
     const workspace = this.requireWorkspace(workspaceId);
@@ -254,26 +263,29 @@ export class GitService {
     return workspacePath;
   }
 
-  /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. */
-  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string): Promise<GitCommit[]> {
+  /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. Pass repoPath to run from a worktree directory instead of the workspace root. */
+  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string, repoPath?: string): Promise<GitCommit[]> {
     const workspace = this.requireWorkspace(workspaceId);
+    const effectivePath = repoPath ?? workspace.path;
 
     // Auto-detect default branch when baseBranch is omitted but branch is specified
     const resolvedBase = baseBranch !== undefined
       ? baseBranch
       : branch !== undefined
-        ? await this.detectDefaultBranch(workspace.path)
+        ? await this.detectDefaultBranch(effectivePath)
         : undefined;
 
     const args = [
-      "-C", workspace.path,
+      "-C", effectivePath,
       "log",
       "--pretty=format:MCODE_SEP%H|||%h|||%s|||%an|||%aI",
       "--numstat",
       `-${limit}`,
     ];
-    if (resolvedBase && branch) {
-      args.push(`${resolvedBase}..${branch}`);
+    // When running from a worktree path, HEAD is the checked-out branch — no need to name it.
+    const headRef = repoPath ? "HEAD" : branch;
+    if (resolvedBase && headRef) {
+      args.push(`${resolvedBase}..${headRef}`);
     } else if (resolvedBase) {
       args.push(`${resolvedBase}..HEAD`);
     } else if (branch) {
@@ -371,6 +383,25 @@ export class GitService {
     }
   }
 
+  /** Push a branch to the origin remote, creating the upstream tracking ref if needed. */
+  async push(repoPath: string, branch: string): Promise<void> {
+    await execFile(
+      "git",
+      ["-C", repoPath, "push", "--set-upstream", "origin", branch],
+      { timeout: 60_000 },
+    );
+  }
+
+  /** Return a diff stat summary between two refs. */
+  async diffStat(repoPath: string, base: string, head: string): Promise<string> {
+    const { stdout } = await execFile(
+      "git",
+      ["-C", repoPath, "diff", "--stat", `${base}...${head}`],
+      { timeout: 30_000 },
+    );
+    return stdout.trim();
+  }
+
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */
   private readonly defaultBranchCache = new Map<string, string>();
 
@@ -450,7 +481,7 @@ function listBranchesForPath(repoPath: string): GitBranch[] {
       repoPath,
       "branch",
       "-a",
-      "--format=%(refname:short)|||%(objectname:short)|||%(HEAD)|||%(worktreepath)",
+      "--format=%(refname)|||%(refname:short)|||%(objectname:short)|||%(HEAD)|||%(worktreepath)",
     ],
     { stdio: "pipe", encoding: "utf-8" },
   );
@@ -461,13 +492,14 @@ function listBranchesForPath(repoPath: string): GitBranch[] {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    const [refname, shortSha, head, worktreepath] = trimmed.split("|||");
-    if (!refname || refname === "origin/HEAD") continue;
+    const [fullRefname, refname, shortSha, head, worktreepath] = trimmed.split("|||");
+    // Skip remote HEAD symrefs (refs/remotes/*/HEAD)
+    if (!fullRefname || !refname || /\/HEAD$/.test(fullRefname)) continue;
 
     let type: GitBranch["type"];
     if (worktreepath && worktreepath.length > 0) {
       type = "worktree";
-    } else if (refname.startsWith("origin/")) {
+    } else if (fullRefname.startsWith("refs/remotes/")) {
       type = "remote";
     } else {
       type = "local";

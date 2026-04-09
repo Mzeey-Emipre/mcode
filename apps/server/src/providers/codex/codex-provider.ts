@@ -86,6 +86,8 @@ interface SessionEntry {
 @injectable()
 export class CodexProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "codex";
+  /** Codex CLI is an agentic tool with no one-shot text completion mode. */
+  readonly supportsCompletion = false;
 
   private codex: Codex | null = null;
   private lastCliPath: string | undefined;

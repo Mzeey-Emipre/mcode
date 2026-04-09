@@ -18,6 +18,8 @@ import type {
   GitCommit,
   PlanAnswer,
   InteractionMode,
+  PrDraft,
+  CreatePrResult,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -198,12 +200,29 @@ export interface McodeTransport {
   listSnapshots(threadId: string): Promise<TurnSnapshot[]>;
   /** Get cumulative diff across all turns for a thread. Implemented in Phase 3. */
   getCumulativeDiff(threadId: string, filePath?: string, maxLines?: number): Promise<string>;
-  /** Get commit log for a workspace branch. */
-  getGitLog(workspaceId: string, branch?: string, limit?: number, baseBranch?: string): Promise<GitCommit[]>;
+  /** Get commit log for a workspace branch. Pass threadId so the server runs git from the thread's worktree path. */
+  getGitLog(workspaceId: string, branch?: string, limit?: number, baseBranch?: string, threadId?: string): Promise<GitCommit[]>;
   /** Get unified diff for a specific git commit. Implemented in Phase 4. */
   getCommitDiff(workspaceId: string, sha: string, filePath?: string, maxLines?: number): Promise<string>;
   /** Get the list of files changed in a specific git commit. */
   getCommitFiles(workspaceId: string, sha: string): Promise<string[]>;
+
+  // GitHub PR (advanced)
+  /** Push a branch to the remote. */
+  push(workspaceId: string, branch: string): Promise<{ success: boolean }>;
+
+  /** Generate an AI-powered PR draft from commit history and conversation context. */
+  generatePrDraft(workspaceId: string, threadId: string, baseBranch: string): Promise<PrDraft>;
+
+  /** Push the branch (if needed) and create a GitHub PR. */
+  createPr(
+    workspaceId: string,
+    threadId: string,
+    title: string,
+    body: string,
+    baseBranch: string,
+    isDraft: boolean,
+  ): Promise<CreatePrResult>;
 
   // Settings
   /** Fetch the full settings object from the server. */
