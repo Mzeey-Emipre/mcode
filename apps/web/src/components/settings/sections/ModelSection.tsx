@@ -11,6 +11,7 @@ import { SegControl } from "../SegControl";
 import { SectionHeading } from "../SectionHeading";
 import type { SettingsProviderId, ReasoningLevel } from "@mcode/contracts";
 import { Input } from "@/components/ui/input";
+import { ChevronDown } from "lucide-react";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -244,11 +245,11 @@ export function ModelSection() {
             configKey="prDraft.model"
             hint="Model for AI-generated PR titles and descriptions. Auto uses a provider-appropriate default."
           >
-            {prDraftModel ? (
+            <div className="relative inline-flex w-56">
               <select
                 value={prDraftModel}
                 onChange={(e) => void update({ prDraft: { model: e.target.value } })}
-                className="h-7 w-56 cursor-pointer rounded-[min(var(--radius-md),12px)] border border-input bg-background px-2 py-0.5 text-xs text-foreground focus-visible:border-ring focus-visible:outline-none"
+                className="h-7 w-full appearance-none cursor-pointer rounded-[min(var(--radius-md),12px)] border border-input bg-background pl-2 pr-7 py-0.5 text-xs text-foreground focus-visible:border-ring focus-visible:outline-none"
               >
                 {prDraftModelOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -256,18 +257,11 @@ export function ModelSection() {
                   </option>
                 ))}
               </select>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  const firstModel = prDraftEffectiveProvider?.models[0];
-                  if (firstModel) void update({ prDraft: { model: firstModel.id } });
-                }}
-                className="h-7 w-56 cursor-pointer rounded-[min(var(--radius-md),12px)] border border-input bg-background px-2 py-0.5 text-left text-xs text-muted-foreground"
-              >
-                Auto
-              </button>
-            )}
+              <ChevronDown
+                size={12}
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+            </div>
           </SettingRow>
         </div>
       </div>
