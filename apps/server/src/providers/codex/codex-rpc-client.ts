@@ -36,7 +36,7 @@ export class CodexRpcClient extends EventEmitter {
   private disposed = false;
   private lineBuffer = "";
 
-  private readonly onData: (chunk: Buffer | string) => void;
+  private readonly onData: (chunk: string) => void;
   private readonly onClose: () => void;
   private readonly onError: (err: Error) => void;
 
@@ -51,8 +51,8 @@ export class CodexRpcClient extends EventEmitter {
     this.stdin = stdin;
     this.stdout = stdout;
 
-    this.onData = (chunk: Buffer | string) => {
-      this.lineBuffer += chunk.toString();
+    this.onData = (chunk: string) => {
+      this.lineBuffer += chunk;
       const lines = this.lineBuffer.split("\n");
       // Keep the last (potentially incomplete) segment in the buffer
       this.lineBuffer = lines.pop() ?? "";
@@ -62,14 +62,17 @@ export class CodexRpcClient extends EventEmitter {
     };
 
     this.onClose = () => {
+      this.disposed = true;
       this.rejectAll(new Error("Stream closed while waiting for response"));
     };
 
     this.onError = (err: Error) => {
       logger.error("CodexRpcClient: stdout stream error", { err });
+      this.disposed = true;
       this.rejectAll(new Error(`Stream error: ${err.message}`));
     };
 
+    this.stdout.setEncoding("utf8");
     this.stdout.on("data", this.onData);
     this.stdout.on("close", this.onClose);
     this.stdout.on("end", this.onClose);
