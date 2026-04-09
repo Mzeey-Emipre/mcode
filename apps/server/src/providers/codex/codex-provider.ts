@@ -87,7 +87,7 @@ interface SessionEntry {
 export class CodexProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "codex";
 
-  private codex: Codex;
+  private codex: Codex | null = null;
   private lastCliPath: string | undefined;
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
@@ -97,7 +97,17 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     @inject(SettingsService) private readonly settingsService: SettingsService,
   ) {
     super();
-    this.codex = new Codex();
+  }
+
+  /**
+   * Lazily create the Codex SDK client. Deferred to avoid crashing the server
+   * at startup when the platform-specific CLI binaries are not installed.
+   */
+  private getCodex(): Codex {
+    if (!this.codex) {
+      this.codex = new Codex();
+    }
+    return this.codex;
   }
 
   /**
@@ -232,7 +242,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
 
     if (resume && resumeId) {
       try {
-        codexThread = this.codex.resumeThread(resumeId, threadOptions);
+        codexThread = this.getCodex().resumeThread(resumeId, threadOptions);
         logger.info("Resumed Codex thread", { sessionId, resumeId });
       } catch (err) {
         logger.warn("Codex resume failed, starting fresh thread", {
@@ -240,10 +250,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
           error: err instanceof Error ? err.message : String(err),
         });
         this.sdkSessionIds.delete(sessionId);
-        codexThread = this.codex.startThread(threadOptions);
+        codexThread = this.getCodex().startThread(threadOptions);
       }
     } else {
-      codexThread = this.codex.startThread(threadOptions);
+      codexThread = this.getCodex().startThread(threadOptions);
     }
 
     const abortController = new AbortController();
