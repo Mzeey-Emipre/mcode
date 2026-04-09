@@ -63,12 +63,13 @@ function getServerPaths(): {
 
 /**
  * Port range to scan for an available port.
- * Dev mode (ELECTRON_RENDERER_URL set) uses 19500+ to avoid
- * colliding with a prod instance running on 19400.
+ * Dev mode (ELECTRON_RENDERER_URL set) uses 19500+ to avoid colliding with
+ * the standalone server or a packaged app instance.
+ * Packaged mode uses 19600+ so it never clashes with a dev server on 19400.
  */
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
-const PORT_MIN = isDev ? 19500 : 19400;
-const PORT_MAX = isDev ? 19600 : 19500;
+const PORT_MIN = isDev ? 19500 : 19600;
+const PORT_MAX = isDev ? 19600 : 19700;
 
 /** Interval (ms) between health-check polls during startup. */
 const HEALTH_POLL_INTERVAL = 200;

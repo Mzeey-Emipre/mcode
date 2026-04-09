@@ -52,7 +52,7 @@ vi.mock("net", () => ({
   createServer: vi.fn().mockReturnValue({
     once: vi.fn(),
     listen: vi.fn((_port: number, cb: () => void) => cb()),
-    address: vi.fn().mockReturnValue({ port: 19400 }),
+    address: vi.fn().mockReturnValue({ port: 19600 }),
     close: vi.fn((cb: () => void) => cb()),
   }),
 }));
@@ -116,14 +116,14 @@ describe("ServerManager", () => {
     const result = await manager.start();
 
     expect(utilityProcess.fork).toHaveBeenCalledOnce();
-    expect(result.port).toBe(19400);
+    expect(result.port).toBe(19600);
     expect(result.authToken).toBe("mock-auth-token");
   });
 
   it("exposes port and authToken as properties", async () => {
     await manager.start();
 
-    expect(manager.port).toBe(19400);
+    expect(manager.port).toBe(19600);
     expect(manager.authToken).toBe("mock-auth-token");
   });
 
@@ -133,7 +133,7 @@ describe("ServerManager", () => {
     const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
     const opts = forkCall[2] as Record<string, unknown>;
     const env = opts.env as Record<string, string>;
-    expect(env.MCODE_PORT).toBe("19400");
+    expect(env.MCODE_PORT).toBe("19600");
     expect(env.MCODE_AUTH_TOKEN).toBe("mock-auth-token");
     expect(env.MCODE_MODE).toBe("desktop");
     expect(opts.stdio).toBe("pipe");
