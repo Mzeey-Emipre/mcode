@@ -143,8 +143,8 @@ describe("PrDraftService", () => {
 
     expect(result.title).toBe("feat: add widget");
     expect(mockGitService.log).toHaveBeenCalledTimes(2);
-    expect(mockGitService.log).toHaveBeenNthCalledWith(1, "ws-1", "master", 50, "main");
-    expect(mockGitService.log).toHaveBeenNthCalledWith(2, "ws-1", "master", 50);
+    expect(mockGitService.log).toHaveBeenNthCalledWith(1, "ws-1", "master", 50, "main", "/repo");
+    expect(mockGitService.log).toHaveBeenNthCalledWith(2, "ws-1", "master", 50, undefined, "/repo");
   });
 
   it("uses repo PR template when available", async () => {

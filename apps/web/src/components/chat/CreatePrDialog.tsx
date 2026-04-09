@@ -245,7 +245,7 @@ export function CreatePrDialog({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- baseBranch intentionally excluded to avoid re-generating draft on base change
+    // baseBranch intentionally excluded — re-generating draft on every base change would be disruptive
   }, [open, workspaceId, threadId]);
 
   const handleSubmit = useCallback(async () => {
