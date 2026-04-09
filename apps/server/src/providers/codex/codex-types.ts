@@ -23,7 +23,12 @@ export interface InitializeResult { protocolVersion: string; serverInfo: { name:
 /** Parameters for the `thread/start` RPC method. */
 export interface ThreadStartParams { workingDirectory: string; model?: string; sandboxMode?: string; modelReasoningEffort?: string }
 /** Result returned by the `thread/start` RPC method. */
-export interface ThreadStartResult { threadId: string }
+export interface ThreadStartResult {
+  /** Top-level threadId (some versions). */
+  threadId?: string;
+  /** Nested thread object (codex app-server >= 0.104.0). The session ID is at `thread.id`. */
+  thread?: { id: string; [key: string]: unknown };
+}
 /** Parameters for the `thread/resume` RPC method. */
 export interface ThreadResumeParams { threadId: string; workingDirectory?: string }
 /** Result returned by the `thread/resume` RPC method. */

@@ -361,7 +361,10 @@ export class CodexAppServer extends EventEmitter {
           this.rpc.off("notification", captureStarted);
         };
         // Prefer the RPC response; if missing, wait for the notification.
-        const responseThreadId = (startResult as { threadId?: string } | null)?.threadId;
+        // The codex app-server returns the threadId at result.thread.id,
+        // not result.threadId. Accept both shapes for forward compatibility.
+        const r = startResult as { threadId?: string; thread?: { id?: string } } | null;
+        const responseThreadId = r?.threadId ?? r?.thread?.id;
         if (responseThreadId) {
           this._threadId = responseThreadId;
           cleanup();
