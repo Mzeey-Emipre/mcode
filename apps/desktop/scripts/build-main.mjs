@@ -12,7 +12,8 @@
 
 import { build } from "esbuild";
 import { execSync, execFileSync } from "child_process";
-import { existsSync } from "fs";
+import { copyFileSync, existsSync } from "fs";
+import { createRequire } from "module";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -37,6 +38,12 @@ await Promise.all([
     entryPoints: ["src/main/main.ts"],
     outfile: "dist/main/main.cjs",
     external: ["electron"],
+    define: {
+      // The main bundle is only used in packaged builds. Setting NODE_ENV
+      // at build time ensures getMcodeDir() returns ~/.mcode (not ~/.mcode-dev)
+      // even for module-level constants evaluated before app code runs.
+      "process.env.NODE_ENV": '"production"',
+    },
   }),
   build({
     ...shared,
@@ -65,19 +72,37 @@ execFileSync(process.execPath, [tscBin, "--project", resolve(serverRoot, "tsconf
 // Phase 2b: esbuild bundles the tsc output into a single CJS file.
 // better-sqlite3 and node-pty are marked external because they contain native
 // bindings that cannot be inlined and must be asarUnpack'd by electron-builder.
+//
+// import.meta.url must resolve to a real file:// URL at runtime because the
+// Claude Agent SDK calls fileURLToPath(import.meta.url) to locate cli.js.
+// A plain __filename substitution breaks fileURLToPath with ERR_INVALID_URL_SCHEME.
 await build({
   ...shared,
   entryPoints: [resolve(serverRoot, "dist-tsc/index.js")],
   outfile: "dist/server/server.cjs",
   external: ["better-sqlite3", "node-pty", "electron"],
+  banner: {
+    js: 'var __importMetaUrl = require("url").pathToFileURL(__filename).href;',
+  },
   define: {
-    // esbuild converts import.meta.url to __filename in CJS output,
-    // but some deps check for it — ensure it resolves predictably.
-    "import.meta.url": "__filename",
+    "import.meta.url": "__importMetaUrl",
+    // Server bundle is only used in packaged builds. Setting NODE_ENV
+    // at build time ensures getMcodeDir() returns ~/.mcode.
+    "process.env.NODE_ENV": '"production"',
   },
 });
 
 console.log("Server bundle complete: dist/server/server.cjs");
+
+// Copy the Claude Agent SDK's cli.js next to server.cjs so the SDK can locate
+// it via dirname(fileURLToPath(import.meta.url)) + "/cli.js".
+// dist/server/** is already in asarUnpack, so both files exist on real disk.
+const localRequire = createRequire(resolve(serverRoot, "package.json"));
+const sdkPkgPath = localRequire.resolve("@anthropic-ai/claude-agent-sdk/package.json");
+const sdkCliSrc = resolve(dirname(sdkPkgPath), "cli.js");
+const sdkCliDst = resolve(desktopRoot, "dist/server/cli.js");
+copyFileSync(sdkCliSrc, sdkCliDst);
+console.log(`Copied SDK cli.js -> ${sdkCliDst}`);
 
 // Step 3: Build web renderer for Electron (cross-platform env var)
 const rendererOutDir = resolve(desktopRoot, "dist", "renderer");

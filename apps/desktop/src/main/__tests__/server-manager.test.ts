@@ -198,7 +198,13 @@ describe("ServerManager", () => {
   });
 
   it("reads heapMb from settings.json when file exists", async () => {
-    vi.mocked(readFileSync).mockReturnValueOnce(
+    // First call is the lock file read in tryExistingServer() — throw ENOENT.
+    // Second call is the settings.json read in readServerHeapMb().
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      const err = new Error("ENOENT") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    }).mockReturnValueOnce(
       JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
     );
     await manager.start();

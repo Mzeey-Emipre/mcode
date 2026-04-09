@@ -532,6 +532,10 @@ app.whenReady().then(async () => {
     // Register custom protocol for attachment files
     registerAttachmentProtocol();
 
+    // Register IPC handlers BEFORE creating the window so the renderer can
+    // invoke get-server-url as soon as it loads, without racing the handler.
+    registerIpcHandlers();
+
     // Create window
     createWindow();
     console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
@@ -539,9 +543,6 @@ app.whenReady().then(async () => {
     // Create and distribute streaming MessagePort pair
     const rendererPort = serverManager.createStreamPort();
     mainWindow!.webContents.postMessage("stream-port", null, [rendererPort]);
-
-    // Register native-only IPC handlers
-    registerIpcHandlers();
 
     // Set up close handler
     setupCloseHandler();
