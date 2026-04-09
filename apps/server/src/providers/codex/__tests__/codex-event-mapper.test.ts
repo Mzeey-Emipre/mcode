@@ -129,6 +129,7 @@ describe("CodexEventMapper", () => {
       type: "toolResult",
       toolCallId: "fc-1",
       isError: false,
+      output: "src/foo.ts",
     });
   });
 
@@ -151,11 +152,13 @@ describe("CodexEventMapper", () => {
       type: "toolUse",
       toolCallId: "mcp-1",
       toolName: "mcp:myserver/runQuery",
+      toolInput: { q: "test" },
     });
     expect(events[1]).toMatchObject({
       type: "toolResult",
       toolCallId: "mcp-1",
       isError: false,
+      output: "42",
     });
   });
 
@@ -296,5 +299,40 @@ describe("CodexEventMapper", () => {
     });
 
     expect(events).toEqual([]);
+  });
+
+  it("returns empty array and warns when agent_message text is not a suffix extension", () => {
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn.event",
+      params: { type: "agent_message", text: "Hello" },
+    });
+    // Send a completely different text (not a suffix of "Hello")
+    const result = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn.event",
+      params: { type: "agent_message", text: "World" },
+    });
+    expect(result).toHaveLength(0);
+    // Subsequent turn.completed should use the replaced text
+    const completedEvents = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn.completed",
+      params: { usage: {} },
+    });
+    const msgEvent = completedEvents.find((e) => e.type === "message");
+    expect(msgEvent).toBeDefined();
+    expect((msgEvent as { content: string }).content).toBe("World");
+  });
+
+  it("omits message event in turn.completed when no text was accumulated", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn.completed",
+      params: { usage: { input_tokens: 5, output_tokens: 3 } },
+    });
+    // Should have only turnComplete, no message event
+    expect(events.some((e) => e.type === "message")).toBe(false);
+    expect(events.some((e) => e.type === "turnComplete")).toBe(true);
   });
 });

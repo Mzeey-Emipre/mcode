@@ -112,4 +112,19 @@ describe("checkCodexVersion error messages", () => {
     expect(result.ok).toBe(true);
     expect((result as { ok: true; version: string }).version).toBe("0.118.0");
   });
+
+  it("returns error when CLI exits with non-zero status", () => {
+    vi.mocked(spawnSync).mockReturnValueOnce({
+      pid: 123,
+      status: 1,
+      signal: null,
+      output: [null, "", ""],
+      stdout: "",
+      stderr: "unknown error",
+      error: undefined,
+    });
+    const result = checkCodexVersion("codex");
+    expect(result.ok).toBe(false);
+    expect((result as { ok: false; error: string }).error).toContain("CLI not found");
+  });
 });
