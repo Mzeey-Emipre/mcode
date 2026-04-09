@@ -99,8 +99,13 @@ export function CommitEntry({ commit }: CommitEntryProps) {
           {commit.message}
         </span>
 
-        {/* SHA + time */}
+        {/* File count badge (shown once files have loaded) + SHA + time */}
         <span className="flex shrink-0 items-center gap-1.5">
+          {files !== null && files.length > 0 && (
+            <span className="rounded bg-muted/50 px-1 font-mono text-[9px] text-muted-foreground/60">
+              {files.length} {files.length === 1 ? "file" : "files"}
+            </span>
+          )}
           <span className="font-mono text-[9px] text-muted-foreground/80">{commit.shortSha}</span>
           <span className="text-[9px] text-muted-foreground/70">{relativeTime(commit.date)}</span>
         </span>

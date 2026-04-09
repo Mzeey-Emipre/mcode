@@ -1,4 +1,4 @@
-import { Columns2, AlignJustify } from "lucide-react";
+import { Columns2, AlignJustify, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDiffStore, type DiffViewMode } from "@/stores/diffStore";
@@ -15,8 +15,10 @@ const ALL_VIEW_MODES: { value: DiffViewMode; label: string; worktreeOnly: boolea
 export function DiffToolbar() {
   const viewMode = useDiffStore((s) => s.viewMode);
   const renderMode = useDiffStore((s) => s.renderMode);
+  const lineWrap = useDiffStore((s) => s.lineWrap);
   const setViewMode = useDiffStore((s) => s.setViewMode);
   const setRenderMode = useDiffStore((s) => s.setRenderMode);
+  const toggleLineWrap = useDiffStore((s) => s.toggleLineWrap);
 
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const isWorktree = useWorkspaceStore((s) => {
@@ -45,24 +47,45 @@ export function DiffToolbar() {
         ))}
       </div>
 
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={() => setRenderMode(renderMode === "unified" ? "side-by-side" : "unified")}
-              className="h-6 w-6 text-muted-foreground/50 hover:text-foreground/70"
-              aria-label={`Switch to ${renderMode === "unified" ? "side-by-side" : "unified"} view`}
-            >
-              {renderMode === "unified" ? <Columns2 size={13} /> : <AlignJustify size={13} />}
-            </Button>
-          }
-        />
-        <TooltipContent side="left" className="text-xs">
-          {renderMode === "unified" ? "Side-by-side view" : "Unified view"}
-        </TooltipContent>
-      </Tooltip>
+      <div className="flex items-center gap-0.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={toggleLineWrap}
+                className={`h-6 w-6 transition-colors ${lineWrap ? "text-foreground/70" : "text-muted-foreground/40 hover:text-foreground/60"}`}
+                aria-label={lineWrap ? "Disable line wrap" : "Wrap long lines"}
+              >
+                <WrapText size={13} />
+              </Button>
+            }
+          />
+          <TooltipContent side="left" className="text-xs">
+            {lineWrap ? "Disable line wrap" : "Wrap long lines"}
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => setRenderMode(renderMode === "unified" ? "side-by-side" : "unified")}
+                className="h-6 w-6 text-muted-foreground/50 hover:text-foreground/70"
+                aria-label={`Switch to ${renderMode === "unified" ? "side-by-side" : "unified"} view`}
+              >
+                {renderMode === "unified" ? <Columns2 size={13} /> : <AlignJustify size={13} />}
+              </Button>
+            }
+          />
+          <TooltipContent side="left" className="text-xs">
+            {renderMode === "unified" ? "Side-by-side view" : "Unified view"}
+          </TooltipContent>
+        </Tooltip>
+      </div>
     </div>
   );
 }

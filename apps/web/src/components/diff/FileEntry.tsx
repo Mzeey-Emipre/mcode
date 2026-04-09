@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Plus, Minus } from "lucide-react";
+import { Plus, Minus, ChevronsDownUp } from "lucide-react";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { parseDiffLines } from "@/lib/diff-parser";
@@ -54,6 +54,12 @@ const EXT_COLORS: Record<string, string> = {
   toml: "text-amber-700 dark:text-amber-400",
 };
 
+/**
+ * Number of lines shown initially for large diffs before truncation.
+ * Diffs with more than LARGE_DIFF_THRESHOLD lines start truncated.
+ */
+const LARGE_DIFF_THRESHOLD = 200;
+const INITIAL_LINES_SHOWN = 100;
 
 /**
  * Diff loading state.
@@ -65,9 +71,11 @@ type DiffState = null | { loading: true } | { loading: false; data: string };
  * Single file row with an inline expandable diff.
  * Clicking toggles the diff open/closed directly below the filename.
  * Diff is loaded lazily on the first expand.
+ * Large diffs (>200 lines) are truncated with a "Show all N lines" button.
  */
 export function FileEntry({ filePath, source, id }: FileEntryProps) {
   const [expanded, setExpanded] = useState(false);
+  const [showAllLines, setShowAllLines] = useState(false);
   const [diffState, setDiffState] = useState<DiffState>(null);
   const renderMode = useDiffStore((s) => s.renderMode);
   // Tracks whether a load has been kicked off so the effect doesn't cancel itself
@@ -140,14 +148,31 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
   );
 
   const isLoaded = diffState !== null && !diffState.loading;
+  const isLargeDiff = lines.length > LARGE_DIFF_THRESHOLD;
+  const { visibleLines, hiddenLineCount } = useMemo(() => {
+    if (isLargeDiff && !showAllLines) {
+      return {
+        visibleLines: lines.slice(0, INITIAL_LINES_SHOWN),
+        hiddenLineCount: lines.length - INITIAL_LINES_SHOWN,
+      };
+    }
+    return { visibleLines: lines, hiddenLineCount: 0 };
+  }, [lines, isLargeDiff, showAllLines]);
 
   return (
     <div className={`border-b border-border/30 ${expanded ? "bg-muted/5" : ""}`}>
-      {/* File header row */}
+      {/* File header row — sticky when expanded so filename stays visible while scrolling the diff */}
       <button
         type="button"
-        onClick={() => setExpanded((prev) => !prev)}
-        className="group flex w-full items-center gap-2 py-[5px] pl-7 pr-3 text-left transition-colors hover:bg-muted/20"
+        onClick={() => setExpanded((prev) => {
+          if (prev) setShowAllLines(false); // reset truncation on collapse
+          return !prev;
+        })}
+        className={`group flex w-full items-center gap-2 py-[5px] pl-7 pr-3 text-left transition-colors hover:bg-muted/20 ${
+          expanded
+            ? "sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/20"
+            : ""
+        }`}
         title={filePath}
       >
         {expanded ? (
@@ -159,16 +184,21 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
         {/* Status dot */}
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/60" />
 
-        {/* Filename + parent dir */}
+        {/* Filename + path */}
         <span className="flex-1 min-w-0">
           <span className="block truncate font-mono text-[11px] text-foreground/80">
             {basename}
           </span>
-          {parent && (
+          {expanded ? (
+            /* Show full path when expanded for clarity */
+            <span className="block truncate font-mono text-[9px] text-muted-foreground/60">
+              {filePath}
+            </span>
+          ) : parent ? (
             <span className="block truncate font-mono text-[9px] text-muted-foreground/70">
               {parent}/
             </span>
-          )}
+          ) : null}
         </span>
 
         {/* +/- stats once loaded */}
@@ -191,7 +221,7 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
         )}
       </button>
 
-      {/* Inline diff */}
+      {/* Inline diff — no height cap; outer ScrollArea owns vertical scroll */}
       {expanded && (
         <div className="border-t border-border/30">
           {!isLoaded ? (
@@ -205,13 +235,25 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
               ))}
             </div>
           ) : lines.length > 0 ? (
-            <div className="max-h-[360px] overflow-auto">
+            <>
               {renderMode === "unified" ? (
-                <UnifiedDiff lines={lines} language={language} />
+                <UnifiedDiff lines={visibleLines} language={language} />
               ) : (
-                <SideBySideDiff lines={lines} language={language} />
+                <SideBySideDiff lines={visibleLines} language={language} />
               )}
-            </div>
+
+              {/* Large diff expansion button */}
+              {hiddenLineCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllLines(true)}
+                  className="flex w-full items-center justify-center gap-1.5 border-t border-border/20 bg-muted/10 py-2 text-[10px] text-muted-foreground/70 transition-colors hover:bg-muted/20 hover:text-foreground/70"
+                >
+                  <ChevronsDownUp size={11} />
+                  Show {hiddenLineCount} more lines
+                </button>
+              )}
+            </>
           ) : (
             <div className="flex items-center justify-center py-4">
               <p className="text-[10px] text-muted-foreground">No changes</p>

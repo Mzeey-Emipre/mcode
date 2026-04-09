@@ -4,7 +4,7 @@ import { ListChecks, Diff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { useDiffStore, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH } from "@/stores/diffStore";
+import { useDiffStore, PANEL_MIN_WIDTH, PANEL_DEFAULT_WIDTH, PANEL_WIDE_WIDTH } from "@/stores/diffStore";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TaskPanelHeader } from "@/components/tasks/TaskPanelHeader";
 import { DiffPanel } from "@/components/diff";
@@ -24,6 +24,22 @@ export function RightPanel() {
 
   const draggingRef = useRef(false);
   const dragListenersRef = useRef<{ move: (e: globalThis.MouseEvent) => void; up: () => void } | null>(null);
+  // Ref keeps the latest panelWidth readable inside the resize handler without
+  // the handler needing to be re-registered on every width change.
+  const panelWidthRef = useRef(panelWidth);
+  useEffect(() => { panelWidthRef.current = panelWidth; }, [panelWidth]);
+
+  // Re-clamp stored width when the window is resized so the panel never
+  // exceeds the available space after the user shrinks the browser.
+  // Registered once on mount; reads panelWidthRef to avoid a stale closure.
+  useEffect(() => {
+    const onResize = () => {
+      const maxAllowed = window.innerWidth - 300;
+      if (panelWidthRef.current > maxAllowed) setPanelWidth(maxAllowed);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [setPanelWidth]);
 
   const onDragStart = useCallback(
     (e: ReactMouseEvent) => {
@@ -35,7 +51,9 @@ export function RightPanel() {
       const onMouseMove = (moveEvent: globalThis.MouseEvent) => {
         if (!draggingRef.current) return;
         const delta = startX - moveEvent.clientX;
-        setPanelWidth(startWidth + delta);
+        // Always leave at least 300px for the chat area
+        const viewportCap = window.innerWidth - 300;
+        setPanelWidth(Math.min(startWidth + delta, viewportCap));
       };
 
       const onMouseUp = () => {
@@ -67,13 +85,17 @@ export function RightPanel() {
 
   return (
     <div
-      style={{ width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: PANEL_MAX_WIDTH }}
+      style={{ width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: "calc(100vw - 300px)" }}
       className="relative flex flex-col border-l border-border bg-background/95"
     >
-      {/* Drag handle (left edge) */}
+      {/* Drag handle (left edge) — double-click snaps between default and wide */}
       <div
-        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-muted-foreground/30 z-10"
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10
+                   hover:bg-primary/25 active:bg-primary/40 transition-colors duration-150"
         onMouseDown={onDragStart}
+        onDoubleClick={() =>
+          setPanelWidth(panelWidth >= PANEL_WIDE_WIDTH ? PANEL_DEFAULT_WIDTH : PANEL_WIDE_WIDTH)
+        }
       />
 
       {/* Tab header */}
