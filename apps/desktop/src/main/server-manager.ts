@@ -8,7 +8,7 @@
  */
 
 import { app, utilityProcess, type UtilityProcess, MessageChannelMain } from "electron";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { createServer, type AddressInfo } from "net";
 import { randomUUID } from "crypto";
 import { resolve, join, dirname } from "path";
@@ -34,15 +34,26 @@ function getServerPaths(): {
 } {
   if (app.isPackaged) {
     const serverBundle = resolve(__dirname, "../server/server.cjs");
-    const nativeBindingPath = resolve(
-      process.resourcesPath,
-      "app.asar.unpacked",
-      "node_modules",
-      "better-sqlite3",
-      "build",
-      "Release",
-      "better_sqlite3.electron.node",
-    );
+    const nativeBindingPath = [
+      resolve(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "node_modules",
+        "better-sqlite3",
+        "build",
+        "Release",
+        "better_sqlite3.electron.node",
+      ),
+      resolve(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "node_modules",
+        "better-sqlite3",
+        "build",
+        "Release",
+        "better_sqlite3.node",
+      ),
+    ].find((candidate) => existsSync(candidate));
     return { entry: serverBundle, cwd: dirname(serverBundle), nativeBindingPath };
   }
 

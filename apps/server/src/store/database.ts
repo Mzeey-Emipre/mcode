@@ -31,11 +31,15 @@ function resolveNativeBinding(): string | undefined {
   const betterSqliteDir = dirname(
     localRequire.resolve("better-sqlite3/package.json"),
   );
-  const bindingPath = join(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node");
+  const bindingCandidates = [
+    join(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node"),
+    join(betterSqliteDir, "build", "Release", "better_sqlite3.node"),
+  ];
+  const bindingPath = bindingCandidates.find((candidate) => existsSync(candidate));
 
-  if (!existsSync(bindingPath)) {
+  if (!bindingPath) {
     throw new Error(
-      `Electron prebuild not found at ${bindingPath}. Run 'bun install' to download it.`,
+      `Electron prebuild not found. Checked: ${bindingCandidates.join(", ")}. Run 'bun install' to download it.`,
     );
   }
 
