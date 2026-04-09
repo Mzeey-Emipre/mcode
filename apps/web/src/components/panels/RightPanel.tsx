@@ -34,13 +34,17 @@ export function RightPanel() {
   // Registered once on mount; reads panelWidthRef to avoid a stale closure.
   // Throttled with rAF so rapid resize events only trigger one recalculation per frame.
   useEffect(() => {
+    // Clamp immediately on mount in case the stored width already exceeds the viewport.
+    const maxAllowed = window.innerWidth - PANEL_MIN_WIDTH;
+    if (panelWidthRef.current > maxAllowed) setPanelWidth(maxAllowed);
+
     let rafId: number | null = null;
     const onResize = () => {
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
-        const maxAllowed = window.innerWidth - PANEL_MIN_WIDTH;
-        if (panelWidthRef.current > maxAllowed) setPanelWidth(maxAllowed);
+        const max = window.innerWidth - PANEL_MIN_WIDTH;
+        if (panelWidthRef.current > max) setPanelWidth(max);
       });
     };
     window.addEventListener("resize", onResize);
@@ -99,8 +103,11 @@ export function RightPanel() {
     >
       {/* Drag handle (left edge) — double-click snaps between default and wide */}
       <div
+        role="separator"
+        aria-orientation="vertical"
+        tabIndex={0}
         className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10
-                   hover:bg-primary/25 active:bg-primary/40 transition-colors duration-150"
+                   hover:bg-primary/25 active:bg-primary/40 focus-visible:bg-primary/25 transition-colors duration-150"
         onMouseDown={onDragStart}
         onDoubleClick={() => {
           const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
@@ -108,6 +115,16 @@ export function RightPanel() {
             ? PANEL_DEFAULT_WIDTH
             : Math.min(PANEL_WIDE_WIDTH, viewportCap);
           setPanelWidth(Math.max(PANEL_MIN_WIDTH, target));
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
+            const target = panelWidth >= PANEL_WIDE_WIDTH
+              ? PANEL_DEFAULT_WIDTH
+              : Math.min(PANEL_WIDE_WIDTH, viewportCap);
+            setPanelWidth(Math.max(PANEL_MIN_WIDTH, target));
+          }
         }}
       />
 
