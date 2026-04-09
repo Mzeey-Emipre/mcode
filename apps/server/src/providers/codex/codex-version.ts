@@ -26,12 +26,23 @@ export function checkCodexVersion(
       ? "Codex CLI not found. Install it with: npm install -g @openai/codex\n\nOr set a custom path in Settings > Provider > Codex CLI path."
       : `Codex CLI not found at "${cliPath}". Check the path in Settings > Provider > Codex CLI path.`;
 
-  if (result.error != null || result.status !== 0) {
+  if (result.error != null) {
+    if ((result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+      return {
+        ok: false,
+        error:
+          "Codex CLI timed out (5s). The CLI may be slow to start. Check your network or set a custom path in Settings > Provider > Codex CLI path.",
+      };
+    }
+    return { ok: false, error: notFoundError };
+  }
+
+  if (result.status !== 0) {
     return { ok: false, error: notFoundError };
   }
 
   const output = (result.stdout ?? "") + (result.stderr ?? "");
-  const match = output.match(/(\d+\.\d+\.\d+)/);
+  const match = output.match(/\b(\d+\.\d+\.\d+)(?!\.\d)/);
 
   if (match == null) {
     return { ok: false, error: notFoundError };
