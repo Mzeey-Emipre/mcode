@@ -318,7 +318,7 @@ describe("CodexEventMapper", () => {
     const completedEvents = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "turn.completed",
-      params: { usage: {} },
+      params: { threadId: "test-thread", usage: {} },
     });
     const msgEvent = completedEvents.find((e) => e.type === "message");
     expect(msgEvent).toBeDefined();
@@ -329,7 +329,7 @@ describe("CodexEventMapper", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "turn.completed",
-      params: { usage: { input_tokens: 5, output_tokens: 3 } },
+      params: { threadId: "test-thread", usage: { input_tokens: 5, output_tokens: 3 } },
     });
     // Should have only turnComplete, no message event
     expect(events.some((e) => e.type === "message")).toBe(false);

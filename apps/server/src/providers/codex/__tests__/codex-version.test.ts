@@ -98,7 +98,7 @@ describe("checkCodexVersion error messages", () => {
 
   it("returns ok:true and version when CLI succeeds", () => {
     mockSpawnSync.mockReturnValue({
-      error: null,
+      error: undefined,
       status: 0,
       stdout: "codex 0.118.0 (build xyz)",
       stderr: "",
