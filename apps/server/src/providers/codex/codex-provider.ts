@@ -135,7 +135,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     if (existing) {
       existing.lastUsedAt = Date.now();
       existing.mapper.reset();
-      void this.runTurn(sessionId, threadId, existing.server, existing.mapper, input);
+      void this.runTurn(sessionId, threadId, existing.server, input);
       return;
     }
 
@@ -208,7 +208,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     }
 
     this.sessions.set(sessionId, { server, mapper, lastUsedAt: Date.now() });
-    void this.runTurn(sessionId, threadId, server, mapper, input);
+    void this.runTurn(sessionId, threadId, server, input);
   }
 
   /**
@@ -221,7 +221,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     sessionId: string,
     threadId: string,
     server: CodexAppServer,
-    mapper: CodexEventMapper,
     input: string | TurnInputPart[],
   ): Promise<void> {
     let serverDied = false;
@@ -260,11 +259,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
         this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
       }
     }
-
-    // Suppress unused-variable lint warning; mapper is used by the notification
-    // listener wired in sendMessage - it is referenced here to keep the
-    // parameter signature consistent for callers.
-    void mapper;
   }
 
   /** Evicts sessions that have been idle longer than IDLE_TTL_MS. */
