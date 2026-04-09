@@ -37,6 +37,49 @@ describe("CodexEventMapper", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // item/agentMessage/delta – streaming text tokens
+  // ---------------------------------------------------------------------------
+
+  it("emits textDelta for item/agentMessage/delta and accumulates text", () => {
+    const e1 = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "t", turnId: "u", itemId: "i", delta: "Hello" },
+    });
+    const e2 = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "t", turnId: "u", itemId: "i", delta: "!" },
+    });
+
+    expect(e1).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "Hello" }]);
+    expect(e2).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "!" }]);
+  });
+
+  it("emits Message with full accumulated text on turn/completed after deltas", () => {
+    mapper.mapNotification({ jsonrpc: "2.0", method: "item/agentMessage/delta", params: { delta: "Hello" } as never });
+    mapper.mapNotification({ jsonrpc: "2.0", method: "item/agentMessage/delta", params: { delta: " world" } as never });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { turn: { status: "completed" } },
+    });
+
+    const msg = events.find((e) => e.type === "message");
+    expect(msg).toMatchObject({ type: "message", content: "Hello world" });
+  });
+
+  it("returns empty array for item/agentMessage/delta with empty delta", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { delta: "" },
+    });
+    expect(events).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
   // item/completed – message items (assistant text)
   // ---------------------------------------------------------------------------
 

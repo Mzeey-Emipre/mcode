@@ -34,6 +34,13 @@ export class CodexEventMapper {
       return [];
     }
 
+    if (method === "item/agentMessage/delta") {
+      const delta = notification.params.delta;
+      if (!delta) return [];
+      this.lastAssistantText += delta;
+      return [{ type: AgentEventType.TextDelta, threadId: this.threadId, delta }];
+    }
+
     if (method === "item/completed") {
       logger.debug("Codex item/completed", { params: notification.params });
       return this.mapItemCompleted(notification.params.item);

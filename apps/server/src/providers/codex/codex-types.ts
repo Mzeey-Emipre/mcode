@@ -90,6 +90,8 @@ export interface CompletedItem {
 export interface ItemCompletedPayload { item?: CompletedItem; [key: string]: unknown }
 /** Payload for the `item/started` notification - silently consumed. */
 export interface ItemStartedPayload { [key: string]: unknown }
+/** Payload for the `item/agentMessage/delta` notification - streaming text token from the assistant. */
+export interface AgentMessageDeltaPayload { threadId?: string; turnId?: string; itemId?: string; delta: string }
 /** Payload for the `turn/started` notification - silently consumed. */
 export interface TurnStartedPayload { [key: string]: unknown }
 
@@ -124,6 +126,7 @@ export interface ErrorNotificationPayload { message?: string; code?: string; [ke
 export type CodexNotification =
   | (JsonRpcNotification<TurnStartedPayload> & { method: "turn/started" })
   | (JsonRpcNotification<ItemStartedPayload> & { method: "item/started" })
+  | (JsonRpcNotification<AgentMessageDeltaPayload> & { method: "item/agentMessage/delta" })
   | (JsonRpcNotification<ItemCompletedPayload> & { method: "item/completed" })
   | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn/completed" })
   | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" });
