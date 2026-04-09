@@ -73,7 +73,7 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr }: PrS
 
   return (
     <div ref={containerRef} className="relative inline-flex">
-      <div className="inline-flex rounded overflow-hidden">
+      <div className="inline-flex rounded">
         {/* Primary action */}
         <button
           className={`inline-flex items-center gap-1.5 px-2 h-6 text-xs bg-muted/10 hover:bg-muted/20 transition-colors ${stateColour}`}

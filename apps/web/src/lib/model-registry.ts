@@ -1,6 +1,7 @@
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { ReasoningLevel } from "@mcode/contracts";
 
+/** Represents a model provider and its available models. */
 export interface ModelProvider {
   id: string;
   name: string;

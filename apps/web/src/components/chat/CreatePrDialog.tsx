@@ -162,7 +162,7 @@ export function CreatePrDialog({
   workspaceId,
   branch,
 }: CreatePrDialogProps) {
-  const { branches, loadBranches } = useWorkspaceStore();
+  const { branches, branchesLoading, loadBranches } = useWorkspaceStore();
 
   const [state, setState] = useState<DialogState>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -198,10 +198,18 @@ export function CreatePrDialog({
     defaultBase?.name ?? "main",
   );
 
-  // Keep baseBranch in sync when branches load and current value becomes unavailable.
+  // Keep baseBranch in sync when branches load.
+  // On first load: initialize to the repo default (main/master/first).
+  // On subsequent loads: reset to default if the current value is no longer available.
   useEffect(() => {
-    if (baseBranches.length > 0 && !baseBranches.some((b) => b.name === baseBranch)) {
-      setBaseBranch(baseBranches[0].name);
+    if (baseBranches.length === 0) return;
+    const defaultBranch = (
+      baseBranches.find((b) => b.name === "main") ??
+      baseBranches.find((b) => b.name === "master") ??
+      baseBranches[0]
+    ).name;
+    if (!baseBranches.some((b) => b.name === baseBranch)) {
+      setBaseBranch(defaultBranch);
     }
   }, [baseBranches, baseBranch]);
 
@@ -261,7 +269,7 @@ export function CreatePrDialog({
     }
   }, [workspaceId, threadId, baseBranch]);
 
-  const isDisabled = state === "loading" || state === "submitting";
+  const isDisabled = state === "loading" || state === "submitting" || branchesLoading;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

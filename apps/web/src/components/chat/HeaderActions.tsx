@@ -36,13 +36,15 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   const shouldPollPr = thread.branch !== "main" && thread.branch !== "master";
   const polledPr = useBranchPr(shouldPollPr ? thread.branch : null, cwd);
 
-  // Immediately after PR creation, thread.pr_number is written to the store by
-  // CreatePrDialog before the next poll cycle. Use the stored number + cached URL
-  // as the source of truth; fall back to the poll result for ongoing status updates.
+  // Prefer the store-backed PR when the thread has a PR number and a cached URL
+  // (written by recordPrCreated immediately after creation, before the first poll).
+  // Fall back to polledPr for ongoing status updates once polling catches up.
+  // Never return a PR object with an empty URL.
   const cachedPrUrl = useWorkspaceStore((s) => s.prUrlsByThreadId[thread.id]);
-  const pr = polledPr ?? (thread.pr_number != null
-    ? { number: thread.pr_number, url: cachedPrUrl ?? "", state: thread.pr_status ?? "OPEN" }
-    : null);
+  const storePr = thread.pr_number != null && cachedPrUrl
+    ? { number: thread.pr_number, url: cachedPrUrl, state: thread.pr_status ?? "OPEN" }
+    : null;
+  const pr = storePr ?? (polledPr?.url ? polledPr : null);
 
   // Check if the branch has commits ahead of main (disable Create PR when it doesn't)
   const hasCommitsAhead = useHasCommitsAhead(
