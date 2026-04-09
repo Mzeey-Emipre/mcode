@@ -33,7 +33,7 @@ function getServerPaths(): {
   nativeBindingPath?: string;
 } {
   if (app.isPackaged) {
-    const serverBundle = resolve(__dirname, "../../server/server.cjs");
+    const serverBundle = resolve(__dirname, "../server/server.cjs");
     const nativeBindingPath = resolve(
       process.resourcesPath,
       "app.asar.unpacked",
