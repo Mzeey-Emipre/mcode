@@ -68,10 +68,14 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
  */
 export class CodexAppServer extends EventEmitter {
   /** `true` after spawn, `false` after exit or kill. */
-  public isAlive = false;
+  private _isAlive = false;
+  /** Whether the child process is currently alive. */
+  public get isAlive(): boolean { return this._isAlive; }
 
   /** Thread ID assigned after a successful `thread/start` or `thread/resume`. */
-  public threadId: string | null = null;
+  private _threadId: string | null = null;
+  /** Thread ID assigned after a successful `thread/start` or `thread/resume`. */
+  public get threadId(): string | null { return this._threadId; }
 
   /** The CLI path used to spawn the process, for stale-path detection. */
   public readonly cliPath: string;
@@ -113,8 +117,12 @@ export class CodexAppServer extends EventEmitter {
     });
 
     this.child = child;
-    this.isAlive = true;
+    this._isAlive = true;
     this.rpc = new CodexRpcClient(child.stdin!, child.stdout!);
+
+    this.rpc.on("notification", (notification) => {
+      this.emit("notification", notification);
+    });
 
     this.wireStderr();
     this.wireExit();
@@ -125,10 +133,6 @@ export class CodexAppServer extends EventEmitter {
       await this.kill();
       throw err;
     }
-
-    this.rpc.on("notification", (notification) => {
-      this.emit("notification", notification);
-    });
   }
 
   /**
@@ -169,7 +173,7 @@ export class CodexAppServer extends EventEmitter {
       }
     }
 
-    this.isAlive = false;
+    this._isAlive = false;
   }
 
   // ---------------------------------------------------------------------------
@@ -209,7 +213,7 @@ export class CodexAppServer extends EventEmitter {
     const { cliPath } = this.options;
 
     this.child.on("exit", (code, signal) => {
-      this.isAlive = false;
+      this._isAlive = false;
       this.emit("exit", code, signal);
 
       if (!this.killRequested) {
@@ -253,7 +257,7 @@ export class CodexAppServer extends EventEmitter {
           { threadId: resumeThreadId },
           15000,
         );
-        this.threadId = resumeResult.threadId;
+        this._threadId = resumeResult.threadId;
         logger.info("Resumed Codex thread", { threadId: this.threadId });
       } catch (err) {
         const msg = String(err).toLowerCase();
@@ -281,7 +285,7 @@ export class CodexAppServer extends EventEmitter {
         startParams,
         15000,
       );
-      this.threadId = startResult.threadId;
+      this._threadId = startResult.threadId;
       logger.info("Started Codex thread", { threadId: this.threadId });
     }
   }
