@@ -390,7 +390,7 @@ describe("CodexEventMapper", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "error",
-      params: { message: "rate limit exceeded" },
+      params: { error: { message: "rate limit exceeded" } },
     });
 
     expect(events).toEqual([

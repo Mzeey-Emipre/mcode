@@ -1,5 +1,8 @@
 /**
  * JSON-RPC 2.0 protocol types for the `codex app-server` NDJSON interface.
+ *
+ * Source of truth: codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts
+ * in https://github.com/openai/codex
  */
 
 // JSON-RPC base shapes
@@ -54,79 +57,110 @@ export interface ModelListResult { models: Array<{ id: string; name?: string }> 
 /** Result returned by the `account/read` RPC method. */
 export interface AccountReadResult { id?: string; email?: string; name?: string }
 
-// Notification payloads - actual codex app-server >= 0.104.0 protocol
-// Observed notification sequence: turn/started → item/started → item/completed
-//   → account/rateLimits/updated → error (optional) → turn/completed
+// ---------------------------------------------------------------------------
+// Notification payloads
+// Source: codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts
+// ---------------------------------------------------------------------------
+
+// Silently-consumed lifecycle payloads (no data needed)
+/** Payload for notifications silently consumed as lifecycle events. */
+export interface LifecyclePayload { [key: string]: unknown }
+
+// Streaming delta payloads
+
+/** Payload for `item/agentMessage/delta` - streaming assistant text token. */
+export interface AgentMessageDeltaPayload { threadId?: string; turnId?: string; itemId?: string; delta: string }
+/** Payload for `item/commandExecution/outputDelta` - streaming shell output token. */
+export interface CommandExecOutputDeltaPayload { threadId?: string; turnId?: string; itemId?: string; delta: string }
+
+// item/completed payload
 
 /**
- * A content part within a message item (OpenAI Responses API streaming format).
- * Known types: "output_text", "refusal". Future types are handled defensively.
- */
-export interface ItemContentPart { type: string; text?: string }
-
-/**
- * A completed output item from the agent.
- * Known types: "message" (assistant text), "function_call" (tool invocation).
+ * A completed `ThreadItem` from the agent. Discriminated on `type`.
+ *
+ * Known types (from codex-rs/app-server-protocol):
+ *   userMessage, agentMessage, commandExecution, fileChange, mcpToolCall,
+ *   dynamicToolCall, collabAgentToolCall, reasoning, webSearch, plan,
+ *   imageView, imageGeneration, contextCompaction, enteredReviewMode, exitedReviewMode
  */
 export interface CompletedItem {
   type: string;
-  /** Present for `type === "message"` items. */
-  role?: string;
-  /** Content parts for `type === "message"` items. */
-  content?: ItemContentPart[];
-  /** Tool call identifier for `type === "function_call"` items. */
   id?: string;
-  /** Function name for `type === "function_call"` items. */
+
+  // agentMessage
+  role?: string;
+  content?: Array<{ type: string; text?: string }>;
+
+  // commandExecution
+  command?: string;
+  output?: string | null;
+  exitCode?: number | null;
+
+  // fileChange
+  changes?: Array<{ path: string; kind: string }>;
+
+  // mcpToolCall / dynamicToolCall
+  server?: string;
+  tool?: string;
   name?: string;
-  /** JSON-encoded arguments for `type === "function_call"` items. */
-  arguments?: string;
-  /** Stringified output for completed `type === "function_call"` items. */
-  output?: string;
-  /** Allow additional protocol fields without breaking the type. */
+  arguments?: string | Record<string, unknown>;
+  result?: string | null;
+  error?: string | null;
+
+  // function_call (OpenAI Responses API shape, may appear in some versions)
   [key: string]: unknown;
 }
 
+/** Payload for the `item/started` notification. */
+export interface ItemStartedPayload { threadId?: string; turnId?: string; item?: CompletedItem }
 /** Payload for the `item/completed` notification. */
-export interface ItemCompletedPayload { item?: CompletedItem; [key: string]: unknown }
-/** Payload for the `item/started` notification - silently consumed. */
-export interface ItemStartedPayload { [key: string]: unknown }
-/** Payload for the `item/agentMessage/delta` notification - streaming text token from the assistant. */
-export interface AgentMessageDeltaPayload { threadId?: string; turnId?: string; itemId?: string; delta: string }
-/** Payload for the `turn/started` notification - silently consumed. */
-export interface TurnStartedPayload { [key: string]: unknown }
+export interface ItemCompletedPayload { threadId?: string; turnId?: string; item?: CompletedItem }
 
-/** Error detail embedded in a failed turn result. */
+// turn/completed payload
+
+/** Error detail from a failed turn or error notification. */
 export interface TurnErrorInfo { message?: string; codexErrorInfo?: string; additionalDetails?: unknown }
 
 /** The `turn` object nested inside a `turn/completed` payload. */
 export interface TurnResult {
   id?: string;
   items?: unknown[];
-  /** `"completed"` on success, `"failed"` when the turn was rejected by the server. */
-  status?: "completed" | "failed" | string;
+  /** `"completed"` on success, `"failed"` or `"interrupted"` otherwise. */
+  status?: "completed" | "failed" | "interrupted" | "inProgress" | string;
   error?: TurnErrorInfo;
   usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number };
 }
 
 /** Payload for the `turn/completed` notification. */
 export interface TurnCompletedPayload { threadId?: string; turn?: TurnResult; [key: string]: unknown }
-/** Payload for the `error` notification (may precede `turn/completed`). */
-export interface ErrorNotificationPayload { message?: string; code?: string; [key: string]: unknown }
 
 /**
- * Discriminated union of all JSON-RPC notifications from `codex app-server`.
+ * Payload for the `error` notification.
+ * Fired for transient mid-turn errors; `willRetry` indicates the agent will retry.
+ * Terminal failures arrive via `turn/completed` with `turn.status === "failed"`.
+ */
+export interface ErrorNotificationPayload {
+  threadId?: string;
+  turnId?: string;
+  error?: TurnErrorInfo;
+  willRetry?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Discriminated union of all JSON-RPC notifications from `codex app-server`
+ * that reach the mapper (lifecycle notifications are filtered upstream).
  *
- * Observed notification methods (codex app-server >= 0.104.0):
- *   turn/started, item/started, item/completed, account/rateLimits/updated,
- *   error, turn/completed
- *
- * `account/rateLimits/updated` is filtered by `LIFECYCLE_NOTIFICATION_PREFIXES`
- * in `CodexAppServer` and never reaches the mapper.
+ * Full protocol: codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts
+ * Filtered upstream by LIFECYCLE_NOTIFICATION_PREFIXES in CodexAppServer:
+ *   thread/*, account/*, hook/*, item/reasoning/*, item/plan/*, item/fileChange/*,
+ *   rawResponseItem/*, serverRequest/*, turn/diff/*, turn/plan/*
  */
 export type CodexNotification =
-  | (JsonRpcNotification<TurnStartedPayload> & { method: "turn/started" })
+  | (JsonRpcNotification<LifecyclePayload> & { method: "turn/started" })
   | (JsonRpcNotification<ItemStartedPayload> & { method: "item/started" })
   | (JsonRpcNotification<AgentMessageDeltaPayload> & { method: "item/agentMessage/delta" })
+  | (JsonRpcNotification<CommandExecOutputDeltaPayload> & { method: "item/commandExecution/outputDelta" })
   | (JsonRpcNotification<ItemCompletedPayload> & { method: "item/completed" })
   | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn/completed" })
   | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" });

@@ -40,20 +40,31 @@ export interface CodexAppServerOptions {
 }
 
 /**
- * Notification method prefixes that are lifecycle events from the app-server.
- * These are silently consumed at debug level and never forwarded to the turn mapper.
+ * Notification method prefixes that are silently consumed at debug level
+ * and never forwarded to the turn mapper.
  *
- * Observed protocol (codex app-server >= 0.104.0):
- *   turn/started, item/started, item/completed, account/rateLimits/updated,
- *   error, turn/completed
+ * Source: codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts
+ * in https://github.com/openai/codex
  *
- * Prefixes matched here cover lifecycle-only namespaces. `turn/` is intentionally
- * excluded because `turn/completed` must reach the mapper.
+ * Intentionally excluded prefixes that DO reach the mapper:
+ *   `turn/` – excluded because `turn/completed` must reach the mapper
+ *   `item/` – excluded because `item/completed`, `item/agentMessage/delta`,
+ *             and `item/commandExecution/outputDelta` must reach the mapper
+ *   `error` – excluded because it must reach the mapper
  */
 const LIFECYCLE_NOTIFICATION_PREFIXES = [
-  "thread/",
-  "codex/event/",
-  "account/",
+  "thread/",           // thread lifecycle (started, status/changed, archived, name/updated, etc.)
+  "codex/event/",      // legacy codex events
+  "account/",          // account/rateLimits/updated, account/updated, account/login/completed
+  "hook/",             // hook/started, hook/completed
+  "rawResponseItem/",  // rawResponseItem/completed - low-level response items
+  "serverRequest/",    // serverRequest/resolved - approval flow bookkeeping
+  "mcpServer/",        // mcpServer/startupStatus/updated, mcpServer/oauthLogin/completed
+  "fuzzyFileSearch/",  // fuzzyFileSearch/sessionUpdated, fuzzyFileSearch/sessionCompleted
+  "windows",           // windows/worldWritableWarning, windowsSandbox/setupCompleted
+  "app/",              // app/list/updated (EXPERIMENTAL)
+  "fs/",               // fs/changed
+  "thread/realtime/",  // realtime audio/SDP (EXPERIMENTAL)
 ] as const;
 
 /** Benign substrings found in stderr that are safe to ignore at debug level. */
