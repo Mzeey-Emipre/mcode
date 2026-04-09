@@ -1406,12 +1406,27 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (method === "session.error") {
-      const errorMsg = (params.error as string) || "Unknown error";
+      const errorMsg = typeof params.error === "string" ? params.error : String(params.error ?? "Unknown error");
+      const errorMessage: Message = {
+        id: crypto.randomUUID(),
+        thread_id: threadId,
+        role: "system",
+        content: JSON.stringify({ __type: "agent_error", message: errorMsg }),
+        tool_calls: null,
+        files_changed: null,
+        cost_usd: null,
+        tokens_used: null,
+        timestamp: new Date().toISOString(),
+        sequence: get().messages.length + 1,
+        attachments: null,
+      };
       set((state) => {
         const nextRunning = new Set(state.runningThreadIds);
         nextRunning.delete(threadId);
         const nextStreaming = { ...state.streamingByThread };
         delete nextStreaming[threadId];
+        const nextPreview = { ...state.streamingPreviewByThread };
+        delete nextPreview[threadId];
         const nextStartTimes = { ...state.agentStartTimes };
         delete nextStartTimes[threadId];
         const nextToolCalls = { ...state.toolCallsByThread };
@@ -1420,14 +1435,22 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         delete nextSubagents[threadId];
         const nextCompacting = { ...state.isCompactingByThread };
         delete nextCompacting[threadId];
-        return {
+        const base = {
           errorByThread: { ...state.errorByThread, [threadId]: errorMsg },
           runningThreadIds: nextRunning,
           streamingByThread: nextStreaming,
+          streamingPreviewByThread: nextPreview,
           agentStartTimes: nextStartTimes,
           toolCallsByThread: nextToolCalls,
           activeSubagentsByThread: nextSubagents,
           isCompactingByThread: nextCompacting,
+        };
+        if (state.currentThreadId !== threadId) return base;
+        const { messages: capped, evicted } = capMessages([...state.messages, errorMessage]);
+        return {
+          ...base,
+          messages: capped,
+          ...(evicted && state.currentThreadId ? { hasMoreMessages: { ...state.hasMoreMessages, [state.currentThreadId]: true } } : {}),
         };
       });
 

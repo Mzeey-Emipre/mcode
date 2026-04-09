@@ -144,13 +144,20 @@ interface ServerLock {
  * Check if an existing server is running by reading the lock file and
  * probing its health endpoint. Returns the lock info if healthy, null otherwise.
  */
-async function tryExistingServer(): Promise<ServerLock | null> {
+async function tryExistingServer(portMin: number, portMax: number): Promise<ServerLock | null> {
   try {
     const raw = readFileSync(lockFilePath(), "utf-8");
     const lock: ServerLock = JSON.parse(raw);
 
     // Validate the lock file has the expected shape
     if (typeof lock.port !== "number" || typeof lock.authToken !== "string" || !lock.port) {
+      return null;
+    }
+
+    // Only reuse a server whose port falls within this mode's range.
+    // Prevents dev instances from hijacking a packaged-app server (or vice versa).
+    if (lock.port < portMin || lock.port >= portMax) {
+      console.log(`[server-manager] Ignored existing server on port ${lock.port} (outside ${portMin}-${portMax})`);
       return null;
     }
 
@@ -196,6 +203,11 @@ export class ServerManager {
     return this._authToken;
   }
 
+  /** Whether the server was reused from another Electron instance (no owned process). */
+  get reusedExisting(): boolean {
+    return this._reusedExisting;
+  }
+
   /**
    * Start the server. If another instance is already running (lock file),
    * reuses it. Otherwise spawns a new utility process.
@@ -205,7 +217,7 @@ export class ServerManager {
     // Check for an existing server before spawning a new one.
     // Avoids SQLite lock contention when multiple Electron instances
     // (dev, source-prod, packaged) share the same data directory.
-    const existing = await tryExistingServer();
+    const existing = await tryExistingServer(PORT_MIN, PORT_MAX);
     if (existing) {
       this._port = existing.port;
       this._authToken = existing.authToken;

@@ -9,6 +9,7 @@ import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
 import { isAbsolute } from "path";
 import { logger } from "@mcode/shared";
+import { AgentEventType } from "@mcode/contracts";
 import type {
   Thread,
   AttachmentMeta,
@@ -710,7 +711,7 @@ export class AgentService {
         // Buffer questions until the session closes (`ended`) so the client
         // cannot submit answers against a still-active session, which would
         // risk overlapping sends on the same thread.
-        if (event.type === "textDelta") {
+        if (event.type === AgentEventType.TextDelta) {
           const parser = this.planParsers.get(event.threadId);
           if (parser) {
             const questions = parser.feed(event.delta);
@@ -721,7 +722,7 @@ export class AgentService {
           }
         }
 
-        if (event.type === "message") {
+        if (event.type === AgentEventType.Message) {
           try {
             const { messages: existing } = this.messageRepo.listByThread(event.threadId, 1);
             const nextSeq =
@@ -746,15 +747,15 @@ export class AgentService {
           }
         }
 
-        if (event.type === "toolUse") {
+        if (event.type === AgentEventType.ToolUse) {
           this.bufferToolCall(event.threadId, event);
         }
 
-        if (event.type === "toolResult") {
+        if (event.type === AgentEventType.ToolResult) {
           this.updateBufferedToolCallOutput(event.threadId, event.toolCallId, event.output, event.isError);
         }
 
-        if (event.type === "turnComplete") {
+        if (event.type === AgentEventType.TurnComplete) {
           this.persistTurn(event.threadId).catch((err) => {
             logger.error("persistTurn failed on turnComplete", {
               threadId: event.threadId,
@@ -788,7 +789,7 @@ export class AgentService {
           }
         }
 
-        if (event.type === "error") {
+        if (event.type === AgentEventType.Error) {
           // Only persist the turn when an assistant message was actually created.
           // For pre-turn failures (e.g. CLI not found) the last message is the
           // user message; calling persistTurn would broadcast turn.persisted with
@@ -809,7 +810,7 @@ export class AgentService {
           this.pendingPlanQuestions.delete(event.threadId);
         }
 
-        if (event.type === "compacting" && event.active) {
+        if (event.type === AgentEventType.Compacting && event.active) {
           // Compaction is consuming the entire conversation as input.
           // Zero the baseline so no tool-result estimate fires during compaction,
           // and mark in-progress so turnComplete does not persist the compaction
@@ -818,7 +819,7 @@ export class AgentService {
           this.compactionInProgressByThread.add(event.threadId);
         }
 
-        if (event.type === "compacting" && !event.active) {
+        if (event.type === AgentEventType.Compacting && !event.active) {
           this.compactionInProgressByThread.delete(event.threadId);
           // Compaction finished — persist a system divider message
           try {
@@ -841,7 +842,7 @@ export class AgentService {
           }
         }
 
-        if (event.type === "compactSummary") {
+        if (event.type === AgentEventType.CompactSummary) {
           try {
             this.threadRepo.updateCompactSummary(event.threadId, event.summary);
             logger.info("Persisted compaction summary", { threadId: event.threadId, summaryLength: event.summary.length });
@@ -855,7 +856,7 @@ export class AgentService {
 
         // Persist SDK session ID so the thread can be resumed after a
         // server restart. The Codex provider emits this on thread.started.
-        if (event.type === "system") {
+        if (event.type === AgentEventType.System) {
           const SDK_PREFIX = "sdk_session_id:";
           if (event.subtype.startsWith(SDK_PREFIX)) {
             const sdkId = event.subtype.slice(SDK_PREFIX.length);
@@ -871,7 +872,7 @@ export class AgentService {
           }
         }
 
-        if (event.type === "ended") {
+        if (event.type === AgentEventType.Ended) {
           this.trackSessionEnded(event.threadId);
           this.planParsers.delete(event.threadId);
           // Broadcast buffered plan questions now that the session is fully closed,

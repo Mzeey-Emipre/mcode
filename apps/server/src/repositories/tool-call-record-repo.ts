@@ -63,7 +63,7 @@ export class ToolCallRecordRepo {
 
   constructor(@inject("Database") private readonly db: Database.Database) {
     this.stmtInsert = db.prepare(
-      "INSERT INTO tool_call_records (id, message_id, parent_tool_call_id, tool_name, input_summary, output_summary, status, started_at, completed_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO tool_call_records (id, message_id, parent_tool_call_id, tool_name, input_summary, output_summary, status, started_at, completed_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     this.stmtListByMessage = db.prepare(
       `SELECT ${TOOL_CALL_RECORD_COLUMNS} FROM tool_call_records WHERE message_id = ? ORDER BY sort_order ASC`,

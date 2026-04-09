@@ -1,21 +1,18 @@
 /**
- * Codex Agent SDK provider adapter.
- * Implements IAgentProvider using @openai/codex-sdk with streaming event mapping.
+ * Codex provider adapter using the persistent `codex app-server` subprocess.
  *
- * SDK event model:
- *   thread.started -> turn.started -> item.started/updated/completed -> turn.completed
- * Item types: agent_message, command_execution, file_change, mcp_tool_call, reasoning,
- *   web_search, todo_list, error
+ * Each session owns one `CodexAppServer` process that stays alive between turns.
+ * JSON-RPC 2.0 notifications are translated to `AgentEvent` objects by
+ * `CodexEventMapper` and forwarded to subscribers via EventEmitter.
+ *
+ * Turn lifecycle:
+ *   sendMessage → server.sendTurn → notifications stream in → turn.completed/failed
  */
 
-import { execFile } from "child_process";
-import { promisify } from "util";
 import { injectable, inject } from "tsyringe";
-import { SettingsService } from "../../services/settings-service";
 import { EventEmitter } from "events";
-import { Codex } from "@openai/codex-sdk";
-import type { Thread as CodexThread, ModelReasoningEffort, Input as CodexInput, UserInput as CodexUserInput } from "@openai/codex-sdk";
 import { logger } from "@mcode/shared";
+import { SettingsService } from "../../services/settings-service.js";
 import type {
   IAgentProvider,
   ProviderId,
@@ -23,36 +20,39 @@ import type {
   AgentEvent,
   AttachmentMeta,
 } from "@mcode/contracts";
+import { AgentEventType } from "@mcode/contracts";
+import { checkCodexVersion, meetsMinVersion } from "./codex-version.js";
+import { CodexAppServer } from "./codex-app-server.js";
+import { CodexEventMapper } from "./codex-event-mapper.js";
+import type { TurnInputPart, CodexNotification } from "./codex-types.js";
 
-/** Module-level promisified execFile for CLI availability probing. */
-const execFileAsync = promisify(execFile);
+/** Idle TTL before a session is evicted (10 minutes). */
+const IDLE_TTL_MS = 10 * 60 * 1000;
+/** How often to check for idle sessions (1 minute). */
+const EVICTION_INTERVAL_MS = 60 * 1000;
+/** Maximum time to wait for a turn to complete before timing out (10 minutes). */
+const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 
-/**
- * Map mcode ReasoningLevel to the Codex SDK's ModelReasoningEffort.
- * - "max" (Claude's top tier) maps to "xhigh" for Codex.
- * - "xhigh" passes through directly.
- * - "low" / "medium" / "high" map 1:1.
- */
-function toCodexReasoningEffort(
-  level: ReasoningLevel | undefined,
-): ModelReasoningEffort | undefined {
-  if (!level) return undefined;
-  if (level === "max" || level === "xhigh") return "xhigh";
-  return level as ModelReasoningEffort;
+interface SessionEntry {
+  server: CodexAppServer;
+  mapper: CodexEventMapper;
+  lastUsedAt: number;
+  /** Sandbox mode used when this session was started; used to detect permission mode changes. */
+  sandboxMode: string;
 }
 
 /**
- * Build a Codex SDK `Input` from a message string and optional attachments.
- * Images are passed as `local_image` entries referencing the persisted file path on disk.
- * Non-image attachments are included as a sanitized text note (name and MIME type only)
- * without exposing local filesystem paths.
+ * Builds the Codex turn input from a message string and optional attachments.
+ * Images become `local_image` parts; non-image files become sanitised text notes
+ * that omit internal filesystem paths to prevent prompt injection.
  */
-function buildCodexInput(message: string, attachments?: AttachmentMeta[]): CodexInput {
-  if (!attachments || attachments.length === 0) return message;
+function buildCodexInput(
+  message: string,
+  attachments?: AttachmentMeta[],
+): TurnInputPart[] {
+  const inputs: TurnInputPart[] = [];
 
-  const inputs: CodexUserInput[] = [];
-
-  for (const att of attachments) {
+  for (const att of attachments ?? []) {
     if (att.mimeType.startsWith("image/")) {
       inputs.push({ type: "local_image", path: att.sourcePath });
     } else {
@@ -64,33 +64,26 @@ function buildCodexInput(message: string, attachments?: AttachmentMeta[]): Codex
     }
   }
 
-  if (message.trim().length > 0) {
-    inputs.push({ type: "text", text: message });
-  }
-
-  return inputs.length > 0 ? inputs : message;
+  inputs.push({ type: "text", text: message });
+  return inputs;
 }
 
-/** Idle TTL before a session is evicted (10 minutes). */
-const IDLE_TTL_MS = 10 * 60 * 1000;
-/** How often to check for idle sessions (1 minute). */
-const EVICTION_INTERVAL_MS = 60 * 1000;
-
-interface SessionEntry {
-  thread: CodexThread;
-  abortController: AbortController;
-  lastUsedAt: number;
+/** Maps mcode ReasoningLevel to the codex app-server `effort` field value. */
+function toCodexEffort(level?: ReasoningLevel): string | undefined {
+  if (!level) return undefined;
+  // "max" is Claude-specific; map to "high" for codex.
+  if (level === "max") return "high";
+  // "low", "medium", "high", "xhigh" are all valid codex effort levels.
+  return level;
 }
 
-/** Codex Agent SDK adapter implementing IAgentProvider with streaming events. */
+/** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
 @injectable()
 export class CodexProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "codex";
   /** Codex CLI is an agentic tool with no one-shot text completion mode. */
   readonly supportsCompletion = false;
 
-  private codex: Codex | null = null;
-  private lastCliPath: string | undefined;
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
@@ -102,50 +95,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
   }
 
   /**
-   * Lazily create the Codex SDK client. Deferred to avoid crashing the server
-   * at startup when the platform-specific CLI binaries are not installed.
+   * Starts or continues a session by sending a message to the Codex app-server.
+   * For new sessions, spawns a subprocess and runs the JSON-RPC handshake first.
+   * The method returns immediately; events stream via the `event` EventEmitter channel.
    */
-  private getCodex(): Codex {
-    if (!this.codex) {
-      this.codex = new Codex();
-    }
-    return this.codex;
-  }
-
-  /**
-   * Check whether the Codex CLI binary is reachable.
-   * Attempts to spawn the binary with --version. Returns an error message
-   * if unavailable, or null if the CLI is found.
-   */
-  private async checkCliAvailable(): Promise<string | null> {
-    const settings = await this.settingsService.get();
-    const cliPath = settings.provider.cli.codex || "codex";
-
-    try {
-      // shell: true is required on Windows to resolve .cmd shims from npm global installs
-      await execFileAsync(cliPath, ["--version"], { timeout: 5000, shell: true });
-      return null;
-    } catch {
-      if (cliPath === "codex") {
-        return "Codex CLI not found. Install it with: npm install -g @openai/codex\n\nOr set a custom path in Settings > Provider > Codex CLI path.";
-      }
-      return `Codex CLI not found at "${cliPath}". Check the path in Settings > Provider > Codex CLI path.`;
-    }
-  }
-
-  /**
-   * Rebuild the Codex SDK client when the CLI path setting changes.
-   * Only recreates the client if the path actually differs.
-   */
-  private async refreshClient(): Promise<void> {
-    const settings = await this.settingsService.get();
-    const cliPath = settings.provider.cli.codex || undefined;
-    if (cliPath === this.lastCliPath) return;
-    this.lastCliPath = cliPath;
-    this.codex = new Codex(cliPath ? { codexPathOverride: cliPath } : undefined);
-  }
-
-  /** Start or continue a session by sending a message via the Codex SDK. */
   async sendMessage(params: {
     sessionId: string;
     message: string;
@@ -157,32 +110,16 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
   }): Promise<void> {
-    try {
-      await this.doSendMessage(params);
-    } catch (e: unknown) {
-      logger.error("CodexProvider sendMessage error", {
-        sessionId: params.sessionId,
-        error: String(e),
-      });
-      throw e;
-    }
-  }
+    const settings = await this.settingsService.get();
+    const cliPath = settings.provider.cli.codex || "codex";
 
-  private async doSendMessage(params: {
-    sessionId: string;
-    message: string;
-    cwd: string;
-    model: string;
-    fallbackModel?: string;
-    resume: boolean;
-    permissionMode: string;
-    attachments?: AttachmentMeta[];
-    reasoningLevel?: ReasoningLevel;
-  }): Promise<void> {
-    await this.refreshClient();
+    const {
+      sessionId, message, cwd, model, resume, permissionMode,
+      reasoningLevel, attachments,
+    } = params;
 
-    const { sessionId, message, cwd, model, resume, permissionMode, reasoningLevel, attachments } = params;
     const input = buildCodexInput(message, attachments);
+    const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
 
     if (!this.evictionTimer) {
       this.evictionTimer = setInterval(
@@ -191,345 +128,231 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       );
     }
 
-    const threadId = sessionId.startsWith("mcode-")
-      ? sessionId.slice(6)
-      : sessionId;
-
+    const sandbox = permissionMode === "full" ? "danger-full-access" : "workspace-write";
+    const approvalPolicy = permissionMode === "full" ? "never" : "on-request";
     const existing = this.sessions.get(sessionId);
 
+    const turnOptions = {
+      model: model || undefined,
+      effort: toCodexEffort(reasoningLevel),
+    };
+
     if (existing) {
-      existing.lastUsedAt = Date.now();
-      // Abort any in-flight turn before starting a new one, so the old
-      // signal is not orphaned when we replace the controller.
-      existing.abortController.abort();
-      // Replace abort controller for the new turn
-      existing.abortController = new AbortController();
-      // Fire-and-forget: start the turn in the background so the RPC
-      // response is not blocked. Matches the Claude provider pattern where
-      // sendMessage returns immediately and events stream via push.
-      void this.runTurn(sessionId, threadId, existing.thread, input, existing.abortController.signal);
+      if (existing.sandboxMode === sandbox) {
+        // Same permission mode - reuse the running session
+        existing.lastUsedAt = Date.now();
+        existing.mapper.reset();
+        void this.runTurn(sessionId, threadId, existing.server, input, turnOptions);
+        return;
+      }
+      // Permission mode changed - kill the old session so we can start fresh with the correct sandbox
+      logger.info("Codex session restarted due to permission mode change", {
+        sessionId,
+        from: existing.sandboxMode,
+        to: sandbox,
+      });
+      this.sessions.delete(sessionId);
+      // Clear the stored SDK thread ID so the new session starts fresh rather than
+      // resuming the old thread (which would inherit the old sandbox mode).
+      this.sdkSessionIds.delete(sessionId);
+      existing.server.kill().catch((err: unknown) => {
+        logger.warn("Codex session kill on permission change failed", { error: String(err) });
+      });
+    }
+
+    // Version check only when starting a new session
+    const versionResult = checkCodexVersion(cliPath);
+    if (!versionResult.ok) {
+      this.emit("event", { type: AgentEventType.Error, threadId, error: versionResult.error } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       return;
     }
 
-    // Probe CLI availability only when starting a new session
-    const cliError = await this.checkCliAvailable();
-    if (cliError) {
-      this.emit("event", {
-        type: "error",
-        threadId,
-        error: cliError,
-      } satisfies AgentEvent);
-      this.emit("event", {
-        type: "ended",
-        threadId,
-      } satisfies AgentEvent);
+    if (!meetsMinVersion(versionResult.version, "0.37.0")) {
+      const errorMsg = `Codex CLI version ${versionResult.version} is not supported. Minimum required: 0.37.0. Update with: npm install -g @openai/codex`;
+      this.emit("event", { type: AgentEventType.Error, threadId, error: errorMsg } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       return;
     }
 
-    // Map mcode permission mode to Codex sandbox mode
-    const sandboxMode = permissionMode === "full"
-      ? "danger-full-access" as const
-      : "workspace-write" as const;
+    const resumeId = this.sdkSessionIds.get(sessionId);
+    const attemptResume = !!(resume && resumeId);
 
-    const modelReasoningEffort = toCodexReasoningEffort(reasoningLevel);
-    const threadOptions = {
+    const server = new CodexAppServer({
+      cliPath,
       workingDirectory: cwd,
       model: model || undefined,
-      sandboxMode,
-      ...(modelReasoningEffort && { modelReasoningEffort }),
-    };
+      sandbox,
+      approvalPolicy,
+      resumeThreadId: attemptResume ? resumeId : undefined,
+    });
 
-    let codexThread: CodexThread;
-    const resumeId = this.sdkSessionIds.get(sessionId);
+    const mapper = new CodexEventMapper(threadId);
 
-    if (resume && resumeId) {
-      try {
-        codexThread = this.getCodex().resumeThread(resumeId, threadOptions);
-        logger.info("Resumed Codex thread", { sessionId, resumeId });
-      } catch (err) {
-        logger.warn("Codex resume failed, starting fresh thread", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        this.sdkSessionIds.delete(sessionId);
-        codexThread = this.getCodex().startThread(threadOptions);
+    server.on("notification", (notification) => {
+      const events = mapper.mapNotification(notification as CodexNotification);
+      for (const event of events) {
+        this.emit("event", event);
       }
-    } else {
-      codexThread = this.getCodex().startThread(threadOptions);
+    });
+
+    // When the codex thread ID rotates mid-session (context compaction, etc.),
+    // update the in-memory map and persist the new ID so future app restarts
+    // resume the correct thread instead of a stale one.
+    server.on("threadIdChanged", (newThreadId: string) => {
+      this.sdkSessionIds.set(sessionId, newThreadId);
+      this.emit("event", {
+        type: AgentEventType.System,
+        threadId,
+        subtype: "sdk_session_id:" + newThreadId,
+      } satisfies AgentEvent);
+    });
+
+    server.on("fatal", (error: string) => {
+      logger.error("CodexAppServer fatal", { sessionId, error });
+      this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      this.sessions.delete(sessionId);
+    });
+
+    server.on("exit", () => {
+      if (!server.isAlive) {
+        this.sessions.delete(sessionId);
+      }
+    });
+
+    try {
+      await server.start();
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      logger.error("CodexAppServer start failed", { sessionId, error: errorMessage });
+      this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      return;
     }
 
-    const abortController = new AbortController();
-    const entry: SessionEntry = {
-      thread: codexThread,
-      abortController,
-      lastUsedAt: Date.now(),
-    };
-    this.sessions.set(sessionId, entry);
+    if (server.resumeFailed) {
+      logger.warn("Codex session context lost; resume failed, started fresh thread", { sessionId });
+      this.emit("event", {
+        type: AgentEventType.System,
+        threadId,
+        subtype: "context_lost",
+      } satisfies AgentEvent);
+    }
 
-    // Fire-and-forget: start the turn in the background so the RPC
-    // response (and createAndSend's Thread return) is not blocked.
-    // Events stream to the frontend via push channels in real time.
-    void this.runTurn(sessionId, threadId, codexThread, input, abortController.signal);
+    if (server.threadId) {
+      this.sdkSessionIds.set(sessionId, server.threadId);
+      this.emit("event", {
+        type: AgentEventType.System,
+        threadId,
+        subtype: "sdk_session_id:" + server.threadId,
+      } satisfies AgentEvent);
+    }
+
+    this.sessions.set(sessionId, { server, mapper, lastUsedAt: Date.now(), sandboxMode: sandbox });
+    void this.runTurn(sessionId, threadId, server, input, turnOptions);
   }
 
-  /** Execute a single turn with streaming, mapping Codex events to AgentEvents. */
+  /**
+   * Sends a single turn to the app-server and waits for `turn/completed`
+   * to arrive as a notification.
+   * Emits `ended` when the turn finishes, or skips it if the server died
+   * (the `fatal` handler already emitted `ended` in that case).
+   */
   private async runTurn(
     sessionId: string,
     threadId: string,
-    codexThread: CodexThread,
-    input: CodexInput,
-    signal: AbortSignal,
+    server: CodexAppServer,
+    input: string | TurnInputPart[],
+    turnOptions?: { model?: string; effort?: string },
   ): Promise<void> {
-    let lastAssistantText = "";
+    let serverDied = false;
+    let endedEmitted = false;
 
     try {
-      const { events } = await codexThread.runStreamed(input, { signal });
-
-      for await (const event of events) {
-        const entry = this.sessions.get(sessionId);
-        if (entry) entry.lastUsedAt = Date.now();
-
-        switch (event.type) {
-          case "thread.started": {
-            // Capture the SDK thread ID for resume
-            const sdkThreadId = codexThread.id;
-            if (sdkThreadId && !this.sdkSessionIds.has(sessionId)) {
-              this.sdkSessionIds.set(sessionId, sdkThreadId);
-              logger.info("Captured Codex thread ID", { sessionId, sdkThreadId });
-              this.emit("event", {
-                type: "system",
-                threadId,
-                subtype: "sdk_session_id:" + sdkThreadId,
-              } satisfies AgentEvent);
-            }
-            break;
+      // Register all listeners BEFORE sendTurn so a turn/completed notification
+      // that arrives during the async sendTurn await is never missed.
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(turnTimer);
+          server.removeListener("notification", onNotification);
+          server.removeListener("fatal", onFatal);
+        };
+        const onNotification = (notification: unknown) => {
+          const n = notification as { method?: string };
+          if (n.method === "turn/completed") {
+            cleanup();
+            resolve();
           }
+        };
+        const onFatal = () => {
+          cleanup();
+          serverDied = true;
+          reject(new Error("Codex app-server died during turn"));
+        };
+        const turnTimer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`Codex turn timed out after ${TURN_TIMEOUT_MS / 1000}s`));
+        }, TURN_TIMEOUT_MS);
 
-          case "item.completed": {
-            const item = event.item;
-            const itemType = item.type;
+        server.on("notification", onNotification);
+        server.once("fatal", onFatal);
 
-            if (itemType === "agent_message") {
-              const text = (item as { text?: string }).text ?? "";
-              if (text) {
-                lastAssistantText = text;
-              }
-            } else if (itemType === "command_execution") {
-              const cmd = item as {
-                id: string;
-                command?: string;
-                aggregated_output?: string;
-                exit_code?: number;
-              };
-              const toolCallId = cmd.id;
-
-              this.emit("event", {
-                type: "toolUse",
-                threadId,
-                toolCallId,
-                toolName: "command_execution",
-                toolInput: { command: cmd.command ?? "" },
-              } satisfies AgentEvent);
-
-              this.emit("event", {
-                type: "toolResult",
-                threadId,
-                toolCallId,
-                output: cmd.aggregated_output ?? "",
-                isError: cmd.exit_code != null && cmd.exit_code !== 0,
-              } satisfies AgentEvent);
-            } else if (itemType === "file_change") {
-              const fc = item as {
-                id: string;
-                changes?: Array<{ path?: string; kind?: string }>;
-              };
-              const toolCallId = fc.id;
-              const paths = (fc.changes ?? []).map((c) => c.path ?? "").join(", ");
-
-              this.emit("event", {
-                type: "toolUse",
-                threadId,
-                toolCallId,
-                toolName: "file_change",
-                toolInput: { files: paths },
-              } satisfies AgentEvent);
-
-              this.emit("event", {
-                type: "toolResult",
-                threadId,
-                toolCallId,
-                output: paths,
-                isError: false,
-              } satisfies AgentEvent);
-            } else if (itemType === "mcp_tool_call") {
-              const mcp = item as {
-                id: string;
-                server?: string;
-                tool?: string;
-                arguments?: Record<string, unknown>;
-                result?: string;
-                error?: string;
-              };
-              const toolCallId = mcp.id;
-
-              this.emit("event", {
-                type: "toolUse",
-                threadId,
-                toolCallId,
-                toolName: `mcp:${mcp.server ?? "unknown"}/${mcp.tool ?? "unknown"}`,
-                toolInput: mcp.arguments ?? {},
-              } satisfies AgentEvent);
-
-              this.emit("event", {
-                type: "toolResult",
-                threadId,
-                toolCallId,
-                output: mcp.error ?? mcp.result ?? "",
-                isError: !!mcp.error,
-              } satisfies AgentEvent);
-            }
-            // reasoning, web_search, todo_list items are silently consumed
-            break;
-          }
-
-          case "item.started":
-          case "item.updated": {
-            // Emit text deltas for incremental agent_message content
-            const updatedItem = event.item;
-            if (updatedItem.type === "agent_message") {
-              const text = (updatedItem as { text?: string }).text ?? "";
-              if (text && text !== lastAssistantText && text.startsWith(lastAssistantText)) {
-                const delta = text.slice(lastAssistantText.length);
-                if (delta) {
-                  lastAssistantText = text;
-                  this.emit("event", {
-                    type: "textDelta",
-                    threadId,
-                    delta,
-                  } satisfies AgentEvent);
-                }
-              }
-            }
-            break;
-          }
-
-          case "turn.completed": {
-            // Emit the full message
-            if (lastAssistantText) {
-              this.emit("event", {
-                type: "message",
-                threadId,
-                content: lastAssistantText,
-                tokens: null,
-              } satisfies AgentEvent);
-            }
-
-            const usage = event.usage as {
-              input_tokens?: number;
-              cached_input_tokens?: number;
-              output_tokens?: number;
-            } | undefined;
-
-            const totalInputTokens =
-              (usage?.input_tokens ?? 0) +
-              (usage?.cached_input_tokens ?? 0);
-
-            // Codex usage is per-turn (not accumulated like Claude's result.usage),
-            // so totalProcessedTokens equals the sum of input + output for this turn.
-            const totalProcessedTokens =
-              totalInputTokens + (usage?.output_tokens ?? 0);
-
-            this.emit("event", {
-              type: "turnComplete",
-              threadId,
-              reason: "end_turn",
-              costUsd: null,
-              tokensIn: totalInputTokens,
-              tokensOut: usage?.output_tokens ?? 0,
-              contextWindow: undefined,
-              totalProcessedTokens,
-            } satisfies AgentEvent);
-
-            lastAssistantText = "";
-            break;
-          }
-
-          case "turn.failed": {
-            const err = event.error as { message?: string } | undefined;
-            const errorMsg = err?.message ?? "Codex turn failed";
-            this.emit("event", {
-              type: "error",
-              threadId,
-              error: errorMsg,
-            } satisfies AgentEvent);
-            break;
-          }
-
-          case "error": {
-            const msg = (event as { message?: string }).message ?? "Codex stream error";
-            this.emit("event", {
-              type: "error",
-              threadId,
-              error: msg,
-            } satisfies AgentEvent);
-            break;
-          }
-        }
-      }
+        // Send the turn after listeners are wired.
+        server.sendTurn(input, turnOptions).catch((err) => {
+          cleanup();
+          reject(err);
+        });
+      });
     } catch (e: unknown) {
-      if ((e as { name?: string }).name === "AbortError") {
-        logger.info("Codex turn aborted", { sessionId });
-      } else {
+      if (!serverDied) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        logger.error("Codex stream error", { sessionId, error: errorMessage });
-        this.emit("event", {
-          type: "error",
-          threadId,
-          error: errorMessage,
-        } satisfies AgentEvent);
+        logger.error("Codex turn failed", { sessionId, error: errorMessage });
+        this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
       }
     } finally {
-      this.emit("event", {
-        type: "ended",
-        threadId,
-      } satisfies AgentEvent);
+      // Suppress ended if the fatal handler already emitted it
+      if (!serverDied && !endedEmitted) {
+        endedEmitted = true;
+        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      }
     }
   }
 
-  /** Evict sessions that have been idle longer than IDLE_TTL_MS. */
+  /** Evicts sessions that have been idle longer than IDLE_TTL_MS. */
   private evictIdleSessions(): void {
     const now = Date.now();
     for (const [sessionId, entry] of this.sessions) {
       if (now - entry.lastUsedAt > IDLE_TTL_MS) {
-        logger.info("Evicting idle Codex session", { sessionId });
-        entry.abortController.abort();
+        logger.info("Evicted idle Codex session", { sessionId });
+        void entry.server.kill();
         this.sessions.delete(sessionId);
       }
     }
   }
 
-  /** Pre-load an SDK session ID mapping (e.g. from the database on startup). */
+  /** Pre-loads an SDK session ID mapping (e.g. from the database on startup). */
   setSdkSessionId(sessionId: string, sdkSessionId: string): void {
     this.sdkSessionIds.set(sessionId, sdkSessionId);
   }
 
-  /** Abort a running session via AbortSignal. */
+  /** Kills a running session's subprocess immediately. */
   stopSession(sessionId: string): void {
     const entry = this.sessions.get(sessionId);
     if (entry) {
-      entry.abortController.abort();
+      void entry.server.kill();
       this.sessions.delete(sessionId);
     }
   }
 
-  /** Tear down all sessions and release resources. */
+  /** Tears down all sessions, clears state, and stops the eviction timer. */
   shutdown(): void {
     if (this.evictionTimer) {
       clearInterval(this.evictionTimer);
       this.evictionTimer = null;
     }
     for (const [, entry] of this.sessions) {
-      entry.abortController.abort();
+      void entry.server.kill();
     }
     this.sessions.clear();
     this.sdkSessionIds.clear();

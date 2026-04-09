@@ -10,6 +10,7 @@ import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { Query, SDKUserMessage, PostCompactHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
+import { AgentEventType } from "@mcode/contracts";
 import type {
   IAgentProvider,
   ProviderId,
@@ -383,7 +384,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             // Derive threadId the same way startStreamLoop does.
             const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
             this.emit("event", {
-              type: "compactSummary",
+              type: AgentEventType.CompactSummary,
               threadId: tid,
               summary: compact_summary,
             } satisfies AgentEvent);
@@ -518,7 +519,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               sdkSessionId: sdkSid,
             });
             this.emit("event", {
-              type: "system",
+              type: AgentEventType.System,
               threadId,
               subtype: "sdk_session_id:" + sdkSid,
             } satisfies AgentEvent);
@@ -543,7 +544,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               );
               this.sdkSessionIds.delete(sessionId);
               this.emit("event", {
-                type: "system",
+                type: AgentEventType.System,
                 threadId,
                 subtype: "session_restarted",
               } satisfies AgentEvent);
@@ -573,7 +574,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               for (const block of contentBlocks) {
                 if (block.type === "tool_use") {
                   this.emit("event", {
-                    type: "toolUse",
+                    type: AgentEventType.ToolUse,
                     threadId,
                     toolCallId:
                       (block.id as string) || "",
@@ -593,7 +594,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             case "result": {
               if (lastAssistantText) {
                 this.emit("event", {
-                  type: "message",
+                  type: AgentEventType.Message,
                   threadId,
                   content: lastAssistantText,
                   tokens:
@@ -615,7 +616,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 );
                 if (usedFallback) {
                   this.emit("event", {
-                    type: "modelFallback",
+                    type: AgentEventType.ModelFallback,
                     threadId,
                     requestedModel,
                     actualModel: usedFallback,
@@ -659,7 +660,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               );
 
               this.emit("event", {
-                type: "turnComplete",
+                type: AgentEventType.TurnComplete,
                 threadId,
                 reason:
                   (anyMsg.stop_reason as string) ||
@@ -691,14 +692,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 if (sdkStatus === "compacting" && !sessionCompacting) {
                   sessionCompacting = true;
                   this.emit("event", {
-                    type: "compacting",
+                    type: AgentEventType.Compacting,
                     threadId,
                     active: true,
                   } satisfies AgentEvent);
                 } else if (sdkStatus !== "compacting" && sessionCompacting) {
                   sessionCompacting = false;
                   this.emit("event", {
-                    type: "compacting",
+                    type: AgentEventType.Compacting,
                     threadId,
                     active: false,
                   } satisfies AgentEvent);
@@ -717,7 +718,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 }
               } else {
                 this.emit("event", {
-                  type: "system",
+                  type: AgentEventType.System,
                   threadId,
                   subtype: (anyMsg.subtype as string) || "unknown",
                 } satisfies AgentEvent);
@@ -727,7 +728,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
             case "tool_use": {
               this.emit("event", {
-                type: "toolUse",
+                type: AgentEventType.ToolUse,
                 threadId,
                 toolCallId: (anyMsg.id as string) || "",
                 toolName:
@@ -751,7 +752,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             case "tool_result": {
               const content = anyMsg.content;
               this.emit("event", {
-                type: "toolResult",
+                type: AgentEventType.ToolResult,
                 threadId,
                 toolCallId:
                   (anyMsg.tool_use_id as string) || "",
@@ -790,7 +791,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 // gracefully via their own lastContextWindowByThread map.
                 if (lastStreamInputTokens > 0) {
                   this.emit("event", {
-                    type: "contextEstimate",
+                    type: AgentEventType.ContextEstimate,
                     threadId,
                     tokensIn: lastStreamInputTokens,
                     contextWindow: lastContextWindow,
@@ -804,7 +805,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   streamEvent.delta.text
                 ) {
                   this.emit("event", {
-                    type: "textDelta",
+                    type: AgentEventType.TextDelta,
                     threadId,
                     delta: streamEvent.delta.text,
                   } satisfies AgentEvent);
@@ -814,7 +815,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   streamEvent.delta.partial_json
                 ) {
                   this.emit("event", {
-                    type: "toolInputDelta",
+                    type: AgentEventType.ToolInputDelta,
                     threadId,
                     partialJson: streamEvent.delta.partial_json,
                   } satisfies AgentEvent);
@@ -829,7 +830,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               const elapsedSeconds = (anyMsg.elapsed_time_seconds as number | undefined) ?? 0;
               if (toolUseId) {
                 this.emit("event", {
-                  type: "toolProgress",
+                  type: AgentEventType.ToolProgress,
                   threadId,
                   toolCallId: toolUseId,
                   toolName,
@@ -848,7 +849,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
           error: errorMessage,
         });
         this.emit("event", {
-          type: "error",
+          type: AgentEventType.Error,
           threadId,
           error: errorMessage,
         } satisfies AgentEvent);
@@ -861,7 +862,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         this.emit(`_streamDone:${sessionId}`);
         if (!suppressEnded && !current?.suppressEnded && (!current || current.query === q)) {
           this.emit("event", {
-            type: "ended",
+            type: AgentEventType.Ended,
             threadId,
           } satisfies AgentEvent);
         }

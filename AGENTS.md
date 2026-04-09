@@ -135,6 +135,10 @@ Syntax highlighting runs in `apps/web/src/workers/shiki.worker.ts` via `@shikijs
 - Add the new lang to `optimizeDeps.include` (pre-bundle it at startup), or
 - Keep all shiki packages under `optimizeDeps.exclude` (skip bundling entirely — what shiki's own docs recommend)
 
+## Provider Architecture Convention
+
+See **[docs/guides/provider-architecture.md](docs/guides/provider-architecture.md)**.
+
 ## Key Documentation
 
 - **Architecture:** [ARCHITECTURE.md](ARCHITECTURE.md)
@@ -144,7 +148,7 @@ Syntax highlighting runs in `apps/web/src/workers/shiki.worker.ts` via `@shikijs
 - **tsyringe docs:** https://github.com/microsoft/tsyringe
 - **shadcn/ui docs:** https://ui.shadcn.com/
 - **Tailwind CSS 4:** https://tailwindcss.com/docs
-- **Codex Agent SDK:** https://github.com/openai/codex (repo + SDK source, `@openai/codex-sdk`)
+- **Codex provider docs:** `apps/server/src/providers/codex/` - uses `codex app-server` JSON-RPC 2.0 protocol (see ARCHITECTURE.md)
 
 ## Performance Requirements
 
