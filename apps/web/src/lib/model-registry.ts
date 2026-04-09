@@ -1,10 +1,13 @@
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { ReasoningLevel } from "@mcode/contracts";
 
+/** Represents a model provider and its available models. */
 export interface ModelProvider {
   id: string;
   name: string;
   comingSoon: boolean;
+  /** Whether this provider supports one-shot structured completion (e.g. PR draft generation). */
+  supportsCompletion?: boolean;
   models: ModelDefinition[];
 }
 
@@ -35,6 +38,7 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     id: "claude",
     name: "Claude",
     comingSoon: false,
+    supportsCompletion: true,
     models: [
       { id: "claude-opus-4-6", label: "Claude Opus 4.6", providerId: "claude" },
       { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", providerId: "claude" },

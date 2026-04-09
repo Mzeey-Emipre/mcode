@@ -77,7 +77,9 @@ export function ChatView() {
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeThread = threads.find((t) => t.id === activeThreadId);
-  const sessionError = useThreadStore((s) => s.error);
+  const sessionError = useThreadStore((s) =>
+    activeThreadId ? s.errorByThread[activeThreadId] ?? null : null,
+  );
   const [dismissedError, setDismissedError] = useState<string | null>(null);
 
   const handleDismissCliError = useCallback(() => {

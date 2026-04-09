@@ -149,6 +149,10 @@ When adding a new setting, ask these questions in order:
       "codex": "",                     // Path to codex CLI, empty = auto-discover
       "claude": ""                     // Path to claude CLI, empty = auto-discover
     }
+  },
+  "prDraft": {
+    "provider": "",                      // Provider for PR draft generation, empty = inherit default
+    "model": ""                          // Model for PR draft generation, empty = provider default
   }
 }
 ```

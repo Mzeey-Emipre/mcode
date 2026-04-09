@@ -46,6 +46,8 @@ interface WorkspaceState {
   fetchingBranch: string | null;
   /** Whether the user has explicitly picked a branch in BranchPicker. Prevents live updates from overriding the user's selection. */
   branchManuallySelected: boolean;
+  /** In-memory map of thread ID → PR URL, populated immediately on PR creation so the header can link without waiting for the next poll. */
+  prUrlsByThreadId: Record<string, string>;
 
   // Workspace actions
   loadWorkspaces: () => Promise<void>;
@@ -99,6 +101,12 @@ interface WorkspaceState {
 
   loadOpenPrs: (workspaceId: string) => Promise<void>;
   fetchBranch: (workspaceId: string, branch: string, prNumber?: number) => Promise<void>;
+  /**
+   * Record a PR that was just created from the dialog. Updates `pr_number` and
+   * `pr_status` on the thread immediately and caches the URL so the header can
+   * link without waiting for the next background poll.
+   */
+  recordPrCreated: (threadId: string, prNumber: number, prUrl: string) => void;
 }
 
 /** Zustand store for workspace, thread, branch, and PR state management. */
@@ -125,6 +133,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   openPrsLoading: false,
   fetchingBranch: null,
   branchManuallySelected: false,
+  prUrlsByThreadId: {},
 
   loadWorkspaces: async () => {
     set({ loading: true, error: null });
@@ -161,6 +170,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         draftStore.clearDraft(tid);
         taskStore.clearTasks(tid);
       }
+      // Remove threads from store FIRST (same ordering as deleteThread) so
+      // any in-flight timer callbacks see threads as gone before timers are cancelled.
       set((state) => ({
         workspaces: state.workspaces.filter((w) => w.id !== id),
         activeWorkspaceId:
@@ -172,6 +183,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             ? null
             : state.activeThreadId,
       }));
+      // One batched Zustand set() for all threads instead of N sequential calls.
+      useThreadStore.getState().clearThreadStateMany(deletedThreadIds);
     } catch (e) {
       set({ error: String(e) });
       throw e;
@@ -228,9 +241,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           if (results.length === 0) return;
           // Discard results if the workspace changed while the request was in flight
           if (get().activeWorkspaceId !== workspaceId) return;
+          const resultMap = new Map(results.map((r) => [r.threadId, r]));
           set((state) => ({
             threads: state.threads.map((t) => {
-              const match = results.find((r) => r.threadId === t.id);
+              const match = resultMap.get(t.id);
               if (!match) return t;
               // null prNumber means the stale PR was cleared server-side
               return { ...t, pr_number: match.prNumber, pr_status: match.prStatus };
@@ -388,10 +402,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       useQueueStore.getState().clearQueue(threadId);
       useComposerDraftStore.getState().clearDraft(threadId);
       useTaskStore.getState().clearTasks(threadId);
-      set((state) => ({
-        threads: state.threads.filter((t) => t.id !== threadId),
-        activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
-      }));
+      // Remove from threads[] FIRST so any in-flight dequeue timer callback's
+      // threadExists guard sees the thread as deleted before clearThreadState
+      // cancels the timer. This closes the race window between the timer
+      // callback checking membership and the timer being cancelled.
+      set((state) => {
+        const remainingUrls = Object.fromEntries(
+          Object.entries(state.prUrlsByThreadId).filter(([k]) => k !== threadId),
+        ) as Record<string, string>;
+        return {
+          threads: state.threads.filter((t) => t.id !== threadId),
+          activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
+          prUrlsByThreadId: remainingUrls,
+        };
+      });
+      useThreadStore.getState().clearThreadState(threadId);
     } catch (e) {
       set({ error: String(e) });
       throw e;
@@ -526,5 +551,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } finally {
       set({ fetchingBranch: null });
     }
+  },
+
+  recordPrCreated: (threadId, prNumber, prUrl) => {
+    set((state) => {
+      const thread = state.threads.find((t) => t.id === threadId);
+      if (!thread) return state;
+      return {
+        threads: state.threads.map((t) =>
+          t.id === threadId ? { ...t, pr_number: prNumber, pr_status: "OPEN" } : t,
+        ),
+        prUrlsByThreadId: { ...state.prUrlsByThreadId, [threadId]: prUrl },
+      };
+    });
   },
 }));

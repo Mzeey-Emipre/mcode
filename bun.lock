@@ -15,7 +15,9 @@
         "@electron/rebuild": "^3.7.1",
         "@mcode/contracts": "workspace:*",
         "@mcode/shared": "workspace:*",
+        "better-sqlite3": "^12.0.0",
         "electron-updater": "^6.8.3",
+        "node-pty": "^1.0.0",
         "uuid": "^11.1.0",
         "which": "^5.0.0",
       },
@@ -141,6 +143,7 @@
     "better-sqlite3",
     "node-pty",
     "@electron/rebuild",
+    "electron-mksnapshot",
   ],
   "packages": {
     "7zip-bin": ["7zip-bin@5.2.0", "", {}, "sha512-ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A=="],

@@ -2,6 +2,11 @@
   "name": "mcode-desktop",
   "version": "0.1.0",
   "description": "Mcode AI agent orchestration desktop app",
+  "author": {
+    "name": "Mzeey Empire",
+    "email": "cjnwob@gmail.com"
+  },
+  "homepage": "https://github.com/Mzeey-Emipre/mcode",
   "main": "dist/main/main.cjs",
   "type": "module",
   "scripts": {
@@ -18,7 +23,9 @@
     "@electron/rebuild": "^3.7.1",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
+    "better-sqlite3": "^12.0.0",
     "electron-updater": "^6.8.3",
+    "node-pty": "^1.0.0",
     "uuid": "^11.1.0",
     "which": "^5.0.0"
   },
@@ -43,7 +50,14 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/better-sqlite3/**/*",
+      "node_modules/node-pty/**/*"
+    ],
+    "asarUnpack": [
+      "dist/server/**",
+      "node_modules/better-sqlite3/**",
+      "node_modules/node-pty/**"
     ],
     "publish": {
       "provider": "github",

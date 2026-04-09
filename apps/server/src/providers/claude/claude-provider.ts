@@ -155,10 +155,16 @@ export function detectFallbackModel(
 @injectable()
 export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "claude";
+  /** Claude supports one-shot text completion via sdkQuery with maxTurns: 1. */
+  readonly supportsCompletion = true;
 
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    super();
+  }
 
   /** Start or continue a session by sending a message via the SDK. */
   async sendMessage(params: {
@@ -181,6 +187,82 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       });
       throw e;
     }
+  }
+
+  /**
+   * One-shot text completion using the same prompt queue pattern as chat.
+   * Spawns an ephemeral SDK subprocess (not persisted to disk) with tools
+   * disabled and maxTurns: 1, collects the response text, then tears down.
+   */
+  async complete(prompt: string, model: string, cwd: string): Promise<string> {
+    const queue = createPromptQueue();
+    const ephemeralId = `complete-${crypto.randomUUID()}`;
+
+    const q = sdkQuery({
+      prompt: queue.iterable,
+      options: {
+        cwd,
+        model,
+        maxTurns: 1,
+        tools: [],
+        systemPrompt: "Respond with exactly what is requested. No questions, no commentary.",
+        settingSources: [],
+        permissionMode: "default" as const,
+        persistSession: false,
+        includePartialMessages: true,
+      },
+    });
+
+    queue.push(toUserMessage(prompt, ephemeralId));
+    // Close immediately: the message is already queued. This signals end-of-input
+    // so the SDK subprocess exits after processing instead of blocking on the
+    // next read from the queue (which would deadlock the for-await loop below).
+    queue.close();
+
+    let resultText = "";
+    let assistantText = "";
+    let deltaText = "";
+
+    for await (const msg of q) {
+      const anyMsg = msg as Record<string, unknown>;
+
+      if (anyMsg.type === "result") {
+        if (anyMsg.is_error) {
+          const errors = (anyMsg.errors as string[]) ?? [];
+          throw new Error(`Claude SDK error: ${errors.join(", ") || "unknown error"}`);
+        }
+        const res = anyMsg.result;
+        if (typeof res === "string" && res) resultText = res;
+      }
+
+      if (anyMsg.type === "assistant") {
+        const content =
+          (anyMsg.message as { content?: Array<{ type: string; text?: string }> })
+            ?.content ?? [];
+        for (const block of content) {
+          if (block.type === "text" && block.text) assistantText += block.text;
+        }
+      }
+
+      // Collect incremental text deltas as a third fallback source
+      if (anyMsg.type === "stream_event") {
+        const streamEvent = anyMsg.event as {
+          type?: string;
+          delta?: { type?: string; text?: string };
+        };
+        if (
+          streamEvent?.type === "content_block_delta" &&
+          streamEvent.delta?.type === "text_delta" &&
+          streamEvent.delta.text
+        ) {
+          deltaText += streamEvent.delta.text;
+        }
+      }
+    }
+
+    const text = resultText || assistantText || deltaText;
+    if (!text) throw new Error("Claude SDK returned no text content");
+    return text.trim();
   }
 
   private async doSendMessage(params: {

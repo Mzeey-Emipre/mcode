@@ -81,6 +81,8 @@ function toCodexEffort(level?: ReasoningLevel): string | undefined {
 @injectable()
 export class CodexProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "codex";
+  /** Codex CLI is an agentic tool with no one-shot text completion mode. */
+  readonly supportsCompletion = false;
 
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();

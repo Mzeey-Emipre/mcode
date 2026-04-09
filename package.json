@@ -32,6 +32,7 @@
   "packageManager": "bun@1.2.14",
   "trustedDependencies": [
     "electron",
+    "electron-mksnapshot",
     "better-sqlite3",
     "node-pty",
     "@electron/rebuild"

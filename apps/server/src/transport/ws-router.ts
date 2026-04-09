@@ -17,7 +17,7 @@ import {
   type WsMethodName,
   getExtension,
 } from "@mcode/contracts";
-import { logger } from "@mcode/shared";
+import { logger, validateBranchName } from "@mcode/shared";
 import type { WorkspaceService } from "../services/workspace-service";
 import type { ThreadService } from "../services/thread-service";
 import type { AgentService } from "../services/agent-service";
@@ -35,6 +35,10 @@ import type { SnapshotService } from "../services/snapshot-service";
 import type { SettingsService } from "../services/settings-service";
 import type { GitWatcherService } from "../services/git-watcher-service";
 import type { MemoryPressureService } from "../services/memory-pressure-service";
+import type { PrDraftService } from "../services/pr-draft-service";
+import type { ThreadRepo } from "../repositories/thread-repo";
+import type { WorkspaceRepo } from "../repositories/workspace-repo";
+import { broadcast } from "./push";
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
@@ -57,6 +61,12 @@ export interface RouterDeps {
   /** Manages lifecycle-aware memory pressure (idle timers, SQLite cache, GC). */
   memoryPressureService: MemoryPressureService;
   taskRepo: TaskRepo;
+  /** Generates AI-powered PR draft titles and bodies. */
+  prDraftService: PrDraftService;
+  /** Thread repository for resolving worktree paths in git operations. */
+  threadRepo: ThreadRepo;
+  /** Workspace repository for resolving repo paths in git operations. */
+  workspaceRepo: WorkspaceRepo;
 }
 
 /**
@@ -247,8 +257,17 @@ async function dispatch(
         params.prNumber,
       );
       return;
-    case "git.log":
-      return deps.gitService.log(params.workspaceId, params.branch, params.limit, params.baseBranch);
+    case "git.log": {
+      let repoPath: string | undefined;
+      if (params.threadId) {
+        const t = deps.threadRepo.findById(params.threadId);
+        const ws = t ? deps.workspaceRepo.findById(t.workspace_id) : null;
+        if (t && ws) {
+          repoPath = deps.gitService.resolveWorkingDir(ws.path, t.mode, t.worktree_path);
+        }
+      }
+      return deps.gitService.log(params.workspaceId, params.branch, params.limit, params.baseBranch, repoPath);
+    }
     case "git.commitDiff":
       return deps.gitService.commitDiff(params.workspaceId, params.sha, params.filePath, params.maxLines);
     case "git.commitFiles":
@@ -464,6 +483,73 @@ async function dispatch(
         deps.memoryPressureService.markForeground();
       }
       return;
+
+    // Git push
+    case "git.push": {
+      const workspace = deps.workspaceService.findById(params.workspaceId);
+      if (!workspace) throw new Error(`Workspace ${params.workspaceId} not found`);
+      await deps.gitService.push(workspace.path, params.branch);
+      return { success: true };
+    }
+
+    // GitHub PR draft and creation
+    case "github.generatePrDraft":
+      return await deps.prDraftService.generateDraft(
+        params.workspaceId,
+        params.threadId,
+        params.baseBranch,
+      );
+
+    case "github.createPr": {
+      const workspace = deps.workspaceService.findById(params.workspaceId);
+      if (!workspace) throw new Error(`Workspace ${params.workspaceId} not found`);
+
+      const thread = deps.threadService.findById(params.threadId);
+      if (!thread) throw new Error(`Thread ${params.threadId} not found`);
+      if (thread.workspace_id !== params.workspaceId) {
+        throw new Error(
+          `Thread ${params.threadId} does not belong to workspace ${params.workspaceId}`,
+        );
+      }
+
+      const repoPath = deps.gitService.resolveWorkingDir(
+        workspace.path,
+        thread.mode,
+        thread.worktree_path,
+      );
+      const branch = thread.branch;
+      if (!branch) throw new Error(`Missing branch for thread ${params.threadId}`);
+      validateBranchName(branch);
+
+      // Silent auto-push (no-op if already up to date)
+      try {
+        await deps.gitService.push(repoPath, branch);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `Failed to push branch "${branch}" to remote. Check push permissions. Details: ${detail}`,
+        );
+      }
+
+      // Create PR via gh CLI
+      const result = await deps.githubService.createPr({
+        cwd: repoPath,
+        title: params.title,
+        body: params.body,
+        baseBranch: params.baseBranch,
+        isDraft: params.isDraft,
+      });
+
+      // Link PR to thread in DB and broadcast
+      deps.threadService.linkPr(params.threadId, result.number, "OPEN");
+      broadcast("thread.prLinked", {
+        threadId: params.threadId,
+        prNumber: result.number,
+        prStatus: "OPEN",
+      });
+
+      return result;
+    }
 
     // App
     case "app.version":

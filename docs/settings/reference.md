@@ -23,3 +23,5 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `server.memory.heapMb` | integer | `512` | 64-8192 | `MCODE_SERVER_HEAP_MB` | V8 max old space for the server process (MB) |
 | `provider.cli.codex` | string | `""` | - | - | Path to the Codex CLI binary. When empty, mcode looks for `codex` on the system PATH. |
 | `provider.cli.claude` | string | `""` | - | - | Path to the Claude Code CLI binary. When empty, mcode looks for `claude` on the system PATH. |
+| `prDraft.provider` | string | `""` | `""` \| `"claude"` \| `"codex"` \| `"gemini"` \| `"copilot"` | - | AI provider for PR draft generation. Empty string inherits from `model.defaults.provider`. |
+| `prDraft.model` | string | `""` | - | - | Model for AI PR draft generation. Empty string uses a provider-appropriate default (`claude-haiku-4-5-20251001` for Claude, `gpt-5.1-codex-mini` for Codex). |

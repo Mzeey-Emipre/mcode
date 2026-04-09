@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
-import { mockTransport } from "./mocks/transport";
+import { mockTransport, createMockThread } from "./mocks/transport";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -10,13 +11,18 @@ vi.mock("@/transport", async () => ({
 const THREAD = "thread-1";
 
 function setup(extra: Record<string, unknown> = {}) {
+  // Seed workspaceStore so handleAgentEvent's thread-membership guard passes.
+  useWorkspaceStore.setState({
+    activeThreadId: THREAD,
+    threads: [createMockThread({ id: THREAD })],
+  });
   // Partial state merge: Zustand merges these fields into the existing store slice.
   // Extra fields override defaults for per-test setup (e.g. isCompactingByThread).
   useThreadStore.setState({
     messages: [],
     runningThreadIds: new Set([THREAD]),
     loading: false,
-    error: null,
+    errorByThread: {},
     streamingByThread: {},
     toolCallsByThread: {},
     agentStartTimes: { [THREAD]: Date.now() },

@@ -12,23 +12,34 @@ import { getMcodeDir } from "@mcode/shared";
 /**
  * Resolve the correct native binding for better-sqlite3 based on runtime.
  *
- * When running under Electron, returns the path to the Electron-specific
- * prebuild (`better_sqlite3.electron.node`). Under plain Node.js (e.g.
- * vitest), returns `undefined` so better-sqlite3 falls back to its default
- * `bindings` resolution (the Node.js prebuild).
+ * Priority:
+ * 1. `BETTER_SQLITE3_BINDING` env var — set by server-manager when the app is
+ *    packaged, pointing to the asarUnpack'd `.node` file outside the asar archive.
+ * 2. Electron runtime path resolution — used in dev mode when running under
+ *    Electron with the source tree present.
+ * 3. `undefined` — falls back to better-sqlite3's default binding resolution
+ *    for plain Node.js (e.g. vitest).
  */
 function resolveNativeBinding(): string | undefined {
+  if (process.env.BETTER_SQLITE3_BINDING) {
+    return process.env.BETTER_SQLITE3_BINDING;
+  }
+
   if (!process.versions.electron) return undefined;
 
   const localRequire = createRequire(import.meta.url);
   const betterSqliteDir = dirname(
     localRequire.resolve("better-sqlite3/package.json"),
   );
-  const bindingPath = join(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node");
+  const bindingCandidates = [
+    join(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node"),
+    join(betterSqliteDir, "build", "Release", "better_sqlite3.node"),
+  ];
+  const bindingPath = bindingCandidates.find((candidate) => existsSync(candidate));
 
-  if (!existsSync(bindingPath)) {
+  if (!bindingPath) {
     throw new Error(
-      `Electron prebuild not found at ${bindingPath}. Run 'bun install' to download it.`,
+      `Electron prebuild not found. Checked: ${bindingCandidates.join(", ")}. Run 'bun install' to download it.`,
     );
   }
 
@@ -93,6 +104,7 @@ export function openDatabase(dbPath?: string): Database.Database {
   const nativeBinding = resolveNativeBinding();
   const db = new Database(resolvedPath, { nativeBinding });
   db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000"); // Wait up to 5s for concurrent writer to finish
   db.pragma("foreign_keys = ON");
   db.pragma("cache_size = -2000");  // 2MB page cache (negative = KB)
   db.pragma("mmap_size = 0");       // Disable memory-mapped I/O

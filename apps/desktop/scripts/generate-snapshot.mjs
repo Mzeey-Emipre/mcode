@@ -48,12 +48,22 @@ console.log("  -> dist/snapshot/snapshot-entry.js");
 
 console.log("Generating V8 snapshot...");
 
-// electron-mksnapshot registers its CLI as "mksnapshot" in node_modules/.bin
+// electron-mksnapshot registers its CLI as "mksnapshot" in node_modules/.bin.
+// In a bun workspace the binary may be hoisted to the monorepo root, so check
+// both the local and root node_modules/.bin directories.
 const ext = process.platform === "win32" ? ".exe" : "";
-const mksnapshot = resolve(
-  desktopRoot,
-  `node_modules/.bin/mksnapshot${ext}`,
-);
+const localBin = resolve(desktopRoot, `node_modules/.bin/mksnapshot${ext}`);
+const rootBin = resolve(desktopRoot, `../../node_modules/.bin/mksnapshot${ext}`);
+const mksnapshot = existsSync(localBin) ? localBin : rootBin;
+
+if (!existsSync(mksnapshot)) {
+  console.error(
+    `ERROR: mksnapshot binary not found at:\n  ${localBin}\n  ${rootBin}\n` +
+    `Ensure electron-mksnapshot is listed in trustedDependencies (root package.json) ` +
+    `so bun runs its install script.`,
+  );
+  process.exit(1);
+}
 
 execFileSync(
   mksnapshot,
