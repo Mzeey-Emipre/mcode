@@ -116,4 +116,22 @@ describe("GithubService.createPr", () => {
       }),
     ).rejects.toThrow("Unexpected gh pr create output");
   });
+
+  it("handles preamble warning lines before the PR URL", async () => {
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: object, callback: (err: null, stdout: string) => void) => {
+        callback(null, "Warning: 2 uncommitted changes\nCreating pull request for feat/thing into main in o/r\nhttps://github.com/o/r/pull/42\n");
+      },
+    );
+
+    const result = await ghService.createPr({
+      cwd: "/repo",
+      title: "feat: add widget",
+      body: "body",
+      baseBranch: "main",
+      isDraft: false,
+    });
+
+    expect(result).toEqual({ number: 42, url: "https://github.com/o/r/pull/42" });
+  });
 });

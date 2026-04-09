@@ -5,7 +5,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { logger } from "@mcode/shared";
 import type { GitService } from "./git-service.js";
@@ -35,9 +35,14 @@ const DEFAULT_FORMAT = `## What
 ## Key Changes
 - [Bullet list derived from commits and diff]`;
 
+/** Maximum PR template file size. Templates larger than this are skipped. */
+const MAX_TEMPLATE_BYTES = 64 * 1024;
+
 /** Generates AI-powered PR titles and bodies from commit history and conversation context. */
 @injectable()
 export class PrDraftService {
+  private readonly templateCache = new Map<string, string | null>();
+
   constructor(
     @inject("GitService") private readonly gitService: GitService,
     @inject("MessageRepo") private readonly messageRepo: MessageRepo,
@@ -71,6 +76,9 @@ export class PrDraftService {
       thread.worktree_path,
     );
     const headBranch = this.gitService.getCurrentBranchAt(repoPath);
+    if (headBranch === "HEAD") {
+      throw new Error("Cannot generate PR draft: repository is in detached HEAD state");
+    }
 
     const [commits, diffStat, messagesResult, settings] = await Promise.all([
       this.gitService.log(workspaceId, headBranch, 50, baseBranch, repoPath).catch(
@@ -107,7 +115,7 @@ export class PrDraftService {
       : "claude";
 
     if (!configuredProvider && provider !== resolvedProvider) {
-      logger.info("PR draft Auto mode: default provider does not support completion, using Claude", {
+      logger.info("PR draft Auto mode: default provider did not support completion, fell back to Claude", {
         defaultProvider: resolvedProvider,
       });
     }
@@ -209,14 +217,29 @@ export class PrDraftService {
     return parseCompletionDraft(text);
   }
 
-  /** Scan common template paths and return the first one found, or null. */
+  /** Scan common template paths and return the first one found, or null. Results are cached per repoPath. */
   private detectPrTemplate(repoPath: string): string | null {
+    if (this.templateCache.has(repoPath)) {
+      return this.templateCache.get(repoPath) ?? null;
+    }
     for (const templatePath of PR_TEMPLATE_PATHS) {
       const fullPath = join(repoPath, templatePath);
       if (existsSync(fullPath)) {
-        return readFileSync(fullPath, "utf-8");
+        try {
+          const { size } = statSync(fullPath);
+          if (size > MAX_TEMPLATE_BYTES) {
+            logger.warn("PR template file exceeds size limit, skipped", { fullPath, size });
+            continue;
+          }
+          const content = readFileSync(fullPath, "utf-8");
+          this.templateCache.set(repoPath, content);
+          return content;
+        } catch {
+          continue;
+        }
       }
     }
+    this.templateCache.set(repoPath, null);
     return null;
   }
 

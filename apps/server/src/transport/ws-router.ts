@@ -17,7 +17,7 @@ import {
   type WsMethodName,
   getExtension,
 } from "@mcode/contracts";
-import { logger } from "@mcode/shared";
+import { logger, validateBranchName } from "@mcode/shared";
 import type { WorkspaceService } from "../services/workspace-service";
 import type { ThreadService } from "../services/thread-service";
 import type { AgentService } from "../services/agent-service";
@@ -512,8 +512,13 @@ async function dispatch(
         );
       }
 
-      const repoPath = thread.worktree_path ?? workspace.path;
+      const repoPath = deps.gitService.resolveWorkingDir(
+        workspace.path,
+        thread.mode,
+        thread.worktree_path,
+      );
       const branch = thread.branch;
+      if (branch) validateBranchName(branch);
 
       // Silent auto-push (no-op if already up to date)
       try {
@@ -535,11 +540,11 @@ async function dispatch(
       });
 
       // Link PR to thread in DB and broadcast
-      deps.threadService.linkPr(params.threadId, result.number, "open");
+      deps.threadService.linkPr(params.threadId, result.number, "OPEN");
       broadcast("thread.prLinked", {
         threadId: params.threadId,
         prNumber: result.number,
-        prStatus: "open",
+        prStatus: "OPEN",
       });
 
       return result;

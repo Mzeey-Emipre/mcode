@@ -41,6 +41,7 @@ function BaseBranchSelect({ branches, value, onChange, disabled }: BaseBranchSel
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (!open) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
@@ -48,7 +49,7 @@ function BaseBranchSelect({ branches, value, onChange, disabled }: BaseBranchSel
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [open]);
 
   useEffect(() => {
     if (open) {

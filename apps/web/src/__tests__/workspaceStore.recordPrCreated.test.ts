@@ -1,4 +1,19 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+const { mockDeleteThread } = vi.hoisted(() => ({
+  mockDeleteThread: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../transport", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../transport")>();
+  return {
+    ...original,
+    getTransport: () => ({
+      deleteThread: mockDeleteThread,
+    }),
+  };
+});
+
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { Thread } from "../transport";
 
@@ -53,5 +68,23 @@ describe("workspaceStore.recordPrCreated", () => {
     const thread = useWorkspaceStore.getState().threads.find((t) => t.id === "t1");
     expect(thread?.pr_number).toBeNull();
     expect(useWorkspaceStore.getState().prUrlsByThreadId["not-exist"]).toBeUndefined();
+  });
+});
+
+describe("workspaceStore.deleteThread", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useWorkspaceStore.setState({
+      threads: [baseThread],
+      prUrlsByThreadId: { t1: "https://github.com/o/r/pull/42" },
+      activeThreadId: null,
+      error: null,
+    });
+  });
+
+  it("removes the thread's pr url from prUrlsByThreadId", async () => {
+    await useWorkspaceStore.getState().deleteThread("t1", false);
+
+    expect(useWorkspaceStore.getState().prUrlsByThreadId["t1"]).toBeUndefined();
   });
 });

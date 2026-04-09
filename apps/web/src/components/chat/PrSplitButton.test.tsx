@@ -96,6 +96,14 @@ describe("PrSplitButton", () => {
     expect(screen.queryByText(/view on github/i)).not.toBeInTheDocument();
   });
 
+  it("calls onOpenPr with the pr url when View on GitHub is clicked", () => {
+    const onOpenPr = vi.fn();
+    render(<PrSplitButton pr={mergedPr} hasCommitsAhead={true} onCreatePr={noop} onOpenPr={onOpenPr} />);
+    fireEvent.click(screen.getByRole("button", { name: /open pr menu/i }));
+    fireEvent.click(screen.getByText(/view on github/i));
+    expect(onOpenPr).toHaveBeenCalledWith("https://github.com/o/r/pull/42");
+  });
+
   // ── PR closed ──────────────────────────────────────────────────────────────
 
   const closedPr = { number: 42, url: "https://github.com/o/r/pull/42", state: "CLOSED" };

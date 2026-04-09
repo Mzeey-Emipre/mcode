@@ -222,15 +222,15 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "github.branchPr": {
     params: z.object({ branch: z.string(), cwd: z.string() }),
-    result: PrInfoSchema.nullable(),
+    result: PrInfoSchema().nullable(),
   },
   "github.listOpenPrs": {
     params: z.object({ workspaceId: z.string() }),
-    result: z.array(PrDetailSchema),
+    result: z.array(PrDetailSchema()),
   },
   "github.prByUrl": {
     params: z.object({ url: z.string() }),
-    result: PrDetailSchema.nullable(),
+    result: PrDetailSchema().nullable(),
   },
   "git.push": {
     params: z.object({
@@ -245,18 +245,18 @@ export const WS_METHODS = lazySchema(() => ({
       threadId: z.string(),
       baseBranch: z.string(),
     }),
-    result: PrDraftSchema,
+    result: PrDraftSchema(),
   },
   "github.createPr": {
     params: z.object({
       workspaceId: z.string(),
       threadId: z.string(),
-      title: z.string(),
-      body: z.string(),
+      title: z.string().max(256),
+      body: z.string().max(65536),
       baseBranch: z.string(),
       isDraft: z.boolean().default(false),
     }),
-    result: CreatePrResultSchema,
+    result: CreatePrResultSchema(),
   },
   "config.discover": {
     params: z.object({ workspacePath: z.string() }),

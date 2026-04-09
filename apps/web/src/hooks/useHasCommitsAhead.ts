@@ -32,8 +32,9 @@ export function useHasCommitsAhead(
         .then((commits) => {
           if (!cancelled) setHasCommits(commits.length > 0);
         })
-        .catch(() => {
-          // Keep last known value on error
+        .catch((err: unknown) => {
+          // Keep last known value on transient errors
+          console.debug("[useHasCommitsAhead] poll failed", { workspaceId, branch, error: String(err) });
         });
     };
 

@@ -110,10 +110,6 @@ export class GithubService {
     });
   }
 
-  /** Input for creating a new GitHub pull request. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  // (interface kept inline to avoid extra exports)
-
   /**
    * Create a GitHub pull request via the gh CLI.
    * Returns the new PR's number and URL.
@@ -149,19 +145,15 @@ export class GithubService {
             reject(error);
             return;
           }
-          // gh pr create outputs the PR URL to stdout, e.g.
-          // https://github.com/owner/repo/pull/123
-          const url = stdout.trim();
-          const match = url.match(/\/pull\/(\d+)$/);
-          if (!match) {
-            reject(new Error(`Unexpected gh pr create output: ${url}`));
+          // gh pr create outputs the PR URL to stdout, possibly preceded by
+          // warning/info lines. Extract the URL from anywhere in the output.
+          const prUrlMatch = stdout.match(/https:\/\/[^\s]*\/pull\/(\d+)/);
+          if (!prUrlMatch) {
+            reject(new Error(`Unexpected gh pr create output: ${stdout.trim()}`));
             return;
           }
-          const number = parseInt(match[1], 10);
-          if (isNaN(number)) {
-            reject(new Error("Could not parse PR number from gh output"));
-            return;
-          }
+          const number = parseInt(prUrlMatch[1], 10);
+          const url = prUrlMatch[0];
           resolve({ number, url });
         },
       );

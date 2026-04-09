@@ -241,9 +241,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           if (results.length === 0) return;
           // Discard results if the workspace changed while the request was in flight
           if (get().activeWorkspaceId !== workspaceId) return;
+          const resultMap = new Map(results.map((r) => [r.threadId, r]));
           set((state) => ({
             threads: state.threads.map((t) => {
-              const match = results.find((r) => r.threadId === t.id);
+              const match = resultMap.get(t.id);
               if (!match) return t;
               // null prNumber means the stale PR was cleared server-side
               return { ...t, pr_number: match.prNumber, pr_status: match.prStatus };
@@ -405,10 +406,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       // threadExists guard sees the thread as deleted before clearThreadState
       // cancels the timer. This closes the race window between the timer
       // callback checking membership and the timer being cancelled.
-      set((state) => ({
-        threads: state.threads.filter((t) => t.id !== threadId),
-        activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
-      }));
+      set((state) => {
+        const { [threadId]: _removed, ...remainingUrls } = state.prUrlsByThreadId;
+        return {
+          threads: state.threads.filter((t) => t.id !== threadId),
+          activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
+          prUrlsByThreadId: remainingUrls,
+        };
+      });
       useThreadStore.getState().clearThreadState(threadId);
     } catch (e) {
       set({ error: String(e) });

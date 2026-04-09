@@ -88,16 +88,16 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     }
   }, []);
 
-  const handleOpenPr = (url: string) => {
+  const handleOpenPr = useCallback((url: string) => {
     try {
       const parsed = new URL(url);
-      if (parsed.protocol === "https:") {
+      if (parsed.protocol === "https:" && parsed.hostname === "github.com") {
         window.desktopBridge?.openExternalUrl(url);
       }
     } catch {
       // Invalid URL, ignore
     }
-  };
+  }, []);
 
   return (
     <div className="flex items-center justify-between gap-0.5">

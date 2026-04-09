@@ -1,15 +1,17 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { mockComplete, mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
+const { mockComplete, mockExistsSync, mockReadFileSync, mockStatSync } = vi.hoisted(() => ({
   mockComplete: vi.fn(),
   mockExistsSync: vi.fn().mockReturnValue(false),
   mockReadFileSync: vi.fn(),
+  mockStatSync: vi.fn().mockReturnValue({ size: 1024 }),
 }));
 
 vi.mock("fs", () => ({
   existsSync: mockExistsSync,
   readFileSync: mockReadFileSync,
+  statSync: mockStatSync,
   mkdirSync: vi.fn(),
 }));
 
@@ -220,6 +222,15 @@ describe("PrDraftService", () => {
 
     await expect(service.generateDraft("ws-1", "missing-thread", "main")).rejects.toThrow(
       "Thread missing-thread not found",
+    );
+  });
+
+  it("throws when repository is in detached HEAD state", async () => {
+    mockGitService.getCurrentBranchAt.mockReturnValue("HEAD");
+    mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
+
+    await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
+      /detached HEAD/i,
     );
   });
 
