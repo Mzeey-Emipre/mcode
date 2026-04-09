@@ -203,6 +203,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       return;
     }
 
+    if (server.resumeFailed) {
+      logger.warn("Codex session lost context; started fresh thread", { sessionId });
+      this.emit("event", {
+        type: AgentEventType.System,
+        threadId,
+        subtype: "context_lost",
+      } satisfies AgentEvent);
+    }
+
     if (server.threadId) {
       this.sdkSessionIds.set(sessionId, server.threadId);
       this.emit("event", {

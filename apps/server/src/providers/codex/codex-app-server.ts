@@ -108,6 +108,11 @@ export class CodexAppServer extends EventEmitter {
   /** Thread ID assigned after a successful `thread/start` or `thread/resume`. */
   public get threadId(): string | null { return this._threadId; }
 
+  /** `true` when a `thread/resume` was attempted but failed, forcing a fresh `thread/start`. */
+  private _resumeFailed = false;
+  /** Whether the session lost context because `thread/resume` failed. */
+  public get resumeFailed(): boolean { return this._resumeFailed; }
+
   /** The CLI path used to spawn the process, for stale-path detection. */
   public readonly cliPath: string;
 
@@ -382,6 +387,7 @@ export class CodexAppServer extends EventEmitter {
           logger.warn("thread/resume failed; falling back to thread/start", {
             error: String(err),
           });
+          this._resumeFailed = true;
           // fall through to thread/start below
         } else {
           throw err; // non-recoverable
