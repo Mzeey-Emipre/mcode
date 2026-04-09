@@ -13,7 +13,7 @@ describe("Thread Lifecycle Behavior", () => {
       messages: [],
       runningThreadIds: new Set(),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       currentThreadId: null,
     });
@@ -55,7 +55,7 @@ describe("Thread Lifecycle Behavior", () => {
     expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(
       false,
     );
-    expect(useThreadStore.getState().error).toBeTruthy();
+    expect(useThreadStore.getState().errorByThread["thread-1"]).toBeTruthy();
   });
 
   it("when sendMessage fails, the thread is no longer marked as running", async () => {
@@ -69,7 +69,7 @@ describe("Thread Lifecycle Behavior", () => {
     expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(
       false,
     );
-    expect(useThreadStore.getState().error).toBeTruthy();
+    expect(useThreadStore.getState().errorByThread["thread-1"]).toBeTruthy();
   });
 
   it("when clearMessages is called, streaming state resets but running threads persist", () => {
@@ -80,6 +80,7 @@ describe("Thread Lifecycle Behavior", () => {
     });
     useThreadStore.setState({
       messages: [msg],
+      currentThreadId: "thread-1",
       runningThreadIds: new Set(["thread-1"]),
       streamingByThread: { "thread-1": "partial" },
     });
@@ -88,7 +89,8 @@ describe("Thread Lifecycle Behavior", () => {
 
     const state = useThreadStore.getState();
     expect(state.messages).toHaveLength(0);
-    expect(state.streamingByThread).toEqual({});
+    // Only the current thread's streaming entry should be pruned
+    expect(state.streamingByThread["thread-1"]).toBeUndefined();
     // Running threads should NOT be cleared by clearMessages
     expect(state.runningThreadIds.has("thread-1")).toBe(true);
   });
@@ -120,7 +122,7 @@ describe("Thread Lifecycle Behavior", () => {
     await useThreadStore.getState().loadMessages(threadId);
 
     const state = useThreadStore.getState();
-    expect(state.error).toContain("db connection failed");
+    expect(state.errorByThread["thread-1"]).toContain("db connection failed");
     expect(state.loading).toBe(false);
   });
 });
