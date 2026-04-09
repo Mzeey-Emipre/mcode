@@ -407,7 +407,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       // cancels the timer. This closes the race window between the timer
       // callback checking membership and the timer being cancelled.
       set((state) => {
-        const { [threadId]: _removed, ...remainingUrls } = state.prUrlsByThreadId;
+        const remainingUrls = Object.fromEntries(
+          Object.entries(state.prUrlsByThreadId).filter(([k]) => k !== threadId),
+        ) as Record<string, string>;
         return {
           threads: state.threads.filter((t) => t.id !== threadId),
           activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
