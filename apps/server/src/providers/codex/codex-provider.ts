@@ -35,6 +35,8 @@ interface SessionEntry {
   server: CodexAppServer;
   mapper: CodexEventMapper;
   lastUsedAt: number;
+  /** Sandbox mode used when this session was started; used to detect permission mode changes. */
+  sandboxMode: string;
 }
 
 /**
@@ -126,13 +128,27 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       );
     }
 
+    const sandboxMode = permissionMode === "full" ? "danger-full-access" : "workspace-write";
     const existing = this.sessions.get(sessionId);
 
     if (existing) {
-      existing.lastUsedAt = Date.now();
-      existing.mapper.reset();
-      void this.runTurn(sessionId, threadId, existing.server, input);
-      return;
+      if (existing.sandboxMode === sandboxMode) {
+        // Same permission mode - reuse the running session
+        existing.lastUsedAt = Date.now();
+        existing.mapper.reset();
+        void this.runTurn(sessionId, threadId, existing.server, input);
+        return;
+      }
+      // Permission mode changed - kill the old session so we can start fresh with the correct sandbox
+      logger.info("Codex permission mode changed, restarting session", {
+        sessionId,
+        from: existing.sandboxMode,
+        to: sandboxMode,
+      });
+      this.sessions.delete(sessionId);
+      existing.server.kill().catch((err: unknown) => {
+        logger.warn("Codex session kill on permission change failed", { error: String(err) });
+      });
     }
 
     // Version check only when starting a new session
@@ -150,7 +166,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       return;
     }
 
-    const sandboxMode = permissionMode === "full" ? "danger-full-access" : "workspace-write";
     const resumeId = this.sdkSessionIds.get(sessionId);
 
     const server = new CodexAppServer({
@@ -203,7 +218,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       } satisfies AgentEvent);
     }
 
-    this.sessions.set(sessionId, { server, mapper, lastUsedAt: Date.now() });
+    this.sessions.set(sessionId, { server, mapper, lastUsedAt: Date.now(), sandboxMode });
     void this.runTurn(sessionId, threadId, server, input);
   }
 
