@@ -1,7 +1,8 @@
 import { useEffect, useCallback, useState } from "react";
-import { Github, Terminal, Diff, GitPullRequest } from "lucide-react";
+import { Terminal, Diff } from "lucide-react";
 import { OpenInEditorMenu } from "./OpenInEditorMenu";
 import { CreatePrDialog } from "./CreatePrDialog";
+import { PrSplitButton } from "./PrSplitButton";
 import { useBranchPr } from "@/hooks/useBranchPr";
 import { useHasCommitsAhead } from "@/hooks/useHasCommitsAhead";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -87,16 +88,14 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     }
   }, []);
 
-  const handleOpenPr = () => {
-    if (pr?.url) {
-      try {
-        const parsed = new URL(pr.url);
-        if (parsed.protocol === "https:") {
-          window.desktopBridge?.openExternalUrl(pr.url);
-        }
-      } catch {
-        // Invalid URL, ignore
+  const handleOpenPr = (url: string) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "https:") {
+        window.desktopBridge?.openExternalUrl(url);
       }
+    } catch {
+      // Invalid URL, ignore
     }
   };
 
@@ -104,33 +103,13 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     <div className="flex items-center justify-between gap-0.5">
       {dirPath && (
         <div className="flex items-center gap-0.5 bg-muted/20 rounded-md px-1 py-0.5">
-          {pr && (
-            <>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={handleOpenPr}
-                className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6"
-                title={`PR #${pr.number} – ${pr.state}`}
-              >
-                <Github size={12} />
-                <span>View PR #{pr.number}</span>
-              </Button>
-              <div className="w-px h-4 bg-border/30" />
-            </>
-          )}
-          {!pr && shouldPollPr && (
-            <Button
-              variant="ghost"
-              size="xs"
-              className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6"
-              onClick={() => setCreatePrOpen(true)}
-              disabled={!hasCommitsAhead}
-              title={hasCommitsAhead === false ? "No commits ahead of base branch" : undefined}
-            >
-              <GitPullRequest size={12} />
-              <span>Create PR</span>
-            </Button>
+          {shouldPollPr && (
+            <PrSplitButton
+              pr={pr}
+              hasCommitsAhead={hasCommitsAhead}
+              onCreatePr={() => setCreatePrOpen(true)}
+              onOpenPr={handleOpenPr}
+            />
           )}
           <OpenInEditorMenu dirPath={dirPath} />
         </div>

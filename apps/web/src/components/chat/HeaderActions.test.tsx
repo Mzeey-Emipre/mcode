@@ -97,6 +97,7 @@ function defaultWorkspaceState() {
     activeThreadId: "thread-1",
     pendingNewThread: false,
     threads: [makeThread()],
+    prUrlsByThreadId: {} as Record<string, string>,
     loadWorkspaces: vi.fn(),
     loadThreads: vi.fn(),
     setActiveWorkspace: vi.fn(),
@@ -106,6 +107,7 @@ function defaultWorkspaceState() {
     deleteThread: vi.fn(),
     setPendingNewThread: vi.fn(),
     updateThreadTitle: vi.fn().mockResolvedValue(undefined),
+    recordPrCreated: vi.fn(),
     error: null,
   };
 }
