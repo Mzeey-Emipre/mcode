@@ -34,7 +34,7 @@ export function RightPanel() {
   // Registered once on mount; reads panelWidthRef to avoid a stale closure.
   useEffect(() => {
     const onResize = () => {
-      const maxAllowed = window.innerWidth - 300;
+      const maxAllowed = window.innerWidth - PANEL_MIN_WIDTH;
       if (panelWidthRef.current > maxAllowed) setPanelWidth(maxAllowed);
     };
     window.addEventListener("resize", onResize);
@@ -51,8 +51,8 @@ export function RightPanel() {
       const onMouseMove = (moveEvent: globalThis.MouseEvent) => {
         if (!draggingRef.current) return;
         const delta = startX - moveEvent.clientX;
-        // Always leave at least 300px for the chat area
-        const viewportCap = window.innerWidth - 300;
+        // Always leave at least PANEL_MIN_WIDTH px for the chat area
+        const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
         setPanelWidth(Math.min(startWidth + delta, viewportCap));
       };
 
@@ -85,7 +85,7 @@ export function RightPanel() {
 
   return (
     <div
-      style={{ width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: "calc(100vw - 300px)" }}
+      style={{ width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: `calc(100vw - ${PANEL_MIN_WIDTH}px)` }}
       className="relative flex flex-col border-l border-border bg-background/95"
     >
       {/* Drag handle (left edge) — double-click snaps between default and wide */}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Plus, Minus, ChevronsDownUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { parseDiffLines } from "@/lib/diff-parser";
@@ -190,8 +191,8 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
             {basename}
           </span>
           {expanded ? (
-            /* Show full path when expanded for clarity */
-            <span className="block truncate font-mono text-[9px] text-muted-foreground/60">
+            /* Show full path when expanded - no truncation so the full path is always readable */
+            <span className="block break-all font-mono text-[9px] text-muted-foreground/60">
               {filePath}
             </span>
           ) : parent ? (
@@ -244,14 +245,15 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
 
               {/* Large diff expansion button */}
               {hiddenLineCount > 0 && (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => setShowAllLines(true)}
-                  className="flex w-full items-center justify-center gap-1.5 border-t border-border/20 bg-muted/10 py-2 text-[10px] text-muted-foreground/70 transition-colors hover:bg-muted/20 hover:text-foreground/70"
+                  className="flex w-full items-center justify-center gap-1.5 rounded-none border-t border-border/20 py-2 text-[10px] text-muted-foreground/70 hover:text-foreground/70"
                 >
                   <ChevronsDownUp size={11} />
                   Show {hiddenLineCount} more lines
-                </button>
+                </Button>
               )}
             </>
           ) : (
