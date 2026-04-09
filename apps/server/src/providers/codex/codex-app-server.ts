@@ -17,6 +17,7 @@ import type {
   ThreadStartResult,
   ThreadResumeParams,
   ThreadResumeResult,
+  TurnInputPart,
 } from "./codex-types.js";
 
 /** Options passed to the CodexAppServer constructor. */
@@ -179,6 +180,20 @@ export class CodexAppServer extends EventEmitter {
     }
 
     this._isAlive = false;
+  }
+
+  /**
+   * Sends a `turn/start` RPC to begin a new agent turn.
+   * Returns after the server acknowledgment - events stream via the `notification` event.
+   *
+   * @param input - Plain text message or structured input parts (text + images).
+   * @throws When the RPC call fails or times out.
+   */
+  async sendTurn(input: string | TurnInputPart[]): Promise<void> {
+    await this.rpc.sendRequest("turn/start", {
+      threadId: this.threadId,
+      input,
+    }, 30000);
   }
 
   // ---------------------------------------------------------------------------
