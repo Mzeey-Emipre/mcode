@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
-import { mockTransport } from "./mocks/transport";
+import { mockTransport, createMockThread } from "./mocks/transport";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -10,11 +11,12 @@ vi.mock("@/transport", async () => ({
 describe("Tool Call Matching", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    useWorkspaceStore.setState({ threads: [createMockThread({ id: "thread-1" })] });
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       toolCallsByThread: {},
       agentStartTimes: {},

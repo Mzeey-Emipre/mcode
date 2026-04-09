@@ -12,11 +12,15 @@ vi.mock("@/transport", async () => ({
 describe("handleAgentEvent branches", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    useWorkspaceStore.setState({
+      activeThreadId: "thread-1",
+      threads: [createMockThread({ id: "thread-1" })],
+    });
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(["thread-1"]),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       toolCallsByThread: {},
       agentStartTimes: { "thread-1": new Date("2026-01-01T00:00:00Z").getTime() },
@@ -36,7 +40,7 @@ describe("handleAgentEvent branches", () => {
 
     const state = useThreadStore.getState();
     expect(state.runningThreadIds.has("thread-1")).toBe(false);
-    expect(state.error).toBe("Out of tokens");
+    expect(state.errorByThread["thread-1"]).toBe("Out of tokens");
   });
 
   it("session.turnComplete without streaming content clears state only", () => {
@@ -104,14 +108,14 @@ describe("session.modelFallback", () => {
     useWorkspaceStore.setState({
       threads: [thread],
       activeWorkspaceId: thread.workspace_id,
-      activeThreadId: null,
+      activeThreadId: "thread-1",
       workspaces: [],
     });
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(["thread-1"]),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       toolCallsByThread: {},
       agentStartTimes: { "thread-1": Date.now() },

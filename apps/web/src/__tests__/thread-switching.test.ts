@@ -16,7 +16,7 @@ describe("Thread Switching", () => {
       messages: [],
       runningThreadIds: new Set(),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       toolCallsByThread: {},
       currentThreadId: null,
