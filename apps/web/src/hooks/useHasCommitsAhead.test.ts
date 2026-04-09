@@ -46,6 +46,7 @@ describe("useHasCommitsAhead", () => {
       "feat/my-branch",
       1,
       "main",
+      undefined,
     );
   });
 
