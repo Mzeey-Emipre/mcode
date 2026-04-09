@@ -58,12 +58,10 @@ function toCodexReasoningEffort(
 function buildCodexInput(
   message: string,
   attachments?: AttachmentMeta[],
-): string | TurnInputPart[] {
-  if (!attachments || attachments.length === 0) return message;
-
+): TurnInputPart[] {
   const inputs: TurnInputPart[] = [];
 
-  for (const att of attachments) {
+  for (const att of attachments ?? []) {
     if (att.mimeType.startsWith("image/")) {
       inputs.push({ type: "local_image", path: att.sourcePath });
     } else {
@@ -75,11 +73,8 @@ function buildCodexInput(
     }
   }
 
-  if (message.trim().length > 0) {
-    inputs.push({ type: "text", text: message });
-  }
-
-  return inputs.length > 0 ? inputs : message;
+  inputs.push({ type: "text", text: message });
+  return inputs;
 }
 
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */

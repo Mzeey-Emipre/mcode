@@ -39,6 +39,17 @@ export interface CodexAppServerOptions {
   resumeThreadId?: string;
 }
 
+/**
+ * Notification method prefixes that are lifecycle events from the app-server.
+ * These are silently consumed at debug level and never forwarded to the turn mapper.
+ * Turn events use dot-notation (`turn.event`, `turn.completed`, `turn.failed`);
+ * lifecycle notifications use slash-notation and are safe to filter by prefix.
+ */
+const LIFECYCLE_NOTIFICATION_PREFIXES = [
+  "thread/",
+  "codex/event/",
+] as const;
+
 /** Benign substrings found in stderr that are safe to ignore at debug level. */
 const BENIGN_PATTERNS = [
   "Debugger",
@@ -122,6 +133,11 @@ export class CodexAppServer extends EventEmitter {
     this.rpc = new CodexRpcClient(child.stdin!, child.stdout!);
 
     this.rpc.on("notification", (notification) => {
+      const method = (notification as { method?: string }).method ?? "";
+      if (LIFECYCLE_NOTIFICATION_PREFIXES.some((p) => method.startsWith(p))) {
+        logger.debug("Codex lifecycle notification", { method });
+        return;
+      }
       this.emit("notification", notification);
     });
 
@@ -190,9 +206,13 @@ export class CodexAppServer extends EventEmitter {
    * @throws When the RPC call fails or times out.
    */
   async sendTurn(input: string | TurnInputPart[]): Promise<void> {
+    // The codex app-server requires input to be a sequence, never a bare string.
+    const parts: TurnInputPart[] = typeof input === "string"
+      ? [{ type: "text", text: input }]
+      : input;
     await this.rpc.sendRequest("turn/start", {
       threadId: this.threadId,
-      input,
+      input: parts,
     }, 30000);
   }
 
