@@ -4,7 +4,7 @@ import { getTransport } from "@/transport";
 const POLL_INTERVAL_MS = 15_000;
 
 /**
- * Polls for commits ahead of the base branch (main).
+ * Polls for commits ahead of the base branch (auto-detected by the server).
  * Returns `true` if commits exist, `false` if none, `null` while loading or disabled.
  * Re-polls every 15 seconds to reflect new pushes in realtime.
  * Pass threadId for worktree threads so the server resolves the correct git working directory.
@@ -28,7 +28,7 @@ export function useHasCommitsAhead(
 
     const check = () => {
       getTransport()
-        .getGitLog(workspaceId, branch, 1, "main", threadId)
+        .getGitLog(workspaceId, branch, 1, undefined, threadId)
         .then((commits) => {
           if (!cancelled) setHasCommits(commits.length > 0);
         })
