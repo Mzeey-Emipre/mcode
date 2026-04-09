@@ -37,6 +37,7 @@ describe("CodexRpcClient", () => {
     stdout.push('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n');
 
     await expect(promise).resolves.toEqual({ ok: true });
+    client.dispose();
   });
 
   it("rejects with timeout error when no response arrives", async () => {
@@ -49,6 +50,7 @@ describe("CodexRpcClient", () => {
     vi.advanceTimersByTime(100);
 
     await expect(promise).rejects.toThrow("Timed out waiting for initialize (50ms)");
+    client.dispose();
   });
 
   it("dispatches notification event for inbound notifications", async () => {
@@ -69,6 +71,7 @@ describe("CodexRpcClient", () => {
       method: "turn.event",
       params: { type: "agent_message", text: "hello" },
     });
+    client.dispose();
   });
 
   it("buffers partial lines correctly", async () => {
@@ -95,6 +98,7 @@ describe("CodexRpcClient", () => {
     stdout.push('t":{"ok":true}}\n');
 
     await expect(promise).resolves.toEqual({ ok: true });
+    client.dispose();
   });
 
   it("handles multiple concurrent requests and correlates by id", async () => {
@@ -114,6 +118,7 @@ describe("CodexRpcClient", () => {
     expect(r1).toEqual({ from: "method1" });
     expect(r2).toEqual({ from: "method2" });
     expect(r3).toEqual({ from: "method3" });
+    client.dispose();
   });
 
   it("dispose rejects all pending requests", async () => {
@@ -148,6 +153,7 @@ describe("CodexRpcClient", () => {
     stdout.push('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n');
 
     await expect(promise).resolves.toEqual({ ok: true });
+    client.dispose();
   });
 
   it("rejects pending requests when stdout stream closes", async () => {
@@ -158,5 +164,51 @@ describe("CodexRpcClient", () => {
     stdout.emit("close");
 
     await expect(promise).rejects.toThrow("Stream closed");
+    client.dispose();
+  });
+
+  it("sendNotification on disposed client logs warning and does not write to stdin", () => {
+    const { stdin, client } = makeClient();
+
+    client.dispose();
+
+    const chunks: string[] = [];
+    stdin.on("data", (chunk: Buffer) => chunks.push(chunk.toString()));
+
+    client.sendNotification("turn/interrupt", { threadId: "abc" });
+
+    expect(chunks).toHaveLength(0);
+  });
+
+  it("rejects pending request when stdout emits error event", async () => {
+    const { client, stdout } = makeClient();
+
+    const promise = client.sendRequest("initialize", {});
+
+    stdout.emit("error", new Error("EPIPE"));
+
+    await expect(promise).rejects.toThrow("Stream error");
+  });
+
+  it("rejects with rpc error response when server returns error field", async () => {
+    const { client, stdout } = makeClient();
+
+    const promise = client.sendRequest("initialize", {});
+
+    stdout.push('{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}\n');
+
+    await expect(promise).rejects.toThrow("Method not found");
+    client.dispose();
+  });
+
+  it("rejects pending requests when stdout emits end event", async () => {
+    const { client, stdout } = makeClient();
+
+    const promise = client.sendRequest("initialize", {});
+
+    stdout.emit("end");
+
+    await expect(promise).rejects.toThrow("Stream closed");
+    client.dispose();
   });
 });
