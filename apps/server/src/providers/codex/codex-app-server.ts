@@ -143,6 +143,7 @@ export class CodexAppServer extends EventEmitter {
    * platforms sends SIGTERM then SIGKILL after 3 seconds.
    */
   async kill(): Promise<void> {
+    if (this.killRequested) return;
     this.killRequested = true;
 
     if (this.rpc) {
@@ -159,6 +160,10 @@ export class CodexAppServer extends EventEmitter {
         const { execFile } = await import("child_process");
         const { promisify } = await import("util");
         const execFileAsync = promisify(execFile);
+        if (this.child.pid == null) {
+          logger.warn("CodexAppServer: child process has no PID, cannot taskkill", { cliPath: this.cliPath });
+          return;
+        }
         try {
           await execFileAsync("taskkill", ["/T", "/F", "/PID", String(this.child.pid)]);
         } catch {
@@ -199,7 +204,9 @@ export class CodexAppServer extends EventEmitter {
           const msg = `Codex app-server fatal stderr: ${line}`;
           logger.error(msg, { cliPath: this.cliPath });
           this.emit("fatal", msg);
-          void this.kill();
+          this.kill().catch((err: unknown) => {
+            logger.error("CodexAppServer: kill after fatal stderr failed", { error: String(err) });
+          });
           return;
         }
       }
@@ -262,7 +269,7 @@ export class CodexAppServer extends EventEmitter {
       } catch (err) {
         const msg = String(err).toLowerCase();
         if (msg.includes("not found") || msg.includes("missing") || msg.includes("expired")) {
-          logger.warn("thread/resume failed, falling back to thread/start", {
+          logger.warn("thread/resume failed; falling back to thread/start", {
             error: String(err),
           });
           // fall through to thread/start below
