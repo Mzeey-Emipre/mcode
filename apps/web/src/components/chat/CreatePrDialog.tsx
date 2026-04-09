@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Loader2, GitPullRequest, GitBranch, ChevronDown, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -10,6 +10,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandItem,
+} from "@/components/ui/command";
 import { Switch } from "@/components/ui/switch";
 import { SegControl } from "@/components/settings/SegControl";
 import { MarkdownContent } from "./MarkdownContent";
@@ -31,105 +39,59 @@ interface BaseBranchSelectProps {
 
 /**
  * Searchable dropdown for picking the PR base branch.
- * Renders a styled trigger button that opens a popover with a search input
- * and a scrollable list of local branches.
+ * Uses Popover + Command for native keyboard navigation (arrow keys, Enter, Escape).
  */
 function BaseBranchSelect({ branches, value, onChange, disabled }: BaseBranchSelectProps) {
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const containerRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open]);
-
-  useEffect(() => {
-    if (open) {
-      setSearch("");
-      requestAnimationFrame(() => searchRef.current?.focus());
-    }
-  }, [open]);
-
-  const filtered = useMemo(
-    () => branches.filter((b) => b.name.toLowerCase().includes(search.toLowerCase())),
-    [branches, search],
-  );
 
   return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => { if (!disabled) setOpen((o) => !o); }}
-        disabled={disabled}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className={cn(
-          "flex h-8 w-full items-center justify-between rounded-lg border border-input bg-background pl-3 pr-2.5 text-sm shadow-xs transition-colors",
-          "focus-visible:border-ring focus-visible:outline-none",
-          "disabled:cursor-not-allowed disabled:opacity-50",
-          open && "border-ring",
-        )}
-      >
-        <span className="truncate">{value}</span>
-        <ChevronDown
-          className={cn("size-3.5 text-muted-foreground transition-transform duration-150", open && "rotate-180")}
-          aria-hidden="true"
-        />
-      </button>
-
-      {open && (
-        <div
-          role="listbox"
-          aria-label="Base branch"
-          className="absolute top-full left-0 z-50 mt-1 w-full min-w-[200px] rounded-lg border border-border bg-popover shadow-lg"
-        >
-          <div className="p-1.5">
-            <Input
-              ref={searchRef}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search branches…"
-              size="sm"
-              className="text-popover-foreground"
-            />
-          </div>
-          <div className="max-h-[200px] overflow-y-auto p-1">
-            {filtered.length === 0 ? (
-              <p className="px-2 py-3 text-center text-xs text-muted-foreground">No branches match</p>
-            ) : (
-              filtered.map((b) => (
-                <button
-                  key={b.name}
-                  type="button"
-                  role="option"
-                  aria-selected={b.name === value}
-                  onClick={() => { onChange(b.name); setOpen(false); }}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs transition-colors",
-                    b.name === value
-                      ? "bg-accent text-foreground"
-                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground",
-                  )}
-                >
-                  <span className="truncate">{b.name}</span>
-                  {b.isCurrent && (
-                    <Badge variant="secondary" size="sm" className="ml-2 shrink-0">current</Badge>
-                  )}
-                </button>
-              ))
+    <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label="Base branch"
+            className={cn(
+              "flex h-8 w-full items-center justify-between rounded-lg border border-input bg-background pl-3 pr-2.5 text-sm shadow-xs transition-colors",
+              "focus-visible:border-ring focus-visible:outline-none",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+              open && "border-ring",
             )}
-          </div>
-        </div>
-      )}
-    </div>
+          >
+            <span className="truncate">{value}</span>
+            <ChevronDown
+              className={cn("size-3.5 text-muted-foreground transition-transform duration-150", open && "rotate-180")}
+              aria-hidden="true"
+            />
+          </button>
+        }
+      />
+      <PopoverContent align="start" sideOffset={4} className="min-w-[200px] p-0">
+        <Command filter={(v, search) => (v.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}>
+          <CommandInput placeholder="Search branches…" />
+          <CommandList className="max-h-[200px]">
+            <CommandEmpty>No branches match</CommandEmpty>
+            {branches.map((b) => (
+              <CommandItem
+                key={b.name}
+                value={b.name}
+                onSelect={(name) => { onChange(name); setOpen(false); }}
+                className={cn(
+                  "flex justify-between text-xs",
+                  b.name === value && "bg-accent text-foreground",
+                )}
+              >
+                <span className="truncate">{b.name}</span>
+                {b.isCurrent && (
+                  <Badge variant="secondary" size="sm" className="ml-2 shrink-0">current</Badge>
+                )}
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -164,7 +126,7 @@ export function CreatePrDialog({
 }: CreatePrDialogProps) {
   const { branches, branchesLoading, loadBranches } = useWorkspaceStore();
 
-  const [state, setState] = useState<DialogState>("loading");
+  const [state, setState] = useState<DialogState>("ready");
   const [error, setError] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [title, setTitle] = useState("");

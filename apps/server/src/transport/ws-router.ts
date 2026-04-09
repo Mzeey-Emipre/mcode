@@ -518,7 +518,8 @@ async function dispatch(
         thread.worktree_path,
       );
       const branch = thread.branch;
-      if (branch) validateBranchName(branch);
+      if (!branch) throw new Error(`Missing branch for thread ${params.threadId}`);
+      validateBranchName(branch);
 
       // Silent auto-push (no-op if already up to date)
       try {

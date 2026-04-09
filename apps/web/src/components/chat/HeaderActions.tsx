@@ -44,7 +44,11 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   const storePr = thread.pr_number != null && cachedPrUrl
     ? { number: thread.pr_number, url: cachedPrUrl, state: thread.pr_status ?? "OPEN" }
     : null;
-  const pr = (polledPr?.url ? polledPr : null) ?? storePr;
+  // When polledPr and storePr have different numbers, storePr is the freshly
+  // created PR and polledPr is stale (not yet caught up). Prefer storePr.
+  const pr = (storePr != null && polledPr?.url && polledPr.number !== storePr.number)
+    ? storePr
+    : (polledPr?.url ? polledPr : null) ?? storePr;
 
   // Check if the branch has commits ahead of main (disable Create PR when it doesn't)
   const hasCommitsAhead = useHasCommitsAhead(

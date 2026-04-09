@@ -264,35 +264,35 @@ describe("PrDraftService", () => {
   });
 
   describe("parseCompletionDraft (via generateWithAI)", () => {
-  beforeEach(() => {
-    mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
-    mockGitService.log.mockResolvedValue([{ message: "feat: x", sha: "aaa" }]);
-    mockGitService.diffStat.mockResolvedValue("1 file changed");
-    mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
-  });
+    beforeEach(() => {
+      mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
+      mockGitService.log.mockResolvedValue([{ message: "feat: x", sha: "aaa" }]);
+      mockGitService.diffStat.mockResolvedValue("1 file changed");
+      mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
+    });
 
-  it("throws when AI response contains no JSON object", async () => {
-    mockComplete.mockResolvedValue("Here is your PR draft: title is great");
+    it("throws when AI response contains no JSON object", async () => {
+      mockComplete.mockResolvedValue("Here is your PR draft: title is great");
 
-    await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
-      "AI response contained no valid JSON",
-    );
-  });
+      await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
+        "AI response contained no valid JSON",
+      );
+    });
 
-  it("throws when AI JSON is missing the title field", async () => {
-    mockComplete.mockResolvedValue(JSON.stringify({ body: "some body" }));
+    it("throws when AI JSON is missing the title field", async () => {
+      mockComplete.mockResolvedValue(JSON.stringify({ body: "some body" }));
 
-    await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
-      /title/,
-    );
-  });
+      await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
+        /title/,
+      );
+    });
 
-  it("throws when AI JSON is missing the body field", async () => {
-    mockComplete.mockResolvedValue(JSON.stringify({ title: "feat: x" }));
+    it("throws when AI JSON is missing the body field", async () => {
+      mockComplete.mockResolvedValue(JSON.stringify({ title: "feat: x" }));
 
-    await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
-      /body/,
-    );
-  });
+      await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
+        /body/,
+      );
+    });
   });
 });
