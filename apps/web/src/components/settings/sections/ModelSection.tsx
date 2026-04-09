@@ -37,10 +37,16 @@ const PROVIDER_OPTIONS = MODEL_PROVIDERS.map((p) => ({
   title: p.comingSoon ? "Coming soon" : undefined,
 }));
 
-/** Provider options for PR draft: "Auto" inherits from default, plus all providers. */
+/** Provider options for PR draft: "Auto" plus providers that support one-shot completion. */
 const PR_DRAFT_PROVIDER_OPTIONS = [
   { value: "", label: "Auto" },
-  ...PROVIDER_OPTIONS,
+  ...MODEL_PROVIDERS.filter((p) => p.supportsCompletion).map((p) => ({
+    value: p.id,
+    label: p.name,
+    disabled: p.comingSoon,
+    icon: PROVIDER_ICONS[p.id],
+    title: p.comingSoon ? "Coming soon" : undefined,
+  })),
 ];
 
 const REASONING_OPTIONS_BASE = [

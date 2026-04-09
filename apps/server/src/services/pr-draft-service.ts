@@ -97,10 +97,23 @@ export class PrDraftService {
       this.settingsService.get(),
     ]);
 
-    const provider = (settings.prDraft.provider || settings.model.defaults.provider) as ProviderId;
+    // Auto mode: inherit from default provider, but fall back to Claude if it does not support completion.
+    const configuredProvider = settings.prDraft.provider as ProviderId | "";
+    const defaultProvider = settings.model.defaults.provider as ProviderId;
+    const resolvedProvider = configuredProvider || defaultProvider;
+    const resolvedAgent = this.providerRegistry.resolve(resolvedProvider);
+    const provider: ProviderId = resolvedAgent.supportsCompletion
+      ? resolvedProvider
+      : "claude";
+
+    if (!configuredProvider && provider !== resolvedProvider) {
+      logger.info("PR draft Auto mode: default provider does not support completion, using Claude", {
+        defaultProvider: resolvedProvider,
+      });
+    }
+
     const modelDefaults: Record<string, string> = {
       claude: "claude-haiku-4-5-20251001",
-      codex: "gpt-5.1-codex-mini",
     };
     const model = settings.prDraft.model || modelDefaults[provider] || "claude-haiku-4-5-20251001";
 
@@ -128,6 +141,7 @@ export class PrDraftService {
       if (
         message.includes("does not support") ||
         message.includes("no valid JSON") ||
+        message.includes("could not be parsed") ||
         message.includes("failed validation")
       ) {
         logger.error("PR draft generation failed with a non-recoverable error", {
