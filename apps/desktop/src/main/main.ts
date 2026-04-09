@@ -501,65 +501,72 @@ app.commandLine.appendSwitch(
 );
 
 app.whenReady().then(async () => {
-  console.log(`[perf] App ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
-  console.log(`[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`);
-  console.log(`Mcode v${app.getVersion()} starting`);
+  try {
+    console.log(`[perf] App ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+    console.log(`[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`);
+    console.log(`Mcode v${app.getVersion()} starting`);
 
-  // Start the server child process
-  const { port } = await serverManager.start();
-  console.log(`[perf] Server ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
-  console.log(`Server started on port ${port}`);
+    // Start the server child process
+    const { port } = await serverManager.start();
+    console.log(`[perf] Server ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+    console.log(`Server started on port ${port}`);
 
-  // Show a Restart / Quit dialog if the server crashes unexpectedly
-  serverManager.onUnexpectedExit = async (code) => {
-    if (!mainWindow) return;
-    const { response } = await dialog.showMessageBox(mainWindow, {
-      type: "error",
-      title: "Server crashed",
-      message: `The Mcode server exited unexpectedly (code ${code ?? "unknown"}).`,
-      buttons: ["Restart", "Quit"],
-      defaultId: 0,
-      cancelId: 1,
+    // Show a Restart / Quit dialog if the server crashes unexpectedly
+    serverManager.onUnexpectedExit = async (code) => {
+      if (!mainWindow) return;
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: "error",
+        title: "Server crashed",
+        message: `The Mcode server exited unexpectedly (code ${code ?? "unknown"}).`,
+        buttons: ["Restart", "Quit"],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response === 0) {
+        await serverManager.restart();
+      } else {
+        app.quit();
+      }
+    };
+
+    // Register custom protocol for attachment files
+    registerAttachmentProtocol();
+
+    // Create window
+    createWindow();
+    console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+
+    // Create and distribute streaming MessagePort pair
+    const rendererPort = serverManager.createStreamPort();
+    mainWindow!.webContents.postMessage("stream-port", null, [rendererPort]);
+
+    // Register native-only IPC handlers
+    registerIpcHandlers();
+
+    // Set up close handler
+    setupCloseHandler();
+
+    // macOS: re-create window when dock icon is clicked
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+        // Re-distribute stream port to the new window
+        const port = serverManager.createStreamPort();
+        mainWindow!.webContents.postMessage("stream-port", null, [port]);
+        setupCloseHandler();
+      }
     });
-    if (response === 0) {
-      await serverManager.restart();
-    } else {
-      app.quit();
-    }
-  };
 
-  // Register custom protocol for attachment files
-  registerAttachmentProtocol();
+    // Initialize auto-updater (no-op in dev — guarded by app.isPackaged)
+    initAutoUpdater();
 
-  // Create window
-  createWindow();
-  console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
-
-  // Create and distribute streaming MessagePort pair
-  const rendererPort = serverManager.createStreamPort();
-  mainWindow!.webContents.postMessage("stream-port", null, [rendererPort]);
-
-  // Register native-only IPC handlers
-  registerIpcHandlers();
-
-  // Set up close handler
-  setupCloseHandler();
-
-  // macOS: re-create window when dock icon is clicked
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-      // Re-distribute stream port to the new window
-      const port = serverManager.createStreamPort();
-      mainWindow!.webContents.postMessage("stream-port", null, [port]);
-      setupCloseHandler();
-    }
-  });
-
-  // Initialize auto-updater (no-op in dev — guarded by app.isPackaged)
-  initAutoUpdater();
-
-  console.log(`[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+    console.log(`[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+  } catch (error) {
+    const detail = error instanceof Error ? `${error.message}\n\n${error.stack ?? ""}` : String(error);
+    console.error("Failed to start desktop app", error);
+    dialog.showErrorBox("Mcode failed to start", detail);
+    app.quit();
+  }
 });
 
 app.on("window-all-closed", () => {

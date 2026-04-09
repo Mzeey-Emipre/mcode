@@ -62,6 +62,7 @@ vi.mock("crypto", () => ({
 }));
 
 vi.mock("fs", () => ({
+  existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => {
     const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
     err.code = "ENOENT";
@@ -74,7 +75,7 @@ const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
 import { utilityProcess } from "electron";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -108,6 +109,7 @@ describe("ServerManager", () => {
     delete process.env.MCODE_SERVER_HEAP_MB;
     refs.setIsPackaged(false);
     delete (process as Record<string, unknown>).resourcesPath;
+    vi.mocked(existsSync).mockReturnValue(false);
   });
 
   it("starts the server by forking a utility process", async () => {
@@ -278,10 +280,30 @@ describe("ServerManager", () => {
       configurable: true,
       writable: true,
     });
+    vi.mocked(existsSync).mockImplementation((path) =>
+      String(path).includes("better_sqlite3.electron.node"),
+    );
     await manager.start();
     const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
     const env = forkCall[2]?.env as Record<string, string>;
     expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.electron.node");
+  });
+
+  it("falls back to better_sqlite3.node when the packaged electron alias is absent", async () => {
+    refs.setIsPackaged(true);
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
+    vi.mocked(existsSync).mockImplementation((path) =>
+      String(path).includes("better_sqlite3.node") &&
+      !String(path).includes("better_sqlite3.electron.node"),
+    );
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const env = forkCall[2]?.env as Record<string, string>;
+    expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.node");
   });
 
   it("does not pass BETTER_SQLITE3_BINDING env var when app.isPackaged is false", async () => {
