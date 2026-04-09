@@ -6,7 +6,7 @@
 
 **Architecture:** A new `PrSplitButton` component owns all PR-related UI and dropdown state. `HeaderActions` delegates rendering to it and continues to own `createPrOpen` state and `CreatePrDialog`. No store changes are needed — `workspaceStore.recordPrCreated`, `pr_number`, `pr_status`, and `prUrlsByThreadId` are already in place from the previous session.
 
-**Tech Stack:** React 18, TypeScript, Tailwind CSS 4, Vitest + @testing-library/react, lucide-react (Github icon), existing `Button` component from `@/components/ui/button`.
+**Tech Stack:** React 18, TypeScript, Tailwind CSS 4, Vitest + @testing-library/react, lucide-react (GitHub icon), existing `Button` component from `@/components/ui/button`.
 
 **Spec:** `docs/superpowers/specs/2026-04-09-pr-split-button-design.md`
 

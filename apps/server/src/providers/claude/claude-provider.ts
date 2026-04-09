@@ -222,45 +222,41 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     let assistantText = "";
     let deltaText = "";
 
-    try {
-      for await (const msg of q) {
-        const anyMsg = msg as Record<string, unknown>;
+    for await (const msg of q) {
+      const anyMsg = msg as Record<string, unknown>;
 
-        if (anyMsg.type === "result") {
-          if (anyMsg.is_error) {
-            const errors = (anyMsg.errors as string[]) ?? [];
-            throw new Error(`Claude SDK error: ${errors.join(", ") || "unknown error"}`);
-          }
-          const res = anyMsg.result;
-          if (typeof res === "string" && res) resultText = res;
+      if (anyMsg.type === "result") {
+        if (anyMsg.is_error) {
+          const errors = (anyMsg.errors as string[]) ?? [];
+          throw new Error(`Claude SDK error: ${errors.join(", ") || "unknown error"}`);
         }
+        const res = anyMsg.result;
+        if (typeof res === "string" && res) resultText = res;
+      }
 
-        if (anyMsg.type === "assistant") {
-          const content =
-            (anyMsg.message as { content?: Array<{ type: string; text?: string }> })
-              ?.content ?? [];
-          for (const block of content) {
-            if (block.type === "text" && block.text) assistantText += block.text;
-          }
-        }
-
-        // Collect incremental text deltas as a third fallback source
-        if (anyMsg.type === "stream_event") {
-          const streamEvent = anyMsg.event as {
-            type?: string;
-            delta?: { type?: string; text?: string };
-          };
-          if (
-            streamEvent?.type === "content_block_delta" &&
-            streamEvent.delta?.type === "text_delta" &&
-            streamEvent.delta.text
-          ) {
-            deltaText += streamEvent.delta.text;
-          }
+      if (anyMsg.type === "assistant") {
+        const content =
+          (anyMsg.message as { content?: Array<{ type: string; text?: string }> })
+            ?.content ?? [];
+        for (const block of content) {
+          if (block.type === "text" && block.text) assistantText += block.text;
         }
       }
-    } finally {
-      queue.close();
+
+      // Collect incremental text deltas as a third fallback source
+      if (anyMsg.type === "stream_event") {
+        const streamEvent = anyMsg.event as {
+          type?: string;
+          delta?: { type?: string; text?: string };
+        };
+        if (
+          streamEvent?.type === "content_block_delta" &&
+          streamEvent.delta?.type === "text_delta" &&
+          streamEvent.delta.text
+        ) {
+          deltaText += streamEvent.delta.text;
+        }
+      }
     }
 
     const text = resultText || assistantText || deltaText;

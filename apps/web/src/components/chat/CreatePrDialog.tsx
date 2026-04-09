@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Loader2, GitPullRequest, GitBranch, ChevronDown, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -156,8 +156,10 @@ export function CreatePrDialog({
     baseBranches.find((b) => b.name === "master") ??
     baseBranches[0];
 
+  // Default to empty string when branches haven't loaded yet — avoids synthesizing
+  // a "main" fallback that may not exist in the repo.
   const [baseBranch, setBaseBranch] = useState<string>(
-    defaultBase?.name ?? "main",
+    defaultBase?.name ?? "",
   );
 
   // Keep baseBranch in sync when branches load.
@@ -182,9 +184,10 @@ export function CreatePrDialog({
     }
   }, [open, workspaceId, loadBranches]);
 
-  // Reset ephemeral fields when the dialog closes.
+  // Reset ephemeral fields when the dialog closes — but not during an in-flight
+  // submission, since the close could be a forced unmount while createPr() is pending.
   useEffect(() => {
-    if (!open) {
+    if (!open && state !== "submitting") {
       setTitle("");
       setBody("");
       setIsDraft(false);
@@ -192,9 +195,24 @@ export function CreatePrDialog({
       setDescMode("write");
       setState("ready");
     }
-  }, [open]);
+  }, [open, state]);
+
+  // Keep a stable ref to onOpenChange so useCallback closures don't go stale.
+  const onOpenChangeRef = useRef(onOpenChange);
+  useEffect(() => { onOpenChangeRef.current = onOpenChange; }, [onOpenChange]);
+
+  /** Intercept close requests — block them while a submission is in flight. */
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (!nextOpen && state === "submitting") return;
+    onOpenChangeRef.current(nextOpen);
+  }, [state]);
+
+  // True when there is at least one valid base branch and the currently selected
+  // value is in that list. Used to gate Generate and Create PR actions.
+  const hasValidBase = baseBranches.length > 0 && baseBranches.some((b) => b.name === baseBranch);
 
   const handleSubmit = useCallback(async () => {
+    if (!hasValidBase) return;
     setState("submitting");
     setError(null);
     try {
@@ -207,6 +225,8 @@ export function CreatePrDialog({
         isDraft,
       );
       useWorkspaceStore.getState().recordPrCreated(threadId, result.number, result.url);
+      // Transition to ready before closing so the reset effect can clear the form.
+      setState("ready");
       onOpenChange(false);
       useToastStore.getState().show("info", "Pull request created", `PR #${result.number} opened on GitHub`);
     } catch (err) {
@@ -214,10 +234,11 @@ export function CreatePrDialog({
       setError(message);
       setState("ready");
     }
-  }, [workspaceId, threadId, title, body, baseBranch, isDraft, onOpenChange]);
+  }, [workspaceId, threadId, title, body, baseBranch, isDraft, onOpenChange, hasValidBase]);
 
   /** Re-run AI draft generation with the current base branch, keeping existing content visible. */
   const handleRegenerate = useCallback(async () => {
+    if (!hasValidBase) return;
     setIsRegenerating(true);
     setError(null);
     try {
@@ -229,12 +250,12 @@ export function CreatePrDialog({
     } finally {
       setIsRegenerating(false);
     }
-  }, [workspaceId, threadId, baseBranch]);
+  }, [workspaceId, threadId, baseBranch, hasValidBase]);
 
-  const isDisabled = state === "loading" || state === "submitting" || branchesLoading;
+  const isDisabled = state === "loading" || state === "submitting" || branchesLoading || !hasValidBase;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className="sm:max-w-4xl w-[min(90vw,900px)] p-0 gap-0"
         showCloseButton={!isDisabled}

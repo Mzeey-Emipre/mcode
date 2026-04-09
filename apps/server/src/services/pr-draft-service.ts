@@ -105,16 +105,22 @@ export class PrDraftService {
       this.settingsService.get(),
     ]);
 
-    // Auto mode: inherit from default provider, but fall back to Claude if it does not support completion.
     const configuredProvider = settings.prDraft.provider as ProviderId | "";
     const defaultProvider = settings.model.defaults.provider as ProviderId;
     const resolvedProvider = configuredProvider || defaultProvider;
     const resolvedAgent = this.providerRegistry.resolve(resolvedProvider);
-    const provider: ProviderId = resolvedAgent.supportsCompletion
-      ? resolvedProvider
-      : "claude";
 
-    if (!configuredProvider && provider !== resolvedProvider) {
+    let provider: ProviderId;
+    if (resolvedAgent.supportsCompletion) {
+      provider = resolvedProvider;
+    } else if (configuredProvider) {
+      // User explicitly chose a provider that does not support completion — fail loudly.
+      throw new Error(
+        `Configured PR draft provider "${configuredProvider}" does not support completion`,
+      );
+    } else {
+      // Auto mode: default provider lacks completion support, fall back to Claude.
+      provider = "claude";
       logger.info("PR draft Auto mode: default provider did not support completion, fell back to Claude", {
         defaultProvider: resolvedProvider,
       });
