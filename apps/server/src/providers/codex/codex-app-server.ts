@@ -326,38 +326,55 @@ export class CodexAppServer extends EventEmitter {
       };
 
       // Some codex app-server versions carry the threadId in the `thread/started`
-      // notification rather than (or in addition to) the RPC response result.
-      // Listen on the raw RPC stream directly so we capture it before the
-      // lifecycle notification filter in CodexAppServer.start() drops it.
-      let notificationThreadId: string | null = null;
+      // notification rather than in the RPC response result. The notification may
+      // arrive in a separate I/O chunk AFTER the response, so we keep the promise
+      // alive beyond the sendRequest await rather than using a simple variable.
+      let resolveThreadStarted!: (id: string | null) => void;
+      const threadStartedPromise = new Promise<string | null>((resolve) => {
+        resolveThreadStarted = resolve;
+      });
+      const startedTimeout = setTimeout(() => resolveThreadStarted(null), 3000);
+
       const captureStarted = (n: unknown) => {
-        const notification = n as { method?: string; params?: { threadId?: string } };
-        if (
-          notification.method === "thread/started" &&
-          typeof notification.params?.threadId === "string"
-        ) {
-          notificationThreadId = notification.params.threadId;
+        const notification = n as { method?: string; params?: Record<string, unknown> };
+        if (notification.method === "thread/started") {
+          // Log the raw params so we can diagnose the protocol if needed.
+          logger.debug("Codex thread/started notification", { params: notification.params });
+          const id = notification.params?.threadId;
+          resolveThreadStarted(typeof id === "string" ? id : null);
         }
       };
       this.rpc.on("notification", captureStarted);
 
+      let startResult: ThreadStartResult | null = null;
       try {
-        const startResult = await this.rpc.sendRequest<ThreadStartParams, ThreadStartResult>(
+        startResult = await this.rpc.sendRequest<ThreadStartParams, ThreadStartResult>(
           "thread/start",
           startParams,
           15000,
         );
-        // Prefer the response result; fall back to the notification if the
-        // result is empty or missing the field.
-        this._threadId = (startResult as { threadId?: string } | null)?.threadId
-          ?? notificationThreadId;
+        logger.debug("Codex thread/start response", { result: startResult });
       } finally {
-        this.rpc.off("notification", captureStarted);
+        // Always clean up; the notification listener is removed after resolving.
+        const cleanup = () => {
+          clearTimeout(startedTimeout);
+          this.rpc.off("notification", captureStarted);
+        };
+        // Prefer the RPC response; if missing, wait for the notification.
+        const responseThreadId = (startResult as { threadId?: string } | null)?.threadId;
+        if (responseThreadId) {
+          this._threadId = responseThreadId;
+          cleanup();
+        } else {
+          this._threadId = await threadStartedPromise;
+          cleanup();
+        }
       }
 
       if (!this._threadId) {
         throw new Error(
-          "thread/start completed but no threadId received in response or thread/started notification",
+          "thread/start completed but no threadId received (response: "
+          + JSON.stringify(startResult) + ")",
         );
       }
 
