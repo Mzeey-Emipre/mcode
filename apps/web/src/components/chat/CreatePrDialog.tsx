@@ -235,6 +235,7 @@ export function CreatePrDialog({
         baseBranch,
         isDraft,
       );
+      useWorkspaceStore.getState().recordPrCreated(threadId, result.number, result.url);
       onOpenChange(false);
       useToastStore.getState().show("info", "Pull request created", `PR #${result.number} opened on GitHub`);
     } catch (err) {

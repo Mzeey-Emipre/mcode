@@ -33,7 +33,15 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   // Only poll for PRs on feature branches (not main/master)
   const cwd = workspace?.path ?? null;
   const shouldPollPr = thread.branch !== "main" && thread.branch !== "master";
-  const pr = useBranchPr(shouldPollPr ? thread.branch : null, cwd);
+  const polledPr = useBranchPr(shouldPollPr ? thread.branch : null, cwd);
+
+  // Immediately after PR creation, thread.pr_number is written to the store by
+  // CreatePrDialog before the next poll cycle. Use the stored number + cached URL
+  // as the source of truth; fall back to the poll result for ongoing status updates.
+  const cachedPrUrl = useWorkspaceStore((s) => s.prUrlsByThreadId[thread.id]);
+  const pr = polledPr ?? (thread.pr_number != null
+    ? { number: thread.pr_number, url: cachedPrUrl ?? "", state: thread.pr_status ?? "OPEN" }
+    : null);
 
   // Check if the branch has commits ahead of main (disable Create PR when it doesn't)
   const hasCommitsAhead = useHasCommitsAhead(

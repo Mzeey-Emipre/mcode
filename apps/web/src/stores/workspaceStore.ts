@@ -46,6 +46,8 @@ interface WorkspaceState {
   fetchingBranch: string | null;
   /** Whether the user has explicitly picked a branch in BranchPicker. Prevents live updates from overriding the user's selection. */
   branchManuallySelected: boolean;
+  /** In-memory map of thread ID → PR URL, populated immediately on PR creation so the header can link without waiting for the next poll. */
+  prUrlsByThreadId: Record<string, string>;
 
   // Workspace actions
   loadWorkspaces: () => Promise<void>;
@@ -99,6 +101,12 @@ interface WorkspaceState {
 
   loadOpenPrs: (workspaceId: string) => Promise<void>;
   fetchBranch: (workspaceId: string, branch: string, prNumber?: number) => Promise<void>;
+  /**
+   * Record a PR that was just created from the dialog. Updates `pr_number` and
+   * `pr_status` on the thread immediately and caches the URL so the header can
+   * link without waiting for the next background poll.
+   */
+  recordPrCreated: (threadId: string, prNumber: number, prUrl: string) => void;
 }
 
 /** Zustand store for workspace, thread, branch, and PR state management. */
@@ -125,6 +133,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   openPrsLoading: false,
   fetchingBranch: null,
   branchManuallySelected: false,
+  prUrlsByThreadId: {},
 
   loadWorkspaces: async () => {
     set({ loading: true, error: null });
@@ -535,5 +544,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } finally {
       set({ fetchingBranch: null });
     }
+  },
+
+  recordPrCreated: (threadId, prNumber, prUrl) => {
+    set((state) => {
+      const thread = state.threads.find((t) => t.id === threadId);
+      if (!thread) return state;
+      return {
+        threads: state.threads.map((t) =>
+          t.id === threadId ? { ...t, pr_number: prNumber, pr_status: "OPEN" } : t,
+        ),
+        prUrlsByThreadId: { ...state.prUrlsByThreadId, [threadId]: prUrl },
+      };
+    });
   },
 }));
