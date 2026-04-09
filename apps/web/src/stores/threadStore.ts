@@ -22,7 +22,8 @@ interface ThreadState {
   messages: Message[];
   runningThreadIds: Set<string>;
   loading: boolean;
-  error: string | null;
+  /** Per-thread error messages keyed by threadId. Prevents background thread errors from leaking into the active thread's UI. */
+  errorByThread: Record<string, string | null>;
   currentThreadId: string | null;
   /** Full accumulated streaming text per thread, used for finalization into a message. */
   streamingByThread: Record<string, string>;
@@ -83,6 +84,7 @@ interface ThreadState {
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
+  /** Returns true if an agent is actively executing on the given thread. */
   isThreadRunning: (threadId: string) => boolean;
   /** Set questions received from the model and show the wizard. */
   setPlanQuestions: (threadId: string, questions: PlanQuestion[]) => void;
@@ -100,9 +102,15 @@ interface ThreadState {
   handleTurnPersisted: (payload: { threadId: string; messageId: string; toolCallCount: number; filesChanged: string[] }) => void;
 
   // Per-thread settings
+  /** Return current settings for a thread, preferring in-memory overrides over DB-persisted values. */
   getThreadSettings: (threadId: string) => ThreadSettings;
   /** Merge partial settings and persist to server. Resolves to false if RPC fails or patch is empty. */
   setThreadSettings: (threadId: string, settings: Partial<ThreadSettings>) => Promise<boolean>;
+
+  /** Remove all per-thread state for a deleted thread. Clears visible-thread globals when the deleted thread is the current one. */
+  clearThreadState: (threadId: string) => void;
+  /** Batch variant of clearThreadState. Prunes all IDs in a single Zustand set() call to avoid N sequential re-renders. Used by deleteWorkspace. */
+  clearThreadStateMany: (threadIds: string[]) => void;
 }
 
 /** Pending dequeue timers per thread, so duplicate turnComplete events don't double-dequeue. */
@@ -114,6 +122,16 @@ function clearDequeueTimer(threadId: string) {
     clearTimeout(timer);
     dequeueTimers.delete(threadId);
   }
+}
+
+/**
+ * Shallow-clone `rec` and omit `key`. Returns a new object.
+ * Used by clearThreadState and clearMessages to prune per-thread maps without mutating state.
+ */
+function omitKey<V>(rec: Record<string, V>, key: string): Record<string, V> {
+  const next = { ...rec };
+  delete next[key];
+  return next;
 }
 
 const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
@@ -186,7 +204,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   messages: [],
   runningThreadIds: new Set<string>(),
   loading: false,
-  error: null,
+  errorByThread: {},
   currentThreadId: null,
   streamingByThread: {},
   streamingPreviewByThread: {},
@@ -249,9 +267,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         delete nextTurnMsgIds[threadId];
         const nextCompacting = { ...state.isCompactingByThread };
         delete nextCompacting[threadId];
+        const nextErrors = { ...state.errorByThread };
+        delete nextErrors[threadId];
         return {
           loading: true,
-          error: null,
+          errorByThread: nextErrors,
           currentThreadId: threadId,
           messages: [],
           persistedToolCallCounts: {},
@@ -267,9 +287,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         };
       });
     } else {
-      set((state) => ({
+      set((state) => {
+        const nextErrors = { ...state.errorByThread };
+        delete nextErrors[threadId];
+        return {
         loading: true,
-        error: null,
+        errorByThread: nextErrors,
         currentThreadId: threadId,
         messages: [],
         persistedToolCallCounts: {},
@@ -277,7 +300,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         latestTurnWithChanges: null,
         isLoadingMore: {},
         loadEpochByThread: { ...state.loadEpochByThread, [threadId]: (state.loadEpochByThread[threadId] ?? 0) + 1 },
-      }));
+      };
+      });
     }
     try {
       const { messages, hasMore } = await getTransport().getMessages(threadId, 100);
@@ -361,7 +385,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
     } catch (e) {
       if (get().currentThreadId === threadId) {
-        set({ error: String(e), loading: false });
+        set((state) => ({
+          errorByThread: { ...state.errorByThread, [threadId]: String(e) },
+          loading: false,
+        }));
       }
     }
   },
@@ -484,7 +511,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         delete next[threadId];
         return next;
       })(),
-      error: null,
+      errorByThread: (() => {
+        const next = { ...state.errorByThread };
+        delete next[threadId];
+        return next;
+      })(),
     }));
 
     try {
@@ -496,7 +527,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         next.delete(threadId);
         const nextStartTimes = { ...state.agentStartTimes };
         delete nextStartTimes[threadId];
-        return { error: String(e), runningThreadIds: next, agentStartTimes: nextStartTimes };
+        return { errorByThread: { ...state.errorByThread, [threadId]: String(e) }, runningThreadIds: next, agentStartTimes: nextStartTimes };
       });
     }
   },
@@ -506,7 +537,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     try {
       await getTransport().stopAgent(threadId);
     } catch (e) {
-      set({ error: String(e) });
+      set((state) => ({ errorByThread: { ...state.errorByThread, [threadId]: String(e) } }));
     }
     // Always mark as stopped, even on error
     set((state) => {
@@ -536,22 +567,39 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    */
   clearMessages: () => {
     get().toolCallRecordCache.clear();
-    set({
+    set((state) => ({
       messages: [],
-      error: null,
-      streamingByThread: {},
-      streamingPreviewByThread: {},
-      toolCallsByThread: {},
+      // Only prune state for the thread being unloaded. Background threads may
+      // have streaming/tool-call/pagination state that must not be wiped here.
+      ...(state.currentThreadId
+        ? {
+            errorByThread: omitKey(state.errorByThread, state.currentThreadId),
+            streamingByThread: omitKey(state.streamingByThread, state.currentThreadId),
+            streamingPreviewByThread: omitKey(state.streamingPreviewByThread, state.currentThreadId),
+            toolCallsByThread: omitKey(state.toolCallsByThread, state.currentThreadId),
+            currentTurnMessageIdByThread: omitKey(state.currentTurnMessageIdByThread, state.currentThreadId),
+            oldestLoadedSequence: omitKey(state.oldestLoadedSequence, state.currentThreadId),
+            hasMoreMessages: omitKey(state.hasMoreMessages, state.currentThreadId),
+            isLoadingMore: omitKey(state.isLoadingMore, state.currentThreadId),
+            loadEpochByThread: omitKey(state.loadEpochByThread, state.currentThreadId),
+          }
+        : {
+            errorByThread: state.errorByThread,
+            streamingByThread: state.streamingByThread,
+            streamingPreviewByThread: state.streamingPreviewByThread,
+            toolCallsByThread: state.toolCallsByThread,
+            currentTurnMessageIdByThread: state.currentTurnMessageIdByThread,
+            oldestLoadedSequence: state.oldestLoadedSequence,
+            hasMoreMessages: state.hasMoreMessages,
+            isLoadingMore: state.isLoadingMore,
+            loadEpochByThread: state.loadEpochByThread,
+          }),
+      // Message-keyed maps belong to the visible thread only — always reset.
       persistedToolCallCounts: {},
       persistedFilesChanged: {},
       latestTurnWithChanges: null,
       serverMessageIds: {},
-      currentTurnMessageIdByThread: {},
-      oldestLoadedSequence: {},
-      hasMoreMessages: {},
-      isLoadingMore: {},
-      loadEpochByThread: {},
-    });
+    }));
     // Note: does NOT reset runningThreadIds - agents may still be running
   },
 
@@ -605,6 +653,129 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }));
 
     return getTransport().updateThreadSettings(threadId, patch).catch(() => false);
+  },
+
+  clearThreadState: (threadId) => {
+    clearDequeueTimer(threadId);
+
+    // Capture before set() to avoid relying on the post-mutation state value.
+    const isCurrentThread = get().currentThreadId === threadId;
+
+    set((state) => {
+      const nextRunning = new Set(state.runningThreadIds);
+      nextRunning.delete(threadId);
+
+      return {
+        runningThreadIds: nextRunning,
+        errorByThread: omitKey(state.errorByThread, threadId),
+        streamingByThread: omitKey(state.streamingByThread, threadId),
+        streamingPreviewByThread: omitKey(state.streamingPreviewByThread, threadId),
+        toolCallsByThread: omitKey(state.toolCallsByThread, threadId),
+        agentStartTimes: omitKey(state.agentStartTimes, threadId),
+        settingsByThread: omitKey(state.settingsByThread, threadId),
+        activeSubagentsByThread: omitKey(state.activeSubagentsByThread, threadId),
+        currentTurnMessageIdByThread: omitKey(state.currentTurnMessageIdByThread, threadId),
+        oldestLoadedSequence: omitKey(state.oldestLoadedSequence, threadId),
+        hasMoreMessages: omitKey(state.hasMoreMessages, threadId),
+        isLoadingMore: omitKey(state.isLoadingMore, threadId),
+        loadEpochByThread: omitKey(state.loadEpochByThread, threadId),
+        contextByThread: omitKey(state.contextByThread, threadId),
+        isCompactingByThread: omitKey(state.isCompactingByThread, threadId),
+        lastFallbackByThread: omitKey(state.lastFallbackByThread, threadId),
+        planQuestionsByThread: omitKey(state.planQuestionsByThread, threadId),
+        planAnswersByThread: omitKey(state.planAnswersByThread, threadId),
+        activeQuestionIndexByThread: omitKey(state.activeQuestionIndexByThread, threadId),
+        planQuestionsStatusByThread: omitKey(state.planQuestionsStatusByThread, threadId),
+        // Clear message-keyed globals only when deleting the currently loaded thread.
+        // For background threads, message-keyed maps (persistedToolCallCounts, etc.)
+        // belong to the active thread's messages and must not be touched.
+        ...(isCurrentThread
+          ? {
+              currentThreadId: null,
+              messages: [],
+              persistedToolCallCounts: {},
+              persistedFilesChanged: {},
+              serverMessageIds: {},
+              latestTurnWithChanges: null,
+            }
+          : {}),
+      };
+    });
+
+    // Evict tool call record cache when deleting the current thread.
+    // Cache keys are message-based so we can't surgically prune by thread.
+    // Use the pre-captured flag to avoid reading stale post-set() state.
+    if (isCurrentThread) {
+      get().toolCallRecordCache.clear();
+    }
+  },
+
+  /**
+   * Batch-prune per-thread state for multiple deleted threads in a single
+   * Zustand set() call to avoid N sequential re-render batches.
+   * Used by deleteWorkspace where many threads are removed at once.
+   */
+  clearThreadStateMany: (threadIds) => {
+    if (threadIds.length === 0) return;
+
+    for (const threadId of threadIds) {
+      clearDequeueTimer(threadId);
+    }
+
+    // Capture before set() to avoid relying on post-mutation state.
+    const currentThreadId = get().currentThreadId;
+    const deletingCurrentThread = currentThreadId !== null && threadIds.includes(currentThreadId);
+
+    set((state) => {
+      const nextRunning = new Set(state.runningThreadIds);
+      for (const threadId of threadIds) {
+        nextRunning.delete(threadId);
+      }
+
+      // Prune every per-thread map for all deleted thread IDs in one pass.
+      const pruneAll = <V>(rec: Record<string, V>): Record<string, V> => {
+        const next = { ...rec };
+        for (const tid of threadIds) delete next[tid];
+        return next;
+      };
+
+      return {
+        runningThreadIds: nextRunning,
+        errorByThread: pruneAll(state.errorByThread),
+        streamingByThread: pruneAll(state.streamingByThread),
+        streamingPreviewByThread: pruneAll(state.streamingPreviewByThread),
+        toolCallsByThread: pruneAll(state.toolCallsByThread),
+        agentStartTimes: pruneAll(state.agentStartTimes),
+        settingsByThread: pruneAll(state.settingsByThread),
+        activeSubagentsByThread: pruneAll(state.activeSubagentsByThread),
+        currentTurnMessageIdByThread: pruneAll(state.currentTurnMessageIdByThread),
+        oldestLoadedSequence: pruneAll(state.oldestLoadedSequence),
+        hasMoreMessages: pruneAll(state.hasMoreMessages),
+        isLoadingMore: pruneAll(state.isLoadingMore),
+        loadEpochByThread: pruneAll(state.loadEpochByThread),
+        contextByThread: pruneAll(state.contextByThread),
+        isCompactingByThread: pruneAll(state.isCompactingByThread),
+        lastFallbackByThread: pruneAll(state.lastFallbackByThread),
+        planQuestionsByThread: pruneAll(state.planQuestionsByThread),
+        planAnswersByThread: pruneAll(state.planAnswersByThread),
+        activeQuestionIndexByThread: pruneAll(state.activeQuestionIndexByThread),
+        planQuestionsStatusByThread: pruneAll(state.planQuestionsStatusByThread),
+        ...(deletingCurrentThread
+          ? {
+              currentThreadId: null,
+              messages: [],
+              persistedToolCallCounts: {},
+              persistedFilesChanged: {},
+              serverMessageIds: {},
+              latestTurnWithChanges: null,
+            }
+          : {}),
+      };
+    });
+
+    if (deletingCurrentThread) {
+      get().toolCallRecordCache.clear();
+    }
   },
 
   setPlanQuestions: (threadId, questions) => {
@@ -661,7 +832,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       set((s) => ({
         planQuestionsStatusByThread: { ...s.planQuestionsStatusByThread, [threadId]: "pending" },
         runningThreadIds: new Set([...Array.from(s.runningThreadIds).filter((id) => id !== threadId)]),
-        error: String(e),
+        errorByThread: { ...s.errorByThread, [threadId]: String(e) },
       }));
     }
   },
@@ -830,12 +1001,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             group: "Tasks",
           }));
           useTaskStore.getState().setTasks(threadId, taskItems);
-          // Show the right panel on the tasks tab when tasks are received.
-          // Imported lazily to avoid circular dependency at module evaluation time.
-          import("./diffStore").then(({ useDiffStore }) => {
-            useDiffStore.getState().showPanel();
-            useDiffStore.getState().setActiveTab("tasks");
-          });
+          // Only open the task panel if the user is viewing this thread.
+          // Background threads populate tasksByThread silently.
+          if (useWorkspaceStore.getState().activeThreadId === threadId) {
+            // Imported lazily to avoid circular dependency at module evaluation time.
+            import("./diffStore").then(({ useDiffStore }) => {
+              // Re-check after async import: user may have switched threads.
+              if (useWorkspaceStore.getState().activeThreadId !== threadId) return;
+              useDiffStore.getState().showPanel();
+              useDiffStore.getState().setActiveTab("tasks");
+            });
+          }
         }
       }
 
@@ -1213,14 +1389,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         },
       }));
 
-      // Notify the user
-      const actualLabel = actualDefinition?.label ?? normalizedActual;
-      const requestedLabel = findModelById(requestedModel)?.label ?? requestedModel;
-      useToastStore.getState().show(
-        "info",
-        `Switched to ${actualLabel}`,
-        `${requestedLabel} was unavailable`,
-      );
+      // Only notify the user if they are viewing this thread
+      if (useWorkspaceStore.getState().activeThreadId === threadId) {
+        const actualLabel = actualDefinition?.label ?? normalizedActual;
+        const requestedLabel = findModelById(requestedModel)?.label ?? requestedModel;
+        useToastStore.getState().show(
+          "info",
+          `Switched to ${actualLabel}`,
+          `${requestedLabel} was unavailable`,
+        );
+      }
       return;
     }
 
@@ -1240,7 +1418,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         const nextCompacting = { ...state.isCompactingByThread };
         delete nextCompacting[threadId];
         return {
-          error: errorMsg,
+          errorByThread: { ...state.errorByThread, [threadId]: errorMsg },
           runningThreadIds: nextRunning,
           streamingByThread: nextStreaming,
           agentStartTimes: nextStartTimes,
@@ -1282,11 +1460,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         localMsgId = trackedMsgId;
       } else if (state.currentThreadId === payload.threadId) {
         // Fallback: find last assistant message (covers cases where session.message
-        // arrived before we started tracking, e.g. on initial load)
-        const lastAssistantMsg = [...state.messages]
-          .reverse()
-          .find((m) => m.role === "assistant");
-        if (lastAssistantMsg) localMsgId = lastAssistantMsg.id;
+        // arrived before we started tracking, e.g. on initial load).
+        // Tail-scan to avoid copying the array just to reverse it.
+        for (let i = state.messages.length - 1; i >= 0; i--) {
+          if (state.messages[i].role === "assistant") {
+            localMsgId = state.messages[i].id;
+            break;
+          }
+        }
       }
 
       const nextTurnMsgIds = { ...state.currentTurnMessageIdByThread };
