@@ -86,7 +86,11 @@ export interface TurnCompletedPayload { threadId: string; turnId?: string; usage
 /** Payload for the `turn.failed` notification. */
 export interface TurnFailedPayload { threadId: string; turnId?: string; error: { message: string; code?: string } }
 
-/** Discriminated union of all notifications pushed by the codex app-server. */
+/**
+ * Discriminated union of all JSON-RPC notifications from `codex app-server`.
+ * To narrow a `turn.event` notification to a specific payload, switch on `params.type`
+ * after matching `method === "turn.event"`.
+ */
 export type CodexNotification =
   | (JsonRpcNotification<TurnEventPayload> & { method: "turn.event" })
   | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn.completed" })
