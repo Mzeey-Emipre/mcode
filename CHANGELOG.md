@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.2.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.1.0...mcode-v0.2.0) (2026-04-09)
+
+
+### Features
+
+* bundle server into packaged desktop app ([#237](https://github.com/Mzeey-Emipre/mcode/issues/237)) ([c1fa845](https://github.com/Mzeey-Emipre/mcode/commit/c1fa8458715b8820e46f4d6a2525d0e1f5793cab))
+* improve diff view UX ([#240](https://github.com/Mzeey-Emipre/mcode/issues/240)) ([0386cef](https://github.com/Mzeey-Emipre/mcode/commit/0386cef1a33f92f3c77bac7522b3a797fe4f2ae5))
+* PR creation flow with AI draft generation and polished dialog ([#213](https://github.com/Mzeey-Emipre/mcode/issues/213)) ([90ff875](https://github.com/Mzeey-Emipre/mcode/commit/90ff875f4ebf2a64ea30571878b00074c50d256d))
+
+
+### Bug Fixes
+
+* add author and homepage for Linux packaging ([#231](https://github.com/Mzeey-Emipre/mcode/issues/231)) ([f1da0f9](https://github.com/Mzeey-Emipre/mcode/commit/f1da0f9d4fd646b120869b85407724964ce4f30e))
+* add author and homepage to desktop package.json ([f1da0f9](https://github.com/Mzeey-Emipre/mcode/commit/f1da0f9d4fd646b120869b85407724964ce4f30e))
+* add author email for Linux deb/AppImage packaging ([#232](https://github.com/Mzeey-Emipre/mcode/issues/232)) ([d432e09](https://github.com/Mzeey-Emipre/mcode/commit/d432e090e4313b272ed58eda83a45655c2dcbead))
+* add author email required by Linux deb/AppImage packaging ([d432e09](https://github.com/Mzeey-Emipre/mcode/commit/d432e090e4313b272ed58eda83a45655c2dcbead))
+* add contents write permission for release artifact upload ([2608744](https://github.com/Mzeey-Emipre/mcode/commit/260874488e8817f5538c0c9b7c1f6b8fd89b34f5))
+* add contents write permission for release uploads ([#233](https://github.com/Mzeey-Emipre/mcode/issues/233)) ([2608744](https://github.com/Mzeey-Emipre/mcode/commit/260874488e8817f5538c0c9b7c1f6b8fd89b34f5))
+* add electron-mksnapshot to trustedDependencies for CI builds ([#223](https://github.com/Mzeey-Emipre/mcode/issues/223)) ([3b693b5](https://github.com/Mzeey-Emipre/mcode/commit/3b693b51522d6f201f0651a1ffc074b624c59be8))
+* codex provider reliability and session resume ([#247](https://github.com/Mzeey-Emipre/mcode/issues/247)) ([e7c294f](https://github.com/Mzeey-Emipre/mcode/commit/e7c294fc39e309d630aa356e36c82e0562c92aa8))
+* correct author email for Linux packaging ([#234](https://github.com/Mzeey-Emipre/mcode/issues/234)) ([9ff4902](https://github.com/Mzeey-Emipre/mcode/commit/9ff490245ec3ff1d366ce7903d2d1f01ae81c123))
+* correct packaged server path and install native deps before packaging ([#242](https://github.com/Mzeey-Emipre/mcode/issues/242)) ([a98b2ed](https://github.com/Mzeey-Emipre/mcode/commit/a98b2ed3489efb5c719ebe0e5f61912554655c9c))
+* disable npm workspace mode in CI packaging ([#228](https://github.com/Mzeey-Emipre/mcode/issues/228)) ([b6d7d20](https://github.com/Mzeey-Emipre/mcode/commit/b6d7d2025df90474482b1669d47cb60b114c8b43))
+* disable npm workspace mode in CI packaging script ([b6d7d20](https://github.com/Mzeey-Emipre/mcode/commit/b6d7d2025df90474482b1669d47cb60b114c8b43))
+* exclude unpacked binaries and NSIS helpers from release artifacts ([#236](https://github.com/Mzeey-Emipre/mcode/issues/236)) ([5a2fbd2](https://github.com/Mzeey-Emipre/mcode/commit/5a2fbd2b66fdb75e3fd5781b5ee5e3a7bf39fdb8))
+* invalidate worktree cache after creating worktree thread ([8383d2c](https://github.com/Mzeey-Emipre/mcode/commit/8383d2cbe4ca171569e59e2dd3e38847f704f849))
+* isolate agent events to their originating thread ([#241](https://github.com/Mzeey-Emipre/mcode/issues/241)) ([aa6604c](https://github.com/Mzeey-Emipre/mcode/commit/aa6604c9534885b484a619501dae543f8bd078c1))
+* lazy-load native modules and separate packaged app port ([#245](https://github.com/Mzeey-Emipre/mcode/issues/245)) ([3b9148f](https://github.com/Mzeey-Emipre/mcode/commit/3b9148f9c06441ca0db943ee047efcd2d2e00895))
+* new worktree threads incorrectly shown as read-only ([#220](https://github.com/Mzeey-Emipre/mcode/issues/220)) ([8383d2c](https://github.com/Mzeey-Emipre/mcode/commit/8383d2cbe4ca171569e59e2dd3e38847f704f849))
+* package bundled server native deps ([#243](https://github.com/Mzeey-Emipre/mcode/issues/243)) ([3c9684a](https://github.com/Mzeey-Emipre/mcode/commit/3c9684a87cc023295f922698d79b9aa46c90c33b))
+* resolve electron-builder CLI via node instead of .bin shims ([#227](https://github.com/Mzeey-Emipre/mcode/issues/227)) ([68498ee](https://github.com/Mzeey-Emipre/mcode/commit/68498eea11bd40332952d8403c226efc8b2f2991))
+* resolve packaged desktop app server startup failures ([#246](https://github.com/Mzeey-Emipre/mcode/issues/246)) ([45bfa09](https://github.com/Mzeey-Emipre/mcode/commit/45bfa090e813e2ca1e0ec3cb9ccfcc3316af1f9e))
+* strip workspace deps before electron-builder packaging ([#225](https://github.com/Mzeey-Emipre/mcode/issues/225)) ([60345ad](https://github.com/Mzeey-Emipre/mcode/commit/60345ade773fa9fd8f1373b3027d0530c1663cba))
+* strip workspaces from root package.json before electron-builder ([#229](https://github.com/Mzeey-Emipre/mcode/issues/229)) ([b681512](https://github.com/Mzeey-Emipre/mcode/commit/b681512bdc9245e50021af300ebc9c3ca8e3334e))
+* use dedicated CI packaging script for electron-builder ([#226](https://github.com/Mzeey-Emipre/mcode/issues/226)) ([86ddf5f](https://github.com/Mzeey-Emipre/mcode/commit/86ddf5f32deef1476cd322b60e6eaffdb1267070))
+* use executableName for Linux binary in after-pack hook ([#230](https://github.com/Mzeey-Emipre/mcode/issues/230)) ([fa44d8e](https://github.com/Mzeey-Emipre/mcode/commit/fa44d8ef3ffc38ffc263d2d4ab4e4f1899737b98))
+* use executableName for Linux binary path in after-pack hook ([fa44d8e](https://github.com/Mzeey-Emipre/mcode/commit/fa44d8ef3ffc38ffc263d2d4ab4e4f1899737b98))
+* use gh release upload to preserve release description ([#235](https://github.com/Mzeey-Emipre/mcode/issues/235)) ([e4aae5c](https://github.com/Mzeey-Emipre/mcode/commit/e4aae5c395c4ebc232656391330b259b902b3b97))
+* work around electron-builder bun detection bug in CI ([#224](https://github.com/Mzeey-Emipre/mcode/issues/224)) ([6184ffe](https://github.com/Mzeey-Emipre/mcode/commit/6184ffe23b304225a639f0037d5f47530502bd85))
+
+
+### Performance Improvements
+
+* thread branching optimisations ([#221](https://github.com/Mzeey-Emipre/mcode/issues/221)) ([6a331c7](https://github.com/Mzeey-Emipre/mcode/commit/6a331c7ab682d57009ab6db4cc009969e7e15e76))
+
 ## [0.1.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.0.1...mcode-v0.1.0) (2026-04-08)
 
 
