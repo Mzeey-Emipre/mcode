@@ -134,8 +134,6 @@ export class GithubService {
       input.body,
       "--base",
       input.baseBranch,
-      "--json",
-      "number,url",
     ];
     if (input.isDraft) {
       args.push("--draft");
@@ -151,19 +149,20 @@ export class GithubService {
             reject(error);
             return;
           }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(stdout);
-          } catch {
-            reject(new Error("Invalid JSON response from gh CLI"));
+          // gh pr create outputs the PR URL to stdout, e.g.
+          // https://github.com/owner/repo/pull/123
+          const url = stdout.trim();
+          const match = url.match(/\/pull\/(\d+)$/);
+          if (!match) {
+            reject(new Error(`Unexpected gh pr create output: ${url}`));
             return;
           }
-          const data = parsed as Record<string, unknown>;
-          if (typeof data.number !== "number" || typeof data.url !== "string") {
-            reject(new Error("Invalid gh response: missing or malformed number/url"));
+          const number = parseInt(match[1], 10);
+          if (isNaN(number)) {
+            reject(new Error("Could not parse PR number from gh output"));
             return;
           }
-          resolve({ number: data.number, url: data.url });
+          resolve({ number, url });
         },
       );
     });

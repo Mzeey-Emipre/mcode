@@ -26,13 +26,10 @@ describe("GithubService.createPr", () => {
   });
 
   it("creates a PR and returns number and url", async () => {
-    const payload = JSON.stringify({
-      number: 42,
-      url: "https://github.com/o/r/pull/42",
-    });
+    // gh pr create outputs the PR URL to stdout (no --json flag supported)
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], _opts: object, callback: (error: null, stdout: string) => void) => {
-        callback(null, payload);
+        callback(null, "https://github.com/o/r/pull/42\n");
       },
     );
 
@@ -52,23 +49,19 @@ describe("GithubService.createPr", () => {
         "--title", "feat: add widget",
         "--body", "## What\nAdded widget",
         "--base", "main",
-        "--json", "number,url",
       ],
       expect.any(Object),
       expect.any(Function),
     );
     const callArgs = mockExecFile.mock.calls[0][1] as string[];
     expect(callArgs).not.toContain("--draft");
+    expect(callArgs).not.toContain("--json");
   });
 
   it("passes --draft flag when isDraft is true", async () => {
-    const payload = JSON.stringify({
-      number: 7,
-      url: "https://github.com/o/r/pull/7",
-    });
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], _opts: object, callback: (error: null, stdout: string) => void) => {
-        callback(null, payload);
+        callback(null, "https://github.com/o/r/pull/7\n");
       },
     );
 
@@ -106,10 +99,10 @@ describe("GithubService.createPr", () => {
     ).rejects.toThrow("gh: not authenticated");
   });
 
-  it("rejects when gh returns malformed JSON", async () => {
+  it("rejects when gh returns output that does not contain a PR URL", async () => {
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], _opts: object, callback: (err: null, stdout: string) => void) => {
-        callback(null, "not valid json {");
+        callback(null, "some unexpected output");
       },
     );
 
@@ -121,6 +114,6 @@ describe("GithubService.createPr", () => {
         baseBranch: "main",
         isDraft: false,
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("Unexpected gh pr create output");
   });
 });
