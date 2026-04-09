@@ -16,7 +16,7 @@ import { MarkdownContent } from "./MarkdownContent";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
-import type { PrDraft, GitBranch as GitBranchType } from "@mcode/contracts";
+import type { GitBranch as GitBranchType } from "@mcode/contracts";
 
 // ---------------------------------------------------------------------------
 // BaseBranchSelect — searchable local-branch picker for the PR dialog sidebar
@@ -211,42 +211,17 @@ export function CreatePrDialog({
     }
   }, [open, workspaceId, loadBranches]);
 
-  // Generate the PR draft when the dialog opens.
-  // baseBranch is intentionally excluded from deps to avoid re-generating when
-  // the user changes the base branch.
+  // Reset ephemeral fields when the dialog closes.
   useEffect(() => {
     if (!open) {
-      // Reset ephemeral fields so the next open starts clean
       setTitle("");
       setBody("");
       setIsDraft(false);
       setError(null);
       setDescMode("write");
-      return;
+      setState("ready");
     }
-    let cancelled = false;
-    setState("loading");
-    setError(null);
-
-    getTransport()
-      .generatePrDraft(workspaceId, threadId, baseBranch)
-      .then((draft: PrDraft) => {
-        if (cancelled) return;
-        setTitle(draft.title);
-        setBody(draft.body);
-        setState("ready");
-      })
-      .catch((err: Error) => {
-        if (cancelled) return;
-        setError(`Draft generation failed: ${err.message}`);
-        setState("error");
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // baseBranch intentionally excluded — re-generating draft on every base change would be disruptive
-  }, [open, workspaceId, threadId]);
+  }, [open]);
 
   const handleSubmit = useCallback(async () => {
     setState("submitting");
@@ -400,7 +375,7 @@ export function CreatePrDialog({
 
           {/* Right: description */}
           <div className="flex-1 flex flex-col gap-2 p-5 min-w-0">
-            {state === "loading" ? (
+            {isRegenerating && !body ? (
               <div className="flex-1 flex items-center justify-center gap-2 text-muted-foreground text-sm">
                 <Loader2 className="size-4 animate-spin" />
                 Generating PR draft…
@@ -424,7 +399,7 @@ export function CreatePrDialog({
                       ) : (
                         <RefreshCw className="size-3" />
                       )}
-                      Regenerate
+                      {title || body ? "Regenerate" : "Generate"}
                     </Button>
                     <SegControl
                       options={[
