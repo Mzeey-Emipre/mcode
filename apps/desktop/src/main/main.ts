@@ -541,9 +541,13 @@ app.whenReady().then(async () => {
     createWindow();
     console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
 
-    // Create and distribute streaming MessagePort pair
-    const rendererPort = serverManager.createStreamPort();
-    mainWindow!.webContents.postMessage("stream-port", null, [rendererPort]);
+    // Create and distribute streaming MessagePort pair.
+    // MessagePort requires an owned UtilityProcess handle - skip when reusing
+    // an external server (the renderer falls back to pure WebSocket).
+    if (!serverManager.reusedExisting) {
+      const rendererPort = serverManager.createStreamPort();
+      mainWindow!.webContents.postMessage("stream-port", null, [rendererPort]);
+    }
 
     // Set up close handler
     setupCloseHandler();
@@ -552,9 +556,11 @@ app.whenReady().then(async () => {
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
-        // Re-distribute stream port to the new window
-        const port = serverManager.createStreamPort();
-        mainWindow!.webContents.postMessage("stream-port", null, [port]);
+        // Re-distribute stream port to the new window (only if we own the process)
+        if (!serverManager.reusedExisting) {
+          const port = serverManager.createStreamPort();
+          mainWindow!.webContents.postMessage("stream-port", null, [port]);
+        }
         setupCloseHandler();
       }
     });
