@@ -74,6 +74,11 @@ export class CodexEventMapper {
           this.lastAssistantText = text;
           return [{ type: "textDelta", threadId, delta }];
         }
+        logger.warn("CodexEventMapper: agent_message text is not a suffix extension, treating as replacement", {
+          threadId: this.threadId,
+          lastLength: this.lastAssistantText.length,
+          newLength: text.length,
+        });
         this.lastAssistantText = text;
         return [];
       }
