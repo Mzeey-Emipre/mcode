@@ -496,13 +496,9 @@ The Claude provider preserves the prompt queue pattern:
 
 The server process is long-lived (spawned once by desktop, lives until app closes), so the session pool persists naturally.
 
-### Codex Provider
+### 8.4 Codex Provider (Session Architecture)
 
-The Codex provider (`apps/server/src/providers/codex/`) uses one persistent
-`codex app-server` child process per session, communicating via JSON-RPC 2.0
-over stdin/stdout (NDJSON).
-
-**Architecture:**
+The Codex provider (`apps/server/src/providers/codex/`) uses one persistent `codex app-server` child process per session, communicating via JSON-RPC 2.0 over stdin/stdout (NDJSON):
 
 - `codex-provider.ts` - `IAgentProvider` implementation; manages `CodexAppServer` sessions
 - `codex-app-server.ts` - persistent child process lifecycle manager
@@ -511,15 +507,14 @@ over stdin/stdout (NDJSON).
 - `codex-version.ts` - CLI version gate (rejects CLI < 0.37.0)
 - `codex-types.ts` - JSON-RPC protocol type definitions
 
-**Lifecycle:**
+Lifecycle per session:
 
-1. Handshake: `initialize` → `initialized` → `model/list` (best-effort) → `thread/start` (or `thread/resume` with fresh-thread fallback)
-2. Turn: `turn/start` RPC, events stream via notifications, wait for `turn.completed` / `turn.failed`
-3. Cancel: `turn/interrupt` RPC, then `taskkill /T /F` on Windows (full tree kill)
-4. Eviction: sessions idle for 10 minutes have their child process killed
+1. **Handshake**: `initialize` → `initialized` → `model/list` (best-effort) → `thread/start` (or `thread/resume` with fresh-thread fallback)
+2. **Turn**: `turn/start` RPC, events stream via notifications, wait for `turn.completed` / `turn.failed`
+3. **Cancel**: `turn/interrupt` RPC, then `taskkill /T /F` on Windows (full tree kill)
+4. **Eviction**: sessions idle for 10 minutes have their child process killed
 
-**Windows notes:** `shell: true` on spawn resolves `.cmd` shims. Process tree kill uses
-`taskkill /T /F /PID` because Node's `child.kill()` does not kill grandchildren.
+On Windows, `shell: true` on spawn resolves `.cmd` shims. Process tree kill uses `taskkill /T /F /PID` because Node's `child.kill()` does not kill grandchildren.
 
 ## 9. Desktop Shell
 
