@@ -75,7 +75,7 @@ export {
 export type { FileCategory } from "./models/file-types.js";
 
 // Events
-export { AgentEventSchema } from "./events/agent-event.js";
+export { AgentEventSchema, AgentEventType } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";
 
 // Plan questions

@@ -32,6 +32,7 @@ import { WorkspaceRepo } from "./repositories/workspace-repo";
 import { CleanupWorker } from "./services/cleanup-worker";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
+import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import type Database from "better-sqlite3";
 
@@ -135,7 +136,7 @@ for (const provider of providerRegistry.resolveAll()) {
     let enrichedEvent = event;
 
     // Enrich non-Agent tool calls with parent ID from the canonical stack in AgentService
-    if (event.type === "toolUse" && event.toolName !== "Agent") {
+    if (event.type === AgentEventType.ToolUse && event.toolName !== "Agent") {
       const parentId = agentService.getCurrentParentToolCallId(event.threadId);
       if (parentId) {
         enrichedEvent = { ...event, parentToolCallId: parentId };
@@ -145,7 +146,7 @@ for (const provider of providerRegistry.resolveAll()) {
     broadcast("agent.event", enrichedEvent);
     portPush.send("agent.event", enrichedEvent);
 
-    if (event.type === "turnComplete") {
+    if (event.type === AgentEventType.TurnComplete) {
       threadRepo.updateStatus(event.threadId, "completed");
       const completedStatus = { threadId: event.threadId, status: "completed" };
       broadcast("thread.status", completedStatus);
@@ -180,7 +181,7 @@ for (const provider of providerRegistry.resolveAll()) {
           });
         }
       }
-    } else if (event.type === "error") {
+    } else if (event.type === AgentEventType.Error) {
       threadRepo.updateStatus(event.threadId, "errored");
       const erroredStatus = { threadId: event.threadId, status: "errored" };
       broadcast("thread.status", erroredStatus);

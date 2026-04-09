@@ -1,4 +1,5 @@
 import { logger } from "@mcode/shared";
+import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import type { CodexNotification, TurnEventPayload } from "./codex-types.js";
 
@@ -34,10 +35,10 @@ export class CodexEventMapper {
 
       const events: AgentEvent[] = [];
       if (text) {
-        events.push({ type: "message", threadId: this.threadId, content: text, tokens: null });
+        events.push({ type: AgentEventType.Message, threadId: this.threadId, content: text, tokens: null });
       }
       events.push({
-        type: "turnComplete",
+        type: AgentEventType.TurnComplete,
         threadId: this.threadId,
         reason: "end_turn",
         costUsd: null,
@@ -51,7 +52,7 @@ export class CodexEventMapper {
     }
 
     if (method === "turn.failed") {
-      return [{ type: "error", threadId: this.threadId, error: notification.params.error.message }];
+      return [{ type: AgentEventType.Error, threadId: this.threadId, error: notification.params.error.message }];
     }
 
     logger.warn("CodexEventMapper: unrecognized notification", { method: (notification as { method: string }).method });
@@ -72,7 +73,7 @@ export class CodexEventMapper {
         if (text.startsWith(this.lastAssistantText) && text.length > this.lastAssistantText.length) {
           const delta = text.slice(this.lastAssistantText.length);
           this.lastAssistantText = text;
-          return [{ type: "textDelta", threadId, delta }];
+          return [{ type: AgentEventType.TextDelta, threadId, delta }];
         }
         logger.warn("CodexEventMapper: agent_message text is not a suffix extension, treating as replacement", {
           threadId: this.threadId,
@@ -85,14 +86,14 @@ export class CodexEventMapper {
 
       case "command_execution": {
         const toolUseEvent: AgentEvent = {
-          type: "toolUse",
+          type: AgentEventType.ToolUse,
           threadId,
           toolCallId: params.id,
           toolName: "command_execution",
           toolInput: { command: params.command },
         };
         const toolResultEvent: AgentEvent = {
-          type: "toolResult",
+          type: AgentEventType.ToolResult,
           threadId,
           toolCallId: params.id,
           output: params.aggregated_output,
@@ -105,14 +106,14 @@ export class CodexEventMapper {
         const toolCallId = params.id;
         const paths = params.changes.map((c) => c.path).join(", ");
         const toolUseEvent: AgentEvent = {
-          type: "toolUse",
+          type: AgentEventType.ToolUse,
           threadId,
           toolCallId,
           toolName: "file_change",
           toolInput: { files: paths },
         };
         const toolResultEvent: AgentEvent = {
-          type: "toolResult",
+          type: AgentEventType.ToolResult,
           threadId,
           toolCallId,
           output: paths,
@@ -124,14 +125,14 @@ export class CodexEventMapper {
       case "mcp_tool_call": {
         const toolCallId = params.id;
         const toolUseEvent: AgentEvent = {
-          type: "toolUse",
+          type: AgentEventType.ToolUse,
           threadId,
           toolCallId,
           toolName: "mcp:" + params.server + "/" + params.tool,
           toolInput: params.arguments ?? {},
         };
         const toolResultEvent: AgentEvent = {
-          type: "toolResult",
+          type: AgentEventType.ToolResult,
           threadId,
           toolCallId,
           output: String(params.error ?? params.result ?? ""),
@@ -146,7 +147,7 @@ export class CodexEventMapper {
         return [];
 
       case "error":
-        return [{ type: "error", threadId, error: params.message }];
+        return [{ type: AgentEventType.Error, threadId, error: params.message }];
 
       default: {
         const exhaustiveCheck: never = params;

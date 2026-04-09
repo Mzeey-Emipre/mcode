@@ -20,6 +20,7 @@ import type {
   AgentEvent,
   AttachmentMeta,
 } from "@mcode/contracts";
+import { AgentEventType } from "@mcode/contracts";
 import { checkCodexVersion, meetsMinVersion } from "./codex-version.js";
 import { CodexAppServer } from "./codex-app-server.js";
 import { CodexEventMapper } from "./codex-event-mapper.js";
@@ -142,15 +143,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     // Version check only when starting a new session
     const versionResult = checkCodexVersion(cliPath);
     if (!versionResult.ok) {
-      this.emit("event", { type: "error", threadId, error: versionResult.error } satisfies AgentEvent);
-      this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Error, threadId, error: versionResult.error } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       return;
     }
 
     if (!meetsMinVersion(versionResult.version, "0.37.0")) {
       const errorMsg = `Codex CLI version ${versionResult.version} is not supported. Minimum required: 0.37.0. Update with: npm install -g @openai/codex`;
-      this.emit("event", { type: "error", threadId, error: errorMsg } satisfies AgentEvent);
-      this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Error, threadId, error: errorMsg } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       return;
     }
 
@@ -177,8 +178,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
 
     server.on("fatal", (error: string) => {
       logger.error("CodexAppServer fatal", { sessionId, error });
-      this.emit("event", { type: "error", threadId, error } satisfies AgentEvent);
-      this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       this.sessions.delete(sessionId);
     });
 
@@ -193,15 +194,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       logger.error("CodexAppServer start failed", { sessionId, error: errorMessage });
-      this.emit("event", { type: "error", threadId, error: errorMessage } satisfies AgentEvent);
-      this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       return;
     }
 
     if (server.threadId) {
       this.sdkSessionIds.set(sessionId, server.threadId);
       this.emit("event", {
-        type: "system",
+        type: AgentEventType.System,
         threadId,
         subtype: "sdk_session_id:" + server.threadId,
       } satisfies AgentEvent);
@@ -251,12 +252,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       if (!serverDied) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         logger.error("Codex runTurn error", { sessionId, error: errorMessage });
-        this.emit("event", { type: "error", threadId, error: errorMessage } satisfies AgentEvent);
+        this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
       }
     } finally {
       // Suppress ended if the fatal handler already emitted it
       if (!serverDied) {
-        this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       }
     }
   }
