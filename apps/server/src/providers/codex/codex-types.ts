@@ -20,33 +20,33 @@ export interface InitializeResult { protocolVersion: string; serverInfo: { name:
 
 // Thread RPCs
 
-/** Parameters for the `thread.start` RPC method. */
+/** Parameters for the `thread/start` RPC method. */
 export interface ThreadStartParams { workingDirectory: string; model?: string; sandboxMode?: string; modelReasoningEffort?: string }
-/** Result returned by the `thread.start` RPC method. */
+/** Result returned by the `thread/start` RPC method. */
 export interface ThreadStartResult { threadId: string }
-/** Parameters for the `thread.resume` RPC method. */
+/** Parameters for the `thread/resume` RPC method. */
 export interface ThreadResumeParams { threadId: string; workingDirectory?: string }
-/** Result returned by the `thread.resume` RPC method. */
+/** Result returned by the `thread/resume` RPC method. */
 export interface ThreadResumeResult { threadId: string }
 
 // Turn RPCs
 
 /** A structured text or image input part for turn messages. */
 export type TurnInputPart = { type: "text"; text: string } | { type: "local_image"; path: string };
-/** Parameters for the `turn.start` RPC method. */
+/** Parameters for the `turn/start` RPC method. */
 export interface TurnStartParams { threadId: string; input: string | TurnInputPart[]; config?: Record<string, unknown> }
-/** Result returned by the `turn.start` RPC method. */
+/** Result returned by the `turn/start` RPC method. */
 export interface TurnStartResult { turnId: string }
-/** Parameters for the `turn.interrupt` RPC method. */
+/** Parameters for the `turn/interrupt` RPC method. */
 export interface TurnInterruptParams { threadId: string }
-/** Result returned by the `turn.interrupt` RPC method. */
+/** Result returned by the `turn/interrupt` RPC method. */
 export interface TurnInterruptResult { success: boolean }
 
 // Handshake RPCs
 
-/** Result returned by the `model.list` RPC method. */
+/** Result returned by the `model/list` RPC method. */
 export interface ModelListResult { models: Array<{ id: string; name?: string }> }
-/** Result returned by the `account.read` RPC method. */
+/** Result returned by the `account/read` RPC method. */
 export interface AccountReadResult { id?: string; email?: string; name?: string }
 
 // Notification payloads - turn.event discriminated union
