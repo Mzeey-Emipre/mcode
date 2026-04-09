@@ -40,9 +40,19 @@ export class CodexEventMapper {
     }
 
     if (method === "turn/completed") {
-      logger.debug("Codex turn/completed", { params: notification.params });
+      const turn = notification.params.turn;
+      logger.debug("Codex turn/completed", { status: turn?.status });
+
+      // Failed turn: emit Error, not TurnComplete (avoids overwriting "errored" status)
+      if (turn?.status === "failed") {
+        const errorMsg = turn.error?.message ?? "Codex turn failed";
+        logger.error("Codex turn failed", { error: errorMsg, codexErrorInfo: turn.error?.codexErrorInfo });
+        this.lastAssistantText = "";
+        return [{ type: AgentEventType.Error, threadId: this.threadId, error: errorMsg }];
+      }
+
       const text = this.lastAssistantText;
-      const usage = notification.params.usage ?? {};
+      const usage = turn?.usage ?? {};
       const tokensIn = (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0);
       const tokensOut = usage.output_tokens ?? 0;
       const totalProcessedTokens = tokensIn + tokensOut;
@@ -93,8 +103,9 @@ export class CodexEventMapper {
     if (itemType === "message") {
       // Extract text from content parts (OpenAI Responses API format)
       const content = item.content ?? [];
+      // Accept both "output_text" (OpenAI Responses API) and "text" (observed in codex)
       const text = content
-        .filter((part) => part.type === "output_text" && typeof part.text === "string")
+        .filter((part) => (part.type === "output_text" || part.type === "text") && typeof part.text === "string")
         .map((part) => part.text ?? "")
         .join("");
 
@@ -134,6 +145,11 @@ export class CodexEventMapper {
         isError: false,
       };
       return [toolUseEvent, toolResultEvent];
+    }
+
+    if (itemType === "userMessage") {
+      // Echo of the user's own message - silently consumed
+      return [];
     }
 
     logger.debug("CodexEventMapper: unrecognized item type in item/completed", { itemType, item });

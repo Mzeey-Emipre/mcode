@@ -92,8 +92,22 @@ export interface ItemCompletedPayload { item?: CompletedItem; [key: string]: unk
 export interface ItemStartedPayload { [key: string]: unknown }
 /** Payload for the `turn/started` notification - silently consumed. */
 export interface TurnStartedPayload { [key: string]: unknown }
+
+/** Error detail embedded in a failed turn result. */
+export interface TurnErrorInfo { message?: string; codexErrorInfo?: string; additionalDetails?: unknown }
+
+/** The `turn` object nested inside a `turn/completed` payload. */
+export interface TurnResult {
+  id?: string;
+  items?: unknown[];
+  /** `"completed"` on success, `"failed"` when the turn was rejected by the server. */
+  status?: "completed" | "failed" | string;
+  error?: TurnErrorInfo;
+  usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number };
+}
+
 /** Payload for the `turn/completed` notification. */
-export interface TurnCompletedPayload { threadId?: string; turnId?: string; usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number }; [key: string]: unknown }
+export interface TurnCompletedPayload { threadId?: string; turn?: TurnResult; [key: string]: unknown }
 /** Payload for the `error` notification (may precede `turn/completed`). */
 export interface ErrorNotificationPayload { message?: string; code?: string; [key: string]: unknown }
 

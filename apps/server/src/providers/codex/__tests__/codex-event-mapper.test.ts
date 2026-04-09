@@ -58,6 +58,23 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
+  it("emits textDelta for item/completed message with plain 'text' content type (codex format)", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "Hello from codex" }],
+        },
+      },
+    });
+    expect(events).toEqual([
+      { type: "textDelta", threadId: "test-thread", delta: "Hello from codex" },
+    ]);
+  });
+
   it("emits delta for new text in subsequent item/completed messages", () => {
     mapper.mapNotification({
       jsonrpc: "2.0",
@@ -116,6 +133,21 @@ describe("CodexEventMapper", () => {
       jsonrpc: "2.0",
       method: "item/completed",
       params: {},
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("returns empty array for item/completed userMessage (echo of user input)", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "userMessage",
+          id: "msg-1",
+          content: [{ type: "text", text: "hello" }],
+        },
+      },
     });
     expect(events).toEqual([]);
   });
@@ -222,7 +254,7 @@ describe("CodexEventMapper", () => {
       method: "turn/completed",
       params: {
         threadId: "test-thread",
-        usage: { input_tokens: 10, cached_input_tokens: 5, output_tokens: 20 },
+        turn: { status: "completed", usage: { input_tokens: 10, cached_input_tokens: 5, output_tokens: 20 } },
       },
     });
 
@@ -249,7 +281,7 @@ describe("CodexEventMapper", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "turn/completed",
-      params: { usage: { input_tokens: 5, output_tokens: 3 } },
+      params: { turn: { status: "completed", usage: { input_tokens: 5, output_tokens: 3 } } },
     });
 
     expect(events.some((e) => e.type === "message")).toBe(false);
@@ -264,15 +296,47 @@ describe("CodexEventMapper", () => {
         item: { type: "message", content: [{ type: "output_text", text: "First" }] },
       },
     });
-    mapper.mapNotification({ jsonrpc: "2.0", method: "turn/completed", params: {} });
+    mapper.mapNotification({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { status: "completed" } } });
 
     // Second turn: text accumulator should be empty
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "turn/completed",
-      params: {},
+      params: { turn: { status: "completed" } },
     });
     expect(events.some((e) => e.type === "message")).toBe(false);
+  });
+
+  it("emits error event for turn/completed with status failed", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: {
+        threadId: "test-thread",
+        turn: {
+          status: "failed",
+          error: { message: "You've hit your usage limit", codexErrorInfo: "usageLimitExceeded" },
+        },
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({
+      type: "error",
+      threadId: "test-thread",
+      error: "You've hit your usage limit",
+    });
+  });
+
+  it("falls back to generic error message when turn/completed failed has no error.message", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { turn: { status: "failed" } },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "error" });
   });
 
   // ---------------------------------------------------------------------------
