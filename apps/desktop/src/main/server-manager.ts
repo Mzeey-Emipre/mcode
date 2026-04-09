@@ -33,26 +33,14 @@ function getServerPaths(): {
   nativeBindingPath?: string;
 } {
   if (app.isPackaged) {
-    const serverBundle = resolve(__dirname, "../server/server.cjs");
+    // The server bundle and native deps are asarUnpack'd to real filesystem
+    // paths. utilityProcess.fork() needs a real entry path and cwd - it does
+    // not go through Electron's asar virtual filesystem layer.
+    const unpackedRoot = resolve(process.resourcesPath, "app.asar.unpacked");
+    const serverBundle = resolve(unpackedRoot, "dist", "server", "server.cjs");
     const nativeBindingPath = [
-      resolve(
-        process.resourcesPath,
-        "app.asar.unpacked",
-        "node_modules",
-        "better-sqlite3",
-        "build",
-        "Release",
-        "better_sqlite3.electron.node",
-      ),
-      resolve(
-        process.resourcesPath,
-        "app.asar.unpacked",
-        "node_modules",
-        "better-sqlite3",
-        "build",
-        "Release",
-        "better_sqlite3.node",
-      ),
+      resolve(unpackedRoot, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.electron.node"),
+      resolve(unpackedRoot, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node"),
     ].find((candidate) => existsSync(candidate));
     return { entry: serverBundle, cwd: dirname(serverBundle), nativeBindingPath };
   }
@@ -63,13 +51,15 @@ function getServerPaths(): {
 
 /**
  * Port range to scan for an available port.
- * Dev mode (ELECTRON_RENDERER_URL set) uses 19500+ to avoid colliding with
- * the standalone server or a packaged app instance.
- * Packaged mode uses 19600+ so it never clashes with a dev server on 19400.
+ * Three tiers prevent clashes when multiple instances coexist:
+ *  - Dev mode  (ELECTRON_RENDERER_URL set): 19500-19599
+ *  - Source prod (from source, not packaged):  19600-19699
+ *  - Packaged installed app (app.isPackaged):  19700-19799
+ * The standalone server defaults to 19400 via MCODE_PORT.
  */
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
-const PORT_MIN = isDev ? 19500 : 19600;
-const PORT_MAX = isDev ? 19600 : 19700;
+const PORT_MIN = app.isPackaged ? 19700 : isDev ? 19500 : 19600;
+const PORT_MAX = app.isPackaged ? 19800 : isDev ? 19600 : 19700;
 
 /** Interval (ms) between health-check polls during startup. */
 const HEALTH_POLL_INTERVAL = 200;
@@ -137,15 +127,58 @@ async function findAvailablePort(min: number, max: number): Promise<number> {
   throw new Error(`No available port found in range ${min}-${max}`);
 }
 
+/** Path to the server lock file for service discovery across instances. */
+function lockFilePath(): string {
+  return join(getMcodeDir(), "server.lock");
+}
+
+/** Lock file schema written by the server on startup. */
+interface ServerLock {
+  port: number;
+  authToken: string;
+  pid: number;
+  startedAt: string;
+}
+
+/**
+ * Check if an existing server is running by reading the lock file and
+ * probing its health endpoint. Returns the lock info if healthy, null otherwise.
+ */
+async function tryExistingServer(): Promise<ServerLock | null> {
+  try {
+    const raw = readFileSync(lockFilePath(), "utf-8");
+    const lock: ServerLock = JSON.parse(raw);
+
+    // Validate the lock file has the expected shape
+    if (typeof lock.port !== "number" || typeof lock.authToken !== "string" || !lock.port) {
+      return null;
+    }
+
+    // Probe the health endpoint to confirm the server is alive
+    const res = await fetch(`http://localhost:${lock.port}/health`);
+    if (res.ok) {
+      console.log(`[server-manager] Found existing server on port ${lock.port} (pid ${lock.pid})`);
+      return lock;
+    }
+  } catch {
+    // Lock file missing, unreadable, stale, or server unreachable
+  }
+  return null;
+}
+
 /**
  * Manages the lifecycle of the Mcode server utility process.
  * Handles spawning, health-check polling, restart, and shutdown.
  * Supports MessagePort transfer for direct streaming to renderer.
+ *
+ * If another server instance is already running (detected via lock file),
+ * reuses it instead of spawning a new one to avoid SQLite lock contention.
  */
 export class ServerManager {
   private serverProcess: UtilityProcess | null = null;
   private _port = 0;
   private _authToken = "";
+  private _reusedExisting = false;
 
   /**
    * Optional callback invoked when the server process exits unexpectedly
@@ -164,10 +197,22 @@ export class ServerManager {
   }
 
   /**
-   * Spawn the server process and wait for it to become healthy.
+   * Start the server. If another instance is already running (lock file),
+   * reuses it. Otherwise spawns a new utility process.
    * Returns the assigned port and auth token.
    */
   async start(): Promise<{ port: number; authToken: string }> {
+    // Check for an existing server before spawning a new one.
+    // Avoids SQLite lock contention when multiple Electron instances
+    // (dev, source-prod, packaged) share the same data directory.
+    const existing = await tryExistingServer();
+    if (existing) {
+      this._port = existing.port;
+      this._authToken = existing.authToken;
+      this._reusedExisting = true;
+      return { port: this._port, authToken: this._authToken };
+    }
+
     this._port = await findAvailablePort(PORT_MIN, PORT_MAX);
     this._authToken = randomUUID();
 
@@ -234,6 +279,7 @@ export class ServerManager {
   /**
    * Create a MessagePort pair and send one end to the server utility process.
    * Returns the renderer-facing port for forwarding to the BrowserWindow.
+   * Not available when reusing an external server (no utility process to message).
    */
   createStreamPort(): Electron.MessagePortMain {
     if (!this.serverProcess) {
@@ -246,10 +292,12 @@ export class ServerManager {
 
   /**
    * Gracefully terminate the server process.
+   * No-op when reusing an external server (we don't own it).
    * Sends kill() and retries after 5 seconds if the process has not exited.
    * utilityProcess.kill() does not accept signal arguments.
    */
   shutdown(): void {
+    if (this._reusedExisting) return;
     if (!this.serverProcess) return;
 
     const proc = this.serverProcess;
