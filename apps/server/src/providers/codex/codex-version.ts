@@ -1,7 +1,13 @@
 import { spawnSync } from "child_process";
 
 /** Shell metacharacters that must not appear in a CLI path passed to `shell: true`. */
-const SHELL_METACHAR_RE = /[;&|`$(){}!<>"\n\r]/;
+const SHELL_METACHAR_RE = /[;&|`$(){}!<>"'\s\n\r]/;
+
+/** TTL for cached version results (5 minutes). */
+const VERSION_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/** Cached version check results keyed by cliPath. */
+const versionCache = new Map<string, { result: ReturnType<typeof checkCodexVersion>; checkedAt: number }>();
 
 /**
  * Checks whether the Codex CLI is reachable and returns its version string.
@@ -20,6 +26,12 @@ export function checkCodexVersion(
 ): { ok: true; version: string } | { ok: false; error: string } {
   if (SHELL_METACHAR_RE.test(cliPath)) {
     return { ok: false, error: `Codex CLI path contains invalid characters: "${cliPath}"` };
+  }
+
+  // Return cached result if fresh, avoiding a blocking spawnSync on the event loop.
+  const cached = versionCache.get(cliPath);
+  if (cached && Date.now() - cached.checkedAt < VERSION_CACHE_TTL_MS) {
+    return cached.result;
   }
 
   const result = spawnSync(cliPath, ["--version"], {
@@ -55,7 +67,14 @@ export function checkCodexVersion(
     return { ok: false, error: notFoundError };
   }
 
-  return { ok: true, version: match[1] };
+  const success = { ok: true as const, version: match[1] };
+  versionCache.set(cliPath, { result: success, checkedAt: Date.now() });
+  return success;
+}
+
+/** Clears the cached version results. Exposed for testing only. */
+export function clearVersionCache(): void {
+  versionCache.clear();
 }
 
 /**

@@ -269,20 +269,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     let serverDied = false;
     let endedEmitted = false;
 
-    // Register fatal listener before sendTurn to close the race window where
-    // the server could die between sendTurn returning and the Promise wiring.
-    const earlyFatalHandler = () => { serverDied = true; };
-    server.once("fatal", earlyFatalHandler);
-
     try {
-      await server.sendTurn(input, turnOptions);
-
-      // turn/start returns immediately as an acknowledgment.
-      // Wait for the turn to complete via a turn/completed notification, server death, or timeout.
+      // Register all listeners BEFORE sendTurn so a turn/completed notification
+      // that arrives during the async sendTurn await is never missed.
       await new Promise<void>((resolve, reject) => {
-        // Remove the early guard; the Promise-scoped handler takes over.
-        server.removeListener("fatal", earlyFatalHandler);
-
         const cleanup = () => {
           clearTimeout(turnTimer);
           server.removeListener("notification", onNotification);
@@ -304,8 +294,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
           cleanup();
           reject(new Error(`Codex turn timed out after ${TURN_TIMEOUT_MS / 1000}s`));
         }, TURN_TIMEOUT_MS);
+
         server.on("notification", onNotification);
         server.once("fatal", onFatal);
+
+        // Send the turn after listeners are wired.
+        server.sendTurn(input, turnOptions).catch((err) => {
+          cleanup();
+          reject(err);
+        });
       });
     } catch (e: unknown) {
       if (!serverDied) {
@@ -314,7 +311,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
         this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
       }
     } finally {
-      server.removeListener("fatal", earlyFatalHandler);
       // Suppress ended if the fatal handler already emitted it
       if (!serverDied && !endedEmitted) {
         endedEmitted = true;

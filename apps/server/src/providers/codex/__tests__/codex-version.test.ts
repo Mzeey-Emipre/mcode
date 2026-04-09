@@ -5,7 +5,7 @@ vi.mock("child_process", () => ({
 }));
 
 import { spawnSync } from "child_process";
-import { meetsMinVersion, checkCodexVersion } from "../codex-version.js";
+import { meetsMinVersion, checkCodexVersion, clearVersionCache } from "../codex-version.js";
 
 const mockSpawnSync = vi.mocked(spawnSync);
 
@@ -42,6 +42,7 @@ describe("meetsMinVersion", () => {
 describe("checkCodexVersion error messages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearVersionCache();
   });
 
   it("default path error contains 'CLI not found'", () => {
@@ -111,6 +112,18 @@ describe("checkCodexVersion error messages", () => {
 
     expect(result.ok).toBe(true);
     expect((result as { ok: true; version: string }).version).toBe("0.118.0");
+  });
+
+  it("rejects cliPath with shell metacharacters without calling spawnSync", () => {
+    mockSpawnSync.mockClear();
+
+    const dangerous = ["codex; rm -rf /", "`$(rm -rf /)`", "codex'--bad", "path with spaces/codex"];
+    for (const cliPath of dangerous) {
+      const result = checkCodexVersion(cliPath);
+      expect(result.ok).toBe(false);
+      expect((result as { ok: false; error: string }).error).toContain("invalid characters");
+    }
+    expect(mockSpawnSync).not.toHaveBeenCalled();
   });
 
   it("returns error when CLI exits with non-zero status", () => {

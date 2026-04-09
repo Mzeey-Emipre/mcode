@@ -39,6 +39,8 @@ export class CodexRpcClient extends EventEmitter {
   private readonly onData: (chunk: string) => void;
   private readonly onClose: () => void;
   private readonly onError: (err: Error) => void;
+  private readonly onStdinError: (err: Error) => void;
+  private readonly onStdinClose: () => void;
 
   /**
    * Creates a new CodexRpcClient and immediately starts listening on stdout.
@@ -72,11 +74,26 @@ export class CodexRpcClient extends EventEmitter {
       this.rejectAll(new Error(`Stream error: ${err.message}`));
     };
 
+    this.onStdinError = (err: Error) => {
+      logger.error("CodexRpcClient: stdin stream error", { err });
+      this.disposed = true;
+      this.rejectAll(new Error(`stdin error: ${err.message}`));
+    };
+
+    this.onStdinClose = () => {
+      logger.warn("CodexRpcClient: stdin stream closed");
+      this.disposed = true;
+      this.rejectAll(new Error("stdin closed while requests pending"));
+    };
+
     this.stdout.setEncoding("utf8");
     this.stdout.on("data", this.onData);
     this.stdout.on("close", this.onClose);
     this.stdout.on("end", this.onClose);
     this.stdout.on("error", this.onError);
+
+    this.stdin.on("error", this.onStdinError);
+    this.stdin.on("close", this.onStdinClose);
   }
 
   /**
@@ -106,7 +123,13 @@ export class CodexRpcClient extends EventEmitter {
       }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
-      this.stdin.write(message);
+      this.stdin.write(message, (err) => {
+        if (err) {
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(new Error(`stdin write failed for ${method}: ${err.message}`));
+        }
+      });
     });
   }
 
@@ -123,7 +146,9 @@ export class CodexRpcClient extends EventEmitter {
     }
 
     const message = JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n";
-    this.stdin.write(message);
+    this.stdin.write(message, (err) => {
+      if (err) logger.warn("CodexRpcClient: notification write failed", { method, error: err.message });
+    });
   }
 
   /**
@@ -138,7 +163,9 @@ export class CodexRpcClient extends EventEmitter {
       return;
     }
     const message = JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n";
-    this.stdin.write(message);
+    this.stdin.write(message, (err) => {
+      if (err) logger.warn("CodexRpcClient: response write failed", { id, error: err.message });
+    });
   }
 
   /**
@@ -153,6 +180,9 @@ export class CodexRpcClient extends EventEmitter {
     this.stdout.off("close", this.onClose);
     this.stdout.off("end", this.onClose);
     this.stdout.off("error", this.onError);
+
+    this.stdin.off("error", this.onStdinError);
+    this.stdin.off("close", this.onStdinClose);
 
     this.rejectAll(new Error("RPC client disposed"));
   }

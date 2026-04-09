@@ -1406,7 +1406,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (method === "session.error") {
-      const errorMsg = (params.error as string) || "Unknown error";
+      const errorMsg = typeof params.error === "string" ? params.error : String(params.error ?? "Unknown error");
       const errorMessage: Message = {
         id: crypto.randomUUID(),
         thread_id: threadId,
@@ -1425,6 +1425,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         nextRunning.delete(threadId);
         const nextStreaming = { ...state.streamingByThread };
         delete nextStreaming[threadId];
+        const nextPreview = { ...state.streamingPreviewByThread };
+        delete nextPreview[threadId];
         const nextStartTimes = { ...state.agentStartTimes };
         delete nextStartTimes[threadId];
         const nextToolCalls = { ...state.toolCallsByThread };
@@ -1437,6 +1439,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           errorByThread: { ...state.errorByThread, [threadId]: errorMsg },
           runningThreadIds: nextRunning,
           streamingByThread: nextStreaming,
+          streamingPreviewByThread: nextPreview,
           agentStartTimes: nextStartTimes,
           toolCallsByThread: nextToolCalls,
           activeSubagentsByThread: nextSubagents,

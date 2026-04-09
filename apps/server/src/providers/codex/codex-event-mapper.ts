@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
@@ -175,7 +176,7 @@ export class CodexEventMapper {
 
     // OpenAI Responses API shape - function_call items carry tool invocations
     if (itemType === "function_call") {
-      const toolCallId = item.id ?? `fc-${Date.now()}`;
+      const toolCallId = item.id ?? `fc-${randomUUID()}`;
       let toolInput: Record<string, unknown> = {};
       if (typeof item.arguments === "string") {
         try { toolInput = JSON.parse(item.arguments) as Record<string, unknown>; }
@@ -202,7 +203,7 @@ export class CodexEventMapper {
     }
 
     if (itemType === "commandExecution") {
-      const toolCallId = item.id ?? `cmd-${Date.now()}`;
+      const toolCallId = item.id ?? `cmd-${randomUUID()}`;
       // Prefer streaming-buffered output; fall back to item.output.
       // The buffer is keyed by itemId from outputDelta notifications which should
       // match item.id, but delete by value scan as a safety net.
@@ -236,7 +237,7 @@ export class CodexEventMapper {
     }
 
     if (itemType === "fileChange") {
-      const toolCallId = item.id ?? `fchg-${Date.now()}`;
+      const toolCallId = item.id ?? `fchg-${randomUUID()}`;
       const changes = item.changes ?? [];
       const paths = changes.map((c) => c.path).join(", ");
       const toolUseEvent: AgentEvent = {
@@ -257,7 +258,7 @@ export class CodexEventMapper {
     }
 
     if (itemType === "mcpToolCall" || itemType === "dynamicToolCall") {
-      const toolCallId = item.id ?? `mcp-${Date.now()}`;
+      const toolCallId = item.id ?? `mcp-${randomUUID()}`;
       let toolInput: Record<string, unknown> = {};
       if (typeof item.arguments === "string") {
         try { toolInput = JSON.parse(item.arguments) as Record<string, unknown>; }

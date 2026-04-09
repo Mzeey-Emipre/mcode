@@ -152,6 +152,21 @@ export class CodexAppServer extends EventEmitter {
       env: { ...process.env },
     });
 
+    // Attach error listener immediately to catch spawn failures (ENOENT, EACCES)
+    // before assigning state or creating the RPC client.
+    const spawnError = await new Promise<Error | null>((resolve) => {
+      child.once("error", (err) => resolve(err));
+      // If the process spawns successfully, the "spawn" event fires first.
+      // Use setImmediate to yield one tick - if no error by then, spawn succeeded.
+      child.once("spawn", () => resolve(null));
+    });
+    if (spawnError) {
+      this._isAlive = false;
+      const msg = `Failed to spawn codex app-server: ${spawnError.message}`;
+      this.emit("fatal", msg);
+      throw new Error(msg);
+    }
+
     this.child = child;
     this._isAlive = true;
     this.rpc = new CodexRpcClient(child.stdin!, child.stdout!);
@@ -188,27 +203,47 @@ export class CodexAppServer extends EventEmitter {
       this.emit("notification", notification);
     });
 
-    // Auto-approve server-initiated requests (approval prompts for command execution,
-    // file edits, MCP tools, etc.). Without this handler, the codex process blocks
-    // forever waiting for a response, causing the session to appear stale.
+    // Handle server-initiated approval requests. Without a response the codex
+    // process blocks forever, causing the session to appear stale.
+    //
+    // Only auto-approve when approvalPolicy === "never" (full-access mode).
+    // For all other policies mcode has no interactive approval UI, so we deny
+    // the request to avoid silently granting permissions the user didn't intend.
     //
     // Each approval type uses different enum values in its `decision` field:
-    //   - item/commandExecution/requestApproval → "acceptForSession"
-    //   - item/fileChange/requestApproval       → "acceptForSession"
+    //   - item/commandExecution/requestApproval → "acceptForSession" / "deny"
+    //   - item/fileChange/requestApproval       → "acceptForSession" / "deny"
     //   - item/permissions/requestApproval       → { permissions: {...}, scope: "session" }
-    //   - applyPatchApproval (deprecated)        → "approved_for_session"
-    //   - execCommandApproval (deprecated)       → "approved_for_session"
+    //   - applyPatchApproval (deprecated)        → "approved_for_session" / "denied"
+    //   - execCommandApproval (deprecated)       → "approved_for_session" / "denied"
     //
     // Source: codex-rs/app-server-protocol/schema/json/*ApprovalResponse.json
     this.rpc.on("serverRequest", (msg: unknown) => {
       const request = msg as { id?: number; method?: string; params?: Record<string, unknown> };
-      logger.info("Codex serverRequest auto-approved", {
-        id: request.id,
-        method: request.method,
-      });
       if (typeof request.id !== "number") return;
 
       const method = request.method ?? "";
+      const autoApprove = this.options.approvalPolicy === "never";
+
+      if (!autoApprove) {
+        logger.info("Codex serverRequest denied (approvalPolicy is not auto-approve)", {
+          id: request.id,
+          method,
+        });
+        // Deprecated approval types use "denied"; v2 types use "deny".
+        if (method === "applyPatchApproval" || method === "execCommandApproval") {
+          this.rpc.sendResponse(request.id, { decision: "denied" });
+        } else {
+          this.rpc.sendResponse(request.id, { decision: "deny" });
+        }
+        return;
+      }
+
+      logger.info("Codex serverRequest auto-approved", {
+        id: request.id,
+        method,
+      });
+
       let result: unknown;
 
       if (method === "item/permissions/requestApproval") {
@@ -272,6 +307,7 @@ export class CodexAppServer extends EventEmitter {
         const execFileAsync = promisify(execFile);
         if (this.child.pid == null) {
           logger.warn("CodexAppServer: child process has no PID, cannot taskkill", { cliPath: this.cliPath });
+          this._isAlive = false;
           return;
         }
         try {
