@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
-import { mockTransport } from "./mocks/transport";
+import { mockTransport, createMockThread } from "./mocks/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
 
@@ -42,8 +42,8 @@ describe("Agent event thread isolation", () => {
     useWorkspaceStore.setState({
       activeThreadId: THREAD_A,
       threads: [
-        { id: THREAD_A, workspace_id: "ws-1", title: "A", status: "active", mode: "direct", worktree_path: null, branch: "main", worktree_managed: false, issue_number: null, pr_number: null, pr_status: null, sdk_session_id: null, created_at: "", updated_at: "", model: "claude-sonnet-4-6", provider: "claude", deleted_at: null, last_context_tokens: null, context_window: null, reasoning_level: null, interaction_mode: null, permission_mode: null, parent_thread_id: null, forked_from_message_id: null, last_compact_summary: null },
-        { id: THREAD_B, workspace_id: "ws-1", title: "B", status: "active", mode: "direct", worktree_path: null, branch: "feat", worktree_managed: false, issue_number: null, pr_number: null, pr_status: null, sdk_session_id: null, created_at: "", updated_at: "", model: "claude-sonnet-4-6", provider: "claude", deleted_at: null, last_context_tokens: null, context_window: null, reasoning_level: null, interaction_mode: null, permission_mode: null, parent_thread_id: null, forked_from_message_id: null, last_compact_summary: null },
+        createMockThread({ id: THREAD_A, workspace_id: "ws-1", title: "A", branch: "main" }),
+        createMockThread({ id: THREAD_B, workspace_id: "ws-1", title: "B", branch: "feat" }),
       ],
     });
     useToastStore.setState({ toasts: [] });
@@ -163,7 +163,11 @@ describe("Agent event thread isolation", () => {
       });
 
       // Give the dynamic import time to resolve
-      await vi.dynamicImportSettled?.() ?? vi.advanceTimersByTime(0);
+      if (vi.dynamicImportSettled) {
+        await vi.dynamicImportSettled();
+      } else {
+        vi.advanceTimersByTime(0);
+      }
       await Promise.resolve();
 
       const { useDiffStore } = await import("@/stores/diffStore");

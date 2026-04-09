@@ -11,8 +11,11 @@ import type { TaskItem } from "./taskStore";
 import { useToastStore } from "./toastStore";
 import { findModelById, getContextWindow } from "@/lib/model-registry";
 
+/** Per-thread configuration for permission scope, interaction mode, and optional reasoning level. */
 export interface ThreadSettings {
+  /** Permission scope applied when the agent calls tools on this thread. */
   permissionMode: PermissionMode;
+  /** Interaction style (e.g. auto-edit vs review) for this thread. */
   interactionMode: InteractionMode;
   /** Reasoning level selected for this thread, forwarded on the post-wizard answer turn. */
   reasoningLevel?: ReasoningLevel;
