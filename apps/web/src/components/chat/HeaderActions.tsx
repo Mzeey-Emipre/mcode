@@ -36,15 +36,15 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   const shouldPollPr = thread.branch !== "main" && thread.branch !== "master";
   const polledPr = useBranchPr(shouldPollPr ? thread.branch : null, cwd);
 
-  // Prefer the store-backed PR when the thread has a PR number and a cached URL
-  // (written by recordPrCreated immediately after creation, before the first poll).
-  // Fall back to polledPr for ongoing status updates once polling catches up.
-  // Never return a PR object with an empty URL.
+  // polledPr is the live source of truth for state (OPEN / MERGED / CLOSED).
+  // The store-backed entry fills the window right after creation, before the first
+  // poll resolves. Only use it when cachedPrUrl is present — otherwise we'd produce
+  // a PR object with url: "" which breaks the Open-in-browser action.
   const cachedPrUrl = useWorkspaceStore((s) => s.prUrlsByThreadId[thread.id]);
   const storePr = thread.pr_number != null && cachedPrUrl
     ? { number: thread.pr_number, url: cachedPrUrl, state: thread.pr_status ?? "OPEN" }
     : null;
-  const pr = storePr ?? (polledPr?.url ? polledPr : null);
+  const pr = (polledPr?.url ? polledPr : null) ?? storePr;
 
   // Check if the branch has commits ahead of main (disable Create PR when it doesn't)
   const hasCommitsAhead = useHasCommitsAhead(
