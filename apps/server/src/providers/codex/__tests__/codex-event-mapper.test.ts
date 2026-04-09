@@ -14,11 +14,43 @@ describe("CodexEventMapper", () => {
     mapper = new CodexEventMapper("test-thread");
   });
 
-  it("emits textDelta for agent_message with new text", () => {
+  // ---------------------------------------------------------------------------
+  // Lifecycle / silently-consumed notifications
+  // ---------------------------------------------------------------------------
+
+  it("returns empty array for turn/started", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "Hello" },
+      method: "turn/started",
+      params: {},
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("returns empty array for item/started", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {},
+    });
+    expect(events).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // item/completed – message items (assistant text)
+  // ---------------------------------------------------------------------------
+
+  it("emits textDelta for item/completed message with output_text content", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "Hello" }],
+        },
+      },
     });
 
     expect(events).toEqual([
@@ -26,17 +58,21 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
-  it("accumulates text and emits only new suffix on subsequent messages", () => {
+  it("emits delta for new text in subsequent item/completed messages", () => {
     mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "Hello" },
+      method: "item/completed",
+      params: {
+        item: { type: "message", content: [{ type: "output_text", text: "Hello" }] },
+      },
     });
 
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "Hello world" },
+      method: "item/completed",
+      params: {
+        item: { type: "message", content: [{ type: "output_text", text: "Hello world" }] },
+      },
     });
 
     expect(events).toEqual([
@@ -44,32 +80,71 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
-  it("returns empty array when agent_message has no new text", () => {
+  it("returns empty array for item/completed message with no new text (same content)", () => {
     mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "Hello" },
+      method: "item/completed",
+      params: {
+        item: { type: "message", content: [{ type: "output_text", text: "Hello" }] },
+      },
     });
 
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "Hello" },
+      method: "item/completed",
+      params: {
+        item: { type: "message", content: [{ type: "output_text", text: "Hello" }] },
+      },
     });
 
     expect(events).toEqual([]);
   });
 
-  it("emits toolUse + toolResult for command_execution", () => {
+  it("returns empty array for item/completed message with no content parts", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
+      method: "item/completed",
       params: {
-        type: "command_execution",
-        id: "cmd-1",
-        command: "ls",
-        aggregated_output: "file.txt",
-        exit_code: 0,
+        item: { type: "message", content: [] },
+      },
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("returns empty array for item/completed with no item", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {},
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("returns empty array for item/completed with unrecognized item type", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { item: { type: "unknown_item_type" } },
+    });
+    expect(events).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // item/completed – function_call items (tool use)
+  // ---------------------------------------------------------------------------
+
+  it("emits toolUse + toolResult for function_call item", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "function_call",
+          id: "call-1",
+          name: "bash",
+          arguments: JSON.stringify({ command: "ls" }),
+          output: "file.txt",
+        },
       },
     });
 
@@ -77,159 +152,74 @@ describe("CodexEventMapper", () => {
     expect(events[0]).toEqual({
       type: "toolUse",
       threadId: "test-thread",
-      toolCallId: "cmd-1",
-      toolName: "command_execution",
+      toolCallId: "call-1",
+      toolName: "bash",
       toolInput: { command: "ls" },
     });
     expect(events[1]).toEqual({
       type: "toolResult",
       threadId: "test-thread",
-      toolCallId: "cmd-1",
+      toolCallId: "call-1",
       output: "file.txt",
       isError: false,
     });
   });
 
-  it("isError true when exit_code is nonzero", () => {
+  it("handles function_call with invalid JSON arguments gracefully", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
+      method: "item/completed",
       params: {
-        type: "command_execution",
-        id: "cmd-1",
-        command: "ls",
-        aggregated_output: "error output",
-        exit_code: 1,
-      },
-    });
-
-    const toolResult = events[1];
-    expect(toolResult).toMatchObject({ type: "toolResult", isError: true });
-  });
-
-  it("emits toolUse + toolResult for file_change", () => {
-    const events = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.event",
-      params: {
-        type: "file_change",
-        id: "fc-1",
-        changes: [{ path: "src/foo.ts", kind: "modified" }],
+        item: {
+          type: "function_call",
+          id: "call-2",
+          name: "bash",
+          arguments: "not valid json",
+          output: "",
+        },
       },
     });
 
     expect(events).toHaveLength(2);
     expect(events[0]).toMatchObject({
       type: "toolUse",
-      toolCallId: "fc-1",
-      toolName: "file_change",
-      toolInput: { files: "src/foo.ts" },
-    });
-    expect(events[1]).toMatchObject({
-      type: "toolResult",
-      toolCallId: "fc-1",
-      isError: false,
-      output: "src/foo.ts",
+      toolInput: { arguments: "not valid json" },
     });
   });
 
-  it("emits toolUse + toolResult for mcp_tool_call", () => {
+  it("handles function_call with no output", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
+      method: "item/completed",
       params: {
-        type: "mcp_tool_call",
-        id: "mcp-1",
-        server: "myserver",
-        tool: "runQuery",
-        arguments: { q: "test" },
-        result: "42",
+        item: {
+          type: "function_call",
+          id: "call-3",
+          name: "bash",
+          arguments: "{}",
+        },
       },
     });
 
-    expect(events).toHaveLength(2);
-    expect(events[0]).toMatchObject({
-      type: "toolUse",
-      toolCallId: "mcp-1",
-      toolName: "mcp:myserver/runQuery",
-      toolInput: { q: "test" },
-    });
-    expect(events[1]).toMatchObject({
-      type: "toolResult",
-      toolCallId: "mcp-1",
-      isError: false,
-      output: "42",
-    });
+    expect(events[1]).toMatchObject({ type: "toolResult", output: "" });
   });
 
-  it("emits error event with isError true for mcp_tool_call with error field", () => {
-    const events = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.event",
-      params: {
-        type: "mcp_tool_call",
-        id: "mcp-1",
-        server: "myserver",
-        tool: "runQuery",
-        arguments: {},
-        error: "something failed",
-      },
-    });
+  // ---------------------------------------------------------------------------
+  // turn/completed
+  // ---------------------------------------------------------------------------
 
-    expect(events).toHaveLength(2);
-    expect(events[1]).toMatchObject({
-      type: "toolResult",
-      isError: true,
-      output: "something failed",
-    });
-  });
-
-  it("returns empty array for reasoning, web_search, todo_list", () => {
-    const reasoningEvents = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "reasoning" },
-    });
-    expect(reasoningEvents).toEqual([]);
-
-    const webSearchEvents = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "web_search" },
-    });
-    expect(webSearchEvents).toEqual([]);
-
-    const todoListEvents = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "todo_list" },
-    });
-    expect(todoListEvents).toEqual([]);
-  });
-
-  it("returns error event for turn.event/error", () => {
-    const events = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "error", message: "something went wrong", willRetry: true },
-    });
-
-    expect(events).toEqual([
-      { type: "error", threadId: "test-thread", error: "something went wrong" },
-    ]);
-  });
-
-  it("returns message + turnComplete for turn.completed", () => {
-    // Set lastAssistantText by sending an agent_message first
+  it("emits message + turnComplete for turn/completed when text was accumulated", () => {
     mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "Hello world" },
+      method: "item/completed",
+      params: {
+        item: { type: "message", content: [{ type: "output_text", text: "Hello world" }] },
+      },
     });
 
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.completed",
+      method: "turn/completed",
       params: {
         threadId: "test-thread",
         usage: { input_tokens: 10, cached_input_tokens: 5, output_tokens: 20 },
@@ -255,84 +245,108 @@ describe("CodexEventMapper", () => {
     });
   });
 
-  it("returns error event for turn.failed", () => {
+  it("omits message event in turn/completed when no text was accumulated", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.failed",
+      method: "turn/completed",
+      params: { usage: { input_tokens: 5, output_tokens: 3 } },
+    });
+
+    expect(events.some((e) => e.type === "message")).toBe(false);
+    expect(events.some((e) => e.type === "turnComplete")).toBe(true);
+  });
+
+  it("resets text accumulator after turn/completed", () => {
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
       params: {
-        threadId: "test-thread",
-        error: { message: "turn failed!" },
+        item: { type: "message", content: [{ type: "output_text", text: "First" }] },
       },
+    });
+    mapper.mapNotification({ jsonrpc: "2.0", method: "turn/completed", params: {} });
+
+    // Second turn: text accumulator should be empty
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: {},
+    });
+    expect(events.some((e) => e.type === "message")).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // error notification
+  // ---------------------------------------------------------------------------
+
+  it("emits error event for error notification", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "error",
+      params: { message: "rate limit exceeded" },
     });
 
     expect(events).toEqual([
-      { type: "error", threadId: "test-thread", error: "turn failed!" },
+      { type: "error", threadId: "test-thread", error: "rate limit exceeded" },
     ]);
   });
 
-  it("reset clears text accumulator", () => {
+  it("emits fallback message for error notification with no message field", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "error",
+      params: {},
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "error", threadId: "test-thread" });
+  });
+
+  // ---------------------------------------------------------------------------
+  // reset()
+  // ---------------------------------------------------------------------------
+
+  it("reset() clears the text accumulator", () => {
     mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "Hello" },
+      method: "item/completed",
+      params: {
+        item: { type: "message", content: [{ type: "output_text", text: "Hello" }] },
+      },
     });
 
     mapper.reset();
 
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "Hello" },
+      method: "item/completed",
+      params: {
+        item: { type: "message", content: [{ type: "output_text", text: "Hello" }] },
+      },
     });
 
+    // After reset the accumulator is empty, so "Hello" is emitted as a full delta
     expect(events).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "Hello" },
     ]);
   });
 
-  it("returns empty array for unrecognized turn.event type", () => {
+  // ---------------------------------------------------------------------------
+  // Unrecognized notification method
+  // ---------------------------------------------------------------------------
+
+  it("returns empty array and warns for unrecognized notification method", async () => {
+    const { logger } = await import("@mcode/shared");
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
-      method: "turn.event",
-      // Cast to bypass TypeScript's exhaustive check in tests
-      params: { type: "unknown_type" } as never,
-    });
+      method: "unknown/method",
+      params: {},
+    } as never);
 
     expect(events).toEqual([]);
-  });
-
-  it("returns empty array and warns when agent_message text is not a suffix extension", () => {
-    mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "Hello" },
-    });
-    // Send a completely different text (not a suffix of "Hello")
-    const result = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.event",
-      params: { type: "agent_message", text: "World" },
-    });
-    expect(result).toHaveLength(0);
-    // Subsequent turn.completed should use the replaced text
-    const completedEvents = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.completed",
-      params: { threadId: "test-thread", usage: {} },
-    });
-    const msgEvent = completedEvents.find((e) => e.type === "message");
-    expect(msgEvent).toBeDefined();
-    expect((msgEvent as { content: string }).content).toBe("World");
-  });
-
-  it("omits message event in turn.completed when no text was accumulated", () => {
-    const events = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "turn.completed",
-      params: { threadId: "test-thread", usage: { input_tokens: 5, output_tokens: 3 } },
-    });
-    // Should have only turnComplete, no message event
-    expect(events.some((e) => e.type === "message")).toBe(false);
-    expect(events.some((e) => e.type === "turnComplete")).toBe(true);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "CodexEventMapper: unrecognized notification",
+      expect.objectContaining({ method: "unknown/method" }),
+    );
   });
 });

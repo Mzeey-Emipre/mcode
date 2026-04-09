@@ -54,49 +54,62 @@ export interface ModelListResult { models: Array<{ id: string; name?: string }> 
 /** Result returned by the `account/read` RPC method. */
 export interface AccountReadResult { id?: string; email?: string; name?: string }
 
-// Notification payloads - turn.event discriminated union
+// Notification payloads - actual codex app-server >= 0.104.0 protocol
+// Observed notification sequence: turn/started → item/started → item/completed
+//   → account/rateLimits/updated → error (optional) → turn/completed
 
-/** Agent produced a text message. */
-export interface AgentMessageEventPayload { type: "agent_message"; text: string }
-/** A shell command was executed by the agent. */
-export interface CommandExecutionEventPayload { type: "command_execution"; id: string; command: string; aggregated_output: string; exit_code: number }
-/** One or more files were created or modified by the agent. */
-export interface FileChangeEventPayload { type: "file_change"; id: string; changes: Array<{ path: string; kind: string }> }
-/** An MCP tool was called by the agent. */
-export interface McpToolCallEventPayload { type: "mcp_tool_call"; id: string; server: string; tool: string; arguments: Record<string, unknown>; result?: string; error?: string }
-/** Internal reasoning step - silently consumed. */
-export interface ReasoningEventPayload { type: "reasoning" }
-/** Web search step - silently consumed. */
-export interface WebSearchEventPayload { type: "web_search" }
-/** Todo list update step - silently consumed. */
-export interface TodoListEventPayload { type: "todo_list" }
-/** An error occurred during the turn. */
-export interface ErrorEventPayload { type: "error"; message: string; willRetry?: boolean }
+/**
+ * A content part within a message item (OpenAI Responses API streaming format).
+ * Known types: "output_text", "refusal". Future types are handled defensively.
+ */
+export interface ItemContentPart { type: string; text?: string }
 
-/** Discriminated union of all `turn.event` notification payloads. */
-export type TurnEventPayload =
-  | AgentMessageEventPayload
-  | CommandExecutionEventPayload
-  | FileChangeEventPayload
-  | McpToolCallEventPayload
-  | ReasoningEventPayload
-  | WebSearchEventPayload
-  | TodoListEventPayload
-  | ErrorEventPayload;
+/**
+ * A completed output item from the agent.
+ * Known types: "message" (assistant text), "function_call" (tool invocation).
+ */
+export interface CompletedItem {
+  type: string;
+  /** Present for `type === "message"` items. */
+  role?: string;
+  /** Content parts for `type === "message"` items. */
+  content?: ItemContentPart[];
+  /** Tool call identifier for `type === "function_call"` items. */
+  id?: string;
+  /** Function name for `type === "function_call"` items. */
+  name?: string;
+  /** JSON-encoded arguments for `type === "function_call"` items. */
+  arguments?: string;
+  /** Stringified output for completed `type === "function_call"` items. */
+  output?: string;
+  /** Allow additional protocol fields without breaking the type. */
+  [key: string]: unknown;
+}
 
-// Notification payloads - turn.completed / turn.failed
-
-/** Payload for the `turn.completed` notification. */
-export interface TurnCompletedPayload { threadId: string; turnId?: string; usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number } }
-/** Payload for the `turn.failed` notification. */
-export interface TurnFailedPayload { threadId: string; turnId?: string; error: { message: string; code?: string } }
+/** Payload for the `item/completed` notification. */
+export interface ItemCompletedPayload { item?: CompletedItem; [key: string]: unknown }
+/** Payload for the `item/started` notification - silently consumed. */
+export interface ItemStartedPayload { [key: string]: unknown }
+/** Payload for the `turn/started` notification - silently consumed. */
+export interface TurnStartedPayload { [key: string]: unknown }
+/** Payload for the `turn/completed` notification. */
+export interface TurnCompletedPayload { threadId?: string; turnId?: string; usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number }; [key: string]: unknown }
+/** Payload for the `error` notification (may precede `turn/completed`). */
+export interface ErrorNotificationPayload { message?: string; code?: string; [key: string]: unknown }
 
 /**
  * Discriminated union of all JSON-RPC notifications from `codex app-server`.
- * To narrow a `turn.event` notification to a specific payload, switch on `params.type`
- * after matching `method === "turn.event"`.
+ *
+ * Observed notification methods (codex app-server >= 0.104.0):
+ *   turn/started, item/started, item/completed, account/rateLimits/updated,
+ *   error, turn/completed
+ *
+ * `account/rateLimits/updated` is filtered by `LIFECYCLE_NOTIFICATION_PREFIXES`
+ * in `CodexAppServer` and never reaches the mapper.
  */
 export type CodexNotification =
-  | (JsonRpcNotification<TurnEventPayload> & { method: "turn.event" })
-  | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn.completed" })
-  | (JsonRpcNotification<TurnFailedPayload> & { method: "turn.failed" });
+  | (JsonRpcNotification<TurnStartedPayload> & { method: "turn/started" })
+  | (JsonRpcNotification<ItemStartedPayload> & { method: "item/started" })
+  | (JsonRpcNotification<ItemCompletedPayload> & { method: "item/completed" })
+  | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn/completed" })
+  | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" });

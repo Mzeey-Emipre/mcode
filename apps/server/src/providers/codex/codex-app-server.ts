@@ -42,12 +42,18 @@ export interface CodexAppServerOptions {
 /**
  * Notification method prefixes that are lifecycle events from the app-server.
  * These are silently consumed at debug level and never forwarded to the turn mapper.
- * Turn events use dot-notation (`turn.event`, `turn.completed`, `turn.failed`);
- * lifecycle notifications use slash-notation and are safe to filter by prefix.
+ *
+ * Observed protocol (codex app-server >= 0.104.0):
+ *   turn/started, item/started, item/completed, account/rateLimits/updated,
+ *   error, turn/completed
+ *
+ * Prefixes matched here cover lifecycle-only namespaces. `turn/` is intentionally
+ * excluded because `turn/completed` must reach the mapper.
  */
 const LIFECYCLE_NOTIFICATION_PREFIXES = [
   "thread/",
   "codex/event/",
+  "account/",
 ] as const;
 
 /** Benign substrings found in stderr that are safe to ignore at debug level. */

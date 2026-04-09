@@ -1,11 +1,18 @@
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
-import type { CodexNotification, TurnEventPayload } from "./codex-types.js";
+import type { CodexNotification, CompletedItem } from "./codex-types.js";
 
 /**
  * Maps raw JSON-RPC 2.0 notifications from the Codex app-server into
  * strongly-typed `AgentEvent` objects consumed by the rest of the mcode system.
+ *
+ * Handles the actual notification protocol observed from codex app-server >= 0.104.0:
+ *   turn/started   → silently consumed
+ *   item/started   → silently consumed
+ *   item/completed → assistant message text or tool call events
+ *   turn/completed → Message (if any buffered text) + TurnComplete
+ *   error          → Error event
  */
 export class CodexEventMapper {
   private lastAssistantText = "";
@@ -22,11 +29,18 @@ export class CodexEventMapper {
   mapNotification(notification: CodexNotification): AgentEvent[] {
     const { method } = notification;
 
-    if (method === "turn.event") {
-      return this.mapTurnEvent(notification.params);
+    if (method === "turn/started" || method === "item/started") {
+      logger.debug("Codex lifecycle notification", { method });
+      return [];
     }
 
-    if (method === "turn.completed") {
+    if (method === "item/completed") {
+      logger.debug("Codex item/completed", { params: notification.params });
+      return this.mapItemCompleted(notification.params.item);
+    }
+
+    if (method === "turn/completed") {
+      logger.debug("Codex turn/completed", { params: notification.params });
       const text = this.lastAssistantText;
       const usage = notification.params.usage ?? {};
       const tokensIn = (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0);
@@ -51,109 +65,78 @@ export class CodexEventMapper {
       return events;
     }
 
-    if (method === "turn.failed") {
-      return [{ type: AgentEventType.Error, threadId: this.threadId, error: notification.params.error.message }];
+    if (method === "error") {
+      logger.debug("Codex error notification", { params: notification.params });
+      const message = notification.params.message ?? "Unknown error from codex app-server";
+      return [{ type: AgentEventType.Error, threadId: this.threadId, error: message }];
     }
 
     logger.warn("CodexEventMapper: unrecognized notification", { method: (notification as { method: string }).method });
     return [];
   }
 
-  /** Resets accumulated assistant text state, e.g. between turns. */
+  /** Resets accumulated assistant text state between turns. */
   reset(): void {
     this.lastAssistantText = "";
   }
 
-  private mapTurnEvent(params: TurnEventPayload): AgentEvent[] {
+  /**
+   * Maps a completed item to zero or more AgentEvents.
+   * Handles "message" items (assistant text) and "function_call" items (tool use).
+   */
+  private mapItemCompleted(item: CompletedItem | undefined): AgentEvent[] {
+    if (!item) return [];
+
     const { threadId } = this;
+    const itemType = item.type;
 
-    switch (params.type) {
-      case "agent_message": {
-        const text = params.text;
-        if (text.startsWith(this.lastAssistantText) && text.length > this.lastAssistantText.length) {
-          const delta = text.slice(this.lastAssistantText.length);
-          this.lastAssistantText = text;
-          return [{ type: AgentEventType.TextDelta, threadId, delta }];
-        }
-        logger.warn("CodexEventMapper: agent_message text is not a suffix extension, treating as replacement", {
-          threadId: this.threadId,
-          lastLength: this.lastAssistantText.length,
-          newLength: text.length,
-        });
+    if (itemType === "message") {
+      // Extract text from content parts (OpenAI Responses API format)
+      const content = item.content ?? [];
+      const text = content
+        .filter((part) => part.type === "output_text" && typeof part.text === "string")
+        .map((part) => part.text ?? "")
+        .join("");
+
+      if (!text) return [];
+
+      // Accumulate and emit as a streaming delta so the UI updates immediately
+      const delta = text.slice(this.lastAssistantText.length);
+      if (delta) {
         this.lastAssistantText = text;
-        return [];
+        return [{ type: AgentEventType.TextDelta, threadId, delta }];
       }
-
-      case "command_execution": {
-        const toolUseEvent: AgentEvent = {
-          type: AgentEventType.ToolUse,
-          threadId,
-          toolCallId: params.id,
-          toolName: "command_execution",
-          toolInput: { command: params.command },
-        };
-        const toolResultEvent: AgentEvent = {
-          type: AgentEventType.ToolResult,
-          threadId,
-          toolCallId: params.id,
-          output: params.aggregated_output,
-          isError: params.exit_code != null && params.exit_code !== 0,
-        };
-        return [toolUseEvent, toolResultEvent];
-      }
-
-      case "file_change": {
-        const toolCallId = params.id;
-        const paths = params.changes.map((c) => c.path).join(", ");
-        const toolUseEvent: AgentEvent = {
-          type: AgentEventType.ToolUse,
-          threadId,
-          toolCallId,
-          toolName: "file_change",
-          toolInput: { files: paths },
-        };
-        const toolResultEvent: AgentEvent = {
-          type: AgentEventType.ToolResult,
-          threadId,
-          toolCallId,
-          output: paths,
-          isError: false,
-        };
-        return [toolUseEvent, toolResultEvent];
-      }
-
-      case "mcp_tool_call": {
-        const toolCallId = params.id;
-        const toolUseEvent: AgentEvent = {
-          type: AgentEventType.ToolUse,
-          threadId,
-          toolCallId,
-          toolName: "mcp:" + params.server + "/" + params.tool,
-          toolInput: params.arguments ?? {},
-        };
-        const toolResultEvent: AgentEvent = {
-          type: AgentEventType.ToolResult,
-          threadId,
-          toolCallId,
-          output: String(params.error ?? params.result ?? ""),
-          isError: !!params.error,
-        };
-        return [toolUseEvent, toolResultEvent];
-      }
-
-      case "reasoning":
-      case "web_search":
-      case "todo_list":
-        return [];
-
-      case "error":
-        return [{ type: AgentEventType.Error, threadId, error: params.message }];
-
-      default: {
-        const exhaustiveCheck: never = params;
-        logger.warn("CodexEventMapper: unrecognized turn.event type", { type: (exhaustiveCheck as TurnEventPayload).type });
-        return [];
-      }
+      // If text shrank or stayed the same, treat as full replacement
+      this.lastAssistantText = text;
+      return [];
     }
+
+    if (itemType === "function_call") {
+      const toolCallId = item.id ?? `codex-tool-${Date.now()}`;
+      let toolInput: Record<string, unknown> = {};
+      try {
+        toolInput = item.arguments ? (JSON.parse(item.arguments) as Record<string, unknown>) : {};
+      } catch {
+        toolInput = { arguments: item.arguments ?? "" };
+      }
+      const toolUseEvent: AgentEvent = {
+        type: AgentEventType.ToolUse,
+        threadId,
+        toolCallId,
+        toolName: item.name ?? "unknown",
+        toolInput,
+      };
+      const toolResultEvent: AgentEvent = {
+        type: AgentEventType.ToolResult,
+        threadId,
+        toolCallId,
+        output: item.output ?? "",
+        isError: false,
+      };
+      return [toolUseEvent, toolResultEvent];
+    }
+
+    logger.debug("CodexEventMapper: unrecognized item type in item/completed", { itemType, item });
+    return [];
   }
 }

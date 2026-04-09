@@ -229,7 +229,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       await new Promise<void>((resolve, reject) => {
         const onNotification = (notification: unknown) => {
           const n = notification as { method?: string };
-          if (n.method === "turn.completed" || n.method === "turn.failed") {
+          // turn/completed is the canonical end-of-turn signal in codex >= 0.104.0
+          if (n.method === "turn/completed") {
             server.removeListener("notification", onNotification);
             server.removeListener("fatal", onFatal);
             resolve();
