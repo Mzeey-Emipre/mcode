@@ -52,6 +52,8 @@ export interface ThreadStartResult {
 /** Parameters for the `thread/resume` RPC method. */
 export interface ThreadResumeParams {
   threadId: string;
+  /** Override model for the resumed thread. */
+  model?: string | null;
   /** Override sandbox mode for the resumed thread. */
   sandbox?: SandboxMode | null;
   /** Override approval policy for the resumed thread. */
@@ -60,8 +62,13 @@ export interface ThreadResumeParams {
   cwd?: string | null;
 }
 
-/** Result returned by the `thread/resume` RPC method. */
-export interface ThreadResumeResult { threadId: string }
+/** Result returned by the `thread/resume` RPC method. Same dual shape as ThreadStartResult. */
+export interface ThreadResumeResult {
+  /** Top-level threadId (some versions). */
+  threadId?: string;
+  /** Nested thread object (codex app-server >= 0.104.0). The session ID is at `thread.id`. */
+  thread?: { id: string; [key: string]: unknown };
+}
 
 // Turn RPCs
 // Source: codex-rs/app-server-protocol/schema/typescript/v2/TurnStartParams.ts
@@ -73,6 +80,8 @@ export type TurnInputPart = { type: "text"; text: string } | { type: "local_imag
 export interface TurnStartParams {
   threadId: string;
   input: TurnInputPart[];
+  /** Override model for this turn. */
+  model?: string | null;
   /** Override approval policy for this turn and subsequent turns. */
   approvalPolicy?: AskForApproval | null;
   /** Override reasoning effort for this turn and subsequent turns. */

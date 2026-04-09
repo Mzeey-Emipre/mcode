@@ -158,6 +158,29 @@ export class CodexAppServer extends EventEmitter {
 
     this.rpc.on("notification", (notification) => {
       const method = (notification as { method?: string }).method ?? "";
+
+      // Capture thread/started notifications to update the thread ID if it changes
+      // mid-session (e.g. context compaction). Without this, subsequent turns would
+      // use a stale thread ID and lose context.
+      if (method === "thread/started") {
+        const params = (notification as { params?: Record<string, unknown> }).params;
+        // Accept both nested `thread.id` and flat `threadId` shapes
+        const thread = params?.thread as { id?: string } | undefined;
+        const newThreadId = thread?.id ?? (typeof params?.threadId === "string" ? params.threadId : undefined);
+        if (newThreadId && newThreadId !== this._threadId) {
+          logger.info("Codex thread ID rotated via thread/started", {
+            old: this._threadId,
+            new: newThreadId,
+          });
+          this._threadId = newThreadId;
+          // Notify consumers so the new thread ID is persisted (e.g. to the DB).
+          // Without this, app restarts would try to resume the stale thread ID.
+          this.emit("threadIdChanged", newThreadId);
+        }
+        logger.debug("Codex lifecycle notification", { method });
+        return;
+      }
+
       if (LIFECYCLE_NOTIFICATION_PREFIXES.some((p) => method.startsWith(p))) {
         logger.debug("Codex lifecycle notification", { method });
         return;
@@ -258,8 +281,12 @@ export class CodexAppServer extends EventEmitter {
         }
       } else {
         this.child.kill("SIGTERM");
-        await new Promise<void>((resolve) => setTimeout(resolve, 3000));
-        if (this.isAlive) {
+        // Wait up to 3s for graceful exit before escalating to SIGKILL
+        const exited = await Promise.race([
+          new Promise<boolean>((resolve) => this.child.once("exit", () => resolve(true))),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
+        ]);
+        if (!exited && this.isAlive) {
           this.child.kill("SIGKILL");
         }
       }
@@ -273,9 +300,13 @@ export class CodexAppServer extends EventEmitter {
    * Returns after the server acknowledgment - events stream via the `notification` event.
    *
    * @param input - Plain text message or structured input parts (text + images).
+   * @param turnOptions - Optional per-turn overrides (model, effort).
    * @throws When the RPC call fails or times out.
    */
-  async sendTurn(input: string | TurnInputPart[]): Promise<void> {
+  async sendTurn(
+    input: string | TurnInputPart[],
+    turnOptions?: { model?: string; effort?: string },
+  ): Promise<void> {
     if (!this.threadId) {
       throw new Error("sendTurn called before thread was established");
     }
@@ -283,9 +314,12 @@ export class CodexAppServer extends EventEmitter {
     const parts: TurnInputPart[] = typeof input === "string"
       ? [{ type: "text", text: input }]
       : input;
+    logger.debug("Codex turn/start sent", { threadId: this.threadId, model: turnOptions?.model });
     await this.rpc.sendRequest("turn/start", {
       threadId: this.threadId,
       input: parts,
+      ...(turnOptions?.model && { model: turnOptions.model }),
+      ...(turnOptions?.effort && { effort: turnOptions.effort }),
     }, 30000);
   }
 
@@ -366,27 +400,39 @@ export class CodexAppServer extends EventEmitter {
 
     // Step 4: thread/resume or thread/start
     if (resumeThreadId) {
+      logger.info("Codex thread/resume attempted", { resumeThreadId });
       try {
-        // thread/resume supports sandbox + approvalPolicy overrides so the
+        // thread/resume supports model + sandbox + approvalPolicy overrides so the
         // resumed thread picks up the current user settings.
         const resumeResult = await this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
           "thread/resume",
           {
             threadId: resumeThreadId,
+            ...(model && { model }),
             ...(sandbox && { sandbox }),
             ...(approvalPolicy && { approvalPolicy }),
             ...(workingDirectory && { cwd: workingDirectory }),
           },
           15000,
         );
-        this._threadId = resumeResult.threadId;
-        logger.info("Resumed Codex thread", { threadId: this.threadId });
+        // Accept both flat `threadId` and nested `thread.id` shapes,
+        // same as the thread/start path. The codex app-server returns the
+        // thread ID at result.thread.id, not result.threadId.
+        const r = resumeResult as { threadId?: string; thread?: { id?: string } };
+        this._threadId = r.threadId ?? r.thread?.id ?? null;
+        logger.info("Codex thread resumed", { resumeThreadId, assignedThreadId: this.threadId });
       } catch (err) {
-        const msg = String(err).toLowerCase();
-        if (msg.includes("not found") || msg.includes("missing") || msg.includes("expired")) {
-          logger.warn("thread/resume failed; falling back to thread/start", {
-            error: String(err),
-          });
+        const errorStr = String(err);
+        const msg = errorStr.toLowerCase();
+        const recoverable =
+          msg.includes("not found")
+          || msg.includes("missing")
+          || msg.includes("expired")
+          || msg.includes("no such thread")
+          || msg.includes("unknown thread")
+          || msg.includes("does not exist");
+        logger.warn("Codex thread/resume failed", { resumeThreadId, error: errorStr, recoverable });
+        if (recoverable) {
           this._resumeFailed = true;
           // fall through to thread/start below
         } else {
@@ -416,9 +462,11 @@ export class CodexAppServer extends EventEmitter {
       const captureStarted = (n: unknown) => {
         const notification = n as { method?: string; params?: Record<string, unknown> };
         if (notification.method === "thread/started") {
-          // Log the raw params so we can diagnose the protocol if needed.
           logger.debug("Codex thread/started notification", { params: notification.params });
-          const id = notification.params?.threadId;
+          // Accept both flat `threadId` and nested `thread.id` shapes
+          const p = notification.params;
+          const thread = p?.thread as { id?: string } | undefined;
+          const id = (typeof p?.threadId === "string" ? p.threadId : undefined) ?? thread?.id;
           resolveThreadStarted(typeof id === "string" ? id : null);
         }
       };

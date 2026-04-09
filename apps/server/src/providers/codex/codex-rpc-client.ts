@@ -127,6 +127,21 @@ export class CodexRpcClient extends EventEmitter {
   }
 
   /**
+   * Sends a JSON-RPC response to a server-initiated request.
+   *
+   * @param id - The request ID from the server's original message.
+   * @param result - The result payload to return.
+   */
+  sendResponse(id: number, result: unknown): void {
+    if (this.disposed) {
+      logger.warn("CodexRpcClient: sendResponse called on disposed client", { id });
+      return;
+    }
+    const message = JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n";
+    this.stdin.write(message);
+  }
+
+  /**
    * Disposes the client by rejecting all pending requests and removing stream listeners.
    * After disposal, calling `sendRequest` throws immediately.
    */

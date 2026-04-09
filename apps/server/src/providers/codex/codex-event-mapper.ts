@@ -3,6 +3,25 @@ import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import type { CodexNotification, CompletedItem } from "./codex-types.js";
 
+/** Notification methods that produce no agent events (module-level to avoid per-call allocation). */
+const SILENCED_METHODS = new Set([
+  "turn/diff/updated", "turn/plan/updated",
+  "skills/changed", "model/rerouted",
+  "deprecationNotice", "configWarning",
+  "item/plan/delta",
+  "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/reasoning/textDelta",
+  "item/fileChange/outputDelta",
+  "item/autoApprovalReview/started", "item/autoApprovalReview/completed",
+  "item/mcpToolCall/progress",
+]);
+
+/** Item types from item/completed that produce no agent events (module-level to avoid per-call allocation). */
+const SILENT_ITEM_TYPES = new Set([
+  "reasoning", "webSearch", "plan", "imageView", "imageGeneration",
+  "contextCompaction", "enteredReviewMode", "exitedReviewMode",
+  "collabAgentToolCall",
+]);
+
 /**
  * Maps raw JSON-RPC 2.0 notifications from the Codex app-server into
  * strongly-typed `AgentEvent` objects consumed by the rest of the mcode system.
@@ -104,17 +123,6 @@ export class CodexEventMapper {
       return [];
     }
 
-    // Silence known informational notifications that don't produce agent events
-    const SILENCED_METHODS = new Set([
-      "turn/diff/updated", "turn/plan/updated",
-      "skills/changed", "model/rerouted",
-      "deprecationNotice", "configWarning",
-      "item/plan/delta",
-      "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/reasoning/textDelta",
-      "item/fileChange/outputDelta",
-      "item/autoApprovalReview/started", "item/autoApprovalReview/completed",
-      "item/mcpToolCall/progress",
-    ]);
     if (SILENCED_METHODS.has(method)) {
       logger.debug("Codex notification silenced", { method });
       return [];
@@ -195,8 +203,18 @@ export class CodexEventMapper {
 
     if (itemType === "commandExecution") {
       const toolCallId = item.id ?? `cmd-${Date.now()}`;
-      // Prefer streaming-buffered output; fall back to item.output
-      const bufferedOutput = this.commandOutputBuffers.get(toolCallId) ?? "";
+      // Prefer streaming-buffered output; fall back to item.output.
+      // The buffer is keyed by itemId from outputDelta notifications which should
+      // match item.id, but delete by value scan as a safety net.
+      let bufferedOutput = this.commandOutputBuffers.get(toolCallId) ?? "";
+      if (!bufferedOutput && this.commandOutputBuffers.size > 0 && !item.id) {
+        // Fallback: if no item.id was provided, grab the most recent buffer entry
+        const lastKey = [...this.commandOutputBuffers.keys()].pop();
+        if (lastKey) {
+          bufferedOutput = this.commandOutputBuffers.get(lastKey) ?? "";
+          this.commandOutputBuffers.delete(lastKey);
+        }
+      }
       const output = bufferedOutput || (typeof item.output === "string" ? item.output : "");
       this.commandOutputBuffers.delete(toolCallId);
 
@@ -218,7 +236,7 @@ export class CodexEventMapper {
     }
 
     if (itemType === "fileChange") {
-      const toolCallId = item.id ?? `fc-${Date.now()}`;
+      const toolCallId = item.id ?? `fchg-${Date.now()}`;
       const changes = item.changes ?? [];
       const paths = changes.map((c) => c.path).join(", ");
       const toolUseEvent: AgentEvent = {
@@ -267,12 +285,6 @@ export class CodexEventMapper {
       return [toolUseEvent, toolResultEvent];
     }
 
-    // Silently consume item types that produce no agent events
-    const SILENT_ITEM_TYPES = new Set([
-      "reasoning", "webSearch", "plan", "imageView", "imageGeneration",
-      "contextCompaction", "enteredReviewMode", "exitedReviewMode",
-      "collabAgentToolCall",
-    ]);
     if (SILENT_ITEM_TYPES.has(itemType)) {
       logger.debug("Codex item/completed silenced", { itemType });
       return [];

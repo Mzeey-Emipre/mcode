@@ -68,6 +68,15 @@ function buildCodexInput(
   return inputs;
 }
 
+/** Maps mcode ReasoningLevel to the codex app-server `effort` field value. */
+function toCodexEffort(level?: ReasoningLevel): string | undefined {
+  if (!level) return undefined;
+  // "max" is Claude-specific; map to "high" for codex.
+  if (level === "max") return "high";
+  // "low", "medium", "high", "xhigh" are all valid codex effort levels.
+  return level;
+}
+
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
 @injectable()
 export class CodexProvider extends EventEmitter implements IAgentProvider {
@@ -104,8 +113,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
 
     const {
       sessionId, message, cwd, model, resume, permissionMode,
-      // TODO: pass reasoningLevel per-turn via turn/start `effort` field
-      attachments,
+      reasoningLevel, attachments,
     } = params;
 
     const input = buildCodexInput(message, attachments);
@@ -122,16 +130,21 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     const approvalPolicy = permissionMode === "full" ? "never" : "on-request";
     const existing = this.sessions.get(sessionId);
 
+    const turnOptions = {
+      model: model || undefined,
+      effort: toCodexEffort(reasoningLevel),
+    };
+
     if (existing) {
       if (existing.sandboxMode === sandbox) {
         // Same permission mode - reuse the running session
         existing.lastUsedAt = Date.now();
         existing.mapper.reset();
-        void this.runTurn(sessionId, threadId, existing.server, input);
+        void this.runTurn(sessionId, threadId, existing.server, input, turnOptions);
         return;
       }
       // Permission mode changed - kill the old session so we can start fresh with the correct sandbox
-      logger.info("Codex permission mode changed, restarting session", {
+      logger.info("Codex session restarted due to permission mode change", {
         sessionId,
         from: existing.sandboxMode,
         to: sandbox,
@@ -161,6 +174,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     }
 
     const resumeId = this.sdkSessionIds.get(sessionId);
+    const attemptResume = !!(resume && resumeId);
 
     const server = new CodexAppServer({
       cliPath,
@@ -168,7 +182,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       model: model || undefined,
       sandbox,
       approvalPolicy,
-      resumeThreadId: (resume && resumeId) ? resumeId : undefined,
+      resumeThreadId: attemptResume ? resumeId : undefined,
     });
 
     const mapper = new CodexEventMapper(threadId);
@@ -178,6 +192,18 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       for (const event of events) {
         this.emit("event", event);
       }
+    });
+
+    // When the codex thread ID rotates mid-session (context compaction, etc.),
+    // update the in-memory map and persist the new ID so future app restarts
+    // resume the correct thread instead of a stale one.
+    server.on("threadIdChanged", (newThreadId: string) => {
+      this.sdkSessionIds.set(sessionId, newThreadId);
+      this.emit("event", {
+        type: AgentEventType.System,
+        threadId,
+        subtype: "sdk_session_id:" + newThreadId,
+      } satisfies AgentEvent);
     });
 
     server.on("fatal", (error: string) => {
@@ -204,7 +230,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     }
 
     if (server.resumeFailed) {
-      logger.warn("Codex session lost context; started fresh thread", { sessionId });
+      logger.warn("Codex session context lost; resume failed, started fresh thread", { sessionId });
       this.emit("event", {
         type: AgentEventType.System,
         threadId,
@@ -222,12 +248,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     }
 
     this.sessions.set(sessionId, { server, mapper, lastUsedAt: Date.now(), sandboxMode: sandbox });
-    void this.runTurn(sessionId, threadId, server, input);
+    void this.runTurn(sessionId, threadId, server, input, turnOptions);
   }
 
   /**
-   * Sends a single turn to the app-server and waits for `turn.completed` or
-   * `turn.failed` to arrive as a notification.
+   * Sends a single turn to the app-server and waits for `turn/completed`
+   * to arrive as a notification.
    * Emits `ended` when the turn finishes, or skips it if the server died
    * (the `fatal` handler already emitted `ended` in that case).
    */
@@ -236,15 +262,25 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     threadId: string,
     server: CodexAppServer,
     input: string | TurnInputPart[],
+    turnOptions?: { model?: string; effort?: string },
   ): Promise<void> {
     let serverDied = false;
+    let endedEmitted = false;
+
+    // Register fatal listener before sendTurn to close the race window where
+    // the server could die between sendTurn returning and the Promise wiring.
+    const earlyFatalHandler = () => { serverDied = true; };
+    server.once("fatal", earlyFatalHandler);
 
     try {
-      await server.sendTurn(input);
+      await server.sendTurn(input, turnOptions);
 
       // turn/start returns immediately as an acknowledgment.
       // Wait for the turn to complete via a turn/completed notification, server death, or timeout.
       await new Promise<void>((resolve, reject) => {
+        // Remove the early guard; the Promise-scoped handler takes over.
+        server.removeListener("fatal", earlyFatalHandler);
+
         const cleanup = () => {
           clearTimeout(turnTimer);
           server.removeListener("notification", onNotification);
@@ -272,12 +308,14 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     } catch (e: unknown) {
       if (!serverDied) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        logger.error("Codex runTurn error", { sessionId, error: errorMessage });
+        logger.error("Codex turn failed", { sessionId, error: errorMessage });
         this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
       }
     } finally {
+      server.removeListener("fatal", earlyFatalHandler);
       // Suppress ended if the fatal handler already emitted it
-      if (!serverDied) {
+      if (!serverDied && !endedEmitted) {
+        endedEmitted = true;
         this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       }
     }
@@ -288,7 +326,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
     const now = Date.now();
     for (const [sessionId, entry] of this.sessions) {
       if (now - entry.lastUsedAt > IDLE_TTL_MS) {
-        logger.info("Evicting idle Codex session", { sessionId });
+        logger.info("Evicted idle Codex session", { sessionId });
         void entry.server.kill();
         this.sessions.delete(sessionId);
       }

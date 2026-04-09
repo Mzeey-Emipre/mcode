@@ -1,5 +1,8 @@
 import { spawnSync } from "child_process";
 
+/** Shell metacharacters that must not appear in a CLI path passed to `shell: true`. */
+const SHELL_METACHAR_RE = /[;&|`$(){}!<>"\n\r]/;
+
 /**
  * Checks whether the Codex CLI is reachable and returns its version string.
  *
@@ -15,6 +18,10 @@ import { spawnSync } from "child_process";
 export function checkCodexVersion(
   cliPath: string,
 ): { ok: true; version: string } | { ok: false; error: string } {
+  if (SHELL_METACHAR_RE.test(cliPath)) {
+    return { ok: false, error: `Codex CLI path contains invalid characters: "${cliPath}"` };
+  }
+
   const result = spawnSync(cliPath, ["--version"], {
     shell: true,
     timeout: 5000,
