@@ -245,23 +245,29 @@ export function ModelSection() {
             configKey="prDraft.model"
             hint="Model for AI-generated PR titles and descriptions. Auto uses a provider-appropriate default."
           >
-            <div className="relative inline-flex w-56">
-              <select
-                value={prDraftModel}
-                onChange={(e) => void update({ prDraft: { model: e.target.value } })}
-                className="h-7 w-full appearance-none cursor-pointer rounded-[min(var(--radius-md),12px)] border border-input bg-background pl-2 pr-7 py-0.5 text-xs text-foreground focus-visible:border-ring focus-visible:outline-none"
-              >
-                {prDraftModelOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown
-                size={12}
-                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
-              />
-            </div>
+            {prDraftProvider ? (
+              <div className="relative inline-flex w-56">
+                <select
+                  value={prDraftModel}
+                  onChange={(e) => void update({ prDraft: { model: e.target.value } })}
+                  className="h-7 w-full appearance-none cursor-pointer rounded-[min(var(--radius-md),12px)] border border-input bg-background pl-2 pr-7 py-0.5 text-xs text-foreground focus-visible:border-ring focus-visible:outline-none"
+                >
+                  {prDraftModelOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  size={12}
+                  className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+              </div>
+            ) : (
+              <div className="h-7 w-56 rounded-[min(var(--radius-md),12px)] border border-input bg-background px-2 py-0.5 text-xs text-muted-foreground flex items-center select-none">
+                Auto
+              </div>
+            )}
           </SettingRow>
         </div>
       </div>
