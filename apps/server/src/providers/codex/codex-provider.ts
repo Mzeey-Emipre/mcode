@@ -30,6 +30,8 @@ import type { TurnInputPart, CodexNotification } from "./codex-types.js";
 const IDLE_TTL_MS = 10 * 60 * 1000;
 /** How often to check for idle sessions (1 minute). */
 const EVICTION_INTERVAL_MS = 60 * 1000;
+/** Maximum time to wait for a turn to complete before timing out (10 minutes). */
+const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface SessionEntry {
   server: CodexAppServer;
@@ -37,19 +39,6 @@ interface SessionEntry {
   lastUsedAt: number;
   /** Sandbox mode used when this session was started; used to detect permission mode changes. */
   sandboxMode: string;
-}
-
-/**
- * Maps a mcode `ReasoningLevel` to the Codex CLI's `modelReasoningEffort` string.
- * - `"max"` and `"xhigh"` both map to `"xhigh"` (Codex's highest tier).
- * - `"low"`, `"medium"`, and `"high"` pass through unchanged.
- */
-function toCodexReasoningEffort(
-  level: ReasoningLevel | undefined,
-): string | undefined {
-  if (!level) return undefined;
-  if (level === "max" || level === "xhigh") return "xhigh";
-  return level;
 }
 
 /**
@@ -115,7 +104,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
 
     const {
       sessionId, message, cwd, model, resume, permissionMode,
-      reasoningLevel, attachments,
+      // TODO: pass reasoningLevel per-turn via turn/start `effort` field
+      attachments,
     } = params;
 
     const input = buildCodexInput(message, attachments);
@@ -128,11 +118,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       );
     }
 
-    const sandboxMode = permissionMode === "full" ? "danger-full-access" : "workspace-write";
+    const sandbox = permissionMode === "full" ? "danger-full-access" : "workspace-write";
+    const approvalPolicy = permissionMode === "full" ? "never" : "on-request";
     const existing = this.sessions.get(sessionId);
 
     if (existing) {
-      if (existing.sandboxMode === sandboxMode) {
+      if (existing.sandboxMode === sandbox) {
         // Same permission mode - reuse the running session
         existing.lastUsedAt = Date.now();
         existing.mapper.reset();
@@ -143,9 +134,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       logger.info("Codex permission mode changed, restarting session", {
         sessionId,
         from: existing.sandboxMode,
-        to: sandboxMode,
+        to: sandbox,
       });
       this.sessions.delete(sessionId);
+      // Clear the stored SDK thread ID so the new session starts fresh rather than
+      // resuming the old thread (which would inherit the old sandbox mode).
+      this.sdkSessionIds.delete(sessionId);
       existing.server.kill().catch((err: unknown) => {
         logger.warn("Codex session kill on permission change failed", { error: String(err) });
       });
@@ -172,8 +166,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       cliPath,
       workingDirectory: cwd,
       model: model || undefined,
-      sandboxMode,
-      modelReasoningEffort: toCodexReasoningEffort(reasoningLevel),
+      sandbox,
+      approvalPolicy,
       resumeThreadId: (resume && resumeId) ? resumeId : undefined,
     });
 
@@ -218,7 +212,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       } satisfies AgentEvent);
     }
 
-    this.sessions.set(sessionId, { server, mapper, lastUsedAt: Date.now(), sandboxMode });
+    this.sessions.set(sessionId, { server, mapper, lastUsedAt: Date.now(), sandboxMode: sandbox });
     void this.runTurn(sessionId, threadId, server, input);
   }
 
@@ -240,22 +234,29 @@ export class CodexProvider extends EventEmitter implements IAgentProvider {
       await server.sendTurn(input);
 
       // turn/start returns immediately as an acknowledgment.
-      // Wait for the turn to complete via a turn.completed or turn.failed notification.
+      // Wait for the turn to complete via a turn/completed notification, server death, or timeout.
       await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(turnTimer);
+          server.removeListener("notification", onNotification);
+          server.removeListener("fatal", onFatal);
+        };
         const onNotification = (notification: unknown) => {
           const n = notification as { method?: string };
-          // turn/completed is the canonical end-of-turn signal in codex >= 0.104.0
           if (n.method === "turn/completed") {
-            server.removeListener("notification", onNotification);
-            server.removeListener("fatal", onFatal);
+            cleanup();
             resolve();
           }
         };
         const onFatal = () => {
-          server.removeListener("notification", onNotification);
+          cleanup();
           serverDied = true;
           reject(new Error("Codex app-server died during turn"));
         };
+        const turnTimer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`Codex turn timed out after ${TURN_TIMEOUT_MS / 1000}s`));
+        }, TURN_TIMEOUT_MS);
         server.on("notification", onNotification);
         server.once("fatal", onFatal);
       });

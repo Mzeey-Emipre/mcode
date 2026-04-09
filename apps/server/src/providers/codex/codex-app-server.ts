@@ -18,6 +18,8 @@ import type {
   ThreadResumeParams,
   ThreadResumeResult,
   TurnInputPart,
+  SandboxMode,
+  AskForApproval,
 } from "./codex-types.js";
 
 /** Options passed to the CodexAppServer constructor. */
@@ -28,10 +30,10 @@ export interface CodexAppServerOptions {
   workingDirectory: string;
   /** Model identifier to pass to `thread/start`. */
   model?: string;
-  /** Sandbox mode to pass to `thread/start`. */
-  sandboxMode?: string;
-  /** Model reasoning effort to pass to `thread/start`. */
-  modelReasoningEffort?: string;
+  /** Sandbox mode for the codex app-server. */
+  sandbox?: SandboxMode;
+  /** Approval policy (`"never"` auto-approves all). */
+  approvalPolicy?: AskForApproval;
   /**
    * If set, attempt `thread/resume` with this thread ID before falling back
    * to `thread/start`.
@@ -156,6 +158,52 @@ export class CodexAppServer extends EventEmitter {
         return;
       }
       this.emit("notification", notification);
+    });
+
+    // Auto-approve server-initiated requests (approval prompts for command execution,
+    // file edits, MCP tools, etc.). Without this handler, the codex process blocks
+    // forever waiting for a response, causing the session to appear stale.
+    //
+    // Each approval type uses different enum values in its `decision` field:
+    //   - item/commandExecution/requestApproval → "acceptForSession"
+    //   - item/fileChange/requestApproval       → "acceptForSession"
+    //   - item/permissions/requestApproval       → { permissions: {...}, scope: "session" }
+    //   - applyPatchApproval (deprecated)        → "approved_for_session"
+    //   - execCommandApproval (deprecated)       → "approved_for_session"
+    //
+    // Source: codex-rs/app-server-protocol/schema/json/*ApprovalResponse.json
+    this.rpc.on("serverRequest", (msg: unknown) => {
+      const request = msg as { id?: number; method?: string; params?: Record<string, unknown> };
+      logger.info("Codex serverRequest auto-approved", {
+        id: request.id,
+        method: request.method,
+      });
+      if (typeof request.id !== "number") return;
+
+      const method = request.method ?? "";
+      let result: unknown;
+
+      if (method === "item/permissions/requestApproval") {
+        // Grant full filesystem + network for the session.
+        result = {
+          permissions: {
+            fileSystem: { read: [], write: [] },
+            network: { enabled: true },
+          },
+          scope: "session",
+        };
+      } else if (
+        method === "applyPatchApproval"
+        || method === "execCommandApproval"
+      ) {
+        // Deprecated approval types use "approved_for_session".
+        result = { decision: "approved_for_session" };
+      } else {
+        // New v2 approval types (commandExecution, fileChange) use "acceptForSession".
+        result = { decision: "acceptForSession" };
+      }
+
+      this.rpc.sendResponse(request.id, result);
     });
 
     this.wireStderr();
@@ -288,7 +336,7 @@ export class CodexAppServer extends EventEmitter {
 
   /** Runs the JSON-RPC handshake sequence in order. */
   private async runHandshake(): Promise<void> {
-    const { workingDirectory, model, sandboxMode, modelReasoningEffort, resumeThreadId } =
+    const { workingDirectory, model, sandbox, approvalPolicy, resumeThreadId } =
       this.options;
 
     // Step 1: initialize
@@ -314,9 +362,16 @@ export class CodexAppServer extends EventEmitter {
     // Step 4: thread/resume or thread/start
     if (resumeThreadId) {
       try {
+        // thread/resume supports sandbox + approvalPolicy overrides so the
+        // resumed thread picks up the current user settings.
         const resumeResult = await this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
           "thread/resume",
-          { threadId: resumeThreadId },
+          {
+            threadId: resumeThreadId,
+            ...(sandbox && { sandbox }),
+            ...(approvalPolicy && { approvalPolicy }),
+            ...(workingDirectory && { cwd: workingDirectory }),
+          },
           15000,
         );
         this._threadId = resumeResult.threadId;
@@ -336,10 +391,10 @@ export class CodexAppServer extends EventEmitter {
 
     if (!this.threadId) {
       const startParams: ThreadStartParams = {
-        workingDirectory,
+        ...(workingDirectory && { cwd: workingDirectory }),
         ...(model && { model }),
-        ...(sandboxMode && { sandboxMode }),
-        ...(modelReasoningEffort && { modelReasoningEffort }),
+        ...(sandbox && { sandbox }),
+        ...(approvalPolicy && { approvalPolicy }),
       };
 
       // Some codex app-server versions carry the threadId in the `thread/started`

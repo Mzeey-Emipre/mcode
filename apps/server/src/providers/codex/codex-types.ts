@@ -22,9 +22,25 @@ export interface InitializeParams { clientInfo: { name: string; version: string 
 export interface InitializeResult { protocolVersion: string; serverInfo: { name: string; version: string }; capabilities: Record<string, unknown> }
 
 // Thread RPCs
+// Source: codex-rs/app-server-protocol/schema/typescript/v2/ThreadStartParams.ts
+
+/** Sandbox mode for the codex app-server. */
+export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+
+/** Approval policy for the codex app-server. `"never"` auto-approves all actions. */
+export type AskForApproval = "untrusted" | "on-failure" | "on-request" | "never";
+
+/** Reasoning effort levels for the codex app-server. */
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 /** Parameters for the `thread/start` RPC method. */
-export interface ThreadStartParams { workingDirectory: string; model?: string; sandboxMode?: string; modelReasoningEffort?: string }
+export interface ThreadStartParams {
+  model?: string | null;
+  cwd?: string | null;
+  approvalPolicy?: AskForApproval | null;
+  sandbox?: SandboxMode | null;
+}
+
 /** Result returned by the `thread/start` RPC method. */
 export interface ThreadStartResult {
   /** Top-level threadId (some versions). */
@@ -32,17 +48,37 @@ export interface ThreadStartResult {
   /** Nested thread object (codex app-server >= 0.104.0). The session ID is at `thread.id`. */
   thread?: { id: string; [key: string]: unknown };
 }
+
 /** Parameters for the `thread/resume` RPC method. */
-export interface ThreadResumeParams { threadId: string; workingDirectory?: string }
+export interface ThreadResumeParams {
+  threadId: string;
+  /** Override sandbox mode for the resumed thread. */
+  sandbox?: SandboxMode | null;
+  /** Override approval policy for the resumed thread. */
+  approvalPolicy?: AskForApproval | null;
+  /** Override working directory for the resumed thread. */
+  cwd?: string | null;
+}
+
 /** Result returned by the `thread/resume` RPC method. */
 export interface ThreadResumeResult { threadId: string }
 
 // Turn RPCs
+// Source: codex-rs/app-server-protocol/schema/typescript/v2/TurnStartParams.ts
 
 /** A structured text or image input part for turn messages. */
 export type TurnInputPart = { type: "text"; text: string } | { type: "local_image"; path: string };
+
 /** Parameters for the `turn/start` RPC method. */
-export interface TurnStartParams { threadId: string; input: string | TurnInputPart[]; config?: Record<string, unknown> }
+export interface TurnStartParams {
+  threadId: string;
+  input: TurnInputPart[];
+  /** Override approval policy for this turn and subsequent turns. */
+  approvalPolicy?: AskForApproval | null;
+  /** Override reasoning effort for this turn and subsequent turns. */
+  effort?: ReasoningEffort | null;
+}
+
 /** Result returned by the `turn/start` RPC method. */
 export interface TurnStartResult { turnId: string }
 /** Parameters for the `turn/interrupt` RPC method. */
