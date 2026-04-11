@@ -162,4 +162,41 @@ ORDER BY m.sequence ASC`,
 
     return { messages: rows.map(rowToMessage), hasMore };
   }
+
+  /**
+   * Return ALL messages for a thread with sequence <= maxSequence,
+   * in ascending sequence order. No row limit — used for fork resolution
+   * where the full history up to the fork point is needed.
+   */
+  listByThreadUpToSequence(
+    threadId: string,
+    maxSequence: number,
+  ): Message[] {
+    const rows = this.db
+      .prepare(
+        `SELECT ${MESSAGE_COLUMNS_PREFIXED}, tc_count.cnt as tool_call_count
+FROM messages m
+LEFT JOIN (
+  SELECT message_id, COUNT(*) as cnt
+  FROM tool_call_records
+  GROUP BY message_id
+) tc_count ON tc_count.message_id = m.id
+WHERE m.thread_id = ? AND m.sequence <= ?
+ORDER BY m.sequence ASC`,
+      )
+      .all(threadId, maxSequence) as MessageRow[];
+
+    return rows.map(rowToMessage);
+  }
+
+  /** Find a single message by ID within a specific thread. Returns null if not found. */
+  findByIdInThread(threadId: string, messageId: string): Message | null {
+    const row = this.db
+      .prepare(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id = ? AND thread_id = ?`,
+      )
+      .get(messageId, threadId) as MessageRow | undefined;
+
+    return row ? rowToMessage(row) : null;
+  }
 }

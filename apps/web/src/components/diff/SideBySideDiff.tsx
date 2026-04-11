@@ -1,7 +1,8 @@
-import { useMemo, useRef, useCallback } from "react";
+import { useMemo } from "react";
 import type { ParsedDiffLine } from "@/lib/diff-parser";
 import { useDiffHighlighter } from "@/hooks/useDiffHighlighter";
 import { useShikiTheme } from "@/hooks/useTheme";
+import { useDiffStore } from "@/stores/diffStore";
 import { HunkSeparator } from "./HunkSeparator";
 
 /** Props for SideBySideDiff. */
@@ -96,36 +97,22 @@ const RIGHT_BG: Record<string, string> = {
   empty: "bg-muted/5",
 };
 
-/** Side-by-side diff renderer with synchronized scrolling, syntax highlighting, and hunk separator bars. */
+/** Side-by-side diff renderer with syntax highlighting and hunk separator bars. */
 export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps) {
   const rows = useMemo(() => buildRows(lines), [lines]);
   const theme = useShikiTheme();
+  const lineWrap = useDiffStore((s) => s.lineWrap);
   const { getLineTokens } = useDiffHighlighter(lines, language, theme, language !== "text");
 
-  const leftRef = useRef<HTMLDivElement>(null);
-  const rightRef = useRef<HTMLDivElement>(null);
-  const syncingRef = useRef(false);
-
-  const syncScroll = useCallback((source: "left" | "right") => {
-    if (syncingRef.current) return;
-    syncingRef.current = true;
-    const from = source === "left" ? leftRef.current : rightRef.current;
-    const to = source === "left" ? rightRef.current : leftRef.current;
-    if (from && to) to.scrollTop = from.scrollTop;
-    syncingRef.current = false;
-  }, []);
-
-  const onScrollLeft = useCallback(() => syncScroll("left"), [syncScroll]);
-  const onScrollRight = useCallback(() => syncScroll("right"), [syncScroll]);
+  // Vertical scrolling is handled by the parent FileEntry wrapper (overflow-auto),
+  // so both sides naturally scroll vertically in sync. Each pane only needs
+  // independent horizontal overflow.
 
   return (
-    <div className="flex select-text text-[11px] font-mono leading-relaxed">
+    <div className="flex select-text text-[12px] font-mono leading-5">
       {/* Left (removed) */}
-      <div
-        ref={leftRef}
-        className="flex-1 border-r border-border/20"
-        onScroll={onScrollLeft}
-      >
+      <div className={`flex-1 border-r border-border/20 ${lineWrap ? "overflow-x-hidden" : "overflow-x-auto"}`}>
+        <div className={lineWrap ? "w-full" : "w-fit min-w-full"}>
         {rows.map((row, i) => {
           // Hunk separator bar
           if (row.left.type === "header") {
@@ -141,7 +128,7 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
               <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/20">
                 {row.left.lineNo ?? ""}
               </span>
-              <span className="flex-1 whitespace-pre px-1">
+              <span className={`flex-1 px-1 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
                 {tokens ? (
                   tokens.map((token, j) => (
                     <span key={j} style={{ color: token.color }}>
@@ -165,14 +152,12 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
             </div>
           );
         })}
+        </div>
       </div>
 
       {/* Right (added) */}
-      <div
-        ref={rightRef}
-        className="flex-1"
-        onScroll={onScrollRight}
-      >
+      <div className={`flex-1 ${lineWrap ? "overflow-x-hidden" : "overflow-x-auto"}`}>
+        <div className={lineWrap ? "w-full" : "w-fit min-w-full"}>
         {rows.map((row, i) => {
           // Hunk separator bar
           if (row.right.type === "header") {
@@ -188,7 +173,7 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
               <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/20">
                 {row.right.lineNo ?? ""}
               </span>
-              <span className="flex-1 whitespace-pre px-1">
+              <span className={`flex-1 px-1 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
                 {tokens ? (
                   tokens.map((token, j) => (
                     <span key={j} style={{ color: token.color }}>
@@ -212,6 +197,7 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );

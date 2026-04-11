@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useLayoutEffect, useCallback, useState, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
-import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2 } from "lucide-react";
+import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2, AlertTriangle } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { getPrVisual } from "@/lib/pr-status";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -80,6 +81,47 @@ interface InlineEditState {
   originalTitle: string;
 }
 
+/** A thread with its nesting depth in the sidebar tree. */
+interface ThreadTreeItem {
+  thread: Thread;
+  depth: number;
+}
+
+/** Builds a depth-first flattened tree from a flat list of threads, ordered by parent-child relationships. */
+function buildThreadTree(threads: Thread[]): ThreadTreeItem[] {
+  const childrenByParent = new Map<string, Thread[]>();
+  const roots: Thread[] = [];
+  const threadIds = new Set(threads.map((t) => t.id));
+
+  for (const thread of threads) {
+    if (!thread.parent_thread_id || !threadIds.has(thread.parent_thread_id)) {
+      // Root thread, or orphan whose parent isn't in this list
+      roots.push(thread);
+    } else {
+      const siblings = childrenByParent.get(thread.parent_thread_id) ?? [];
+      siblings.push(thread);
+      childrenByParent.set(thread.parent_thread_id, siblings);
+    }
+  }
+
+  const result: ThreadTreeItem[] = [];
+  function walk(thread: Thread, depth: number) {
+    result.push({ thread, depth });
+    const children = childrenByParent.get(thread.id);
+    if (children) {
+      for (const child of children) {
+        walk(child, depth + 1);
+      }
+    }
+  }
+
+  for (const root of roots) {
+    walk(root, 0);
+  }
+
+  return result;
+}
+
 /** Sidebar tree listing workspaces and their threads with CRUD actions. */
 export function ProjectTree() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -88,6 +130,8 @@ export function ProjectTree() {
   const threads = useWorkspaceStore((s) => s.threads);
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
   const loadThreads = useWorkspaceStore((s) => s.loadThreads);
+  const loadWorktrees = useWorkspaceStore((s) => s.loadWorktrees);
+  const worktreesLoadedForWorkspace = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
@@ -133,6 +177,17 @@ export function ProjectTree() {
   useEffect(() => {
     setThreadListExpanded(threadListExpanded);
   }, [threadListExpanded]);
+
+  // Auto-load worktrees for the active workspace so stale-worktree detection has data.
+  useEffect(() => {
+    if (!activeWorkspaceId || worktreesLoadedForWorkspace === activeWorkspaceId) return;
+    const hasWorktreeThreads = threads.some(
+      (t) => t.workspace_id === activeWorkspaceId && t.mode === "worktree" && t.worktree_path,
+    );
+    if (hasWorktreeThreads) {
+      loadWorktrees(activeWorkspaceId);
+    }
+  }, [activeWorkspaceId, threads, worktreesLoadedForWorkspace, loadWorktrees]);
 
   const toggleThreadList = useCallback((wsId: string) => {
     setThreadListExpandedState((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
@@ -484,6 +539,7 @@ export function ProjectTree() {
           </div>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }
@@ -524,6 +580,20 @@ function VirtualizedThreadList({
 }: VirtualizedThreadListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
+
+  // Build nested tree from flat thread list
+  const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
+
+  // Normalized set of existing worktree paths for stale detection.
+  const worktrees = useWorkspaceStore((s) => s.worktrees);
+  const worktreesLoadedFor = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
+  const validWorktreePaths = useMemo(() => {
+    const set = new Set<string>();
+    for (const wt of worktrees) {
+      set.add(wt.path.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase());
+    }
+    return set;
+  }, [worktrees]);
 
   // Per-thread timestamps and pending timeout IDs for the 250ms click-delay pattern.
   const lastClickTimeRef = useRef<Map<string, number>>(new Map());
@@ -573,7 +643,7 @@ function VirtualizedThreadList({
     });
   });
 
-  const visibleCount = Math.min(threads.length, maxVisible);
+  const visibleCount = Math.min(treeItems.length, maxVisible);
 
   const virtualizer = useVirtualizer({
     count: visibleCount,
@@ -589,9 +659,15 @@ function VirtualizedThreadList({
       style={{ height: virtualizer.getTotalSize(), position: "relative" }}
     >
       {virtualizer.getVirtualItems().map((virtualItem) => {
-        const thread = threads[virtualItem.index];
+        const { thread, depth } = treeItems[virtualItem.index];
         const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
         const isEditing = inlineEdit?.threadId === thread.id;
+        // Worktree thread whose directory no longer exists on disk.
+        // Only check threads from the workspace whose worktrees are loaded — comparing
+        // against a different workspace's worktree list would produce false positives.
+        const isStaleWorktree = worktreesLoadedFor === thread.workspace_id
+          && thread.mode === "worktree" && !!thread.worktree_path
+          && !validWorktreePaths.has(thread.worktree_path.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase());
         return (
           <div
             key={thread.id}
@@ -621,11 +697,12 @@ function VirtualizedThreadList({
                 onClick={() => handleThreadClick(thread.id, thread.title)}
                 onContextMenu={(e) => onThreadContextMenu(e, thread)}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer transition-colors",
+                  "flex items-center gap-2 rounded-md pr-2 py-1 text-sm cursor-pointer transition-colors",
                   activeThreadId === thread.id
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                 )}
+                style={{ paddingLeft: `${8 + depth * 16}px` }}
               >
                 {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
@@ -674,7 +751,13 @@ function VirtualizedThreadList({
                     className="flex-1 border-ring"
                   />
                 ) : (
-                  <span className="truncate flex-1 text-sm" data-testid="thread-title">
+                  <span className={cn("truncate flex-1 text-sm", isStaleWorktree && "text-destructive/80 line-through")} data-testid="thread-title">
+                    {isStaleWorktree && (
+                      <Tooltip>
+                        <TooltipTrigger render={<AlertTriangle size={11} className="inline mr-1 align-text-bottom text-destructive/70" />} />
+                        <TooltipContent side="right" className="text-xs">Worktree directory no longer exists</TooltipContent>
+                      </Tooltip>
+                    )}
                     {thread.title}
                   </span>
                 )}
@@ -744,10 +827,12 @@ function ProjectNode({
   onDelete,
   onThreadContextMenu,
 }: ProjectNodeProps) {
-  const needsCap = threads.length > THREAD_LIST_CAP;
+  // Use the flattened tree order (same order VirtualizedThreadList renders) for cap decisions.
+  const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
+  const needsCap = treeItems.length > THREAD_LIST_CAP;
 
   // Auto-expand when the active thread sits beyond the cap (temporary, not persisted).
-  const activeIndex = activeThreadId ? threads.findIndex((t) => t.id === activeThreadId) : -1;
+  const activeIndex = activeThreadId ? treeItems.findIndex((item) => item.thread.id === activeThreadId) : -1;
   const forceExpand = activeIndex >= THREAD_LIST_CAP;
   const maxVisible = (!needsCap || isThreadListExpanded || forceExpand) ? Infinity : THREAD_LIST_CAP;
 

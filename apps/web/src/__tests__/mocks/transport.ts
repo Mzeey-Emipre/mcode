@@ -47,6 +47,9 @@ export function createMockThread(overrides?: Partial<Thread>): Thread {
     reasoning_level: null,
     interaction_mode: null,
     permission_mode: null,
+    parent_thread_id: null,
+    forked_from_message_id: null,
+    last_compact_summary: null,
     ...overrides,
   };
 }
@@ -119,6 +122,9 @@ export const mockTransport: McodeTransport = {
   getGitLog: vi.fn().mockResolvedValue([]),
   getCommitDiff: vi.fn().mockResolvedValue(""),
   getCommitFiles: vi.fn().mockResolvedValue([]),
+  push: vi.fn().mockResolvedValue({ success: true }),
+  generatePrDraft: vi.fn().mockResolvedValue({ title: "", body: "" }),
+  createPr: vi.fn().mockResolvedValue({ number: 1, url: "" }),
   getSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(getDefaultSettings()))),
   updateSettings: vi.fn().mockImplementation(() => Promise.resolve(structuredClone(getDefaultSettings()))),
   setBackground: vi.fn().mockResolvedValue(undefined),

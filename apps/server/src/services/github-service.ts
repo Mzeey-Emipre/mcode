@@ -110,6 +110,56 @@ export class GithubService {
     });
   }
 
+  /**
+   * Create a GitHub pull request via the gh CLI.
+   * Returns the new PR's number and URL.
+   */
+  createPr(input: {
+    cwd: string;
+    title: string;
+    body: string;
+    baseBranch: string;
+    isDraft: boolean;
+  }): Promise<{ number: number; url: string }> {
+    const args = [
+      "pr",
+      "create",
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+      "--base",
+      input.baseBranch,
+    ];
+    if (input.isDraft) {
+      args.push("--draft");
+    }
+
+    return new Promise((resolve, reject) => {
+      execFile(
+        "gh",
+        args,
+        { cwd: input.cwd, encoding: "utf-8", timeout: 30_000 },
+        (error, stdout) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          // gh pr create outputs the PR URL to stdout, possibly preceded by
+          // warning/info lines. Extract the URL from anywhere in the output.
+          const prUrlMatch = stdout.match(/https:\/\/[^\s]*\/pull\/(\d+)/);
+          if (!prUrlMatch) {
+            reject(new Error(`Unexpected gh pr create output: ${stdout.trim()}`));
+            return;
+          }
+          const number = parseInt(prUrlMatch[1], 10);
+          const url = prUrlMatch[0];
+          resolve({ number, url });
+        },
+      );
+    });
+  }
+
   /** Look up a PR by its GitHub URL. */
   getPrByUrl(url: string): Promise<PrDetail | null> {
     const match = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);

@@ -24,11 +24,23 @@ bun run dev:desktop
 
 ## Documentation
 
-- **[Architecture](ARCHITECTURE.md)** - system design, data model, IPC flow, diagrams
+- **[Architecture](ARCHITECTURE.md)** - System design, data model, IPC flow, and diagrams
 
 ## Tech Stack
 
-Electron 35, TypeScript, React 19, SQLite (better-sqlite3), Claude Agent SDK, shadcn/ui, Tailwind CSS 4, Zustand, Turborepo + Bun.
+- Electron 35
+- TypeScript
+- React 19
+- SQLite
+- Claude Agent SDK
+- shadcn/ui
+- Tailwind CSS 4
+- Zustand
+- Bun
+
+## Notes
+
+This project is in very early development. Expect bugs, breaking changes, and incomplete features. Use at your own risk for now.
 
 ## License
 

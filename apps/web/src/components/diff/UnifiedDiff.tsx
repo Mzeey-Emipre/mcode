@@ -1,6 +1,7 @@
 import type { ParsedDiffLine } from "@/lib/diff-parser";
 import { useDiffHighlighter } from "@/hooks/useDiffHighlighter";
 import { useShikiTheme } from "@/hooks/useTheme";
+import { useDiffStore } from "@/stores/diffStore";
 import { HunkSeparator } from "./HunkSeparator";
 
 /** Props for UnifiedDiff. */
@@ -13,10 +14,12 @@ interface UnifiedDiffProps {
 /** Unified diff renderer: line numbers, +/- prefix, syntax highlighting, hunk separator bars. */
 export function UnifiedDiff({ lines, language = "text" }: UnifiedDiffProps) {
   const theme = useShikiTheme();
+  const lineWrap = useDiffStore((s) => s.lineWrap);
   const { getLineTokens } = useDiffHighlighter(lines, language, theme, language !== "text");
 
   return (
-    <div className="select-text overflow-x-auto text-[11px] font-mono leading-relaxed">
+    <div className={`select-text text-[12px] font-mono leading-5 ${lineWrap ? "overflow-x-hidden" : "overflow-x-auto"}`}>
+      <div className={lineWrap ? "w-full" : "w-fit min-w-full"}>
       {lines.map((line, i) => {
         if (line.type === "header") {
           // Only render @@ hunk headers; skip git metadata lines
@@ -62,7 +65,7 @@ export function UnifiedDiff({ lines, language = "text" }: UnifiedDiffProps) {
               {isAdd ? "+" : isRemove ? "-" : " "}
             </span>
             {/* Content: syntax-highlighted tokens when available, plain text fallback */}
-            <span className="flex-1 whitespace-pre px-1">
+            <span className={`flex-1 px-1 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
               {tokens ? (
                 tokens.map((token, j) => (
                   <span key={j} style={{ color: token.color }}>
@@ -86,6 +89,7 @@ export function UnifiedDiff({ lines, language = "text" }: UnifiedDiffProps) {
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

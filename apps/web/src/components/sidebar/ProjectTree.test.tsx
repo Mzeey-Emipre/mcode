@@ -22,6 +22,9 @@ vi.mock("@/stores/workspaceStore", () => ({
       deleteThread: vi.fn(),
       setPendingNewThread: vi.fn(),
       updateThreadTitle: vi.fn(),
+      loadWorktrees: vi.fn(),
+      worktrees: [],
+      worktreesLoadedForWorkspace: null,
       error: null,
     })
   ),
@@ -78,6 +81,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     reasoning_level: null,
     interaction_mode: null,
     permission_mode: null,
+    parent_thread_id: null,
+    forked_from_message_id: null,
+    last_compact_summary: null,
     ...overrides,
   };
 }
@@ -116,11 +122,13 @@ function setupStoreMocks({
     deleteThread: vi.fn(),
     setPendingNewThread: vi.fn(),
     updateThreadTitle,
+    loadWorktrees: vi.fn(),
+    worktrees: [],
+    worktreesLoadedForWorkspace: null,
     error: null,
   };
 
   // Cast via unknown to avoid requiring every field of WorkspaceState in the fixture.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (useWorkspaceStore as unknown as { mockImplementation: (fn: (selector: (s: unknown) => unknown) => unknown) => void }).mockImplementation(
     (selector) => selector(state)
   );

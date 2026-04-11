@@ -18,7 +18,7 @@ describe("Chat Pagination", () => {
       messages: [],
       runningThreadIds: new Set(),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       toolCallsByThread: {},
       currentThreadId: threadId,

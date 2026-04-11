@@ -75,7 +75,7 @@ export class TurnSnapshotRepo {
       `SELECT ${TURN_SNAPSHOT_COLUMNS} FROM turn_snapshots WHERE message_id = ?`,
     );
     this.stmtListByThread = db.prepare(
-      `SELECT ${TURN_SNAPSHOT_COLUMNS} FROM turn_snapshots WHERE thread_id = ? ORDER BY created_at ASC`,
+      `SELECT ${TURN_SNAPSHOT_COLUMNS} FROM turn_snapshots WHERE thread_id = ? ORDER BY created_at ASC, rowid ASC`,
     );
     this.stmtDeleteExpired = db.prepare(
       "DELETE FROM turn_snapshots WHERE created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' days')",

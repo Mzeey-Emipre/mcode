@@ -75,7 +75,7 @@ export {
 export type { FileCategory } from "./models/file-types.js";
 
 // Events
-export { AgentEventSchema } from "./events/agent-event.js";
+export { AgentEventSchema, AgentEventType } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";
 
 // Plan questions
@@ -96,8 +96,8 @@ export type {
 export { GitBranchSchema, WorktreeSchema, GitCommitSchema } from "./git.js";
 export type { GitBranch, WorktreeInfo, GitCommit } from "./git.js";
 
-export { PrInfoSchema, PrDetailSchema } from "./github.js";
-export type { PrInfo, PrDetail } from "./github.js";
+export { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrParamsSchema, CreatePrResultSchema } from "./github.js";
+export type { PrInfo, PrDetail, PrDraft, CreatePrParams, CreatePrResult } from "./github.js";
 
 // Skills
 export { SkillInfoSchema } from "./skills.js";
@@ -131,9 +131,15 @@ export type { WsChannelName } from "./ws/channels.js";
 // Utilities
 export { lazySchema } from "./utils/lazySchema.js";
 
+// Handoff contract
+export { HANDOFF_MARKER, parseHandoffJson } from "./handoff.js";
+export type { HandoffMetadata } from "./handoff.js";
+
 // Provider interfaces
 export type {
   ProviderId,
   IAgentProvider,
+  ICompletionCapable,
   IProviderRegistry,
 } from "./providers/interfaces.js";
+export { isCompletionCapable } from "./providers/interfaces.js";

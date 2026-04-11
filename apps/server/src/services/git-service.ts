@@ -7,7 +7,7 @@
 import { injectable, inject } from "tsyringe";
 import { execFileSync, execFile as execFileCb } from "child_process";
 import { promisify } from "util";
-import { rm } from "fs/promises";
+import { rm, rename } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
@@ -15,6 +15,12 @@ import type { GitBranch, WorktreeInfo, GitCommit } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 const execFile = promisify(execFileCb);
+
+/**
+ * Options for fs.rm when removing worktree directories.
+ * maxRetries handles transient EBUSY locks from antivirus/indexers on Windows.
+ */
+const RM_RETRY_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 } as const;
 
 /** Resolve the worktree base directory path under the mcode data dir. */
 function getWorktreeBaseDir(repoPath: string): string {
@@ -61,6 +67,15 @@ export class GitService {
   getCurrentBranch(workspaceId: string): string {
     const workspace = this.requireWorkspace(workspaceId);
     return getCurrentBranchForPath(workspace.path);
+  }
+
+  /**
+   * Get the current branch name for an arbitrary repo path.
+   * Use this instead of getCurrentBranch when you already have the resolved path
+   * (e.g. a worktree directory that may differ from the workspace root).
+   */
+  getCurrentBranchAt(repoPath: string): string {
+    return getCurrentBranchForPath(repoPath);
   }
 
   /** Checkout an existing branch in the workspace repository. */
@@ -146,7 +161,9 @@ export class GitService {
     try {
       await execFile(
         "git",
-        ["-C", repoPath, "worktree", "remove", wtPath, "--force"],
+        // Double --force: the second flag tells git to remove even if the
+        // worktree directory is locked (e.g. held by a Windows process).
+        ["-C", repoPath, "worktree", "remove", wtPath, "--force", "--force"],
         { timeout: 30_000 },
       );
     } catch (err) {
@@ -167,14 +184,14 @@ export class GitService {
       });
     }
 
-    // 3. Fallback: remove directory manually if git didn't clean it up
+    // 3. Fallback: remove directory manually if git didn't clean it up.
     if (existsSync(wtPath)) {
       logger.warn(
         "Worktree directory still exists after git remove, falling back to fs.rm",
         { wtPath },
       );
       try {
-        await rm(wtPath, { recursive: true, force: true });
+        await rm(wtPath, RM_RETRY_OPTIONS);
       } catch (err) {
         logger.error("Fallback fs.rm failed", {
           wtPath,
@@ -183,13 +200,40 @@ export class GitService {
       }
     }
 
-    // 4. Verify cleanup
+    // 4. Rename-then-delete: atomically unblock the path even if deletion is slow.
+    // Renaming succeeds even when the directory has open handles, so the original
+    // path becomes available immediately while the OS drains remaining handles.
+    if (existsSync(wtPath)) {
+      // Use a timestamp suffix to avoid collision with stale .deleting directories
+      // left by previous crashed cleanup attempts.
+      const pendingPath = `${wtPath}.deleting-${Date.now()}`;
+      try {
+        await rename(wtPath, pendingPath);
+        logger.info("Renamed stuck worktree for deferred deletion", { wtPath, pendingPath });
+        // Best-effort: fire-and-forget deletion of the renamed directory.
+        rm(pendingPath, RM_RETRY_OPTIONS).catch(
+          (err) => {
+            logger.warn("Deferred deletion of renamed worktree failed", {
+              pendingPath,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          },
+        );
+      } catch (err) {
+        logger.error("Rename-then-delete fallback failed", {
+          wtPath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 5. Verify cleanup
     if (existsSync(wtPath)) {
       logger.error("Worktree directory could not be removed", { wtPath });
       return false;
     }
 
-    // 5. Delete the branch
+    // 6. Delete the branch
     try {
       await execFile("git", ["-C", repoPath, "branch", "-d", branch], {
         timeout: 10_000,
@@ -219,26 +263,29 @@ export class GitService {
     return workspacePath;
   }
 
-  /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. */
-  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string): Promise<GitCommit[]> {
+  /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. Pass repoPath to run from a worktree directory instead of the workspace root. */
+  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string, repoPath?: string): Promise<GitCommit[]> {
     const workspace = this.requireWorkspace(workspaceId);
+    const effectivePath = repoPath ?? workspace.path;
 
     // Auto-detect default branch when baseBranch is omitted but branch is specified
     const resolvedBase = baseBranch !== undefined
       ? baseBranch
       : branch !== undefined
-        ? await this.detectDefaultBranch(workspace.path)
+        ? await this.detectDefaultBranch(effectivePath)
         : undefined;
 
     const args = [
-      "-C", workspace.path,
+      "-C", effectivePath,
       "log",
       "--pretty=format:MCODE_SEP%H|||%h|||%s|||%an|||%aI",
       "--numstat",
       `-${limit}`,
     ];
-    if (resolvedBase && branch) {
-      args.push(`${resolvedBase}..${branch}`);
+    // When running from a worktree path, HEAD is the checked-out branch — no need to name it.
+    const headRef = repoPath ? "HEAD" : branch;
+    if (resolvedBase && headRef) {
+      args.push(`${resolvedBase}..${headRef}`);
     } else if (resolvedBase) {
       args.push(`${resolvedBase}..HEAD`);
     } else if (branch) {
@@ -336,6 +383,25 @@ export class GitService {
     }
   }
 
+  /** Push a branch to the origin remote, creating the upstream tracking ref if needed. */
+  async push(repoPath: string, branch: string): Promise<void> {
+    await execFile(
+      "git",
+      ["-C", repoPath, "push", "--set-upstream", "origin", branch],
+      { timeout: 60_000 },
+    );
+  }
+
+  /** Return a diff stat summary between two refs. */
+  async diffStat(repoPath: string, base: string, head: string): Promise<string> {
+    const { stdout } = await execFile(
+      "git",
+      ["-C", repoPath, "diff", "--stat", `${base}...${head}`],
+      { timeout: 30_000 },
+    );
+    return stdout.trim();
+  }
+
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */
   private readonly defaultBranchCache = new Map<string, string>();
 
@@ -415,7 +481,7 @@ function listBranchesForPath(repoPath: string): GitBranch[] {
       repoPath,
       "branch",
       "-a",
-      "--format=%(refname:short)|||%(objectname:short)|||%(HEAD)|||%(worktreepath)",
+      "--format=%(refname)|||%(refname:short)|||%(objectname:short)|||%(HEAD)|||%(worktreepath)",
     ],
     { stdio: "pipe", encoding: "utf-8" },
   );
@@ -426,13 +492,14 @@ function listBranchesForPath(repoPath: string): GitBranch[] {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    const [refname, shortSha, head, worktreepath] = trimmed.split("|||");
-    if (!refname || refname === "origin/HEAD") continue;
+    const [fullRefname, refname, shortSha, head, worktreepath] = trimmed.split("|||");
+    // Skip remote HEAD symrefs (refs/remotes/*/HEAD)
+    if (!fullRefname || !refname || /\/HEAD$/.test(fullRefname)) continue;
 
     let type: GitBranch["type"];
     if (worktreepath && worktreepath.length > 0) {
       type = "worktree";
-    } else if (refname.startsWith("origin/")) {
+    } else if (fullRefname.startsWith("refs/remotes/")) {
       type = "remote";
     } else {
       type = "local";

@@ -35,6 +35,11 @@ async function mockWebSocketServer(page: Page): Promise<void> {
     deleted_at: null,
     last_context_tokens: null,
     context_window: null,
+    reasoning_level: null,
+    interaction_mode: null,
+    permission_mode: null,
+    parent_thread_id: null,
+    forked_from_message_id: null,
   };
   const thread2 = {
     id: "thread-2",
@@ -56,6 +61,11 @@ async function mockWebSocketServer(page: Page): Promise<void> {
     deleted_at: null,
     last_context_tokens: null,
     context_window: null,
+    reasoning_level: null,
+    interaction_mode: null,
+    permission_mode: null,
+    parent_thread_id: null,
+    forked_from_message_id: null,
   };
 
   await page.routeWebSocket(/ws:\/\/localhost:3100/, (ws) => {

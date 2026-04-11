@@ -13,7 +13,7 @@ import type {
   Settings,
   GitCommit,
 } from "./types";
-import type { PaginatedMessages, TurnSnapshot } from "@mcode/contracts";
+import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
@@ -305,6 +305,8 @@ export function createWsTransport(
       reasoningLevel?,
       provider?,
       interactionMode?,
+      parentThreadId?,
+      forkedFromMessageId?,
     ) =>
       rpc<Thread>("agent.createAndSend", {
         workspaceId,
@@ -318,6 +320,8 @@ export function createWsTransport(
         reasoningLevel,
         provider,
         interactionMode,
+        parentThreadId,
+        forkedFromMessageId,
       }),
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
     answerPlanQuestions: (threadId, answers, permissionMode?, reasoningLevel?) =>
@@ -396,12 +400,33 @@ export function createWsTransport(
       rpc<TurnSnapshot[]>("snapshot.listByThread", { threadId }),
     getCumulativeDiff: (threadId, filePath?, maxLines?) =>
       rpc<string>("snapshot.getCumulativeDiff", { threadId, filePath, maxLines }),
-    getGitLog: (workspaceId, branch?, limit?, baseBranch?) =>
-      rpc<GitCommit[]>("git.log", { workspaceId, branch, limit, baseBranch }),
+    getGitLog: (workspaceId, branch?, limit?, baseBranch?, threadId?) =>
+      rpc<GitCommit[]>("git.log", { workspaceId, branch, limit, baseBranch, threadId }),
     getCommitDiff: (workspaceId, sha, filePath?, maxLines?) =>
       rpc<string>("git.commitDiff", { workspaceId, sha, filePath, maxLines }),
     getCommitFiles: (workspaceId, sha) =>
       rpc<string[]>("git.commitFiles", { workspaceId, sha }),
+
+    // GitHub PR (advanced)
+    push: (workspaceId, branch) =>
+      rpc<{ success: boolean }>("git.push", { workspaceId, branch }),
+
+    generatePrDraft: (workspaceId, threadId, baseBranch) =>
+      rpc<PrDraft>("github.generatePrDraft", {
+        workspaceId,
+        threadId,
+        baseBranch,
+      }),
+
+    createPr: (workspaceId, threadId, title, body, baseBranch, isDraft) =>
+      rpc<CreatePrResult>("github.createPr", {
+        workspaceId,
+        threadId,
+        title,
+        body,
+        baseBranch,
+        isDraft,
+      }),
 
     // Settings
     getSettings: () => rpc<Settings>("settings.get", {}),

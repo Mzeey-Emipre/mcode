@@ -12,7 +12,9 @@ interface ContextTrackerProps {
   /** Tokens consumed in the last completed turn (input_tokens from the API). */
   tokensIn: number;
   /** Maximum context window size for the active model. */
-  contextWindow: number;
+  contextWindow?: number;
+  /** Accumulated total tokens processed across compactions. */
+  totalProcessedTokens?: number;
   /** Optional additional Tailwind classes for the root element. */
   className?: string;
 }
@@ -32,8 +34,8 @@ function colorTier(pct: number) {
  * from muted → amber (70%) → red (90%) to signal urgency. When the provider
  * compacts, the ring silently animates backward.
  */
-export function ContextTracker({ tokensIn, contextWindow, className }: ContextTrackerProps) {
-  if (tokensIn <= 0) return null;
+export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, className }: ContextTrackerProps) {
+  if (tokensIn <= 0 || !contextWindow) return null;
 
   const pct = Math.min(100, contextWindow > 0 ? (tokensIn / contextWindow) * 100 : 0);
   const filled = CIRCUMFERENCE * (pct / 100);
@@ -113,6 +115,11 @@ export function ContextTracker({ tokensIn, contextWindow, className }: ContextTr
             Context Window
           </span>
           <span className="text-xs font-medium">{tooltipLine}</span>
+          {totalProcessedTokens != null && totalProcessedTokens > tokensIn && (
+            <span className="text-[10px] text-muted-foreground">
+              Total processed: {abbrev(totalProcessedTokens)} tokens
+            </span>
+          )}
         </div>
       </TooltipContent>
     </Tooltip>

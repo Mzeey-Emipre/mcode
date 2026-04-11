@@ -12,23 +12,34 @@ import { getMcodeDir } from "@mcode/shared";
 /**
  * Resolve the correct native binding for better-sqlite3 based on runtime.
  *
- * When running under Electron, returns the path to the Electron-specific
- * prebuild (`better_sqlite3.electron.node`). Under plain Node.js (e.g.
- * vitest), returns `undefined` so better-sqlite3 falls back to its default
- * `bindings` resolution (the Node.js prebuild).
+ * Priority:
+ * 1. `BETTER_SQLITE3_BINDING` env var — set by server-manager when the app is
+ *    packaged, pointing to the asarUnpack'd `.node` file outside the asar archive.
+ * 2. Electron runtime path resolution — used in dev mode when running under
+ *    Electron with the source tree present.
+ * 3. `undefined` — falls back to better-sqlite3's default binding resolution
+ *    for plain Node.js (e.g. vitest).
  */
 function resolveNativeBinding(): string | undefined {
+  if (process.env.BETTER_SQLITE3_BINDING) {
+    return process.env.BETTER_SQLITE3_BINDING;
+  }
+
   if (!process.versions.electron) return undefined;
 
   const localRequire = createRequire(import.meta.url);
   const betterSqliteDir = dirname(
     localRequire.resolve("better-sqlite3/package.json"),
   );
-  const bindingPath = join(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node");
+  const bindingCandidates = [
+    join(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node"),
+    join(betterSqliteDir, "build", "Release", "better_sqlite3.node"),
+  ];
+  const bindingPath = bindingCandidates.find((candidate) => existsSync(candidate));
 
-  if (!existsSync(bindingPath)) {
+  if (!bindingPath) {
     throw new Error(
-      `Electron prebuild not found at ${bindingPath}. Run 'bun install' to download it.`,
+      `Electron prebuild not found. Checked: ${bindingCandidates.join(", ")}. Run 'bun install' to download it.`,
     );
   }
 
@@ -93,6 +104,7 @@ export function openDatabase(dbPath?: string): Database.Database {
   const nativeBinding = resolveNativeBinding();
   const db = new Database(resolvedPath, { nativeBinding });
   db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000"); // Wait up to 5s for concurrent writer to finish
   db.pragma("foreign_keys = ON");
   db.pragma("cache_size = -2000");  // 2MB page cache (negative = KB)
   db.pragma("mmap_size = 0");       // Disable memory-mapped I/O
@@ -247,6 +259,34 @@ function runMigrations(db: Database.Database): void {
         ALTER TABLE threads ADD COLUMN permission_mode TEXT DEFAULT NULL;
       `);
       db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(12);
+    })();
+  }
+
+  if (currentVersion < 13) {
+    // Clear context_window for non-Claude threads. Earlier code wrote a
+    // hardcoded DEFAULT_CONTEXT_WINDOW (200 000) for all providers, including
+    // Codex which does not expose a context window. Those stale rows cause the
+    // context tracker ring to render with an incorrect denominator.
+    db.prepare(
+      "UPDATE threads SET context_window = NULL WHERE provider != 'claude'",
+    ).run();
+    db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(13);
+  }
+
+  if (currentVersion < 14) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE threads ADD COLUMN parent_thread_id TEXT DEFAULT NULL;
+        ALTER TABLE threads ADD COLUMN forked_from_message_id TEXT DEFAULT NULL;
+      `);
+      db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(14);
+    })();
+  }
+
+  if (currentVersion < 15) {
+    db.transaction(() => {
+      db.exec("ALTER TABLE threads ADD COLUMN last_compact_summary TEXT DEFAULT NULL");
+      db.prepare("INSERT INTO _migrations (version) VALUES (?)").run(15);
     })();
   }
 }

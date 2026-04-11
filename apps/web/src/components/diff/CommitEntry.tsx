@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Minus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type { GitCommit } from "@mcode/contracts";
@@ -99,8 +100,13 @@ export function CommitEntry({ commit }: CommitEntryProps) {
           {commit.message}
         </span>
 
-        {/* SHA + time */}
+        {/* File count badge (shown once files have loaded) + SHA + time */}
         <span className="flex shrink-0 items-center gap-1.5">
+          {files !== null && files.length > 0 && (
+            <Badge variant="ghost" size="sm" className="font-mono text-muted-foreground/60">
+              {files.length} {files.length === 1 ? "file" : "files"}
+            </Badge>
+          )}
           <span className="font-mono text-[9px] text-muted-foreground/80">{commit.shortSha}</span>
           <span className="text-[9px] text-muted-foreground/70">{relativeTime(commit.date)}</span>
         </span>

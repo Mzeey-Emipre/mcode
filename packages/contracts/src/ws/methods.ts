@@ -7,7 +7,7 @@ import { AttachmentMetaSchema } from "../models/attachment.js";
 import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { GitBranchSchema, WorktreeSchema } from "../git.js";
 import { GitCommitSchema } from "../models/git-commit.js";
-import { PrInfoSchema, PrDetailSchema } from "../github.js";
+import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
@@ -55,7 +55,14 @@ export const CreateAndSendSchema = z.object({
   provider: ProviderIdSchema.optional(),
   /** When "plan", the server wraps the message with the plan-mode question prompt. */
   interactionMode: InteractionModeSchema.optional(),
-});
+  /** Source thread ID when branching from an existing thread. */
+  parentThreadId: z.string().optional(),
+  /** Fork-point message ID in the parent thread. Defaults to last persisted message. */
+  forkedFromMessageId: z.string().optional(),
+}).refine(
+  (d) => !d.forkedFromMessageId || d.parentThreadId,
+  { message: "forkedFromMessageId requires parentThreadId", path: ["forkedFromMessageId"] },
+);
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
 export const WS_METHODS = lazySchema(() => ({
@@ -145,6 +152,7 @@ export const WS_METHODS = lazySchema(() => ({
       branch: z.string().optional(),
       baseBranch: z.string().optional(),
       limit: z.number().int().min(1).max(500).optional(),
+      threadId: z.string().optional(),
     }),
     result: z.array(GitCommitSchema),
   },
@@ -214,15 +222,41 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "github.branchPr": {
     params: z.object({ branch: z.string(), cwd: z.string() }),
-    result: PrInfoSchema.nullable(),
+    result: PrInfoSchema().nullable(),
   },
   "github.listOpenPrs": {
     params: z.object({ workspaceId: z.string() }),
-    result: z.array(PrDetailSchema),
+    result: z.array(PrDetailSchema()),
   },
   "github.prByUrl": {
     params: z.object({ url: z.string() }),
-    result: PrDetailSchema.nullable(),
+    result: PrDetailSchema().nullable(),
+  },
+  "git.push": {
+    params: z.object({
+      workspaceId: z.string(),
+      branch: z.string(),
+    }),
+    result: z.object({ success: z.boolean() }),
+  },
+  "github.generatePrDraft": {
+    params: z.object({
+      workspaceId: z.string(),
+      threadId: z.string(),
+      baseBranch: z.string(),
+    }),
+    result: PrDraftSchema(),
+  },
+  "github.createPr": {
+    params: z.object({
+      workspaceId: z.string(),
+      threadId: z.string(),
+      title: z.string().max(256),
+      body: z.string().max(65536),
+      baseBranch: z.string(),
+      isDraft: z.boolean().default(false),
+    }),
+    result: CreatePrResultSchema(),
   },
   "config.discover": {
     params: z.object({ workspacePath: z.string() }),

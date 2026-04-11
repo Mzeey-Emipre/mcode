@@ -11,9 +11,8 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "*",
-    "@mcode/contracts": "workspace:*",
+"@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
-    "@openai/codex-sdk": "^0.118.0",
     "better-sqlite3": "^12.0.0",
     "node-pty": "^1.0.0",
     "reflect-metadata": "^0.2.2",

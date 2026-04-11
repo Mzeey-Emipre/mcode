@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type { PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
@@ -13,16 +13,19 @@ import {
   Loader2,
   Check,
   ListTodo,
+  GitBranch,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, DEFAULT_CONTEXT_WINDOW, findProviderForModel, getCodexReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, findProviderForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
 import { BranchPicker } from "./BranchPicker";
 import { NamingModeSelector } from "./NamingModeSelector";
+import type { NamingMode } from "@mcode/contracts";
 import { BranchNameInput } from "./BranchNameInput";
 import { WorktreePicker } from "./WorktreePicker";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -60,6 +63,12 @@ interface ComposerProps {
   threadId?: string;
   isNewThread?: boolean;
   workspaceId?: string;
+  /** When set, the composer is in branch mode — submit branches instead of sends. */
+  branchFromMessageId?: string;
+  /** Preview content of the message being branched from, shown as a quote. */
+  branchFromMessageContent?: string;
+  /** Called when the user exits branch mode (X button or Escape). */
+  onBranchModeExit?: () => void;
 }
 
 type AccessMode = PermissionMode;
@@ -116,7 +125,7 @@ function TasksToggle({ threadId }: { threadId?: string }) {
  * - **Existing worktree:** `[Worktree v]` … `[Select worktree v]`
  * - **Locked (existing thread):** read-only branch badge
  */
-export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) {
+export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit }: ComposerProps) {
   const [input, setInput] = useState("");
   const [modelId, setModelId] = useState(getDefaultModelId());
   const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
@@ -124,6 +133,13 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   const [access, setAccess] = useState<AccessMode>(PERMISSION_MODES.FULL);
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
   const [composerMode, setComposerModeLocal] = useState<ComposerMode>("direct");
+  // Separate exec mode/branch state used only while in branch mode so the
+  // main new-thread mode state is not disturbed.
+  const [branchExecMode, setBranchExecMode] = useState<ComposerMode>("direct");
+  const [branchTargetBranch, setBranchTargetBranch] = useState("");
+  const [branchWorktreePath, setBranchWorktreePath] = useState("");
+  const [branchNamingMode, setBranchNamingMode] = useState<NamingMode>("auto");
+  const [branchCustomName, setBranchCustomName] = useState("");
   const [preparingWorktree, setPreparingWorktree] = useState(false);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -293,6 +309,24 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     prevThreadIdRef.current = threadId;
   }, [threadId, saveDraft, getDraft]);
 
+  // Reset branch-specific exec state and load branch/worktree data when branch mode activates.
+  useEffect(() => {
+    if (branchFromMessageId && workspaceId) {
+      // Default to the same execution mode as the parent thread so the child
+      // stays in the same context by default (worktree → existing-worktree, local → direct).
+      const defaultExecMode: ComposerMode =
+        activeThread?.mode === "worktree" ? "existing-worktree" : "direct";
+      setBranchExecMode(defaultExecMode);
+      setBranchTargetBranch(activeThread?.branch ?? "");
+      // Pre-select the parent's worktree so the user doesn't have to pick it manually.
+      setBranchWorktreePath(activeThread?.worktree_path ?? "");
+      setBranchNamingMode("auto");
+      setBranchCustomName("");
+      loadBranches(workspaceId);
+      loadWorktrees(workspaceId);
+    }
+  }, [branchFromMessageId]);
+
   // Consume pending prefill set by empty-state prompt chips
   useEffect(() => {
     if (!pendingPrefill) return;
@@ -336,6 +370,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
   });
   const sendMessage = useThreadStore((s) => s.sendMessage);
   const stopAgent = useThreadStore((s) => s.stopAgent);
+  const branchThread = useWorkspaceStore((s) => s.branchThread);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const setThreadSettings = useThreadStore((s) => s.setThreadSettings);
   const contextEntry = useThreadStore((s) => threadId ? s.contextByThread[threadId] : undefined);
@@ -482,9 +517,21 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
 
   const hasContent = input.trim().length > 0 || attachments.length > 0;
 
-  // Full lock when agent running, provider lock when thread has a model
-  const isModelFullyLocked = isAgentRunning;
-  const isProviderLocked = !isNewThread && activeThread?.model != null;
+  // Detect stale worktree: thread is a worktree thread but its directory no longer exists.
+  // Only check when worktrees have been loaded for THIS thread's workspace to avoid
+  // false positives from cross-workspace comparisons or pre-load empty state.
+  const worktreesLoadedForWorkspace = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
+  const isStaleWorktree = useMemo(() => {
+    if (!activeThread?.worktree_path || activeThread.mode !== "worktree") return false;
+    if (worktreesLoadedForWorkspace !== activeThread.workspace_id) return false;
+    const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+    return !worktrees.some((wt) => norm(wt.path) === norm(activeThread.worktree_path!));
+  }, [activeThread, worktrees, worktreesLoadedForWorkspace]);
+
+  // Full lock when agent running, unless the user is branching (child thread is independent).
+  const isModelFullyLocked = isAgentRunning && !branchFromMessageId;
+  // Allow provider switching when creating a new thread or branching (child thread can use any provider).
+  const isProviderLocked = !isNewThread && !branchFromMessageId && activeThread?.model != null;
 
   // Close dropdowns on click outside
   useEffect(() => {
@@ -831,6 +878,37 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       } finally {
         setPreparingWorktree(false);
       }
+    } else if (branchFromMessageId && threadId) {
+      // Branch mode: create a child thread from the quoted message instead of sending.
+      let branchMode: "direct" | "worktree" | "existing-worktree" = "direct";
+      let branchBranch = branchTargetBranch || activeThread?.branch || "";
+      let branchWorktree: string | undefined;
+
+      if (branchExecMode === "worktree") {
+        branchMode = "worktree";
+        branchBranch = branchNamingMode === "custom" && branchCustomName.trim()
+          ? branchCustomName.trim()
+          : autoPreviewBranch;
+      } else if (branchExecMode === "existing-worktree") {
+        branchMode = "existing-worktree";
+        branchWorktree = branchWorktreePath;
+        if (!branchWorktreePath) return;
+      }
+
+      await branchThread({
+        sourceThreadId: threadId,
+        content: messageContent,
+        model: modelId,
+        provider,
+        permissionMode: access,
+        reasoningLevel: reasoning,
+        attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+        mode: branchMode,
+        branch: branchBranch,
+        existingWorktreePath: branchWorktree,
+        forkedFromMessageId: branchFromMessageId,
+      });
+      onBranchModeExit?.();
     } else if (threadId) {
       await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider);
     }
@@ -849,7 +927,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
     }
 
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, mode, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore, preparingWorktree]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, mode, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore, preparingWorktree, branchFromMessageId, branchExecMode, branchTargetBranch, branchNamingMode, branchCustomName, branchWorktreePath, activeThread, branchThread, autoPreviewBranch, onBranchModeExit]);
 
   const handleEditorChange = useCallback((text: string) => {
     setInput(text);
@@ -898,8 +976,12 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       slashCommand.onKeyDown(fakeEvent);
       return key === "ArrowDown" || key === "ArrowUp";
     }
+    if (key === "Escape" && branchFromMessageId) {
+      onBranchModeExit?.();
+      return true;
+    }
     return false;
-  }, [fileAutocomplete.isOpen, filePopup, slashCommand, handleSlashSelect]);
+  }, [fileAutocomplete.isOpen, filePopup, slashCommand, handleSlashSelect, branchFromMessageId, onBranchModeExit]);
 
   const toast = useQueueStore((s) => s.toast);
 
@@ -932,7 +1014,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       {/* Main composer container - dark bg, rounded */}
       <div
         className={cn(
-          "relative rounded-xl bg-muted/50 ring-1 ring-border/60 shadow-lg shadow-black/20 focus-within:ring-2 focus-within:ring-primary/70",
+          "relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 shadow-lg shadow-black/20 focus-within:ring-2 focus-within:ring-primary/70",
           isDragOver && "ring-2 ring-primary"
         )}
         onDragEnter={handleDragEnter}
@@ -940,6 +1022,31 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
+        {/* Branch mode quote bar */}
+        {branchFromMessageId && (
+          <div className="relative flex items-start gap-2.5 rounded-tl-xl border-l-2 border-l-primary/50 bg-gradient-to-r from-primary/[0.04] to-transparent px-3 py-2.5 animate-fade-up-in">
+            {/* Gradient separator — starts warm at the accent, fades right */}
+            <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-primary/25 to-border/20" />
+            <GitBranch className="size-3.5 shrink-0 mt-0.5 text-primary/60" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold text-primary/80 leading-none mb-1">Branching from message</p>
+              {branchFromMessageContent && (
+                <p className="text-xs text-muted-foreground/55 truncate italic">
+                  {branchFromMessageContent.slice(0, 120)}{branchFromMessageContent.length > 120 ? "…" : ""}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onBranchModeExit}
+              className="shrink-0 rounded p-0.5 text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/40 transition-colors"
+              aria-label="Exit branch mode"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* PR URL detection card */}
         {detectedPr && !prDismissed && (
           <PrDetectedCard
@@ -968,16 +1075,17 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
             onSlashDismiss={slashCommand.onDismiss}
             isSlashPopupOpen={slashCommand.isOpen}
             editorRef={editorRef}
-            disabled={planPending}
+            disabled={planPending || isStaleWorktree}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
-            placeholder={planPending ? "Answer the planning questions above" : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
+            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
           />
           <FileTagPopup
             files={fileAutocomplete.filteredFiles}
             isOpen={fileAutocomplete.isOpen}
             onSelect={handleFileSelect}
             listRef={filePopup.listRef}
+            selectedIndex={filePopup.selectedIndex}
           />
         </div>
 
@@ -1142,7 +1250,8 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
           {threadId && (
             <ContextTracker
               tokensIn={contextEntry?.lastTokensIn ?? activeThread?.last_context_tokens ?? 0}
-              contextWindow={contextEntry?.contextWindow ?? activeThread?.context_window ?? DEFAULT_CONTEXT_WINDOW}
+              contextWindow={contextEntry?.contextWindow ?? (activeThread?.provider === "claude" ? activeThread.context_window ?? undefined : undefined)}
+              totalProcessedTokens={contextEntry?.totalProcessedTokens}
             />
           )}
 
@@ -1158,6 +1267,7 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                     : handleSend
             }
             disabled={
+              isStaleWorktree ||
               planPending ||
               preparingWorktree ||
               (!isAgentRunning && !hasContent)
@@ -1205,9 +1315,9 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
       {/* Status bar - below the container */}
       <div className="flex items-center justify-between px-1 pt-1.5">
         <ModeSelector
-          mode={composerMode}
-          onModeChange={setComposerMode}
-          locked={!isNewThread}
+          mode={branchFromMessageId ? branchExecMode : composerMode}
+          onModeChange={branchFromMessageId ? setBranchExecMode : setComposerMode}
+          locked={!isNewThread && !branchFromMessageId}
         />
         <div className="flex items-center gap-3">
           <AgentStatusBar />
@@ -1252,6 +1362,41 @@ export function Composer({ threadId, isNewThread, workspaceId }: ComposerProps) 
                 loading={worktreesLoading}
               />
             ) : null
+          ) : branchFromMessageId ? (
+            // Branch mode: show execution controls for the child thread
+            branchExecMode === "direct" ? (
+              <BranchPicker
+                branches={branches}
+                selectedBranch={branchTargetBranch || activeThread?.branch || ""}
+                onSelect={setBranchTargetBranch}
+                loading={branchesLoading}
+                locked={false}
+              />
+            ) : branchExecMode === "worktree" ? (
+              <>
+                <BranchPicker
+                  branches={branches}
+                  selectedBranch={branchTargetBranch || activeThread?.branch || ""}
+                  onSelect={setBranchTargetBranch}
+                  loading={branchesLoading}
+                  locked={false}
+                />
+                <NamingModeSelector mode={branchNamingMode} onModeChange={setBranchNamingMode} />
+                <BranchNameInput
+                  namingMode={branchNamingMode}
+                  autoPreview={autoPreviewBranch}
+                  customValue={branchCustomName}
+                  onCustomChange={setBranchCustomName}
+                />
+              </>
+            ) : (
+              <WorktreePicker
+                worktrees={worktrees}
+                selectedPath={branchWorktreePath}
+                onSelect={(wt) => setBranchWorktreePath(wt.path)}
+                loading={worktreesLoading}
+              />
+            )
           ) : activeThread?.branch ? (
             <BranchPicker
               branches={[]}

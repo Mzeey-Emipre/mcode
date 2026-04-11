@@ -8,8 +8,9 @@ import { injectable } from "tsyringe";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
-import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage, PostCompactHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
+import { AgentEventType } from "@mcode/contracts";
 import type {
   IAgentProvider,
   ProviderId,
@@ -154,10 +155,16 @@ export function detectFallbackModel(
 @injectable()
 export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "claude";
+  /** Claude supports one-shot text completion via sdkQuery with maxTurns: 1. */
+  readonly supportsCompletion = true;
 
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    super();
+  }
 
   /** Start or continue a session by sending a message via the SDK. */
   async sendMessage(params: {
@@ -180,6 +187,82 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       });
       throw e;
     }
+  }
+
+  /**
+   * One-shot text completion using the same prompt queue pattern as chat.
+   * Spawns an ephemeral SDK subprocess (not persisted to disk) with tools
+   * disabled and maxTurns: 1, collects the response text, then tears down.
+   */
+  async complete(prompt: string, model: string, cwd: string): Promise<string> {
+    const queue = createPromptQueue();
+    const ephemeralId = `complete-${crypto.randomUUID()}`;
+
+    const q = sdkQuery({
+      prompt: queue.iterable,
+      options: {
+        cwd,
+        model,
+        maxTurns: 1,
+        tools: [],
+        systemPrompt: "Respond with exactly what is requested. No questions, no commentary.",
+        settingSources: [],
+        permissionMode: "default" as const,
+        persistSession: false,
+        includePartialMessages: true,
+      },
+    });
+
+    queue.push(toUserMessage(prompt, ephemeralId));
+    // Close immediately: the message is already queued. This signals end-of-input
+    // so the SDK subprocess exits after processing instead of blocking on the
+    // next read from the queue (which would deadlock the for-await loop below).
+    queue.close();
+
+    let resultText = "";
+    let assistantText = "";
+    let deltaText = "";
+
+    for await (const msg of q) {
+      const anyMsg = msg as Record<string, unknown>;
+
+      if (anyMsg.type === "result") {
+        if (anyMsg.is_error) {
+          const errors = (anyMsg.errors as string[]) ?? [];
+          throw new Error(`Claude SDK error: ${errors.join(", ") || "unknown error"}`);
+        }
+        const res = anyMsg.result;
+        if (typeof res === "string" && res) resultText = res;
+      }
+
+      if (anyMsg.type === "assistant") {
+        const content =
+          (anyMsg.message as { content?: Array<{ type: string; text?: string }> })
+            ?.content ?? [];
+        for (const block of content) {
+          if (block.type === "text" && block.text) assistantText += block.text;
+        }
+      }
+
+      // Collect incremental text deltas as a third fallback source
+      if (anyMsg.type === "stream_event") {
+        const streamEvent = anyMsg.event as {
+          type?: string;
+          delta?: { type?: string; text?: string };
+        };
+        if (
+          streamEvent?.type === "content_block_delta" &&
+          streamEvent.delta?.type === "text_delta" &&
+          streamEvent.delta.text
+        ) {
+          deltaText += streamEvent.delta.text;
+        }
+      }
+    }
+
+    const text = resultText || assistantText || deltaText;
+    if (!text) throw new Error("Claude SDK returned no text content");
+    return text.trim();
   }
 
   private async doSendMessage(params: {
@@ -293,6 +376,22 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
       includePartialMessages: true,
+      hooks: {
+        PostCompact: [{
+          // @ts-expect-error: HookCallback accepts 3 params but we only need input
+          hooks: [async (input) => {
+            const { compact_summary } = (input as PostCompactHookInput);
+            // Derive threadId the same way startStreamLoop does.
+            const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+            this.emit("event", {
+              type: AgentEventType.CompactSummary,
+              threadId: tid,
+              summary: compact_summary,
+            } satisfies AgentEvent);
+            return {};
+          }],
+        }],
+      },
     };
     const options = resume
       ? { ...baseOptions, resume: resumeId }
@@ -391,6 +490,11 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         let sessionCompacting = false;
         /** Tracks the last known context window size for post-compaction estimation. */
         let lastContextWindow: number | undefined = undefined;
+        /** Per-API-call input token count from the most recent stream_event message_start.
+         * Consumed by the result handler to use as tokensIn on turnComplete (authoritative
+         * context fill vs. the accumulated result.usage which inflates across API calls).
+         * Reset to undefined after each turnComplete. */
+        let lastStreamInputTokens: number | undefined = undefined;
 
         for await (const msg of q) {
           const entry = this.sessions.get(sessionId);
@@ -415,7 +519,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               sdkSessionId: sdkSid,
             });
             this.emit("event", {
-              type: "system",
+              type: AgentEventType.System,
               threadId,
               subtype: "sdk_session_id:" + sdkSid,
             } satisfies AgentEvent);
@@ -440,7 +544,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               );
               this.sdkSessionIds.delete(sessionId);
               this.emit("event", {
-                type: "system",
+                type: AgentEventType.System,
                 threadId,
                 subtype: "session_restarted",
               } satisfies AgentEvent);
@@ -470,7 +574,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               for (const block of contentBlocks) {
                 if (block.type === "tool_use") {
                   this.emit("event", {
-                    type: "toolUse",
+                    type: AgentEventType.ToolUse,
                     threadId,
                     toolCallId:
                       (block.id as string) || "",
@@ -490,7 +594,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             case "result": {
               if (lastAssistantText) {
                 this.emit("event", {
-                  type: "message",
+                  type: AgentEventType.Message,
                   threadId,
                   content: lastAssistantText,
                   tokens:
@@ -512,7 +616,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 );
                 if (usedFallback) {
                   this.emit("event", {
-                    type: "modelFallback",
+                    type: AgentEventType.ModelFallback,
                     threadId,
                     requestedModel,
                     actualModel: usedFallback,
@@ -530,24 +634,33 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 (u) => typeof u.contextWindow === "number",
               )?.contextWindow;
 
-              // With prompt caching, input_tokens is only the uncached portion.
-              // Sum all input token categories for the true context window fill.
               const usage = (anyMsg.usage ?? {}) as {
                 input_tokens?: number;
                 output_tokens?: number;
                 cache_read_input_tokens?: number;
                 cache_creation_input_tokens?: number;
               };
-              // Output tokens become input context on the next turn, so include
-              // them so the tracker reflects the true next-turn fill.
-              const totalInputTokens =
+
+              // Accumulated total tokens processed across all API calls this session.
+              // result.usage is accumulated (like total_cost_usd and num_turns),
+              // so this already includes all previous API calls in the turn.
+              const totalProcessedTokens =
                 (usage.input_tokens ?? 0) +
                 (usage.cache_read_input_tokens ?? 0) +
                 (usage.cache_creation_input_tokens ?? 0) +
                 (usage.output_tokens ?? 0);
 
+              // Current context fill: prefer the last stream_event message_start
+              // usage (per-API-call, authoritative). Fall back to a heuristic
+              // from result.usage only if stream events were not captured.
+              const tokensIn = lastStreamInputTokens ?? (
+                (usage.input_tokens ?? 0) +
+                (usage.cache_read_input_tokens ?? 0) +
+                (usage.cache_creation_input_tokens ?? 0)
+              );
+
               this.emit("event", {
-                type: "turnComplete",
+                type: AgentEventType.TurnComplete,
                 threadId,
                 reason:
                   (anyMsg.stop_reason as string) ||
@@ -555,12 +668,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   "end_turn",
                 costUsd:
                   (anyMsg.total_cost_usd as number) ?? null,
-                tokensIn: totalInputTokens,
+                tokensIn,
                 tokensOut: usage.output_tokens ?? 0,
                 contextWindow: sdkContextWindow,
+                totalProcessedTokens,
               } satisfies AgentEvent);
 
               lastContextWindow = sdkContextWindow;
+              // Reset for next turn
+              lastStreamInputTokens = undefined;
 
               lastAssistantText = "";
               break;
@@ -576,34 +692,33 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 if (sdkStatus === "compacting" && !sessionCompacting) {
                   sessionCompacting = true;
                   this.emit("event", {
-                    type: "compacting",
+                    type: AgentEventType.Compacting,
                     threadId,
                     active: true,
                   } satisfies AgentEvent);
                 } else if (sdkStatus !== "compacting" && sessionCompacting) {
                   sessionCompacting = false;
                   this.emit("event", {
-                    type: "compacting",
+                    type: AgentEventType.Compacting,
                     threadId,
                     active: false,
                   } satisfies AgentEvent);
-                  // Emit a rough post-compaction estimate so the tracker
-                  // reappears immediately. The SDK typically compacts to ~50%
-                  // of the context window. This is overwritten by the next
-                  // authoritative turnComplete.
-                  const ctxWindow = lastContextWindow ?? 200_000;
-                  if (ctxWindow > 0) {
-                    this.emit("event", {
-                      type: "contextEstimate",
-                      threadId,
-                      tokensIn: Math.round(ctxWindow * 0.5),
-                      contextWindow: ctxWindow,
-                    } satisfies AgentEvent);
-                  }
+                  // Ring hides during compaction (lastTokensIn: 0 sentinel).
+                  // It stays hidden until the next authoritative turnComplete
+                  // or stream_event message_start provides real usage data.
+                }
+              } else if ((anyMsg.subtype as string) === "compact_boundary") {
+                const metadata = (anyMsg as { compact_metadata?: { pre_tokens?: number; trigger?: string } }).compact_metadata;
+                if (metadata) {
+                  logger.info("Compact boundary received", {
+                    threadId,
+                    preTokens: metadata.pre_tokens,
+                    trigger: metadata.trigger,
+                  });
                 }
               } else {
                 this.emit("event", {
-                  type: "system",
+                  type: AgentEventType.System,
                   threadId,
                   subtype: (anyMsg.subtype as string) || "unknown",
                 } satisfies AgentEvent);
@@ -613,7 +728,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
             case "tool_use": {
               this.emit("event", {
-                type: "toolUse",
+                type: AgentEventType.ToolUse,
                 threadId,
                 toolCallId: (anyMsg.id as string) || "",
                 toolName:
@@ -637,7 +752,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             case "tool_result": {
               const content = anyMsg.content;
               this.emit("event", {
-                type: "toolResult",
+                type: AgentEventType.ToolResult,
                 threadId,
                 toolCallId:
                   (anyMsg.tool_use_id as string) || "",
@@ -654,7 +769,35 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               const streamEvent = anyMsg.event as {
                 type?: string;
                 delta?: { type?: string; text?: string; partial_json?: string };
+                message?: {
+                  usage?: {
+                    input_tokens?: number;
+                    cache_read_input_tokens?: number;
+                    cache_creation_input_tokens?: number;
+                  };
+                };
               };
+              if (streamEvent?.type === "message_start" && streamEvent.message?.usage) {
+                const u = streamEvent.message.usage;
+                lastStreamInputTokens =
+                  (u.input_tokens ?? 0) +
+                  (u.cache_read_input_tokens ?? 0) +
+                  (u.cache_creation_input_tokens ?? 0);
+
+                // Emit mid-turn context estimate so the ring updates on each API call.
+                // contextWindow is undefined on the very first API call of a session
+                // because lastContextWindow is only populated after the first result.
+                // contextEstimate.contextWindow is optional and consumers handle undefined
+                // gracefully via their own lastContextWindowByThread map.
+                if (lastStreamInputTokens > 0) {
+                  this.emit("event", {
+                    type: AgentEventType.ContextEstimate,
+                    threadId,
+                    tokensIn: lastStreamInputTokens,
+                    contextWindow: lastContextWindow,
+                  } satisfies AgentEvent);
+                }
+              }
               if (streamEvent?.type === "content_block_delta") {
                 if (
                   streamEvent.delta?.type === "text_delta" &&
@@ -662,7 +805,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   streamEvent.delta.text
                 ) {
                   this.emit("event", {
-                    type: "textDelta",
+                    type: AgentEventType.TextDelta,
                     threadId,
                     delta: streamEvent.delta.text,
                   } satisfies AgentEvent);
@@ -672,7 +815,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   streamEvent.delta.partial_json
                 ) {
                   this.emit("event", {
-                    type: "toolInputDelta",
+                    type: AgentEventType.ToolInputDelta,
                     threadId,
                     partialJson: streamEvent.delta.partial_json,
                   } satisfies AgentEvent);
@@ -687,7 +830,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               const elapsedSeconds = (anyMsg.elapsed_time_seconds as number | undefined) ?? 0;
               if (toolUseId) {
                 this.emit("event", {
-                  type: "toolProgress",
+                  type: AgentEventType.ToolProgress,
                   threadId,
                   toolCallId: toolUseId,
                   toolName,
@@ -706,7 +849,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
           error: errorMessage,
         });
         this.emit("event", {
-          type: "error",
+          type: AgentEventType.Error,
           threadId,
           error: errorMessage,
         } satisfies AgentEvent);
@@ -719,7 +862,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         this.emit(`_streamDone:${sessionId}`);
         if (!suppressEnded && !current?.suppressEnded && (!current || current.query === q)) {
           this.emit("event", {
-            type: "ended",
+            type: AgentEventType.Ended,
             threadId,
           } satisfies AgentEvent);
         }

@@ -18,7 +18,7 @@ vi.mock("@/stores/threadStore", () => ({
       runningThreadIds: new Set(),
       loadMessages: vi.fn(),
       clearMessages: vi.fn(),
-      error: null,
+      errorByThread: {},
     })
   ),
 }));
@@ -79,6 +79,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     reasoning_level: null,
     interaction_mode: null,
     permission_mode: null,
+    parent_thread_id: null,
+    forked_from_message_id: null,
+    last_compact_summary: null,
     ...overrides,
   };
 }
@@ -120,7 +123,6 @@ function defaultWorkspaceState(overrides: Partial<{
 /** Re-configure the workspace store mock with the given state. */
 function setupWorkspaceMock(state: ReturnType<typeof defaultWorkspaceState>) {
   // Cast via unknown to avoid requiring every field of WorkspaceState in the fixture.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (useWorkspaceStore as unknown as { mockImplementation: (fn: (selector: (s: unknown) => unknown) => unknown) => void }).mockImplementation(
     (selector) => selector(state)
   );
