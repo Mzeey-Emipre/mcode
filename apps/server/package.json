@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node --import tsx src/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "node --import tsx src/store/cli/migrate.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "*",

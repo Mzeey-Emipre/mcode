@@ -160,6 +160,19 @@ See **[docs/guides/provider-architecture.md](docs/guides/provider-architecture.m
 | App startup to usable | < 2 seconds |
 | Frontend bundle size | < 2MB gzipped |
 
+## Database Migrations
+
+```sh
+cd apps/server
+
+bun run db:migrate status          # Show applied and pending migrations
+bun run db:migrate up              # Apply all pending migrations
+bun run db:migrate down            # Roll back the last migration
+bun run db:migrate new <name>      # Scaffold a new migration file
+```
+
+After scaffolding, implement `up()` and `down()` in the new file, then register it in `loadMigrations()` in `apps/server/src/store/database.ts`.
+
 ## Testing
 
 - **Unit tests:** `bun run test` from root (Vitest, runs in apps/web and apps/desktop)
