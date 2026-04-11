@@ -347,7 +347,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "provider.listModels": {
     params: z.object({ providerId: ProviderIdSchema }),
-    result: z.array(ProviderModelInfoSchema),
+    result: z.array(ProviderModelInfoSchema()),
   },
   "memory.setBackground": {
     params: z.object({ background: z.boolean() }),
