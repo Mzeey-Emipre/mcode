@@ -7,9 +7,9 @@
 import { injectable, inject } from "tsyringe";
 import { execFileSync, execFile as execFileCb } from "child_process";
 import { promisify } from "util";
-import { rm, rename } from "fs/promises";
+import { rm, rename, rmdir } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
-import { join, basename } from "path";
+import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
 import type { GitBranch, WorktreeInfo, GitCommit } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -21,6 +21,28 @@ const execFile = promisify(execFileCb);
  * maxRetries handles transient EBUSY locks from antivirus/indexers on Windows.
  */
 const RM_RETRY_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 } as const;
+
+/**
+ * Options for {@link GitService.removeWorktree}.
+ * Controls which worktree path is removed and whether the associated branch is deleted.
+ */
+interface RemoveWorktreeOptions {
+  /**
+   * Exact branch name to delete after the worktree is removed.
+   * When omitted and deleteBranch is true, removeWorktree falls back to `mcode/<worktree-name>`.
+   */
+  branchName?: string;
+  /**
+   * Whether removeWorktree should attempt `git branch -d` after cleaning up the worktree.
+   * Defaults to true; when false, branchName is ignored and no branch deletion is attempted.
+   */
+  deleteBranch?: boolean;
+  /**
+   * Exact filesystem path of the worktree to remove.
+   * When omitted, removeWorktree derives the managed path under the mcode worktree directory from the worktree name.
+   */
+  worktreePath?: string;
+}
 
 /** Resolve the worktree base directory path under the mcode data dir. */
 function getWorktreeBaseDir(repoPath: string): string {
@@ -36,6 +58,40 @@ function ensureWorktreeBaseDir(repoPath: string): string {
 
 function worktreeSlug(repoPath: string): string {
   return basename(repoPath).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+}
+
+/** Best-effort cleanup of empty managed parent directories after a worktree is removed. */
+async function removeEmptyManagedParentDirs(wtPath: string): Promise<void> {
+  const managedRoot = resolve(getMcodeDir(), "worktrees");
+  const rel = relative(managedRoot, resolve(wtPath));
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    return;
+  }
+
+  let current = dirname(resolve(wtPath));
+  while (current !== managedRoot) {
+    try {
+      await rmdir(current);
+      logger.info("Removed empty managed worktree parent dir", { path: current });
+      current = dirname(current);
+    } catch (err) {
+      const code = err && typeof err === "object" && "code" in err
+        ? String((err as NodeJS.ErrnoException).code)
+        : "";
+      if (code === "ENOTEMPTY" || code === "EEXIST" || code === "EBUSY") {
+        break;
+      }
+      if (code === "ENOENT") {
+        current = dirname(current);
+        continue;
+      }
+      logger.warn("Failed to remove empty managed worktree parent dir", {
+        path: current,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      break;
+    }
+  }
 }
 
 /** Check whether a branch ref exists in the repository. */
@@ -92,6 +148,14 @@ export class GitService {
     return listWorktreesForPath(workspace.path);
   }
 
+  /** Check whether a filesystem path is a git-registered worktree for a repository. */
+  isRegisteredWorktreePath(repoPath: string, worktreePath: string): boolean {
+    const normalize = (value: string) =>
+      resolve(value).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+    const target = normalize(worktreePath);
+    return listWorktreesForPath(repoPath).some((worktree) => normalize(worktree.path) === target);
+  }
+
   /**
    * Fetch a remote branch from origin and create a local tracking branch.
    * When prNumber is provided, fetches via `refs/pull/<n>/head` refspec.
@@ -107,13 +171,14 @@ export class GitService {
 
   /**
    * Create a new git worktree in the mcode data directory.
-   * Returns the worktree metadata including the filesystem path.
+   * Returns the worktree metadata including the filesystem path and whether this
+   * call created the branch or attached to an existing one.
    */
   createWorktree(
     repoPath: string,
     name: string,
     branchName?: string,
-  ): WorktreeInfo {
+  ): WorktreeInfo & { createdBranch: boolean } {
     validateWorktreeName(name);
 
     if (!existsSync(repoPath)) {
@@ -128,7 +193,9 @@ export class GitService {
       throw new Error(`Worktree directory already exists: ${wtPath}`);
     }
 
-    if (branchExists(repoPath, branch)) {
+    const createdBranch = !branchExists(repoPath, branch);
+
+    if (!createdBranch) {
       execFileSync(
         "git",
         ["-C", repoPath, "worktree", "add", wtPath, branch],
@@ -142,20 +209,30 @@ export class GitService {
       );
     }
 
-    return { name, path: wtPath, branch, managed: true };
+    return { name, path: wtPath, branch, managed: true, createdBranch };
   }
 
-  /** Remove a git worktree by name. Returns true if the directory was cleaned up. */
+  /**
+   * Remove a git worktree by name.
+   * When deleteBranch is true, deletes options.branchName or the default managed branch.
+   * When worktreePath is set, removes that exact worktree path instead of deriving
+   * one under the managed mcode worktree directory.
+   */
   async removeWorktree(
     repoPath: string,
     name: string,
-    branchName?: string,
+    options: RemoveWorktreeOptions = {},
   ): Promise<boolean> {
     validateWorktreeName(name);
 
-    const wtPath = join(getWorktreeBaseDir(repoPath), name);
-    const branch = branchName ?? `mcode/${name}`;
-    validateBranchName(branch);
+    const wtPath = options.worktreePath ?? join(getWorktreeBaseDir(repoPath), name);
+    const deleteBranch = options.deleteBranch ?? true;
+    const branch = deleteBranch
+      ? (options.branchName ?? `mcode/${name}`)
+      : null;
+    if (branch) {
+      validateBranchName(branch);
+    }
 
     // 1. Try git worktree remove
     try {
@@ -173,18 +250,7 @@ export class GitService {
       });
     }
 
-    // 2. Prune stale worktree metadata
-    try {
-      await execFile("git", ["-C", repoPath, "worktree", "prune"], {
-        timeout: 10_000,
-      });
-    } catch (err) {
-      logger.warn("git worktree prune failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-
-    // 3. Fallback: remove directory manually if git didn't clean it up.
+    // 2. Fallback: remove directory manually if git didn't clean it up.
     if (existsSync(wtPath)) {
       logger.warn(
         "Worktree directory still exists after git remove, falling back to fs.rm",
@@ -200,7 +266,7 @@ export class GitService {
       }
     }
 
-    // 4. Rename-then-delete: atomically unblock the path even if deletion is slow.
+    // 3. Rename-then-delete: atomically unblock the path even if deletion is slow.
     // Renaming succeeds even when the directory has open handles, so the original
     // path becomes available immediately while the OS drains remaining handles.
     if (existsSync(wtPath)) {
@@ -227,13 +293,31 @@ export class GitService {
       }
     }
 
-    // 5. Verify cleanup
+    // 4. Verify cleanup
     if (existsSync(wtPath)) {
       logger.error("Worktree directory could not be removed", { wtPath });
       return false;
     }
 
-    // 6. Delete the branch
+    // 5. Prune stale worktree metadata after any manual fallback removed the path.
+    try {
+      await execFile("git", ["-C", repoPath, "worktree", "prune"], {
+        timeout: 10_000,
+      });
+    } catch (err) {
+      logger.warn("git worktree prune failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // 6. Best-effort cleanup of any empty managed parent directories left behind.
+    await removeEmptyManagedParentDirs(wtPath);
+
+    // 7. Delete the branch when explicitly requested.
+    if (!branch) {
+      return true;
+    }
+
     try {
       await execFile("git", ["-C", repoPath, "branch", "-d", branch], {
         timeout: 10_000,
