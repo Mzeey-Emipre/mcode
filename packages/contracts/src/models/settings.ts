@@ -147,6 +147,8 @@ export const SettingsSchema = lazySchema(() =>
             codex: z.string().default(""),
             /** Path to the Claude CLI binary. Empty uses PATH lookup. */
             claude: z.string().default(""),
+            /** Path to the Copilot CLI binary. Empty uses PATH lookup. */
+            copilot: z.string().default(""),
           })
           .default({}),
       })
@@ -240,6 +242,7 @@ export const PartialSettingsSchema = lazySchema(() =>
           .object({
             codex: z.string().optional(),
             claude: z.string().optional(),
+            copilot: z.string().optional(),
           })
           .optional(),
       })
