@@ -74,8 +74,16 @@ export class MigrationRunner {
       )
     `);
 
+    interface PragmaRow {
+      name: string;
+      type: string;
+      notnull: number;
+      dflt_value: string | null;
+      pk: number;
+    }
+
     // If table existed before (without name column), patch it in.
-    const columns = this.db.pragma("table_info(_migrations)") as Array<{ name: string }>;
+    const columns = this.db.pragma("table_info(_migrations)") as PragmaRow[];
     const hasNameColumn = columns.some((col) => col.name === "name");
     if (!hasNameColumn) {
       this.db.exec("ALTER TABLE _migrations ADD COLUMN name TEXT NOT NULL DEFAULT ''");
@@ -101,19 +109,20 @@ export class MigrationRunner {
     const records: MigrationRecord[] = [];
 
     const insertStmt = this.db.prepare(
-      "INSERT INTO _migrations (version, name) VALUES (?, ?)",
+      "INSERT INTO _migrations (version, name, applied_at) VALUES (?, ?, ?)",
     );
 
     for (const [version, module] of toApply) {
+      // Capture the timestamp before the transaction so the INSERT and the
+      // returned record agree on the value without a SELECT round-trip.
+      const appliedAt = new Date().toISOString();
+
       this.db.transaction(() => {
         module.up(this.db);
-        insertStmt.run(version, module.description);
+        insertStmt.run(version, module.description, appliedAt);
       })();
 
-      const row = this.db
-        .prepare("SELECT version, name, applied_at FROM _migrations WHERE version = ?")
-        .get(version) as { version: number; name: string; applied_at: string };
-      records.push(rowToRecord(row));
+      records.push({ version, name: module.description, appliedAt });
     }
 
     return { applied: records.length, migrations: records };
@@ -122,8 +131,15 @@ export class MigrationRunner {
   /**
    * Reverts the most-recently applied migrations in descending version order.
    * Defaults to rolling back 1 migration when `steps` is omitted.
+   *
+   * If `steps` exceeds the number of applied migrations, only the available
+   * applied migrations are reverted (no error is thrown for the excess).
    */
   down(steps = 1): { reverted: number; migrations: MigrationRecord[] } {
+    if (steps === 0) {
+      throw new Error("steps must be a positive integer");
+    }
+
     const appliedRows = this.db
       .prepare("SELECT version, name, applied_at FROM _migrations ORDER BY version DESC")
       .all() as Array<{ version: number; name: string; applied_at: string }>;

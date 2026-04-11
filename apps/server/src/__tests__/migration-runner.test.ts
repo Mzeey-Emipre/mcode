@@ -58,61 +58,6 @@ describe("MigrationRunner", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 10. _migrations table bootstrap
-  // -------------------------------------------------------------------------
-  describe("constructor / table bootstrap", () => {
-    it("creates _migrations table on a fresh DB", () => {
-      new MigrationRunner(db, new Map());
-
-      const tables = (
-        db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='_migrations'").all()
-      ) as Array<{ name: string }>;
-
-      expect(tables).toHaveLength(1);
-    });
-
-    it("created table has version, name, and applied_at columns", () => {
-      new MigrationRunner(db, new Map());
-
-      const cols = (db.pragma("table_info(_migrations)")) as Array<{ name: string }>;
-      const colNames = cols.map((c) => c.name);
-
-      expect(colNames).toContain("version");
-      expect(colNames).toContain("name");
-      expect(colNames).toContain("applied_at");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // 11. name column migration for legacy _migrations tables
-  // -------------------------------------------------------------------------
-  describe("legacy _migrations table (no name column)", () => {
-    it("adds name column when _migrations exists without it", () => {
-      // Simulate a pre-existing legacy table (no name column).
-      db.exec(`
-        CREATE TABLE _migrations (
-          version INTEGER PRIMARY KEY,
-          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-      `);
-      db.exec("INSERT INTO _migrations (version) VALUES (1)");
-
-      // Constructor should patch the table without throwing.
-      new MigrationRunner(db, new Map());
-
-      const cols = (db.pragma("table_info(_migrations)")) as Array<{ name: string }>;
-      const colNames = cols.map((c) => c.name);
-      expect(colNames).toContain("name");
-
-      // Existing row should have the default empty string for name.
-      const row = db.prepare("SELECT name FROM _migrations WHERE version = 1").get() as {
-        name: string;
-      };
-      expect(row.name).toBe("");
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // 1. Fresh DB: up() applies all migrations
   // -------------------------------------------------------------------------
   describe("up() on fresh DB", () => {
@@ -329,6 +274,107 @@ describe("MigrationRunner", () => {
       // Only version 1 should be in _migrations.
       expect(runner.applied()).toHaveLength(1);
       expect(runner.applied()[0].version).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 10. Transaction rollback: if down() throws, DB is unchanged
+  // -------------------------------------------------------------------------
+  describe("transaction rollback on down() failure", () => {
+    it("reverts down() if the module throws", () => {
+      createTempTable(db, "items");
+
+      const migrations: Map<number, MigrationModule> = new Map([
+        [1, makeColumnMigration("add col_a", "items", "col_a")],
+        [
+          2,
+          {
+            description: "add col_b",
+            up(db) {
+              db.exec("ALTER TABLE items ADD COLUMN col_b TEXT DEFAULT NULL");
+            },
+            down(_db) {
+              // Simulates a buggy rollback so we can verify transaction safety.
+              throw new Error("down migration 2 failed intentionally");
+            },
+          },
+        ],
+      ]);
+
+      const runner = new MigrationRunner(db, migrations);
+      runner.up();
+      expect(runner.applied()).toHaveLength(2);
+
+      // down() on migration 2 throws — the DELETE should be rolled back.
+      expect(() => runner.down()).toThrow("down migration 2 failed intentionally");
+
+      // Both migrations must still be recorded as applied.
+      expect(runner.applied()).toHaveLength(2);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 11. down(0) throws
+  // -------------------------------------------------------------------------
+  describe("down(0) validation", () => {
+    it("throws when steps is 0", () => {
+      const runner = new MigrationRunner(db, new Map());
+      expect(() => runner.down(0)).toThrow("steps must be a positive integer");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 12. _migrations table bootstrap
+  // -------------------------------------------------------------------------
+  describe("constructor / table bootstrap", () => {
+    it("creates _migrations table on a fresh DB", () => {
+      new MigrationRunner(db, new Map());
+
+      const tables = (
+        db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='_migrations'").all()
+      ) as Array<{ name: string }>;
+
+      expect(tables).toHaveLength(1);
+    });
+
+    it("created table has version, name, and applied_at columns", () => {
+      new MigrationRunner(db, new Map());
+
+      const cols = (db.pragma("table_info(_migrations)")) as Array<{ name: string }>;
+      const colNames = cols.map((c) => c.name);
+
+      expect(colNames).toContain("version");
+      expect(colNames).toContain("name");
+      expect(colNames).toContain("applied_at");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 13. name column migration for legacy _migrations tables
+  // -------------------------------------------------------------------------
+  describe("legacy _migrations table (no name column)", () => {
+    it("adds name column when _migrations exists without it", () => {
+      // Simulate a pre-existing legacy table (no name column).
+      db.exec(`
+        CREATE TABLE _migrations (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+      db.exec("INSERT INTO _migrations (version) VALUES (1)");
+
+      // Constructor should patch the table without throwing.
+      new MigrationRunner(db, new Map());
+
+      const cols = (db.pragma("table_info(_migrations)")) as Array<{ name: string }>;
+      const colNames = cols.map((c) => c.name);
+      expect(colNames).toContain("name");
+
+      // Existing row should have the default empty string for name.
+      const row = db.prepare("SELECT name FROM _migrations WHERE version = 1").get() as {
+        name: string;
+      };
+      expect(row.name).toBe("");
     });
   });
 });
