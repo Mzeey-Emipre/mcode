@@ -126,7 +126,7 @@ try {
       console.log(`Rolling back ${actualSteps} migration${actualSteps !== 1 ? "s" : ""}...`);
 
       try {
-        const result = runner.down(steps);
+        const result = runner.down(actualSteps);
         for (const m of result.migrations) {
           console.log(`↩️  V${pad(m.version)} ${m.name}`);
         }
