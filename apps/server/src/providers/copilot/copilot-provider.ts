@@ -162,6 +162,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
 
     this.lastCliPath = cliPath;
     this.client = new CopilotClient(cliPath ? { cliPath } : undefined);
+    // The SDK's createSession() auto-starts the connection, but listModels()
+    // does not. Eagerly start the client so both paths work.
+    await this.client.start();
   }
 
   /** Start or continue a session by sending a message via the Copilot SDK. */
