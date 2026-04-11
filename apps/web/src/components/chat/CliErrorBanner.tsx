@@ -2,13 +2,23 @@ import { useState, useCallback } from "react";
 import { TriangleAlert, Copy, Check, X, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** Error message prefix that identifies a CLI-not-found error from the provider. */
-const CLI_NOT_FOUND_MARKERS = ["CLI not found", "not found at"];
+/** Substrings that identify a provider CLI setup error from any backend. */
+const CLI_NOT_FOUND_MARKERS = [
+  "CLI not found",       // claude / codex custom-path message
+  "not found at",        // custom-path fallback for all providers
+  "package not found",   // @github/copilot npm package missing
+  "exited unexpectedly", // Copilot CLI launched but exited (auth / subscription issue)
+];
 
-/** Extract an install command from the error message, if present. */
+/**
+ * Extract the first actionable shell command from the error message.
+ * Matches `npm install …` lines and backtick-quoted commands like `gh auth login`.
+ */
 function extractInstallCommand(error: string): string | null {
-  const match = error.match(/npm install[^\n]+/);
-  return match ? match[0] : null;
+  const npmMatch = error.match(/npm install[^\n]+/);
+  if (npmMatch) return npmMatch[0];
+  const backtickMatch = error.match(/`([^`]+)`/);
+  return backtickMatch ? backtickMatch[1] : null;
 }
 
 /** Returns true when the error string represents a missing CLI binary. */
