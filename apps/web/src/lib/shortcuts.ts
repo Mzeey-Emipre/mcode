@@ -48,20 +48,22 @@ function handleKeyDown(e: KeyboardEvent): void {
   for (let i = 0; i < bindings.length; i++) {
     const binding = bindings[i];
     if (matchesKeyEvent(getParsedKeybinding(i), e) && evaluateWhen(binding.when)) {
-      const handled = executeCommand(binding.command);
-      if (handled) e.preventDefault();
-      return;
+      if (executeCommand(binding.command)) {
+        e.preventDefault();
+        return;
+      }
+      // Command not registered; continue scanning for another binding on the same key
     }
   }
 }
 
 /**
  * Initialize the keybinding system.
- * Loads default keybindings, attaches the global keydown listener,
- * and sets up focus tracking.
+ * Loads default keybindings (merged with optional user overrides),
+ * attaches the global keydown listener, and sets up focus tracking.
  */
-export function initShortcuts(): () => void {
-  loadKeybindings(defaultKeybindings as Keybinding[]);
+export function initShortcuts(overrides?: Keybinding[]): () => void {
+  loadKeybindings(defaultKeybindings as Keybinding[], overrides);
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("focusin", updateFocusContext);
   document.addEventListener("focusout", updateFocusContext);

@@ -21,8 +21,16 @@ export function KeyboardShortcutsSection() {
     return commands.filter((c) => getKeybindingForCommand(c.id));
   }, []);
 
+  const hasDesktopBridge = !!window.desktopBridge;
+
   const handleOpenKeybindings = () => {
-    window.desktopBridge?.openKeybindingsFile().catch((err) => {
+    if (!window.desktopBridge) {
+      useToastStore
+        .getState()
+        .show("error", "Desktop integration unavailable", "Keybindings cannot be opened in this environment");
+      return;
+    }
+    window.desktopBridge.openKeybindingsFile().catch((err) => {
       useToastStore
         .getState()
         .show("error", "Could not open keybindings file", String(err?.message ?? err));
@@ -41,6 +49,7 @@ export function KeyboardShortcutsSection() {
           <Button
             variant="outline"
             size="sm"
+            disabled={!hasDesktopBridge}
             onClick={handleOpenKeybindings}
           >
             Edit keybindings.json

@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useMemo } from "react";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import {
   Command,
   CommandInput,
@@ -17,7 +18,7 @@ import { isMac } from "@/lib/platform";
 /**
  * Top-center floating command palette overlay.
  * Lists all registered commands grouped by category with inline shortcut display.
- * Uses cmdk for fuzzy search filtering.
+ * Uses cmdk for fuzzy search filtering and @base-ui Dialog for focus trapping.
  */
 export function CommandPalette() {
   const open = useUiStore((s) => s.commandPaletteOpen);
@@ -58,54 +59,48 @@ export function CommandPalette() {
     [setOpen],
   );
 
-  if (!open) return null;
-
   const categories = Array.from(grouped.keys()).sort();
 
   return (
-    <div className="fixed inset-0 z-50">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={() => setOpen(false)}
-      />
-
-      {/* Palette container - top center */}
-      <div className="absolute left-1/2 top-[15%] w-full max-w-lg -translate-x-1/2">
-        <Command
-          className="rounded-lg border border-border bg-popover shadow-2xl"
-          loop
-        >
-          <CommandInput placeholder="Type a command..." autoFocus />
-          <CommandList className="max-h-80">
-            <CommandEmpty>No commands found.</CommandEmpty>
-            {categories.map((category, i) => (
-              <div key={category}>
-                {i > 0 && <CommandSeparator />}
-                <CommandGroup heading={category}>
-                  {grouped.get(category)!.map((cmd) => {
-                    const binding = getKeybindingForCommand(cmd.id);
-                    return (
-                      <CommandItem
-                        key={cmd.id}
-                        value={`${cmd.title} ${cmd.category}`}
-                        onSelect={() => handleSelect(cmd.id)}
-                      >
-                        <span className="flex-1">{cmd.title}</span>
-                        {binding && (
-                          <kbd className="ml-auto rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            {formatKeybinding(binding.key, isMac)}
-                          </kbd>
-                        )}
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
-              </div>
-            ))}
-          </CommandList>
-        </Command>
-      </div>
-    </div>
+    <DialogPrimitive.Root open={open} onOpenChange={setOpen} modal="trap-focus">
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/50" />
+        <DialogPrimitive.Popup className="fixed left-1/2 top-[15%] z-50 w-full max-w-lg -translate-x-1/2 outline-none">
+          <Command
+            className="rounded-lg border border-border bg-popover shadow-2xl"
+            loop
+          >
+            <CommandInput placeholder="Type a command..." autoFocus />
+            <CommandList className="max-h-80">
+              <CommandEmpty>No commands found.</CommandEmpty>
+              {categories.map((category, i) => (
+                <div key={category}>
+                  {i > 0 && <CommandSeparator />}
+                  <CommandGroup heading={category}>
+                    {grouped.get(category)!.map((cmd) => {
+                      const binding = getKeybindingForCommand(cmd.id);
+                      return (
+                        <CommandItem
+                          key={cmd.id}
+                          value={`${cmd.title} ${cmd.category}`}
+                          onSelect={() => handleSelect(cmd.id)}
+                        >
+                          <span className="flex-1">{cmd.title}</span>
+                          {binding && (
+                            <kbd className="ml-auto rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              {formatKeybinding(binding.key, isMac)}
+                            </kbd>
+                          )}
+                        </CommandItem>
+                      );
+                    })}
+                  </CommandGroup>
+                </div>
+              ))}
+            </CommandList>
+          </Command>
+        </DialogPrimitive.Popup>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
