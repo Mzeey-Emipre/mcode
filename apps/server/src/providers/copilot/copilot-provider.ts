@@ -68,9 +68,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       return null;
     } catch {
       if (!settings.provider.cli.copilot) {
-        return "GitHub Copilot CLI not found. Ensure the `gh` CLI is installed and authenticated.\n\nOr set a custom path in Settings > Provider > Copilot CLI path.";
+        return "Copilot CLI not found. Install it with: npm install -g @github/copilot\n\nOr set a custom path in Settings > Provider > Copilot CLI path.";
       }
-      return `GitHub Copilot CLI not found at "${cliPath}". Check the path in Settings > Provider > Copilot CLI path.`;
+      return `Copilot CLI not found at "${cliPath}". Check the path in Settings > Provider > Copilot CLI path.`;
     }
   }
 
@@ -105,14 +105,15 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
   }): Promise<void> {
-    // Fire-and-forget: delegate to doSendMessage so the RPC response is not
-    // blocked waiting for the agentic turn to complete. Events stream via push.
-    void this.doSendMessage(params).catch((e: unknown) => {
+    try {
+      await this.doSendMessage(params);
+    } catch (e: unknown) {
       logger.error("CopilotProvider sendMessage error", {
         sessionId: params.sessionId,
         error: String(e),
       });
-    });
+      throw e;
+    }
   }
 
   private async doSendMessage(params: {
