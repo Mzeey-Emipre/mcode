@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { lazy, Suspense, type ComponentProps } from "react";
 
 vi.mock("cmdk", () => ({
   Command: Object.assign(
@@ -33,5 +33,20 @@ describe("WorktreePicker", () => {
       />,
     );
     expect(screen.getByText("feature-a")).toBeInTheDocument();
+  });
+
+  it("renders via React.lazy default export", async () => {
+    const LazyWorktreePicker = lazy(() => import("../components/chat/WorktreePicker"));
+    render(
+      <Suspense fallback={<div data-testid="fallback" />}>
+        <LazyWorktreePicker
+          worktrees={worktrees}
+          selectedPath="/repo/.worktrees/feature-a"
+          onSelect={() => {}}
+          loading={false}
+        />
+      </Suspense>,
+    );
+    expect(await screen.findByText("feature-a")).toBeInTheDocument();
   });
 });

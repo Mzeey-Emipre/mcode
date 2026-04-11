@@ -1355,7 +1355,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 />
               </>
             ) : composerMode === "existing-worktree" ? (
-              <Suspense fallback={null}><LazyWorktreePicker
+              <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
                 worktrees={worktrees}
                 selectedPath={selectedWorktree?.path ?? ""}
                 onSelect={setSelectedWorktree}
@@ -1390,7 +1390,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 />
               </>
             ) : (
-              <Suspense fallback={null}><LazyWorktreePicker
+              <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
                 worktrees={worktrees}
                 selectedPath={branchWorktreePath}
                 onSelect={(wt) => setBranchWorktreePath(wt.path)}
