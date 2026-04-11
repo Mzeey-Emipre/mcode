@@ -103,7 +103,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
   private async refreshClient(): Promise<void> {
     const settings = await this.settingsService.get();
     const cliPath = settings.provider.cli.copilot || undefined;
-    if (cliPath === this.lastCliPath && this.client !== null) return;
+    const state = this.client?.getState();
+    // Reuse the existing client only when it is healthy. A "disconnected" or
+    // "error" state means the CLI process died; rebuild so the next session
+    // gets a fresh process rather than failing immediately.
+    if (cliPath === this.lastCliPath && this.client !== null && state === "connected") return;
 
     if (this.client) {
       await this.client.stop().catch((err) =>
@@ -142,6 +146,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
         : params.sessionId;
 
       if (msg.includes("CLI server exited")) {
+        // The @github/copilot process died — discard the dead client so
+        // refreshClient() rebuilds it on the next attempt.
+        this.client = null;
         const userMsg =
           "GitHub Copilot CLI exited unexpectedly.\n\n" +
           "Ensure you are authenticated: run `gh auth login` and confirm you have an active GitHub Copilot subscription.";
