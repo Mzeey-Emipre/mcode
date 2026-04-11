@@ -275,7 +275,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
               threadId,
               toolCallId,
               toolName,
-              toolInput: (toolArgs as Record<string, unknown>) ?? {},
+              toolInput: toolArgs ?? {},
             } satisfies AgentEvent);
           }),
         );
