@@ -1,6 +1,7 @@
 import type { AgentEvent } from "../events/agent-event.js";
 import type { AttachmentMeta } from "../models/attachment.js";
 import type { ReasoningLevel } from "../models/settings.js";
+import type { ProviderModelInfo } from "./models.js";
 
 /** Identifier for a supported AI provider. */
 export type ProviderId = "claude" | "codex" | "gemini" | "copilot";
@@ -31,6 +32,9 @@ export interface IAgentProvider {
 
   /** Tear down all sessions and release resources. */
   shutdown(): void;
+
+  /** List models available from this provider. Not all providers support dynamic discovery. */
+  listModels?(): Promise<ProviderModelInfo[]>;
 
   /** Subscribe to agent events. */
   on(event: "event", handler: (event: AgentEvent) => void): void;
