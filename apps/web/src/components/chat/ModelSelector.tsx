@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ComponentType } from "react";
+import { useState, useEffect, useRef, useMemo, type ComponentType } from "react";
 import { ChevronDown, ChevronRight, Lock, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -6,8 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import {
   MODEL_PROVIDERS,
   findModelById,
+  toModelDefinition,
   type ModelProvider,
 } from "@/lib/model-registry";
+import { useProviderModelStore } from "@/stores/providerModelStore";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -51,6 +53,31 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchModels = useProviderModelStore((s) => s.fetchModels);
+  const dynamicModels = useProviderModelStore((s) => s.models);
+  const dynamicLoading = useProviderModelStore((s) => s.loading);
+
+  // Fetch dynamic models when the dropdown opens
+  useEffect(() => {
+    if (!open) return;
+    for (const p of MODEL_PROVIDERS) {
+      if (p.dynamic && !dynamicModels[p.id]?.length && !dynamicLoading[p.id]) {
+        fetchModels(p.id);
+      }
+    }
+  }, [open, fetchModels, dynamicModels, dynamicLoading]);
+
+  // Merge dynamically fetched models into the static provider list
+  const resolvedProviders = useMemo(() => {
+    return MODEL_PROVIDERS.map((p) => {
+      if (!p.dynamic || !dynamicModels[p.id]?.length) return p;
+      return {
+        ...p,
+        models: dynamicModels[p.id].map((m) => toModelDefinition(m, p.id)),
+      };
+    });
+  }, [dynamicModels]);
 
   // Delayed hover close so user has time to move to submenu
   const setHoveredWithDelay = (providerId: string | null) => {
@@ -147,16 +174,27 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                   {models.map((m) => (
                     <button
                       key={m.id}
+                      disabled={m.policyState === "disabled"}
                       onClick={() => handleSelectModel(m.id, p.id)}
                       className={cn(
                         "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                        isSelected(m.id)
-                          ? "bg-accent text-foreground"
-                          : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+                        m.policyState === "disabled"
+                          ? "cursor-not-allowed text-muted-foreground/40"
+                          : isSelected(m.id)
+                            ? "bg-accent text-foreground"
+                            : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                       )}
                     >
                       <span className="flex-1 text-left">{m.label}</span>
-                      {isSelected(m.id) && (
+                      {m.multiplier != null && m.multiplier !== 1 && (
+                        <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                          {m.multiplier}x
+                        </span>
+                      )}
+                      {m.policyState === "disabled" && (
+                        <Lock size={10} className="shrink-0 text-muted-foreground/40" />
+                      )}
+                      {isSelected(m.id) && m.policyState !== "disabled" && (
                         <Check size={10} className="shrink-0 text-foreground" />
                       )}
                     </button>
@@ -166,16 +204,27 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
             : p.models.map((m) => (
                 <button
                   key={m.id}
+                  disabled={m.policyState === "disabled"}
                   onClick={() => handleSelectModel(m.id, p.id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                    isSelected(m.id)
-                      ? "bg-accent text-foreground"
-                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+                    m.policyState === "disabled"
+                      ? "cursor-not-allowed text-muted-foreground/40"
+                      : isSelected(m.id)
+                        ? "bg-accent text-foreground"
+                        : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                 >
                   <span className="flex-1 text-left">{m.label}</span>
-                  {isSelected(m.id) && (
+                  {m.multiplier != null && m.multiplier !== 1 && (
+                    <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                      {m.multiplier}x
+                    </span>
+                  )}
+                  {m.policyState === "disabled" && (
+                    <Lock size={10} className="shrink-0 text-muted-foreground/40" />
+                  )}
+                  {isSelected(m.id) && m.policyState !== "disabled" && (
                     <Check size={10} className="shrink-0 text-foreground" />
                   )}
                 </button>
@@ -198,25 +247,36 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
           {/* When provider is locked, show only that provider's models directly */}
           {providerLocked && displayProvider ? (
             <div className="max-h-[280px] overflow-y-auto">
-              {displayProvider.models.map((m) => (
+              {(resolvedProviders.find((rp) => rp.id === displayProvider.id) ?? displayProvider).models.map((m) => (
                 <button
                   key={m.id}
+                  disabled={m.policyState === "disabled"}
                   onClick={() => handleSelectModel(m.id, displayProvider.id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                    m.id === normalizedSelectedId
-                      ? "bg-accent text-foreground"
-                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+                    m.policyState === "disabled"
+                      ? "cursor-not-allowed text-muted-foreground/40"
+                      : m.id === normalizedSelectedId
+                        ? "bg-accent text-foreground"
+                        : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                 >
                   <span className="flex-1 text-left">{m.label}</span>
-                  {m.id === normalizedSelectedId && (
+                  {m.multiplier != null && m.multiplier !== 1 && (
+                    <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                      {m.multiplier}x
+                    </span>
+                  )}
+                  {m.policyState === "disabled" && (
+                    <Lock size={10} className="shrink-0 text-muted-foreground/40" />
+                  )}
+                  {m.id === normalizedSelectedId && m.policyState !== "disabled" && (
                     <Check size={10} className="shrink-0 text-foreground" />
                   )}
                 </button>
               ))}
             </div>
-          ) : MODEL_PROVIDERS.map((p) => {
+          ) : resolvedProviders.map((p) => {
             const pm = PROVIDER_META[p.id];
             const ProvIcon = pm?.icon ?? ClaudeIcon;
             const provIconClass = pm?.color ?? "";
@@ -247,6 +307,9 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                   <span className="flex-1 text-left">{p.name}</span>
                   {p.comingSoon && (
                     <Badge variant="secondary" size="sm">SOON</Badge>
+                  )}
+                  {p.dynamic && !hasModels && dynamicLoading[p.id] && (
+                    <span className="text-[10px] text-muted-foreground animate-pulse">Loading...</span>
                   )}
                   {!p.comingSoon && hasModels && p.models.length > 1 && (
                     <ChevronRight size={10} className="text-muted-foreground" />
