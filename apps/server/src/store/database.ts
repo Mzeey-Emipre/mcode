@@ -53,7 +53,7 @@ function resolveNativeBinding(): string | undefined {
 }
 
 /** Builds the ordered map of all migration modules keyed by version number. */
-function loadMigrations(): Map<number, MigrationModule> {
+export function loadMigrations(): Map<number, MigrationModule> {
   const migrations = new Map<number, MigrationModule>();
   migrations.set(1, m001);
   migrations.set(2, m002);
