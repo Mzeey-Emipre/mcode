@@ -19,6 +19,8 @@ export interface ModelDefinition {
   id: string;
   label: string;
   providerId: string;
+  /** Optional display group for organizing models in selectors (e.g. "OpenAI", "Anthropic"). */
+  group?: string;
   /** Maximum context window size in tokens, if known. */
   contextWindow?: number;
   /**
@@ -90,23 +92,23 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     name: "GitHub Copilot",
     comingSoon: false,
     models: [
-      { id: "gpt-5.3-codex", label: "GPT-5.3 Codex", providerId: "copilot" },
-      { id: "gpt-5.2-codex", label: "GPT-5.2 Codex", providerId: "copilot" },
-      { id: "gpt-5.2", label: "GPT-5.2", providerId: "copilot" },
-      { id: "gpt-5.1-codex", label: "GPT-5.1 Codex", providerId: "copilot" },
-      { id: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max", providerId: "copilot" },
-      { id: "gpt-5.1", label: "GPT-5.1", providerId: "copilot" },
-      { id: "gpt-5-mini", label: "GPT-5 mini", providerId: "copilot" },
-      { id: "gpt-4.1", label: "GPT-4.1", providerId: "copilot" },
-      { id: "claude-opus-4.6", label: "Claude Opus 4.6", providerId: "copilot" },
-      { id: "claude-opus-4-6-fast", label: "Claude Opus 4.6 Fast", providerId: "copilot" },
-      { id: "claude-opus-4.5", label: "Claude Opus 4.5", providerId: "copilot" },
-      { id: "claude-sonnet-4.6", label: "Claude Sonnet 4.6", providerId: "copilot" },
-      { id: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", providerId: "copilot" },
-      { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", providerId: "copilot" },
-      { id: "gemini-3-pro", label: "Gemini 3 Pro", providerId: "copilot" },
-      { id: "gemini-3-flash", label: "Gemini 3 Flash", providerId: "copilot" },
-      { id: "grok-code-fast-1", label: "Grok Code Fast 1", providerId: "copilot" },
+      { id: "gpt-5.3-codex", label: "GPT-5.3 Codex", providerId: "copilot", group: "OpenAI" },
+      { id: "gpt-5.2-codex", label: "GPT-5.2 Codex", providerId: "copilot", group: "OpenAI" },
+      { id: "gpt-5.2", label: "GPT-5.2", providerId: "copilot", group: "OpenAI" },
+      { id: "gpt-5.1-codex", label: "GPT-5.1 Codex", providerId: "copilot", group: "OpenAI" },
+      { id: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max", providerId: "copilot", group: "OpenAI" },
+      { id: "gpt-5.1", label: "GPT-5.1", providerId: "copilot", group: "OpenAI" },
+      { id: "gpt-5-mini", label: "GPT-5 mini", providerId: "copilot", group: "OpenAI" },
+      { id: "gpt-4.1", label: "GPT-4.1", providerId: "copilot", group: "OpenAI" },
+      { id: "claude-opus-4.6", label: "Claude Opus 4.6", providerId: "copilot", group: "Anthropic" },
+      { id: "claude-opus-4-6-fast", label: "Claude Opus 4.6 Fast", providerId: "copilot", group: "Anthropic" },
+      { id: "claude-opus-4.5", label: "Claude Opus 4.5", providerId: "copilot", group: "Anthropic" },
+      { id: "claude-sonnet-4.6", label: "Claude Sonnet 4.6", providerId: "copilot", group: "Anthropic" },
+      { id: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", providerId: "copilot", group: "Anthropic" },
+      { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", providerId: "copilot", group: "Anthropic" },
+      { id: "gemini-3-pro", label: "Gemini 3 Pro", providerId: "copilot", group: "Google" },
+      { id: "gemini-3-flash", label: "Gemini 3 Flash", providerId: "copilot", group: "Google" },
+      { id: "grok-code-fast-1", label: "Grok Code Fast 1", providerId: "copilot", group: "xAI" },
     ],
   },
   {

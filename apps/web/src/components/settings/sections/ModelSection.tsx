@@ -22,7 +22,9 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -83,12 +85,12 @@ export function ModelSection() {
   const activeProvider = MODEL_PROVIDERS.find((p) => p.id === provider);
 
   const modelOptions = useMemo(
-    () => (activeProvider?.models ?? []).map((m) => ({ value: m.id, label: m.label })),
+    () => (activeProvider?.models ?? []).map((m) => ({ value: m.id, label: m.label, group: m.group })),
     [activeProvider],
   );
 
   const fallbackOptions = useMemo(
-    () => [{ value: "", label: "Off" }, ...modelOptions],
+    () => [{ value: "", label: "Off", group: undefined }, ...modelOptions],
     [modelOptions],
   );
 
@@ -115,8 +117,11 @@ export function ModelSection() {
         ? "Reasoning effort for Codex models. X-High is the maximum tier."
         : "Reasoning effort for Codex models.";
     }
+    if (provider === "copilot") {
+      return "Reasoning effort passed to the Copilot model. Not all models support all levels.";
+    }
     return "Default reasoning level. Max requires Opus 4.6.";
-  }, [codexLevels]);
+  }, [codexLevels, provider]);
 
   const handleProviderChange = (v: string) => {
     const newProvider = MODEL_PROVIDERS.find((p) => p.id === v);
@@ -186,11 +191,30 @@ export function ModelSection() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {modelOptions.map((m) => (
-                <SelectItem key={m.value} value={m.value}>
-                  {m.label}
-                </SelectItem>
-              ))}
+              {modelOptions.some((m) => m.group)
+                ? (() => {
+                    const groups = new Map<string, typeof modelOptions>();
+                    for (const m of modelOptions) {
+                      const g = m.group ?? "";
+                      if (!groups.has(g)) groups.set(g, []);
+                      groups.get(g)!.push(m);
+                    }
+                    return Array.from(groups.entries()).map(([g, items]) => (
+                      <SelectGroup key={g}>
+                        {g && <SelectLabel>{g}</SelectLabel>}
+                        {items.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ));
+                  })()
+                : modelOptions.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
             </SelectContent>
           </Select>
         ) : (
@@ -212,11 +236,30 @@ export function ModelSection() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {fallbackOptions.map((m) => (
-                <SelectItem key={m.value} value={m.value}>
-                  {m.label}
-                </SelectItem>
-              ))}
+              {fallbackOptions.some((m) => m.group)
+                ? (() => {
+                    const groups = new Map<string, typeof fallbackOptions>();
+                    for (const m of fallbackOptions) {
+                      const g = m.group ?? "";
+                      if (!groups.has(g)) groups.set(g, []);
+                      groups.get(g)!.push(m);
+                    }
+                    return Array.from(groups.entries()).map(([g, items]) => (
+                      <SelectGroup key={g}>
+                        {g && <SelectLabel>{g}</SelectLabel>}
+                        {items.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ));
+                  })()
+                : fallbackOptions.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
             </SelectContent>
           </Select>
         ) : (

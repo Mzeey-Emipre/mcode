@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type ComponentType } from "react";
-import { ChevronDown, ChevronRight, Lock } from "lucide-react";
+import { ChevronDown, ChevronRight, Lock, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,7 @@ type IconComponent = ComponentType<{ size?: number; className?: string }>;
 const PROVIDER_META: Record<string, { icon: IconComponent; color: string }> = {
   claude: { icon: ClaudeIcon, color: "text-orange-500 dark:text-orange-400" },
   codex: { icon: CodexIcon, color: "text-emerald-400" },
-  copilot: { icon: CopilotIcon, color: "text-sky-400" },
+  copilot: { icon: CopilotIcon, color: "text-violet-400 dark:text-violet-300" },
   cursor: { icon: CursorProviderIcon, color: "text-blue-400" },
   opencode: { icon: OpenCodeIcon, color: "text-violet-400" },
   gemini: { icon: GeminiIcon, color: "text-sky-400" },
@@ -100,30 +100,73 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
     setHoveredProvider(null);
   };
 
-  const renderSubmenu = (p: ModelProvider) => (
-    <div
-      className="absolute left-full top-0 -ml-1 pl-2 min-w-[160px]"
-      onMouseEnter={() => setHoveredWithDelay(p.id)}
-      onMouseLeave={() => setHoveredWithDelay(null)}
-    >
-      <div className="max-h-[280px] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
-      {p.models.map((m) => (
-        <button
-          key={m.id}
-          onClick={() => handleSelectModel(m.id)}
-          className={cn(
-            "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-            m.id === normalizedSelectedId
-              ? "bg-accent text-foreground"
-              : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
-          )}
-        >
-          {m.label}
-        </button>
-      ))}
+  const renderSubmenu = (p: ModelProvider) => {
+    // Group models by their `group` field for providers that use it (e.g. Copilot)
+    const hasGroups = p.models.some((m) => m.group);
+    const groups: { label: string; models: typeof p.models }[] = [];
+    if (hasGroups) {
+      const seen = new Map<string, typeof p.models>();
+      for (const m of p.models) {
+        const g = m.group ?? "";
+        if (!seen.has(g)) seen.set(g, []);
+        seen.get(g)!.push(m);
+      }
+      seen.forEach((models, label) => groups.push({ label, models }));
+    }
+
+    return (
+      <div
+        className="absolute left-full top-0 -ml-1 pl-2 min-w-[160px]"
+        onMouseEnter={() => setHoveredWithDelay(p.id)}
+        onMouseLeave={() => setHoveredWithDelay(null)}
+      >
+        <div className="max-h-[280px] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
+          {hasGroups
+            ? groups.map(({ label, models }) => (
+                <div key={label}>
+                  <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 select-none">
+                    {label}
+                  </div>
+                  {models.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => handleSelectModel(m.id)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
+                        m.id === normalizedSelectedId
+                          ? "bg-accent text-foreground"
+                          : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+                      )}
+                    >
+                      <span className="flex-1 text-left">{m.label}</span>
+                      {m.id === normalizedSelectedId && (
+                        <Check size={10} className="shrink-0 text-foreground" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ))
+            : p.models.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => handleSelectModel(m.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
+                    m.id === normalizedSelectedId
+                      ? "bg-accent text-foreground"
+                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+                  )}
+                >
+                  <span className="flex-1 text-left">{m.label}</span>
+                  {m.id === normalizedSelectedId && (
+                    <Check size={10} className="shrink-0 text-foreground" />
+                  )}
+                </button>
+              ))}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div ref={containerRef} className="relative">
@@ -149,7 +192,10 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
                       : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                 >
-                  {m.label}
+                  <span className="flex-1 text-left">{m.label}</span>
+                  {m.id === normalizedSelectedId && (
+                    <Check size={10} className="shrink-0 text-foreground" />
+                  )}
                 </button>
               ))}
             </div>
