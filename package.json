@@ -35,5 +35,8 @@
     "better-sqlite3",
     "node-pty",
     "@electron/rebuild"
-  ]
+  ],
+  "dependencies": {
+    "@github/copilot-sdk": "^0.2.2"
+  }
 }
