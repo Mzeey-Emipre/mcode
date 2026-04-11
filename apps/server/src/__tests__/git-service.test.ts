@@ -2,10 +2,11 @@ import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 
-const { mockExecFile, mockRm, mockRename, mockExistsSync, mockLogger } = vi.hoisted(() => ({
+const { mockExecFile, mockRm, mockRename, mockRmdir, mockExistsSync, mockLogger } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
   mockRm: vi.fn(),
   mockRename: vi.fn(),
+  mockRmdir: vi.fn(),
   mockExistsSync: vi.fn(),
   mockLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
@@ -27,6 +28,7 @@ vi.mock("fs", () => ({
 vi.mock("fs/promises", () => ({
   rm: mockRm,
   rename: mockRename,
+  rmdir: mockRmdir,
 }));
 
 vi.mock("@mcode/shared", () => ({
@@ -230,5 +232,28 @@ describe("GitService.removeWorktree", () => {
     expect(mockExecFile.mock.invocationCallOrder[pruneIndex]).toBeLessThan(
       mockExecFile.mock.invocationCallOrder[branchIndex],
     );
+  });
+
+  it("removes an empty managed parent directory after worktree cleanup", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+    mockRmdir.mockResolvedValue(undefined);
+
+    await gitService.removeWorktree("/repo", "my-worktree");
+
+    expect(mockRmdir).toHaveBeenCalledWith(expect.stringContaining("worktrees"));
+    expect(mockRmdir).toHaveBeenCalledWith(expect.stringContaining("repo"));
+  });
+
+  it("does not remove parent directories for external worktrees", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    await gitService.removeWorktree("/repo", "my-worktree", {
+      worktreePath: "/external/worktrees/my-worktree",
+      deleteBranch: false,
+    });
+
+    expect(mockRmdir).not.toHaveBeenCalled();
   });
 });

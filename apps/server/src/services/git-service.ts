@@ -7,9 +7,9 @@
 import { injectable, inject } from "tsyringe";
 import { execFileSync, execFile as execFileCb } from "child_process";
 import { promisify } from "util";
-import { rm, rename } from "fs/promises";
+import { rm, rename, rmdir } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
-import { join, basename, resolve } from "path";
+import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
 import type { GitBranch, WorktreeInfo, GitCommit } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -42,6 +42,40 @@ function ensureWorktreeBaseDir(repoPath: string): string {
 
 function worktreeSlug(repoPath: string): string {
   return basename(repoPath).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+}
+
+/** Best-effort cleanup of empty managed parent directories after a worktree is removed. */
+async function removeEmptyManagedParentDirs(wtPath: string): Promise<void> {
+  const managedRoot = resolve(getMcodeDir(), "worktrees");
+  const rel = relative(managedRoot, resolve(wtPath));
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    return;
+  }
+
+  let current = dirname(resolve(wtPath));
+  while (current !== managedRoot) {
+    try {
+      await rmdir(current);
+      logger.info("Removed empty managed worktree parent dir", { path: current });
+      current = dirname(current);
+    } catch (err) {
+      const code = err && typeof err === "object" && "code" in err
+        ? String((err as NodeJS.ErrnoException).code)
+        : "";
+      if (code === "ENOTEMPTY" || code === "EEXIST" || code === "EBUSY") {
+        break;
+      }
+      if (code === "ENOENT") {
+        current = dirname(current);
+        continue;
+      }
+      logger.warn("Failed to remove empty managed worktree parent dir", {
+        path: current,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      break;
+    }
+  }
 }
 
 /** Check whether a branch ref exists in the repository. */
@@ -251,7 +285,10 @@ export class GitService {
       });
     }
 
-    // 6. Delete the branch when explicitly requested.
+    // 6. Best-effort cleanup of any empty managed parent directories left behind.
+    await removeEmptyManagedParentDirs(wtPath);
+
+    // 7. Delete the branch when explicitly requested.
     if (!branch) {
       return true;
     }
