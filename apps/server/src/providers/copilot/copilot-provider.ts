@@ -9,7 +9,9 @@
  */
 
 import { execFile } from "child_process";
+import { existsSync } from "fs";
 import { createRequire } from "module";
+import { join } from "path";
 import { promisify } from "util";
 
 const _require = createRequire(import.meta.url);
@@ -84,17 +86,21 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     const cliPath = settings.provider.cli.copilot;
 
     if (!cliPath) {
-      // SDK will try to resolve @github/copilot from node_modules.
-      try {
-        _require.resolve("@github/copilot");
-        return null;
-      } catch {
+      // Mirror the SDK's own getBundledCliPath() resolution strategy.
+      // @github/copilot has no "main" export so require.resolve() fails;
+      // instead we check whether index.js exists in any node_modules search path.
+      const searchPaths = _require.resolve.paths("@github/copilot") ?? [];
+      const found = searchPaths.some((base) =>
+        existsSync(join(base, "@github", "copilot", "index.js")),
+      );
+      if (!found) {
         return (
           "GitHub Copilot package not found.\n\n" +
-          "Install it with: npm install -g @github/copilot\n\n" +
+          "Install it with: npm install @github/copilot\n\n" +
           "Or set a custom path in Settings > Provider > Copilot CLI path."
         );
       }
+      return null;
     }
 
     try {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, type ComponentType } from "react";
-import { ChevronDown, ChevronRight, Lock, Check } from "lucide-react";
+import { ChevronDown, ChevronRight, Lock, Check, AlertCircle, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -55,8 +55,10 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchModels = useProviderModelStore((s) => s.fetchModels);
+  const clearModels = useProviderModelStore((s) => s.clearModels);
   const dynamicModels = useProviderModelStore((s) => s.models);
   const dynamicLoading = useProviderModelStore((s) => s.loading);
+  const dynamicErrors = useProviderModelStore((s) => s.errors);
 
   // Fetch dynamic models when the dropdown opens
   useEffect(() => {
@@ -289,18 +291,24 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
             const ProvIcon = pm?.icon ?? ClaudeIcon;
             const provIconClass = pm?.color ?? "";
             const hasModels = p.models.length > 0;
+            const hasError = p.dynamic && !!dynamicErrors[p.id];
+            const isLoading = p.dynamic && !hasModels && !!dynamicLoading[p.id];
 
             return (
               <div
                 key={p.id}
                 className="relative"
-                onMouseEnter={() => !p.comingSoon && hasModels && setHoveredWithDelay(p.id)}
+                onMouseEnter={() => !p.comingSoon && hasModels && !hasError && setHoveredWithDelay(p.id)}
                 onMouseLeave={() => setHoveredWithDelay(null)}
               >
                 <button
                   disabled={p.comingSoon}
                   onClick={() => {
-                    if (hasModels && p.models.length === 1) {
+                    if (hasError) {
+                      // Clear error so the guard in fetchModels passes, then retry
+                      clearModels(p.id);
+                      fetchModels(p.id);
+                    } else if (hasModels && p.models.length === 1) {
                       handleSelectModel(p.models[0].id, p.id);
                     }
                   }}
@@ -316,8 +324,14 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                   {p.comingSoon && (
                     <Badge variant="secondary" size="sm">SOON</Badge>
                   )}
-                  {p.dynamic && !hasModels && dynamicLoading[p.id] && (
+                  {isLoading && (
                     <span className="text-[10px] text-muted-foreground animate-pulse">Loading...</span>
+                  )}
+                  {hasError && (
+                    <span className="flex items-center gap-1 text-[10px] text-destructive/70" title={dynamicErrors[p.id] ?? undefined}>
+                      <AlertCircle size={10} />
+                      <RefreshCw size={10} />
+                    </span>
                   )}
                   {!p.comingSoon && hasModels && p.models.length > 1 && (
                     <ChevronRight size={10} className="text-muted-foreground" />
