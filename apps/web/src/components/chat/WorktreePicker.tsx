@@ -109,3 +109,5 @@ function truncatePath(path: string): string {
   if (parts.length <= 4) return path;
   return ".../" + parts.slice(-3).join("/");
 }
+
+export default WorktreePicker;
