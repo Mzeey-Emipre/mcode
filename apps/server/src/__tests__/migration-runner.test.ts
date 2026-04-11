@@ -224,7 +224,7 @@ describe("MigrationRunner", () => {
       const runner = new MigrationRunner(db, threeItemMigrations());
       runner.up();
 
-      expect(runner.validate()).toEqual({ valid: true, gaps: [], missing: [] });
+      expect(runner.validate()).toEqual({ valid: true, gaps: [] });
     });
 
     it("reports applied version with no file in map as a gap", () => {
@@ -235,7 +235,6 @@ describe("MigrationRunner", () => {
       const result = runner.validate();
       expect(result.valid).toBe(false);
       expect(result.gaps).toContain(99);
-      expect(result.missing).toEqual([]);
     });
   });
 

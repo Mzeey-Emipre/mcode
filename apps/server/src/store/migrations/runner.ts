@@ -21,8 +21,6 @@ export interface ValidationResult {
   valid: boolean;
   /** Applied DB versions that have no corresponding migration module. */
   gaps: number[];
-  /** Reserved for future file-contiguity checks; always empty for now. */
-  missing: number[];
 }
 
 /**
@@ -90,13 +88,19 @@ export class MigrationRunner {
     }
 
     // Backfill descriptions for rows that were applied before the name column
-    // existed (stored as ''). Uses the in-memory module map, so this is a
-    // no-op for any version not in the map (gaps are left as-is).
-    const updateStmt = this.db.prepare(
-      "UPDATE _migrations SET name = ? WHERE version = ? AND name = ''",
-    );
-    for (const [version, module] of this.migrations) {
-      updateStmt.run(module.description, version);
+    // existed (stored as ''). Guarded by a count check so the prepare and loop
+    // are skipped entirely when there is nothing to backfill.
+    const emptyCount = (
+      this.db.prepare("SELECT COUNT(*) as n FROM _migrations WHERE name = ''").get() as { n: number }
+    ).n;
+
+    if (emptyCount > 0) {
+      const updateStmt = this.db.prepare(
+        "UPDATE _migrations SET name = ? WHERE version = ? AND name = ''",
+      );
+      for (const [version, module] of this.migrations) {
+        updateStmt.run(module.description, version);
+      }
     }
   }
 
@@ -146,7 +150,7 @@ export class MigrationRunner {
    * applied migrations are reverted (no error is thrown for the excess).
    */
   down(steps = 1): { reverted: number; migrations: MigrationRecord[] } {
-    if (steps === 0) {
+    if (steps <= 0) {
       throw new Error("steps must be a positive integer");
     }
 
@@ -225,7 +229,6 @@ export class MigrationRunner {
     return {
       valid: gaps.length === 0,
       gaps,
-      missing: [],
     };
   }
 }

@@ -52,128 +52,151 @@ if (!command || command === "--help" || command === "-h") {
   printUsage(0);
 }
 
-switch (command) {
-  case "status": {
-    const db = openDb();
-    const runner = new MigrationRunner(db, loadMigrations());
-    const applied = runner.applied();
-    const pending = runner.pending();
+let db: Database.Database | undefined;
 
-    if (applied.length === 0 && pending.length === 0) {
-      console.log("No migrations found.");
-    }
+try {
+  switch (command) {
+    case "status": {
+      db = openDb();
+      const runner = new MigrationRunner(db, loadMigrations());
+      const applied = runner.applied();
+      const pending = runner.pending();
 
-    for (const m of applied) {
-      console.log(`✅ V${pad(m.version)} ${m.name}  (applied: ${m.appliedAt})`);
-    }
-    for (const m of pending) {
-      console.log(`⏳ V${pad(m.version)} ${m.name}  [not yet applied]`);
-    }
-    break;
-  }
+      if (applied.length === 0 && pending.length === 0) {
+        console.log("No migrations found.");
+      }
 
-  case "up": {
-    const steps = args[0] !== undefined ? parseInt(args[0], 10) : undefined;
-    if (steps !== undefined && (isNaN(steps) || steps <= 0)) {
-      console.error("Error: n must be a positive integer");
-      process.exit(1);
-    }
-
-    const db = openDb();
-    const runner = new MigrationRunner(db, loadMigrations());
-    const pending = runner.pending();
-
-    if (pending.length === 0) {
-      console.log("Already up to date.");
+      for (const m of applied) {
+        console.log(`✅ V${pad(m.version)} ${m.name}  (applied: ${m.appliedAt})`);
+      }
+      for (const m of pending) {
+        console.log(`⏳ V${pad(m.version)} ${m.name}  [not yet applied]`);
+      }
       break;
     }
 
-    const toApply = steps !== undefined ? pending.slice(0, steps) : pending;
-    console.log(`Applying ${toApply.length} pending migration${toApply.length === 1 ? "" : "s"}...`);
-
-    try {
-      const result = runner.up(steps);
-      for (const m of result.migrations) {
-        console.log(`✅ V${pad(m.version)} ${m.name}`);
+    case "up": {
+      const steps = args[0] !== undefined ? parseInt(args[0], 10) : undefined;
+      if (steps !== undefined && (isNaN(steps) || steps <= 0)) {
+        console.error("Error: n must be a positive integer");
+        process.exit(1);
       }
-      console.log(`Done. ${result.applied} migration${result.applied === 1 ? "" : "s"} applied.`);
-    } catch (err) {
-      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-      process.exit(1);
+
+      db = openDb();
+      const runner = new MigrationRunner(db, loadMigrations());
+      const pending = runner.pending();
+
+      if (pending.length === 0) {
+        console.log("Already up to date.");
+        break;
+      }
+
+      const toApply = steps !== undefined ? pending.slice(0, steps) : pending;
+      console.log(`Applying ${toApply.length} pending migration${toApply.length === 1 ? "" : "s"}...`);
+
+      try {
+        const result = runner.up(steps);
+        for (const m of result.migrations) {
+          console.log(`✅ V${pad(m.version)} ${m.name}`);
+        }
+        console.log(`Done. ${result.applied} migration${result.applied === 1 ? "" : "s"} applied.`);
+      } catch (err) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+      break;
     }
-    break;
-  }
 
-  case "down": {
-    const steps = args[0] !== undefined ? parseInt(args[0], 10) : 1;
-    if (isNaN(steps) || steps <= 0) {
-      console.error("Error: n must be a positive integer");
-      process.exit(1);
-    }
+    case "down": {
+      const steps = args[0] !== undefined ? parseInt(args[0], 10) : 1;
+      if (isNaN(steps) || steps <= 0) {
+        console.error("Error: n must be a positive integer");
+        process.exit(1);
+      }
 
-    const db = openDb();
-    const runner = new MigrationRunner(db, loadMigrations());
+      db = openDb();
+      const runner = new MigrationRunner(db, loadMigrations());
 
-    console.log(`Rolling back ${steps} migration${steps === 1 ? "" : "s"}...`);
-
-    try {
-      const result = runner.down(steps);
-      if (result.reverted === 0) {
+      const appliedCount = runner.applied().length;
+      const actualSteps = Math.min(steps, appliedCount);
+      if (actualSteps === 0) {
         console.log("Nothing to roll back.");
-      } else {
+        break;
+      }
+      console.log(`Rolling back ${actualSteps} migration${actualSteps !== 1 ? "s" : ""}...`);
+
+      try {
+        const result = runner.down(steps);
         for (const m of result.migrations) {
           console.log(`↩️  V${pad(m.version)} ${m.name}`);
         }
         console.log(`Done. ${result.reverted} migration${result.reverted === 1 ? "" : "s"} reverted.`);
+      } catch (err) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
       }
-    } catch (err) {
-      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-      process.exit(1);
-    }
-    break;
-  }
-
-  case "new": {
-    const name = args[0];
-    if (!name) {
-      console.error("Error: missing required argument <name>");
-      process.exit(1);
+      break;
     }
 
-    // Find highest version number from existing migration filenames.
-    const files = existsSync(migrationsDir)
-      ? readdirSync(migrationsDir).filter((f) => /^\d+_/.test(f))
-      : [];
+    case "new": {
+      const name = args[0];
+      if (!name) {
+        console.error("Error: missing required argument <name>");
+        process.exit(1);
+      }
 
-    const highestVersion = files.reduce((max, f) => {
-      const match = f.match(/^(\d+)_/);
-      return match ? Math.max(max, parseInt(match[1], 10)) : max;
-    }, 0);
+      // Find highest version number from existing migration filenames.
+      const files = existsSync(migrationsDir)
+        ? readdirSync(migrationsDir).filter((f) => /^\d+_/.test(f))
+        : [];
 
-    const nextVersion = highestVersion + 1;
-    const slug = name.replace(/\s+/g, "_").toLowerCase();
-    const filename = `${pad(nextVersion)}_${slug}.ts`;
-    const outputPath = join(migrationsDir, filename);
+      const highestVersion = files.reduce((max, f) => {
+        const match = f.match(/^(\d+)_/);
+        return match ? Math.max(max, parseInt(match[1], 10)) : max;
+      }, 0);
 
-    const scaffold = `import type Database from "better-sqlite3";
+      const nextVersion = highestVersion + 1;
+      const slug = name
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/[^a-z0-9_]/g, "");
 
-export const description = "${name}";
+      if (!slug) {
+        console.error("Error: migration name must contain at least one alphanumeric character");
+        process.exit(1);
+      }
 
-export function up(db: Database.Database): void {
+      const filename = `${pad(nextVersion)}_${slug}.ts`;
+      const outputPath = join(migrationsDir, filename);
+
+      if (existsSync(outputPath)) {
+        console.error(`Error: ${filename} already exists`);
+        process.exit(1);
+      }
+
+      const scaffold = `import type Database from "better-sqlite3";
+
+export const description = ${JSON.stringify(name)};
+
+export function up(_db: Database.Database): void {
   // TODO: implement migration
 }
 
-export function down(db: Database.Database): void {
+export function down(_db: Database.Database): void {
   // TODO: implement rollback
 }
 `;
 
-    writeFileSync(outputPath, scaffold);
-    console.log(`Created: apps/server/src/store/migrations/${filename}`);
-    break;
-  }
+      writeFileSync(outputPath, scaffold);
+      console.log(`Created: apps/server/src/store/migrations/${filename}`);
+      console.log(`  Next: register it in apps/server/src/store/database.ts (loadMigrations)`);
+      break;
+    }
 
-  default:
-    console.error(`Unknown command: ${command}`);
-    printUsage(1);
+    default:
+      console.error(`Unknown command: ${command}`);
+      printUsage(1);
+  }
+} finally {
+  db?.close();
 }
