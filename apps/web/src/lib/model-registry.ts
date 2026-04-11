@@ -1,10 +1,13 @@
 import { useSettingsStore } from "@/stores/settingsStore";
-import type { ReasoningLevel } from "@mcode/contracts";
+import type { ReasoningLevel, ProviderModelInfo } from "@mcode/contracts";
 
+/** A provider entry in the model registry. */
 export interface ModelProvider {
   id: string;
   name: string;
   comingSoon: boolean;
+  /** When true, models are fetched at runtime via provider.listModels. */
+  dynamic?: boolean;
   models: ModelDefinition[];
 }
 
@@ -30,6 +33,10 @@ export interface ModelDefinition {
   supportedReasoningLevels?: readonly CodexReasoningLevel[];
   /** Default reasoning effort level for this model. */
   defaultReasoningLevel?: CodexReasoningLevel;
+  /** Billing rate multiplier (e.g. 1, 0.33, 3). Only present for dynamic models. */
+  multiplier?: number;
+  /** Policy state from org admin. Only present for dynamic models. */
+  policyState?: "enabled" | "disabled" | "unconfigured";
 }
 
 export const MODEL_PROVIDERS: readonly ModelProvider[] = [
@@ -91,25 +98,8 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     id: "copilot",
     name: "GitHub Copilot",
     comingSoon: false,
-    models: [
-      { id: "gpt-5.3-codex", label: "GPT-5.3 Codex", providerId: "copilot", group: "OpenAI" },
-      { id: "gpt-5.2-codex", label: "GPT-5.2 Codex", providerId: "copilot", group: "OpenAI" },
-      { id: "gpt-5.2", label: "GPT-5.2", providerId: "copilot", group: "OpenAI" },
-      { id: "gpt-5.1-codex", label: "GPT-5.1 Codex", providerId: "copilot", group: "OpenAI" },
-      { id: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max", providerId: "copilot", group: "OpenAI" },
-      { id: "gpt-5.1", label: "GPT-5.1", providerId: "copilot", group: "OpenAI" },
-      { id: "gpt-5-mini", label: "GPT-5 mini", providerId: "copilot", group: "OpenAI" },
-      { id: "gpt-4.1", label: "GPT-4.1", providerId: "copilot", group: "OpenAI" },
-      { id: "claude-opus-4.6", label: "Claude Opus 4.6", providerId: "copilot", group: "Anthropic" },
-      { id: "claude-opus-4-6-fast", label: "Claude Opus 4.6 Fast", providerId: "copilot", group: "Anthropic" },
-      { id: "claude-opus-4.5", label: "Claude Opus 4.5", providerId: "copilot", group: "Anthropic" },
-      { id: "claude-sonnet-4.6", label: "Claude Sonnet 4.6", providerId: "copilot", group: "Anthropic" },
-      { id: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", providerId: "copilot", group: "Anthropic" },
-      { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", providerId: "copilot", group: "Anthropic" },
-      { id: "gemini-3-pro", label: "Gemini 3 Pro", providerId: "copilot", group: "Google" },
-      { id: "gemini-3-flash", label: "Gemini 3 Flash", providerId: "copilot", group: "Google" },
-      { id: "grok-code-fast-1", label: "Grok Code Fast 1", providerId: "copilot", group: "xAI" },
-    ],
+    dynamic: true,
+    models: [],
   },
   {
     id: "cursor",
@@ -130,6 +120,19 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     models: [],
   },
 ];
+
+/** Convert a dynamically fetched model to a ModelDefinition for UI consumption. */
+export function toModelDefinition(m: ProviderModelInfo, providerId: string): ModelDefinition {
+  return {
+    id: m.id,
+    label: m.name,
+    providerId,
+    group: m.group,
+    contextWindow: m.contextWindow,
+    multiplier: m.multiplier,
+    policyState: m.policy?.state,
+  };
+}
 
 /**
  * Matches a dated SDK variant ID (e.g. `claude-haiku-4-5-20251001`) to its base
