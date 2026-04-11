@@ -9,11 +9,10 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { useUiStore } from "@/stores/uiStore";
-import { getAllCommands } from "@/lib/command-registry";
+import { getAllCommands, executeCommand } from "@/lib/command-registry";
 import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";
 import { setContext } from "@/lib/context-tracker";
-
-const isMac = navigator.platform.toUpperCase().includes("MAC");
+import { isMac } from "@/lib/platform";
 
 /**
  * Top-center floating command palette overlay.
@@ -53,8 +52,7 @@ export function CommandPalette() {
       // Defer execution so the palette closes before the command runs
       // (avoids focus conflicts with dialogs the command might open)
       requestAnimationFrame(() => {
-        const cmd = getAllCommands().find((c) => c.id === commandId);
-        cmd?.handler();
+        executeCommand(commandId);
       });
     },
     [setOpen],

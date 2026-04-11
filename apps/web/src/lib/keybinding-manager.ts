@@ -21,6 +21,8 @@ export interface ParsedKeybinding {
 }
 
 let keybindings: Keybinding[] = [];
+/** Pre-parsed cache, rebuilt whenever keybindings are loaded. */
+let parsedCache: ParsedKeybinding[] = [];
 
 /**
  * Parse a keybinding string like "mod+shift+k" into its components.
@@ -53,7 +55,7 @@ export function matchesKeyEvent(
 ): boolean {
   const modMatch = parsed.mod
     ? event.ctrlKey || event.metaKey
-    : true;
+    : !event.ctrlKey && !event.metaKey;
 
   const altMatch = parsed.alt ? event.altKey : !event.altKey;
 
@@ -82,6 +84,7 @@ export function loadKeybindings(
 ): void {
   if (!userOverrides || userOverrides.length === 0) {
     keybindings = [...defaults];
+    parsedCache = keybindings.map((b) => parseKeybinding(b.key));
     return;
   }
 
@@ -115,11 +118,17 @@ export function loadKeybindings(
   }
 
   keybindings = merged;
+  parsedCache = keybindings.map((b) => parseKeybinding(b.key));
 }
 
 /** Get all active keybindings. */
 export function getKeybindings(): readonly Keybinding[] {
   return keybindings;
+}
+
+/** Get the pre-parsed keybinding at the given index. */
+export function getParsedKeybinding(index: number): ParsedKeybinding {
+  return parsedCache[index];
 }
 
 /** Find the keybinding for a given command ID. */
@@ -171,4 +180,5 @@ export function formatKeybinding(key: string, isMac: boolean): string {
 /** Remove all keybindings (for testing). */
 export function clearKeybindings(): void {
   keybindings = [];
+  parsedCache = [];
 }

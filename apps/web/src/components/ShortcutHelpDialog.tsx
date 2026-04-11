@@ -11,8 +11,7 @@ import {
   getKeybindingForCommand,
   formatKeybinding,
 } from "@/lib/keybinding-manager";
-
-const isMac = navigator.platform.toUpperCase().includes("MAC");
+import { isMac } from "@/lib/platform";
 
 /**
  * Full-screen dialog showing all keyboard shortcuts grouped by category.

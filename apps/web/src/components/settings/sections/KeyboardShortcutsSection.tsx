@@ -5,8 +5,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { getAllCommands } from "@/lib/command-registry";
 import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";
 import { useToastStore } from "@/stores/toastStore";
-
-const isMac = navigator.platform.toUpperCase().includes("MAC");
+import { isMac } from "@/lib/platform";
 
 /** Settings section showing keyboard shortcuts and the path to the user override file. */
 export function KeyboardShortcutsSection() {

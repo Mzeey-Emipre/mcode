@@ -41,7 +41,7 @@ export function evaluateWhen(when: string | undefined): boolean {
   const negated = when.startsWith("!");
   const key = (negated ? when.slice(1) : when) as ContextKey;
 
-  if (!(key in state)) return false;
+  if (!Object.prototype.hasOwnProperty.call(state, key)) return false;
 
   const value = state[key];
   return negated ? !value : value;

@@ -4,9 +4,9 @@
 // checks the "when" clause, and executes the associated command.
 
 import {
-  parseKeybinding,
   matchesKeyEvent,
   getKeybindings,
+  getParsedKeybinding,
   loadKeybindings,
   type Keybinding,
 } from "./keybinding-manager";
@@ -46,11 +46,12 @@ function handleKeyDown(e: KeyboardEvent): void {
   // Never intercept keystrokes when a terminal has focus
   if (isTerminalFocused(document.activeElement)) return;
 
-  for (const binding of getKeybindings()) {
-    const parsed = parseKeybinding(binding.key);
-    if (matchesKeyEvent(parsed, e) && evaluateWhen(binding.when)) {
-      e.preventDefault();
-      executeCommand(binding.command);
+  const bindings = getKeybindings();
+  for (let i = 0; i < bindings.length; i++) {
+    const binding = bindings[i];
+    if (matchesKeyEvent(getParsedKeybinding(i), e) && evaluateWhen(binding.when)) {
+      const handled = executeCommand(binding.command);
+      if (handled) e.preventDefault();
       return;
     }
   }
