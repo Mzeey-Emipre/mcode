@@ -9,7 +9,10 @@
  */
 
 import { execFile } from "child_process";
+import { createRequire } from "module";
 import { promisify } from "util";
+
+const _require = createRequire(import.meta.url);
 import { injectable, inject } from "tsyringe";
 import { EventEmitter } from "events";
 import { CopilotClient, approveAll } from "@github/copilot-sdk";
@@ -55,21 +58,40 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
   }
 
   /**
-   * Check whether the Copilot CLI binary is reachable.
+   * Check whether the Copilot CLI is reachable.
+   *
+   * When no custom path is configured the SDK resolves the `@github/copilot`
+   * npm package from Node.js module search paths — NOT an external binary
+   * called `gh`. We use the same resolution strategy here so the check matches
+   * what the SDK will actually do.
+   *
+   * When a custom path is configured we verify the binary is executable.
+   *
    * Returns an error message if unavailable, or null if the CLI is found.
    */
   private async checkCliAvailable(): Promise<string | null> {
     const settings = await this.settingsService.get();
-    const cliPath = settings.provider.cli.copilot || "gh";
+    const cliPath = settings.provider.cli.copilot;
+
+    if (!cliPath) {
+      // SDK will try to resolve @github/copilot from node_modules.
+      try {
+        _require.resolve("@github/copilot");
+        return null;
+      } catch {
+        return (
+          "GitHub Copilot package not found.\n\n" +
+          "Install it with: npm install -g @github/copilot\n\n" +
+          "Or set a custom path in Settings > Provider > Copilot CLI path."
+        );
+      }
+    }
 
     try {
       // shell: true is required on Windows to resolve .cmd shims from npm global installs
       await execFileAsync(cliPath, ["--version"], { timeout: 5000, shell: true });
       return null;
     } catch {
-      if (!settings.provider.cli.copilot) {
-        return "Copilot CLI not found. Install it with: npm install -g @github/copilot\n\nOr set a custom path in Settings > Provider > Copilot CLI path.";
-      }
       return `Copilot CLI not found at "${cliPath}". Check the path in Settings > Provider > Copilot CLI path.`;
     }
   }
@@ -108,10 +130,36 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     try {
       await this.doSendMessage(params);
     } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
       logger.error("CopilotProvider sendMessage error", {
         sessionId: params.sessionId,
-        error: String(e),
+        error: msg,
       });
+
+      // Translate SDK-level CLI launch failures into actionable user messages.
+      const threadId = params.sessionId.startsWith("mcode-")
+        ? params.sessionId.slice(6)
+        : params.sessionId;
+
+      if (msg.includes("CLI server exited")) {
+        const userMsg =
+          "GitHub Copilot CLI exited unexpectedly.\n\n" +
+          "Ensure you are authenticated: run `gh auth login` and confirm you have an active GitHub Copilot subscription.";
+        this.emit("event", { type: "error", threadId, error: userMsg } satisfies AgentEvent);
+        this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+        return;
+      }
+
+      if (msg.includes("Could not find @github/copilot")) {
+        const userMsg =
+          "GitHub Copilot package not found.\n\n" +
+          "Install it with: npm install -g @github/copilot\n\n" +
+          "Or set a custom path in Settings > Provider > Copilot CLI path.";
+        this.emit("event", { type: "error", threadId, error: userMsg } satisfies AgentEvent);
+        this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+        return;
+      }
+
       throw e;
     }
   }
