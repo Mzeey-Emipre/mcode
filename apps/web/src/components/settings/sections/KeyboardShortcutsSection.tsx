@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { SectionHeading } from "../SectionHeading";
 import { SettingRow } from "../SettingRow";
 import { Button } from "@/components/ui/button";
@@ -5,18 +6,20 @@ import { useUiStore } from "@/stores/uiStore";
 import { getAllCommands } from "@/lib/command-registry";
 import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";
 import { useToastStore } from "@/stores/toastStore";
-import { isMac } from "@/lib/platform";
+import { isMac, isWindows } from "@/lib/platform";
 
 /** Settings section showing keyboard shortcuts and the path to the user override file. */
 export function KeyboardShortcutsSection() {
   const setShortcutHelpOpen = useUiStore((s) => s.setShortcutHelpOpen);
 
-  const configPath = isMac
-    ? "~/.mcode/keybindings.json"
-    : "%USERPROFILE%\\.mcode\\keybindings.json";
+  const configPath = isWindows
+    ? "%USERPROFILE%\\.mcode\\keybindings.json"
+    : "~/.mcode/keybindings.json";
 
-  const commands = getAllCommands().filter((c) => c.id !== "escape.handle");
-  const boundCommands = commands.filter((c) => getKeybindingForCommand(c.id));
+  const boundCommands = useMemo(() => {
+    const commands = getAllCommands().filter((c) => c.id !== "escape.handle");
+    return commands.filter((c) => getKeybindingForCommand(c.id));
+  }, []);
 
   const handleOpenKeybindings = () => {
     window.desktopBridge?.openKeybindingsFile().catch((err) => {

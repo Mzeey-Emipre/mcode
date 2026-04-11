@@ -40,11 +40,9 @@ function updateFocusContext(): void {
 }
 
 function handleKeyDown(e: KeyboardEvent): void {
-  // Refresh focus context right before matching
+  // Refresh focus context right before matching so evaluateWhen
+  // has up-to-date inputFocused / terminalFocused values.
   updateFocusContext();
-
-  // Never intercept keystrokes when a terminal has focus
-  if (isTerminalFocused(document.activeElement)) return;
 
   const bindings = getKeybindings();
   for (let i = 0; i < bindings.length; i++) {
@@ -75,6 +73,11 @@ export function initShortcuts(): () => void {
   };
 }
 
-// Re-export for backward compat with tests and any remaining consumers
-export { getKeybindings, loadKeybindings } from "./keybinding-manager";
-export { getAllCommands, registerCommand } from "./command-registry";
+/** Get all active keybindings. */
+export { getKeybindings } from "./keybinding-manager";
+/** Load keybindings from defaults and optional user overrides. */
+export { loadKeybindings } from "./keybinding-manager";
+/** Return all currently registered commands. */
+export { getAllCommands } from "./command-registry";
+/** Register a command and return a disposer that unregisters it. */
+export { registerCommand } from "./command-registry";

@@ -43,11 +43,7 @@ export function parseKeybinding(str: string): ParsedKeybinding {
 
 /**
  * Test whether a KeyboardEvent matches a parsed keybinding.
- *
- * For letter keys (a-z), shift must match exactly to distinguish
- * mod+n from mod+shift+n. For non-letter keys (symbols, special keys),
- * shift is encoded in the key character itself (e.g., "?" vs "/")
- * so the shift modifier is not checked.
+ * All modifier flags (mod, shift, alt) must match exactly.
  */
 export function matchesKeyEvent(
   parsed: ParsedKeybinding,
@@ -57,16 +53,9 @@ export function matchesKeyEvent(
     ? event.ctrlKey || event.metaKey
     : !event.ctrlKey && !event.metaKey;
 
+  const shiftMatch = parsed.shift === event.shiftKey;
   const altMatch = parsed.alt ? event.altKey : !event.altKey;
-
   const keyMatch = event.key.toLowerCase() === parsed.key;
-
-  // For letter keys, enforce exact shift match to distinguish mod+n from mod+shift+n.
-  // For symbols and special keys, shift state is implicit in the key value itself.
-  const isLetter = /^[a-z]$/.test(parsed.key);
-  const shiftMatch = isLetter
-    ? parsed.shift === event.shiftKey
-    : true;
 
   return modMatch && shiftMatch && altMatch && keyMatch;
 }

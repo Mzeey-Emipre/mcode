@@ -64,4 +64,29 @@ describe("CommandRegistry", () => {
     dispose();
     expect(getCommand("test.dispose")).toBeUndefined();
   });
+
+  it("first disposer does not remove a newer registration for the same id", () => {
+    const dispose1 = registerCommand({
+      id: "test.dispose",
+      title: "First",
+      category: "Test",
+      handler: vi.fn(),
+    });
+    const dispose2 = registerCommand({
+      id: "test.dispose",
+      title: "Second",
+      category: "Test",
+      handler: vi.fn(),
+    });
+    expect(getCommand("test.dispose")).toBeDefined();
+
+    // First disposer should be a no-op since the map now holds a different instance
+    dispose1();
+    expect(getCommand("test.dispose")).toBeDefined();
+    expect(getCommand("test.dispose")!.title).toBe("Second");
+
+    // Second disposer should remove the command
+    dispose2();
+    expect(getCommand("test.dispose")).toBeUndefined();
+  });
 });

@@ -13,12 +13,17 @@ export interface ContextState {
 /** Valid context key names. */
 export type ContextKey = keyof ContextState;
 
-const state: ContextState = {
-  inputFocused: false,
-  terminalFocused: false,
-  commandPaletteOpen: false,
-  settingsOpen: false,
-};
+/** Factory for the initial context state (single source of truth for defaults). */
+function getDefaultContext(): ContextState {
+  return {
+    inputFocused: false,
+    terminalFocused: false,
+    commandPaletteOpen: false,
+    settingsOpen: false,
+  };
+}
+
+const state: ContextState = getDefaultContext();
 
 /** Get the current context snapshot. */
 export function getContext(): Readonly<ContextState> {
@@ -49,8 +54,5 @@ export function evaluateWhen(when: string | undefined): boolean {
 
 /** Reset all context to defaults (for testing). */
 export function resetContext(): void {
-  state.inputFocused = false;
-  state.terminalFocused = false;
-  state.commandPaletteOpen = false;
-  state.settingsOpen = false;
+  Object.assign(state, getDefaultContext());
 }

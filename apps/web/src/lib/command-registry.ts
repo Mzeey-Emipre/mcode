@@ -19,7 +19,11 @@ const commands = new Map<string, CommandDefinition>();
 export function registerCommand(def: CommandDefinition): () => void {
   commands.set(def.id, def);
   return () => {
-    commands.delete(def.id);
+    // Only remove if the map still holds this exact instance;
+    // a newer registration for the same ID should not be clobbered.
+    if (commands.get(def.id) === def) {
+      commands.delete(def.id);
+    }
   };
 }
 

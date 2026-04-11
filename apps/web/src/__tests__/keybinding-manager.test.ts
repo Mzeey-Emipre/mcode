@@ -84,10 +84,16 @@ describe("matchesKeyEvent", () => {
     expect(matchesKeyEvent(parsed, event)).toBe(true);
   });
 
-  it("matches mod+? (shifted symbol)", () => {
-    const parsed = parseKeybinding("mod+?");
+  it("matches mod+shift+? (shifted symbol requires explicit shift)", () => {
+    const parsed = parseKeybinding("mod+shift+?");
     const event = createKeyEvent({ key: "?", ctrlKey: true, shiftKey: true });
     expect(matchesKeyEvent(parsed, event)).toBe(true);
+  });
+
+  it("does not match mod+? without shift in event", () => {
+    const parsed = parseKeybinding("mod+?");
+    const event = createKeyEvent({ key: "?", ctrlKey: true, shiftKey: true });
+    expect(matchesKeyEvent(parsed, event)).toBe(false);
   });
 });
 

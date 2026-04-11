@@ -133,7 +133,17 @@ export function App() {
         id: "tasks.toggle",
         title: "Toggle Tasks Panel",
         category: "View",
-        handler: () => useDiffStore.getState().togglePanel(),
+        handler: () => {
+          const store = useDiffStore.getState();
+          if (!store.panelVisible) {
+            store.showPanel();
+            store.setActiveTab("tasks");
+          } else if (store.activeTab !== "tasks") {
+            store.setActiveTab("tasks");
+          } else {
+            store.hidePanel();
+          }
+        },
       }),
       registerCommand({
         id: "changes.toggle",
@@ -169,7 +179,7 @@ export function App() {
 
     return () => {
       cleanup();
-      disposers.flat().forEach((d) => d());
+      disposers.forEach((d) => d());
     };
   }, []);
 
