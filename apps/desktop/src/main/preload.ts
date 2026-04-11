@@ -99,4 +99,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   /** Open settings.json in the OS default editor. Resolves to an empty string on success. */
   openSettingsFile: (): Promise<string> =>
     ipcRenderer.invoke("open-settings-file"),
+
+  /** Open keybindings.json in the OS default editor. Creates the file if it doesn't exist. */
+  openKeybindingsFile: (): Promise<string> =>
+    ipcRenderer.invoke("open-keybindings-file"),
 });

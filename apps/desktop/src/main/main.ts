@@ -366,20 +366,31 @@ function registerIpcHandlers(): void {
     return getRecentLogs(lines);
   });
 
-  // Open settings.json in the default system editor
-  ipcMain.handle("open-settings-file", async () => {
+  /** Ensure a config file exists in the mcode data dir, then open it. */
+  async function ensureAndOpenConfigFile(
+    fileName: string,
+    defaultContent: string,
+  ): Promise<string> {
     const dir = getMcodeDir();
-    const filePath = join(dir, "settings.json");
+    const filePath = join(dir, fileName);
     if (!existsSync(filePath)) {
       await mkdir(dir, { recursive: true });
-      await writeFile(filePath, "{}\n", "utf8");
+      await writeFile(filePath, defaultContent, "utf8");
     }
     const err = await shell.openPath(filePath);
     if (err) {
-      throw new Error(`Failed to open settings.json: ${err}`);
+      throw new Error(`Failed to open ${fileName}: ${err}`);
     }
     return "";
-  });
+  }
+
+  ipcMain.handle("open-settings-file", () =>
+    ensureAndOpenConfigFile("settings.json", "{}\n"),
+  );
+
+  ipcMain.handle("open-keybindings-file", () =>
+    ensureAndOpenConfigFile("keybindings.json", "[]\n"),
+  );
 }
 
 // ---------------------------------------------------------------------------

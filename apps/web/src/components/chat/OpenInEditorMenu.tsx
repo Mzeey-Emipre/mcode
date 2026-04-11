@@ -2,7 +2,9 @@ import { useEffect, useCallback } from "react";
 import { FolderOpen } from "lucide-react";
 import { getTransport } from "@/transport";
 import { useInstalledEditors } from "@/hooks/useInstalledEditors";
-import { registerShortcut } from "@/lib/shortcuts";
+import { registerCommand } from "@/lib/shortcuts";
+import { formatKeybinding } from "@/lib/keybinding-manager";
+import { isMac } from "@/lib/platform";
 import { useToastStore } from "@/stores/toastStore";
 import { VsCodeIcon, ZedIcon, CursorIcon } from "./EditorIcons";
 import { Button } from "@/components/ui/button";
@@ -60,12 +62,12 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
       );
   }, [dirPath]);
 
-  // Ctrl/Cmd+O shortcut to open in file explorer (via centralized shortcut system)
+  // Ctrl/Cmd+O shortcut to open in file explorer (via centralized command system)
   useEffect(() => {
-    return registerShortcut({
-      key: "o",
-      ctrl: true,
-      description: "Open in file explorer",
+    return registerCommand({
+      id: "explorer.open",
+      title: "Open in File Explorer",
+      category: "View",
       handler: handleOpenExplorer,
     });
   }, [handleOpenExplorer]);
@@ -103,7 +105,7 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
             <FolderOpen size={14} />
             <span>Explorer</span>
           </span>
-          <kbd className="ml-4 text-[10px] text-muted-foreground">Ctrl+O</kbd>
+          <kbd className="ml-4 text-[10px] text-muted-foreground">{formatKeybinding("mod+o", isMac)}</kbd>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
