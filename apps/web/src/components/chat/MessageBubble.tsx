@@ -1,8 +1,8 @@
-import { memo, useMemo, useState, useCallback, useRef, useEffect } from "react";
+import { memo, useMemo, useState, useCallback, useRef, useEffect, lazy, Suspense } from "react";
 import type { Message } from "@/transport";
 import { FileText, File, ImageIcon, RotateCcw, Copy, Check, GitBranch } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MarkdownContent } from "./MarkdownContent";
+const LazyMarkdownContent = lazy(() => import("./MarkdownContent"));
 import { stripInjectedFiles } from "@/lib/file-tags";
 import { isHandoffMessage, parseHandoffJson } from "./handoff-utils";
 import { HandoffCard } from "./HandoffCard";
@@ -210,7 +210,9 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
   return (
     <div className="group/msg space-y-2">
       <div className="text-sm text-foreground">
-        <MarkdownContent content={message.content} isStreaming={false} />
+        <Suspense>
+          <LazyMarkdownContent content={message.content} isStreaming={false} />
+        </Suspense>
       </div>
       <div className="flex items-center gap-3 px-1">
         {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
