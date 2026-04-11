@@ -137,3 +137,9 @@ export type {
   IAgentProvider,
   IProviderRegistry,
 } from "./providers/interfaces.js";
+
+export {
+  ProviderModelInfoSchema,
+  ModelPolicyStateSchema,
+} from "./providers/models.js";
+export type { ProviderModelInfo } from "./providers/models.js";
