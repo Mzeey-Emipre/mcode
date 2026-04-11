@@ -3,9 +3,17 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
+const analyze = process.env.ANALYZE === "true" || process.env.ANALYZE === "1";
+
 export default defineConfig({
+  plugins: [
+    react(),
+    tailwindcss(),
+    ...(analyze
+      ? [(await import("rollup-plugin-visualizer")).visualizer({ open: true, gzipSize: true, filename: "dist/bundle-stats.html" })]
+      : []),
+  ],
   base: process.env.ELECTRON_BUILD ? "./" : "/",
-  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

@@ -111,3 +111,5 @@ export const MarkdownContent = memo(function MarkdownContent({
     </ReactMarkdown>
   );
 });
+
+export default MarkdownContent;

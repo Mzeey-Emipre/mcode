@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type { PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
@@ -27,7 +27,7 @@ import { BranchPicker } from "./BranchPicker";
 import { NamingModeSelector } from "./NamingModeSelector";
 import type { NamingMode } from "@mcode/contracts";
 import { BranchNameInput } from "./BranchNameInput";
-import { WorktreePicker } from "./WorktreePicker";
+const LazyWorktreePicker = lazy(() => import("./WorktreePicker"));
 import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
@@ -1355,12 +1355,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 />
               </>
             ) : composerMode === "existing-worktree" ? (
-              <WorktreePicker
+              <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
                 worktrees={worktrees}
                 selectedPath={selectedWorktree?.path ?? ""}
                 onSelect={setSelectedWorktree}
                 loading={worktreesLoading}
-              />
+              /></Suspense>
             ) : null
           ) : branchFromMessageId ? (
             // Branch mode: show execution controls for the child thread
@@ -1390,12 +1390,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 />
               </>
             ) : (
-              <WorktreePicker
+              <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
                 worktrees={worktrees}
                 selectedPath={branchWorktreePath}
                 onSelect={(wt) => setBranchWorktreePath(wt.path)}
                 loading={worktreesLoading}
-              />
+              /></Suspense>
             )
           ) : activeThread?.branch ? (
             <BranchPicker
