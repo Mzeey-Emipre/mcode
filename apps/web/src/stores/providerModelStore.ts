@@ -25,7 +25,11 @@ export const useProviderModelStore = create<ProviderModelState>((set, get) => ({
 
   fetchModels: async (providerId: string) => {
     const state = get();
-    if (state.loading[providerId]) return;
+    // Block if already in-flight OR if a previous attempt failed.
+    // A failed fetch won't auto-retry — callers must call clearModels() first
+    // to reset the error before retrying, preventing infinite retry loops when
+    // the provider is not installed.
+    if (state.loading[providerId] || state.errors[providerId]) return;
 
     set((s) => ({
       loading: { ...s.loading, [providerId]: true },
