@@ -96,14 +96,22 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
     }
   };
 
-  const model = findModelById(selectedModelId);
+  // Try static registry first, then fall back to resolved (dynamic) providers.
+  // Copilot models are not in the static list — they only exist after listModels() returns.
+  const model = findModelById(selectedModelId) ?? (() => {
+    for (const rp of resolvedProviders) {
+      const found = rp.models.find((m) => m.id === selectedModelId);
+      if (found) return found;
+    }
+    return undefined;
+  })();
   const normalizedSelectedId = model?.id ?? selectedModelId;
 
   // Resolve display provider: prefer the explicit selectedProviderId so that
   // providers sharing the same model ID (e.g. Codex vs Copilot) show correctly.
   const displayProvider = selectedProviderId
     ? MODEL_PROVIDERS.find((p) => p.id === selectedProviderId)
-    : MODEL_PROVIDERS.find((p) => p.models.some((m) => m.id === normalizedSelectedId));
+    : resolvedProviders.find((p) => p.models.some((m) => m.id === normalizedSelectedId));
 
   const meta = displayProvider ? PROVIDER_META[displayProvider.id] : undefined;
   const Icon = meta?.icon ?? ClaudeIcon;
