@@ -107,3 +107,24 @@ export function GeminiIcon({ size = 14, className }: IconProps) {
     </svg>
   );
 }
+
+/** GitHub Copilot - official Copilot dual-sparkle logomark. */
+export function CopilotIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+    >
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M9.106 2.853a4.9 4.9 0 0 1 5.788 0l3.834 2.791A4.88 4.88 0 0 1 20.7 9.727v2.456a1 1 0 0 1-.27.685l-2.07 2.22v3.56a1 1 0 0 1-.465.845l-5.437 3.43a1 1 0 0 1-1.07-.01l-5.186-3.39a1 1 0 0 1-.452-.838v-3.597l-2.07-2.22a1 1 0 0 1-.27-.685V9.727a4.88 4.88 0 0 1 1.972-3.942zM8.75 13.667l-2.34-2.51V9.727a2.88 2.88 0 0 1 1.163-2.325l3.834-2.791a2.9 2.9 0 0 1 3.425-.062l.017.012.018.013 3.834 2.791a2.88 2.88 0 0 1 1.189 2.362v1.43l-2.34 2.51v3.17l-4.5 2.839-4.3-2.812zM10 10.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0m5.5 1.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
