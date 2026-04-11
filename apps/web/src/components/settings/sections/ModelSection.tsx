@@ -17,12 +17,24 @@ import {
   CursorProviderIcon,
   OpenCodeIcon,
   GeminiIcon,
+  CopilotIcon,
 } from "@/components/chat/ProviderIcons";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+/** Providers with more models than this threshold use a Select dropdown instead of SegControl. */
+const SEG_CONTROL_MAX_MODELS = 6;
 
 /** Maps provider id to its brand icon component. */
 const PROVIDER_ICONS: Record<string, ReactNode> = {
   claude: <ClaudeIcon size={12} />,
   codex: <CodexIcon size={12} />,
+  copilot: <CopilotIcon size={12} />,
   cursor: <CursorProviderIcon size={12} />,
   opencode: <OpenCodeIcon size={12} />,
   gemini: <GeminiIcon size={12} />,
@@ -65,6 +77,7 @@ export function ModelSection() {
   const reasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
   const codexCliPath = useSettingsStore((s) => s.settings.provider.cli.codex);
   const claudeCliPath = useSettingsStore((s) => s.settings.provider.cli.claude);
+  const copilotCliPath = useSettingsStore((s) => s.settings.provider.cli.copilot);
   const update = useSettingsStore((s) => s.update);
 
   const activeProvider = MODEL_PROVIDERS.find((p) => p.id === provider);
@@ -167,7 +180,22 @@ export function ModelSection() {
         configKey="model.defaults.id"
         hint="New threads start with this model."
       >
-        <SegControl options={modelOptions} value={modelId} onChange={handleModelChange} />
+        {modelOptions.length > SEG_CONTROL_MAX_MODELS ? (
+          <Select value={modelId} onValueChange={(v) => v != null && handleModelChange(v)}>
+            <SelectTrigger size="sm" className="w-56 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {modelOptions.map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <SegControl options={modelOptions} value={modelId} onChange={handleModelChange} />
+        )}
       </SettingRow>
 
       <SettingRow
@@ -175,11 +203,29 @@ export function ModelSection() {
         configKey="model.defaults.fallbackId"
         hint="Used when the primary model is unavailable. Off disables fallback."
       >
-        <SegControl
-          options={fallbackOptions}
-          value={fallbackId}
-          onChange={(v) => update({ model: { defaults: { fallbackId: v } } })}
-        />
+        {fallbackOptions.length > SEG_CONTROL_MAX_MODELS ? (
+          <Select
+            value={fallbackId}
+            onValueChange={(v) => v != null && update({ model: { defaults: { fallbackId: v } } })}
+          >
+            <SelectTrigger size="sm" className="w-56 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {fallbackOptions.map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <SegControl
+            options={fallbackOptions}
+            value={fallbackId}
+            onChange={(v) => update({ model: { defaults: { fallbackId: v } } })}
+          />
+        )}
       </SettingRow>
 
       <SettingRow
@@ -221,6 +267,18 @@ export function ModelSection() {
               value={claudeCliPath}
               onChange={(e) => void update({ provider: { cli: { claude: e.target.value } } })}
               placeholder="claude"
+              className="h-7 w-56 text-xs"
+            />
+          </SettingRow>
+          <SettingRow
+            label="Copilot CLI path"
+            configKey="provider.cli.copilot"
+            hint="Path to the Copilot CLI binary. Leave empty to auto-discover from PATH."
+          >
+            <Input
+              value={copilotCliPath}
+              onChange={(e) => void update({ provider: { cli: { copilot: e.target.value } } })}
+              placeholder="copilot"
               className="h-7 w-56 text-xs"
             />
           </SettingRow>
