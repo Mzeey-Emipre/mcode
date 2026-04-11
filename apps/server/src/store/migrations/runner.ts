@@ -88,6 +88,16 @@ export class MigrationRunner {
     if (!hasNameColumn) {
       this.db.exec("ALTER TABLE _migrations ADD COLUMN name TEXT NOT NULL DEFAULT ''");
     }
+
+    // Backfill descriptions for rows that were applied before the name column
+    // existed (stored as ''). Uses the in-memory module map, so this is a
+    // no-op for any version not in the map (gaps are left as-is).
+    const updateStmt = this.db.prepare(
+      "UPDATE _migrations SET name = ? WHERE version = ? AND name = ''",
+    );
+    for (const [version, module] of this.migrations) {
+      updateStmt.run(module.description, version);
+    }
   }
 
   /**
