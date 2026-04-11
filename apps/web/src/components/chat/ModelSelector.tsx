@@ -15,6 +15,7 @@ import {
   CursorProviderIcon,
   OpenCodeIcon,
   GeminiIcon,
+  CopilotIcon,
 } from "./ProviderIcons";
 
 type IconComponent = ComponentType<{ size?: number; className?: string }>;
@@ -22,6 +23,7 @@ type IconComponent = ComponentType<{ size?: number; className?: string }>;
 const PROVIDER_META: Record<string, { icon: IconComponent; color: string }> = {
   claude: { icon: ClaudeIcon, color: "text-orange-500 dark:text-orange-400" },
   codex: { icon: CodexIcon, color: "text-emerald-400" },
+  copilot: { icon: CopilotIcon, color: "text-sky-400" },
   cursor: { icon: CursorProviderIcon, color: "text-blue-400" },
   opencode: { icon: OpenCodeIcon, color: "text-violet-400" },
   gemini: { icon: GeminiIcon, color: "text-sky-400" },
@@ -104,7 +106,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
       onMouseEnter={() => setHoveredWithDelay(p.id)}
       onMouseLeave={() => setHoveredWithDelay(null)}
     >
-      <div className="rounded-md border border-border bg-popover p-1 shadow-lg">
+      <div className="max-h-[280px] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
       {p.models.map((m) => (
         <button
           key={m.id}
@@ -135,20 +137,22 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
         <div className="absolute bottom-full left-0 z-20 mb-1 min-w-[180px] rounded-md border border-border bg-popover p-1 shadow-lg">
           {/* When provider is locked, show only that provider's models directly */}
           {providerLocked && provider ? (
-            provider.models.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => handleSelectModel(m.id)}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                  m.id === normalizedSelectedId
-                    ? "bg-accent text-foreground"
-                    : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
-                )}
-              >
-                {m.label}
-              </button>
-            ))
+            <div className="max-h-[280px] overflow-y-auto">
+              {provider.models.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => handleSelectModel(m.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
+                    m.id === normalizedSelectedId
+                      ? "bg-accent text-foreground"
+                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           ) : MODEL_PROVIDERS.map((p) => {
             const pm = PROVIDER_META[p.id];
             const ProvIcon = pm?.icon ?? ClaudeIcon;
