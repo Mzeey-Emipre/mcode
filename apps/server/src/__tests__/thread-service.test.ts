@@ -124,4 +124,68 @@ describe("ThreadService.delete", () => {
     expect(result).toBe(true);
     expect(cleanupJobRepo.count()).toBe(0);
   });
+
+  it("enqueues a cleanup job for an attached existing worktree when cleanup is requested", () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO threads
+        (id, workspace_id, title, branch, mode, status, worktree_path, worktree_managed, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'worktree', 'active', ?, 0, ?, ?)`,
+    ).run("t-existing", ws.id, "Existing Worktree", "feat/existing", "/tmp/existing-wt", now, now);
+
+    const result = threadService.delete("t-existing", true);
+
+    expect(result).toBe(true);
+    expect(cleanupJobRepo.count()).toBe(1);
+    const job = cleanupJobRepo.findDue(Date.now())[0];
+    expect(job.worktree_path).toBe("/tmp/existing-wt");
+    expect(job.branch).toBe("feat/existing");
+  });
+
+  it("rollback during create does not delete an existing non-mcode branch", async () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    vi.spyOn(threadRepo, "updateWorktreePath").mockReturnValue(false);
+    (mockGitService.createWorktree as ReturnType<typeof vi.fn>).mockReturnValue({
+      name: "feat-custom-rollback",
+      path: "/tmp/wt/feat-custom-rollback",
+      branch: "feat/custom",
+      managed: true,
+      createdBranch: false,
+    });
+
+    await expect(
+      threadService.create(ws.id, "Rollback Thread", "worktree", "feat/custom"),
+    ).rejects.toThrow("Failed to persist worktree path");
+
+    const worktreeName = (mockGitService.createWorktree as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+      "/tmp/test",
+      worktreeName,
+      { deleteBranch: false },
+    );
+  });
+
+  it("rollback during create deletes a newly-created branch", async () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    vi.spyOn(threadRepo, "updateWorktreePath").mockReturnValue(false);
+    (mockGitService.createWorktree as ReturnType<typeof vi.fn>).mockReturnValue({
+      name: "feat-new-rollback",
+      path: "/tmp/wt/feat-new-rollback",
+      branch: "feat/new",
+      managed: true,
+      createdBranch: true,
+    });
+
+    await expect(
+      threadService.create(ws.id, "Rollback Thread", "worktree", "feat/new"),
+    ).rejects.toThrow("Failed to persist worktree path");
+
+    const worktreeName = (mockGitService.createWorktree as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+      "/tmp/test",
+      worktreeName,
+      { branchName: "feat/new" },
+    );
+  });
 });

@@ -52,6 +52,7 @@ describe("CleanupWorker", () => {
 
     mockGitService = {
       removeWorktree: vi.fn().mockResolvedValue(true),
+      isRegisteredWorktreePath: vi.fn().mockReturnValue(false),
     } as unknown as GitService;
 
     worker = new CleanupWorker(
@@ -258,7 +259,7 @@ describe("CleanupWorker", () => {
       expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
     });
 
-    it("skips branch deletion for non-mcode branches and still removes worktree", async () => {
+    it("deletes non-mcode thread branches too when cleanup is requested", async () => {
       const ws = workspaceRepo.create("test", "/repo");
       insertThread("t-nobranch", ws.id, "feat/user-branch", wt("user-wt"));
       cleanupJobRepo.insert({
@@ -270,11 +271,42 @@ describe("CleanupWorker", () => {
 
       await worker.poll();
 
-      // removeWorktree called with undefined branch so git branch -d is skipped
+      // removeWorktree receives the stored thread branch, even when it is not mcode/*
       expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
         expect.any(String),
         "user-wt",
-        undefined,
+        expect.objectContaining({
+          branchName: "feat/user-branch",
+          worktreePath: expect.stringContaining("user-wt"),
+        }),
+      );
+    });
+
+    it("allows an attached external worktree when git still registers the path", async () => {
+      const externalWtPath = "/external/worktrees/feat-ext";
+      (mockGitService.isRegisteredWorktreePath as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      const ws = workspaceRepo.create("test", "/repo");
+      insertThread("t-external", ws.id, "feat/external", externalWtPath);
+      cleanupJobRepo.insert({
+        thread_id: "t-external",
+        workspace_path: "/repo",
+        worktree_path: externalWtPath,
+        branch: "feat/external",
+      });
+
+      await worker.poll();
+
+      expect(mockGitService.isRegisteredWorktreePath).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining("feat-ext"),
+      );
+      expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+        expect.any(String),
+        "feat-ext",
+        expect.objectContaining({
+          branchName: "feat/external",
+          worktreePath: expect.stringContaining("feat-ext"),
+        }),
       );
     });
 
@@ -332,7 +364,10 @@ describe("CleanupWorker", () => {
       expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
         expect.any(String),
         "win-wt",
-        "mcode/win",
+        expect.objectContaining({
+          branchName: "mcode/win",
+          worktreePath: expect.stringContaining("win-wt"),
+        }),
       );
     });
 

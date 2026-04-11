@@ -42,7 +42,7 @@ describe("GitService.removeWorktree", () => {
   let gitService: GitService;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     gitService = new GitService({} as WorkspaceRepo);
   });
 
@@ -53,7 +53,7 @@ describe("GitService.removeWorktree", () => {
     const result = await gitService.removeWorktree(
       "/repo",
       "my-worktree",
-      "feat/test",
+      { branchName: "feat/test" },
     );
 
     expect(result).toBe(true);
@@ -117,7 +117,7 @@ describe("GitService.removeWorktree", () => {
     const result = await gitService.removeWorktree(
       "/repo",
       "my-worktree",
-      "feat/test",
+      { branchName: "feat/test" },
     );
 
     expect(result).toBe(true);
@@ -143,12 +143,29 @@ describe("GitService.removeWorktree", () => {
     mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
     mockExistsSync.mockReturnValue(false);
 
-    await gitService.removeWorktree("/repo", "my-worktree", "feat/test");
+    await gitService.removeWorktree("/repo", "my-worktree", { branchName: "feat/test" });
 
     expect(mockExecFile).toHaveBeenCalledWith(
       "git",
       ["-C", "/repo", "worktree", "remove", expect.stringContaining("my-worktree"), "--force", "--force"],
       expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+  });
+
+  it("skips branch deletion when deleteBranch is false", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    const result = await gitService.removeWorktree("/repo", "my-worktree", {
+      deleteBranch: false,
+    });
+
+    expect(result).toBe(true);
+    expect(mockExecFile).toHaveBeenCalledTimes(2);
+    expect(mockExecFile).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["branch", "-d"]),
+      expect.anything(),
     );
   });
 
@@ -183,5 +200,35 @@ describe("GitService.removeWorktree", () => {
     const result = await gitService.removeWorktree("/repo", "my-worktree");
 
     expect(result).toBe(false);
+  });
+
+  it("prunes stale metadata after manual fallback before deleting the branch", async () => {
+    mockExecFile
+      .mockRejectedValueOnce(new Error("git failed")) // worktree remove
+      .mockResolvedValueOnce({ stdout: "", stderr: "" }) // prune
+      .mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
+    mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    mockRm.mockResolvedValue(undefined);
+
+    await gitService.removeWorktree("/repo", "my-worktree", {
+      branchName: "mcode/my-worktree",
+    });
+
+    const pruneIndex = 1;
+    const branchIndex = 2;
+    expect(mockExecFile.mock.calls[pruneIndex]?.[1]).toEqual(["-C", "/repo", "worktree", "prune"]);
+    expect(mockExecFile.mock.calls[branchIndex]?.[1]).toEqual([
+      "-C",
+      "/repo",
+      "branch",
+      "-d",
+      "mcode/my-worktree",
+    ]);
+    expect(mockRm.mock.invocationCallOrder[0]).toBeLessThan(
+      mockExecFile.mock.invocationCallOrder[pruneIndex],
+    );
+    expect(mockExecFile.mock.invocationCallOrder[pruneIndex]).toBeLessThan(
+      mockExecFile.mock.invocationCallOrder[branchIndex],
+    );
   });
 });
