@@ -22,9 +22,25 @@ const execFile = promisify(execFileCb);
  */
 const RM_RETRY_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 } as const;
 
+/**
+ * Options for {@link GitService.removeWorktree}.
+ * Controls which worktree path is removed and whether the associated branch is deleted.
+ */
 interface RemoveWorktreeOptions {
+  /**
+   * Exact branch name to delete after the worktree is removed.
+   * When omitted and deleteBranch is true, removeWorktree falls back to `mcode/<worktree-name>`.
+   */
   branchName?: string;
+  /**
+   * Whether removeWorktree should attempt `git branch -d` after cleaning up the worktree.
+   * Defaults to true; when false, branchName is ignored and no branch deletion is attempted.
+   */
   deleteBranch?: boolean;
+  /**
+   * Exact filesystem path of the worktree to remove.
+   * When omitted, removeWorktree derives the managed path under the mcode worktree directory from the worktree name.
+   */
   worktreePath?: string;
 }
 
