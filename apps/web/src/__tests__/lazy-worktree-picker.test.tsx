@@ -1,16 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
 
 vi.mock("cmdk", () => ({
   Command: Object.assign(
-    ({ children, ...props }: any) => <div {...props}>{children}</div>,
+    ({ children, ...props }: ComponentProps<"div">) => <div {...props}>{children}</div>,
     {
-      Input: (props: any) => <input {...props} />,
-      List: ({ children, ...props }: any) => <div {...props}>{children}</div>,
-      Empty: ({ children, ...props }: any) => <div {...props}>{children}</div>,
-      Group: ({ children, ...props }: any) => <div {...props}>{children}</div>,
-      Item: ({ children, ...props }: any) => <div {...props}>{children}</div>,
-      Separator: (props: any) => <hr {...props} />,
+      Input: (props: ComponentProps<"input">) => <input {...props} />,
+      List: ({ children, ...props }: ComponentProps<"div">) => <div {...props}>{children}</div>,
+      Empty: ({ children, ...props }: ComponentProps<"div">) => <div {...props}>{children}</div>,
+      Group: ({ children, ...props }: ComponentProps<"div">) => <div {...props}>{children}</div>,
+      Item: ({ children, ...props }: ComponentProps<"div">) => <div {...props}>{children}</div>,
+      Separator: (props: ComponentProps<"hr">) => <hr {...props} />,
     },
   ),
 }));

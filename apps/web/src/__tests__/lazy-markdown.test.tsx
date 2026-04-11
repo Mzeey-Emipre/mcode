@@ -22,8 +22,13 @@ const assistantMsg = {
   thread_id: "t-1",
   role: "assistant" as const,
   content: "Hello world",
+  cost_usd: null,
+  tokens_used: null,
   timestamp: new Date().toISOString(),
+  sequence: 0,
   attachments: [],
+  tool_calls: null,
+  files_changed: null,
 };
 
 describe("MessageBubble lazy MarkdownContent", () => {
