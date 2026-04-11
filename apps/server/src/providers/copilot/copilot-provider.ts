@@ -25,10 +25,20 @@ import type {
   ReasoningLevel,
   AgentEvent,
   AttachmentMeta,
+  ProviderModelInfo,
 } from "@mcode/contracts";
 
 /** Module-level promisified execFile for CLI availability probing. */
 const execFileAsync = promisify(execFile);
+
+/** Infer vendor group from model ID prefix for UI section headers. */
+function inferModelGroup(modelId: string): string | undefined {
+  if (modelId.startsWith("gpt-") || modelId.startsWith("o1") || modelId.startsWith("o3") || modelId.startsWith("o4")) return "OpenAI";
+  if (modelId.startsWith("claude-")) return "Anthropic";
+  if (modelId.startsWith("gemini-")) return "Google";
+  if (modelId.startsWith("grok-")) return "xAI";
+  return undefined;
+}
 
 /** Idle TTL before a session is evicted (10 minutes). */
 const IDLE_TTL_MS = 10 * 60 * 1000;
@@ -94,6 +104,35 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     } catch {
       return `Copilot CLI not found at "${cliPath}". Check the path in Settings > Provider > Copilot CLI path.`;
     }
+  }
+
+  /** Fetch available models from the Copilot SDK. */
+  async listModels(): Promise<ProviderModelInfo[]> {
+    const cliError = await this.checkCliAvailable();
+    if (cliError) {
+      throw new Error(cliError);
+    }
+
+    await this.refreshClient();
+    const client = this.client;
+    if (!client) {
+      throw new Error("Copilot client not available");
+    }
+
+    const sdkModels = await client.listModels();
+
+    return sdkModels.map((m) => ({
+      id: m.id,
+      name: m.name,
+      group: inferModelGroup(m.id),
+      contextWindow: m.capabilities?.limits?.max_context_window_tokens,
+      supportsVision: m.capabilities?.supports?.vision,
+      supportsReasoning: m.capabilities?.supports?.reasoningEffort,
+      supportedReasoningEfforts: m.supportedReasoningEfforts as ProviderModelInfo["supportedReasoningEfforts"],
+      defaultReasoningEffort: m.defaultReasoningEffort as ProviderModelInfo["defaultReasoningEffort"],
+      policy: m.policy ? { state: m.policy.state as "enabled" | "disabled" | "unconfigured" } : undefined,
+      multiplier: m.billing?.multiplier,
+    }));
   }
 
   /**
