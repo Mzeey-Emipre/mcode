@@ -9,13 +9,14 @@ export function up(db: Database.Database): void {
     ALTER TABLE threads ADD COLUMN parent_thread_id TEXT DEFAULT NULL;
     ALTER TABLE threads ADD COLUMN forked_from_message_id TEXT DEFAULT NULL;
   `);
+  db.exec("CREATE INDEX idx_threads_parent_thread_id ON threads(parent_thread_id)");
+  db.exec("CREATE INDEX idx_threads_forked_from_message_id ON threads(forked_from_message_id)");
 }
 
-/**
- * Reverse this migration.
- * Throw if rollback is not possible (e.g., irreversible data migration).
- */
+/** Reverse this migration. */
 export function down(db: Database.Database): void {
-  db.exec("ALTER TABLE threads DROP COLUMN parent_thread_id");
+  db.exec("DROP INDEX idx_threads_forked_from_message_id");
+  db.exec("DROP INDEX idx_threads_parent_thread_id");
   db.exec("ALTER TABLE threads DROP COLUMN forked_from_message_id");
+  db.exec("ALTER TABLE threads DROP COLUMN parent_thread_id");
 }

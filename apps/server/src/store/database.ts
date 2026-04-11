@@ -86,7 +86,12 @@ export function openDatabase(dbPath?: string): Database.Database {
   db.pragma("foreign_keys = ON");
   db.pragma("cache_size = -2000");  // 2MB page cache (negative = KB)
   db.pragma("mmap_size = 0");       // Disable memory-mapped I/O
-  new MigrationRunner(db, loadMigrations()).up();
+  try {
+    new MigrationRunner(db, loadMigrations()).up();
+  } catch (err) {
+    db.close();
+    throw err;
+  }
   return db;
 }
 
@@ -100,6 +105,11 @@ export function openMemoryDatabase(): Database.Database {
   const nativeBinding = resolveNativeBinding();
   const db = new Database(":memory:", { nativeBinding });
   db.pragma("foreign_keys = ON");
-  new MigrationRunner(db, loadMigrations()).up();
+  try {
+    new MigrationRunner(db, loadMigrations()).up();
+  } catch (err) {
+    db.close();
+    throw err;
+  }
   return db;
 }

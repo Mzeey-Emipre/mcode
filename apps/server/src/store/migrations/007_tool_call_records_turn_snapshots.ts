@@ -6,7 +6,7 @@ export const description = "Add tool_call_records and turn_snapshots tables";
 /** Apply this migration. Runner wraps this in a transaction. */
 export function up(db: Database.Database): void {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS tool_call_records (
+    CREATE TABLE tool_call_records (
       id TEXT PRIMARY KEY NOT NULL,
       message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
       parent_tool_call_id TEXT,
@@ -18,10 +18,10 @@ export function up(db: Database.Database): void {
       completed_at TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0
     );
-    CREATE INDEX IF NOT EXISTS idx_tool_call_records_message ON tool_call_records(message_id);
-    CREATE INDEX IF NOT EXISTS idx_tool_call_records_parent ON tool_call_records(parent_tool_call_id);
+    CREATE INDEX idx_tool_call_records_message ON tool_call_records(message_id);
+    CREATE INDEX idx_tool_call_records_parent ON tool_call_records(parent_tool_call_id);
 
-    CREATE TABLE IF NOT EXISTS turn_snapshots (
+    CREATE TABLE turn_snapshots (
       id TEXT PRIMARY KEY NOT NULL,
       message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
       thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
@@ -31,16 +31,13 @@ export function up(db: Database.Database): void {
       worktree_path TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
-    CREATE INDEX IF NOT EXISTS idx_turn_snapshots_message ON turn_snapshots(message_id);
-    CREATE INDEX IF NOT EXISTS idx_turn_snapshots_thread ON turn_snapshots(thread_id);
+    CREATE INDEX idx_turn_snapshots_message ON turn_snapshots(message_id);
+    CREATE INDEX idx_turn_snapshots_thread ON turn_snapshots(thread_id);
   `);
 }
 
-/**
- * Reverse this migration.
- * Throw if rollback is not possible (e.g., irreversible data migration).
- */
+/** Reverse this migration. */
 export function down(db: Database.Database): void {
-  db.exec("DROP TABLE IF EXISTS turn_snapshots;");
-  db.exec("DROP TABLE IF EXISTS tool_call_records;");
+  db.exec("DROP TABLE turn_snapshots;");
+  db.exec("DROP TABLE tool_call_records;");
 }

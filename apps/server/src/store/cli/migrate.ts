@@ -12,7 +12,7 @@
 import Database from "better-sqlite3";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { existsSync, readdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { getMcodeDir } from "@mcode/shared";
 import { MigrationRunner } from "../migrations/runner.js";
 import { loadMigrations } from "../database.js";
@@ -174,14 +174,18 @@ try {
         process.exit(1);
       }
 
+      mkdirSync(migrationsDir, { recursive: true });
+
       const scaffold = `import type Database from "better-sqlite3";
 
 export const description = ${JSON.stringify(name)};
 
+/** Apply this migration. Runner wraps this in a transaction. */
 export function up(_db: Database.Database): void {
   // TODO: implement migration
 }
 
+/** Reverse this migration. Throw if rollback is not possible. */
 export function down(_db: Database.Database): void {
   // TODO: implement rollback
 }
