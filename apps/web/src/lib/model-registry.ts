@@ -194,6 +194,16 @@ export function getDefaultModelId(): string {
   return findModelById(id) ? id : "claude-sonnet-4-6";
 }
 
+/**
+ * Return the default provider ID from user settings, falling back to "claude".
+ * Needed because multiple providers share the same model IDs (e.g. Codex and
+ * Copilot both expose "gpt-5.3-codex"), so the provider cannot be inferred
+ * from the model ID alone.
+ */
+export function getDefaultProviderId(): string {
+  return useSettingsStore.getState().settings.model.defaults.provider ?? "claude";
+}
+
 /** Valid reasoning levels for fallback validation. */
 const VALID_REASONING_LEVELS: readonly string[] = ["low", "medium", "high", "max", "xhigh"];
 

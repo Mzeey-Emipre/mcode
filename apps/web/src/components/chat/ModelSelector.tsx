@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import {
   MODEL_PROVIDERS,
   findModelById,
-  findProviderForModel,
   type ModelProvider,
 } from "@/lib/model-registry";
 import {
@@ -31,7 +30,15 @@ const PROVIDER_META: Record<string, { icon: IconComponent; color: string }> = {
 
 interface ModelSelectorProps {
   selectedModelId: string;
-  onSelect: (modelId: string) => void;
+  /**
+   * Explicit provider ID for the selected model. Required when multiple
+   * providers share the same model ID (e.g. "gpt-5.3-codex" exists in both
+   * Codex and Copilot). Without this, the selector cannot determine which
+   * provider's icon/label to show, and the wrong provider may be committed.
+   */
+  selectedProviderId?: string;
+  /** Called with both the model ID and the provider it was selected from. */
+  onSelect: (modelId: string, providerId: string) => void;
   /** Fully locked: no changes allowed (agent running) */
   locked: boolean;
   /** Provider locked: can switch models within the same provider but not change provider (thread started) */
@@ -39,7 +46,7 @@ interface ModelSelectorProps {
 }
 
 /** Renders a model selection dropdown and controls selection state. */
-export function ModelSelector({ selectedModelId, onSelect, locked, providerLocked }: ModelSelectorProps) {
+export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, locked, providerLocked }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -64,11 +71,17 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
 
   const model = findModelById(selectedModelId);
   const normalizedSelectedId = model?.id ?? selectedModelId;
-  const provider = findProviderForModel(selectedModelId);
-  const meta = provider ? PROVIDER_META[provider.id] : undefined;
+
+  // Resolve display provider: prefer the explicit selectedProviderId so that
+  // providers sharing the same model ID (e.g. Codex vs Copilot) show correctly.
+  const displayProvider = selectedProviderId
+    ? MODEL_PROVIDERS.find((p) => p.id === selectedProviderId)
+    : MODEL_PROVIDERS.find((p) => p.models.some((m) => m.id === normalizedSelectedId));
+
+  const meta = displayProvider ? PROVIDER_META[displayProvider.id] : undefined;
   const Icon = meta?.icon ?? ClaudeIcon;
   const iconClass = meta?.color ?? "";
-  const shortLabel = model ? model.label.replace(`${provider?.name} `, "") : selectedModelId;
+  const shortLabel = model ? model.label.replace(`${displayProvider?.name} `, "") : selectedModelId;
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -94,8 +107,8 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
     );
   }
 
-  const handleSelectModel = (modelId: string) => {
-    onSelect(modelId);
+  const handleSelectModel = (modelId: string, providerId: string) => {
+    onSelect(modelId, providerId);
     setOpen(false);
     setHoveredProvider(null);
   };
@@ -114,6 +127,10 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
       seen.forEach((models, label) => groups.push({ label, models }));
     }
 
+    // A model row is "selected" only when both ID and provider match.
+    const isSelected = (modelId: string) =>
+      modelId === normalizedSelectedId && p.id === (selectedProviderId ?? displayProvider?.id);
+
     return (
       <div
         className="absolute left-full top-0 -ml-1 pl-2 min-w-[160px]"
@@ -130,16 +147,16 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
                   {models.map((m) => (
                     <button
                       key={m.id}
-                      onClick={() => handleSelectModel(m.id)}
+                      onClick={() => handleSelectModel(m.id, p.id)}
                       className={cn(
                         "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                        m.id === normalizedSelectedId
+                        isSelected(m.id)
                           ? "bg-accent text-foreground"
                           : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                       )}
                     >
                       <span className="flex-1 text-left">{m.label}</span>
-                      {m.id === normalizedSelectedId && (
+                      {isSelected(m.id) && (
                         <Check size={10} className="shrink-0 text-foreground" />
                       )}
                     </button>
@@ -149,16 +166,16 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
             : p.models.map((m) => (
                 <button
                   key={m.id}
-                  onClick={() => handleSelectModel(m.id)}
+                  onClick={() => handleSelectModel(m.id, p.id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                    m.id === normalizedSelectedId
+                    isSelected(m.id)
                       ? "bg-accent text-foreground"
                       : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                 >
                   <span className="flex-1 text-left">{m.label}</span>
-                  {m.id === normalizedSelectedId && (
+                  {isSelected(m.id) && (
                     <Check size={10} className="shrink-0 text-foreground" />
                   )}
                 </button>
@@ -179,12 +196,12 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
       {open && (
         <div className="absolute bottom-full left-0 z-20 mb-1 min-w-[180px] rounded-md border border-border bg-popover p-1 shadow-lg">
           {/* When provider is locked, show only that provider's models directly */}
-          {providerLocked && provider ? (
+          {providerLocked && displayProvider ? (
             <div className="max-h-[280px] overflow-y-auto">
-              {provider.models.map((m) => (
+              {displayProvider.models.map((m) => (
                 <button
                   key={m.id}
-                  onClick={() => handleSelectModel(m.id)}
+                  onClick={() => handleSelectModel(m.id, displayProvider.id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
                     m.id === normalizedSelectedId
@@ -216,7 +233,7 @@ export function ModelSelector({ selectedModelId, onSelect, locked, providerLocke
                   disabled={p.comingSoon}
                   onClick={() => {
                     if (hasModels && p.models.length === 1) {
-                      handleSelectModel(p.models[0].id);
+                      handleSelectModel(p.models[0].id, p.id);
                     }
                   }}
                   className={cn(
