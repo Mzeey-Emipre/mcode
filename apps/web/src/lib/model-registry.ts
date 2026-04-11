@@ -1,13 +1,11 @@
 import { useSettingsStore } from "@/stores/settingsStore";
-import type { ReasoningLevel, ProviderModelInfo } from "@mcode/contracts";
+import type { ReasoningLevel } from "@mcode/contracts";
 
 /** A provider entry in the model registry. */
 export interface ModelProvider {
   id: string;
   name: string;
   comingSoon: boolean;
-  /** When true, models are fetched at runtime via provider.listModels. */
-  dynamic?: boolean;
   models: ModelDefinition[];
 }
 
@@ -33,10 +31,8 @@ export interface ModelDefinition {
   supportedReasoningLevels?: readonly CodexReasoningLevel[];
   /** Default reasoning effort level for this model. */
   defaultReasoningLevel?: CodexReasoningLevel;
-  /** Billing rate multiplier (e.g. 1, 0.33, 3). Only present for dynamic models. */
+  /** Billing rate multiplier relative to the base rate (e.g. 1, 0.33, 3). */
   multiplier?: number;
-  /** Policy state from org admin. Only present for dynamic models. */
-  policyState?: "enabled" | "disabled" | "unconfigured";
 }
 
 export const MODEL_PROVIDERS: readonly ModelProvider[] = [
@@ -98,8 +94,29 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     id: "copilot",
     name: "GitHub Copilot",
     comingSoon: false,
-    dynamic: true,
-    models: [],
+    models: [
+      // OpenAI
+      { id: "gpt-5.4", label: "GPT-5.4", providerId: "copilot", group: "OpenAI", multiplier: 1 },
+      { id: "gpt-5.3-codex", label: "GPT-5.3 Codex", providerId: "copilot", group: "OpenAI", multiplier: 1 },
+      { id: "gpt-5.2-codex", label: "GPT-5.2 Codex", providerId: "copilot", group: "OpenAI", multiplier: 1 },
+      { id: "gpt-5.2", label: "GPT-5.2", providerId: "copilot", group: "OpenAI", multiplier: 1 },
+      { id: "gpt-5.1", label: "GPT-5.1", providerId: "copilot", group: "OpenAI", multiplier: 1 },
+      { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", providerId: "copilot", group: "OpenAI", multiplier: 0.33 },
+      { id: "gpt-5-mini", label: "GPT-5 Mini", providerId: "copilot", group: "OpenAI", multiplier: 0 },
+      { id: "gpt-4.1", label: "GPT-4.1", providerId: "copilot", group: "OpenAI", multiplier: 0 },
+      // Anthropic
+      { id: "claude-sonnet-4.6", label: "Claude Sonnet 4.6", providerId: "copilot", group: "Anthropic", multiplier: 1 },
+      { id: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", providerId: "copilot", group: "Anthropic", multiplier: 1 },
+      { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", providerId: "copilot", group: "Anthropic", multiplier: 0.33 },
+      { id: "claude-opus-4.6", label: "Claude Opus 4.6", providerId: "copilot", group: "Anthropic", multiplier: 3 },
+      { id: "claude-opus-4.5", label: "Claude Opus 4.5", providerId: "copilot", group: "Anthropic", multiplier: 3 },
+      { id: "claude-sonnet-4", label: "Claude Sonnet 4", providerId: "copilot", group: "Anthropic", multiplier: 1 },
+      // Google
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", providerId: "copilot", group: "Google", multiplier: 1 },
+      // xAI
+      { id: "grok-code-fast-1", label: "Grok Code Fast 1", providerId: "copilot", group: "xAI", multiplier: 0.33 },
+      { id: "grok-3-fast", label: "Grok 3 Fast", providerId: "copilot", group: "xAI", multiplier: 0.33 },
+    ],
   },
   {
     id: "cursor",
@@ -120,19 +137,6 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     models: [],
   },
 ];
-
-/** Convert a dynamically fetched model to a ModelDefinition for UI consumption. */
-export function toModelDefinition(m: ProviderModelInfo, providerId: string): ModelDefinition {
-  return {
-    id: m.id,
-    label: m.name,
-    providerId,
-    group: m.group,
-    contextWindow: m.contextWindow,
-    multiplier: m.multiplier,
-    policyState: m.policy?.state,
-  };
-}
 
 /**
  * Matches a dated SDK variant ID (e.g. `claude-haiku-4-5-20251001`) to its base

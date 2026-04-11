@@ -1,13 +1,11 @@
-import { useMemo, useEffect, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   MODEL_PROVIDERS,
   isMaxEffortModel,
   normalizeReasoningLevelForModel,
   getCodexReasoningLevels,
-  toModelDefinition,
 } from "@/lib/model-registry";
-import { useProviderModelStore } from "@/stores/providerModelStore";
 import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
 import { SectionHeading } from "../SectionHeading";
@@ -84,30 +82,7 @@ export function ModelSection() {
   const copilotCliPath = useSettingsStore((s) => s.settings.provider.cli.copilot);
   const update = useSettingsStore((s) => s.update);
 
-  const fetchModels = useProviderModelStore((s) => s.fetchModels);
-  const dynamicModels = useProviderModelStore((s) => s.models);
-
-  // Fetch Copilot (and any other dynamic provider) models on mount
-  useEffect(() => {
-    for (const p of MODEL_PROVIDERS) {
-      if (p.dynamic && !dynamicModels[p.id]?.length) {
-        fetchModels(p.id);
-      }
-    }
-  }, [fetchModels, dynamicModels]);
-
-  // Merge dynamically fetched models into the static provider list
-  const resolvedProviders = useMemo(() => {
-    return MODEL_PROVIDERS.map((p) => {
-      if (!p.dynamic || !dynamicModels[p.id]?.length) return p;
-      return {
-        ...p,
-        models: dynamicModels[p.id].map((m) => toModelDefinition(m, p.id)),
-      };
-    });
-  }, [dynamicModels]);
-
-  const activeProvider = resolvedProviders.find((p) => p.id === provider);
+  const activeProvider = MODEL_PROVIDERS.find((p) => p.id === provider);
 
   const modelOptions = useMemo(
     () => (activeProvider?.models ?? []).map((m) => ({
@@ -153,7 +128,7 @@ export function ModelSection() {
   }, [codexLevels, provider]);
 
   const handleProviderChange = (v: string) => {
-    const newProvider = resolvedProviders.find((p) => p.id === v);
+    const newProvider = MODEL_PROVIDERS.find((p) => p.id === v);
     const firstModel = newProvider?.models[0];
     let newReasoning: string = reasoning;
     if (firstModel) {

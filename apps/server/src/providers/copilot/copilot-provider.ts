@@ -18,7 +18,7 @@ const _require = createRequire(import.meta.url);
 import { injectable, inject } from "tsyringe";
 import { EventEmitter } from "events";
 import { CopilotClient, approveAll } from "@github/copilot-sdk";
-import type { CopilotSession } from "@github/copilot-sdk";
+import type { CopilotSession, ModelInfo } from "@github/copilot-sdk";
 import { logger } from "@mcode/shared";
 import { SettingsService } from "../../services/settings-service.js";
 import type {
@@ -62,6 +62,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
+  /** Serialises concurrent refreshClient() calls so only one rebuild runs at a time. */
+  private clientStartLock: Promise<void> = Promise.resolve();
 
   constructor(
     @inject(SettingsService) private readonly settingsService: SettingsService,
@@ -125,7 +127,26 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       throw new Error("Copilot client not available");
     }
 
-    const sdkModels = await client.listModels();
+    let sdkModels: ModelInfo[];
+    try {
+      sdkModels = await client.listModels();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // The SDK throws "Client not connected" when the CLI process died
+      // after the initial handshake. Force a fresh client and retry once.
+      if (msg.includes("not connected")) {
+        logger.warn("CopilotProvider: listModels connection lost, reconnecting", { error: msg });
+        this.client = null;
+        await this.refreshClient();
+        const freshClient = this.client as CopilotClient | null;
+        if (!freshClient) {
+          throw new Error("Copilot client not available after reconnect");
+        }
+        sdkModels = await freshClient.listModels();
+      } else {
+        throw e;
+      }
+    }
 
     return sdkModels.map((m) => ({
       id: m.id,
@@ -143,9 +164,19 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
 
   /**
    * Rebuild the CopilotClient when the CLI path setting changes.
-   * Only recreates the client if the path actually differs from the last known path.
+   *
+   * Uses a promise-based mutex (`clientStartLock`) so that concurrent callers
+   * wait for the in-flight startup to finish instead of stomping on each
+   * other (one call stopping a client that another is mid-start on).
    */
-  private async refreshClient(): Promise<void> {
+  private refreshClient(): Promise<void> {
+    this.clientStartLock = this.clientStartLock
+      .catch(() => {})
+      .then(() => this.doRefreshClient());
+    return this.clientStartLock;
+  }
+
+  private async doRefreshClient(): Promise<void> {
     const settings = await this.settingsService.get();
     const cliPath = settings.provider.cli.copilot || undefined;
     const state = this.client?.getState();
@@ -165,6 +196,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     // The SDK's createSession() auto-starts the connection, but listModels()
     // does not. Eagerly start the client so both paths work.
     await this.client.start();
+
+    logger.info("CopilotProvider: client started", { state: this.client.getState() });
   }
 
   /** Start or continue a session by sending a message via the Copilot SDK. */

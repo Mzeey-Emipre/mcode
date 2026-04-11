@@ -1,15 +1,13 @@
-import { useState, useEffect, useRef, useMemo, type ComponentType } from "react";
-import { ChevronDown, ChevronRight, Lock, Check, AlertCircle, RefreshCw } from "lucide-react";
+import { useState, useEffect, useRef, type ComponentType } from "react";
+import { ChevronDown, ChevronRight, Lock, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   MODEL_PROVIDERS,
   findModelById,
-  toModelDefinition,
   type ModelProvider,
 } from "@/lib/model-registry";
-import { useProviderModelStore } from "@/stores/providerModelStore";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -54,33 +52,6 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
   const containerRef = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchModels = useProviderModelStore((s) => s.fetchModels);
-  const clearModels = useProviderModelStore((s) => s.clearModels);
-  const dynamicModels = useProviderModelStore((s) => s.models);
-  const dynamicLoading = useProviderModelStore((s) => s.loading);
-  const dynamicErrors = useProviderModelStore((s) => s.errors);
-
-  // Fetch dynamic models when the dropdown opens
-  useEffect(() => {
-    if (!open) return;
-    for (const p of MODEL_PROVIDERS) {
-      if (p.dynamic && !dynamicModels[p.id]?.length && !dynamicLoading[p.id]) {
-        fetchModels(p.id);
-      }
-    }
-  }, [open, fetchModels, dynamicModels, dynamicLoading]);
-
-  // Merge dynamically fetched models into the static provider list
-  const resolvedProviders = useMemo(() => {
-    return MODEL_PROVIDERS.map((p) => {
-      if (!p.dynamic || !dynamicModels[p.id]?.length) return p;
-      return {
-        ...p,
-        models: dynamicModels[p.id].map((m) => toModelDefinition(m, p.id)),
-      };
-    });
-  }, [dynamicModels]);
-
   // Delayed hover close so user has time to move to submenu
   const setHoveredWithDelay = (providerId: string | null) => {
     if (hoverTimeoutRef.current) {
@@ -88,32 +59,22 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
       hoverTimeoutRef.current = null;
     }
     if (providerId) {
-      // Open immediately
       setHoveredProvider(providerId);
     } else {
-      // Close with 300ms delay
       hoverTimeoutRef.current = setTimeout(() => {
         setHoveredProvider(null);
       }, 300);
     }
   };
 
-  // Try static registry first, then fall back to resolved (dynamic) providers.
-  // Copilot models are not in the static list — they only exist after listModels() returns.
-  const model = findModelById(selectedModelId) ?? (() => {
-    for (const rp of resolvedProviders) {
-      const found = rp.models.find((m) => m.id === selectedModelId);
-      if (found) return found;
-    }
-    return undefined;
-  })();
+  const model = findModelById(selectedModelId);
   const normalizedSelectedId = model?.id ?? selectedModelId;
 
   // Resolve display provider: prefer the explicit selectedProviderId so that
   // providers sharing the same model ID (e.g. Codex vs Copilot) show correctly.
   const displayProvider = selectedProviderId
     ? MODEL_PROVIDERS.find((p) => p.id === selectedProviderId)
-    : resolvedProviders.find((p) => p.models.some((m) => m.id === normalizedSelectedId));
+    : MODEL_PROVIDERS.find((p) => p.models.some((m) => m.id === normalizedSelectedId));
 
   const meta = displayProvider ? PROVIDER_META[displayProvider.id] : undefined;
   const Icon = meta?.icon ?? ClaudeIcon;
@@ -184,15 +145,12 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                   {models.map((m) => (
                     <button
                       key={m.id}
-                      disabled={m.policyState === "disabled"}
                       onClick={() => handleSelectModel(m.id, p.id)}
                       className={cn(
                         "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                        m.policyState === "disabled"
-                          ? "cursor-not-allowed text-muted-foreground/40"
-                          : isSelected(m.id)
-                            ? "bg-accent text-foreground"
-                            : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+                        isSelected(m.id)
+                          ? "bg-accent text-foreground"
+                          : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                       )}
                     >
                       <span className="flex-1 text-left">{m.label}</span>
@@ -201,10 +159,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                           {m.multiplier}x
                         </span>
                       )}
-                      {m.policyState === "disabled" && (
-                        <Lock size={10} className="shrink-0 text-muted-foreground/40" />
-                      )}
-                      {isSelected(m.id) && m.policyState !== "disabled" && (
+                      {isSelected(m.id) && (
                         <Check size={10} className="shrink-0 text-foreground" />
                       )}
                     </button>
@@ -214,15 +169,12 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
             : p.models.map((m) => (
                 <button
                   key={m.id}
-                  disabled={m.policyState === "disabled"}
                   onClick={() => handleSelectModel(m.id, p.id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                    m.policyState === "disabled"
-                      ? "cursor-not-allowed text-muted-foreground/40"
-                      : isSelected(m.id)
-                        ? "bg-accent text-foreground"
-                        : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+                    isSelected(m.id)
+                      ? "bg-accent text-foreground"
+                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                 >
                   <span className="flex-1 text-left">{m.label}</span>
@@ -231,10 +183,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                       {m.multiplier}x
                     </span>
                   )}
-                  {m.policyState === "disabled" && (
-                    <Lock size={10} className="shrink-0 text-muted-foreground/40" />
-                  )}
-                  {isSelected(m.id) && m.policyState !== "disabled" && (
+                  {isSelected(m.id) && (
                     <Check size={10} className="shrink-0 text-foreground" />
                   )}
                 </button>
@@ -257,18 +206,15 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
           {/* When provider is locked, show only that provider's models directly */}
           {providerLocked && displayProvider ? (
             <div className="max-h-[280px] overflow-y-auto">
-              {(resolvedProviders.find((rp) => rp.id === displayProvider.id) ?? displayProvider).models.map((m) => (
+              {displayProvider.models.map((m) => (
                 <button
                   key={m.id}
-                  disabled={m.policyState === "disabled"}
                   onClick={() => handleSelectModel(m.id, displayProvider.id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                    m.policyState === "disabled"
-                      ? "cursor-not-allowed text-muted-foreground/40"
-                      : m.id === normalizedSelectedId
-                        ? "bg-accent text-foreground"
-                        : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+                    m.id === normalizedSelectedId
+                      ? "bg-accent text-foreground"
+                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                 >
                   <span className="flex-1 text-left">{m.label}</span>
@@ -277,38 +223,29 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                       {m.multiplier}x
                     </span>
                   )}
-                  {m.policyState === "disabled" && (
-                    <Lock size={10} className="shrink-0 text-muted-foreground/40" />
-                  )}
-                  {m.id === normalizedSelectedId && m.policyState !== "disabled" && (
+                  {m.id === normalizedSelectedId && (
                     <Check size={10} className="shrink-0 text-foreground" />
                   )}
                 </button>
               ))}
             </div>
-          ) : resolvedProviders.map((p) => {
+          ) : MODEL_PROVIDERS.map((p) => {
             const pm = PROVIDER_META[p.id];
             const ProvIcon = pm?.icon ?? ClaudeIcon;
             const provIconClass = pm?.color ?? "";
             const hasModels = p.models.length > 0;
-            const hasError = p.dynamic && !!dynamicErrors[p.id];
-            const isLoading = p.dynamic && !hasModels && !!dynamicLoading[p.id];
 
             return (
               <div
                 key={p.id}
                 className="relative"
-                onMouseEnter={() => !p.comingSoon && hasModels && !hasError && setHoveredWithDelay(p.id)}
+                onMouseEnter={() => !p.comingSoon && hasModels && setHoveredWithDelay(p.id)}
                 onMouseLeave={() => setHoveredWithDelay(null)}
               >
                 <button
                   disabled={p.comingSoon}
                   onClick={() => {
-                    if (hasError) {
-                      // Clear error so the guard in fetchModels passes, then retry
-                      clearModels(p.id);
-                      fetchModels(p.id);
-                    } else if (hasModels && p.models.length === 1) {
+                    if (hasModels && p.models.length === 1) {
                       handleSelectModel(p.models[0].id, p.id);
                     }
                   }}
@@ -323,15 +260,6 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                   <span className="flex-1 text-left">{p.name}</span>
                   {p.comingSoon && (
                     <Badge variant="secondary" size="sm">SOON</Badge>
-                  )}
-                  {isLoading && (
-                    <span className="text-[10px] text-muted-foreground animate-pulse">Loading...</span>
-                  )}
-                  {hasError && (
-                    <span className="flex items-center gap-1 text-[10px] text-destructive/70" title={dynamicErrors[p.id] ?? undefined}>
-                      <AlertCircle size={10} />
-                      <RefreshCw size={10} />
-                    </span>
                   )}
                   {!p.comingSoon && hasModels && p.models.length > 1 && (
                     <ChevronRight size={10} className="text-muted-foreground" />
