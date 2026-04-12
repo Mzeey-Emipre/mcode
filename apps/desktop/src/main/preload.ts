@@ -48,7 +48,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openInExplorer: (path: string): Promise<void> =>
     ipcRenderer.invoke("open-in-explorer", path),
 
-  /** Open a URL in the default browser (https only). */
+  /** Open a URL in the default browser (https, http, mailto). */
   openExternalUrl: (url: string): Promise<void> =>
     ipcRenderer.invoke("open-external-url", url),
 

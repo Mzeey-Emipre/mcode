@@ -191,6 +191,25 @@ const MIME_MAP: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// External URL helper
+// ---------------------------------------------------------------------------
+
+/** Protocols that may be opened in the user's default browser. */
+const EXTERNAL_PROTOCOLS = new Set(["https:", "http:", "mailto:"]);
+
+/** Open a URL in the system browser if its protocol is allowed. */
+function openIfAllowed(url: string): void {
+  try {
+    const parsed = new URL(url);
+    if (EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
+      shell.openExternal(parsed.href).catch(() => {});
+    }
+  } catch {
+    // Invalid URL, ignore
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------
 
@@ -222,6 +241,30 @@ function createWindow(): void {
   });
 
   mainWindow.setMenuBarVisibility(false);
+
+  // Intercept target="_blank" and window.open() calls.
+  // Deny the new window and open the URL in the system browser instead.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openIfAllowed(url);
+    return { action: "deny" };
+  });
+
+  // Prevent the main window from navigating away from the app.
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const currentUrl = mainWindow!.webContents.getURL();
+    // Allow same-origin navigation for the SPA router (dev mode http://localhost).
+    // In production (file://), origin is "null" so all navigation is blocked,
+    // which is correct since the SPA uses pushState routing.
+    try {
+      const current = new URL(currentUrl);
+      const target = new URL(url);
+      if (current.origin !== "null" && current.origin === target.origin) return;
+    } catch {
+      // Parse error, fall through to block
+    }
+    event.preventDefault();
+    openIfAllowed(url);
+  });
 
   // Show the window as soon as the first frame is painted.
   // Fallback timeout ensures the window becomes visible even if the
@@ -301,16 +344,9 @@ function registerIpcHandlers(): void {
     return shell.openPath(dirPath);
   });
 
-  // Open external URL (https only)
+  // Open external URL (https, http, mailto)
   ipcMain.handle("open-external-url", (_event, url: string) => {
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol === "https:") {
-        shell.openExternal(url);
-      }
-    } catch {
-      // Invalid URL, ignore
-    }
+    openIfAllowed(url);
   });
 
   // Read clipboard image and save to temp JPEG

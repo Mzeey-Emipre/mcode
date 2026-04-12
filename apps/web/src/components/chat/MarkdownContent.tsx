@@ -33,6 +33,15 @@ const staticComponents = {
         className="text-primary underline hover:text-primary"
         target="_blank"
         rel="noopener noreferrer"
+        onClick={(e) => {
+          if (!safeHref) return;
+          e.preventDefault();
+          if (window.desktopBridge?.openExternalUrl) {
+            window.desktopBridge.openExternalUrl(safeHref);
+          } else {
+            window.open(safeHref, "_blank", "noopener,noreferrer");
+          }
+        }}
       >
         {children}
       </a>
