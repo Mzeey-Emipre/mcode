@@ -191,6 +191,24 @@ const MIME_MAP: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// External URL helper
+// ---------------------------------------------------------------------------
+
+/** Protocols that may be opened in the user's default browser. */
+const EXTERNAL_PROTOCOLS = new Set(["https:", "http:", "mailto:"]);
+
+/** Open a URL in the system browser if its protocol is allowed. */
+function openIfAllowed(url: string): void {
+  try {
+    if (EXTERNAL_PROTOCOLS.has(new URL(url).protocol)) {
+      void shell.openExternal(url);
+    }
+  } catch {
+    // Invalid URL, ignore
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------
 
@@ -226,38 +244,25 @@ function createWindow(): void {
   // Intercept target="_blank" and window.open() calls.
   // Deny the new window and open the URL in the system browser instead.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      const parsed = new URL(url);
-      if (["https:", "http:", "mailto:"].includes(parsed.protocol)) {
-        shell.openExternal(url);
-      }
-    } catch {
-      // Invalid URL, ignore
-    }
+    openIfAllowed(url);
     return { action: "deny" };
   });
 
   // Prevent the main window from navigating away from the app.
-  // Only allow the initial load URL (dev server or file://).
   mainWindow.webContents.on("will-navigate", (event, url) => {
     const currentUrl = mainWindow!.webContents.getURL();
-    // Allow same-origin navigation (SPA router)
+    // Allow same-origin navigation for the SPA router (dev mode http://localhost).
+    // In production (file://), origin is "null" so all navigation is blocked,
+    // which is correct since the SPA uses pushState routing.
     try {
       const current = new URL(currentUrl);
       const target = new URL(url);
-      if (current.origin === target.origin) return;
+      if (current.origin !== "null" && current.origin === target.origin) return;
     } catch {
-      // Parse error, block navigation
+      // Parse error, fall through to block
     }
     event.preventDefault();
-    try {
-      const parsed = new URL(url);
-      if (["https:", "http:", "mailto:"].includes(parsed.protocol)) {
-        shell.openExternal(url);
-      }
-    } catch {
-      // Invalid URL, ignore
-    }
+    openIfAllowed(url);
   });
 
   // Show the window as soon as the first frame is painted.
@@ -340,14 +345,7 @@ function registerIpcHandlers(): void {
 
   // Open external URL (https, http, mailto)
   ipcMain.handle("open-external-url", (_event, url: string) => {
-    try {
-      const parsed = new URL(url);
-      if (["https:", "http:", "mailto:"].includes(parsed.protocol)) {
-        shell.openExternal(url);
-      }
-    } catch {
-      // Invalid URL, ignore
-    }
+    openIfAllowed(url);
   });
 
   // Read clipboard image and save to temp JPEG
