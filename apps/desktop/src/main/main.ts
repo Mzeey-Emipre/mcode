@@ -223,6 +223,43 @@ function createWindow(): void {
 
   mainWindow.setMenuBarVisibility(false);
 
+  // Intercept target="_blank" and window.open() calls.
+  // Deny the new window and open the URL in the system browser instead.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (["https:", "http:", "mailto:"].includes(parsed.protocol)) {
+        shell.openExternal(url);
+      }
+    } catch {
+      // Invalid URL, ignore
+    }
+    return { action: "deny" };
+  });
+
+  // Prevent the main window from navigating away from the app.
+  // Only allow the initial load URL (dev server or file://).
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const currentUrl = mainWindow!.webContents.getURL();
+    // Allow same-origin navigation (SPA router)
+    try {
+      const current = new URL(currentUrl);
+      const target = new URL(url);
+      if (current.origin === target.origin) return;
+    } catch {
+      // Parse error, block navigation
+    }
+    event.preventDefault();
+    try {
+      const parsed = new URL(url);
+      if (["https:", "http:", "mailto:"].includes(parsed.protocol)) {
+        shell.openExternal(url);
+      }
+    } catch {
+      // Invalid URL, ignore
+    }
+  });
+
   // Show the window as soon as the first frame is painted.
   // Fallback timeout ensures the window becomes visible even if the
   // ready-to-show event never fires (e.g. renderer crash before first paint).
@@ -301,11 +338,11 @@ function registerIpcHandlers(): void {
     return shell.openPath(dirPath);
   });
 
-  // Open external URL (https only)
+  // Open external URL (https, http, mailto)
   ipcMain.handle("open-external-url", (_event, url: string) => {
     try {
       const parsed = new URL(url);
-      if (parsed.protocol === "https:") {
+      if (["https:", "http:", "mailto:"].includes(parsed.protocol)) {
         shell.openExternal(url);
       }
     } catch {
