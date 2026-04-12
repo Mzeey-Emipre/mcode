@@ -46,7 +46,7 @@ describe("MarkdownContent link handling", () => {
   });
 
   it("falls back to window.open when desktopBridge is unavailable", () => {
-    delete (window as Record<string, unknown>).desktopBridge;
+    delete (window as unknown as Record<string, unknown>).desktopBridge;
     const mockOpen = vi.fn();
     vi.stubGlobal("open", mockOpen);
 
