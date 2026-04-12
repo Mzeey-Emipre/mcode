@@ -200,8 +200,9 @@ const EXTERNAL_PROTOCOLS = new Set(["https:", "http:", "mailto:"]);
 /** Open a URL in the system browser if its protocol is allowed. */
 function openIfAllowed(url: string): void {
   try {
-    if (EXTERNAL_PROTOCOLS.has(new URL(url).protocol)) {
-      void shell.openExternal(url);
+    const parsed = new URL(url);
+    if (EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
+      shell.openExternal(parsed.href).catch(() => {});
     }
   } catch {
     // Invalid URL, ignore

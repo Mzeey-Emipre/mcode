@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MarkdownContent } from "../components/chat/MarkdownContent";
 
@@ -15,6 +15,10 @@ describe("MarkdownContent link handling", () => {
     window.desktopBridge = {
       openExternalUrl: mockOpenExternalUrl,
     } as unknown as typeof window.desktopBridge;
+  });
+
+  afterEach(() => {
+    delete (window as unknown as Record<string, unknown>).desktopBridge;
   });
 
   it("calls desktopBridge.openExternalUrl for https links", () => {
@@ -41,6 +45,13 @@ describe("MarkdownContent link handling", () => {
   it("does not call desktopBridge for javascript: links", () => {
     render(<MarkdownContent content='[xss](javascript:alert(1))' />);
     const link = screen.getByText("xss");
+    fireEvent.click(link);
+    expect(mockOpenExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("does not call desktopBridge for data: URI links", () => {
+    render(<MarkdownContent content='[data](data:text/html,<h1>hi</h1>)' />);
+    const link = screen.getByText("data");
     fireEvent.click(link);
     expect(mockOpenExternalUrl).not.toHaveBeenCalled();
   });
