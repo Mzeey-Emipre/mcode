@@ -219,6 +219,16 @@ export class ServerManager {
     return this._reusedExisting;
   }
 
+  /** IPC path from the server lock file for fast-path push transport. */
+  get ipcPath(): string {
+    try {
+      const lock: ServerLock = JSON.parse(readFileSync(lockFilePath(), "utf-8"));
+      return lock.ipcPath ?? "";
+    } catch {
+      return "";
+    }
+  }
+
   /**
    * Start the server. If another instance is already running (lock file),
    * reuses it. Otherwise spawns a new utility process.
@@ -230,10 +240,16 @@ export class ServerManager {
     // (dev, source-prod, packaged) share the same data directory.
     const existing = await tryExistingServer(PORT_MIN, PORT_MAX);
     if (existing) {
-      this._port = existing.port;
-      this._authToken = existing.authToken;
-      this._reusedExisting = true;
-      return { port: this._port, authToken: this._authToken };
+      if (existing.version && existing.version !== app.getVersion()) {
+        console.log(`[server-manager] Version mismatch: running=${existing.version}, expected=${app.getVersion()}, replacing`);
+        await this.forceReplace();
+        // Fall through to spawn new server
+      } else {
+        this._port = existing.port;
+        this._authToken = existing.authToken;
+        this._reusedExisting = true;
+        return { port: this._port, authToken: this._authToken };
+      }
     }
 
     const sentinelPath = join(getMcodeDir(), "server.starting");
