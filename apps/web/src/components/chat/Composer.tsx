@@ -78,15 +78,16 @@ function TasksToggle({ threadId }: { threadId?: string }) {
   const hasTasks = useTaskStore(
     (s) => !!(threadId && s.tasksByThread[threadId]?.length),
   );
-  const panelVisible = useDiffStore((s) => s.panelVisible);
-  const showPanel = useDiffStore((s) => s.showPanel);
-  const setActiveTab = useDiffStore((s) => s.setActiveTab);
+  const panelVisible = useDiffStore(
+    (s) => !!(threadId && s.rightPanelByThread[threadId]?.visible),
+  );
 
   if (!hasTasks) return null;
 
   const handleClick = () => {
-    showPanel();
-    setActiveTab("tasks");
+    if (!threadId) return;
+    useDiffStore.getState().showRightPanel(threadId);
+    useDiffStore.getState().setRightPanelTab(threadId, "tasks");
   };
 
   return (

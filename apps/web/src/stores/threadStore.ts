@@ -1011,8 +1011,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             import("./diffStore").then(({ useDiffStore }) => {
               // Re-check after async import: user may have switched threads.
               if (useWorkspaceStore.getState().activeThreadId !== threadId) return;
-              useDiffStore.getState().showPanel();
-              useDiffStore.getState().setActiveTab("tasks");
+              useDiffStore.getState().showRightPanel(threadId);
+              useDiffStore.getState().setRightPanelTab(threadId, "tasks");
             });
           }
         }
