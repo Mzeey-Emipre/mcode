@@ -9,19 +9,21 @@ interface CodeBlockProps {
   code: string;
   /** Language identifier from the code fence (e.g. "typescript", "python"). */
   language: string;
-  /** When true, skips highlighting and hides the copy button. */
+  /** When true, shows raw code inline and hides the copy button. */
   isStreaming: boolean;
+  /** When true, skips Shiki highlighting but keeps the copy button and language label. */
+  disableHighlighting?: boolean;
 }
 
 /**
  * Renders a syntax-highlighted code block with a language header and copy button.
  * Uses a CSS grid stack to crossfade from plain to highlighted code with zero layout shift.
  */
-export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }: CodeBlockProps) {
+export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming, disableHighlighting = false }: CodeBlockProps) {
   const theme = useShikiTheme();
   // The hook is always called unconditionally (rules of hooks), but `enabled`
   // suppresses the Worker postMessage during streaming so no requests are wasted.
-  const { html } = useHighlighter(code, language || "text", theme, !isStreaming);
+  const { html } = useHighlighter(code, language || "text", theme, !isStreaming && !disableHighlighting);
 
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -48,7 +50,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }
 
   return (
     <div className="my-2 rounded-lg overflow-hidden border border-border">
-      <div className="flex items-center justify-between bg-muted/50 px-3 py-1 border-b border-border">
+      <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
         <span className="text-xs text-muted-foreground">{language || "text"}</span>
         {!isStreaming && (
           <button
@@ -62,7 +64,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }
         )}
       </div>
       {isStreaming ? (
-        <pre className="bg-muted/30 p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+        <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
           <code>{code}</code>
         </pre>
       ) : (
@@ -72,7 +74,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }
         >
           {/* Plain text layer */}
           <pre
-            className={`bg-muted/30 p-3 overflow-x-auto text-sm font-mono leading-relaxed
+            className={`bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed
               [grid-row:1/2] [grid-column:1/2]
               ${isReady ? "invisible opacity-0" : "visible opacity-100"}`}
           >
@@ -82,7 +84,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }
           {html && (
             <div
               className="[grid-row:1/2] [grid-column:1/2] overflow-x-auto transition-opacity duration-150 ease-in
-                [&_pre]:p-3 [&_pre]:text-sm [&_pre]:leading-relaxed [&_pre]:!bg-muted/30 [&_pre]:m-0
+                [&_pre]:p-3 [&_pre]:text-sm [&_pre]:leading-relaxed [&_pre]:!bg-muted [&_pre]:m-0 [&_pre]:text-foreground
                 [&_code]:text-sm [&_code]:font-mono"
               dangerouslySetInnerHTML={{ __html: html }}
             />

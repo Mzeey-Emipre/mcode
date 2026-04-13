@@ -92,4 +92,33 @@ describe("CodeBlock", () => {
     const wrapper = container.querySelector("[data-code-block]");
     expect(wrapper?.className).toContain("ready");
   });
+
+  it("skips highlighting when disableHighlighting is true", () => {
+    mockUseHighlighter.mockReturnValue({ html: null });
+    render(
+      <CodeBlock code="const x = 1;" language="typescript" isStreaming={false} disableHighlighting />,
+    );
+    expect(mockUseHighlighter).toHaveBeenCalledWith(
+      "const x = 1;",
+      "typescript",
+      "github-dark",
+      false,
+    );
+  });
+
+  it("still shows copy button when disableHighlighting is true", () => {
+    mockUseHighlighter.mockReturnValue({ html: null });
+    render(
+      <CodeBlock code="const x = 1;" language="typescript" isStreaming={false} disableHighlighting />,
+    );
+    expect(screen.getByRole("button", { name: /copy/i })).toBeInTheDocument();
+  });
+
+  it("still shows language label when disableHighlighting is true", () => {
+    mockUseHighlighter.mockReturnValue({ html: null });
+    render(
+      <CodeBlock code="print('hi')" language="python" isStreaming={false} disableHighlighting />,
+    );
+    expect(screen.getByText("python")).toBeInTheDocument();
+  });
 });

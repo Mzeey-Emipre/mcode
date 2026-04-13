@@ -214,7 +214,9 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
                 </div>
               )}
               {textContent.trim() && (
-                <p className="whitespace-pre-wrap break-words">{textContent}</p>
+                <Suspense fallback={null}>
+                  <LazyMarkdownContent content={textContent} isStreaming={false} variant="user" />
+                </Suspense>
               )}
             </div>
           )}
@@ -233,7 +235,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
   return (
     <div className="group/msg space-y-2">
       <div className="text-sm text-foreground">
-        <Suspense>
+        <Suspense fallback={null}>
           <LazyMarkdownContent content={message.content} isStreaming={false} />
         </Suspense>
       </div>

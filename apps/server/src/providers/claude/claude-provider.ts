@@ -934,7 +934,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       message: {
         role: "user" as const,
         content:
-          contentBlocks as SDKUserMessage["message"]["content"],
+          contentBlocks as unknown as SDKUserMessage["message"]["content"],
       },
       parent_tool_use_id: null,
       session_id: sessionId,
