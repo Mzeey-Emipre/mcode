@@ -98,20 +98,45 @@ describe("diffStore", () => {
   });
 
   describe("clearThread", () => {
-    it("should remove rightPanelByThread entry", () => {
-      const { showRightPanel, clearThread, getRightPanel } = useDiffStore.getState();
+    it("should remove all per-thread entries", () => {
+      const { showRightPanel, setSnapshots, setSnapshotsLoading, setCommits, setCommitsLoading, clearThread, getRightPanel } =
+        useDiffStore.getState();
       showRightPanel("thread-1");
+      setSnapshots("thread-1", [{ id: "s1" } as never]);
+      setSnapshotsLoading("thread-1", true);
+      setCommits("thread-1", [{ sha: "c1" } as never]);
+      setCommitsLoading("thread-1", true);
+
       clearThread("thread-1");
-      expect(useDiffStore.getState().rightPanelByThread["thread-1"]).toBeUndefined();
+
+      const state = useDiffStore.getState();
+      expect(state.rightPanelByThread["thread-1"]).toBeUndefined();
       expect(getRightPanel("thread-1")).toEqual(RIGHT_PANEL_DEFAULTS);
+      expect(state.snapshotsByThread["thread-1"]).toBeUndefined();
+      expect(state.snapshotsLoadingByThread["thread-1"]).toBeUndefined();
+      expect(state.commitsByThread["thread-1"]).toBeUndefined();
+      expect(state.commitsLoadingByThread["thread-1"]).toBeUndefined();
     });
 
-    it("should not affect other threads' panel state", () => {
-      const { showRightPanel, clearThread, getRightPanel } = useDiffStore.getState();
+    it("should not affect other threads", () => {
+      const { showRightPanel, setSnapshots, setSnapshotsLoading, setCommits, setCommitsLoading, clearThread, getRightPanel } =
+        useDiffStore.getState();
       showRightPanel("thread-1");
       showRightPanel("thread-2");
+      setSnapshots("thread-1", [{ id: "s1" } as never]);
+      setSnapshots("thread-2", [{ id: "s2" } as never]);
+      setSnapshotsLoading("thread-2", true);
+      setCommits("thread-2", [{ sha: "c2" } as never]);
+      setCommitsLoading("thread-2", true);
+
       clearThread("thread-1");
+
+      const state = useDiffStore.getState();
       expect(getRightPanel("thread-2").visible).toBe(true);
+      expect(state.snapshotsByThread["thread-2"]).toHaveLength(1);
+      expect(state.snapshotsLoadingByThread["thread-2"]).toBe(true);
+      expect(state.commitsByThread["thread-2"]).toHaveLength(1);
+      expect(state.commitsLoadingByThread["thread-2"]).toBe(true);
     });
 
     it("should clear selectedFile when it belongs to deleted thread", () => {
