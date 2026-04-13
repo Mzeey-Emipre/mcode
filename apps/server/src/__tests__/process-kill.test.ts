@@ -86,10 +86,12 @@ describe("killProcessTree", () => {
       });
 
       await expect(killProcessTree(5678)).resolves.toBeUndefined();
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      // ESRCH means process already gone - expected; logged at debug, not warn.
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({ pid: 5678 }),
       );
+      expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
       killSpy.mockRestore();
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });

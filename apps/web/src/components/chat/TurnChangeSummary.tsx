@@ -98,8 +98,8 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
     if (!threadId) return;
 
     const store = useDiffStore.getState();
-    store.showPanel();
-    store.setActiveTab("changes");
+    store.showRightPanel(threadId);
+    store.setRightPanelTab(threadId, "changes");
     store.setViewMode("by-turn");
 
     // Ensure snapshots are loaded so the panel can display this turn

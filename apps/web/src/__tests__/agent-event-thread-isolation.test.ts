@@ -171,7 +171,7 @@ describe("Agent event thread isolation", () => {
       await Promise.resolve();
 
       const { useDiffStore } = await import("@/stores/diffStore");
-      expect(useDiffStore.getState().panelVisible).toBe(false);
+      expect(useDiffStore.getState().rightPanelByThread[THREAD_A]?.visible).toBeFalsy();
     });
 
     it("opens task panel when TodoWrite fires on the active thread", async () => {
@@ -190,13 +190,13 @@ describe("Agent event thread isolation", () => {
       await Promise.resolve();
 
       const { useDiffStore } = await import("@/stores/diffStore");
-      expect(useDiffStore.getState().panelVisible).toBe(true);
+      expect(useDiffStore.getState().rightPanelByThread[THREAD_A]?.visible).toBe(true);
     });
 
     it("does not open task panel if user switches threads before the import resolves", async () => {
       // Reset panel state from previous tests
       const { useDiffStore } = await import("@/stores/diffStore");
-      useDiffStore.setState({ panelVisible: false });
+      useDiffStore.setState({ rightPanelByThread: {} });
 
       const { handleAgentEvent } = useThreadStore.getState();
 
@@ -216,7 +216,7 @@ describe("Agent event thread isolation", () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(useDiffStore.getState().panelVisible).toBe(false);
+      expect(useDiffStore.getState().rightPanelByThread[THREAD_A]?.visible).toBeFalsy();
     });
   });
 

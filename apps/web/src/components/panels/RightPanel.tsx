@@ -4,7 +4,7 @@ import { ListChecks, Diff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { useDiffStore, PANEL_MIN_WIDTH, PANEL_DEFAULT_WIDTH, PANEL_WIDE_WIDTH } from "@/stores/diffStore";
+import { useDiffStore, PANEL_MIN_WIDTH, PANEL_DEFAULT_WIDTH, PANEL_WIDE_WIDTH, RIGHT_PANEL_DEFAULTS } from "@/stores/diffStore";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TaskPanelHeader } from "@/components/tasks/TaskPanelHeader";
 import { DiffPanel } from "@/components/diff";
@@ -12,12 +12,20 @@ import { DiffPanel } from "@/components/diff";
 /** Right-side panel with tabs for Tasks and Changes. */
 export function RightPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
-  const panelVisible = useDiffStore((s) => s.panelVisible);
-  const activeTab = useDiffStore((s) => s.activeTab);
-  const panelWidth = useDiffStore((s) => s.panelWidth);
-  const setPanelWidth = useDiffStore((s) => s.setPanelWidth);
-  const setActiveTab = useDiffStore((s) => s.setActiveTab);
-  const hidePanel = useDiffStore((s) => s.hidePanel);
+
+  // Per-thread panel state
+  const panelState = useDiffStore((s) =>
+    activeThreadId
+      ? (s.rightPanelByThread[activeThreadId] ?? RIGHT_PANEL_DEFAULTS)
+      : RIGHT_PANEL_DEFAULTS,
+  );
+  const { visible: panelVisible, width: panelWidth, activeTab } = panelState;
+
+  // Zustand action refs are stable (same identity for the store's lifetime),
+  // so destructuring from getState() at render time is safe and avoids
+  // adding actions to useCallback/useEffect dependency arrays.
+  const { setRightPanelWidth, setRightPanelTab, hideRightPanel } = useDiffStore.getState();
+
   const tasks = useTaskStore(
     (s) => (activeThreadId ? s.tasksByThread[activeThreadId] : undefined),
   );
@@ -29,14 +37,15 @@ export function RightPanel() {
   const panelWidthRef = useRef(panelWidth);
   useEffect(() => { panelWidthRef.current = panelWidth; }, [panelWidth]);
 
-  // Re-clamp stored width when the window is resized so the panel never
-  // exceeds the available space after the user shrinks the browser.
-  // Registered once on mount; reads panelWidthRef to avoid a stale closure.
+  // Re-clamp stored width when the panel becomes visible or the window is resized
+  // so the panel never exceeds the available space after the user shrinks the browser.
+  // Re-registers when activeThreadId changes (each thread has its own stored width).
   // Throttled with rAF so rapid resize events only trigger one recalculation per frame.
   useEffect(() => {
-    // Clamp immediately on mount in case the stored width already exceeds the viewport.
+    if (!activeThreadId || !panelVisible) return;
+    // Clamp immediately in case the stored width already exceeds the viewport.
     const maxAllowed = window.innerWidth - PANEL_MIN_WIDTH;
-    if (panelWidthRef.current > maxAllowed) setPanelWidth(maxAllowed);
+    if (panelWidthRef.current > maxAllowed) setRightPanelWidth(activeThreadId, maxAllowed);
 
     let rafId: number | null = null;
     const onResize = () => {
@@ -44,7 +53,7 @@ export function RightPanel() {
       rafId = requestAnimationFrame(() => {
         rafId = null;
         const max = window.innerWidth - PANEL_MIN_WIDTH;
-        if (panelWidthRef.current > max) setPanelWidth(max);
+        if (panelWidthRef.current > max) setRightPanelWidth(activeThreadId, max);
       });
     };
     window.addEventListener("resize", onResize);
@@ -52,7 +61,7 @@ export function RightPanel() {
       window.removeEventListener("resize", onResize);
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [setPanelWidth]);
+  }, [activeThreadId, panelVisible]);
 
   const onDragStart = useCallback(
     (e: ReactMouseEvent) => {
@@ -66,7 +75,7 @@ export function RightPanel() {
         const delta = startX - moveEvent.clientX;
         // Always leave at least PANEL_MIN_WIDTH px for the chat area
         const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
-        setPanelWidth(Math.min(startWidth + delta, viewportCap));
+        setRightPanelWidth(activeThreadId!, Math.min(startWidth + delta, viewportCap));
       };
 
       const onMouseUp = () => {
@@ -80,7 +89,7 @@ export function RightPanel() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [panelWidth, setPanelWidth],
+    [panelWidth, activeThreadId],
   );
 
   useEffect(() => {
@@ -114,7 +123,7 @@ export function RightPanel() {
           const target = panelWidth >= PANEL_WIDE_WIDTH
             ? PANEL_DEFAULT_WIDTH
             : Math.min(PANEL_WIDE_WIDTH, viewportCap);
-          setPanelWidth(Math.max(PANEL_MIN_WIDTH, target));
+          setRightPanelWidth(activeThreadId!, Math.max(PANEL_MIN_WIDTH, target));
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -123,7 +132,7 @@ export function RightPanel() {
             const target = panelWidth >= PANEL_WIDE_WIDTH
               ? PANEL_DEFAULT_WIDTH
               : Math.min(PANEL_WIDE_WIDTH, viewportCap);
-            setPanelWidth(Math.max(PANEL_MIN_WIDTH, target));
+            setRightPanelWidth(activeThreadId!, Math.max(PANEL_MIN_WIDTH, target));
           }
         }}
       />
@@ -134,7 +143,7 @@ export function RightPanel() {
           <div className="flex items-center gap-0.5">
             <button
               type="button"
-              onClick={() => setActiveTab("tasks")}
+              onClick={() => setRightPanelTab(activeThreadId!, "tasks")}
               className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-semibold tracking-[0.1em] uppercase transition-colors ${
                 activeTab === "tasks"
                   ? "text-foreground bg-muted/50"
@@ -146,7 +155,7 @@ export function RightPanel() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("changes")}
+              onClick={() => setRightPanelTab(activeThreadId!, "changes")}
               className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-semibold tracking-[0.1em] uppercase transition-colors ${
                 activeTab === "changes"
                   ? "text-foreground bg-muted/50"
@@ -160,7 +169,7 @@ export function RightPanel() {
           <Button
             variant="ghost"
             size="icon-xs"
-            onClick={hidePanel}
+            onClick={() => hideRightPanel(activeThreadId!)}
             className="h-5 w-5 text-muted-foreground/70 hover:text-foreground hover:bg-transparent transition-colors duration-150"
             aria-label="Close panel"
           >

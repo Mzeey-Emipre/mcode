@@ -6,6 +6,7 @@ import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useTaskStore } from "./taskStore";
 import { useComposerDraftStore } from "./composerDraftStore";
+import { useDiffStore } from "./diffStore";
 import type { NamingMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
 import { useSettingsStore } from "./settingsStore";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
@@ -166,9 +167,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         .map((t) => t.id);
       const draftStore = useComposerDraftStore.getState();
       const taskStore = useTaskStore.getState();
+      const terminalStore = useTerminalStore.getState();
+      const diffStore = useDiffStore.getState();
       for (const tid of deletedThreadIds) {
         draftStore.clearDraft(tid);
         taskStore.clearTasks(tid);
+        terminalStore.clearThread(tid);
+        diffStore.clearThread(tid);
       }
       // Remove threads from store FIRST (same ordering as deleteThread) so
       // any in-flight timer callbacks see threads as gone before timers are cancelled.
@@ -398,10 +403,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
     try {
       await getTransport().deleteThread(threadId, cleanupWorktree);
-      useTerminalStore.getState().removeAllTerminals(threadId);
+      useTerminalStore.getState().clearThread(threadId);
       useQueueStore.getState().clearQueue(threadId);
       useComposerDraftStore.getState().clearDraft(threadId);
       useTaskStore.getState().clearTasks(threadId);
+      useDiffStore.getState().clearThread(threadId);
       // Remove from threads[] FIRST so any in-flight dequeue timer callback's
       // threadExists guard sees the thread as deleted before clearThreadState
       // cancels the timer. This closes the race window between the timer

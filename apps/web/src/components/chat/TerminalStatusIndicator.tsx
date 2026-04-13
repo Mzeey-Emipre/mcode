@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { TerminalSquare } from "lucide-react";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -10,7 +11,9 @@ export function TerminalStatusIndicator() {
   const count = useTerminalStore((s) =>
     activeThreadId ? (s.terminals[activeThreadId]?.length ?? 0) : 0,
   );
-  const togglePanel = useTerminalStore((s) => s.togglePanel);
+  const togglePanel = useCallback(() => {
+    if (activeThreadId) useTerminalStore.getState().toggleTerminalPanel(activeThreadId);
+  }, [activeThreadId]);
 
   if (count <= 0) return null;
 

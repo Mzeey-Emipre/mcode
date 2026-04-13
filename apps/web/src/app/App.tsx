@@ -106,7 +106,10 @@ export function App() {
         id: "terminal.toggle",
         title: "Toggle Terminal",
         category: "View",
-        handler: () => useTerminalStore.getState().togglePanel(),
+        handler: () => {
+          const tid = useWorkspaceStore.getState().activeThreadId;
+          if (tid) useTerminalStore.getState().toggleTerminalPanel(tid);
+        },
       }),
       registerCommand({
         id: "settings.open",
@@ -134,14 +137,18 @@ export function App() {
         title: "Toggle Tasks Panel",
         category: "View",
         handler: () => {
-          const store = useDiffStore.getState();
-          if (!store.panelVisible) {
-            store.showPanel();
-            store.setActiveTab("tasks");
-          } else if (store.activeTab !== "tasks") {
-            store.setActiveTab("tasks");
+          const tid = useWorkspaceStore.getState().activeThreadId;
+          if (!tid) return;
+          const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
+            useDiffStore.getState();
+          const panel = getRightPanel(tid);
+          if (!panel.visible) {
+            showRightPanel(tid);
+            setRightPanelTab(tid, "tasks");
+          } else if (panel.activeTab !== "tasks") {
+            setRightPanelTab(tid, "tasks");
           } else {
-            store.hidePanel();
+            hideRightPanel(tid);
           }
         },
       }),
@@ -150,14 +157,18 @@ export function App() {
         title: "Toggle Changes Panel",
         category: "View",
         handler: () => {
-          const store = useDiffStore.getState();
-          if (!store.panelVisible) {
-            store.showPanel();
-            store.setActiveTab("changes");
-          } else if (store.activeTab !== "changes") {
-            store.setActiveTab("changes");
+          const tid = useWorkspaceStore.getState().activeThreadId;
+          if (!tid) return;
+          const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
+            useDiffStore.getState();
+          const panel = getRightPanel(tid);
+          if (!panel.visible) {
+            showRightPanel(tid);
+            setRightPanelTab(tid, "changes");
+          } else if (panel.activeTab !== "changes") {
+            setRightPanelTab(tid, "changes");
           } else {
-            store.hidePanel();
+            hideRightPanel(tid);
           }
         },
       }),

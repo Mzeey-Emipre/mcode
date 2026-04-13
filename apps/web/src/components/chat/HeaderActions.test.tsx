@@ -23,15 +23,26 @@ vi.mock("@/stores/workspaceStore", () => {
 
 vi.mock("@/stores/terminalStore", () => ({
   useTerminalStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({ panelVisible: false, togglePanel: vi.fn() }),
+    selector({ terminalPanelByThread: {}, toggleTerminalPanel: vi.fn() }),
   ),
 }));
 
-vi.mock("@/stores/diffStore", () => ({
-  useDiffStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({ panelVisible: false, activeTab: "changes", showPanel: vi.fn(), hidePanel: vi.fn(), setActiveTab: vi.fn() }),
-  ),
-}));
+vi.mock("@/stores/diffStore", () => {
+  const getRightPanel = vi.fn().mockReturnValue({ visible: false, width: 380, activeTab: "tasks" });
+  const actions = {
+    getRightPanel,
+    showRightPanel: vi.fn(),
+    hideRightPanel: vi.fn(),
+    setRightPanelTab: vi.fn(),
+  };
+  const store = Object.assign(
+    vi.fn((selector: (s: unknown) => unknown) =>
+      selector({ rightPanelByThread: {}, ...actions }),
+    ),
+    { getState: vi.fn().mockReturnValue(actions) },
+  );
+  return { useDiffStore: store };
+});
 
 vi.mock("./OpenInEditorMenu", () => ({
   OpenInEditorMenu: () => <div data-testid="open-in-editor" />,
