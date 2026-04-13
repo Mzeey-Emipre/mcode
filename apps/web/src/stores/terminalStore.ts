@@ -46,141 +46,131 @@ function generateLabel(existing: readonly TerminalInstance[]): string {
   return `Terminal ${max + 1}`;
 }
 
-function findAllTerminals(
-  terminals: Record<string, readonly TerminalInstance[]>,
-): readonly TerminalInstance[] {
-  return Object.values(terminals).flat();
-}
-
-export const useTerminalStore = create<TerminalState>((set) => ({
+export const useTerminalStore = create<TerminalState>((set, get) => ({
   terminals: {},
-  activeTerminalId: null,
-  panelVisible: false,
+  terminalPanelByThread: {},
   splitMode: false,
 
-  addTerminal: (threadId, ptyId) => {
+  getTerminalPanel: (threadId) =>
+    get().terminalPanelByThread[threadId] ?? TERMINAL_PANEL_DEFAULTS,
+
+  toggleTerminalPanel: (threadId) =>
+    set((state) => {
+      const current = state.terminalPanelByThread[threadId] ?? TERMINAL_PANEL_DEFAULTS;
+      return {
+        terminalPanelByThread: {
+          ...state.terminalPanelByThread,
+          [threadId]: { ...current, visible: !current.visible },
+        },
+      };
+    }),
+
+  showTerminalPanel: (threadId) =>
+    set((state) => {
+      const current = state.terminalPanelByThread[threadId] ?? TERMINAL_PANEL_DEFAULTS;
+      return {
+        terminalPanelByThread: {
+          ...state.terminalPanelByThread,
+          [threadId]: { ...current, visible: true },
+        },
+      };
+    }),
+
+  hideTerminalPanel: (threadId) =>
+    set((state) => {
+      const current = state.terminalPanelByThread[threadId] ?? TERMINAL_PANEL_DEFAULTS;
+      return {
+        terminalPanelByThread: {
+          ...state.terminalPanelByThread,
+          [threadId]: { ...current, visible: false },
+        },
+      };
+    }),
+
+  setTerminalPanelHeight: (threadId, height) =>
+    set((state) => {
+      const current = state.terminalPanelByThread[threadId] ?? TERMINAL_PANEL_DEFAULTS;
+      return {
+        terminalPanelByThread: {
+          ...state.terminalPanelByThread,
+          [threadId]: { ...current, height },
+        },
+      };
+    }),
+
+  setActiveTerminal: (threadId, ptyId) =>
+    set((state) => {
+      const current = state.terminalPanelByThread[threadId] ?? TERMINAL_PANEL_DEFAULTS;
+      return {
+        terminalPanelByThread: {
+          ...state.terminalPanelByThread,
+          [threadId]: { ...current, activeTerminalId: ptyId },
+        },
+      };
+    }),
+
+  addTerminal: (threadId, ptyId) =>
     set((state) => {
       const existing = state.terminals[threadId] ?? [];
       const label = generateLabel(existing);
-      const instance: TerminalInstance = {
-        id: ptyId,
-        threadId,
-        label,
-      };
+      const instance: TerminalInstance = { id: ptyId, threadId, label };
+      const currentPanel = state.terminalPanelByThread[threadId] ?? TERMINAL_PANEL_DEFAULTS;
       return {
         terminals: {
           ...state.terminals,
           [threadId]: [...existing, instance],
         },
-        activeTerminalId: ptyId,
-        panelVisible: true,
+        terminalPanelByThread: {
+          ...state.terminalPanelByThread,
+          [threadId]: { ...currentPanel, visible: true, activeTerminalId: ptyId },
+        },
       };
-    });
-  },
+    }),
 
-  removeTerminal: (ptyId) => {
+  removeTerminal: (ptyId) =>
     set((state) => {
+      let ownerThreadId: string | null = null;
       const updatedTerminals: Record<string, readonly TerminalInstance[]> = {};
-      let found = false;
 
-      for (const [threadId, instances] of Object.entries(state.terminals)) {
-        const filtered = instances.filter((t) => t.id !== ptyId);
-        if (filtered.length !== instances.length) {
-          found = true;
-        }
-        // Don't keep empty arrays in the map
+      for (const [tid, instances] of Object.entries(state.terminals)) {
+        const filtered = instances.filter((t) => {
+          if (t.id === ptyId) {
+            ownerThreadId = tid;
+            return false;
+          }
+          return true;
+        });
         if (filtered.length > 0) {
-          updatedTerminals[threadId] = filtered;
+          updatedTerminals[tid] = filtered;
         }
       }
 
-      if (!found) {
-        return state;
-      }
+      if (!ownerThreadId) return state;
 
-      const wasActive = state.activeTerminalId === ptyId;
-      let nextActive = state.activeTerminalId;
-
-      if (wasActive) {
-        const allRemaining = findAllTerminals(updatedTerminals);
-        nextActive = allRemaining.length > 0 ? allRemaining[0].id : null;
-      }
+      const currentPanel = state.terminalPanelByThread[ownerThreadId] ?? TERMINAL_PANEL_DEFAULTS;
+      const needsNewActive = currentPanel.activeTerminalId === ptyId;
+      const remaining = updatedTerminals[ownerThreadId] ?? [];
+      const nextActive = needsNewActive ? (remaining[0]?.id ?? null) : currentPanel.activeTerminalId;
 
       return {
         terminals: updatedTerminals,
-        activeTerminalId: nextActive,
+        terminalPanelByThread: {
+          ...state.terminalPanelByThread,
+          [ownerThreadId]: { ...currentPanel, activeTerminalId: nextActive },
+        },
       };
-    });
-  },
+    }),
 
-  removeAllTerminals: (threadId) => {
+  removeAllTerminals: (threadId) =>
     set((state) => {
-      const removed = state.terminals[threadId] ?? [];
-      const removedIds = new Set(removed.map((t) => t.id));
-      const wasActive =
-        state.activeTerminalId !== null &&
-        removedIds.has(state.activeTerminalId);
-
-      // Remove the key entirely instead of leaving an empty array
-      const updatedTerminals = { ...state.terminals };
-      delete updatedTerminals[threadId];
-
-      // Only hide panel if no terminals remain across all threads
-      const anyRemaining = Object.values(updatedTerminals).some(
-        (list) => list.length > 0,
-      );
-
+      if (!state.terminals[threadId] && !state.terminalPanelByThread[threadId]) return state;
+      const { [threadId]: _, ...remainingTerminals } = state.terminals;
+      const { [threadId]: __, ...remainingPanels } = state.terminalPanelByThread;
       return {
-        terminals: updatedTerminals,
-        activeTerminalId: wasActive ? null : state.activeTerminalId,
-        panelVisible: anyRemaining ? state.panelVisible : false,
+        terminals: remainingTerminals,
+        terminalPanelByThread: remainingPanels,
       };
-    });
-  },
+    }),
 
-  setActiveTerminal: (ptyId) => {
-    set({ activeTerminalId: ptyId });
-  },
-
-  togglePanel: () => {
-    set((state) => ({ panelVisible: !state.panelVisible }));
-  },
-
-  showPanel: () => {
-    set({ panelVisible: true });
-  },
-
-  hidePanel: () => {
-    set({ panelVisible: false });
-  },
-
-  toggleSplit: () => {
-    set((state) => ({ splitMode: !state.splitMode }));
-  },
-
-  /**
-   * Align activeTerminalId to the given thread. Called on every thread
-   * switch so the terminal panel shows a terminal belonging to the
-   * current thread instead of going blank.
-   */
-  syncToThread: (threadId) => {
-    set((state) => {
-      if (!threadId) {
-        return state.activeTerminalId === null ? {} : { activeTerminalId: null };
-      }
-
-      const threadTerminals = state.terminals[threadId] ?? [];
-      const currentActive = state.activeTerminalId;
-
-      // If current active terminal already belongs to this thread, keep it
-      if (currentActive && threadTerminals.some((t) => t.id === currentActive)) {
-        return {};
-      }
-
-      // Pick first terminal in the thread, or null
-      return {
-        activeTerminalId: threadTerminals.length > 0 ? threadTerminals[0].id : null,
-      };
-    });
-  },
+  toggleSplit: () => set((state) => ({ splitMode: !state.splitMode })),
 }));
