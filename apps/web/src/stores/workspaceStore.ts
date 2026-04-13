@@ -6,6 +6,7 @@ import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useTaskStore } from "./taskStore";
 import { useComposerDraftStore } from "./composerDraftStore";
+import { useDiffStore } from "./diffStore";
 import type { NamingMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
 import { useSettingsStore } from "./settingsStore";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
@@ -402,6 +403,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       useQueueStore.getState().clearQueue(threadId);
       useComposerDraftStore.getState().clearDraft(threadId);
       useTaskStore.getState().clearTasks(threadId);
+      useDiffStore.getState().clearThread(threadId);
       // Remove from threads[] FIRST so any in-flight dequeue timer callback's
       // threadExists guard sees the thread as deleted before clearThreadState
       // cancels the timer. This closes the race window between the timer
