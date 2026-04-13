@@ -20,6 +20,7 @@ import {
 import { execFileSync, spawn, type ChildProcess } from "child_process";
 import { existsSync, createReadStream } from "fs";
 import { mkdir, writeFile } from "fs/promises";
+import { connect as netConnect } from "net";
 import { isAbsolute, join } from "path";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
@@ -210,6 +211,49 @@ function openIfAllowed(url: string): void {
   } catch {
     // Invalid URL, ignore
   }
+}
+
+// ---------------------------------------------------------------------------
+// IPC push relay (main process → renderer via webContents.send)
+// ---------------------------------------------------------------------------
+
+/**
+ * Connect to the server's IPC push endpoint and forward parsed frames
+ * to the renderer via webContents.send("ipc-push-message", data).
+ * The main process owns the net.Socket because the preload runs in a
+ * sandbox that doesn't have access to the Node.js `net` module.
+ */
+function startIpcRelay(ipcPath: string, window: BrowserWindow): void {
+  if (!ipcPath) return;
+
+  const socket = netConnect(ipcPath);
+  let buffer = Buffer.alloc(0);
+
+  socket.on("data", (chunk: Buffer) => {
+    buffer = buffer.length === 0 ? Buffer.from(chunk) : Buffer.concat([buffer, chunk]);
+
+    while (buffer.length >= 4) {
+      const frameLen = buffer.readUInt32BE(0);
+      if (buffer.length < 4 + frameLen) break;
+
+      const json = buffer.subarray(4, 4 + frameLen).toString("utf-8");
+      buffer = buffer.subarray(4 + frameLen);
+
+      try {
+        const data = JSON.parse(json);
+        if (!window.isDestroyed()) {
+          window.webContents.send("ipc-push-message", data);
+        }
+      } catch { /* malformed frame, skip */ }
+    }
+  });
+
+  socket.on("error", () => socket.destroy());
+  socket.on("close", () => {
+    if (!window.isDestroyed()) {
+      window.webContents.send("ipc-push-disconnect");
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -598,6 +642,11 @@ app.whenReady().then(async () => {
     createWindow();
     console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
 
+    // Start IPC push relay (main process → renderer via webContents.send)
+    if (mainWindow && serverManager.ipcPath) {
+      startIpcRelay(serverManager.ipcPath, mainWindow);
+    }
+
     // Set up close handler
     setupCloseHandler();
 
@@ -606,6 +655,9 @@ app.whenReady().then(async () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
         setupCloseHandler();
+        if (mainWindow && serverManager.ipcPath) {
+          startIpcRelay(serverManager.ipcPath, mainWindow);
+        }
       }
     });
 

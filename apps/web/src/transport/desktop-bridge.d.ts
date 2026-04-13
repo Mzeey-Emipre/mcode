@@ -1,13 +1,13 @@
 import type { AttachmentMeta } from "./types";
 
-/** Handle returned from ipc.connect() for receiving push messages. */
-interface IpcHandle {
-  /** Register a callback for incoming push messages. */
-  onMessage(callback: (data: unknown) => void): void;
-  /** Register a callback for connection close/error. */
+/** IPC push transport relayed from the Electron main process. */
+interface IpcBridge {
+  /** Register a callback for push messages forwarded by the main process. */
+  onPush(callback: (data: unknown) => void): void;
+  /** Register a callback for IPC connection close events. */
   onDisconnect(callback: () => void): void;
-  /** Close the IPC connection. */
-  close(): void;
+  /** Remove all IPC push listeners. */
+  off(): void;
 }
 
 /**
@@ -47,11 +47,8 @@ interface DesktopBridge {
   openSettingsFile(): Promise<string>;
   /** Open keybindings.json in the OS default editor. Creates the file if it doesn't exist. */
   openKeybindingsFile(): Promise<string>;
-  /** IPC push transport for high-throughput streaming. */
-  ipc: {
-    /** Connect to the server's IPC push endpoint. */
-    connect(path: string): IpcHandle;
-  };
+  /** IPC push transport relayed from the main process. */
+  ipc: IpcBridge;
 }
 
 declare global {

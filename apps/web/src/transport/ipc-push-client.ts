@@ -1,31 +1,30 @@
 import { pushEmitter, suppressedPushChannels } from "./ws-transport";
 
 /**
- * IPC push client that connects via the preload bridge's ipc.connect().
- * Receives length-prefixed push frames and forwards to pushEmitter.
+ * IPC push client that listens for messages relayed by the Electron main
+ * process. The main process owns the net.Socket to the server's IPC endpoint
+ * and forwards parsed frames via webContents.send / ipcRenderer.on.
  * Populates suppressedPushChannels to prevent WebSocket duplicates.
  */
 export class IpcPushClient {
-  private handle: ReturnType<NonNullable<typeof window.desktopBridge>["ipc"]["connect"]> | null = null;
+  private _active = false;
   private channels = new Set<string>();
 
   /** Whether the IPC connection is active. */
   get isActive(): boolean {
-    return this.handle !== null;
+    return this._active;
   }
 
   /**
-   * Connect to the server's IPC push endpoint.
+   * Start listening for IPC push events from the main process.
    * No-op if desktopBridge is not available (browser mode).
    */
-  connect(ipcPath: string): void {
+  connect(_ipcPath: string): void {
     if (!window.desktopBridge?.ipc) return;
 
     this.disconnect();
 
-    this.handle = window.desktopBridge.ipc.connect(ipcPath);
-
-    this.handle.onMessage((data) => {
+    window.desktopBridge.ipc.onPush((data) => {
       if (!data || typeof data !== "object") return;
       const msg = data as { channel?: string; data?: unknown };
       if (!msg.channel) return;
@@ -35,17 +34,19 @@ export class IpcPushClient {
       pushEmitter.emit(msg.channel, msg.data);
     });
 
-    this.handle.onDisconnect(() => {
+    window.desktopBridge.ipc.onDisconnect(() => {
       this.clearSuppressed();
-      this.handle = null;
+      this._active = false;
     });
+
+    this._active = true;
   }
 
-  /** Disconnect and clear suppressed channels (WebSocket takes over). */
+  /** Stop listening and clear suppressed channels (WebSocket takes over). */
   disconnect(): void {
-    this.handle?.close();
+    window.desktopBridge?.ipc?.off();
     this.clearSuppressed();
-    this.handle = null;
+    this._active = false;
   }
 
   private clearSuppressed(): void {

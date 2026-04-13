@@ -46,7 +46,7 @@ function getServerPaths(): {
   }
 
   const serverDir = resolve(__dirname, "../../../server");
-  return { entry: resolve(serverDir, "src/entry.mjs"), cwd: serverDir };
+  return { entry: resolve(serverDir, "src/index.ts"), cwd: serverDir };
 }
 
 /**
@@ -301,6 +301,9 @@ export class ServerManager {
 
       const env: Record<string, string> = {
         ...(process.env as Record<string, string>),
+        // Run the Electron binary as a plain Node.js process so the server
+        // script executes without launching another Electron window.
+        ELECTRON_RUN_AS_NODE: "1",
         MCODE_PORT: String(this._port),
         MCODE_MODE: "desktop",
         MCODE_DATA_DIR: getMcodeDir(),
@@ -315,9 +318,9 @@ export class ServerManager {
       // V8 flags go in the args array for child_process.spawn.
       // Module loader flags (--import tsx) are supported here, unlike utilityProcess.
       const v8Flags = [`--max-old-space-size=${heapMb}`, "--max-semi-space-size=2", "--expose-gc"];
-      const entryArgs = entry.endsWith(".mjs")
-        ? ["--import", "tsx", entry]
-        : [entry];
+      const entryArgs = entry.endsWith(".cjs")
+        ? [entry]
+        : ["--import", "tsx", entry];
       const args = [...v8Flags, ...entryArgs];
 
       const child = spawn(process.execPath, args, {
