@@ -64,7 +64,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming, 
         )}
       </div>
       {isStreaming ? (
-        <pre className="bg-muted p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+        <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
           <code>{code}</code>
         </pre>
       ) : (
@@ -74,7 +74,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming, 
         >
           {/* Plain text layer */}
           <pre
-            className={`bg-muted p-3 overflow-x-auto text-sm font-mono leading-relaxed
+            className={`bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed
               [grid-row:1/2] [grid-column:1/2]
               ${isReady ? "invisible opacity-0" : "visible opacity-100"}`}
           >
@@ -84,7 +84,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming, 
           {html && (
             <div
               className="[grid-row:1/2] [grid-column:1/2] overflow-x-auto transition-opacity duration-150 ease-in
-                [&_pre]:p-3 [&_pre]:text-sm [&_pre]:leading-relaxed [&_pre]:!bg-muted [&_pre]:m-0
+                [&_pre]:p-3 [&_pre]:text-sm [&_pre]:leading-relaxed [&_pre]:!bg-muted [&_pre]:m-0 [&_pre]:text-foreground
                 [&_code]:text-sm [&_code]:font-mono"
               dangerouslySetInnerHTML={{ __html: html }}
             />

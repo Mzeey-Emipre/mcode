@@ -131,7 +131,7 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming, variant = "
   // Streaming - show raw code
   if (isStreaming) {
     return (
-      <pre className="bg-muted p-3 overflow-x-auto text-sm font-mono leading-relaxed rounded-lg">
+      <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed rounded-lg">
         <code>{code}</code>
       </pre>
     );
@@ -155,7 +155,7 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming, variant = "
             {copied ? <Check size={13} /> : <Copy size={13} />}
           </button>
         </div>
-        <pre className="bg-muted p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+        <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
           <code>{code}</code>
         </pre>
       </div>
@@ -192,7 +192,7 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming, variant = "
 
       {/* Content area */}
       {state.status === "loading" && (
-        <div className="bg-muted p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+        <div className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
           <code>{code}</code>
         </div>
       )}
@@ -204,7 +204,7 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming, variant = "
         />
       )}
       {state.status === "success" && view === "code" && (
-        <pre className="bg-muted p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+        <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
           <code>{code}</code>
         </pre>
       )}
