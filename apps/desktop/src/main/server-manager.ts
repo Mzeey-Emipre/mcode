@@ -147,8 +147,9 @@ interface ServerLock {
  * probing its health endpoint. Returns the lock info if healthy, null otherwise.
  */
 async function tryExistingServer(portMin: number, portMax: number): Promise<ServerLock | null> {
+  const lockPath = lockFilePath();
   try {
-    const raw = readFileSync(lockFilePath(), "utf-8");
+    const raw = readFileSync(lockPath, "utf-8");
     const lock: ServerLock = JSON.parse(raw);
 
     // Validate the lock file has the expected shape
@@ -160,6 +161,15 @@ async function tryExistingServer(portMin: number, portMax: number): Promise<Serv
     // Prevents dev instances from hijacking a packaged-app server (or vice versa).
     if (lock.port < portMin || lock.port >= portMax) {
       console.log(`[server-manager] Ignored existing server on port ${lock.port} (outside ${portMin}-${portMax})`);
+      return null;
+    }
+
+    // Check PID liveness before wasting time on HTTP probe
+    try {
+      process.kill(lock.pid, 0); // throws if process doesn't exist
+    } catch {
+      console.log(`[server-manager] Stale lock file: PID ${lock.pid} not alive`);
+      try { unlinkSync(lockPath); } catch { /* ok */ }
       return null;
     }
 
@@ -226,7 +236,23 @@ export class ServerManager {
       return { port: this._port, authToken: this._authToken };
     }
 
-    this._port = await findAvailablePort(PORT_MIN, PORT_MAX);
+    // Port pinning: prefer the previous port if lock file exists
+    let preferredPort: number | null = null;
+    const lockPath = lockFilePath();
+    if (existsSync(lockPath)) {
+      try {
+        const oldLock: ServerLock = JSON.parse(readFileSync(lockPath, "utf-8"));
+        if (oldLock.port >= PORT_MIN && oldLock.port < PORT_MAX) {
+          preferredPort = oldLock.port;
+        }
+      } catch { /* corrupt lock, ignore */ }
+    }
+
+    this._port = preferredPort
+      ? await findAvailablePort(preferredPort, preferredPort + 1).catch(() =>
+          findAvailablePort(PORT_MIN, PORT_MAX),
+        )
+      : await findAvailablePort(PORT_MIN, PORT_MAX);
 
     const heapMb = readServerHeapMb();
     console.log(`Starting server with --max-old-space-size=${heapMb}`);

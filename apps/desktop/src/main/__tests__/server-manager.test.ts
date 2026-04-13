@@ -395,7 +395,12 @@ describe("ServerManager", () => {
     vi.mocked(readFileSync).mockReset().mockReturnValueOnce(LOCK_FILE_JSON);
     // fetch already returns ok from beforeEach
 
+    // Allow PID liveness check to succeed (process.kill(pid, 0) should not throw)
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+
     const result = await manager.start();
+
+    killSpy.mockRestore();
 
     // spawn should NOT have been called - we reused the existing server
     expect(spawn).not.toHaveBeenCalled();
