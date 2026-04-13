@@ -9,19 +9,21 @@ interface CodeBlockProps {
   code: string;
   /** Language identifier from the code fence (e.g. "typescript", "python"). */
   language: string;
-  /** When true, skips highlighting and hides the copy button. */
+  /** When true, shows raw code inline and hides the copy button. */
   isStreaming: boolean;
+  /** When true, skips Shiki highlighting but keeps the copy button and language label. */
+  disableHighlighting?: boolean;
 }
 
 /**
  * Renders a syntax-highlighted code block with a language header and copy button.
  * Uses a CSS grid stack to crossfade from plain to highlighted code with zero layout shift.
  */
-export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }: CodeBlockProps) {
+export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming, disableHighlighting = false }: CodeBlockProps) {
   const theme = useShikiTheme();
   // The hook is always called unconditionally (rules of hooks), but `enabled`
   // suppresses the Worker postMessage during streaming so no requests are wasted.
-  const { html } = useHighlighter(code, language || "text", theme, !isStreaming);
+  const { html } = useHighlighter(code, language || "text", theme, !isStreaming && !disableHighlighting);
 
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
