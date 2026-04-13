@@ -58,10 +58,16 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
   const dynamicModelsRef = useRef<Map<string, ModelProvider["models"]>>(new Map());
   const [loadingProviders, setLoadingProviders] = useState<Set<string>>(new Set());
   const fetchingRef = useRef<Set<string>>(new Set());
+  // Tracks providers whose fetch failed; prevents repeated retries on every hover.
+  const fetchFailedRef = useRef<Set<string>>(new Set());
 
-  /** Fetches live models for a provider and caches the result. No-ops on repeat calls. */
+  /** Fetches live models for a provider and caches the result. No-ops on repeat calls or after a failure. */
   const fetchProviderModels = useCallback(async (providerId: string) => {
-    if (fetchingRef.current.has(providerId) || dynamicModelsRef.current.has(providerId)) return;
+    if (
+      fetchingRef.current.has(providerId) ||
+      dynamicModelsRef.current.has(providerId) ||
+      fetchFailedRef.current.has(providerId)
+    ) return;
     fetchingRef.current.add(providerId);
     setLoadingProviders((prev) => new Set(prev).add(providerId));
     try {
@@ -73,10 +79,13 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
         group: m.group,
         multiplier: m.multiplier,
       }));
-      dynamicModelsRef.current = new Map(dynamicModelsRef.current).set(providerId, mapped);
-      setDynamicModels(new Map(dynamicModelsRef.current));
+      // Reuse the same Map instance for both the ref and state to avoid a double-copy.
+      const updated = new Map(dynamicModelsRef.current).set(providerId, mapped);
+      dynamicModelsRef.current = updated;
+      setDynamicModels(updated);
     } catch {
-      // Fall back to static registry silently
+      // Mark as failed so repeated hovers don't spam the server while Copilot is unavailable.
+      fetchFailedRef.current.add(providerId);
     } finally {
       fetchingRef.current.delete(providerId);
       setLoadingProviders((prev) => {
@@ -118,7 +127,9 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
   const meta = displayProvider ? PROVIDER_META[displayProvider.id] : undefined;
   const Icon = meta?.icon ?? ClaudeIcon;
   const iconClass = meta?.color ?? "";
-  const shortLabel = model ? model.label.replace(`${displayProvider?.name} `, "") : selectedModelId;
+  const shortLabel = model && displayProvider
+    ? model.label.replace(`${displayProvider.name} `, "")
+    : (model?.label ?? selectedModelId);
 
   // For a provider-locked thread, fetch immediately so the list is current.
   useEffect(() => {

@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
+import type { AgentEvent } from "@mcode/contracts";
 
 // --- Mocks (hoisted to avoid TDZ issues with vi.mock) ---
 
@@ -57,7 +58,7 @@ describe("CopilotProvider bootstrap", () => {
     // resolves with the first success callback arg. Pass { stdout } as that arg
     // so the provider's `const { stdout } = await execFileAsync(...)` works.
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: object, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null, result?: { stdout: string }) => void) => {
         cb(null, { stdout: "gho_faketoken\n" });
       },
     );
@@ -86,7 +87,7 @@ describe("CopilotProvider bootstrap", () => {
       // SDK client was constructed with env.PATH prepended with node binary dir
       const ctorCall = MockCopilotClient.mock.calls[0]?.[0];
       expect(ctorCall).toBeDefined();
-      expect(ctorCall.env?.PATH).toMatch(/\/usr\/bin/);;
+      expect(ctorCall.env?.PATH).toMatch(/\/usr\/bin/);
     });
 
     it("skips executor override when not in Electron", async () => {
@@ -108,7 +109,7 @@ describe("CopilotProvider bootstrap", () => {
   describe("gh auth token", () => {
     it("passes githubToken when gh auth succeeds", async () => {
       mockExecFile.mockImplementation(
-        (_cmd: string, _args: string[], _opts: object, cb: Function) => {
+        (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null, result?: { stdout: string }) => void) => {
           cb(null, { stdout: "gho_abc123\n" });
         },
       );
@@ -122,7 +123,7 @@ describe("CopilotProvider bootstrap", () => {
 
     it("omits githubToken when gh is not installed", async () => {
       mockExecFile.mockImplementation(
-        (_cmd: string, _args: string[], _opts: object, cb: Function) => {
+        (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null, result?: { stdout: string }) => void) => {
           cb(new Error("ENOENT"));
         },
       );
@@ -158,8 +159,8 @@ describe("CopilotProvider bootstrap", () => {
 
       const provider = new CopilotProvider(makeSettingsService() as any);
 
-      const events: any[] = [];
-      provider.on("event", (e: any) => events.push(e));
+      const events: AgentEvent[] = [];
+      provider.on("event", (e: AgentEvent) => events.push(e));
 
       await provider.sendMessage({
         sessionId: "mcode-test1",
@@ -172,7 +173,7 @@ describe("CopilotProvider bootstrap", () => {
 
       const errorEvt = events.find((e) => e.type === "error");
       expect(errorEvt).toBeDefined();
-      expect(errorEvt.error).toContain("gh auth login");
+      expect(errorEvt?.type === "error" && errorEvt.error).toContain("gh auth login");
     });
 
     it("translates package not found to install instructions", async () => {
@@ -184,8 +185,8 @@ describe("CopilotProvider bootstrap", () => {
 
       const provider = new CopilotProvider(makeSettingsService() as any);
 
-      const events: any[] = [];
-      provider.on("event", (e: any) => events.push(e));
+      const events: AgentEvent[] = [];
+      provider.on("event", (e: AgentEvent) => events.push(e));
 
       await provider.sendMessage({
         sessionId: "mcode-test2",
@@ -198,7 +199,7 @@ describe("CopilotProvider bootstrap", () => {
 
       const errorEvt = events.find((e) => e.type === "error");
       expect(errorEvt).toBeDefined();
-      expect(errorEvt.error).toContain("npm install");
+      expect(errorEvt?.type === "error" && errorEvt.error).toContain("npm install");
     });
   });
 });

@@ -130,14 +130,20 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
 ];
 
 /**
+ * Flat model list sorted longest-ID-first, precomputed once at module load.
+ * Used by `matchDatedVariant` to avoid reallocating and sorting on every call.
+ */
+const SORTED_ALL_MODELS: readonly ModelDefinition[] = MODEL_PROVIDERS
+  .flatMap((p) => p.models)
+  .sort((a, b) => b.id.length - a.id.length);
+
+/**
  * Matches a dated SDK variant ID (e.g. `claude-haiku-4-5-20251001`) to its base
- * model definition by prefix. Sorts candidates longest-first so a more specific
- * ID is never shadowed by a shorter prefix.
+ * model definition by prefix. Longest-first order ensures a more specific ID is
+ * never shadowed by a shorter prefix.
  */
 function matchDatedVariant(id: string): ModelDefinition | undefined {
-  return MODEL_PROVIDERS.flatMap((p) => p.models)
-    .sort((a, b) => b.id.length - a.id.length)
-    .find((m) => id.startsWith(`${m.id}-`));
+  return SORTED_ALL_MODELS.find((m) => id.startsWith(`${m.id}-`));
 }
 
 /**

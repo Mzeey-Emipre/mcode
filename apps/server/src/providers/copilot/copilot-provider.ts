@@ -33,7 +33,15 @@ const execFileAsync = promisify(execFile);
 
 /** Infer vendor group from model ID prefix for UI section headers. */
 function inferModelGroup(modelId: string): string | undefined {
-  if (modelId.startsWith("gpt-") || modelId.startsWith("o1") || modelId.startsWith("o3") || modelId.startsWith("o4")) return "OpenAI";
+  if (
+    modelId.startsWith("gpt-") ||
+    modelId.startsWith("o1-") ||
+    modelId.startsWith("o3-") ||
+    modelId.startsWith("o4-") ||
+    modelId === "o1" ||
+    modelId === "o3" ||
+    modelId === "o4"
+  ) return "OpenAI";
   if (modelId.startsWith("claude-")) return "Anthropic";
   if (modelId.startsWith("gemini-")) return "Google";
   if (modelId.startsWith("grok-")) return "xAI";
@@ -213,6 +221,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     logger.info("CopilotProvider: client started", { state: client.getState() });
   }
 
+  /** Strip the "mcode-" session prefix to derive the threadId used in emitted AgentEvents. */
+  private toThreadId(sessionId: string): string {
+    return sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+  }
+
   /** Start or continue a session by sending a message via the Copilot SDK. */
   async sendMessage(params: {
     sessionId: string;
@@ -235,9 +248,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       });
 
       // Translate SDK-level CLI launch failures into actionable user messages.
-      const threadId = params.sessionId.startsWith("mcode-")
-        ? params.sessionId.slice(6)
-        : params.sessionId;
+      const threadId = this.toThreadId(params.sessionId);
 
       if (msg.includes("CLI server exited")) {
         // The @github/copilot process died — discard the dead client so
@@ -287,11 +298,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       );
     }
 
-    // Strip "mcode-" prefix to derive the threadId used in emitted AgentEvents
-    const threadId = sessionId.startsWith("mcode-")
-      ? sessionId.slice(6)
-      : sessionId;
+    const threadId = this.toThreadId(sessionId);
 
+    // Double-checked locking: re-read after the async refreshClient() await so
+    // concurrent sendMessage calls that both passed the first check don't each
+    // create a new SDK session for the same sessionId.
     const existing = this.sessions.get(sessionId);
     if (existing) {
       existing.lastUsedAt = Date.now();
@@ -309,6 +320,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
 
     let session: CopilotSession;
 
+    // TODO(#258): respect params.permissionMode. Currently approveAll is used
+    // unconditionally because the Copilot SDK does not expose per-action gating.
+    // Until the SDK adds granular permission control, all tool actions are
+    // approved automatically regardless of the thread's permissionMode setting.
     if (resume && sdkSessionId) {
       try {
         session = await client.resumeSession(sdkSessionId, {
@@ -474,7 +489,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // session.error — provider-level error; resolve so cleanup runs
+        // session.error — provider-level error; resolve so cleanup runs.
+        // Also evict the session entry so the next sendMessage creates a fresh
+        // session rather than reusing a potentially dead one.
         unsubscribers.push(
           session.on("session.error", (event) => {
             this.emit("event", {
@@ -482,6 +499,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
               threadId,
               error: event.data.message,
             } satisfies AgentEvent);
+            this.sessions.delete(sessionId);
             resolve();
           }),
         );
