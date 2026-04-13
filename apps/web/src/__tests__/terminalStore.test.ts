@@ -142,15 +142,17 @@ describe("TerminalStore", () => {
   });
 
   describe("removeAllTerminals", () => {
-    it("should remove terminals and panel state for the thread", () => {
+    it("should remove terminals but preserve panel config", () => {
       const { addTerminal, removeAllTerminals, getTerminalPanel } = useTerminalStore.getState();
       addTerminal("thread-1", "pty-1");
       removeAllTerminals("thread-1");
 
       const state = useTerminalStore.getState();
       expect(state.terminals["thread-1"]).toBeUndefined();
-      expect(state.terminalPanelByThread["thread-1"]).toBeUndefined();
-      expect(getTerminalPanel("thread-1")).toEqual(TERMINAL_PANEL_DEFAULTS);
+      // Panel config preserved (height, visibility) but activeTerminalId nulled.
+      const panel = getTerminalPanel("thread-1");
+      expect(panel.visible).toBe(true);
+      expect(panel.activeTerminalId).toBeNull();
     });
 
     it("should not affect other threads", () => {
@@ -180,6 +182,29 @@ describe("TerminalStore", () => {
       useTerminalStore.getState().removeAllTerminals("thread-1");
 
       expect(useTerminalStore.getState().terminals["thread-2"]).toHaveLength(1);
+    });
+  });
+
+  describe("clearThread", () => {
+    it("should remove both terminals and panel state", () => {
+      const { addTerminal, clearThread, getTerminalPanel } = useTerminalStore.getState();
+      addTerminal("thread-1", "pty-1");
+      clearThread("thread-1");
+
+      const state = useTerminalStore.getState();
+      expect(state.terminals["thread-1"]).toBeUndefined();
+      expect(state.terminalPanelByThread["thread-1"]).toBeUndefined();
+      expect(getTerminalPanel("thread-1")).toEqual(TERMINAL_PANEL_DEFAULTS);
+    });
+
+    it("should not affect other threads", () => {
+      const { addTerminal, clearThread, getTerminalPanel } = useTerminalStore.getState();
+      addTerminal("thread-1", "pty-1");
+      addTerminal("thread-2", "pty-2");
+      clearThread("thread-1");
+
+      expect(getTerminalPanel("thread-2").visible).toBe(true);
+      expect(getTerminalPanel("thread-2").activeTerminalId).toBe("pty-2");
     });
   });
 

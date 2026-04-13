@@ -35,6 +35,7 @@ interface TerminalState {
   addTerminal: (threadId: string, ptyId: string) => void;
   removeTerminal: (ptyId: string) => void;
   removeAllTerminals: (threadId: string) => void;
+  clearThread: (threadId: string) => void;
   toggleSplit: () => void;
 }
 
@@ -136,21 +137,22 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         instances.some((t) => t.id === ptyId),
       );
       if (!ownerEntry) return state;
-      const [ownerThreadId] = ownerEntry;
+      const [ownerThreadId, ownerInstances] = ownerEntry;
 
-      const updatedTerminals: Record<string, readonly TerminalInstance[]> = {};
-      for (const [tid, instances] of Object.entries(state.terminals)) {
-        const filtered = instances.filter((t) => t.id !== ptyId);
-        // Threads with zero remaining terminals are intentionally pruned from the map.
-        if (filtered.length > 0) {
-          updatedTerminals[tid] = filtered;
-        }
-      }
+      // Only rebuild the owning thread's array; other threads keep their identity.
+      const filtered = ownerInstances.filter((t) => t.id !== ptyId);
+      const updatedTerminals =
+        filtered.length > 0
+          ? { ...state.terminals, [ownerThreadId]: filtered }
+          : (() => {
+              const rest = { ...state.terminals };
+              delete rest[ownerThreadId];
+              return rest;
+            })();
 
       const currentPanel = state.terminalPanelByThread[ownerThreadId] ?? TERMINAL_PANEL_DEFAULTS;
       const needsNewActive = currentPanel.activeTerminalId === ptyId;
-      const remaining = updatedTerminals[ownerThreadId] ?? [];
-      const nextActive = needsNewActive ? (remaining[0]?.id ?? null) : currentPanel.activeTerminalId;
+      const nextActive = needsNewActive ? (filtered[0]?.id ?? null) : currentPanel.activeTerminalId;
 
       return {
         terminals: updatedTerminals,
@@ -162,6 +164,27 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }),
 
   removeAllTerminals: (threadId) =>
+    set((state) => {
+      if (!state.terminals[threadId]) return state;
+      const remainingTerminals = { ...state.terminals };
+      delete remainingTerminals[threadId];
+      // Preserve panel config (height, visibility) so it persists across "close all".
+      // Only null out activeTerminalId since there are no terminals left.
+      const currentPanel = state.terminalPanelByThread[threadId];
+      return {
+        terminals: remainingTerminals,
+        ...(currentPanel
+          ? {
+              terminalPanelByThread: {
+                ...state.terminalPanelByThread,
+                [threadId]: { ...currentPanel, activeTerminalId: null },
+              },
+            }
+          : {}),
+      };
+    }),
+
+  clearThread: (threadId) =>
     set((state) => {
       if (!state.terminals[threadId] && !state.terminalPanelByThread[threadId]) return state;
       const remainingTerminals = { ...state.terminals };

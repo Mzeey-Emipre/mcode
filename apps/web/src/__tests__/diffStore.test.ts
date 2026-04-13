@@ -113,5 +113,31 @@ describe("diffStore", () => {
       clearThread("thread-1");
       expect(getRightPanel("thread-2").visible).toBe(true);
     });
+
+    it("should clear selectedFile when it belongs to deleted thread", () => {
+      useDiffStore.setState({
+        selectedFile: { source: "snapshot", id: "snap-1", filePath: "a.ts", threadId: "thread-1" },
+        diffContent: "diff text",
+        diffLoading: true,
+      });
+      useDiffStore.getState().clearThread("thread-1");
+      const state = useDiffStore.getState();
+      expect(state.selectedFile).toBeNull();
+      expect(state.diffContent).toBeNull();
+      expect(state.diffLoading).toBe(false);
+    });
+
+    it("should preserve selectedFile when it belongs to a different thread", () => {
+      const file = { source: "commit" as const, id: "abc123", filePath: "b.ts", threadId: "thread-2" };
+      useDiffStore.setState({
+        selectedFile: file,
+        diffContent: "other diff",
+        diffLoading: false,
+      });
+      useDiffStore.getState().clearThread("thread-1");
+      const state = useDiffStore.getState();
+      expect(state.selectedFile).toEqual(file);
+      expect(state.diffContent).toBe("other diff");
+    });
   });
 });

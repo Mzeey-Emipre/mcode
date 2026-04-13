@@ -172,7 +172,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       for (const tid of deletedThreadIds) {
         draftStore.clearDraft(tid);
         taskStore.clearTasks(tid);
-        terminalStore.removeAllTerminals(tid);
+        terminalStore.clearThread(tid);
         diffStore.clearThread(tid);
       }
       // Remove threads from store FIRST (same ordering as deleteThread) so
@@ -403,7 +403,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
     try {
       await getTransport().deleteThread(threadId, cleanupWorktree);
-      useTerminalStore.getState().removeAllTerminals(threadId);
+      useTerminalStore.getState().clearThread(threadId);
       useQueueStore.getState().clearQueue(threadId);
       useComposerDraftStore.getState().clearDraft(threadId);
       useTaskStore.getState().clearTasks(threadId);

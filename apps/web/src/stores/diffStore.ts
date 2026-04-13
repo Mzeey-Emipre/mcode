@@ -29,6 +29,8 @@ export interface SelectedFile {
   /** Snapshot ID or commit SHA depending on source. */
   id: string;
   filePath: string;
+  /** Thread that owns this selection, used to clear on thread deletion. */
+  threadId: string;
 }
 
 /** Per-thread right panel state (visibility, width, active tab). */
@@ -188,16 +190,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       const rightPanels = { ...state.rightPanelByThread };
       delete rightPanels[threadId];
 
-      // Only clear the global selectedFile/diffContent when they belong to the
-      // thread being deleted. Threads that have no snapshot/commit data yet (e.g.
-      // newly created) default to false, leaving another thread's open diff intact.
-      const sf = state.selectedFile;
-      const selectionBelongsToThread = sf !== null && (() => {
-        if (sf.source === "snapshot" || sf.source === "cumulative") {
-          return (state.snapshotsByThread[threadId] ?? []).some((s) => s.id === sf.id);
-        }
-        return (state.commitsByThread[threadId] ?? []).some((c) => c.sha === sf.id);
-      })();
+      // Only clear the global selection when it belongs to the deleted thread.
+      const selectionBelongsToThread = state.selectedFile?.threadId === threadId;
 
       return {
         snapshotsByThread: snapshots,
@@ -205,7 +199,9 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         commitsByThread: commits,
         commitsLoadingByThread: commitsLoading,
         rightPanelByThread: rightPanels,
-        ...(selectionBelongsToThread ? { selectedFile: null, diffContent: null } : {}),
+        ...(selectionBelongsToThread
+          ? { selectedFile: null, diffContent: null, diffLoading: false }
+          : {}),
       };
     }),
 }));
