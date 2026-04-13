@@ -64,6 +64,7 @@ vi.mock("fs", () => ({
     throw err;
   }),
   unlinkSync: vi.fn(),
+  writeFileSync: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -103,7 +104,7 @@ const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
 import { spawn } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 
 // ---------------------------------------------------------------------------
 // Tests

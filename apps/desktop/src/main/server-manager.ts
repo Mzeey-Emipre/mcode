@@ -9,7 +9,7 @@
 
 import { app } from "electron";
 import { spawn, type ChildProcess } from "child_process";
-import { existsSync, readFileSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { createServer, type AddressInfo } from "net";
 import { resolve, join, dirname } from "path";
 import { getMcodeDir } from "@mcode/shared";
@@ -236,6 +236,30 @@ export class ServerManager {
       return { port: this._port, authToken: this._authToken };
     }
 
+    const sentinelPath = join(getMcodeDir(), "server.starting");
+
+    // Acquire startup lock to prevent duplicate server spawns
+    try {
+      writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        console.log("[server-manager] Another process is starting the server, waiting...");
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 200));
+          const existingNow = await tryExistingServer(PORT_MIN, PORT_MAX);
+          if (existingNow) {
+            this._port = existingNow.port;
+            this._authToken = existingNow.authToken;
+            this._reusedExisting = true;
+            return { port: this._port, authToken: this._authToken };
+          }
+        }
+        // Timeout: other spawner may have crashed. Clean up and take over.
+        try { unlinkSync(sentinelPath); } catch { /* ok */ }
+      }
+    }
+
     // Port pinning: prefer the previous port if lock file exists
     let preferredPort: number | null = null;
     const lockPath = lockFilePath();
@@ -302,6 +326,9 @@ export class ServerManager {
     // Read auth token from lock file (server writes it on startup).
     // Retry briefly in case the lock file write races the health endpoint.
     this._authToken = await this.readAuthTokenFromLock();
+
+    // Release startup lock now that the server is confirmed ready.
+    try { unlinkSync(sentinelPath); } catch { /* ok */ }
 
     return { port: this._port, authToken: this._authToken };
   }
