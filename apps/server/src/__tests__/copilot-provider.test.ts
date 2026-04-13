@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 
 // --- Mocks (hoisted to avoid TDZ issues with vi.mock) ---
 

@@ -27,7 +27,7 @@ import type {
   ProviderModelInfo,
 } from "@mcode/contracts";
 
-/** Module-level promisified execFile for CLI availability probing. */
+/** Promisified execFile used to retrieve the gh auth token. */
 const execFileAsync = promisify(execFile);
 
 /** Infer vendor group from model ID prefix for UI section headers. */
@@ -56,6 +56,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
 
   private client: CopilotClient | null = null;
   private lastCliPath: string | undefined;
+  /** Cached result of `which("node")` so we don't re-probe PATH on every rebuild. */
+  private cachedNodePath: string | null | undefined;
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
@@ -145,11 +147,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       await this.client.stop().catch((err) =>
         logger.warn("CopilotProvider: error stopping old client", { error: String(err) }),
       );
+      this.client = null;
     }
 
-    this.lastCliPath = configuredCliPath;
-
-    const opts: Record<string, unknown> = {};
+    const opts: { cliPath?: string; githubToken?: string } = {};
 
     // User-configured CLI path takes priority over all other resolution.
     if (configuredCliPath) {
@@ -161,18 +162,20 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     // Temporarily override process.execPath so the SDK uses the real node.
     // Safe because doRefreshClient is serialised by clientStartLock and
     // JS is single-threaded — no concurrent reads during the window.
-    let execPathOverridden = false;
+    let savedExecPath: string | undefined;
     if (process.versions.electron && !configuredCliPath) {
-      const nodePath = await which("node", { nothrow: true });
-      if (nodePath) {
-        (process as NodeJS.Process & { _mcodeOrigExecPath?: string })._mcodeOrigExecPath =
-          process.execPath;
-        process.execPath = nodePath;
-        execPathOverridden = true;
-      } else {
-        logger.warn(
-          "CopilotProvider: node not found in PATH; SDK will use process.execPath (electron)",
-        );
+      // Cache the which("node") result so we don't re-probe PATH on every rebuild.
+      if (this.cachedNodePath === undefined) {
+        this.cachedNodePath = await which("node", { nothrow: true });
+        if (!this.cachedNodePath) {
+          logger.warn(
+            "CopilotProvider: node not found in PATH; SDK will use process.execPath (electron)",
+          );
+        }
+      }
+      if (this.cachedNodePath) {
+        savedExecPath = process.execPath;
+        process.execPath = this.cachedNodePath;
       }
     }
 
@@ -181,28 +184,31 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     try {
       const { stdout } = await execFileAsync("gh", ["auth", "token"], {
         timeout: 5000,
-        shell: true,
       });
       const token = stdout.trim();
       if (token) {
         opts.githubToken = token;
       }
-    } catch {
-      // gh not installed or not authenticated; SDK falls back to useLoggedInUser
+    } catch (err) {
+      logger.debug("CopilotProvider: gh auth token unavailable, falling back to SDK auth", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     try {
-      this.client = new CopilotClient(opts as ConstructorParameters<typeof CopilotClient>[0]);
+      const client = new CopilotClient(opts as ConstructorParameters<typeof CopilotClient>[0]);
       // The SDK's createSession() auto-starts the connection, but listModels()
       // does not. Eagerly start the client so both paths work.
-      await this.client.start();
-      logger.info("CopilotProvider: client started", { state: this.client.getState() });
+      await client.start();
+      // Assign only after start() succeeds so a failed startup never leaves
+      // a stale non-started client on the instance.
+      this.client = client;
+      this.lastCliPath = configuredCliPath;
+      logger.info("CopilotProvider: client started", { state: client.getState() });
     } finally {
       // Restore process.execPath immediately after the SDK captures it during start().
-      if (execPathOverridden) {
-        const proc = process as NodeJS.Process & { _mcodeOrigExecPath?: string };
-        process.execPath = proc._mcodeOrigExecPath!;
-        delete proc._mcodeOrigExecPath;
+      if (savedExecPath !== undefined) {
+        process.execPath = savedExecPath;
       }
     }
   }
@@ -295,7 +301,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       return;
     }
 
-    const client = this.client!;
+    const client = this.client;
+    if (!client) {
+      throw new Error("Copilot client not available");
+    }
     const sdkSessionId = this.sdkSessionIds.get(sessionId);
 
     let session: CopilotSession;
