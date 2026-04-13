@@ -172,7 +172,7 @@ function makeComponents(isStreaming: boolean, variant: "assistant" | "user") {
           <Suspense fallback={
             <pre className="bg-muted/30 rounded-lg p-4 overflow-x-auto"><code>{code}</code></pre>
           }>
-            <LazyMermaidBlock code={code} isStreaming={isStreaming} variant={variant} />
+            <LazyMermaidBlock code={code} isStreaming={isStreaming} />
           </Suspense>
         );
       }

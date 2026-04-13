@@ -8,12 +8,6 @@ interface MermaidBlockProps {
   code: string;
   /** When true, shows raw code instead of rendering the diagram. */
   isStreaming: boolean;
-  /**
-   * Controls header background contrast. 'user' uses an opaque background
-   * so the header is legible inside the primary-colored user bubble.
-   * Defaults to 'assistant'.
-   */
-  variant?: "assistant" | "user";
 }
 
 /** Tracks the mermaid render lifecycle: loading → success or error. */
@@ -28,7 +22,11 @@ let lastInitTheme: string | null = null;
 
 function loadMermaid() {
   if (!mermaidPromise) {
-    mermaidPromise = import("mermaid");
+    mermaidPromise = import("mermaid").catch((err) => {
+      // Clear the cache so future attempts can retry instead of re-throwing permanently.
+      mermaidPromise = null;
+      throw err;
+    });
   }
   return mermaidPromise;
 }
@@ -69,7 +67,7 @@ function toMermaidTheme(shikiTheme: string): "dark" | "default" {
  * SVG output uses dangerouslySetInnerHTML. This is safe because mermaid v10+
  * sanitizes SVG via its bundled DOMPurify, and securityLevel is set to "strict".
  */
-const MermaidBlock = memo(function MermaidBlock({ code, isStreaming, variant = "assistant" }: MermaidBlockProps) {
+const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBlockProps) {
   const shikiTheme = useShikiTheme();
   const mermaidTheme = toMermaidTheme(shikiTheme);
   const rawId = useId();
@@ -192,9 +190,9 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming, variant = "
 
       {/* Content area */}
       {state.status === "loading" && (
-        <div className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+        <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
           <code>{code}</code>
-        </div>
+        </pre>
       )}
       {state.status === "success" && view === "diagram" && (
         <div
