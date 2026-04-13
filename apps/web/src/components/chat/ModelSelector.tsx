@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
-import { ChevronDown, ChevronRight, Lock, Check } from "lucide-react";
+import { ChevronDown, ChevronRight, Lock, Check, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -53,16 +53,17 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
   const containerRef = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Dynamically fetched model lists, keyed by provider ID. Falls back to the
-  // static registry when a fetch has not completed yet or fails.
+  // Dynamically fetched model lists, keyed by provider ID.
   const [dynamicModels, setDynamicModels] = useState<Map<string, ModelProvider["models"]>>(new Map());
   const dynamicModelsRef = useRef<Map<string, ModelProvider["models"]>>(new Map());
+  const [loadingProviders, setLoadingProviders] = useState<Set<string>>(new Set());
   const fetchingRef = useRef<Set<string>>(new Set());
 
   /** Fetches live models for a provider and caches the result. No-ops on repeat calls. */
   const fetchProviderModels = useCallback(async (providerId: string) => {
     if (fetchingRef.current.has(providerId) || dynamicModelsRef.current.has(providerId)) return;
     fetchingRef.current.add(providerId);
+    setLoadingProviders((prev) => new Set(prev).add(providerId));
     try {
       const info = await getTransport().listProviderModels(providerId);
       const mapped: ModelProvider["models"] = info.map((m) => ({
@@ -78,6 +79,11 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
       // Fall back to static registry silently
     } finally {
       fetchingRef.current.delete(providerId);
+      setLoadingProviders((prev) => {
+        const next = new Set(prev);
+        next.delete(providerId);
+        return next;
+      });
     }
   }, []);
 
@@ -182,7 +188,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
       )}
     >
       <span className="flex-1 text-left">{m.label}</span>
-      {m.multiplier != null && m.multiplier !== 1 && (
+      {m.multiplier != null && (
         <span className="text-[10px] text-muted-foreground/60 tabular-nums">
           {m.multiplier}x
         </span>
@@ -224,7 +230,13 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
         onMouseLeave={() => setHoveredWithDelay(null)}
       >
         <div className="max-h-[min(480px,calc(100vh-8rem))] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
-          {renderGroupedModels(getModels(p), p.id, isSelected)}
+          {loadingProviders.has(p.id) ? (
+            <div className="flex items-center justify-center py-6">
+              <Loader2 size={14} className="animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            renderGroupedModels(getModels(p), p.id, isSelected)
+          )}
         </div>
       </div>
     );
@@ -243,10 +255,16 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
           {/* When provider is locked, show only that provider's models directly */}
           {providerLocked && displayProvider ? (
             <div className="max-h-[min(480px,calc(100vh-8rem))] overflow-y-auto">
-              {renderGroupedModels(
-                getModels(displayProvider),
-                displayProvider.id,
-                (id) => id === normalizedSelectedId
+              {loadingProviders.has(displayProvider.id) ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 size={14} className="animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                renderGroupedModels(
+                  getModels(displayProvider),
+                  displayProvider.id,
+                  (id) => id === normalizedSelectedId
+                )
               )}
             </div>
           ) : MODEL_PROVIDERS.map((p) => {
