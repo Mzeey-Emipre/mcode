@@ -4,6 +4,7 @@
  * Extracted from apps/desktop/src/main/pty-manager.ts.
  */
 
+import { createRequire } from "node:module";
 import { injectable, inject } from "tsyringe";
 import { isAbsolute } from "path";
 import { existsSync, statSync } from "fs";
@@ -15,6 +16,10 @@ import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitService } from "./git-service";
 
+// createRequire lets us load native CJS modules (node-pty) from both ESM
+// (dev mode via entry.mjs + tsx) and the CJS production bundle.
+const _require = createRequire(import.meta.url);
+
 /**
  * Lazily load node-pty's spawn function. Deferred to avoid crashing the server
  * at startup if the native binding is missing or incompatible - the error is
@@ -23,8 +28,7 @@ import type { GitService } from "./git-service";
 let _spawn: typeof import("node-pty").spawn | undefined;
 function getSpawn(): typeof import("node-pty").spawn {
   if (!_spawn) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _spawn = (require("node-pty") as typeof import("node-pty")).spawn;
+    _spawn = (_require("node-pty") as typeof import("node-pty")).spawn;
   }
   return _spawn;
 }
