@@ -71,7 +71,7 @@ describe("CopilotProvider bootstrap", () => {
   });
 
   describe("Electron executor override", () => {
-    it("calls which('node') and overrides process.execPath when in Electron", async () => {
+    it("calls which('node') and prepends node dir to PATH in env when in Electron", async () => {
       Object.defineProperty(process.versions, "electron", {
         value: "28.0.0",
         configurable: true,
@@ -83,9 +83,10 @@ describe("CopilotProvider bootstrap", () => {
 
       // which was called to find the real node binary
       expect(which).toHaveBeenCalledWith("node", { nothrow: true });
-      // SDK client was constructed (override happened before construction)
+      // SDK client was constructed with env.PATH prepended with node binary dir
       const ctorCall = MockCopilotClient.mock.calls[0]?.[0];
       expect(ctorCall).toBeDefined();
+      expect(ctorCall.env?.PATH).toMatch(/\/usr\/bin/);;
     });
 
     it("skips executor override when not in Electron", async () => {

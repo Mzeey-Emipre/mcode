@@ -9,6 +9,7 @@
  */
 
 import { execFile } from "child_process";
+import { dirname } from "path";
 import { promisify } from "util";
 
 import { injectable, inject } from "tsyringe";
@@ -151,7 +152,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       this.client = null;
     }
 
-    const opts: { cliPath?: string; githubToken?: string } = {};
+    const opts: {
+      cliPath?: string;
+      githubToken?: string;
+      env?: Record<string, string | undefined>;
+    } = {};
 
     // User-configured CLI path takes priority over all other resolution.
     if (configuredCliPath) {
@@ -159,13 +164,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     }
 
     // Electron fix: utilityProcess.fork sets process.execPath to
-    // electron.exe. The SDK spawns: spawn(process.execPath, [cliPath, ...]).
-    // Temporarily override process.execPath so the SDK uses the real node.
-    // Safe because doRefreshClient is serialised by clientStartLock and
-    // JS is single-threaded — no concurrent reads during the window.
-    let savedExecPath: string | undefined;
+    // electron.exe. The SDK's getNodeExecPath() reads process.execPath
+    // to spawn .js CLI files. Rather than mutating the global, we
+    // prepend the real node binary's directory to PATH in the env we
+    // pass to the SDK so `node` resolves correctly in the child process.
     if (process.versions.electron && !configuredCliPath) {
-      // Cache the which("node") result so we don't re-probe PATH on every rebuild.
       if (this.cachedNodePath === undefined) {
         this.cachedNodePath = await which("node", { nothrow: true });
         if (!this.cachedNodePath) {
@@ -175,8 +178,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
         }
       }
       if (this.cachedNodePath) {
-        savedExecPath = process.execPath;
-        process.execPath = this.cachedNodePath;
+        const nodeDir = dirname(this.cachedNodePath);
+        opts.env = {
+          ...process.env,
+          PATH: `${nodeDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
+        };
       }
     }
 
@@ -196,22 +202,15 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       });
     }
 
-    try {
-      const client = new CopilotClient(opts as ConstructorParameters<typeof CopilotClient>[0]);
-      // The SDK's createSession() auto-starts the connection, but listModels()
-      // does not. Eagerly start the client so both paths work.
-      await client.start();
-      // Assign only after start() succeeds so a failed startup never leaves
-      // a stale non-started client on the instance.
-      this.client = client;
-      this.lastCliPath = configuredCliPath;
-      logger.info("CopilotProvider: client started", { state: client.getState() });
-    } finally {
-      // Restore process.execPath immediately after the SDK captures it during start().
-      if (savedExecPath !== undefined) {
-        process.execPath = savedExecPath;
-      }
-    }
+    const client = new CopilotClient(opts as ConstructorParameters<typeof CopilotClient>[0]);
+    // The SDK's createSession() auto-starts the connection, but listModels()
+    // does not. Eagerly start the client so both paths work.
+    await client.start();
+    // Assign only after start() succeeds so a failed startup never leaves
+    // a stale non-started client on the instance.
+    this.client = client;
+    this.lastCliPath = configuredCliPath;
+    logger.info("CopilotProvider: client started", { state: client.getState() });
   }
 
   /** Start or continue a session by sending a message via the Copilot SDK. */
@@ -475,7 +474,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // session.error — provider-level error
+        // session.error — provider-level error; resolve so cleanup runs
         unsubscribers.push(
           session.on("session.error", (event) => {
             this.emit("event", {
@@ -483,6 +482,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
               threadId,
               error: event.data.message,
             } satisfies AgentEvent);
+            resolve();
           }),
         );
 
