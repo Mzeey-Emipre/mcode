@@ -67,6 +67,14 @@ vi.mock("fs", () => ({
   writeFileSync: vi.fn(),
 }));
 
+vi.mock("fs/promises", () => ({
+  readFile: vi.fn(() => {
+    const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    return Promise.reject(err);
+  }),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -95,8 +103,8 @@ function setupDefaultReadFileMock() {
   };
   vi.mocked(readFileSync)
     .mockImplementationOnce(enoent) // tryExistingServer lock read
-    .mockImplementationOnce(enoent) // readServerHeapMb settings.json read
-    .mockImplementationOnce(() => LOCK_FILE_JSON); // readAuthTokenFromLock
+    .mockImplementationOnce(enoent); // readServerHeapMb settings.json read
+  vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock (async)
 }
 
 // Mock fetch for health check
@@ -105,6 +113,7 @@ const originalFetch = globalThis.fetch;
 import { ServerManager } from "../server-manager.js";
 import { spawn } from "child_process";
 import { existsSync, readFileSync, writeFileSync } from "fs";
+import { readFile } from "fs/promises";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -125,6 +134,9 @@ describe("ServerManager", () => {
       err.code = "ENOENT";
       throw err;
     });
+
+    // Reset async readFile (fs/promises) used by readAuthTokenFromLock
+    vi.mocked(readFile).mockReset();
 
     // Mock fetch: first call returns healthy (waitForReady); subsequent calls
     // also return ok so tryExistingServer health probes work too.
@@ -273,8 +285,8 @@ describe("ServerManager", () => {
   // -----------------------------------------------------------------------
 
   it("reads heapMb from settings.json", async () => {
-    // Re-sequence readFileSync: lock ENOENT, then settings.json with custom heap,
-    // then lock file for readAuthTokenFromLock.
+    // Re-sequence readFileSync: lock ENOENT, then settings.json with custom heap.
+    // readAuthTokenFromLock uses async readFile (fs/promises), set up separately.
     vi.mocked(readFileSync).mockReset();
     const enoent = () => {
       const err = new Error("ENOENT") as NodeJS.ErrnoException;
@@ -283,8 +295,8 @@ describe("ServerManager", () => {
     };
     vi.mocked(readFileSync)
       .mockImplementationOnce(enoent) // tryExistingServer
-      .mockReturnValueOnce(JSON.stringify({ server: { memory: { heapMb: 1024 } } })) // settings.json
-      .mockReturnValueOnce(LOCK_FILE_JSON); // readAuthTokenFromLock
+      .mockReturnValueOnce(JSON.stringify({ server: { memory: { heapMb: 1024 } } })); // settings.json
+    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
 
     await manager.start();
 
@@ -297,7 +309,7 @@ describe("ServerManager", () => {
     process.env.MCODE_SERVER_HEAP_MB = "2048";
 
     // When env var is set, settings.json is never read. Re-sequence accordingly:
-    // tryExistingServer lock ENOENT, then readAuthTokenFromLock.
+    // tryExistingServer lock ENOENT only. readAuthTokenFromLock via async readFile.
     vi.mocked(readFileSync).mockReset();
     const enoent = () => {
       const err = new Error("ENOENT") as NodeJS.ErrnoException;
@@ -305,8 +317,8 @@ describe("ServerManager", () => {
       throw err;
     };
     vi.mocked(readFileSync)
-      .mockImplementationOnce(enoent) // tryExistingServer
-      .mockReturnValueOnce(LOCK_FILE_JSON); // readAuthTokenFromLock
+      .mockImplementationOnce(enoent); // tryExistingServer
+    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
 
     await manager.start();
 

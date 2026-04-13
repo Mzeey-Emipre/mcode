@@ -227,10 +227,17 @@ function startIpcRelay(ipcPath: string, window: BrowserWindow): void {
   if (!ipcPath) return;
 
   const socket = netConnect(ipcPath);
-  let buffer = Buffer.alloc(0);
+  const chunks: Buffer[] = [];
+  let totalLen = 0;
 
   socket.on("data", (chunk: Buffer) => {
-    buffer = buffer.length === 0 ? Buffer.from(chunk) : Buffer.concat([buffer, chunk]);
+    chunks.push(chunk);
+    totalLen += chunk.length;
+
+    // Only concat when we have enough data for at least one frame header
+    let buffer = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, totalLen);
+    chunks.length = 0;
+    totalLen = 0;
 
     while (buffer.length >= 4) {
       const frameLen = buffer.readUInt32BE(0);
@@ -245,6 +252,12 @@ function startIpcRelay(ipcPath: string, window: BrowserWindow): void {
           window.webContents.send("ipc-push-message", data);
         }
       } catch { /* malformed frame, skip */ }
+    }
+
+    // Retain leftover bytes for the next data event
+    if (buffer.length > 0) {
+      chunks.push(buffer);
+      totalLen = buffer.length;
     }
   });
 
@@ -627,7 +640,6 @@ app.whenReady().then(async () => {
     // Register IPC handlers BEFORE creating the window so the renderer can
     // invoke get-server-url as soon as it loads, without racing the handler.
     registerIpcHandlers();
-
 
     // Set auth cookie so the renderer can authenticate to the server via HTTP
     await session.defaultSession.cookies.set({

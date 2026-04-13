@@ -288,17 +288,17 @@ function startServerAndSubscribe(): void {
   // only activates once the server is ready to accept connections.
   onSessionChange((count) => {
     if (count === 0 && !graceTimer) {
-      logger.info("All sessions disconnected, starting grace period", {
+      logger.info("All sessions disconnected, grace period started", {
         graceMs: GRACE_PERIOD_MS,
       });
       graceTimer = setTimeout(() => {
         if (sessionCount() === 0) {
-          logger.info("Grace period expired with zero sessions, shutting down");
+          logger.info("Grace period expired with zero sessions, shutdown initiated");
           shutdown();
         }
       }, GRACE_PERIOD_MS);
     } else if (count > 0 && graceTimer) {
-      logger.info("New session connected, cancelling grace period");
+      logger.info("New session connected, grace period cancelled");
       clearTimeout(graceTimer);
       graceTimer = null;
     }
@@ -308,7 +308,7 @@ function startServerAndSubscribe(): void {
 ipcServer.listen(ipcPath).then(() => {
   startServerAndSubscribe();
 }).catch((err) => {
-  logger.error("IPC server failed to start, continuing without fast path", {
+  logger.error("IPC server failed to start, fell back to WebSocket-only push", {
     error: err instanceof Error ? err.message : String(err),
   });
   startServerAndSubscribe();
@@ -320,7 +320,7 @@ ipcServer.listen(ipcPath).then(() => {
  * Awaits server close handshakes so in-flight connections drain cleanly.
  */
 async function shutdown(): Promise<void> {
-  logger.info("Shutting down...");
+  logger.info("Shutdown initiated");
 
   // Clear any pending grace period timer
   if (graceTimer) {

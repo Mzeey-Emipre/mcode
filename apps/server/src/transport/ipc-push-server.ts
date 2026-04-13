@@ -27,7 +27,7 @@ export class IpcPushServer {
       this.sockets.add(socket);
       socket.on("close", () => this.sockets.delete(socket));
       socket.on("error", (err) => {
-        logger.error("IPC socket error", { err });
+        logger.error("IPC socket error", { error: err instanceof Error ? err.message : String(err) });
         this.sockets.delete(socket);
       });
 
@@ -42,7 +42,7 @@ export class IpcPushServer {
         this.server!.on("error", (err) => {
           logger.error("IPC server error", { error: err instanceof Error ? err.message : String(err) });
         });
-        logger.info("IPC push server listening", { path: ipcPath });
+        logger.info("IPC push server started", { path: ipcPath });
         resolve();
       });
     });
@@ -74,10 +74,11 @@ function createSocketAdapter(socket: Socket): MessagePortLike {
     postMessage(message: unknown): void {
       const json = JSON.stringify(message);
       const payload = Buffer.from(json, "utf-8");
-      const header = Buffer.alloc(4);
-      header.writeUInt32BE(payload.length, 0);
+      const frame = Buffer.allocUnsafe(4 + payload.length);
+      frame.writeUInt32BE(payload.length, 0);
+      payload.copy(frame, 4);
       try {
-        socket.write(Buffer.concat([header, payload]));
+        socket.write(frame);
       } catch {
         logger.warn("IPC write failed, destroying socket");
         socket.destroy();

@@ -5,13 +5,10 @@
  * so token validation logic lives in one place.
  */
 
-import { URL } from "url";
+import type { IncomingMessage } from "http";
 
 /** Minimal request shape required for token extraction. */
-interface RequestLike {
-  url?: string;
-  headers: Record<string, string | string[] | undefined>;
-}
+type RequestLike = Pick<IncomingMessage, "url" | "headers">;
 
 /**
  * Extract an auth token from a request using the following precedence:
@@ -22,21 +19,20 @@ interface RequestLike {
  * Returns `null` when no token is present in any of the three locations.
  */
 export function extractToken(req: RequestLike): string | null {
-  // 1. Query param
-  if (req.url) {
-    try {
-      const parsed = new URL(req.url, "http://localhost");
-      const fromQuery = parsed.searchParams.get("token");
-      if (fromQuery) return fromQuery;
-    } catch {
-      // Malformed URL - skip query param extraction
-    }
-  }
-
-  // 2. Authorization header
+  // 1. Authorization header (cheapest check, no object allocation)
   const authHeader = req.headers.authorization;
   if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     return authHeader.slice(7);
+  }
+
+  // 2. Query param (only parse URL when header was absent)
+  if (req.url) {
+    const qIdx = req.url.indexOf("?token=");
+    if (qIdx !== -1) {
+      const start = qIdx + 7;
+      const end = req.url.indexOf("&", start);
+      return end === -1 ? req.url.slice(start) : req.url.slice(start, end);
+    }
   }
 
   // 3. Cookie

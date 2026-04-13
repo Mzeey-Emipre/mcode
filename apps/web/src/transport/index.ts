@@ -30,19 +30,32 @@ async function scanPortRange(
   const timeout = setTimeout(() => controller.abort(), 5000);
 
   try {
-    const probes = Array.from({ length: portMax - portMin }, (_, i) => {
-      const port = portMin + i;
-      return fetch(`http://localhost:${port}/health`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: controller.signal,
-      })
-        .then((r) => (r.ok ? port : null))
-        .catch(() => null);
+    // Race all probes. The first healthy response resolves the outer promise
+    // and aborts all remaining probes via the shared AbortController.
+    const port = await new Promise<number>((resolve, reject) => {
+      let remaining = portMax - portMin;
+      Array.from({ length: remaining }, (_, i) => {
+        const p = portMin + i;
+        fetch(`http://localhost:${p}/health`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: controller.signal,
+        })
+          .then((r) => {
+            if (r.ok) {
+              controller.abort(); // cancel remaining probes
+              resolve(p);
+            } else {
+              if (--remaining === 0) reject(new Error("none found"));
+            }
+          })
+          .catch(() => {
+            if (--remaining === 0) reject(new Error("none found"));
+          });
+      });
     });
-
-    const results = await Promise.all(probes);
-    const foundPort = results.find((p) => p !== null);
-    return foundPort ? `ws://localhost:${foundPort}?token=${token}` : null;
+    return `ws://localhost:${port}?token=${token}`;
+  } catch {
+    return null;
   } finally {
     clearTimeout(timeout);
   }
@@ -82,6 +95,14 @@ export async function initTransport(): Promise<McodeTransport> {
   if (initPromise) return initPromise;
 
   initPromise = resolveServerUrl().then(async ({ url, ipcPath }) => {
+    // Persist the auth token from the initial URL so browser-mode reconnects
+    // can re-discover the server with a valid token after a restart.
+    try {
+      const parsedUrl = new URL(url, "http://localhost");
+      const token = parsedUrl.searchParams.get("token");
+      if (token) localStorage.setItem("mcode-auth-token", token);
+    } catch { /* ignore parse errors */ }
+
     transport = createWsTransport(url, {
       onStatusChange: (status) => {
         useConnectionStore.getState().setStatus(status);
@@ -97,10 +118,10 @@ export async function initTransport(): Promise<McodeTransport> {
           const info = await window.desktopBridge.getServerUrl();
           return info.url;
         }
-        // In browser, scan the port range. The /health endpoint does not
-        // require auth, so an empty token is fine for discovery. The actual
-        // auth token is conveyed via the HttpOnly cookie set on first connect.
-        const found = await scanPortRange(19400, 19800, "");
+        // In browser, scan the port range. Use the last-known token from
+        // localStorage so the reconnect URL includes valid auth.
+        const savedToken = localStorage.getItem("mcode-auth-token") ?? "";
+        const found = await scanPortRange(19400, 19800, savedToken);
         if (found) return found;
         throw new Error("Server not found");
       },
@@ -108,7 +129,7 @@ export async function initTransport(): Promise<McodeTransport> {
 
     // Connect IPC fast path if available
     if (ipcPath) {
-      ipcPushClient.connect(ipcPath);
+      ipcPushClient.connect();
     }
 
     try {

@@ -32,13 +32,13 @@ describe("extractToken", () => {
     ).toBe("fromQuery");
   });
 
-  it("prefers query param over Authorization header", () => {
+  it("prefers Authorization header over query param", () => {
     expect(
       extractToken({
         url: "/?token=fromQuery",
         headers: { authorization: "Bearer fromHeader" },
       }),
-    ).toBe("fromQuery");
+    ).toBe("fromHeader");
   });
 
   it("prefers Authorization header over cookie", () => {

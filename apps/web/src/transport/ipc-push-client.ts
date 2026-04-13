@@ -19,7 +19,8 @@ export class IpcPushClient {
    * Start listening for IPC push events from the main process.
    * No-op if desktopBridge is not available (browser mode).
    */
-  connect(_ipcPath: string): void {
+  /** Start listening. The ipcPath is unused here - the main process owns the connection. */
+  connect(): void {
     if (!window.desktopBridge?.ipc) return;
 
     this.disconnect();

@@ -10,6 +10,7 @@
 import { app } from "electron";
 import { spawn, type ChildProcess } from "child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { readFile } from "fs/promises";
 import { createServer, type AddressInfo } from "net";
 import { resolve, join, dirname } from "path";
 import { getMcodeDir } from "@mcode/shared";
@@ -114,7 +115,7 @@ function readServerHeapMb(): number {
  * then immediately closes it.
  */
 async function findAvailablePort(min: number, max: number): Promise<number> {
-  for (let port = min; port <= max; port++) {
+  for (let port = min; port < max; port++) {
     const available = await new Promise<boolean>((resolve) => {
       const srv = createServer();
       srv.once("error", () => resolve(false));
@@ -257,7 +258,7 @@ export class ServerManager {
       writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-        console.log("[server-manager] Another process is starting the server, waiting...");
+        console.log("[server-manager] Startup lock held by another process, waiting for server");
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 200));
@@ -270,8 +271,13 @@ export class ServerManager {
             return { port: this._port, authToken: this._authToken };
           }
         }
-        // Timeout: other spawner may have crashed. Clean up and take over.
-        try { unlinkSync(sentinelPath); } catch { /* ok */ }
+        // Timeout: other spawner may have crashed. Re-acquire the lock before spawning.
+        try {
+          writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
+        } catch {
+          // Another process grabbed it first - retry the whole start flow
+          try { unlinkSync(sentinelPath); } catch { /* ok */ }
+        }
       }
     }
 
@@ -295,7 +301,7 @@ export class ServerManager {
         : await findAvailablePort(PORT_MIN, PORT_MAX);
 
       const heapMb = readServerHeapMb();
-      console.log(`Starting server with --max-old-space-size=${heapMb}`);
+      console.log(`[server-manager] Server configured: --max-old-space-size=${heapMb}`);
 
       const { entry, cwd, nativeBindingPath } = getServerPaths();
 
@@ -391,6 +397,14 @@ export class ServerManager {
       return;
     }
 
+    // Validate lock port is within this mode's range to prevent sending
+    // auth tokens to arbitrary localhost ports from a crafted lock file.
+    if (lock.port < PORT_MIN || lock.port >= PORT_MAX) {
+      console.warn(`[server-manager] forceReplace: port ${lock.port} outside allowed range, skipping`);
+      try { unlinkSync(lockPath); } catch { /* ok */ }
+      return;
+    }
+
     // 1. Graceful HTTP shutdown
     try {
       await fetch(`http://localhost:${lock.port}/shutdown`, {
@@ -429,7 +443,7 @@ export class ServerManager {
     const maxAttempts = 10;
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        const raw = readFileSync(lockFilePath(), "utf-8");
+        const raw = await readFile(lockFilePath(), "utf-8");
         const lock: ServerLock = JSON.parse(raw);
         if (lock.authToken) {
           this._ipcPath = lock.ipcPath ?? "";

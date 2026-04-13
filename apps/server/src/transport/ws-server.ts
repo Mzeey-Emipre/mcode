@@ -12,7 +12,14 @@ import { BinaryUploadHeaderSchema, type BinaryUploadHeader } from "@mcode/contra
 import { routeMessage, type RouterDeps } from "./ws-router";
 import { addClient, removeClient } from "./push";
 import { handleBinaryUpload } from "./binary-upload";
+import { timingSafeEqual } from "crypto";
 import { extractToken, buildAuthCookie } from "./auth";
+
+/** Constant-time string comparison to prevent timing attacks on token validation. */
+function safeTokenEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 /** Create and configure the HTTP + WebSocket server. */
 export function createWsServer(deps: RouterDeps & { authToken: string }): {
@@ -20,7 +27,7 @@ export function createWsServer(deps: RouterDeps & { authToken: string }): {
   wss: WebSocketServer;
 } {
   const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
-    const token = extractToken(req as any);
+    const token = extractToken(req);
 
     if (req.method === "GET" && req.url?.startsWith("/health")) {
       const body = JSON.stringify({
@@ -28,7 +35,7 @@ export function createWsServer(deps: RouterDeps & { authToken: string }): {
         activeAgents: deps.agentService.activeCount(),
       });
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token === deps.authToken) {
+      if (token && safeTokenEqual(token, deps.authToken)) {
         headers["Set-Cookie"] = buildAuthCookie(deps.authToken);
       }
       res.writeHead(200, headers);
@@ -37,7 +44,7 @@ export function createWsServer(deps: RouterDeps & { authToken: string }): {
     }
 
     if (req.method === "POST" && req.url === "/shutdown") {
-      if (token !== deps.authToken) {
+      if (!token || !safeTokenEqual(token, deps.authToken)) {
         res.writeHead(401);
         res.end("Unauthorized");
         return;
@@ -67,8 +74,8 @@ export function createWsServer(deps: RouterDeps & { authToken: string }): {
   });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-    const token = extractToken(req as any);
-    if (token !== deps.authToken) {
+    const token = extractToken(req);
+    if (!token || !safeTokenEqual(token, deps.authToken)) {
       logger.warn("WebSocket connection rejected: invalid token");
       ws.close(4001, "Unauthorized");
       return;

@@ -40,14 +40,14 @@ export function onSessionChange(cb: (count: number) => void): () => void {
 export function addClient(ws: WebSocket): void {
   clients.add(ws);
   _sessionCount++;
-  for (const cb of [...sessionChangeListeners]) cb(_sessionCount);
+  for (let i = 0; i < sessionChangeListeners.length; i++) sessionChangeListeners[i](_sessionCount);
 }
 
 /** Remove a disconnected WebSocket client. No-op if already removed. */
 export function removeClient(ws: WebSocket): void {
   if (!clients.delete(ws)) return;
   _sessionCount--;
-  for (const cb of [...sessionChangeListeners]) cb(_sessionCount);
+  for (let i = 0; i < sessionChangeListeners.length; i++) sessionChangeListeners[i](_sessionCount);
 }
 
 /** Get the current number of connected clients. */
