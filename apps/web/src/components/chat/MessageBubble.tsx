@@ -214,7 +214,9 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
                 </div>
               )}
               {textContent.trim() && (
-                <p className="whitespace-pre-wrap break-words">{textContent}</p>
+                <Suspense>
+                  <LazyMarkdownContent content={textContent} isStreaming={false} variant="user" />
+                </Suspense>
               )}
             </div>
           )}
