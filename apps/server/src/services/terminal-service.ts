@@ -209,10 +209,10 @@ export class TerminalService {
         error: err,
       });
     }
-    // Kill the entire process tree (grandchildren like git, npm) before the PTY
-    // shell itself. On Windows, pty.kill() only kills the direct shell process;
-    // grandchildren survive and keep the worktree directory locked.
-    await killProcessTree(session.pty.pid);
+    // Kill the PTY first so node-pty's conpty cleanup agent (conpty_console_list_agent)
+    // can AttachConsole while the shell process is still alive. If we run
+    // killProcessTree first, the shell is already dead when the agent forks and
+    // AttachConsole fails with "AttachConsole failed".
     try {
       session.pty.kill();
     } catch (err) {
@@ -221,6 +221,10 @@ export class TerminalService {
         error: err,
       });
     }
+    // Kill any grandchildren (git, npm, etc.) that were not attached to the
+    // console and therefore missed by node-pty's process list enumeration.
+    // Best-effort: the shell may already be dead at this point.
+    await killProcessTree(session.pty.pid);
   }
 
   private removePty(ptyId: string): void {
