@@ -9,14 +9,45 @@ import { logger } from "@mcode/shared";
 
 const clients = new Set<WebSocket>();
 
+let _sessionCount = 0;
+const sessionChangeListeners: ((count: number) => void)[] = [];
+
+/**
+ * Get the net cumulative session count.
+ *
+ * Each `addClient` call increments this value; each `removeClient` call
+ * decrements it. This tracks session lifecycle (total connects minus
+ * total disconnects) and is distinct from `clientCount()`, which returns
+ * `clients.size` - the number of sockets currently open.
+ */
+export function sessionCount(): number {
+  return _sessionCount;
+}
+
+/**
+ * Register a callback invoked whenever the session count changes.
+ * Returns an unsubscribe function that removes the callback.
+ */
+export function onSessionChange(cb: (count: number) => void): () => void {
+  sessionChangeListeners.push(cb);
+  return () => {
+    const idx = sessionChangeListeners.indexOf(cb);
+    if (idx >= 0) sessionChangeListeners.splice(idx, 1);
+  };
+}
+
 /** Register a WebSocket client for push event delivery. */
 export function addClient(ws: WebSocket): void {
   clients.add(ws);
+  _sessionCount++;
+  for (const cb of sessionChangeListeners) cb(_sessionCount);
 }
 
 /** Remove a disconnected WebSocket client. */
 export function removeClient(ws: WebSocket): void {
   clients.delete(ws);
+  _sessionCount--;
+  for (const cb of sessionChangeListeners) cb(_sessionCount);
 }
 
 /** Get the current number of connected clients. */
@@ -58,4 +89,17 @@ export function broadcast(
       ws.send(payload);
     }
   }
+}
+
+/**
+ * Reset module-level state to a clean baseline.
+ *
+ * FOR TESTING ONLY. Do not call this in production code.
+ * Resets `_sessionCount` to 0, clears `sessionChangeListeners`, and
+ * empties the `clients` set so each test starts from a known state.
+ */
+export function _resetForTest(): void {
+  _sessionCount = 0;
+  sessionChangeListeners.length = 0;
+  clients.clear();
 }
