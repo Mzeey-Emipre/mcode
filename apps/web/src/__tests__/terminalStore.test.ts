@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useTerminalStore, TerminalPanelState, TERMINAL_PANEL_DEFAULTS } from "@/stores/terminalStore";
+import { useTerminalStore, TERMINAL_PANEL_DEFAULTS } from "@/stores/terminalStore";
 
 describe("TerminalStore", () => {
   beforeEach(() => {
