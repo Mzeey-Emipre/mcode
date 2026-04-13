@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ComponentType } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
 import { ChevronDown, ChevronRight, Lock, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import {
   findModelById,
   type ModelProvider,
 } from "@/lib/model-registry";
+import { getTransport } from "@/transport";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -52,6 +53,38 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
   const containerRef = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Dynamically fetched model lists, keyed by provider ID. Falls back to the
+  // static registry when a fetch has not completed yet or fails.
+  const [dynamicModels, setDynamicModels] = useState<Map<string, ModelProvider["models"]>>(new Map());
+  const dynamicModelsRef = useRef<Map<string, ModelProvider["models"]>>(new Map());
+  const fetchingRef = useRef<Set<string>>(new Set());
+
+  /** Fetches live models for a provider and caches the result. No-ops on repeat calls. */
+  const fetchProviderModels = useCallback(async (providerId: string) => {
+    if (fetchingRef.current.has(providerId) || dynamicModelsRef.current.has(providerId)) return;
+    fetchingRef.current.add(providerId);
+    try {
+      const info = await getTransport().listProviderModels(providerId);
+      const mapped: ModelProvider["models"] = info.map((m) => ({
+        id: m.id,
+        label: m.name,
+        providerId,
+        group: m.group,
+        multiplier: m.multiplier,
+      }));
+      dynamicModelsRef.current = new Map(dynamicModelsRef.current).set(providerId, mapped);
+      setDynamicModels(new Map(dynamicModelsRef.current));
+    } catch {
+      // Fall back to static registry silently
+    } finally {
+      fetchingRef.current.delete(providerId);
+    }
+  }, []);
+
+  /** Returns live models for a provider, falling back to the static registry. */
+  const getModels = (p: ModelProvider): ModelProvider["models"] =>
+    dynamicModels.get(p.id) ?? p.models;
+
   // Delayed hover close so user has time to move to submenu
   const setHoveredWithDelay = (providerId: string | null) => {
     if (hoverTimeoutRef.current) {
@@ -80,6 +113,13 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
   const Icon = meta?.icon ?? ClaudeIcon;
   const iconClass = meta?.color ?? "";
   const shortLabel = model ? model.label.replace(`${displayProvider?.name} `, "") : selectedModelId;
+
+  // For a provider-locked thread, fetch immediately so the list is current.
+  useEffect(() => {
+    if (providerLocked && displayProvider) {
+      fetchProviderModels(displayProvider.id);
+    }
+  }, [providerLocked, displayProvider?.id, fetchProviderModels]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -184,7 +224,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
         onMouseLeave={() => setHoveredWithDelay(null)}
       >
         <div className="max-h-[min(480px,calc(100vh-8rem))] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
-          {renderGroupedModels(p.models, p.id, isSelected)}
+          {renderGroupedModels(getModels(p), p.id, isSelected)}
         </div>
       </div>
     );
@@ -204,7 +244,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
           {providerLocked && displayProvider ? (
             <div className="max-h-[min(480px,calc(100vh-8rem))] overflow-y-auto">
               {renderGroupedModels(
-                displayProvider.models,
+                getModels(displayProvider),
                 displayProvider.id,
                 (id) => id === normalizedSelectedId
               )}
@@ -219,7 +259,12 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
               <div
                 key={p.id}
                 className="relative"
-                onMouseEnter={() => !p.comingSoon && hasModels && setHoveredWithDelay(p.id)}
+                onMouseEnter={() => {
+                    if (!p.comingSoon && hasModels) {
+                      setHoveredWithDelay(p.id);
+                      fetchProviderModels(p.id);
+                    }
+                  }}
                 onMouseLeave={() => setHoveredWithDelay(null)}
               >
                 <button
