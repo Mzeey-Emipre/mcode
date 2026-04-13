@@ -8,8 +8,9 @@ import { createWsServer } from "./transport/ws-server";
 import { broadcast } from "./transport/push";
 import { PortPush, type MessagePortLike } from "./transport/port-push";
 import { logger, getMcodeDir } from "@mcode/shared";
-import { writeFileSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
+import { randomUUID } from "crypto";
 
 // Services
 import { WorkspaceService } from "./services/workspace-service";
@@ -51,6 +52,30 @@ const LOCK_FILE_PATH = join(getMcodeDir(), "server.lock");
  * "0.0.0.0" or "::" to expose the server on all network interfaces.
  */
 const HOST = process.env.MCODE_HOST ?? "127.0.0.1";
+
+/**
+ * Resolve the auth token with precedence:
+ * 1. MCODE_AUTH_TOKEN env var (for testing / standalone override)
+ * 2. ~/.mcode/auth-secret file (stable across restarts)
+ * 3. Generate new UUID and persist to file
+ */
+function resolveAuthToken(): string {
+  const fromEnv = process.env.MCODE_AUTH_TOKEN;
+  if (fromEnv) return fromEnv;
+
+  const secretPath = join(getMcodeDir(), "auth-secret");
+  if (existsSync(secretPath)) {
+    const token = readFileSync(secretPath, "utf-8").trim();
+    if (token) return token;
+  }
+
+  const token = randomUUID();
+  mkdirSync(getMcodeDir(), { recursive: true });
+  writeFileSync(secretPath, token, { mode: 0o600 });
+  return token;
+}
+
+const AUTH_TOKEN = resolveAuthToken();
 
 // Initialize DI container
 const container = setupContainer();
@@ -220,6 +245,7 @@ const { httpServer, wss } = createWsServer({
   prDraftService,
   threadRepo,
   workspaceRepo,
+  authToken: AUTH_TOKEN,
 });
 
 /**
@@ -240,13 +266,16 @@ function listen(port: number, attempt = 1): void {
     logger.info(`Mcode server listening on ${HOST}:${port}`);
 
     // Write lock file so other instances can discover this server
-    const authToken = process.env.MCODE_AUTH_TOKEN ?? "";
     try {
-      writeFileSync(
-        LOCK_FILE_PATH,
-        JSON.stringify({ port, authToken, pid: process.pid, startedAt: new Date().toISOString() }),
-        { mode: 0o600 },
-      );
+      const lockData = JSON.stringify({
+        port,
+        authToken: AUTH_TOKEN,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        version: process.env.MCODE_VERSION ?? "0.0.0",
+        ipcPath: "",
+      });
+      writeFileSync(LOCK_FILE_PATH, lockData, { mode: 0o600 });
       logger.info("Server lock file written", { path: LOCK_FILE_PATH });
     } catch (err) {
       logger.warn("Failed to write server lock file", { error: String(err) });
