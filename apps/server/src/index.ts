@@ -5,7 +5,7 @@
 
 import { setupContainer } from "./container";
 import { createWsServer } from "./transport/ws-server";
-import { broadcast } from "./transport/push";
+import { broadcast, onSessionChange, sessionCount } from "./transport/push";
 import { PortPush, type MessagePortLike } from "./transport/port-push";
 import { logger, getMcodeDir } from "@mcode/shared";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
@@ -283,7 +283,33 @@ function listen(port: number, attempt = 1): void {
   });
 }
 
+/** Grace period in milliseconds before shutting down when all sessions disconnect. */
+const GRACE_PERIOD_MS = 30_000;
+
+/** Timer handle for the active grace period, null when no grace period is running. */
+let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
 listen(PREFERRED_PORT);
+
+// Subscribe to session changes after the server starts so the grace period
+// only activates once the server is ready to accept connections.
+onSessionChange((count) => {
+  if (count === 0) {
+    logger.info("All sessions disconnected, starting grace period", {
+      graceMs: GRACE_PERIOD_MS,
+    });
+    graceTimer = setTimeout(() => {
+      if (sessionCount() === 0) {
+        logger.info("Grace period expired with zero sessions, shutting down");
+        shutdown();
+      }
+    }, GRACE_PERIOD_MS);
+  } else if (graceTimer) {
+    logger.info("New session connected, cancelling grace period");
+    clearTimeout(graceTimer);
+    graceTimer = null;
+  }
+});
 
 /**
  * Gracefully shut down all services, close WebSocket connections,
@@ -292,6 +318,12 @@ listen(PREFERRED_PORT);
  */
 async function shutdown(): Promise<void> {
   logger.info("Shutting down...");
+
+  // Clear any pending grace period timer
+  if (graceTimer) {
+    clearTimeout(graceTimer);
+    graceTimer = null;
+  }
 
   // 0. Close the MessagePort stream transport
   portPush.detach();
