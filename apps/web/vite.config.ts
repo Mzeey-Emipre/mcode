@@ -51,7 +51,6 @@ export default defineConfig({
       "@shikijs/themes/github-dark",
       "@shikijs/themes/github-light",
     ],
-    exclude: ["mermaid"],
   },
   clearScreen: false,
   server: {
