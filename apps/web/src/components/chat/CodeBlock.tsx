@@ -50,7 +50,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming, 
 
   return (
     <div className="my-2 rounded-lg overflow-hidden border border-border">
-      <div className="flex items-center justify-between bg-muted/50 px-3 py-1 border-b border-border">
+      <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
         <span className="text-xs text-muted-foreground">{language || "text"}</span>
         {!isStreaming && (
           <button

@@ -144,7 +144,7 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming, variant = "
         <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-destructive bg-destructive/10 border-b border-destructive/20">
           Diagram could not be rendered
         </div>
-        <div className="flex items-center justify-between bg-muted px-3 py-1 border-b border-border">
+        <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
           <span className="text-xs text-muted-foreground">mermaid</span>
           <button
             type="button"
@@ -165,8 +165,8 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming, variant = "
   // Loading or success state
   return (
     <div className="my-2 rounded-lg overflow-hidden border border-border">
-      {/* Header bar - opaque in user variant for contrast over primary-colored bubble */}
-      <div className={`flex items-center justify-between px-3 py-1 border-b border-border ${variant === "user" ? "bg-muted" : "bg-muted/50"}`}>
+      {/* Header bar - solid bg-background matches diagram view, no transparency bleed in user bubble */}
+      <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
         <span className="text-xs text-muted-foreground">mermaid</span>
         <div className="flex items-center gap-1">
           {state.status === "success" && (
