@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
+// @ts-expect-error -- Node types not in web tsconfig; vitest provides fs at runtime
 import { readFileSync } from "fs";
 
 const EDITOR_SRC = readFileSync(
