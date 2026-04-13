@@ -535,6 +535,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
               error: event.data.message,
             } satisfies AgentEvent);
             this.sessions.delete(sessionId);
+            this.contextWindowBySession.delete(sessionId);
             resolve();
           }),
         );
