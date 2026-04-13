@@ -17,7 +17,7 @@ vi.mock("../components/chat/CodeBlock", () => ({
     disableHighlighting?: boolean;
     isStreaming?: boolean;
   }) => (
-    <pre data-testid="code-block" data-language={language} data-disable-highlighting={String(disableHighlighting)}>
+    <pre data-testid="code-block" data-language={language} data-disable-highlighting={String(disableHighlighting)} data-streaming={String(isStreaming)}>
       {code}
     </pre>
   )),
