@@ -1,5 +1,6 @@
 import type { McodeTransport } from "./types";
 import { createWsTransport } from "./ws-transport";
+import { ipcPushClient } from "./ipc-push-client";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 
@@ -17,13 +18,44 @@ const CONNECT_TIMEOUT_MS = 5000;
 let transport: (McodeTransport & { close(): void; waitForConnection(timeoutMs: number): Promise<void> }) | null = null;
 
 /**
- * Resolve the WebSocket server URL.
- *
- * In Electron, `window.desktopBridge.getServerUrl()` returns the URL of the
- * server spawned by the main process. In standalone / dev mode we fall back
- * to an environment variable or the default localhost URL.
+ * Scan a port range to find the mcode server.
+ * Probes /health with the stored auth token.
  */
-async function resolveServerUrl(): Promise<string> {
+async function scanPortRange(
+  portMin: number,
+  portMax: number,
+  token: string,
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const probes = Array.from({ length: portMax - portMin }, (_, i) => {
+      const port = portMin + i;
+      return fetch(`http://localhost:${port}/health`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      })
+        .then((r) => (r.ok ? port : null))
+        .catch(() => null);
+    });
+
+    const results = await Promise.all(probes);
+    const foundPort = results.find((p) => p !== null);
+    return foundPort ? `ws://localhost:${foundPort}?token=${token}` : null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Resolve the WebSocket server URL and IPC path.
+ *
+ * In Electron, `window.desktopBridge.getServerUrl()` returns the URL and IPC
+ * path of the server spawned by the main process. In standalone / dev mode we
+ * fall back to an environment variable or the default localhost URL.
+ */
+async function resolveServerUrl(): Promise<{ url: string; ipcPath: string }> {
   if (window.desktopBridge?.getServerUrl) {
     try {
       return await window.desktopBridge.getServerUrl();
@@ -36,7 +68,7 @@ async function resolveServerUrl(): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const envUrl = (import.meta as any).env?.VITE_SERVER_URL as string | undefined;
 
-  return envUrl || DEFAULT_SERVER_URL;
+  return { url: envUrl || DEFAULT_SERVER_URL, ipcPath: "" };
 }
 
 let initPromise: Promise<McodeTransport> | null = null;
@@ -49,7 +81,7 @@ export async function initTransport(): Promise<McodeTransport> {
   if (transport) return transport;
   if (initPromise) return initPromise;
 
-  initPromise = resolveServerUrl().then(async (url) => {
+  initPromise = resolveServerUrl().then(async ({ url, ipcPath }) => {
     transport = createWsTransport(url, {
       onStatusChange: (status) => {
         useConnectionStore.getState().setStatus(status);
@@ -59,7 +91,25 @@ export async function initTransport(): Promise<McodeTransport> {
           void useSettingsStore.getState().fetch();
         }
       },
+      discoverServerUrl: async () => {
+        // In Electron, ask the desktop bridge for the current server URL
+        if (window.desktopBridge?.getServerUrl) {
+          const info = await window.desktopBridge.getServerUrl();
+          return info.url;
+        }
+        // In browser, scan the port range with the stored token
+        const token = localStorage.getItem("mcode-auth-token") ?? "";
+        const found = await scanPortRange(19400, 19800, token);
+        if (found) return found;
+        throw new Error("Server not found");
+      },
     });
+
+    // Connect IPC fast path if available
+    if (ipcPath) {
+      ipcPushClient.connect(ipcPath);
+    }
+
     try {
       await transport.waitForConnection(CONNECT_TIMEOUT_MS);
     } catch (err) {
