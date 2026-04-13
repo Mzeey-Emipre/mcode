@@ -6,21 +6,35 @@ export interface TerminalInstance {
   readonly label: string;
 }
 
-interface TerminalState {
-  terminals: Record<string, readonly TerminalInstance[]>;
-  activeTerminalId: string | null;
-  panelVisible: boolean;
-  splitMode: boolean;
+/** Per-thread terminal panel state (visibility, height, active terminal). */
+export type TerminalPanelState = {
+  readonly visible: boolean;
+  readonly height: number;
+  readonly activeTerminalId: string | null;
+};
 
+/** Default state for threads with no panel record. Panels start closed. */
+export const TERMINAL_PANEL_DEFAULTS: TerminalPanelState = {
+  visible: false,
+  height: 300,
+  activeTerminalId: null,
+} as const;
+
+interface TerminalState {
+  readonly terminals: Record<string, readonly TerminalInstance[]>;
+  readonly terminalPanelByThread: Record<string, TerminalPanelState>;
+  readonly splitMode: boolean;
+
+  getTerminalPanel: (threadId: string) => TerminalPanelState;
+  toggleTerminalPanel: (threadId: string) => void;
+  showTerminalPanel: (threadId: string) => void;
+  hideTerminalPanel: (threadId: string) => void;
+  setTerminalPanelHeight: (threadId: string, height: number) => void;
+  setActiveTerminal: (threadId: string, ptyId: string | null) => void;
   addTerminal: (threadId: string, ptyId: string) => void;
   removeTerminal: (ptyId: string) => void;
   removeAllTerminals: (threadId: string) => void;
-  setActiveTerminal: (ptyId: string | null) => void;
-  togglePanel: () => void;
-  showPanel: () => void;
-  hidePanel: () => void;
   toggleSplit: () => void;
-  syncToThread: (threadId: string | null) => void;
 }
 
 function generateLabel(existing: readonly TerminalInstance[]): string {
