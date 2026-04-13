@@ -1,14 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { MarkdownContent } from "../components/chat/MarkdownContent";
 import { CodeBlock } from "../components/chat/CodeBlock";
 
 // Mock CodeBlock to avoid shiki/worker dependencies
 vi.mock("../components/chat/CodeBlock", () => ({
-  CodeBlock: vi.fn(({ code, language, disableHighlighting }: {
+  CodeBlock: vi.fn(({ code, language, disableHighlighting, isStreaming }: {
     code: string;
     language: string;
     disableHighlighting?: boolean;
+    isStreaming?: boolean;
   }) => (
     <pre data-testid="code-block" data-language={language} data-disable-highlighting={String(disableHighlighting)}>
       {code}
@@ -104,7 +105,7 @@ describe("MarkdownContent variant styling", () => {
     it("passes disableHighlighting=false to CodeBlock", () => {
       render(<MarkdownContent content={'```ts\nconst x = 1;\n```'} />);
       expect(mockCodeBlock).toHaveBeenCalledWith(
-        expect.objectContaining({ disableHighlighting: false }),
+        expect.objectContaining({ disableHighlighting: false, isStreaming: false }),
         undefined,
       );
     });
@@ -138,7 +139,7 @@ describe("MarkdownContent variant styling", () => {
     it("passes disableHighlighting=true to CodeBlock", () => {
       render(<MarkdownContent content={'```ts\nconst x = 1;\n```'} variant="user" />);
       expect(mockCodeBlock).toHaveBeenCalledWith(
-        expect.objectContaining({ disableHighlighting: true }),
+        expect.objectContaining({ disableHighlighting: true, isStreaming: false }),
         undefined,
       );
     });
