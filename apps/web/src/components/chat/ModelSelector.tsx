@@ -111,63 +111,71 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
     setHoveredProvider(null);
   };
 
-  const renderSubmenu = (p: ModelProvider) => {
-    // Group models by their `group` field for providers that use it (e.g. Copilot)
-    const hasGroups = p.models.some((m) => m.group);
-    const groups: { label: string; models: typeof p.models }[] = [];
-    if (hasGroups) {
-      const seen = new Map<string, typeof p.models>();
-      for (const m of p.models) {
-        const g = m.group ?? "";
-        if (!seen.has(g)) seen.set(g, []);
-        seen.get(g)!.push(m);
-      }
-      seen.forEach((models, label) => groups.push({ label, models }));
+  /** Groups a provider's models by their `group` field. Returns ungrouped if none use it. */
+  const groupModels = (models: ModelProvider["models"]) => {
+    const hasGroups = models.some((m) => m.group);
+    if (!hasGroups) return null;
+    const seen = new Map<string, typeof models>();
+    for (const m of models) {
+      const g = m.group ?? "";
+      if (!seen.has(g)) seen.set(g, []);
+      seen.get(g)!.push(m);
     }
+    const result: { label: string; models: typeof models }[] = [];
+    seen.forEach((ms, label) => result.push({ label, models: ms }));
+    return result;
+  };
 
+  const renderModelRow = (
+    m: ModelProvider["models"][0],
+    providerId: string,
+    isSelected: (id: string) => boolean
+  ) => (
+    <button
+      key={m.id}
+      onClick={() => handleSelectModel(m.id, providerId)}
+      className={cn(
+        "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
+        isSelected(m.id)
+          ? "bg-accent text-foreground"
+          : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+      )}
+    >
+      <span className="flex-1 text-left">{m.label}</span>
+      {m.multiplier != null && m.multiplier !== 1 && (
+        <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+          {m.multiplier}x
+        </span>
+      )}
+      {isSelected(m.id) && (
+        <Check size={10} className="shrink-0 text-foreground" />
+      )}
+    </button>
+  );
+
+  const renderGroupedModels = (
+    models: ModelProvider["models"],
+    providerId: string,
+    isSelected: (id: string) => boolean
+  ) => {
+    const groups = groupModels(models);
+    if (!groups) {
+      return models.map((m) => renderModelRow(m, providerId, isSelected));
+    }
+    return groups.map(({ label, models: gModels }) => (
+      <div key={label}>
+        <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 select-none">
+          {label}
+        </div>
+        {gModels.map((m) => renderModelRow(m, providerId, isSelected))}
+      </div>
+    ));
+  };
+
+  const renderSubmenu = (p: ModelProvider) => {
     // A model row is "selected" only when both ID and provider match.
     const isSelected = (modelId: string) =>
       modelId === normalizedSelectedId && p.id === (selectedProviderId ?? displayProvider?.id);
-
-    // Subtle vendor badge shown inline on each model row when groups are present,
-    // so the vendor is visible at a glance when scanning a long list.
-    const GROUP_BADGE_COLORS: Record<string, string> = {
-      OpenAI:    "bg-emerald-500/10 text-emerald-400",
-      Anthropic: "bg-orange-500/10 text-orange-400",
-      Google:    "bg-sky-500/10 text-sky-400",
-      xAI:       "bg-zinc-500/10 text-zinc-400",
-    };
-
-    const ModelRow = ({ m, groupLabel }: { m: typeof p.models[0]; groupLabel?: string }) => (
-      <button
-        key={m.id}
-        onClick={() => handleSelectModel(m.id, p.id)}
-        className={cn(
-          "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-          isSelected(m.id)
-            ? "bg-accent text-foreground"
-            : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
-        )}
-      >
-        <span className="flex-1 text-left">{m.label}</span>
-        {groupLabel && (
-          <span className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium leading-none",
-            GROUP_BADGE_COLORS[groupLabel] ?? "bg-muted text-muted-foreground"
-          )}>
-            {groupLabel}
-          </span>
-        )}
-        {m.multiplier != null && m.multiplier !== 1 && (
-          <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-            {m.multiplier}x
-          </span>
-        )}
-        {isSelected(m.id) && (
-          <Check size={10} className="shrink-0 text-foreground" />
-        )}
-      </button>
-    );
 
     return (
       <div
@@ -176,20 +184,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
         onMouseLeave={() => setHoveredWithDelay(null)}
       >
         <div className="max-h-[min(480px,calc(100vh-8rem))] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
-          {hasGroups
-            ? groups.map(({ label, models }) => (
-                <div key={label}>
-                  <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 select-none">
-                    {label}
-                  </div>
-                  {models.map((m) => (
-                    <ModelRow key={m.id} m={m} groupLabel={label} />
-                  ))}
-                </div>
-              ))
-            : p.models.map((m) => (
-                <ModelRow key={m.id} m={m} />
-              ))}
+          {renderGroupedModels(p.models, p.id, isSelected)}
         </div>
       </div>
     );
@@ -207,29 +202,12 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
         <div className="absolute bottom-full left-0 z-20 mb-1 min-w-[180px] rounded-md border border-border bg-popover p-1 shadow-lg">
           {/* When provider is locked, show only that provider's models directly */}
           {providerLocked && displayProvider ? (
-            <div className="max-h-[280px] overflow-y-auto">
-              {displayProvider.models.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => handleSelectModel(m.id, displayProvider.id)}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                    m.id === normalizedSelectedId
-                      ? "bg-accent text-foreground"
-                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
-                  )}
-                >
-                  <span className="flex-1 text-left">{m.label}</span>
-                  {m.multiplier != null && m.multiplier !== 1 && (
-                    <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-                      {m.multiplier}x
-                    </span>
-                  )}
-                  {m.id === normalizedSelectedId && (
-                    <Check size={10} className="shrink-0 text-foreground" />
-                  )}
-                </button>
-              ))}
+            <div className="max-h-[min(480px,calc(100vh-8rem))] overflow-y-auto">
+              {renderGroupedModels(
+                displayProvider.models,
+                displayProvider.id,
+                (id) => id === normalizedSelectedId
+              )}
             </div>
           ) : MODEL_PROVIDERS.map((p) => {
             const pm = PROVIDER_META[p.id];
