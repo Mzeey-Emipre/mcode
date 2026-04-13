@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, lazy, Suspense } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
@@ -18,6 +18,9 @@ interface MarkdownContentProps {
 
 /** Stable remark plugin list, hoisted to avoid re-creating on every render. */
 const plugins = [remarkGfm];
+
+/** Lazy-loaded MermaidBlock - only fetched when a mermaid fence is encountered. */
+const LazyMermaidBlock = lazy(() => import("./MermaidBlock"));
 
 /**
  * Builds the static component overrides that depend on `variant`.
@@ -153,6 +156,16 @@ function makeComponents(isStreaming: boolean, variant: "assistant" | "user") {
       if (language === "plan-questions") return null;
 
       const code = String(children).replace(/\n$/, "");
+
+      if (language === "mermaid") {
+        return (
+          <Suspense fallback={
+            <pre className="bg-muted/30 rounded-lg p-4 overflow-x-auto"><code>{code}</code></pre>
+          }>
+            <LazyMermaidBlock code={code} isStreaming={isStreaming} />
+          </Suspense>
+        );
+      }
 
       return (
         <CodeBlock

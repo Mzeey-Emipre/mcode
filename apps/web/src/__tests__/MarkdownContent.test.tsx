@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MarkdownContent } from "../components/chat/MarkdownContent";
 import { CodeBlock } from "../components/chat/CodeBlock";
 
 // Mock CodeBlock to avoid shiki/worker dependencies
+vi.mock("../components/chat/MermaidBlock", () => ({
+  default: ({ code, isStreaming }: { code: string; isStreaming: boolean }) => (
+    <div data-testid="mermaid-block" data-streaming={String(isStreaming)}>{code}</div>
+  ),
+}));
+
 vi.mock("../components/chat/CodeBlock", () => ({
   CodeBlock: vi.fn(({ code, language, disableHighlighting, isStreaming }: {
     code: string;
@@ -142,6 +148,44 @@ describe("MarkdownContent variant styling", () => {
         expect.objectContaining({ disableHighlighting: true, isStreaming: false }),
         undefined,
       );
+    });
+  });
+});
+
+describe("mermaid code blocks", () => {
+  it("routes mermaid language to MermaidBlock", async () => {
+    render(
+      <MarkdownContent content={'```mermaid\ngraph TD; A-->B;\n```'} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("mermaid-block")).toBeInTheDocument();
+      expect(screen.getByTestId("mermaid-block")).toHaveTextContent("graph TD; A-->B;");
+    });
+  });
+
+  it("passes isStreaming to MermaidBlock", async () => {
+    render(
+      <MarkdownContent content={'```mermaid\ngraph TD;\n```'} isStreaming={true} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("mermaid-block")).toHaveAttribute("data-streaming", "true");
+    });
+  });
+
+  it("routes non-mermaid languages to CodeBlock", () => {
+    render(
+      <MarkdownContent content={'```python\nprint("hi")\n```'} />,
+    );
+    expect(screen.getByTestId("code-block")).toBeInTheDocument();
+    expect(screen.queryByTestId("mermaid-block")).not.toBeInTheDocument();
+  });
+
+  it("routes mermaid to MermaidBlock in user variant too", async () => {
+    render(
+      <MarkdownContent content={'```mermaid\ngraph LR; X-->Y;\n```'} variant="user" />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("mermaid-block")).toBeInTheDocument();
     });
   });
 });
