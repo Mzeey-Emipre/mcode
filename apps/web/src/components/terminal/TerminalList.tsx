@@ -12,7 +12,9 @@ export function TerminalList({ threadId, onClose }: TerminalListProps) {
   const terminals = useTerminalStore(
     (s) => s.terminals[threadId] ?? EMPTY_TERMINALS,
   );
-  const activeTerminalId = useTerminalStore((s) => s.activeTerminalId);
+  const activeTerminalId = useTerminalStore(
+    (s) => s.terminalPanelByThread[threadId]?.activeTerminalId ?? null,
+  );
   const setActiveTerminal = useTerminalStore((s) => s.setActiveTerminal);
 
   return (
@@ -24,7 +26,7 @@ export function TerminalList({ threadId, onClose }: TerminalListProps) {
           <div
             key={terminal.id}
             className="group flex cursor-pointer items-center justify-between px-3 py-1.5 hover:bg-muted"
-            onClick={() => setActiveTerminal(terminal.id)}
+            onClick={() => setActiveTerminal(threadId, terminal.id)}
           >
             <div className="flex items-center gap-2">
               <TerminalSquare className="size-3.5 text-muted-foreground" />
