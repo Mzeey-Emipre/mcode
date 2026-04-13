@@ -202,7 +202,9 @@ function openIfAllowed(url: string): void {
   try {
     const parsed = new URL(url);
     if (EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
-      shell.openExternal(parsed.href).catch(() => {});
+      shell.openExternal(parsed.href).catch((err: unknown) => {
+        console.error(`[openIfAllowed] Failed to open ${parsed.protocol} URL: ${parsed.href}`, err);
+      });
     }
   } catch {
     // Invalid URL, ignore

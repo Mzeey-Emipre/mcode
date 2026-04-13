@@ -19,6 +19,7 @@ describe("MarkdownContent link handling", () => {
 
   afterEach(() => {
     delete (window as unknown as Record<string, unknown>).desktopBridge;
+    vi.unstubAllGlobals();
   });
 
   it("calls desktopBridge.openExternalUrl for https links", () => {
@@ -64,7 +65,5 @@ describe("MarkdownContent link handling", () => {
     render(<MarkdownContent content="[link](https://example.com)" />);
     fireEvent.click(screen.getByText("link"));
     expect(mockOpen).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer");
-
-    vi.unstubAllGlobals();
   });
 });
