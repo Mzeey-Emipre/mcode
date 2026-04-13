@@ -219,7 +219,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
 
     return (
       <div
-        className="absolute left-full top-0 -ml-1 pl-2 min-w-[180px]"
+        className="absolute left-full bottom-0 -ml-1 pl-2 min-w-[180px]"
         onMouseEnter={() => setHoveredWithDelay(p.id)}
         onMouseLeave={() => setHoveredWithDelay(null)}
       >
