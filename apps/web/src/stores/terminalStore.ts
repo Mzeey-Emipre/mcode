@@ -164,8 +164,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   removeAllTerminals: (threadId) =>
     set((state) => {
       if (!state.terminals[threadId] && !state.terminalPanelByThread[threadId]) return state;
-      const { [threadId]: _, ...remainingTerminals } = state.terminals;
-      const { [threadId]: __, ...remainingPanels } = state.terminalPanelByThread;
+      const remainingTerminals = { ...state.terminals };
+      delete remainingTerminals[threadId];
+      const remainingPanels = { ...state.terminalPanelByThread };
+      delete remainingPanels[threadId];
       return {
         terminals: remainingTerminals,
         terminalPanelByThread: remainingPanels,

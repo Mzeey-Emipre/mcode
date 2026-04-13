@@ -16,6 +16,21 @@ const execFile = promisify(execFileCb);
 const TASKKILL_TIMEOUT_MS = 5_000;
 
 /**
+ * Returns true when the error indicates the process was already gone.
+ * These are expected when killProcessTree is called after the PTY shell has
+ * already exited (e.g. the cleanup pass after pty.kill()).
+ */
+function isProcessGoneError(err: unknown): boolean {
+  const e = err as NodeJS.ErrnoException & { code?: string | number; stderr?: string };
+  // Unix: ESRCH = no such process
+  if (e.code === "ESRCH") return true;
+  // Windows: taskkill exits with code 128 when the PID is not found
+  if (typeof e.code === "number" && e.code === 128) return true;
+  if (typeof e.stderr === "string" && /not found/i.test(e.stderr)) return true;
+  return false;
+}
+
+/**
  * Kill an entire process tree rooted at the given PID.
  * Best-effort: never throws. The process may already be dead.
  */
@@ -32,9 +47,14 @@ export async function killProcessTree(pid: number): Promise<void> {
       }
     }
   } catch (err) {
-    logger.warn("killProcessTree: process may already be dead", {
-      pid,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    if (isProcessGoneError(err)) {
+      // Expected when the process already exited (e.g. cleanup pass after pty.kill()).
+      logger.debug("killProcessTree: process already gone", { pid });
+    } else {
+      logger.warn("killProcessTree: unexpected error killing process tree", {
+        pid,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }

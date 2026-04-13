@@ -3,6 +3,7 @@ import { useTerminalStore, type TerminalInstance } from "@/stores/terminalStore"
 
 const EMPTY_TERMINALS: readonly TerminalInstance[] = [];
 
+/** Props for TerminalList: the owning thread and a handler to close a single terminal. */
 interface TerminalListProps {
   readonly threadId: string;
   readonly onClose: (ptyId: string) => void;

@@ -177,23 +177,35 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   setDiffLoading: (loading) => set({ diffLoading: loading }),
   clearThread: (threadId) =>
     set((state) => {
-      const { [threadId]: _s, ...snapshots } = state.snapshotsByThread;
-      const { [threadId]: _sl, ...snapshotsLoading } = state.snapshotsLoadingByThread;
-      const { [threadId]: _c, ...commits } = state.commitsByThread;
-      const { [threadId]: _cl, ...commitsLoading } = state.commitsLoadingByThread;
-      const { [threadId]: _rp, ...rightPanels } = state.rightPanelByThread;
-      // selectedFile and diffContent are global (not per-thread), so clearing them
-      // on any thread deletion is intentional: if the user had a diff open for the
-      // deleted thread, it should no longer be displayed. If they had a diff open
-      // for a different thread, that thread's panel will reload its content on next focus.
+      const snapshots = { ...state.snapshotsByThread };
+      delete snapshots[threadId];
+      const snapshotsLoading = { ...state.snapshotsLoadingByThread };
+      delete snapshotsLoading[threadId];
+      const commits = { ...state.commitsByThread };
+      delete commits[threadId];
+      const commitsLoading = { ...state.commitsLoadingByThread };
+      delete commitsLoading[threadId];
+      const rightPanels = { ...state.rightPanelByThread };
+      delete rightPanels[threadId];
+
+      // Only clear the global selectedFile/diffContent when they belong to the
+      // thread being deleted. Threads that have no snapshot/commit data yet (e.g.
+      // newly created) default to false, leaving another thread's open diff intact.
+      const sf = state.selectedFile;
+      const selectionBelongsToThread = sf !== null && (() => {
+        if (sf.source === "snapshot" || sf.source === "cumulative") {
+          return (state.snapshotsByThread[threadId] ?? []).some((s) => s.id === sf.id);
+        }
+        return (state.commitsByThread[threadId] ?? []).some((c) => c.sha === sf.id);
+      })();
+
       return {
         snapshotsByThread: snapshots,
         snapshotsLoadingByThread: snapshotsLoading,
         commitsByThread: commits,
         commitsLoadingByThread: commitsLoading,
         rightPanelByThread: rightPanels,
-        selectedFile: null,
-        diffContent: null,
+        ...(selectionBelongsToThread ? { selectedFile: null, diffContent: null } : {}),
       };
     }),
 }));
