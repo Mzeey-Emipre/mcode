@@ -96,7 +96,8 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
         if (!cancelled) {
           setState({ status: "success", svg });
         }
-      } catch {
+      } catch (err) {
+        console.error("[MermaidBlock] render failed:", err);
         if (!cancelled) {
           setState({ status: "error" });
         }
