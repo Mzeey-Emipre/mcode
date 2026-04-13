@@ -9,13 +9,10 @@
  */
 
 import { execFile } from "child_process";
-import { existsSync } from "fs";
-import { createRequire } from "module";
-import { join } from "path";
 import { promisify } from "util";
 
-const _require = createRequire(import.meta.url);
 import { injectable, inject } from "tsyringe";
+import which from "which";
 import { EventEmitter } from "events";
 import { CopilotClient, approveAll } from "@github/copilot-sdk";
 import type { CopilotSession, ModelInfo } from "@github/copilot-sdk";
@@ -71,56 +68,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     super();
   }
 
-  /**
-   * Check whether the Copilot CLI is reachable.
-   *
-   * When no custom path is configured the SDK resolves the `@github/copilot`
-   * npm package from Node.js module search paths — NOT an external binary
-   * called `gh`. We use the same resolution strategy here so the check matches
-   * what the SDK will actually do.
-   *
-   * When a custom path is configured we verify the binary is executable.
-   *
-   * Returns an error message if unavailable, or null if the CLI is found.
-   */
-  private async checkCliAvailable(): Promise<string | null> {
-    const settings = await this.settingsService.get();
-    const cliPath = settings.provider.cli.copilot;
-
-    if (!cliPath) {
-      // Mirror the SDK's own getBundledCliPath() resolution strategy.
-      // @github/copilot has no "main" export so require.resolve() fails;
-      // instead we check whether index.js exists in any node_modules search path.
-      const searchPaths = _require.resolve.paths("@github/copilot") ?? [];
-      const found = searchPaths.some((base) =>
-        existsSync(join(base, "@github", "copilot", "index.js")),
-      );
-      if (!found) {
-        return (
-          "GitHub Copilot package not found.\n\n" +
-          "Install it with: npm install @github/copilot\n\n" +
-          "Or set a custom path in Settings > Provider > Copilot CLI path."
-        );
-      }
-      return null;
-    }
-
-    try {
-      // shell: true is required on Windows to resolve .cmd shims from npm global installs
-      await execFileAsync(cliPath, ["--version"], { timeout: 5000, shell: true });
-      return null;
-    } catch {
-      return `Copilot CLI not found at "${cliPath}". Check the path in Settings > Provider > Copilot CLI path.`;
-    }
-  }
-
   /** Fetch available models from the Copilot SDK. */
   async listModels(): Promise<ProviderModelInfo[]> {
-    const cliError = await this.checkCliAvailable();
-    if (cliError) {
-      throw new Error(cliError);
-    }
-
     await this.refreshClient();
     const client = this.client;
     if (!client) {
@@ -178,12 +127,19 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
 
   private async doRefreshClient(): Promise<void> {
     const settings = await this.settingsService.get();
-    const cliPath = settings.provider.cli.copilot || undefined;
+    const configuredCliPath = settings.provider.cli.copilot || undefined;
     const state = this.client?.getState();
+
     // Reuse the existing client only when it is healthy. A "disconnected" or
     // "error" state means the CLI process died; rebuild so the next session
     // gets a fresh process rather than failing immediately.
-    if (cliPath === this.lastCliPath && this.client !== null && state === "connected") return;
+    if (
+      configuredCliPath === this.lastCliPath &&
+      this.client !== null &&
+      state === "connected"
+    ) {
+      return;
+    }
 
     if (this.client) {
       await this.client.stop().catch((err) =>
@@ -191,13 +147,64 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       );
     }
 
-    this.lastCliPath = cliPath;
-    this.client = new CopilotClient(cliPath ? { cliPath } : undefined);
-    // The SDK's createSession() auto-starts the connection, but listModels()
-    // does not. Eagerly start the client so both paths work.
-    await this.client.start();
+    this.lastCliPath = configuredCliPath;
 
-    logger.info("CopilotProvider: client started", { state: this.client.getState() });
+    const opts: Record<string, unknown> = {};
+
+    // User-configured CLI path takes priority over all other resolution.
+    if (configuredCliPath) {
+      opts.cliPath = configuredCliPath;
+    }
+
+    // Electron fix: utilityProcess.fork sets process.execPath to
+    // electron.exe. The SDK spawns: spawn(process.execPath, [cliPath, ...]).
+    // Temporarily override process.execPath so the SDK uses the real node.
+    // Safe because doRefreshClient is serialised by clientStartLock and
+    // JS is single-threaded — no concurrent reads during the window.
+    let execPathOverridden = false;
+    if (process.versions.electron && !configuredCliPath) {
+      const nodePath = await which("node", { nothrow: true });
+      if (nodePath) {
+        (process as NodeJS.Process & { _mcodeOrigExecPath?: string })._mcodeOrigExecPath =
+          process.execPath;
+        process.execPath = nodePath;
+        execPathOverridden = true;
+      } else {
+        logger.warn(
+          "CopilotProvider: node not found in PATH; SDK will use process.execPath (electron)",
+        );
+      }
+    }
+
+    // Explicit auth: get token from gh CLI so the headless subprocess
+    // does not need to discover auth from its own environment.
+    try {
+      const { stdout } = await execFileAsync("gh", ["auth", "token"], {
+        timeout: 5000,
+        shell: true,
+      });
+      const token = stdout.trim();
+      if (token) {
+        opts.githubToken = token;
+      }
+    } catch {
+      // gh not installed or not authenticated; SDK falls back to useLoggedInUser
+    }
+
+    try {
+      this.client = new CopilotClient(opts as ConstructorParameters<typeof CopilotClient>[0]);
+      // The SDK's createSession() auto-starts the connection, but listModels()
+      // does not. Eagerly start the client so both paths work.
+      await this.client.start();
+      logger.info("CopilotProvider: client started", { state: this.client.getState() });
+    } finally {
+      // Restore process.execPath immediately after the SDK captures it during start().
+      if (execPathOverridden) {
+        const proc = process as NodeJS.Process & { _mcodeOrigExecPath?: string };
+        process.execPath = proc._mcodeOrigExecPath!;
+        delete proc._mcodeOrigExecPath;
+      }
+    }
   }
 
   /** Start or continue a session by sending a message via the Copilot SDK. */
@@ -285,21 +292,6 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       // Abort in-flight turn by sending a new message on the existing session.
       // The previous runTurn promise will resolve when session.idle fires.
       void this.runTurn(sessionId, threadId, existing.session, message);
-      return;
-    }
-
-    // Probe CLI availability only when starting a new session
-    const cliError = await this.checkCliAvailable();
-    if (cliError) {
-      this.emit("event", {
-        type: "error",
-        threadId,
-        error: cliError,
-      } satisfies AgentEvent);
-      this.emit("event", {
-        type: "ended",
-        threadId,
-      } satisfies AgentEvent);
       return;
     }
 
