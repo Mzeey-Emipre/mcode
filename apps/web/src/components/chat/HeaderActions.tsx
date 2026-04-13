@@ -77,22 +77,34 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     });
   }, [pr, thread.id]);
 
-  const terminalVisible = useTerminalStore((s) => s.panelVisible);
-  const toggleTerminal = useTerminalStore((s) => s.togglePanel);
+  const terminalVisible = useTerminalStore((s) =>
+    thread?.id ? (s.terminalPanelByThread[thread.id]?.visible ?? false) : false,
+  );
+  const toggleTerminal = useCallback(() => {
+    if (thread?.id) useTerminalStore.getState().toggleTerminalPanel(thread.id);
+  }, [thread?.id]);
 
-  const diffActive = useDiffStore(
-    (s) => s.panelVisible && s.activeTab === "changes",
+  const diffActive = useDiffStore((s) =>
+    thread?.id
+      ? (s.rightPanelByThread[thread.id]?.visible ?? false) &&
+        (s.rightPanelByThread[thread.id]?.activeTab ?? "tasks") === "changes"
+      : false,
   );
 
   const toggleDiff = useCallback(() => {
-    const store = useDiffStore.getState();
-    if (!store.panelVisible || store.activeTab !== "changes") {
-      store.showPanel();
-      store.setActiveTab("changes");
+    if (!thread?.id) return;
+    const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
+      useDiffStore.getState();
+    const panel = getRightPanel(thread.id);
+    if (!panel.visible) {
+      showRightPanel(thread.id);
+      setRightPanelTab(thread.id, "changes");
+    } else if (panel.activeTab !== "changes") {
+      setRightPanelTab(thread.id, "changes");
     } else {
-      store.hidePanel();
+      hideRightPanel(thread.id);
     }
-  }, []);
+  }, [thread?.id]);
 
   const handleOpenPr = useCallback((url: string) => {
     try {
