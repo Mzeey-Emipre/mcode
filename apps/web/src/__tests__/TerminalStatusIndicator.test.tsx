@@ -8,8 +8,7 @@ describe("TerminalStatusIndicator", () => {
   beforeEach(() => {
     useTerminalStore.setState({
       terminals: {},
-      activeTerminalId: null,
-      panelVisible: false,
+      terminalPanelByThread: {},
       splitMode: false,
     });
     useWorkspaceStore.setState({
@@ -77,13 +76,13 @@ describe("TerminalStatusIndicator", () => {
       terminals: {
         "thread-1": [{ id: "pty-1", threadId: "thread-1", label: "Terminal 1" }],
       },
-      panelVisible: false,
+      terminalPanelByThread: { "thread-1": { visible: false, height: 300, activeTerminalId: null } },
     });
 
     render(<TerminalStatusIndicator />);
     fireEvent.click(screen.getByRole("button"));
 
-    expect(useTerminalStore.getState().panelVisible).toBe(true);
+    expect(useTerminalStore.getState().terminalPanelByThread["thread-1"]?.visible).toBe(true);
   });
 
   it("toggles panel off when clicked while panel is visible", () => {
@@ -91,12 +90,12 @@ describe("TerminalStatusIndicator", () => {
       terminals: {
         "thread-1": [{ id: "pty-1", threadId: "thread-1", label: "Terminal 1" }],
       },
-      panelVisible: true,
+      terminalPanelByThread: { "thread-1": { visible: true, height: 300, activeTerminalId: null } },
     });
 
     render(<TerminalStatusIndicator />);
     fireEvent.click(screen.getByRole("button"));
 
-    expect(useTerminalStore.getState().panelVisible).toBe(false);
+    expect(useTerminalStore.getState().terminalPanelByThread["thread-1"]?.visible).toBe(false);
   });
 });

@@ -23,13 +23,13 @@ vi.mock("@/stores/workspaceStore", () => {
 
 vi.mock("@/stores/terminalStore", () => ({
   useTerminalStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({ panelVisible: false, togglePanel: vi.fn() }),
+    selector({ terminalPanelByThread: {}, toggleTerminalPanel: vi.fn() }),
   ),
 }));
 
 vi.mock("@/stores/diffStore", () => ({
   useDiffStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({ panelVisible: false, activeTab: "changes", showPanel: vi.fn(), hidePanel: vi.fn(), setActiveTab: vi.fn() }),
+    selector({ rightPanelByThread: {}, showRightPanel: vi.fn(), hideRightPanel: vi.fn(), setRightPanelTab: vi.fn() }),
   ),
 }));
 
