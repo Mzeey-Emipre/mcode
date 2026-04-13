@@ -171,11 +171,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       opts.cliPath = configuredCliPath;
     }
 
-    // Electron fix: utilityProcess.fork sets process.execPath to
-    // electron.exe. The SDK's getNodeExecPath() reads process.execPath
-    // to spawn .js CLI files. Rather than mutating the global, we
-    // prepend the real node binary's directory to PATH in the env we
-    // pass to the SDK so `node` resolves correctly in the child process.
+    // Electron fix: resolve the real node binary path once. The SDK's
+    // getNodeExecPath() reads process.execPath to spawn .js CLI files,
+    // but in Electron that returns electron.exe which cannot host the
+    // CLI's server mode. We temporarily override process.execPath during
+    // client.start() and also prepend node's directory to PATH.
     if (process.versions.electron && !configuredCliPath) {
       if (this.cachedNodePath === undefined) {
         this.cachedNodePath = await which("node", { nothrow: true });
@@ -213,7 +213,21 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     const client = new CopilotClient(opts as ConstructorParameters<typeof CopilotClient>[0]);
     // The SDK's createSession() auto-starts the connection, but listModels()
     // does not. Eagerly start the client so both paths work.
-    await client.start();
+    //
+    // Electron fix: the SDK reads process.execPath to spawn the CLI .js file.
+    // In Electron that returns electron.exe, causing the CLI to exit immediately.
+    // Temporarily override process.execPath with the real node binary.
+    if (process.versions.electron && this.cachedNodePath) {
+      const origExecPath = process.execPath;
+      process.execPath = this.cachedNodePath;
+      try {
+        await client.start();
+      } finally {
+        process.execPath = origExecPath;
+      }
+    } else {
+      await client.start();
+    }
     // Assign only after start() succeeds so a failed startup never leaves
     // a stale non-started client on the instance.
     this.client = client;
@@ -225,6 +239,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
   private toThreadId(sessionId: string): string {
     return sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
   }
+
+  /** Cached context window limit from the last session.usage_info event, keyed by sessionId. */
+  private contextWindowBySession = new Map<string, number>();
 
   /** Start or continue a session by sending a message via the Copilot SDK. */
   async sendMessage(params: {
@@ -471,11 +488,29 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
+        // session.usage_info — live context window metrics emitted each turn
+        unsubscribers.push(
+          session.on("session.usage_info", (event) => {
+            const { tokenLimit, currentTokens } = event.data as {
+              tokenLimit: number;
+              currentTokens: number;
+            };
+            this.contextWindowBySession.set(sessionId, tokenLimit);
+            this.emit("event", {
+              type: "contextEstimate",
+              threadId,
+              tokensIn: currentTokens,
+              contextWindow: tokenLimit,
+            } satisfies AgentEvent);
+          }),
+        );
+
         // assistant.usage — token counts after a model call
         unsubscribers.push(
           session.on("assistant.usage", (event) => {
             const { inputTokens = 0, outputTokens = 0, cacheReadTokens = 0 } = event.data;
             const tokensIn = inputTokens + cacheReadTokens;
+            const contextWindow = this.contextWindowBySession.get(sessionId);
             this.emit("event", {
               type: "turnComplete",
               threadId,
@@ -483,7 +518,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
               costUsd: null,
               tokensIn,
               tokensOut: outputTokens,
-              contextWindow: undefined,
+              contextWindow,
               totalProcessedTokens: tokensIn + outputTokens,
             } satisfies AgentEvent);
           }),
@@ -500,6 +535,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
               error: event.data.message,
             } satisfies AgentEvent);
             this.sessions.delete(sessionId);
+            this.contextWindowBySession.delete(sessionId);
             resolve();
           }),
         );
@@ -576,6 +612,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
         this.sessions.delete(sessionId);
+        this.contextWindowBySession.delete(sessionId);
       }
     }
   }
@@ -587,6 +624,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
 
   /** Disconnect and remove an active session. */
   stopSession(sessionId: string): void {
+    this.contextWindowBySession.delete(sessionId);
     const entry = this.sessions.get(sessionId);
     if (entry) {
       entry.session.disconnect().catch((err) =>
@@ -616,6 +654,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     }
     this.sessions.clear();
     this.sdkSessionIds.clear();
+    this.contextWindowBySession.clear();
 
     if (this.client) {
       this.client.stop().catch((err) =>

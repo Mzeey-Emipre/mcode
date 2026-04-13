@@ -1259,7 +1259,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           {threadId && (
             <ContextTracker
               tokensIn={contextEntry?.lastTokensIn ?? activeThread?.last_context_tokens ?? 0}
-              contextWindow={contextEntry?.contextWindow ?? (activeThread?.provider === "claude" ? activeThread.context_window ?? undefined : undefined)}
+              contextWindow={contextEntry?.contextWindow ?? activeThread?.context_window ?? undefined}
               totalProcessedTokens={contextEntry?.totalProcessedTokens}
             />
           )}
