@@ -34,9 +34,6 @@ const HANDLE_RELEASE_DELAY_MS = 1_500;
  */
 const SESSION_EXIT_TIMEOUT_MS = 5_000;
 
-/** Expected prefix for all mcode-managed branch names. */
-const MCODE_BRANCH_PREFIX = "mcode/";
-
 /**
  * Drains the cleanup_jobs table with retry logic.
  * Must be started via start() after DI is fully resolved.
@@ -126,9 +123,14 @@ export class CleanupWorker {
       if (!existsSync(resolvedWs)) {
         throw new Error(`workspace_path does not exist: ${resolvedWs}`);
       }
+      if (resolvedWt === resolvedWs) {
+        throw new Error(`worktree_path must not equal workspace_path: ${resolvedWt}`);
+      }
+
       const rel = relative(worktreeBase, resolvedWt);
-      if (rel.startsWith("..") || isAbsolute(rel)) {
-        throw new Error(`worktree_path outside expected base: ${resolvedWt}`);
+      const isManagedPath = !(rel.startsWith("..") || isAbsolute(rel));
+      if (!isManagedPath && !this.gitService.isRegisteredWorktreePath(resolvedWs, resolvedWt)) {
+        throw new Error(`worktree_path is not a registered worktree for repo: ${resolvedWt}`);
       }
 
       // 1. Signal the SDK subprocess to exit and wait for it to actually stop.
@@ -151,25 +153,18 @@ export class CleanupWorker {
         await new Promise<void>((resolve) => setTimeout(resolve, HANDLE_RELEASE_DELAY_MS));
       }
 
-      // 4. Remove the worktree directory. Only pass branch if it uses the
-      //    mcode/ prefix to prevent accidental deletion of user branches.
+      // 4. Remove the worktree directory and delete the exact thread branch when
+      //    the thread record has one. The delete-thread dialog is the user intent
+      //    boundary; rollback paths are handled separately in ThreadService.
       const wtName = resolvedWt.replace(/\\/g, "/").split("/").pop() ?? resolvedWt;
-      const safeBranch =
-        job.branch && job.branch.startsWith(MCODE_BRANCH_PREFIX)
-          ? job.branch
-          : undefined;
-
-      if (job.branch && !safeBranch) {
-        logger.warn("CleanupWorker skipped branch deletion for non-mcode branch", {
-          jobId: job.id,
-          branch: job.branch,
-        });
-      }
+      const removeOptions = job.branch
+        ? { branchName: job.branch, worktreePath: resolvedWt }
+        : { deleteBranch: false, worktreePath: resolvedWt };
 
       const removed = await this.gitService.removeWorktree(
         resolvedWs,
         wtName,
-        safeBranch,
+        removeOptions,
       );
 
       if (!removed) {

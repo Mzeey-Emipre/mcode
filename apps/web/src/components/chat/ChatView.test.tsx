@@ -18,7 +18,7 @@ vi.mock("@/stores/threadStore", () => ({
       runningThreadIds: new Set(),
       loadMessages: vi.fn(),
       clearMessages: vi.fn(),
-      error: null,
+      errorByThread: {},
     })
   ),
 }));

@@ -1,11 +1,24 @@
-import { memo, useMemo, useState, useCallback, useRef, useEffect } from "react";
+import { memo, useMemo, useState, useCallback, useRef, useEffect, lazy, Suspense } from "react";
 import type { Message } from "@/transport";
-import { FileText, File, ImageIcon, RotateCcw, Copy, Check, GitBranch } from "lucide-react";
+import { FileText, File, ImageIcon, RotateCcw, Copy, Check, GitBranch, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MarkdownContent } from "./MarkdownContent";
+const LazyMarkdownContent = lazy(() => import("./MarkdownContent"));
 import { stripInjectedFiles } from "@/lib/file-tags";
 import { isHandoffMessage, parseHandoffJson } from "./handoff-utils";
 import { HandoffCard } from "./HandoffCard";
+
+/** Parses the message content of a synthetic agent-error system message. Returns the error text, or null if not an agent error. */
+function parseAgentError(content: string): string | null {
+  try {
+    const parsed = JSON.parse(content) as { __type?: string; message?: string };
+    if (parsed.__type === "agent_error" && typeof parsed.message === "string") {
+      return parsed.message;
+    }
+  } catch {
+    // not JSON
+  }
+  return null;
+}
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** Props for {@link MessageBubble}. */
@@ -137,6 +150,16 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
       // Malformed handoff JSON: fall through to normal system-message rendering.
     }
 
+    const agentError = parseAgentError(message.content);
+    if (agentError) {
+      return (
+        <div className="flex items-start gap-2.5 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm">
+          <AlertCircle size={14} className="mt-0.5 shrink-0 text-destructive/60" />
+          <p className="text-muted-foreground leading-relaxed">{agentError}</p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex items-center gap-3 py-2">
         <div className="h-px flex-1 bg-border" />
@@ -210,7 +233,9 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
   return (
     <div className="group/msg space-y-2">
       <div className="text-sm text-foreground">
-        <MarkdownContent content={message.content} isStreaming={false} />
+        <Suspense>
+          <LazyMarkdownContent content={message.content} isStreaming={false} />
+        </Suspense>
       </div>
       <div className="flex items-center gap-3 px-1">
         {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}

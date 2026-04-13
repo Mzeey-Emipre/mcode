@@ -7,7 +7,9 @@ import { setupContainer } from "./container";
 import { createWsServer } from "./transport/ws-server";
 import { broadcast } from "./transport/push";
 import { PortPush, type MessagePortLike } from "./transport/port-push";
-import { logger } from "@mcode/shared";
+import { logger, getMcodeDir } from "@mcode/shared";
+import { writeFileSync, unlinkSync } from "fs";
+import { join } from "path";
 
 // Services
 import { WorkspaceService } from "./services/workspace-service";
@@ -30,13 +32,18 @@ import { GitWatcherService } from "./services/git-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
 import { WorkspaceRepo } from "./repositories/workspace-repo";
 import { CleanupWorker } from "./services/cleanup-worker";
+import { PrDraftService } from "./services/pr-draft-service";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
+import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import type Database from "better-sqlite3";
 
 const PREFERRED_PORT = parseInt(process.env.MCODE_PORT ?? "19400", 10);
 const MAX_PORT_ATTEMPTS = 10;
+
+/** Path to the server lock file used for service discovery across instances. */
+const LOCK_FILE_PATH = join(getMcodeDir(), "server.lock");
 
 /**
  * Host address to bind the server to.
@@ -70,6 +77,7 @@ const memoryPressureService = container.resolve(MemoryPressureService);
 const taskRepo = container.resolve(TaskRepo);
 const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup watcher initialization
 const cleanupWorker = container.resolve(CleanupWorker);
+const prDraftService = container.resolve(PrDraftService);
 const db = container.resolve<Database.Database>("Database");
 
 const portPush = new PortPush();
@@ -135,7 +143,7 @@ for (const provider of providerRegistry.resolveAll()) {
     let enrichedEvent = event;
 
     // Enrich non-Agent tool calls with parent ID from the canonical stack in AgentService
-    if (event.type === "toolUse" && event.toolName !== "Agent") {
+    if (event.type === AgentEventType.ToolUse && event.toolName !== "Agent") {
       const parentId = agentService.getCurrentParentToolCallId(event.threadId);
       if (parentId) {
         enrichedEvent = { ...event, parentToolCallId: parentId };
@@ -145,7 +153,7 @@ for (const provider of providerRegistry.resolveAll()) {
     broadcast("agent.event", enrichedEvent);
     portPush.send("agent.event", enrichedEvent);
 
-    if (event.type === "turnComplete") {
+    if (event.type === AgentEventType.TurnComplete) {
       threadRepo.updateStatus(event.threadId, "completed");
       const completedStatus = { threadId: event.threadId, status: "completed" };
       broadcast("thread.status", completedStatus);
@@ -180,7 +188,7 @@ for (const provider of providerRegistry.resolveAll()) {
           });
         }
       }
-    } else if (event.type === "error") {
+    } else if (event.type === AgentEventType.Error) {
       threadRepo.updateStatus(event.threadId, "errored");
       const erroredStatus = { threadId: event.threadId, status: "errored" };
       broadcast("thread.status", erroredStatus);
@@ -209,6 +217,9 @@ const { httpServer, wss } = createWsServer({
   memoryPressureService,
   taskRepo,
   providerRegistry,
+  prDraftService,
+  threadRepo,
+  workspaceRepo,
 });
 
 /**
@@ -227,6 +238,19 @@ function listen(port: number, attempt = 1): void {
   });
   httpServer.listen(port, HOST, () => {
     logger.info(`Mcode server listening on ${HOST}:${port}`);
+
+    // Write lock file so other instances can discover this server
+    const authToken = process.env.MCODE_AUTH_TOKEN ?? "";
+    try {
+      writeFileSync(
+        LOCK_FILE_PATH,
+        JSON.stringify({ port, authToken, pid: process.pid, startedAt: new Date().toISOString() }),
+        { mode: 0o600 },
+      );
+      logger.info("Server lock file written", { path: LOCK_FILE_PATH });
+    } catch (err) {
+      logger.warn("Failed to write server lock file", { error: String(err) });
+    }
   });
 }
 
@@ -292,6 +316,13 @@ async function shutdown(): Promise<void> {
     db.close();
   } catch {
     // Already closed or other non-fatal error
+  }
+
+  // 12. Remove server lock file
+  try {
+    unlinkSync(LOCK_FILE_PATH);
+  } catch {
+    // Lock file may already be gone
   }
 
   logger.info("Shutdown complete");

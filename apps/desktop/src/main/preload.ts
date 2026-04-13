@@ -48,7 +48,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openInExplorer: (path: string): Promise<void> =>
     ipcRenderer.invoke("open-in-explorer", path),
 
-  /** Open a URL in the default browser (https only). */
+  /** Open a URL in the default browser (https, http, mailto). */
   openExternalUrl: (url: string): Promise<void> =>
     ipcRenderer.invoke("open-external-url", url),
 
@@ -99,4 +99,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   /** Open settings.json in the OS default editor. Resolves to an empty string on success. */
   openSettingsFile: (): Promise<string> =>
     ipcRenderer.invoke("open-settings-file"),
+
+  /** Open keybindings.json in the OS default editor. Creates the file if it doesn't exist. */
+  openKeybindingsFile: (): Promise<string> =>
+    ipcRenderer.invoke("open-keybindings-file"),
 });

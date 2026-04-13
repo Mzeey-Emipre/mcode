@@ -5,11 +5,16 @@ import { SettingsView } from "@/components/settings/SettingsView";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { TerminalPanel } from "@/components/terminal";
 import { RightPanel } from "@/components/panels/RightPanel";
+import { CommandPalette } from "@/components/CommandPalette";
+import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useDiffStore } from "@/stores/diffStore";
-import { initShortcuts, registerShortcut } from "@/lib/shortcuts";
+import { useUiStore } from "@/stores/uiStore";
+import { initShortcuts } from "@/lib/shortcuts";
+import { registerCommand } from "@/lib/command-registry";
+import { setContext } from "@/lib/context-tracker";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -21,6 +26,7 @@ export function App() {
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("model");
+  const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   useIdleReclamation();
 
   useEffect(() => {
@@ -40,63 +46,140 @@ export function App() {
     return () => window.removeEventListener("mcode:open-settings", handler);
   }, []);
 
-  // Keyboard shortcuts
+  // Keep settingsOpen context in sync
+  useEffect(() => {
+    setContext("settingsOpen", settingsOpen);
+  }, [settingsOpen]);
+
+  // Register all commands and initialize shortcuts
   useEffect(() => {
     const cleanup = initShortcuts();
 
-    const unregCmdK = registerShortcut({
-      key: "k",
-      ctrl: true,
-      description: "Open command palette",
-      handler: () => {
-        // TODO: command palette
-      },
-    });
-
-    const unregEscape = registerShortcut({
-      key: "Escape",
-      description: "Deselect thread",
-      handler: () => useWorkspaceStore.getState().setActiveThread(null),
-    });
-
-    const unregCtrlJ = registerShortcut({
-      key: "j",
-      ctrl: true,
-      description: "Toggle terminal panel",
-      handler: () => useTerminalStore.getState().togglePanel(),
-    });
-
-    const unregCtrlT = registerShortcut({
-      key: "t",
-      ctrl: true,
-      description: "Toggle task panel",
-      handler: () => useDiffStore.getState().togglePanel(),
-    });
-
-    const unregCtrlD = registerShortcut({
-      key: "d",
-      ctrl: true,
-      description: "Toggle changes panel",
-      handler: () => {
-        const store = useDiffStore.getState();
-        if (!store.panelVisible) {
-          store.showPanel();
-          store.setActiveTab("changes");
-        } else if (store.activeTab !== "changes") {
-          store.setActiveTab("changes");
-        } else {
-          store.hidePanel();
-        }
-      },
-    });
+    const disposers = [
+      registerCommand({
+        id: "commandPalette.toggle",
+        title: "Command Palette",
+        category: "General",
+        handler: () => {
+          const store = useUiStore.getState();
+          store.setCommandPaletteOpen(!store.commandPaletteOpen);
+        },
+      }),
+      registerCommand({
+        id: "escape.handle",
+        title: "Escape",
+        category: "General",
+        handler: () => {
+          const ui = useUiStore.getState();
+          if (ui.commandPaletteOpen) {
+            ui.setCommandPaletteOpen(false);
+          } else if (ui.shortcutHelpOpen) {
+            ui.setShortcutHelpOpen(false);
+          } else {
+            useWorkspaceStore.getState().setActiveThread(null);
+          }
+        },
+      }),
+      registerCommand({
+        id: "thread.new",
+        title: "New Thread",
+        category: "Thread",
+        handler: () => {
+          useWorkspaceStore.getState().setPendingNewThread(true);
+        },
+      }),
+      registerCommand({
+        id: "workspace.new",
+        title: "New Workspace",
+        category: "Workspace",
+        handler: () => {
+          window.dispatchEvent(new CustomEvent("mcode:new-workspace"));
+        },
+      }),
+      registerCommand({
+        id: "sidebar.toggle",
+        title: "Toggle Sidebar",
+        category: "View",
+        handler: () => useUiStore.getState().toggleSidebar(),
+      }),
+      registerCommand({
+        id: "terminal.toggle",
+        title: "Toggle Terminal",
+        category: "View",
+        handler: () => useTerminalStore.getState().togglePanel(),
+      }),
+      registerCommand({
+        id: "settings.open",
+        title: "Open Settings",
+        category: "General",
+        handler: () => {
+          window.dispatchEvent(
+            new CustomEvent("mcode:open-settings", {
+              detail: { section: "model" },
+            }),
+          );
+        },
+      }),
+      registerCommand({
+        id: "shortcuts.help",
+        title: "Keyboard Shortcuts",
+        category: "General",
+        handler: () => {
+          const store = useUiStore.getState();
+          store.setShortcutHelpOpen(!store.shortcutHelpOpen);
+        },
+      }),
+      registerCommand({
+        id: "tasks.toggle",
+        title: "Toggle Tasks Panel",
+        category: "View",
+        handler: () => {
+          const store = useDiffStore.getState();
+          if (!store.panelVisible) {
+            store.showPanel();
+            store.setActiveTab("tasks");
+          } else if (store.activeTab !== "tasks") {
+            store.setActiveTab("tasks");
+          } else {
+            store.hidePanel();
+          }
+        },
+      }),
+      registerCommand({
+        id: "changes.toggle",
+        title: "Toggle Changes Panel",
+        category: "View",
+        handler: () => {
+          const store = useDiffStore.getState();
+          if (!store.panelVisible) {
+            store.showPanel();
+            store.setActiveTab("changes");
+          } else if (store.activeTab !== "changes") {
+            store.setActiveTab("changes");
+          } else {
+            store.hidePanel();
+          }
+        },
+      }),
+      // Thread switching: Cmd+1 through Cmd+9
+      ...Array.from({ length: 9 }, (_, i) =>
+        registerCommand({
+          id: `thread.goTo${i + 1}`,
+          title: `Go to Thread ${i + 1}`,
+          category: "Thread",
+          handler: () => {
+            const threads = useWorkspaceStore.getState().threads;
+            if (threads[i]) {
+              useWorkspaceStore.getState().setActiveThread(threads[i].id);
+            }
+          },
+        }),
+      ),
+    ];
 
     return () => {
       cleanup();
-      unregCmdK();
-      unregEscape();
-      unregCtrlJ();
-      unregCtrlT();
-      unregCtrlD();
+      disposers.forEach((d) => d());
     };
   }, []);
 
@@ -121,13 +204,15 @@ export function App() {
       <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
         <ConnectionBanner />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar
-            settingsOpen={settingsOpen}
-            settingsSection={settingsSection}
-            onSettingsSection={setSettingsSection}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onCloseSettings={() => setSettingsOpen(false)}
-          />
+          {!sidebarCollapsed && (
+            <Sidebar
+              settingsOpen={settingsOpen}
+              settingsSection={settingsSection}
+              onSettingsSection={setSettingsSection}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onCloseSettings={() => setSettingsOpen(false)}
+            />
+          )}
           <div className="flex flex-1 flex-col overflow-hidden">
             <div className="flex flex-1 overflow-hidden">
               <main className="flex-1 overflow-hidden">
@@ -143,6 +228,8 @@ export function App() {
           </div>
         </div>
       </div>
+      <CommandPalette />
+      <ShortcutHelpDialog />
       <ToastContainer />
     </TooltipProvider>
   );

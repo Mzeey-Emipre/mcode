@@ -2,10 +2,11 @@ import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 
-const { mockExecFile, mockRm, mockRename, mockExistsSync, mockLogger } = vi.hoisted(() => ({
+const { mockExecFile, mockRm, mockRename, mockRmdir, mockExistsSync, mockLogger } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
   mockRm: vi.fn(),
   mockRename: vi.fn(),
+  mockRmdir: vi.fn(),
   mockExistsSync: vi.fn(),
   mockLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
@@ -27,6 +28,7 @@ vi.mock("fs", () => ({
 vi.mock("fs/promises", () => ({
   rm: mockRm,
   rename: mockRename,
+  rmdir: mockRmdir,
 }));
 
 vi.mock("@mcode/shared", () => ({
@@ -42,7 +44,7 @@ describe("GitService.removeWorktree", () => {
   let gitService: GitService;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     gitService = new GitService({} as WorkspaceRepo);
   });
 
@@ -53,7 +55,7 @@ describe("GitService.removeWorktree", () => {
     const result = await gitService.removeWorktree(
       "/repo",
       "my-worktree",
-      "feat/test",
+      { branchName: "feat/test" },
     );
 
     expect(result).toBe(true);
@@ -117,7 +119,7 @@ describe("GitService.removeWorktree", () => {
     const result = await gitService.removeWorktree(
       "/repo",
       "my-worktree",
-      "feat/test",
+      { branchName: "feat/test" },
     );
 
     expect(result).toBe(true);
@@ -143,12 +145,29 @@ describe("GitService.removeWorktree", () => {
     mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
     mockExistsSync.mockReturnValue(false);
 
-    await gitService.removeWorktree("/repo", "my-worktree", "feat/test");
+    await gitService.removeWorktree("/repo", "my-worktree", { branchName: "feat/test" });
 
     expect(mockExecFile).toHaveBeenCalledWith(
       "git",
       ["-C", "/repo", "worktree", "remove", expect.stringContaining("my-worktree"), "--force", "--force"],
       expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+  });
+
+  it("skips branch deletion when deleteBranch is false", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    const result = await gitService.removeWorktree("/repo", "my-worktree", {
+      deleteBranch: false,
+    });
+
+    expect(result).toBe(true);
+    expect(mockExecFile).toHaveBeenCalledTimes(2);
+    expect(mockExecFile).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["branch", "-d"]),
+      expect.anything(),
     );
   });
 
@@ -183,5 +202,58 @@ describe("GitService.removeWorktree", () => {
     const result = await gitService.removeWorktree("/repo", "my-worktree");
 
     expect(result).toBe(false);
+  });
+
+  it("prunes stale metadata after manual fallback before deleting the branch", async () => {
+    mockExecFile
+      .mockRejectedValueOnce(new Error("git failed")) // worktree remove
+      .mockResolvedValueOnce({ stdout: "", stderr: "" }) // prune
+      .mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
+    mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    mockRm.mockResolvedValue(undefined);
+
+    await gitService.removeWorktree("/repo", "my-worktree", {
+      branchName: "mcode/my-worktree",
+    });
+
+    const pruneIndex = 1;
+    const branchIndex = 2;
+    expect(mockExecFile.mock.calls[pruneIndex]?.[1]).toEqual(["-C", "/repo", "worktree", "prune"]);
+    expect(mockExecFile.mock.calls[branchIndex]?.[1]).toEqual([
+      "-C",
+      "/repo",
+      "branch",
+      "-d",
+      "mcode/my-worktree",
+    ]);
+    expect(mockRm.mock.invocationCallOrder[0]).toBeLessThan(
+      mockExecFile.mock.invocationCallOrder[pruneIndex],
+    );
+    expect(mockExecFile.mock.invocationCallOrder[pruneIndex]).toBeLessThan(
+      mockExecFile.mock.invocationCallOrder[branchIndex],
+    );
+  });
+
+  it("removes an empty managed parent directory after worktree cleanup", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+    mockRmdir.mockResolvedValue(undefined);
+
+    await gitService.removeWorktree("/repo", "my-worktree");
+
+    expect(mockRmdir).toHaveBeenCalledWith(expect.stringContaining("worktrees"));
+    expect(mockRmdir).toHaveBeenCalledWith(expect.stringContaining("repo"));
+  });
+
+  it("does not remove parent directories for external worktrees", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    await gitService.removeWorktree("/repo", "my-worktree", {
+      worktreePath: "/external/worktrees/my-worktree",
+      deleteBranch: false,
+    });
+
+    expect(mockRmdir).not.toHaveBeenCalled();
   });
 });

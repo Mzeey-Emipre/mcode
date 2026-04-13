@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const refs = vi.hoisted(() => {
   let exitCallback: ((code: number | null) => void) | null = null;
+  let isPackaged = false;
 
   const mockUtilityProcess = {
     stdout: { on: vi.fn() },
@@ -23,11 +24,14 @@ const refs = vi.hoisted(() => {
     mockUtilityProcess,
     getExitCallback: () => exitCallback,
     resetExitCallback: () => { exitCallback = null; },
+    setIsPackaged: (v: boolean) => { isPackaged = v; },
+    getIsPackaged: () => isPackaged,
   };
 });
 
 vi.mock("electron", () => ({
   app: {
+    get isPackaged() { return refs.getIsPackaged(); },
     getPath: vi.fn().mockReturnValue("/tmp"),
     getVersion: vi.fn().mockReturnValue("0.1.0-test"),
   },
@@ -48,7 +52,7 @@ vi.mock("net", () => ({
   createServer: vi.fn().mockReturnValue({
     once: vi.fn(),
     listen: vi.fn((_port: number, cb: () => void) => cb()),
-    address: vi.fn().mockReturnValue({ port: 19400 }),
+    address: vi.fn().mockReturnValue({ port: 19600 }),
     close: vi.fn((cb: () => void) => cb()),
   }),
 }));
@@ -58,6 +62,7 @@ vi.mock("crypto", () => ({
 }));
 
 vi.mock("fs", () => ({
+  existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => {
     const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
     err.code = "ENOENT";
@@ -70,7 +75,7 @@ const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
 import { utilityProcess } from "electron";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -102,20 +107,23 @@ describe("ServerManager", () => {
     manager.shutdown();
     globalThis.fetch = originalFetch;
     delete process.env.MCODE_SERVER_HEAP_MB;
+    refs.setIsPackaged(false);
+    delete (process as Record<string, unknown>).resourcesPath;
+    vi.mocked(existsSync).mockReturnValue(false);
   });
 
   it("starts the server by forking a utility process", async () => {
     const result = await manager.start();
 
     expect(utilityProcess.fork).toHaveBeenCalledOnce();
-    expect(result.port).toBe(19400);
+    expect(result.port).toBe(19600);
     expect(result.authToken).toBe("mock-auth-token");
   });
 
   it("exposes port and authToken as properties", async () => {
     await manager.start();
 
-    expect(manager.port).toBe(19400);
+    expect(manager.port).toBe(19600);
     expect(manager.authToken).toBe("mock-auth-token");
   });
 
@@ -125,7 +133,7 @@ describe("ServerManager", () => {
     const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
     const opts = forkCall[2] as Record<string, unknown>;
     const env = opts.env as Record<string, string>;
-    expect(env.MCODE_PORT).toBe("19400");
+    expect(env.MCODE_PORT).toBe("19600");
     expect(env.MCODE_AUTH_TOKEN).toBe("mock-auth-token");
     expect(env.MCODE_MODE).toBe("desktop");
     expect(opts.stdio).toBe("pipe");
@@ -190,7 +198,13 @@ describe("ServerManager", () => {
   });
 
   it("reads heapMb from settings.json when file exists", async () => {
-    vi.mocked(readFileSync).mockReturnValueOnce(
+    // First call is the lock file read in tryExistingServer() — throw ENOENT.
+    // Second call is the settings.json read in readServerHeapMb().
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      const err = new Error("ENOENT") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    }).mockReturnValueOnce(
       JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
     );
     await manager.start();
@@ -241,5 +255,67 @@ describe("ServerManager", () => {
     const exitCb = refs.getExitCallback();
     exitCb!(0);
     expect(onCrash).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // Packaged vs dev entry path branching
+  // -----------------------------------------------------------------------
+
+  it("forks the dev entry.mjs when app.isPackaged is false", async () => {
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    expect(forkCall[0]).toContain("entry.mjs");
+  });
+
+  it("forks the bundled server.cjs when app.isPackaged is true", async () => {
+    refs.setIsPackaged(true);
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    expect(forkCall[0]).toContain("server.cjs");
+  });
+
+  it("passes BETTER_SQLITE3_BINDING env var when app.isPackaged is true", async () => {
+    refs.setIsPackaged(true);
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
+    vi.mocked(existsSync).mockImplementation((path) =>
+      String(path).includes("better_sqlite3.electron.node"),
+    );
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const env = forkCall[2]?.env as Record<string, string>;
+    expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.electron.node");
+  });
+
+  it("falls back to better_sqlite3.node when the packaged electron alias is absent", async () => {
+    refs.setIsPackaged(true);
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
+    vi.mocked(existsSync).mockImplementation((path) =>
+      String(path).includes("better_sqlite3.node") &&
+      !String(path).includes("better_sqlite3.electron.node"),
+    );
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const env = forkCall[2]?.env as Record<string, string>;
+    expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.node");
+  });
+
+  it("does not pass BETTER_SQLITE3_BINDING env var when app.isPackaged is false", async () => {
+    await manager.start();
+    const forkCall = vi.mocked(utilityProcess.fork).mock.calls[0];
+    const env = forkCall[2]?.env as Record<string, string>;
+    expect(env.BETTER_SQLITE3_BINDING).toBeUndefined();
   });
 });

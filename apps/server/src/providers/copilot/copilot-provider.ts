@@ -53,6 +53,7 @@ interface SessionEntry {
 @injectable()
 export class CopilotProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "copilot";
+  readonly supportsCompletion = false;
 
   private client: CopilotClient | null = null;
   private lastCliPath: string | undefined;

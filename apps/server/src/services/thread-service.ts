@@ -76,10 +76,13 @@ export class ThreadService {
 
         if (!updated) {
           try {
+            const rollbackOptions = info.createdBranch
+              ? { branchName: branch }
+              : { deleteBranch: false };
             const cleaned = await this.gitService.removeWorktree(
               workspace.path,
               worktreeName,
-              branch,
+              rollbackOptions,
             );
             if (!cleaned) {
               logger.warn("Rollback worktree cleanup returned false during thread creation", {
@@ -119,15 +122,15 @@ export class ThreadService {
 
   /**
    * Soft-delete a thread and enqueue a background cleanup job when the thread
-   * has a managed worktree. The cleanup job handles process termination,
+   * has a worktree path. The cleanup job handles process termination,
    * filesystem removal, and hard-deletion of the DB row asynchronously with
-   * exponential backoff retries. The job's branch field is set from
-   * thread.branch; branches prefixed with "mcode/" are deleted by the worker.
+   * exponential backoff retries. The job stores the thread's exact branch so
+   * explicit user cleanup deletes the worktree and its associated thread branch.
    */
   delete(threadId: string, cleanupWorktree: boolean): boolean {
     if (cleanupWorktree) {
       const thread = this.threadRepo.findById(threadId);
-      if (thread?.worktree_path && thread.worktree_managed) {
+      if (thread?.worktree_path) {
         const workspace = this.workspaceRepo.findById(thread.workspace_id);
         if (workspace) {
           this.cleanupJobRepo.insert({

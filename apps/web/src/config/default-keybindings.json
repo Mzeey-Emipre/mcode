@@ -1,0 +1,22 @@
+[
+  { "key": "mod+p", "command": "commandPalette.toggle" },
+  { "key": "mod+n", "command": "thread.new", "when": "!inputFocused" },
+  { "key": "mod+shift+n", "command": "workspace.new", "when": "!inputFocused" },
+  { "key": "mod+\\", "command": "sidebar.toggle", "when": "!inputFocused" },
+  { "key": "mod+j", "command": "terminal.toggle", "when": "!inputFocused" },
+  { "key": "mod+,", "command": "settings.open", "when": "!inputFocused" },
+  { "key": "mod+shift+?", "command": "shortcuts.help", "when": "!inputFocused" },
+  { "key": "mod+o", "command": "explorer.open", "when": "!inputFocused" },
+  { "key": "Escape", "command": "escape.handle" },
+  { "key": "mod+t", "command": "tasks.toggle", "when": "!inputFocused" },
+  { "key": "mod+d", "command": "changes.toggle", "when": "!inputFocused" },
+  { "key": "mod+1", "command": "thread.goTo1", "when": "!inputFocused" },
+  { "key": "mod+2", "command": "thread.goTo2", "when": "!inputFocused" },
+  { "key": "mod+3", "command": "thread.goTo3", "when": "!inputFocused" },
+  { "key": "mod+4", "command": "thread.goTo4", "when": "!inputFocused" },
+  { "key": "mod+5", "command": "thread.goTo5", "when": "!inputFocused" },
+  { "key": "mod+6", "command": "thread.goTo6", "when": "!inputFocused" },
+  { "key": "mod+7", "command": "thread.goTo7", "when": "!inputFocused" },
+  { "key": "mod+8", "command": "thread.goTo8", "when": "!inputFocused" },
+  { "key": "mod+9", "command": "thread.goTo9", "when": "!inputFocused" }
+]

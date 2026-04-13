@@ -1,17 +1,47 @@
 import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
 
+/**
+ * All valid `type` discriminants for `AgentEvent`.
+ * Use these constants instead of string literals to get autocomplete and
+ * a compile-time error if a value is renamed or removed.
+ *
+ * @example
+ * if (event.type === AgentEventType.ToolUse) { ... }
+ */
+export const AgentEventType = {
+  Message: "message",
+  ToolUse: "toolUse",
+  ToolResult: "toolResult",
+  TurnComplete: "turnComplete",
+  Error: "error",
+  Ended: "ended",
+  System: "system",
+  Compacting: "compacting",
+  CompactSummary: "compactSummary",
+  ModelFallback: "modelFallback",
+  TextDelta: "textDelta",
+  ToolInputDelta: "toolInputDelta",
+  ToolProgress: "toolProgress",
+  ContextEstimate: "contextEstimate",
+} as const;
+
+/** Union of all valid `AgentEvent` type discriminants. */
+export type AgentEventType = typeof AgentEventType[keyof typeof AgentEventType];
+
 /** Discriminated union of all events emitted by an agent provider. */
 export const AgentEventSchema = lazySchema(() =>
   z.discriminatedUnion("type", [
     z.object({
-      type: z.literal("message"),
+      type: z.literal(AgentEventType.Message),
       threadId: z.string(),
       content: z.string(),
       tokens: z.number().nullable(),
+      /** Server-assigned message ID, injected after DB persistence. Used by the client for stable branching. */
+      messageId: z.string().optional(),
     }),
     z.object({
-      type: z.literal("toolUse"),
+      type: z.literal(AgentEventType.ToolUse),
       threadId: z.string(),
       toolCallId: z.string(),
       toolName: z.string(),
@@ -19,14 +49,14 @@ export const AgentEventSchema = lazySchema(() =>
       parentToolCallId: z.string().optional(),
     }),
     z.object({
-      type: z.literal("toolResult"),
+      type: z.literal(AgentEventType.ToolResult),
       threadId: z.string(),
       toolCallId: z.string(),
       output: z.string(),
       isError: z.boolean(),
     }),
     z.object({
-      type: z.literal("turnComplete"),
+      type: z.literal(AgentEventType.TurnComplete),
       threadId: z.string(),
       reason: z.string(),
       costUsd: z.number().nullable(),
@@ -38,36 +68,36 @@ export const AgentEventSchema = lazySchema(() =>
       totalProcessedTokens: z.number().optional(),
     }),
     z.object({
-      type: z.literal("error"),
+      type: z.literal(AgentEventType.Error),
       threadId: z.string(),
       error: z.string(),
     }),
     z.object({
-      type: z.literal("ended"),
+      type: z.literal(AgentEventType.Ended),
       threadId: z.string(),
     }),
     z.object({
-      type: z.literal("system"),
+      type: z.literal(AgentEventType.System),
       threadId: z.string(),
       subtype: z.string(),
     }),
     z.object({
       /** Emitted when the SDK starts or finishes compacting the context window. */
-      type: z.literal("compacting"),
+      type: z.literal(AgentEventType.Compacting),
       threadId: z.string(),
       /** True when compaction is starting, false when it has finished. */
       active: z.boolean(),
     }),
     z.object({
       /** Emitted when a provider completes context compaction, carrying the generated summary. */
-      type: z.literal("compactSummary"),
+      type: z.literal(AgentEventType.CompactSummary),
       threadId: z.string(),
       /** Full compaction summary text produced by the SDK. Used to seed branched thread replays. */
       summary: z.string(),
     }),
     z.object({
       /** Emitted when the SDK fell back to an alternate model. */
-      type: z.literal("modelFallback"),
+      type: z.literal(AgentEventType.ModelFallback),
       threadId: z.string(),
       /** The model that was originally requested. */
       requestedModel: z.string(),
@@ -76,21 +106,21 @@ export const AgentEventSchema = lazySchema(() =>
     }),
     z.object({
       /** A streaming text chunk emitted as Claude types its response. */
-      type: z.literal("textDelta"),
+      type: z.literal(AgentEventType.TextDelta),
       threadId: z.string(),
       /** Partial response text - append to accumulate the full response. */
       delta: z.string(),
     }),
     z.object({
       /** Incremental JSON fragment emitted while Claude builds a tool call's input. */
-      type: z.literal("toolInputDelta"),
+      type: z.literal(AgentEventType.ToolInputDelta),
       threadId: z.string(),
       /** Partial JSON string to append to the tool input being assembled. */
       partialJson: z.string(),
     }),
     z.object({
       /** Heartbeat emitted while a tool is executing, carrying elapsed wall-clock time. */
-      type: z.literal("toolProgress"),
+      type: z.literal(AgentEventType.ToolProgress),
       threadId: z.string(),
       /** Identifier of the tool call this progress event belongs to. */
       toolCallId: z.string(),
@@ -105,7 +135,7 @@ export const AgentEventSchema = lazySchema(() =>
        * tool result) and immediately after compaction finishes. Replaces the
        * stale snapshot in contextByThread without waiting for turnComplete.
        */
-      type: z.literal("contextEstimate"),
+      type: z.literal(AgentEventType.ContextEstimate),
       threadId: z.string(),
       /** Estimated total tokens currently occupying the context window. */
       tokensIn: z.number(),

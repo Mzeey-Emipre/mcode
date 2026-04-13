@@ -8,8 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0)"
-        required: true
+        description: "Release tag to attach artifacts to (e.g. v0.1.0). Leave empty to build without uploading."
+        required: false
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -34,24 +37,67 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build & Package
-        run: bun run --cwd apps/desktop dist
+      - name: Build main & renderer
+        run: bun run --cwd apps/desktop build
+
+      - name: Generate V8 snapshot
+        run: bun apps/desktop/scripts/generate-snapshot.mjs
+
+      - name: Install Python setuptools (node-gyp on Python 3.12+ needs it)
+        if: runner.os == 'Windows'
+        run: pip install setuptools
+
+      - name: Package with electron-builder
+        run: node apps/desktop/scripts/ci-package.mjs
+
+      - name: Collect release artifacts
+        if: github.event.release.tag_name || inputs.tag
+        id: artifacts
+        shell: bash
+        run: |
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          shopt -s nullglob
+          files=()
+          # Only collect top-level release artifacts. Exclude *-unpacked dirs
+          # (contain bare executables without supporting files) and NSIS helpers
+          # like elevate.exe that are not distributable artifacts.
+          for f in \
+            apps/desktop/release/*.exe \
+            apps/desktop/release/*.exe.blockmap \
+            apps/desktop/release/*.dmg \
+            apps/desktop/release/*.dmg.blockmap \
+            apps/desktop/release/*.zip \
+            apps/desktop/release/*.zip.blockmap \
+            apps/desktop/release/*.AppImage \
+            apps/desktop/release/*.deb \
+            apps/desktop/release/latest.yml \
+            apps/desktop/release/latest-mac.yml \
+            apps/desktop/release/latest-linux.yml; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            # Skip NSIS helper binaries
+            [[ "$base" == "elevate.exe" ]] && continue
+            files+=("$f")
+          done
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No artifacts found to upload"
+            exit 0
+          fi
+
+          printf '%s\n' "${files[@]}"
+          printf '%s\n' "${files[@]}" > artifact-list.txt
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
 
       - name: Upload release artifacts
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
-          files: |
-            apps/desktop/release/**/*.exe
-            apps/desktop/release/**/*.exe.blockmap
-            apps/desktop/release/**/*.dmg
-            apps/desktop/release/**/*.dmg.blockmap
-            apps/desktop/release/**/*.zip
-            apps/desktop/release/**/*.zip.blockmap
-            apps/desktop/release/**/*.AppImage
-            apps/desktop/release/**/*.deb
-            apps/desktop/release/**/latest.yml
-            apps/desktop/release/**/latest-mac.yml
-            apps/desktop/release/**/latest-linux.yml
+        if: steps.artifacts.outputs.count > 0
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          while IFS= read -r f; do
+            echo "Uploading: $f"
+            gh release upload "${{ steps.artifacts.outputs.tag }}" "$f" --clobber
+          done < artifact-list.txt

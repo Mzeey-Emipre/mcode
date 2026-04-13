@@ -135,6 +135,10 @@ Syntax highlighting runs in `apps/web/src/workers/shiki.worker.ts` via `@shikijs
 - Add the new lang to `optimizeDeps.include` (pre-bundle it at startup), or
 - Keep all shiki packages under `optimizeDeps.exclude` (skip bundling entirely — what shiki's own docs recommend)
 
+## Provider Architecture Convention
+
+See **[docs/guides/provider-architecture.md](docs/guides/provider-architecture.md)**.
+
 ## Key Documentation
 
 - **Architecture:** [ARCHITECTURE.md](ARCHITECTURE.md)
@@ -144,7 +148,7 @@ Syntax highlighting runs in `apps/web/src/workers/shiki.worker.ts` via `@shikijs
 - **tsyringe docs:** https://github.com/microsoft/tsyringe
 - **shadcn/ui docs:** https://ui.shadcn.com/
 - **Tailwind CSS 4:** https://tailwindcss.com/docs
-- **Codex Agent SDK:** https://github.com/openai/codex (repo + SDK source, `@openai/codex-sdk`)
+- **Codex provider docs:** `apps/server/src/providers/codex/` - uses `codex app-server` JSON-RPC 2.0 protocol (see ARCHITECTURE.md)
 
 ## Performance Requirements
 
@@ -155,6 +159,19 @@ Syntax highlighting runs in `apps/web/src/workers/shiki.worker.ts` via `@shikijs
 | First 100 messages load | < 50ms |
 | App startup to usable | < 2 seconds |
 | Frontend bundle size | < 2MB gzipped |
+
+## Database Migrations
+
+```sh
+cd apps/server
+
+bun run db:migrate status          # Show applied and pending migrations
+bun run db:migrate up              # Apply all pending migrations
+bun run db:migrate down            # Roll back the last migration
+bun run db:migrate new <name>      # Scaffold a new migration file
+```
+
+After scaffolding, implement `up()` and `down()` in the new file, then register it in `loadMigrations()` in `apps/server/src/store/database.ts`.
 
 ## Testing
 

@@ -6,6 +6,8 @@ export interface ModelProvider {
   id: string;
   name: string;
   comingSoon: boolean;
+  /** Whether this provider supports one-shot structured completion (e.g. PR draft generation). */
+  supportsCompletion?: boolean;
   models: ModelDefinition[];
   /** Whether this provider supports live model listing via listProviderModels(). */
   supportsModelListing?: boolean;
@@ -42,6 +44,7 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     id: "claude",
     name: "Claude",
     comingSoon: false,
+    supportsCompletion: true,
     models: [
       { id: "claude-opus-4-6", label: "Claude Opus 4.6", providerId: "claude" },
       { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", providerId: "claude" },

@@ -1,6 +1,6 @@
 {
   "name": "mcode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -32,6 +32,7 @@
   "packageManager": "bun@1.2.14",
   "trustedDependencies": [
     "electron",
+    "electron-mksnapshot",
     "better-sqlite3",
     "node-pty",
     "@electron/rebuild"

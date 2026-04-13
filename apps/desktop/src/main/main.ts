@@ -191,6 +191,27 @@ const MIME_MAP: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// External URL helper
+// ---------------------------------------------------------------------------
+
+/** Protocols that may be opened in the user's default browser. */
+const EXTERNAL_PROTOCOLS = new Set(["https:", "http:", "mailto:"]);
+
+/** Open a URL in the system browser if its protocol is allowed. */
+function openIfAllowed(url: string): void {
+  try {
+    const parsed = new URL(url);
+    if (EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
+      shell.openExternal(parsed.href).catch((err: unknown) => {
+        console.error(`[openIfAllowed] Failed to open ${parsed.protocol} URL: ${parsed.href}`, err);
+      });
+    }
+  } catch {
+    // Invalid URL, ignore
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------
 
@@ -222,6 +243,30 @@ function createWindow(): void {
   });
 
   mainWindow.setMenuBarVisibility(false);
+
+  // Intercept target="_blank" and window.open() calls.
+  // Deny the new window and open the URL in the system browser instead.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openIfAllowed(url);
+    return { action: "deny" };
+  });
+
+  // Prevent the main window from navigating away from the app.
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const currentUrl = mainWindow!.webContents.getURL();
+    // Allow same-origin navigation for the SPA router (dev mode http://localhost).
+    // In production (file://), origin is "null" so all navigation is blocked,
+    // which is correct since the SPA uses pushState routing.
+    try {
+      const current = new URL(currentUrl);
+      const target = new URL(url);
+      if (current.origin !== "null" && current.origin === target.origin) return;
+    } catch {
+      // Parse error, fall through to block
+    }
+    event.preventDefault();
+    openIfAllowed(url);
+  });
 
   // Show the window as soon as the first frame is painted.
   // Fallback timeout ensures the window becomes visible even if the
@@ -301,16 +346,9 @@ function registerIpcHandlers(): void {
     return shell.openPath(dirPath);
   });
 
-  // Open external URL (https only)
+  // Open external URL (https, http, mailto)
   ipcMain.handle("open-external-url", (_event, url: string) => {
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol === "https:") {
-        shell.openExternal(url);
-      }
-    } catch {
-      // Invalid URL, ignore
-    }
+    openIfAllowed(url);
   });
 
   // Read clipboard image and save to temp JPEG
@@ -366,20 +404,31 @@ function registerIpcHandlers(): void {
     return getRecentLogs(lines);
   });
 
-  // Open settings.json in the default system editor
-  ipcMain.handle("open-settings-file", async () => {
+  /** Ensure a config file exists in the mcode data dir, then open it. */
+  async function ensureAndOpenConfigFile(
+    fileName: string,
+    defaultContent: string,
+  ): Promise<string> {
     const dir = getMcodeDir();
-    const filePath = join(dir, "settings.json");
+    const filePath = join(dir, fileName);
     if (!existsSync(filePath)) {
       await mkdir(dir, { recursive: true });
-      await writeFile(filePath, "{}\n", "utf8");
+      await writeFile(filePath, defaultContent, "utf8");
     }
     const err = await shell.openPath(filePath);
     if (err) {
-      throw new Error(`Failed to open settings.json: ${err}`);
+      throw new Error(`Failed to open ${fileName}: ${err}`);
     }
     return "";
-  });
+  }
+
+  ipcMain.handle("open-settings-file", () =>
+    ensureAndOpenConfigFile("settings.json", "{}\n"),
+  );
+
+  ipcMain.handle("open-keybindings-file", () =>
+    ensureAndOpenConfigFile("keybindings.json", "[]\n"),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -501,65 +550,80 @@ app.commandLine.appendSwitch(
 );
 
 app.whenReady().then(async () => {
-  console.log(`[perf] App ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
-  console.log(`[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`);
-  console.log(`Mcode v${app.getVersion()} starting`);
+  try {
+    console.log(`[perf] App ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+    console.log(`[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`);
+    console.log(`Mcode v${app.getVersion()} starting`);
 
-  // Start the server child process
-  const { port } = await serverManager.start();
-  console.log(`[perf] Server ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
-  console.log(`Server started on port ${port}`);
+    // Start the server child process
+    const { port } = await serverManager.start();
+    console.log(`[perf] Server ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+    console.log(`Server started on port ${port}`);
 
-  // Show a Restart / Quit dialog if the server crashes unexpectedly
-  serverManager.onUnexpectedExit = async (code) => {
-    if (!mainWindow) return;
-    const { response } = await dialog.showMessageBox(mainWindow, {
-      type: "error",
-      title: "Server crashed",
-      message: `The Mcode server exited unexpectedly (code ${code ?? "unknown"}).`,
-      buttons: ["Restart", "Quit"],
-      defaultId: 0,
-      cancelId: 1,
+    // Show a Restart / Quit dialog if the server crashes unexpectedly
+    serverManager.onUnexpectedExit = async (code) => {
+      if (!mainWindow) return;
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: "error",
+        title: "Server crashed",
+        message: `The Mcode server exited unexpectedly (code ${code ?? "unknown"}).`,
+        buttons: ["Restart", "Quit"],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response === 0) {
+        await serverManager.restart();
+      } else {
+        app.quit();
+      }
+    };
+
+    // Register custom protocol for attachment files
+    registerAttachmentProtocol();
+
+    // Register IPC handlers BEFORE creating the window so the renderer can
+    // invoke get-server-url as soon as it loads, without racing the handler.
+    registerIpcHandlers();
+
+
+    // Create window
+    createWindow();
+    console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+
+    // Create and distribute streaming MessagePort pair.
+    // MessagePort requires an owned UtilityProcess handle - skip when reusing
+    // an external server (the renderer falls back to pure WebSocket).
+    if (!serverManager.reusedExisting) {
+      const rendererPort = serverManager.createStreamPort();
+      mainWindow!.webContents.postMessage("stream-port", null, [rendererPort]);
+    }
+
+    // Set up close handler
+    setupCloseHandler();
+
+    // macOS: re-create window when dock icon is clicked
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+        // Re-distribute stream port to the new window (only if we own the process)
+        if (!serverManager.reusedExisting) {
+          const port = serverManager.createStreamPort();
+          mainWindow!.webContents.postMessage("stream-port", null, [port]);
+        }
+        setupCloseHandler();
+      }
     });
-    if (response === 0) {
-      await serverManager.restart();
-    } else {
-      app.quit();
-    }
-  };
 
-  // Register custom protocol for attachment files
-  registerAttachmentProtocol();
+    // Initialize auto-updater (no-op in dev — guarded by app.isPackaged)
+    initAutoUpdater();
 
-  // Create window
-  createWindow();
-  console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
-
-  // Create and distribute streaming MessagePort pair
-  const rendererPort = serverManager.createStreamPort();
-  mainWindow!.webContents.postMessage("stream-port", null, [rendererPort]);
-
-  // Register native-only IPC handlers
-  registerIpcHandlers();
-
-  // Set up close handler
-  setupCloseHandler();
-
-  // macOS: re-create window when dock icon is clicked
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-      // Re-distribute stream port to the new window
-      const port = serverManager.createStreamPort();
-      mainWindow!.webContents.postMessage("stream-port", null, [port]);
-      setupCloseHandler();
-    }
-  });
-
-  // Initialize auto-updater (no-op in dev — guarded by app.isPackaged)
-  initAutoUpdater();
-
-  console.log(`[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+    console.log(`[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+  } catch (error) {
+    const detail = error instanceof Error ? `${error.message}\n\n${error.stack ?? ""}` : String(error);
+    console.error("Failed to start desktop app", error);
+    dialog.showErrorBox("Mcode failed to start", detail);
+    app.quit();
+  }
 });
 
 app.on("window-all-closed", () => {

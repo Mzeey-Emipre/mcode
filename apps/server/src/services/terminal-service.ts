@@ -7,7 +7,6 @@
 import { injectable, inject } from "tsyringe";
 import { isAbsolute } from "path";
 import { existsSync, statSync } from "fs";
-import { spawn } from "node-pty";
 import type { IPty, IDisposable } from "node-pty";
 import { v4 as uuid } from "uuid";
 import { logger } from "@mcode/shared";
@@ -15,6 +14,20 @@ import { killProcessTree } from "./process-kill.js";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitService } from "./git-service";
+
+/**
+ * Lazily load node-pty's spawn function. Deferred to avoid crashing the server
+ * at startup if the native binding is missing or incompatible - the error is
+ * surfaced only when a terminal is actually requested.
+ */
+let _spawn: typeof import("node-pty").spawn | undefined;
+function getSpawn(): typeof import("node-pty").spawn {
+  if (!_spawn) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _spawn = (require("node-pty") as typeof import("node-pty")).spawn;
+  }
+  return _spawn;
+}
 
 const MAX_PTYS_PER_THREAD = 4;
 const DEFAULT_COLS = 80;
@@ -104,7 +117,7 @@ export class TerminalService {
 
     logger.info("Spawning PTY", { id, threadId, shell, cwd });
 
-    const pty = spawn(shell, [], {
+    const pty = getSpawn()(shell, [], {
       name: TERM_NAME,
       cols: DEFAULT_COLS,
       rows: DEFAULT_ROWS,

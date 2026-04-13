@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
-import { mockTransport } from "./mocks/transport";
+import { mockTransport, createMockThread } from "./mocks/transport";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -10,11 +11,18 @@ vi.mock("@/transport", async () => ({
 describe("Agent Message Flow", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    useWorkspaceStore.setState({
+      threads: [
+        createMockThread({ id: "thread-1" }),
+        createMockThread({ id: "thread-a" }),
+        createMockThread({ id: "thread-b" }),
+      ],
+    });
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       currentThreadId: null,
     });
@@ -123,11 +131,12 @@ describe("Agent Message Flow", () => {
 describe("duplicate message prevention", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    useWorkspaceStore.setState({ threads: [createMockThread({ id: "thread-1" })] });
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(["thread-1"]),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: { "thread-1": "Hello world" },
       streamingPreviewByThread: { "thread-1": "Hello world" },
       toolCallsByThread: {},
@@ -169,11 +178,12 @@ describe("duplicate message prevention", () => {
 describe("session.textDelta", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    useWorkspaceStore.setState({ threads: [createMockThread({ id: "thread-1" })] });
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(["thread-1"]),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       toolCallsByThread: {},
       agentStartTimes: {},
@@ -234,11 +244,12 @@ describe("session.textDelta", () => {
 describe("session.toolProgress", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    useWorkspaceStore.setState({ threads: [createMockThread({ id: "thread-1" })] });
     useThreadStore.setState({
       messages: [],
       runningThreadIds: new Set(["thread-1"]),
       loading: false,
-      error: null,
+      errorByThread: {},
       streamingByThread: {},
       toolCallsByThread: {
         "thread-1": [

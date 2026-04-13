@@ -32,6 +32,8 @@ interface DiffState {
   viewMode: DiffViewMode;
   /** Diff rendering mode. */
   renderMode: DiffRenderMode;
+  /** Whether long lines wrap instead of scrolling horizontally. */
+  lineWrap: boolean;
   /** Turn snapshots keyed by thread ID. */
   snapshotsByThread: Record<string, TurnSnapshot[]>;
   /** Whether snapshots are currently loading, keyed by thread ID. */
@@ -54,6 +56,7 @@ interface DiffState {
   setActiveTab: (tab: RightPanelTab) => void;
   setViewMode: (mode: DiffViewMode) => void;
   setRenderMode: (mode: DiffRenderMode) => void;
+  toggleLineWrap: () => void;
   setSnapshots: (threadId: string, snapshots: TurnSnapshot[]) => void;
   setSnapshotsLoading: (threadId: string, loading: boolean) => void;
   setCommits: (threadId: string, commits: GitCommit[]) => void;
@@ -65,13 +68,15 @@ interface DiffState {
 }
 
 /** Minimum right panel width in pixels. */
-export const PANEL_MIN_WIDTH = 280;
-/** Maximum right panel width in pixels. */
-export const PANEL_MAX_WIDTH = 600;
-const DEFAULT_WIDTH = 320;
+export const PANEL_MIN_WIDTH = 300;
+/** Default right panel width in pixels. */
+export const PANEL_DEFAULT_WIDTH = 380;
+/** Wide snap target for the right panel (double-click drag handle). */
+export const PANEL_WIDE_WIDTH = 680;
+const DEFAULT_WIDTH = PANEL_DEFAULT_WIDTH;
 
 function clampWidth(w: number): number {
-  return Math.max(PANEL_MIN_WIDTH, Math.min(PANEL_MAX_WIDTH, w));
+  return Math.max(PANEL_MIN_WIDTH, w);
 }
 
 /** Zustand store for diff panel and right panel tab state. */
@@ -81,6 +86,7 @@ export const useDiffStore = create<DiffState>((set) => ({
   panelWidth: DEFAULT_WIDTH,
   viewMode: "by-turn",
   renderMode: "unified",
+  lineWrap: false,
   snapshotsByThread: {},
   snapshotsLoadingByThread: {},
   commitsByThread: {},
@@ -96,6 +102,7 @@ export const useDiffStore = create<DiffState>((set) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   setViewMode: (mode) => set({ viewMode: mode, selectedFile: null, diffContent: null }),
   setRenderMode: (mode) => set({ renderMode: mode }),
+  toggleLineWrap: () => set((s) => ({ lineWrap: !s.lineWrap })),
   setSnapshots: (threadId, snapshots) =>
     set((s) => ({ snapshotsByThread: { ...s.snapshotsByThread, [threadId]: snapshots } })),
   setSnapshotsLoading: (threadId, loading) =>

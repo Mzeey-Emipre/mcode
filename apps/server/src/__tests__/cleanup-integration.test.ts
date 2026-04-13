@@ -116,7 +116,10 @@ describe("Cleanup integration", () => {
     expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
       expect.any(String),
       "feat-wt",
-      "mcode/int-branch",
+      expect.objectContaining({
+        branchName: "mcode/int-branch",
+        worktreePath: expect.stringContaining("feat-wt"),
+      }),
     );
 
     // Verify: thread hard-deleted from database
