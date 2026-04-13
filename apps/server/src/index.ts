@@ -6,7 +6,8 @@
 import { setupContainer } from "./container";
 import { createWsServer } from "./transport/ws-server";
 import { broadcast, onSessionChange, sessionCount } from "./transport/push";
-import { PortPush, type MessagePortLike } from "./transport/port-push";
+import { PortPush } from "./transport/port-push";
+import { IpcPushServer, generateIpcPath } from "./transport/ipc-push-server";
 import { logger, getMcodeDir } from "@mcode/shared";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
@@ -107,26 +108,16 @@ const db = container.resolve<Database.Database>("Database");
 
 const portPush = new PortPush();
 
-/** Electron utilityProcess parentPort shape (only present when running as a utility process). */
-interface ParentPort {
-  on(event: string, listener: (e: { data: unknown; ports: unknown[] }) => void): void;
-}
+/** IPC push server for named pipe / Unix domain socket transport. */
+const ipcServer = new IpcPushServer();
 
-// Listen for MessagePort from parent utility process.
-// `parentPort` exists only when running inside Electron's utilityProcess.
-// Calling start() is not needed: Electron auto-starts the port when the
-// first "message" listener is added.
-const parentPort = (process as NodeJS.Process & { parentPort?: ParentPort }).parentPort;
+/** Platform-appropriate IPC path for this server process. */
+const ipcPath = generateIpcPath(process.pid, getMcodeDir());
 
-if (parentPort) {
-  parentPort.on("message", (e: { data: unknown; ports: unknown[] }) => {
-    const msg = e.data as { type?: string };
-    if (msg?.type === "stream-port" && e.ports[0]) {
-      portPush.attach(e.ports[0] as MessagePortLike);
-      logger.info("Stream MessagePort attached");
-    }
-  });
-}
+ipcServer.onConnection((port) => {
+  logger.info("IPC push client connected");
+  portPush.attach(port);
+});
 
 // Wire up PTY sender to broadcast push events
 terminalService.setSender((channel, data) => {
@@ -273,7 +264,7 @@ function listen(port: number, attempt = 1): void {
         pid: process.pid,
         startedAt: new Date().toISOString(),
         version: process.env.MCODE_VERSION ?? "0.0.0",
-        ipcPath: "",
+        ipcPath,
       });
       writeFileSync(LOCK_FILE_PATH, lockData, { mode: 0o600 });
       logger.info("Server lock file written", { path: LOCK_FILE_PATH });
@@ -289,26 +280,38 @@ const GRACE_PERIOD_MS = 30_000;
 /** Timer handle for the active grace period, null when no grace period is running. */
 let graceTimer: ReturnType<typeof setTimeout> | null = null;
 
-listen(PREFERRED_PORT);
+/** Start HTTP server and subscribe to session changes for grace period shutdown. */
+function startServerAndSubscribe(): void {
+  listen(PREFERRED_PORT);
 
-// Subscribe to session changes after the server starts so the grace period
-// only activates once the server is ready to accept connections.
-onSessionChange((count) => {
-  if (count === 0) {
-    logger.info("All sessions disconnected, starting grace period", {
-      graceMs: GRACE_PERIOD_MS,
-    });
-    graceTimer = setTimeout(() => {
-      if (sessionCount() === 0) {
-        logger.info("Grace period expired with zero sessions, shutting down");
-        shutdown();
-      }
-    }, GRACE_PERIOD_MS);
-  } else if (graceTimer) {
-    logger.info("New session connected, cancelling grace period");
-    clearTimeout(graceTimer);
-    graceTimer = null;
-  }
+  // Subscribe to session changes after the server starts so the grace period
+  // only activates once the server is ready to accept connections.
+  onSessionChange((count) => {
+    if (count === 0) {
+      logger.info("All sessions disconnected, starting grace period", {
+        graceMs: GRACE_PERIOD_MS,
+      });
+      graceTimer = setTimeout(() => {
+        if (sessionCount() === 0) {
+          logger.info("Grace period expired with zero sessions, shutting down");
+          shutdown();
+        }
+      }, GRACE_PERIOD_MS);
+    } else if (graceTimer) {
+      logger.info("New session connected, cancelling grace period");
+      clearTimeout(graceTimer);
+      graceTimer = null;
+    }
+  });
+}
+
+ipcServer.listen(ipcPath).then(() => {
+  startServerAndSubscribe();
+}).catch((err) => {
+  logger.error("IPC server failed to start, continuing without fast path", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+  startServerAndSubscribe();
 });
 
 /**
@@ -327,6 +330,14 @@ async function shutdown(): Promise<void> {
 
   // 0. Close the MessagePort stream transport
   portPush.detach();
+
+  // Close IPC push server
+  await ipcServer.close();
+
+  // Clean up IPC socket file on non-Windows
+  if (process.platform !== "win32") {
+    try { unlinkSync(ipcPath); } catch { /* already removed */ }
+  }
 
   // 1. Capture active thread IDs before stopAll() clears them
   const activeThreadIds = agentService.activeThreadIds();
