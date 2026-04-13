@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, useRef, useId } from "react";
+import { memo, useState, useEffect, useCallback, useRef, useId, useMemo } from "react";
 import { Copy, Check, Code2, GitGraph } from "lucide-react";
 import { useShikiTheme } from "@/hooks/useTheme";
 import { CodeBlock } from "./CodeBlock";
@@ -11,10 +11,11 @@ interface MermaidBlockProps {
   isStreaming: boolean;
 }
 
+/** Tracks the mermaid render lifecycle: loading → success or error. */
 type RenderState =
   | { status: "loading" }
   | { status: "success"; svg: string }
-  | { status: "error"; message: string };
+  | { status: "error" };
 
 // Module-level mermaid loader - cached across all instances
 let mermaidPromise: Promise<typeof import("mermaid")> | null = null;
@@ -31,12 +32,12 @@ async function ensureInitialized(theme: "dark" | "default") {
   const mermaidModule = await loadMermaid();
   const mermaid = mermaidModule.default;
   if (lastInitTheme !== theme) {
-    lastInitTheme = theme;
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: "strict",
       theme,
     });
+    lastInitTheme = theme;
   }
   return mermaid;
 }
@@ -67,7 +68,8 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
   const shikiTheme = useShikiTheme();
   const mermaidTheme = toMermaidTheme(shikiTheme);
   const rawId = useId();
-  const mermaidId = "mermaid-" + rawId.replace(/:/g, "");
+  // Memoized and colon-replaced with "-" (not "") to prevent ID collisions between adjacent instances.
+  const mermaidId = useMemo(() => "mermaid-" + rawId.replace(/:/g, "-"), [rawId]);
 
   const [state, setState] = useState<RenderState>({ status: "loading" });
   const [view, setView] = useState<"diagram" | "code">("diagram");
@@ -94,12 +96,9 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
         if (!cancelled) {
           setState({ status: "success", svg });
         }
-      } catch (err) {
+      } catch {
         if (!cancelled) {
-          setState({
-            status: "error",
-            message: err instanceof Error ? err.message : "Diagram could not be rendered",
-          });
+          setState({ status: "error" });
         }
       }
     })();
@@ -107,7 +106,7 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
     return () => {
       cancelled = true;
     };
-  }, [code, mermaidTheme, mermaidId, isStreaming]);
+  }, [code, mermaidTheme, isStreaming, mermaidId]);
 
   const handleCopy = useCallback(async () => {
     try {

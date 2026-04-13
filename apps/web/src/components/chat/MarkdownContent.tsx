@@ -40,7 +40,17 @@ function makeStaticComponents(variant: "assistant" | "user") {
     strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold">{children}</strong>,
     em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
     a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
-      const safeHref = href && /^https?:|^mailto:/.test(href) ? href : undefined;
+      let safeHref: string | undefined;
+      if (href) {
+        try {
+          const { protocol } = new URL(href);
+          if (protocol === "https:" || protocol === "http:" || protocol === "mailto:") {
+            safeHref = href;
+          }
+        } catch {
+          // Invalid URL - safeHref stays undefined
+        }
+      }
       const linkClass = isUser
         ? "text-primary-foreground underline hover:opacity-80"
         : "text-primary underline hover:text-primary";
