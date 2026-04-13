@@ -6,31 +6,32 @@
  */
 
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
+// Node.js built-in — only available in the Electron preload context
+import { connect as netConnect } from "net";
 
 /**
- * Stream port callback registry.
- * The preload receives a MessagePort via webContents.postMessage('stream-port')
- * and forwards messages to the registered callback in the renderer world.
- *
- * Messages arriving before the callback is registered are buffered and
- * flushed in FIFO order once onStreamEvent is called.
+ * Parse length-prefixed frames from a Node.js net.Socket.
+ * Frame format: [4-byte BE length][JSON payload].
  */
-let streamCallback: ((data: unknown) => void) | null = null;
-const streamQueue: unknown[] = [];
+function createFrameParser(onMessage: (data: unknown) => void) {
+  let buffer = Buffer.alloc(0);
 
-ipcRenderer.on("stream-port", (event) => {
-  const port = event.ports[0];
-  if (!port) return;
+  return (chunk: Buffer) => {
+    buffer = Buffer.concat([buffer, chunk]);
 
-  port.onmessage = (e: MessageEvent) => {
-    if (streamCallback) {
-      streamCallback(e.data);
-    } else {
-      streamQueue.push(e.data);
+    while (buffer.length >= 4) {
+      const frameLen = buffer.readUInt32BE(0);
+      if (buffer.length < 4 + frameLen) break;
+
+      const json = buffer.subarray(4, 4 + frameLen).toString("utf-8");
+      buffer = buffer.subarray(4 + frameLen);
+
+      try {
+        onMessage(JSON.parse(json));
+      } catch (e) { console.warn("[ipc] Malformed frame:", e); }
     }
   };
-  port.start();
-});
+}
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Get the WebSocket URL (with auth token) for connecting to the server. */
@@ -73,15 +74,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   /** Resolve the native file path for a File object (drag-and-drop). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 
-  /** Register a callback for streaming events received via MessagePort. */
-  onStreamEvent: (callback: (data: unknown) => void): void => {
-    streamCallback = callback;
-    // Flush any messages that arrived before the callback was registered
-    while (streamQueue.length > 0) {
-      callback(streamQueue.shift()!);
-    }
-  },
-
   /** Clear Blink's in-memory resource caches (images, scripts, CSS).
    * Typically called after a thread switch to reclaim memory. */
   clearRendererCache: (): void => webFrame.clearCache(),
@@ -103,4 +95,27 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   /** Open keybindings.json in the OS default editor. Creates the file if it doesn't exist. */
   openKeybindingsFile: (): Promise<string> =>
     ipcRenderer.invoke("open-keybindings-file"),
+
+  /** IPC push transport for high-throughput streaming. */
+  ipc: {
+    /** Connect to the server's IPC push endpoint. */
+    connect(path: string) {
+      let messageCallback: ((data: unknown) => void) | null = null;
+      let disconnectCallback: (() => void) | null = null;
+
+      const socket = netConnect(path);
+      const parser = createFrameParser((data) => messageCallback?.(data));
+      socket.on("data", parser);
+      // Let "close" be the single source of disconnect notification.
+      // Node.js guarantees "close" fires after "error" + destroy().
+      socket.on("error", () => socket.destroy());
+      socket.on("close", () => disconnectCallback?.());
+
+      return {
+        onMessage(cb: (data: unknown) => void) { messageCallback = cb; },
+        onDisconnect(cb: () => void) { disconnectCallback = cb; },
+        close() { socket.end(); socket.destroy(); },
+      };
+    },
+  },
 });

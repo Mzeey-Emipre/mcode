@@ -1,5 +1,15 @@
 import type { AttachmentMeta } from "./types";
 
+/** Handle returned from ipc.connect() for receiving push messages. */
+interface IpcHandle {
+  /** Register a callback for incoming push messages. */
+  onMessage(callback: (data: unknown) => void): void;
+  /** Register a callback for connection close/error. */
+  onDisconnect(callback: () => void): void;
+  /** Close the IPC connection. */
+  close(): void;
+}
+
 /**
  * Thin bridge exposed by the Electron preload script for native
  * desktop operations that cannot go through the WebSocket transport
@@ -28,8 +38,6 @@ interface DesktopBridge {
   getRecentLogs(lines: number): Promise<string>;
   /** Map a browser File object to its real filesystem path. */
   getPathForFile(file: File): string;
-  /** Register a callback for streaming events received via MessagePort. */
-  onStreamEvent(callback: (data: unknown) => void): void;
   /** Clear Blink's in-memory resource caches (images, scripts, CSS).
    * Typically called after a thread switch to reclaim memory. */
   clearRendererCache(): void;
@@ -39,6 +47,11 @@ interface DesktopBridge {
   openSettingsFile(): Promise<string>;
   /** Open keybindings.json in the OS default editor. Creates the file if it doesn't exist. */
   openKeybindingsFile(): Promise<string>;
+  /** IPC push transport for high-throughput streaming. */
+  ipc: {
+    /** Connect to the server's IPC push endpoint. */
+    connect(path: string): IpcHandle;
+  };
 }
 
 declare global {
