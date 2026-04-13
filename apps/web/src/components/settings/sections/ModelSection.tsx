@@ -18,12 +18,26 @@ import {
   CursorProviderIcon,
   OpenCodeIcon,
   GeminiIcon,
+  CopilotIcon,
 } from "@/components/chat/ProviderIcons";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+/** Providers with more models than this threshold use a Select dropdown instead of SegControl. */
+const SEG_CONTROL_MAX_MODELS = 6;
 
 /** Maps provider id to its brand icon component. */
 const PROVIDER_ICONS: Record<string, ReactNode> = {
   claude: <ClaudeIcon size={12} />,
   codex: <CodexIcon size={12} />,
+  copilot: <CopilotIcon size={12} />,
   cursor: <CursorProviderIcon size={12} />,
   opencode: <OpenCodeIcon size={12} />,
   gemini: <GeminiIcon size={12} />,
@@ -78,6 +92,7 @@ export function ModelSection() {
   const reasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
   const codexCliPath = useSettingsStore((s) => s.settings.provider.cli.codex);
   const claudeCliPath = useSettingsStore((s) => s.settings.provider.cli.claude);
+  const copilotCliPath = useSettingsStore((s) => s.settings.provider.cli.copilot);
   const prDraftProvider = useSettingsStore((s) => s.settings.prDraft.provider);
   const prDraftModel = useSettingsStore((s) => s.settings.prDraft.model);
   const update = useSettingsStore((s) => s.update);
@@ -90,12 +105,16 @@ export function ModelSection() {
   );
 
   const modelOptions = useMemo(
-    () => (activeProvider?.models ?? []).map((m) => ({ value: m.id, label: m.label })),
+    () => (activeProvider?.models ?? []).map((m) => ({
+      value: m.id,
+      label: m.multiplier != null && m.multiplier !== 1 ? `${m.label} (${m.multiplier}x)` : m.label,
+      group: m.group,
+    })),
     [activeProvider],
   );
 
   const fallbackOptions = useMemo(
-    () => [{ value: "", label: "Off" }, ...modelOptions],
+    () => [{ value: "", label: "Off", group: undefined }, ...modelOptions],
     [modelOptions],
   );
 
@@ -131,8 +150,11 @@ export function ModelSection() {
         ? "Reasoning effort for Codex models. X-High is the maximum tier."
         : "Reasoning effort for Codex models.";
     }
+    if (provider === "copilot") {
+      return "Reasoning effort passed to the Copilot model. Not all models support all levels.";
+    }
     return "Default reasoning level. Max requires Opus 4.6.";
-  }, [codexLevels]);
+  }, [codexLevels, provider]);
 
   const handleProviderChange = (v: string) => {
     const newProvider = MODEL_PROVIDERS.find((p) => p.id === v);
@@ -196,7 +218,41 @@ export function ModelSection() {
         configKey="model.defaults.id"
         hint="New threads start with this model."
       >
-        <SegControl options={modelOptions} value={modelId} onChange={handleModelChange} />
+        {modelOptions.length > SEG_CONTROL_MAX_MODELS ? (
+          <Select value={modelId} onValueChange={(v) => v != null && handleModelChange(v)}>
+            <SelectTrigger size="sm" className="w-56 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {modelOptions.some((m) => m.group)
+                ? (() => {
+                    const groups = new Map<string, typeof modelOptions>();
+                    for (const m of modelOptions) {
+                      const g = m.group ?? "";
+                      if (!groups.has(g)) groups.set(g, []);
+                      groups.get(g)!.push(m);
+                    }
+                    return Array.from(groups.entries()).map(([g, items]) => (
+                      <SelectGroup key={g}>
+                        {g && <SelectLabel>{g}</SelectLabel>}
+                        {items.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ));
+                  })()
+                : modelOptions.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <SegControl options={modelOptions} value={modelId} onChange={handleModelChange} />
+        )}
       </SettingRow>
 
       <SettingRow
@@ -204,11 +260,48 @@ export function ModelSection() {
         configKey="model.defaults.fallbackId"
         hint="Used when the primary model is unavailable. Off disables fallback."
       >
-        <SegControl
-          options={fallbackOptions}
-          value={fallbackId}
-          onChange={(v) => update({ model: { defaults: { fallbackId: v } } })}
-        />
+        {fallbackOptions.length > SEG_CONTROL_MAX_MODELS ? (
+          <Select
+            value={fallbackId}
+            onValueChange={(v) => v != null && update({ model: { defaults: { fallbackId: v } } })}
+          >
+            <SelectTrigger size="sm" className="w-56 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {fallbackOptions.some((m) => m.group)
+                ? (() => {
+                    const groups = new Map<string, typeof fallbackOptions>();
+                    for (const m of fallbackOptions) {
+                      const g = m.group ?? "";
+                      if (!groups.has(g)) groups.set(g, []);
+                      groups.get(g)!.push(m);
+                    }
+                    return Array.from(groups.entries()).map(([g, items]) => (
+                      <SelectGroup key={g}>
+                        {g && <SelectLabel>{g}</SelectLabel>}
+                        {items.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ));
+                  })()
+                : fallbackOptions.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <SegControl
+            options={fallbackOptions}
+            value={fallbackId}
+            onChange={(v) => update({ model: { defaults: { fallbackId: v } } })}
+          />
+        )}
       </SettingRow>
 
       <SettingRow
@@ -296,6 +389,18 @@ export function ModelSection() {
               value={claudeCliPath}
               onChange={(e) => void update({ provider: { cli: { claude: e.target.value } } })}
               placeholder="claude"
+              className="h-7 w-56 text-xs"
+            />
+          </SettingRow>
+          <SettingRow
+            label="Copilot CLI path"
+            configKey="provider.cli.copilot"
+            hint="Path to the Copilot CLI binary. Leave empty to auto-discover from PATH."
+          >
+            <Input
+              value={copilotCliPath}
+              onChange={(e) => void update({ provider: { cli: { copilot: e.target.value } } })}
+              placeholder="copilot"
               className="h-7 w-56 text-xs"
             />
           </SettingRow>

@@ -12,6 +12,7 @@ import type {
   ToolCallRecord,
   Settings,
   GitCommit,
+  ProviderModelInfo,
 } from "./types";
 import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
@@ -431,6 +432,10 @@ export function createWsTransport(
     // Settings
     getSettings: () => rpc<Settings>("settings.get", {}),
     updateSettings: (partial) => rpc<Settings>("settings.update", partial as Record<string, unknown>),
+
+    // Provider models
+    listProviderModels: (providerId) =>
+      rpc<ProviderModelInfo[]>("provider.listModels", { providerId }),
 
     // Memory pressure
     setBackground: (background) => rpc<void>("memory.setBackground", { background }),

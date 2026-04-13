@@ -18,6 +18,7 @@ import type {
   GitCommit,
   PlanAnswer,
   InteractionMode,
+  ProviderModelInfo,
   PrDraft,
   CreatePrResult,
 } from "@mcode/contracts";
@@ -40,6 +41,7 @@ export type {
   PartialSettings,
   GitCommit,
   PlanAnswer,
+  ProviderModelInfo,
 } from "@mcode/contracts";
 
 export type { PaginatedMessages, ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
@@ -229,6 +231,10 @@ export interface McodeTransport {
   getSettings(): Promise<Settings>;
   /** Update settings with a deep-partial merge. Returns full merged settings. */
   updateSettings(partial: PartialSettings): Promise<Settings>;
+
+  // Provider models
+  /** Fetch dynamically discovered models from a provider (e.g. Copilot). */
+  listProviderModels(providerId: string): Promise<ProviderModelInfo[]>;
 
   // Memory pressure
   /** Notify server of window background/foreground state for memory management. */

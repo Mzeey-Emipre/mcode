@@ -216,6 +216,7 @@ const { httpServer, wss } = createWsServer({
   gitWatcherService,
   memoryPressureService,
   taskRepo,
+  providerRegistry,
   prDraftService,
   threadRepo,
   workspaceRepo,
