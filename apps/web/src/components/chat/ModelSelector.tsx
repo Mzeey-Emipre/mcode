@@ -116,10 +116,10 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
 
   // For a provider-locked thread, fetch immediately so the list is current.
   useEffect(() => {
-    if (providerLocked && displayProvider) {
+    if (providerLocked && displayProvider?.supportsModelListing) {
       fetchProviderModels(displayProvider.id);
     }
-  }, [providerLocked, displayProvider?.id, fetchProviderModels]);
+  }, [providerLocked, displayProvider?.id, displayProvider?.supportsModelListing, fetchProviderModels]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -262,7 +262,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                 onMouseEnter={() => {
                     if (!p.comingSoon && hasModels) {
                       setHoveredWithDelay(p.id);
-                      fetchProviderModels(p.id);
+                      if (p.supportsModelListing) fetchProviderModels(p.id);
                     }
                   }}
                 onMouseLeave={() => setHoveredWithDelay(null)}

@@ -7,6 +7,8 @@ export interface ModelProvider {
   name: string;
   comingSoon: boolean;
   models: ModelDefinition[];
+  /** Whether this provider supports live model listing via listProviderModels(). */
+  supportsModelListing?: boolean;
 }
 
 /**
@@ -94,6 +96,7 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     id: "copilot",
     name: "GitHub Copilot",
     comingSoon: false,
+    supportsModelListing: true,
     models: [
       // OpenAI
       { id: "gpt-5.4", label: "GPT-5.4", providerId: "copilot", group: "OpenAI", multiplier: 1 },
