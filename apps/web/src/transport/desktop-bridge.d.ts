@@ -16,8 +16,8 @@ interface IpcHandle {
  * (file dialogs, clipboard, editor launching, etc.).
  */
 interface DesktopBridge {
-  /** Return the URL of the local mcode server (e.g. ws://localhost:PORT). */
-  getServerUrl(): Promise<string>;
+  /** Return the URL and IPC path of the local mcode server. */
+  getServerUrl(): Promise<{ url: string; ipcPath: string }>;
   /** Open a native folder-picker dialog. Returns the selected path or null. */
   showOpenDialog(options: { title?: string }): Promise<string | null>;
   /** Launch an external editor at the given directory. */

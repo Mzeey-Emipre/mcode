@@ -14,6 +14,7 @@ import {
   dialog,
   ipcMain,
   protocol,
+  session,
   shell,
 } from "electron";
 import { execFileSync, spawn, type ChildProcess } from "child_process";
@@ -294,9 +295,10 @@ function createWindow(): void {
 /** Register all native-only IPC handlers. */
 function registerIpcHandlers(): void {
   // Server URL for WebSocket connection
-  ipcMain.handle("get-server-url", () => {
-    return `ws://localhost:${serverManager.port}?token=${serverManager.authToken}`;
-  });
+  ipcMain.handle("get-server-url", () => ({
+    url: `ws://localhost:${serverManager.port}?token=${serverManager.authToken}`,
+    ipcPath: serverManager.ipcPath,
+  }));
 
   // Native file dialog
   ipcMain.handle(
@@ -513,11 +515,8 @@ function setupCloseHandler(): void {
       });
 
       if (response === 0) {
-        serverManager.shutdown();
         app.quit();
       }
-    } else {
-      serverManager.shutdown();
     }
   });
 }
@@ -586,6 +585,15 @@ app.whenReady().then(async () => {
     registerIpcHandlers();
 
 
+    // Set auth cookie so the renderer can authenticate to the server via HTTP
+    await session.defaultSession.cookies.set({
+      url: `http://localhost:${serverManager.port}`,
+      name: "mcode-auth",
+      value: serverManager.authToken,
+      httpOnly: true,
+      sameSite: "strict",
+    });
+
     // Create window
     createWindow();
     console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
@@ -615,13 +623,8 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    serverManager.shutdown();
     app.quit();
   }
-});
-
-app.on("before-quit", () => {
-  serverManager.shutdown();
 });
 
 export { mainWindow };
