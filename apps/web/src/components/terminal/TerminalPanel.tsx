@@ -1,34 +1,45 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
+import { TerminalSquare } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useTerminalStore, type TerminalInstance } from "@/stores/terminalStore";
+import { useTerminalStore, TERMINAL_PANEL_DEFAULTS, type TerminalInstance } from "@/stores/terminalStore";
 import { getTransport } from "@/transport";
+import { Button } from "@/components/ui/button";
 import { TerminalToolbar } from "./TerminalToolbar";
 import { TerminalList } from "./TerminalList";
 import { TerminalView } from "./TerminalView";
 
-const DEFAULT_HEIGHT = 300;
 const MIN_HEIGHT = 150;
 const MAX_HEIGHT_RATIO = 0.7;
 const EMPTY_TERMINALS: readonly TerminalInstance[] = [];
 
+/** Terminal panel that renders per-thread terminal instances with drag-to-resize. */
 export function TerminalPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
-  const panelVisible = useTerminalStore((s) => s.panelVisible);
-  const splitMode = useTerminalStore((s) => s.splitMode);
-  const activeTerminalId = useTerminalStore((s) => s.activeTerminalId);
-  const addTerminal = useTerminalStore((s) => s.addTerminal);
-  const removeTerminal = useTerminalStore((s) => s.removeTerminal);
-  const removeAllTerminals = useTerminalStore((s) => s.removeAllTerminals);
-  const syncToThread = useTerminalStore((s) => s.syncToThread);
+
+  // One-time action refs (stable, don't trigger re-renders)
+  const {
+    addTerminal: storeAddTerminal,
+    removeTerminal: storeRemoveTerminal,
+    removeAllTerminals,
+    setTerminalPanelHeight,
+  } = useTerminalStore.getState();
+
+  // Reactive subscriptions
+  const panelState = useTerminalStore((s) =>
+    activeThreadId
+      ? (s.terminalPanelByThread[activeThreadId] ?? TERMINAL_PANEL_DEFAULTS)
+      : TERMINAL_PANEL_DEFAULTS,
+  );
+  const { visible: panelVisible, height: panelHeight, activeTerminalId } = panelState;
 
   const terminals = useTerminalStore(
     (s) => (activeThreadId ? s.terminals[activeThreadId] : undefined) ?? EMPTY_TERMINALS,
   );
+  const splitMode = useTerminalStore((s) => s.splitMode);
 
-  const [panelHeight, setPanelHeight] = useState(DEFAULT_HEIGHT);
   const draggingRef = useRef(false);
 
-  // Drag handle resizing
+  /** Handles drag-to-resize from the top edge of the panel. */
   const onDragStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -44,7 +55,7 @@ export function TerminalPanel() {
           MIN_HEIGHT,
           Math.min(maxHeight, startHeight + delta),
         );
-        setPanelHeight(newHeight);
+        setTerminalPanelHeight(activeThreadId!, newHeight);
       };
 
       const onMouseUp = () => {
@@ -56,55 +67,32 @@ export function TerminalPanel() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [panelHeight],
+    [panelHeight, activeThreadId, setTerminalPanelHeight],
   );
 
-  // Create a new terminal for the active thread
+  /** Creates a new terminal for the active thread. */
   const createTerminal = useCallback(async () => {
     if (!activeThreadId) return;
     const transport = getTransport();
     const ptyId = await transport.terminalCreate(activeThreadId);
-    addTerminal(activeThreadId, ptyId);
-  }, [activeThreadId, addTerminal]);
+    storeAddTerminal(activeThreadId, ptyId);
+  }, [activeThreadId, storeAddTerminal]);
 
-  // Close a single terminal
+  /** Kills and removes a single terminal. */
   const closeTerminal = useCallback(
     (ptyId: string) => {
       getTransport().terminalKill(ptyId).catch(() => {});
-      removeTerminal(ptyId);
+      storeRemoveTerminal(ptyId);
     },
-    [removeTerminal],
+    [storeRemoveTerminal],
   );
 
-  // Close all terminals for the active thread (single RPC call)
+  /** Kills and removes all terminals for the active thread. */
   const closeAllTerminals = useCallback(() => {
     if (!activeThreadId) return;
     getTransport().terminalKillByThread(activeThreadId).catch(() => {});
     removeAllTerminals(activeThreadId);
   }, [activeThreadId, removeAllTerminals]);
-
-  // Sync activeTerminalId to the current thread on every switch.
-  // Must run before the auto-create effect below so that
-  // activeTerminalId is correct before auto-create checks
-  // whether to spawn a new terminal.
-  useEffect(() => {
-    syncToThread(activeThreadId);
-  }, [activeThreadId, syncToThread]);
-
-  // Auto-create first terminal when panel opens with none
-  const autoCreateFailed = useRef(false);
-  useEffect(() => {
-    // Reset failure flag when thread changes or panel closes
-    if (!panelVisible || !activeThreadId) {
-      autoCreateFailed.current = false;
-      return;
-    }
-    if (terminals.length === 0 && !autoCreateFailed.current) {
-      createTerminal().catch(() => {
-        autoCreateFailed.current = true;
-      });
-    }
-  }, [panelVisible, activeThreadId, terminals.length, createTerminal]);
 
   if (!panelVisible || !activeThreadId) {
     return null;
@@ -130,21 +118,31 @@ export function TerminalPanel() {
       </div>
 
       {/* Terminal views + optional split list */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 overflow-hidden">
-          {terminals.map((term) => (
-            <TerminalView
-              key={term.id}
-              ptyId={term.id}
-              visible={term.id === activeTerminalId}
-            />
-          ))}
+      {terminals.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+          <TerminalSquare className="h-10 w-10 opacity-40" />
+          <p className="text-sm">No terminals</p>
+          <Button variant="outline" size="sm" onClick={createTerminal}>
+            New terminal
+          </Button>
         </div>
+      ) : (
+        <div className="relative flex flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden">
+            {terminals.map((term) => (
+              <TerminalView
+                key={term.id}
+                ptyId={term.id}
+                visible={term.id === activeTerminalId}
+              />
+            ))}
+          </div>
 
-        {splitMode && (
-          <TerminalList threadId={activeThreadId} onClose={closeTerminal} />
-        )}
-      </div>
+          {splitMode && (
+            <TerminalList threadId={activeThreadId} onClose={closeTerminal} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
