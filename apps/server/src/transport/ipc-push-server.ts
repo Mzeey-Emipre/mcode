@@ -36,8 +36,12 @@ export class IpcPushServer {
     });
 
     return new Promise<void>((resolve, reject) => {
-      this.server!.on("error", reject);
+      this.server!.once("error", reject);
       this.server!.listen(ipcPath, () => {
+        this.server!.removeListener("error", reject);
+        this.server!.on("error", (err) => {
+          logger.error("IPC server error", { error: err instanceof Error ? err.message : String(err) });
+        });
         logger.info("IPC push server listening", { path: ipcPath });
         resolve();
       });
@@ -75,6 +79,7 @@ function createSocketAdapter(socket: Socket): MessagePortLike {
       try {
         socket.write(Buffer.concat([header, payload]));
       } catch {
+        logger.warn("IPC write failed, destroying socket");
         socket.destroy();
       }
     },

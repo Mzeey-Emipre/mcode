@@ -97,9 +97,10 @@ export async function initTransport(): Promise<McodeTransport> {
           const info = await window.desktopBridge.getServerUrl();
           return info.url;
         }
-        // In browser, scan the port range with the stored token
-        const token = localStorage.getItem("mcode-auth-token") ?? "";
-        const found = await scanPortRange(19400, 19800, token);
+        // In browser, scan the port range. The /health endpoint does not
+        // require auth, so an empty token is fine for discovery. The actual
+        // auth token is conveyed via the HttpOnly cookie set on first connect.
+        const found = await scanPortRange(19400, 19800, "");
         if (found) return found;
         throw new Error("Server not found");
       },

@@ -131,12 +131,8 @@ export function createWsTransport(
       resolveReady();
       options?.onStatusChange?.("connected");
 
-      // Store token in localStorage for browser reconnection fallback
-      try {
-        const parsed = new URL(url, "http://localhost");
-        const token = parsed.searchParams.get("token");
-        if (token) localStorage.setItem("mcode-auth-token", token);
-      } catch { /* browser may not have localStorage */ }
+      // Auth token is conveyed via HttpOnly cookie (Set-Cookie on /health).
+      // No need to store it in localStorage - the cookie handles reconnection.
     };
 
     ws.onmessage = (event) => {

@@ -287,7 +287,7 @@ function startServerAndSubscribe(): void {
   // Subscribe to session changes after the server starts so the grace period
   // only activates once the server is ready to accept connections.
   onSessionChange((count) => {
-    if (count === 0) {
+    if (count === 0 && !graceTimer) {
       logger.info("All sessions disconnected, starting grace period", {
         graceMs: GRACE_PERIOD_MS,
       });
@@ -297,7 +297,7 @@ function startServerAndSubscribe(): void {
           shutdown();
         }
       }, GRACE_PERIOD_MS);
-    } else if (graceTimer) {
+    } else if (count > 0 && graceTimer) {
       logger.info("New session connected, cancelling grace period");
       clearTimeout(graceTimer);
       graceTimer = null;

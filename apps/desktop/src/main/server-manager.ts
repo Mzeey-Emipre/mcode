@@ -100,6 +100,7 @@ function readServerHeapMb(): number {
     if (result.success) {
       return result.data.server.memory.heapMb;
     }
+    console.warn("[server-manager] settings.json parse failed, using default heap");
   } catch {
     // File missing or unreadable, fall through to default
   }
@@ -196,6 +197,7 @@ export class ServerManager {
   private serverProcess: ChildProcess | null = null;
   private _port = 0;
   private _authToken = "";
+  private _ipcPath = "";
   private _reusedExisting = false;
 
   /**
@@ -219,14 +221,9 @@ export class ServerManager {
     return this._reusedExisting;
   }
 
-  /** IPC path from the server lock file for fast-path push transport. */
+  /** IPC path for the server's fast-path push transport. */
   get ipcPath(): string {
-    try {
-      const lock: ServerLock = JSON.parse(readFileSync(lockFilePath(), "utf-8"));
-      return lock.ipcPath ?? "";
-    } catch {
-      return "";
-    }
+    return this._ipcPath;
   }
 
   /**
@@ -247,6 +244,7 @@ export class ServerManager {
       } else {
         this._port = existing.port;
         this._authToken = existing.authToken;
+        this._ipcPath = existing.ipcPath ?? "";
         this._reusedExisting = true;
         return { port: this._port, authToken: this._authToken };
       }
@@ -267,6 +265,7 @@ export class ServerManager {
           if (existingNow) {
             this._port = existingNow.port;
             this._authToken = existingNow.authToken;
+            this._ipcPath = existingNow.ipcPath ?? "";
             this._reusedExisting = true;
             return { port: this._port, authToken: this._authToken };
           }
@@ -276,77 +275,79 @@ export class ServerManager {
       }
     }
 
-    // Port pinning: prefer the previous port if lock file exists
-    let preferredPort: number | null = null;
-    const lockPath = lockFilePath();
-    if (existsSync(lockPath)) {
-      try {
-        const oldLock: ServerLock = JSON.parse(readFileSync(lockPath, "utf-8"));
-        if (oldLock.port >= PORT_MIN && oldLock.port < PORT_MAX) {
-          preferredPort = oldLock.port;
-        }
-      } catch { /* corrupt lock, ignore */ }
-    }
-
-    this._port = preferredPort
-      ? await findAvailablePort(preferredPort, preferredPort + 1).catch(() =>
-          findAvailablePort(PORT_MIN, PORT_MAX),
-        )
-      : await findAvailablePort(PORT_MIN, PORT_MAX);
-
-    const heapMb = readServerHeapMb();
-    console.log(`Starting server with --max-old-space-size=${heapMb}`);
-
-    const { entry, cwd, nativeBindingPath } = getServerPaths();
-
-    const env: Record<string, string> = {
-      ...(process.env as Record<string, string>),
-      MCODE_PORT: String(this._port),
-      MCODE_MODE: "desktop",
-      MCODE_DATA_DIR: getMcodeDir(),
-      MCODE_TEMP_DIR: app.getPath("temp"),
-      MCODE_VERSION: app.getVersion(),
-    };
-
-    if (nativeBindingPath) {
-      env.BETTER_SQLITE3_BINDING = nativeBindingPath;
-    }
-
-    // V8 flags go in the args array for child_process.spawn.
-    // Module loader flags (--import tsx) are supported here, unlike utilityProcess.
-    const v8Flags = [`--max-old-space-size=${heapMb}`, "--max-semi-space-size=2", "--expose-gc"];
-    const entryArgs = entry.endsWith(".mjs")
-      ? ["--import", "tsx", entry]
-      : [entry];
-    const args = [...v8Flags, ...entryArgs];
-
-    const child = spawn(process.execPath, args, {
-      cwd,
-      env,
-      detached: true,
-      stdio: "ignore",
-    });
-    child.unref();
-    this.serverProcess = child;
-
-    child.on("exit", (code) => {
-      console.error(`Server process exited with code ${code}`);
-      if (this.serverProcess === child) {
-        this.serverProcess = null;
-        this.onUnexpectedExit?.(code);
+    try {
+      // Port pinning: prefer the previous port if lock file exists
+      let preferredPort: number | null = null;
+      const lockPath = lockFilePath();
+      if (existsSync(lockPath)) {
+        try {
+          const oldLock: ServerLock = JSON.parse(readFileSync(lockPath, "utf-8"));
+          if (oldLock.port >= PORT_MIN && oldLock.port < PORT_MAX) {
+            preferredPort = oldLock.port;
+          }
+        } catch { /* corrupt lock, ignore */ }
       }
-    });
 
-    await this.waitForReady(10_000);
+      this._port = preferredPort
+        ? await findAvailablePort(preferredPort, preferredPort + 1).catch(() =>
+            findAvailablePort(PORT_MIN, PORT_MAX),
+          )
+        : await findAvailablePort(PORT_MIN, PORT_MAX);
 
-    // Read auth token from lock file (server writes it on startup).
-    // Retry briefly in case the lock file write races the health endpoint.
-    this._authToken = await this.readAuthTokenFromLock();
+      const heapMb = readServerHeapMb();
+      console.log(`Starting server with --max-old-space-size=${heapMb}`);
 
-    // Release startup lock now that the server is confirmed ready.
-    try { unlinkSync(sentinelPath); } catch { /* ok */ }
+      const { entry, cwd, nativeBindingPath } = getServerPaths();
 
-    return { port: this._port, authToken: this._authToken };
+      const env: Record<string, string> = {
+        ...(process.env as Record<string, string>),
+        MCODE_PORT: String(this._port),
+        MCODE_MODE: "desktop",
+        MCODE_DATA_DIR: getMcodeDir(),
+        MCODE_TEMP_DIR: app.getPath("temp"),
+        MCODE_VERSION: app.getVersion(),
+      };
+
+      if (nativeBindingPath) {
+        env.BETTER_SQLITE3_BINDING = nativeBindingPath;
+      }
+
+      // V8 flags go in the args array for child_process.spawn.
+      // Module loader flags (--import tsx) are supported here, unlike utilityProcess.
+      const v8Flags = [`--max-old-space-size=${heapMb}`, "--max-semi-space-size=2", "--expose-gc"];
+      const entryArgs = entry.endsWith(".mjs")
+        ? ["--import", "tsx", entry]
+        : [entry];
+      const args = [...v8Flags, ...entryArgs];
+
+      const child = spawn(process.execPath, args, {
+        cwd,
+        env,
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+      this.serverProcess = child;
+
+      child.on("exit", (code) => {
+        console.error(`Server process exited with code ${code}`);
+        if (this.serverProcess === child) {
+          this.serverProcess = null;
+          this.onUnexpectedExit?.(code);
+        }
+      });
+
+      await this.waitForReady(10_000);
+
+      // Read auth token from lock file (server writes it on startup).
+      // Retry briefly in case the lock file write races the health endpoint.
+      this._authToken = await this.readAuthTokenFromLock();
+
+      return { port: this._port, authToken: this._authToken };
+    } finally {
+      // Release startup lock whether spawn succeeded or failed
+      try { unlinkSync(sentinelPath); } catch { /* ok */ }
+    }
   }
 
   /**
@@ -427,7 +428,10 @@ export class ServerManager {
       try {
         const raw = readFileSync(lockFilePath(), "utf-8");
         const lock: ServerLock = JSON.parse(raw);
-        if (lock.authToken) return lock.authToken;
+        if (lock.authToken) {
+          this._ipcPath = lock.ipcPath ?? "";
+          return lock.authToken;
+        }
       } catch {
         // File not ready yet
       }

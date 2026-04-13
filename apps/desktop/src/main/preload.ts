@@ -17,7 +17,7 @@ function createFrameParser(onMessage: (data: unknown) => void) {
   let buffer = Buffer.alloc(0);
 
   return (chunk: Buffer) => {
-    buffer = Buffer.concat([buffer, chunk]);
+    buffer = buffer.length === 0 ? Buffer.from(chunk) : Buffer.concat([buffer, chunk]);
 
     while (buffer.length >= 4) {
       const frameLen = buffer.readUInt32BE(0);
