@@ -16,12 +16,7 @@ vi.mock("../hooks/useTheme", () => ({
   useShikiTheme: vi.fn(() => "github-dark"),
 }));
 
-// Mock CodeBlock
-vi.mock("../components/chat/CodeBlock", () => ({
-  CodeBlock: ({ code, language }: { code: string; language: string }) => (
-    <pre data-testid="code-block" data-language={language}>{code}</pre>
-  ),
-}));
+// CodeBlock is no longer used by MermaidBlock (code view renders pre directly)
 
 import MermaidBlock, { __resetForTesting } from "../components/chat/MermaidBlock";
 
@@ -61,12 +56,12 @@ describe("MermaidBlock", () => {
     });
   });
 
-  it("falls back to CodeBlock with error banner on render failure", async () => {
+  it("shows error banner and raw code on render failure", async () => {
     mockRender.mockRejectedValue(new Error("Parse error"));
     render(<MermaidBlock code="invalid mermaid" isStreaming={false} />);
     await waitFor(() => {
       expect(screen.getByText(/diagram could not be rendered/i)).toBeInTheDocument();
-      expect(screen.getByTestId("code-block")).toBeInTheDocument();
+      expect(screen.getByText("invalid mermaid")).toBeInTheDocument();
     });
   });
 
@@ -92,11 +87,11 @@ describe("MermaidBlock", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /view code/i }));
-    expect(screen.getByTestId("code-block")).toBeInTheDocument();
+    expect(screen.getByText("graph TD; A-->B;")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /view diagram/i }));
     await waitFor(() => {
-      expect(screen.queryByTestId("code-block")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /view diagram/i })).not.toBeInTheDocument();
     });
   });
 

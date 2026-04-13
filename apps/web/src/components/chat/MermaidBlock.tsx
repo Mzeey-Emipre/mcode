@@ -1,7 +1,6 @@
 import { memo, useState, useEffect, useCallback, useRef, useId, useMemo } from "react";
 import { Copy, Check, Code2, GitGraph } from "lucide-react";
 import { useShikiTheme } from "@/hooks/useTheme";
-import { CodeBlock } from "./CodeBlock";
 
 /** Props for {@link MermaidBlock}. */
 interface MermaidBlockProps {
@@ -9,6 +8,12 @@ interface MermaidBlockProps {
   code: string;
   /** When true, shows raw code instead of rendering the diagram. */
   isStreaming: boolean;
+  /**
+   * Controls header background contrast. 'user' uses an opaque background
+   * so the header is legible inside the primary-colored user bubble.
+   * Defaults to 'assistant'.
+   */
+  variant?: "assistant" | "user";
 }
 
 /** Tracks the mermaid render lifecycle: loading → success or error. */
@@ -64,7 +69,7 @@ function toMermaidTheme(shikiTheme: string): "dark" | "default" {
  * SVG output uses dangerouslySetInnerHTML. This is safe because mermaid v10+
  * sanitizes SVG via its bundled DOMPurify, and securityLevel is set to "strict".
  */
-const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBlockProps) {
+const MermaidBlock = memo(function MermaidBlock({ code, isStreaming, variant = "assistant" }: MermaidBlockProps) {
   const shikiTheme = useShikiTheme();
   const mermaidTheme = toMermaidTheme(shikiTheme);
   const rawId = useId();
@@ -132,14 +137,27 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
     );
   }
 
-  // Error state - CodeBlock with error banner, no toggle
+  // Error state - error banner + code view, no toggle
   if (state.status === "error") {
     return (
-      <div>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-destructive bg-destructive/10 rounded-t-lg border border-b-0 border-destructive/20">
+      <div className="my-2 rounded-lg overflow-hidden border border-border">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-destructive bg-destructive/10 border-b border-destructive/20">
           Diagram could not be rendered
         </div>
-        <CodeBlock code={code} language="mermaid" isStreaming={false} />
+        <div className="flex items-center justify-between bg-muted px-3 py-1 border-b border-border">
+          <span className="text-xs text-muted-foreground">mermaid</span>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            aria-label={copied ? "Copied" : "Copy code"}
+          >
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+          </button>
+        </div>
+        <pre className="bg-muted/30 p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+          <code>{code}</code>
+        </pre>
       </div>
     );
   }
@@ -147,8 +165,8 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
   // Loading or success state
   return (
     <div className="my-2 rounded-lg overflow-hidden border border-border">
-      {/* Header bar - matches CodeBlock layout */}
-      <div className="flex items-center justify-between bg-muted/50 px-3 py-1 border-b border-border">
+      {/* Header bar - opaque in user variant for contrast over primary-colored bubble */}
+      <div className={`flex items-center justify-between px-3 py-1 border-b border-border ${variant === "user" ? "bg-muted" : "bg-muted/50"}`}>
         <span className="text-xs text-muted-foreground">mermaid</span>
         <div className="flex items-center gap-1">
           {state.status === "success" && (
@@ -186,7 +204,9 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
         />
       )}
       {state.status === "success" && view === "code" && (
-        <CodeBlock code={code} language="mermaid" isStreaming={false} />
+        <pre className="bg-muted/30 p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+          <code>{code}</code>
+        </pre>
       )}
     </div>
   );
