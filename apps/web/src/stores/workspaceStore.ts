@@ -167,9 +167,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         .map((t) => t.id);
       const draftStore = useComposerDraftStore.getState();
       const taskStore = useTaskStore.getState();
+      const terminalStore = useTerminalStore.getState();
+      const diffStore = useDiffStore.getState();
       for (const tid of deletedThreadIds) {
         draftStore.clearDraft(tid);
         taskStore.clearTasks(tid);
+        terminalStore.removeAllTerminals(tid);
+        diffStore.clearThread(tid);
       }
       // Remove threads from store FIRST (same ordering as deleteThread) so
       // any in-flight timer callbacks see threads as gone before timers are cancelled.

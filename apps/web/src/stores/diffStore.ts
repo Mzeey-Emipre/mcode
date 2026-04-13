@@ -182,6 +182,10 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       const { [threadId]: _c, ...commits } = state.commitsByThread;
       const { [threadId]: _cl, ...commitsLoading } = state.commitsLoadingByThread;
       const { [threadId]: _rp, ...rightPanels } = state.rightPanelByThread;
+      // selectedFile and diffContent are global (not per-thread), so clearing them
+      // on any thread deletion is intentional: if the user had a diff open for the
+      // deleted thread, it should no longer be displayed. If they had a diff open
+      // for a different thread, that thread's panel will reload its content on next focus.
       return {
         snapshotsByThread: snapshots,
         snapshotsLoadingByThread: snapshotsLoading,

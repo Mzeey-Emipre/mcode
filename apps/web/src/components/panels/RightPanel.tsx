@@ -21,6 +21,9 @@ export function RightPanel() {
   );
   const { visible: panelVisible, width: panelWidth, activeTab } = panelState;
 
+  // Zustand action refs are stable (same identity for the store's lifetime),
+  // so destructuring from getState() at render time is safe and avoids
+  // adding actions to useCallback/useEffect dependency arrays.
   const { setRightPanelWidth, setRightPanelTab, hideRightPanel } = useDiffStore.getState();
 
   const tasks = useTaskStore(
@@ -34,13 +37,13 @@ export function RightPanel() {
   const panelWidthRef = useRef(panelWidth);
   useEffect(() => { panelWidthRef.current = panelWidth; }, [panelWidth]);
 
-  // Re-clamp stored width when the window is resized so the panel never
-  // exceeds the available space after the user shrinks the browser.
-  // Registered once on mount; reads panelWidthRef to avoid a stale closure.
+  // Re-clamp stored width when the panel becomes visible or the window is resized
+  // so the panel never exceeds the available space after the user shrinks the browser.
+  // Re-registers when activeThreadId changes (each thread has its own stored width).
   // Throttled with rAF so rapid resize events only trigger one recalculation per frame.
   useEffect(() => {
-    if (!activeThreadId) return;
-    // Clamp immediately on mount in case the stored width already exceeds the viewport.
+    if (!activeThreadId || !panelVisible) return;
+    // Clamp immediately in case the stored width already exceeds the viewport.
     const maxAllowed = window.innerWidth - PANEL_MIN_WIDTH;
     if (panelWidthRef.current > maxAllowed) setRightPanelWidth(activeThreadId, maxAllowed);
 
@@ -58,7 +61,7 @@ export function RightPanel() {
       window.removeEventListener("resize", onResize);
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [activeThreadId, setRightPanelWidth]);
+  }, [activeThreadId, panelVisible]);
 
   const onDragStart = useCallback(
     (e: ReactMouseEvent) => {
@@ -86,7 +89,7 @@ export function RightPanel() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [panelWidth, activeThreadId, setRightPanelWidth],
+    [panelWidth, activeThreadId],
   );
 
   useEffect(() => {

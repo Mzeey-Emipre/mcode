@@ -12,17 +12,18 @@ const MIN_HEIGHT = 150;
 const MAX_HEIGHT_RATIO = 0.7;
 const EMPTY_TERMINALS: readonly TerminalInstance[] = [];
 
+// Zustand action refs are stable (same identity for the store's lifetime).
+// Destructuring at module scope avoids calling getState() on every render.
+const {
+  addTerminal: storeAddTerminal,
+  removeTerminal: storeRemoveTerminal,
+  removeAllTerminals,
+  setTerminalPanelHeight,
+} = useTerminalStore.getState();
+
 /** Terminal panel that renders per-thread terminal instances with drag-to-resize. */
 export function TerminalPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
-
-  // One-time action refs (stable, don't trigger re-renders)
-  const {
-    addTerminal: storeAddTerminal,
-    removeTerminal: storeRemoveTerminal,
-    removeAllTerminals,
-    setTerminalPanelHeight,
-  } = useTerminalStore.getState();
 
   // Reactive subscriptions
   const panelState = useTerminalStore((s) =>
@@ -42,6 +43,7 @@ export function TerminalPanel() {
   /** Handles drag-to-resize from the top edge of the panel. */
   const onDragStart = useCallback(
     (e: React.MouseEvent) => {
+      if (!activeThreadId) return;
       e.preventDefault();
       draggingRef.current = true;
       const startY = e.clientY;
@@ -55,7 +57,7 @@ export function TerminalPanel() {
           MIN_HEIGHT,
           Math.min(maxHeight, startHeight + delta),
         );
-        setTerminalPanelHeight(activeThreadId!, newHeight);
+        setTerminalPanelHeight(activeThreadId, newHeight);
       };
 
       const onMouseUp = () => {
@@ -67,7 +69,7 @@ export function TerminalPanel() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [panelHeight, activeThreadId, setTerminalPanelHeight],
+    [panelHeight, activeThreadId],
   );
 
   /** Creates a new terminal for the active thread. */
@@ -76,7 +78,7 @@ export function TerminalPanel() {
     const transport = getTransport();
     const ptyId = await transport.terminalCreate(activeThreadId);
     storeAddTerminal(activeThreadId, ptyId);
-  }, [activeThreadId, storeAddTerminal]);
+  }, [activeThreadId]);
 
   /** Kills and removes a single terminal. */
   const closeTerminal = useCallback(
@@ -84,7 +86,7 @@ export function TerminalPanel() {
       getTransport().terminalKill(ptyId).catch(() => {});
       storeRemoveTerminal(ptyId);
     },
-    [storeRemoveTerminal],
+    [],
   );
 
   /** Kills and removes all terminals for the active thread. */
@@ -92,7 +94,7 @@ export function TerminalPanel() {
     if (!activeThreadId) return;
     getTransport().terminalKillByThread(activeThreadId).catch(() => {});
     removeAllTerminals(activeThreadId);
-  }, [activeThreadId, removeAllTerminals]);
+  }, [activeThreadId]);
 
   if (!panelVisible || !activeThreadId) {
     return null;

@@ -84,12 +84,11 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     if (thread?.id) useTerminalStore.getState().toggleTerminalPanel(thread.id);
   }, [thread?.id]);
 
-  const diffActive = useDiffStore((s) =>
-    thread?.id
-      ? (s.rightPanelByThread[thread.id]?.visible ?? false) &&
-        (s.rightPanelByThread[thread.id]?.activeTab ?? "tasks") === "changes"
-      : false,
-  );
+  const diffActive = useDiffStore((s) => {
+    if (!thread?.id) return false;
+    const panel = s.rightPanelByThread[thread.id];
+    return (panel?.visible ?? false) && (panel?.activeTab ?? "tasks") === "changes";
+  });
 
   const toggleDiff = useCallback(() => {
     if (!thread?.id) return;

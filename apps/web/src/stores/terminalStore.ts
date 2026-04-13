@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+/** A single PTY-backed terminal instance displayed in the terminal panel. */
 export interface TerminalInstance {
   readonly id: string;
   readonly threadId: string;
@@ -46,6 +47,7 @@ function generateLabel(existing: readonly TerminalInstance[]): string {
   return `Terminal ${max + 1}`;
 }
 
+/** Zustand store for terminal instances and per-thread panel state. */
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   terminals: {},
   terminalPanelByThread: {},
@@ -129,23 +131,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   removeTerminal: (ptyId) =>
     set((state) => {
-      let ownerThreadId: string | null = null;
-      const updatedTerminals: Record<string, readonly TerminalInstance[]> = {};
+      // Find the owning thread before filtering so the predicate stays pure.
+      const ownerEntry = Object.entries(state.terminals).find(([, instances]) =>
+        instances.some((t) => t.id === ptyId),
+      );
+      if (!ownerEntry) return state;
+      const [ownerThreadId] = ownerEntry;
 
+      const updatedTerminals: Record<string, readonly TerminalInstance[]> = {};
       for (const [tid, instances] of Object.entries(state.terminals)) {
-        const filtered = instances.filter((t) => {
-          if (t.id === ptyId) {
-            ownerThreadId = tid;
-            return false;
-          }
-          return true;
-        });
+        const filtered = instances.filter((t) => t.id !== ptyId);
+        // Threads with zero remaining terminals are intentionally pruned from the map.
         if (filtered.length > 0) {
           updatedTerminals[tid] = filtered;
         }
       }
-
-      if (!ownerThreadId) return state;
 
       const currentPanel = state.terminalPanelByThread[ownerThreadId] ?? TERMINAL_PANEL_DEFAULTS;
       const needsNewActive = currentPanel.activeTerminalId === ptyId;
