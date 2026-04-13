@@ -1,11 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MarkdownContent } from "../components/chat/MarkdownContent";
+import { CodeBlock } from "../components/chat/CodeBlock";
 
 // Mock CodeBlock to avoid shiki/worker dependencies
 vi.mock("../components/chat/CodeBlock", () => ({
-  CodeBlock: ({ code }: { code: string }) => <pre>{code}</pre>,
+  CodeBlock: vi.fn(({ code, language, disableHighlighting }: {
+    code: string;
+    language: string;
+    disableHighlighting?: boolean;
+  }) => (
+    <pre data-testid="code-block" data-language={language} data-disable-highlighting={String(disableHighlighting)}>
+      {code}
+    </pre>
+  )),
 }));
+
+const mockCodeBlock = vi.mocked(CodeBlock);
 
 describe("MarkdownContent link handling", () => {
   let mockOpenExternalUrl: ReturnType<typeof vi.fn>;
@@ -65,5 +76,71 @@ describe("MarkdownContent link handling", () => {
     render(<MarkdownContent content="[link](https://example.com)" />);
     fireEvent.click(screen.getByText("link"));
     expect(mockOpen).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer");
+  });
+});
+
+describe("MarkdownContent variant styling", () => {
+  beforeEach(() => {
+    mockCodeBlock.mockClear();
+  });
+
+  describe("variant='assistant' (default)", () => {
+    it("renders inline code with bg-muted", () => {
+      const { container } = render(
+        <MarkdownContent content="Use `foo` here" />,
+      );
+      const code = container.querySelector("code");
+      expect(code?.className).toContain("bg-muted");
+    });
+
+    it("renders links with text-primary", () => {
+      const { container } = render(
+        <MarkdownContent content="[link](https://example.com)" />,
+      );
+      const link = container.querySelector("a");
+      expect(link?.className).toContain("text-primary");
+    });
+
+    it("passes disableHighlighting=false to CodeBlock", () => {
+      render(<MarkdownContent content={'```ts\nconst x = 1;\n```'} />);
+      expect(mockCodeBlock).toHaveBeenCalledWith(
+        expect.objectContaining({ disableHighlighting: false }),
+        undefined,
+      );
+    });
+  });
+
+  describe("variant='user'", () => {
+    it("renders inline code with bg-primary-foreground/15", () => {
+      const { container } = render(
+        <MarkdownContent content="Use `foo` here" variant="user" />,
+      );
+      const code = container.querySelector("code");
+      expect(code?.className).toContain("bg-primary-foreground/15");
+    });
+
+    it("renders links with text-primary-foreground", () => {
+      const { container } = render(
+        <MarkdownContent content="[link](https://example.com)" variant="user" />,
+      );
+      const link = container.querySelector("a");
+      expect(link?.className).toContain("text-primary-foreground");
+    });
+
+    it("renders blockquote with border-primary-foreground/40", () => {
+      const { container } = render(
+        <MarkdownContent content="> quote" variant="user" />,
+      );
+      const blockquote = container.querySelector("blockquote");
+      expect(blockquote?.className).toContain("border-primary-foreground/40");
+    });
+
+    it("passes disableHighlighting=true to CodeBlock", () => {
+      render(<MarkdownContent content={'```ts\nconst x = 1;\n```'} variant="user" />);
+      expect(mockCodeBlock).toHaveBeenCalledWith(
+        expect.objectContaining({ disableHighlighting: true }),
+        undefined,
+      );
+    });
   });
 });
