@@ -1,7 +1,7 @@
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { ReasoningLevel } from "@mcode/contracts";
 
-/** Represents a model provider and its available models. */
+/** A provider entry in the model registry. */
 export interface ModelProvider {
   id: string;
   name: string;
@@ -9,6 +9,8 @@ export interface ModelProvider {
   /** Whether this provider supports one-shot structured completion (e.g. PR draft generation). */
   supportsCompletion?: boolean;
   models: ModelDefinition[];
+  /** Whether this provider supports live model listing via listProviderModels(). */
+  supportsModelListing?: boolean;
 }
 
 /**
@@ -22,6 +24,8 @@ export interface ModelDefinition {
   id: string;
   label: string;
   providerId: string;
+  /** Optional display group for organizing models in selectors (e.g. "OpenAI", "Anthropic"). */
+  group?: string;
   /** Maximum context window size in tokens, if known. */
   contextWindow?: number;
   /**
@@ -31,6 +35,8 @@ export interface ModelDefinition {
   supportedReasoningLevels?: readonly CodexReasoningLevel[];
   /** Default reasoning effort level for this model. */
   defaultReasoningLevel?: CodexReasoningLevel;
+  /** Billing rate multiplier relative to the base rate (e.g. 1, 0.33, 3). */
+  multiplier?: number;
 }
 
 export const MODEL_PROVIDERS: readonly ModelProvider[] = [
@@ -90,6 +96,20 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     ],
   },
   {
+    id: "copilot",
+    name: "GitHub Copilot",
+    comingSoon: false,
+    supportsModelListing: true,
+    // Minimal static fallback — the live list from listProviderModels() is the
+    // source of truth. These are shown only while the spinner is loading or if
+    // the fetch fails (e.g. Copilot client not connected).
+    models: [
+      { id: "gpt-4.1", label: "GPT-4.1", providerId: "copilot", group: "OpenAI" },
+      { id: "claude-sonnet-4.6", label: "Claude Sonnet 4.6", providerId: "copilot", group: "Anthropic" },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", providerId: "copilot", group: "Google" },
+    ],
+  },
+  {
     id: "cursor",
     name: "Cursor",
     comingSoon: true,
@@ -110,14 +130,20 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
 ];
 
 /**
+ * Flat model list sorted longest-ID-first, precomputed once at module load.
+ * Used by `matchDatedVariant` to avoid reallocating and sorting on every call.
+ */
+const SORTED_ALL_MODELS: readonly ModelDefinition[] = MODEL_PROVIDERS
+  .flatMap((p) => p.models)
+  .sort((a, b) => b.id.length - a.id.length);
+
+/**
  * Matches a dated SDK variant ID (e.g. `claude-haiku-4-5-20251001`) to its base
- * model definition by prefix. Sorts candidates longest-first so a more specific
- * ID is never shadowed by a shorter prefix.
+ * model definition by prefix. Longest-first order ensures a more specific ID is
+ * never shadowed by a shorter prefix.
  */
 function matchDatedVariant(id: string): ModelDefinition | undefined {
-  return MODEL_PROVIDERS.flatMap((p) => p.models)
-    .sort((a, b) => b.id.length - a.id.length)
-    .find((m) => id.startsWith(`${m.id}-`));
+  return SORTED_ALL_MODELS.find((m) => id.startsWith(`${m.id}-`));
 }
 
 /**
@@ -170,6 +196,16 @@ export function getDefaultModel(): ModelDefinition {
 export function getDefaultModelId(): string {
   const id = useSettingsStore.getState().settings.model.defaults.id;
   return findModelById(id) ? id : "claude-sonnet-4-6";
+}
+
+/**
+ * Return the default provider ID from user settings, falling back to "claude".
+ * Needed because multiple providers share the same model IDs (e.g. Codex and
+ * Copilot both expose "gpt-5.3-codex"), so the provider cannot be inferred
+ * from the model ID alone.
+ */
+export function getDefaultProviderId(): string {
+  return useSettingsStore.getState().settings.model.defaults.provider ?? "claude";
 }
 
 /** Valid reasoning levels for fallback validation. */

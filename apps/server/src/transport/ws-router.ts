@@ -15,6 +15,7 @@ import {
   type WebSocketRequest,
   type WebSocketResponse,
   type WsMethodName,
+  type IProviderRegistry,
   getExtension,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
@@ -61,6 +62,8 @@ export interface RouterDeps {
   /** Manages lifecycle-aware memory pressure (idle timers, SQLite cache, GC). */
   memoryPressureService: MemoryPressureService;
   taskRepo: TaskRepo;
+  /** Registry of AI provider adapters for model discovery. */
+  providerRegistry: IProviderRegistry;
   /** Generates AI-powered PR draft titles and bodies. */
   prDraftService: PrDraftService;
   /** Thread repository for resolving worktree paths in git operations. */
@@ -474,6 +477,15 @@ async function dispatch(
       return deps.settingsService.get();
     case "settings.update":
       return deps.settingsService.update(params);
+
+    // Provider
+    case "provider.listModels": {
+      const provider = deps.providerRegistry.resolve(params.providerId);
+      if (!provider.listModels) {
+        throw new Error(`Provider "${params.providerId}" does not support model listing`);
+      }
+      return provider.listModels();
+    }
 
     // Memory pressure
     case "memory.setBackground":

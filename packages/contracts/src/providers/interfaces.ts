@@ -1,9 +1,14 @@
 import type { AgentEvent } from "../events/agent-event.js";
 import type { AttachmentMeta } from "../models/attachment.js";
 import type { ReasoningLevel } from "../models/settings.js";
+import type { ProviderModelInfo } from "./models.js";
 
-/** Identifier for a supported AI provider. */
-export type ProviderId = "claude" | "codex" | "gemini" | "copilot";
+/**
+ * Identifier for a supported AI provider.
+ * "cursor" and "opencode" are registered in the frontend model registry as
+ * comingSoon placeholders but do not have active server-side adapters yet.
+ */
+export type ProviderId = "claude" | "codex" | "gemini" | "copilot" | "cursor" | "opencode";
 
 /** A pluggable agent backend that can run sessions and emit events. */
 export interface IAgentProvider {
@@ -37,6 +42,9 @@ export interface IAgentProvider {
 
   /** Tear down all sessions and release resources. */
   shutdown(): void;
+
+  /** List models available from this provider. Not all providers support dynamic discovery. */
+  listModels?(): Promise<ProviderModelInfo[]>;
 
   /** Subscribe to agent events. */
   on(event: "event", handler: (event: AgentEvent) => void): void;

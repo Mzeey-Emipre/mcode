@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, findProviderForModel, getCodexReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -128,6 +128,10 @@ function TasksToggle({ threadId }: { threadId?: string }) {
 export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit }: ComposerProps) {
   const [input, setInput] = useState("");
   const [modelId, setModelId] = useState(getDefaultModelId());
+  // Track provider explicitly: multiple providers share the same model IDs
+  // (e.g. "gpt-5.3-codex" exists in both Codex and Copilot), so deriving the
+  // provider from the model ID alone is ambiguous and routes to the wrong backend.
+  const [provider, setProvider] = useState<string>(getDefaultProviderId());
   const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
   const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.CHAT);
   const [access, setAccess] = useState<AccessMode>(PERMISSION_MODES.FULL);
@@ -152,7 +156,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
   const prevThreadIdRef = useRef<string | undefined>(threadId);
-  const draftRef = useRef({ input, attachments, modelId, reasoning });
+  const draftRef = useRef({ input, attachments, modelId, provider, reasoning });
   /** Tracks whether the user toggled mode/access before settings finished loading. */
   const agentSettingsTouchedRef = useRef(false);
   /** Set to true by the thread-switch effect; cleared by the model-sync effect.
@@ -161,7 +165,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   // Keep draft ref in sync so the thread-switch effect reads current values
   useEffect(() => {
-    draftRef.current = { input, attachments, modelId, reasoning };
+    draftRef.current = { input, attachments, modelId, provider, reasoning };
   });
 
   const saveDraft = useComposerDraftStore((s) => s.saveDraft);
@@ -173,6 +177,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   // Reactive settings: sync model/reasoning defaults when settings finish loading
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const settingsDefaultModelId = useSettingsStore((s) => s.settings.model.defaults.id);
+  const settingsDefaultProvider = useSettingsStore((s) => s.settings.model.defaults.provider);
   const settingsDefaultReasoning = useSettingsStore((s) => s.settings.model.defaults.reasoning);
   const settingsDefaultMode = useSettingsStore((s) => s.settings.agent.defaults.mode);
   const settingsDefaultPermission = useSettingsStore((s) => s.settings.agent.defaults.permission);
@@ -185,13 +190,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
     const validModelId = findModelById(settingsDefaultModelId) ? settingsDefaultModelId : "claude-sonnet-4-6";
     setModelId(validModelId);
+    setProvider(settingsDefaultProvider ?? "claude");
     setReasoning(normalizeReasoningLevelForModel(validModelId, settingsDefaultReasoning));
 
     if (!agentSettingsTouchedRef.current) {
       setMode(settingsDefaultMode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
       setAccess(settingsDefaultPermission);
     }
-  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission, threadId]);
+  }, [settingsLoaded, settingsDefaultModelId, settingsDefaultProvider, settingsDefaultReasoning, settingsDefaultMode, settingsDefaultPermission, threadId]);
 
   // Reset reasoning when the selected model does not support the current level
   useEffect(() => {
@@ -225,6 +231,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         setInput(saved.input);
         setAttachments(saved.attachments);
         setModelId(saved.modelId);
+        if (saved.provider) setProvider(saved.provider);
         setReasoning(normalizeReasoningLevelForModel(saved.modelId, saved.reasoning));
         // Restore Lexical editor content
         if (editorRef.current) {
@@ -252,6 +259,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         const nextThread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
         const resolvedModelId = resolveThreadModelId(nextThread?.model, getDefaultModelId());
         setModelId(resolvedModelId);
+        setProvider((nextThread?.provider as string) ?? getDefaultProviderId());
         setReasoning(normalizeReasoningLevelForModel(
           resolvedModelId,
           nextThread?.reasoning_level
@@ -290,6 +298,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       setInput("");
       setAttachments([]);
       setModelId(getDefaultModelId());
+      setProvider(getDefaultProviderId());
       setReasoning(normalizeReasoningLevelForModel(getDefaultModelId(), getDefaultReasoningLevel()));
       // Reset mode/access to persisted defaults
       agentSettingsTouchedRef.current = false;
@@ -425,10 +434,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const loadOpenPrs = useWorkspaceStore((s) => s.loadOpenPrs);
   const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
 
-  // Sync modelId if thread.model changes server-side (e.g. user changed model from another client).
-  // This does NOT fire on SDK model fallback because fallback no longer mutates thread.model --
-  // fallback is stored transiently in lastFallbackByThread. The model picker intentionally
-  // stays at the user's intended model; the fallback toast notifies them of the actual model used.
+  // Sync modelId + provider if thread record changes server-side (e.g. from another client).
+  // Does NOT fire on SDK model fallback — fallback is stored transiently and does not
+  // mutate thread.model, so the picker stays at the user's intended model.
   useEffect(() => {
     if (!activeThread?.model) return;
     if (threadSwitchRef.current) {
@@ -439,7 +447,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const isRunning = threadId ? useThreadStore.getState().runningThreadIds.has(threadId) : false;
     if (hasDraft && !isRunning) return;
     setModelId(activeThread.model);
-  }, [activeThread?.model, threadId, getDraft]);
+    if (activeThread.provider) setProvider(activeThread.provider as string);
+  }, [activeThread?.model, activeThread?.provider, threadId, getDraft]);
 
   // Combined setter that keeps local + store in sync
   const setComposerMode = useCallback(
@@ -807,7 +816,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const { content, display } = await injectFileContent(trimmed);
       const currentAttachments = collectAndClearAttachments();
 
-      const queueProvider = findProviderForModel(modelId)?.id;
+      const queueProvider = provider;
       useQueueStore.getState().enqueue(threadId, {
         content,
         displayContent: display,
@@ -833,7 +842,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
     // ---- Normal send path ----
     const { content: messageContent, display: displayContent } = await injectFileContent(trimmed);
-    const provider = findProviderForModel(modelId)?.id;
 
     // Validate worktree mode requirements
     if (isNewThread && newThreadMode === "worktree" && namingMode === "custom" && !customBranchName.trim()) {
@@ -1107,7 +1115,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           {/* Model picker */}
           <ModelSelector
             selectedModelId={modelId}
-            onSelect={setModelId}
+            selectedProviderId={provider}
+            onSelect={(mid, pid) => { setModelId(mid); setProvider(pid); }}
             locked={isModelFullyLocked}
             providerLocked={isProviderLocked}
           />

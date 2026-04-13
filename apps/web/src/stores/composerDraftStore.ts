@@ -7,6 +7,8 @@ export interface ComposerDraft {
   input: string;
   attachments: PendingAttachment[];
   modelId: string;
+  /** Provider ID stored alongside the model because multiple providers share model IDs. */
+  provider?: string;
   reasoning: ReasoningLevel;
 }
 

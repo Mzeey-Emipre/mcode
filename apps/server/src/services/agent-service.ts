@@ -901,6 +901,9 @@ export class AgentService {
       if (provider === "codex") {
         return "Codex CLI not found. Install it with: npm install -g @openai/codex\n\nOr set a custom path in Settings > Model.";
       }
+      if (provider === "copilot") {
+        return "Copilot CLI not found. Install it with: npm install -g @github/copilot\n\nOr set a custom path in Settings > Provider > Copilot CLI path.";
+      }
       return `${provider} CLI not found. Check the CLI path in Settings > Model.`;
     }
     return message;
