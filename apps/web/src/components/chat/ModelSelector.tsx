@@ -129,13 +129,53 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
     const isSelected = (modelId: string) =>
       modelId === normalizedSelectedId && p.id === (selectedProviderId ?? displayProvider?.id);
 
+    // Subtle vendor badge shown inline on each model row when groups are present,
+    // so the vendor is visible at a glance when scanning a long list.
+    const GROUP_BADGE_COLORS: Record<string, string> = {
+      OpenAI:    "bg-emerald-500/10 text-emerald-400",
+      Anthropic: "bg-orange-500/10 text-orange-400",
+      Google:    "bg-sky-500/10 text-sky-400",
+      xAI:       "bg-zinc-500/10 text-zinc-400",
+    };
+
+    const ModelRow = ({ m, groupLabel }: { m: typeof p.models[0]; groupLabel?: string }) => (
+      <button
+        key={m.id}
+        onClick={() => handleSelectModel(m.id, p.id)}
+        className={cn(
+          "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
+          isSelected(m.id)
+            ? "bg-accent text-foreground"
+            : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
+        )}
+      >
+        <span className="flex-1 text-left">{m.label}</span>
+        {groupLabel && (
+          <span className={cn(
+            "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium leading-none",
+            GROUP_BADGE_COLORS[groupLabel] ?? "bg-muted text-muted-foreground"
+          )}>
+            {groupLabel}
+          </span>
+        )}
+        {m.multiplier != null && m.multiplier !== 1 && (
+          <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+            {m.multiplier}x
+          </span>
+        )}
+        {isSelected(m.id) && (
+          <Check size={10} className="shrink-0 text-foreground" />
+        )}
+      </button>
+    );
+
     return (
       <div
-        className="absolute left-full top-0 -ml-1 pl-2 min-w-[160px]"
+        className="absolute left-full top-0 -ml-1 pl-2 min-w-[180px]"
         onMouseEnter={() => setHoveredWithDelay(p.id)}
         onMouseLeave={() => setHoveredWithDelay(null)}
       >
-        <div className="max-h-[280px] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
+        <div className="max-h-[min(480px,calc(100vh-8rem))] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
           {hasGroups
             ? groups.map(({ label, models }) => (
                 <div key={label}>
@@ -143,50 +183,12 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                     {label}
                   </div>
                   {models.map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => handleSelectModel(m.id, p.id)}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                        isSelected(m.id)
-                          ? "bg-accent text-foreground"
-                          : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
-                      )}
-                    >
-                      <span className="flex-1 text-left">{m.label}</span>
-                      {m.multiplier != null && m.multiplier !== 1 && (
-                        <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-                          {m.multiplier}x
-                        </span>
-                      )}
-                      {isSelected(m.id) && (
-                        <Check size={10} className="shrink-0 text-foreground" />
-                      )}
-                    </button>
+                    <ModelRow key={m.id} m={m} groupLabel={label} />
                   ))}
                 </div>
               ))
             : p.models.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => handleSelectModel(m.id, p.id)}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs",
-                    isSelected(m.id)
-                      ? "bg-accent text-foreground"
-                      : "text-popover-foreground hover:bg-accent/50 hover:text-foreground"
-                  )}
-                >
-                  <span className="flex-1 text-left">{m.label}</span>
-                  {m.multiplier != null && m.multiplier !== 1 && (
-                    <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-                      {m.multiplier}x
-                    </span>
-                  )}
-                  {isSelected(m.id) && (
-                    <Check size={10} className="shrink-0 text-foreground" />
-                  )}
-                </button>
+                <ModelRow key={m.id} m={m} />
               ))}
         </div>
       </div>
