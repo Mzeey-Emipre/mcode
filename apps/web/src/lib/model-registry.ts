@@ -100,28 +100,13 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     name: "GitHub Copilot",
     comingSoon: false,
     supportsModelListing: true,
+    // Minimal static fallback — the live list from listProviderModels() is the
+    // source of truth. These are shown only while the spinner is loading or if
+    // the fetch fails (e.g. Copilot client not connected).
     models: [
-      // OpenAI
-      { id: "gpt-5.4", label: "GPT-5.4", providerId: "copilot", group: "OpenAI", multiplier: 1 },
-      { id: "gpt-5.3-codex", label: "GPT-5.3 Codex", providerId: "copilot", group: "OpenAI", multiplier: 1 },
-      { id: "gpt-5.2-codex", label: "GPT-5.2 Codex", providerId: "copilot", group: "OpenAI", multiplier: 1 },
-      { id: "gpt-5.2", label: "GPT-5.2", providerId: "copilot", group: "OpenAI", multiplier: 1 },
-      { id: "gpt-5.1", label: "GPT-5.1", providerId: "copilot", group: "OpenAI", multiplier: 1 },
-      { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", providerId: "copilot", group: "OpenAI", multiplier: 0.33 },
-      { id: "gpt-5-mini", label: "GPT-5 Mini", providerId: "copilot", group: "OpenAI", multiplier: 0 },
-      { id: "gpt-4.1", label: "GPT-4.1", providerId: "copilot", group: "OpenAI", multiplier: 0 },
-      // Anthropic
-      { id: "claude-sonnet-4.6", label: "Claude Sonnet 4.6", providerId: "copilot", group: "Anthropic", multiplier: 1 },
-      { id: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", providerId: "copilot", group: "Anthropic", multiplier: 1 },
-      { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", providerId: "copilot", group: "Anthropic", multiplier: 0.33 },
-      { id: "claude-opus-4.6", label: "Claude Opus 4.6", providerId: "copilot", group: "Anthropic", multiplier: 3 },
-      { id: "claude-opus-4.5", label: "Claude Opus 4.5", providerId: "copilot", group: "Anthropic", multiplier: 3 },
-      { id: "claude-sonnet-4", label: "Claude Sonnet 4", providerId: "copilot", group: "Anthropic", multiplier: 1 },
-      // Google
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", providerId: "copilot", group: "Google", multiplier: 1 },
-      // xAI
-      { id: "grok-code-fast-1", label: "Grok Code Fast 1", providerId: "copilot", group: "xAI", multiplier: 0.33 },
-      { id: "grok-3-fast", label: "Grok 3 Fast", providerId: "copilot", group: "xAI", multiplier: 0.33 },
+      { id: "gpt-4.1", label: "GPT-4.1", providerId: "copilot", group: "OpenAI" },
+      { id: "claude-sonnet-4.6", label: "Claude Sonnet 4.6", providerId: "copilot", group: "Anthropic" },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", providerId: "copilot", group: "Google" },
     ],
   },
   {
