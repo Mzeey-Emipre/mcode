@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useProviderModelsStore } from "@/stores/providerModelsStore";
 import {
   MODEL_PROVIDERS,
   isMaxEffortModel,
@@ -104,6 +105,9 @@ export function ModelSection() {
     (p) => p.id === (prDraftProvider || provider),
   );
 
+  const prDraftEffectiveId = prDraftProvider || provider;
+  const dynamicPrDraftModels = useProviderModelsStore((s) => s.models[prDraftEffectiveId]);
+
   const modelOptions = useMemo(
     () => (activeProvider?.models ?? []).map((m) => ({
       value: m.id,
@@ -118,13 +122,18 @@ export function ModelSection() {
     [modelOptions],
   );
 
-  // PR draft model options: "Auto" (provider default) + all models for the effective provider
+  // PR draft model options: "Auto" (provider default) + all models for the effective provider.
+  // Dynamic models from the store take priority; static registry is the fallback when the
+  // store hasn't fetched yet (e.g. Copilot not connected).
   const prDraftModelOptions = useMemo(
     () => [
       { value: "", label: "Auto" },
-      ...(prDraftEffectiveProvider?.models ?? []).map((m) => ({ value: m.id, label: m.label })),
+      ...(dynamicPrDraftModels ?? prDraftEffectiveProvider?.models ?? []).map((m) => ({
+        value: m.id,
+        label: m.label,
+      })),
     ],
-    [prDraftEffectiveProvider],
+    [dynamicPrDraftModels, prDraftEffectiveProvider],
   );
 
   const codexLevels = useMemo(() => getCodexReasoningLevels(modelId), [modelId]);
