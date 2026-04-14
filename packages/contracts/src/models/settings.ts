@@ -71,6 +71,15 @@ export const SettingsSchema = lazySchema(() =>
             permission: PermissionModeSchema.default("full"),
           })
           .default({}),
+        /** Per-session safety limits (Claude provider only). */
+        guardrails: z
+          .object({
+            /** Stop the agent if session cost exceeds this USD amount. 0 disables. */
+            maxBudgetUsd: z.number().nonnegative().default(0),
+            /** Stop the agent after this many turns. 0 disables. */
+            maxTurns: z.number().int().nonnegative().default(0),
+          })
+          .default({}),
       })
       .default({}),
 
@@ -208,6 +217,12 @@ export const PartialSettingsSchema = lazySchema(() =>
           .object({
             mode: AgentDefaultModeSchema.optional(),
             permission: PermissionModeSchema.optional(),
+          })
+          .optional(),
+        guardrails: z
+          .object({
+            maxBudgetUsd: z.number().nonnegative().optional(),
+            maxTurns: z.number().int().nonnegative().optional(),
           })
           .optional(),
       })
