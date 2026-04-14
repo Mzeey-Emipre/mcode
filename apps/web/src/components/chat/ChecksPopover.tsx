@@ -72,13 +72,6 @@ function aggregateHeadline(checks: ChecksStatus): string {
   }
 }
 
-/** Tailwind bg class for the colored accent strip at the top of the popover. */
-const ACCENT_BG: Record<ChecksStatus["aggregate"], string> = {
-  passing: "bg-green-500",
-  failing: "bg-red-500",
-  pending: "bg-amber-500",
-  no_checks: "bg-border",
-};
 
 /**
  * Popover that shows PR metadata and individual CI check run details.
@@ -149,7 +142,6 @@ export function ChecksPopover({
 
   const visual = getCiVisual(checks.aggregate);
   const StatusIcon = visual.icon;
-  const accentBg = ACCENT_BG[checks.aggregate];
 
   return (
     <Popover>
@@ -160,11 +152,8 @@ export function ChecksPopover({
         {children}
       </PopoverTrigger>
       <PopoverContent side="bottom" align="start" sideOffset={6} className="w-80 p-0 overflow-hidden">
-        {/* Colored status accent strip */}
-        <div className={cn("h-[2px] w-full", accentBg)} />
-
         {/* Aggregate status header */}
-        <div className="flex items-center gap-3 px-4 pt-3 pb-2.5">
+        <div className="flex items-center gap-3 px-4 pt-4 pb-2.5">
           <StatusIcon size={16} className={cn("shrink-0", visual.color)} />
           <div className="min-w-0">
             <div className="text-sm font-semibold text-foreground leading-tight">
