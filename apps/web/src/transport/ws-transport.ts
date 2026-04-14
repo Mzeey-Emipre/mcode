@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
@@ -306,8 +307,14 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?) =>
-      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode }),
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?) => {
+      const { maxBudgetUsd, maxTurns } = useSettingsStore.getState().settings.agent.guardrails;
+      return rpc<void>("agent.send", {
+        threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode,
+        ...(maxBudgetUsd > 0 && { maxBudgetUsd }),
+        ...(maxTurns > 0 && { maxTurns }),
+      });
+    },
     createAndSendMessage: (
       workspaceId,
       content,
@@ -322,8 +329,9 @@ export function createWsTransport(
       interactionMode?,
       parentThreadId?,
       forkedFromMessageId?,
-    ) =>
-      rpc<Thread>("agent.createAndSend", {
+    ) => {
+      const { maxBudgetUsd, maxTurns } = useSettingsStore.getState().settings.agent.guardrails;
+      return rpc<Thread>("agent.createAndSend", {
         workspaceId,
         content,
         model,
@@ -337,7 +345,10 @@ export function createWsTransport(
         interactionMode,
         parentThreadId,
         forkedFromMessageId,
-      }),
+        ...(maxBudgetUsd > 0 && { maxBudgetUsd }),
+        ...(maxTurns > 0 && { maxTurns }),
+      });
+    },
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
     answerPlanQuestions: (threadId, answers, permissionMode?, reasoningLevel?) =>
       rpc<void>("agent.answerQuestions", { threadId, answers, permissionMode, reasoningLevel }),
