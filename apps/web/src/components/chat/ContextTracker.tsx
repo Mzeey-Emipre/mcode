@@ -17,6 +17,10 @@ interface ContextTrackerProps {
   totalProcessedTokens?: number;
   /** Optional additional Tailwind classes for the root element. */
   className?: string;
+  /** Show red dot badge when any quota category is below 20%. */
+  hasLowQuota?: boolean;
+  /** When true, suppress the tooltip (popover is visible). */
+  popoverOpen?: boolean;
 }
 
 /** Returns the color tier class for the fill ring and label. */
@@ -34,7 +38,7 @@ function colorTier(pct: number) {
  * from muted → amber (70%) → red (90%) to signal urgency. When the provider
  * compacts, the ring silently animates backward.
  */
-export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, className }: ContextTrackerProps) {
+export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, className, hasLowQuota, popoverOpen }: ContextTrackerProps) {
   if (tokensIn <= 0 || !contextWindow) return null;
 
   const pct = Math.min(100, contextWindow > 0 ? (tokensIn / contextWindow) * 100 : 0);
@@ -51,12 +55,12 @@ export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, 
   const tooltipLine = `${displayPct}% · ${abbrev(tokensIn)}/${abbrev(contextWindow)} context used`;
 
   return (
-    <Tooltip>
+    <Tooltip open={popoverOpen ? false : undefined}>
       <TooltipTrigger
         render={
           <div
             className={cn(
-              "relative flex items-center justify-center cursor-default",
+              "relative flex items-center justify-center cursor-pointer",
               className,
             )}
             style={{ width: 24, height: 24 }}
@@ -95,6 +99,10 @@ export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, 
                 )}
               />
             </svg>
+
+            {hasLowQuota && (
+              <div className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-background bg-destructive" />
+            )}
 
             {/* Centre percentage — positioned absolutely so it doesn't rotate */}
             <span
