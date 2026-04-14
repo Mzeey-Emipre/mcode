@@ -21,6 +21,7 @@ import {
 import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
 import { ProviderUsageInfoSchema } from "../providers/usage.js";
+import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 
 /** Schema for creating a new thread. */
 export const CreateThreadSchema = lazySchema(() =>
@@ -48,6 +49,8 @@ export const SendMessageSchema = lazySchema(() =>
     maxBudgetUsd: z.number().nonnegative().finite().optional(),
     /** Maximum agent turns. 0 or absent disables. */
     maxTurns: z.number().int().nonnegative().optional(),
+    /** Copilot sub-agent to activate for this message. Ignored by other providers. */
+    copilotAgent: CopilotAgentNameSchema.optional(),
   }),
 );
 
@@ -70,13 +73,15 @@ export const CreateAndSendSchema = lazySchema(() =>
     maxBudgetUsd: z.number().nonnegative().finite().optional(),
     /** Maximum agent turns. 0 or absent disables. */
     maxTurns: z.number().int().nonnegative().optional(),
+    /** Copilot sub-agent to activate for this thread. Ignored by other providers. */
+    copilotAgent: CopilotAgentNameSchema.optional(),
     /** Source thread ID when branching from an existing thread. */
-    parentThreadId: z.string().optional(),
-    /** Fork-point message ID in the parent thread. Defaults to last persisted message. */
-    forkedFromMessageId: z.string().optional(),
-  }).refine(
-    (d) => !d.forkedFromMessageId || d.parentThreadId,
-    { message: "forkedFromMessageId requires parentThreadId", path: ["forkedFromMessageId"] },
+  parentThreadId: z.string().optional(),
+  /** Fork-point message ID in the parent thread. Defaults to last persisted message. */
+  forkedFromMessageId: z.string().optional(),
+}).refine(
+  (d) => !d.forkedFromMessageId || d.parentThreadId,
+  { message: "forkedFromMessageId requires parentThreadId", path: ["forkedFromMessageId"] },
   ),
 );
 
@@ -96,11 +101,11 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "thread.list": {
     params: z.object({ workspaceId: z.string() }),
-    result: z.array(ThreadSchema),
+    result: z.array(ThreadSchema()),
   },
   "thread.create": {
     params: CreateThreadSchema(),
-    result: ThreadSchema,
+    result: ThreadSchema(),
   },
   "thread.delete": {
     params: z.object({
@@ -119,8 +124,14 @@ export const WS_METHODS = lazySchema(() => ({
       reasoningLevel: ReasoningLevelSchema.optional(),
       interactionMode: InteractionModeSchema.optional(),
       permissionMode: PermissionModeSchema.optional(),
+      /** Copilot-specific: name of the selected sub-agent. Pass null to clear back to provider default. */
+      copilotAgent: CopilotAgentNameSchema.nullable().optional(),
     }).refine(
-      (data) => data.reasoningLevel !== undefined || data.interactionMode !== undefined || data.permissionMode !== undefined,
+      (data) =>
+        data.reasoningLevel !== undefined ||
+        data.interactionMode !== undefined ||
+        data.permissionMode !== undefined ||
+        data.copilotAgent !== undefined,
       { message: "Must provide at least one setting to update" },
     ),
     result: z.boolean(),
@@ -194,7 +205,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "agent.createAndSend": {
     params: CreateAndSendSchema(),
-    result: ThreadSchema,
+    result: ThreadSchema(),
   },
   "agent.stop": {
     params: z.object({ threadId: z.string() }),
@@ -398,6 +409,12 @@ export const WS_METHODS = lazySchema(() => ({
   "memory.setBackground": {
     params: z.object({ background: z.boolean() }),
     result: z.void(),
+  },
+  "provider.copilotAgents": {
+    params: z.object({
+      workspaceId: z.string(),
+    }),
+    result: z.array(CopilotSubagentSchema()),
   },
 } as const));
 

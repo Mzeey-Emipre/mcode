@@ -20,6 +20,7 @@ import {
   getExtension,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
+import { discoverCopilotAgents } from "../providers/copilot/copilot-agent-discovery.js";
 import type { WorkspaceService } from "../services/workspace-service";
 import type { ThreadService } from "../services/thread-service";
 import type { AgentService } from "../services/agent-service";
@@ -211,6 +212,7 @@ async function dispatch(
         reasoning_level: params.reasoningLevel,
         interaction_mode: params.interactionMode,
         permission_mode: params.permissionMode,
+        copilot_agent: params.copilotAgent,
       });
     case "thread.markViewed":
       deps.threadService.markViewed(params.threadId);
@@ -290,6 +292,7 @@ async function dispatch(
         params.interactionMode,
         params.maxBudgetUsd,
         params.maxTurns,
+        params.copilotAgent,
       );
       return;
     case "agent.createAndSend":
@@ -309,6 +312,7 @@ async function dispatch(
         params.forkedFromMessageId,
         params.maxBudgetUsd,
         params.maxTurns,
+        params.copilotAgent,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);
@@ -497,6 +501,11 @@ async function dispatch(
         return { providerId: provider.id, quotaCategories: [] } satisfies ProviderUsageInfo;
       }
       return provider.getUsage();
+    }
+    case "provider.copilotAgents": {
+      const workspace = deps.workspaceService.findById(params.workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${params.workspaceId}`);
+      return discoverCopilotAgents(workspace.path);
     }
 
     // Memory pressure

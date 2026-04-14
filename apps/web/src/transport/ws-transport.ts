@@ -13,6 +13,7 @@ import type {
   Settings,
   GitCommit,
   ProviderModelInfo,
+  CopilotSubagent,
 } from "./types";
 import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
@@ -294,6 +295,7 @@ export function createWsTransport(
         reasoningLevel: settings.reasoningLevel,
         interactionMode: settings.interactionMode,
         permissionMode: settings.permissionMode,
+        copilotAgent: settings.copilotAgent,
       }),
     markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
     syncThreadPrs: (workspaceId) =>
@@ -307,13 +309,13 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?) => {
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?, copilotAgent?: string) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
         ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
         : {};
       return rpc<void>("agent.send", {
-        threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode,
+        threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode, copilotAgent,
         ...guardrails,
       });
     },
@@ -331,6 +333,7 @@ export function createWsTransport(
       interactionMode?,
       parentThreadId?,
       forkedFromMessageId?,
+      copilotAgent?,
     ) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
@@ -350,6 +353,7 @@ export function createWsTransport(
         interactionMode,
         parentThreadId,
         forkedFromMessageId,
+        copilotAgent,
         ...guardrails,
       });
     },
@@ -467,6 +471,9 @@ export function createWsTransport(
       rpc<ProviderModelInfo[]>("provider.listModels", { providerId }),
     getProviderUsage: (providerId) =>
       rpc<ProviderUsageInfo>("provider.getUsage", { providerId }),
+    /** Fetches all available Copilot sub-agents for the given workspace (built-in + user + project). */
+    listCopilotAgents: (workspaceId) =>
+      rpc<CopilotSubagent[]>("provider.copilotAgents", { workspaceId }),
 
     // Memory pressure
     setBackground: (background) => rpc<void>("memory.setBackground", { background }),

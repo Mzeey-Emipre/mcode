@@ -136,12 +136,16 @@ export class AgentService {
     interactionMode?: InteractionMode,
     maxBudgetUsd?: number,
     maxTurns?: number,
+    copilotAgent?: string,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     // Use the thread's stored provider as authoritative fallback; only override
     // when the caller explicitly supplies a provider (new thread or explicit switch).
     const effectiveProvider: ProviderId = provider ?? (thread.provider as ProviderId) ?? "claude";
+    // Fall back to the thread's persisted Copilot agent when the caller doesn't supply one.
+    // Converts null (DB "cleared") to undefined (provider ignores it) so the SDK defaults.
+    const effectiveCopilotAgent = copilotAgent ?? (thread.copilot_agent ?? undefined);
     if (thread.status === "deleted" || thread.deleted_at != null) {
       throw new Error(`Cannot send message to deleted thread: ${threadId}`);
     }
@@ -241,6 +245,7 @@ export class AgentService {
       ...(reasoningLevel !== undefined && { reasoning_level: reasoningLevel }),
       ...(interactionMode !== undefined && { interaction_mode: interactionMode }),
       ...(permissionMode !== undefined && permissionMode !== "default" && { permission_mode: permissionMode }),
+      ...(copilotAgent !== undefined && { copilot_agent: copilotAgent }),
     });
 
     const sessionName = `mcode-${threadId}`;
@@ -275,6 +280,7 @@ export class AgentService {
         reasoningLevel,
         ...(effectiveBudget > 0 && { maxBudgetUsd: effectiveBudget }),
         ...(effectiveTurns > 0 && { maxTurns: effectiveTurns }),
+        copilotAgent: effectiveCopilotAgent,
       });
       logger.info("Message sent via provider", {
         threadId,
@@ -383,6 +389,7 @@ export class AgentService {
     forkedFromMessageId?: string,
     maxBudgetUsd?: number,
     maxTurns?: number,
+    copilotAgent?: string,
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
@@ -392,6 +399,7 @@ export class AgentService {
         existingWorktreePath, attachments, reasoningLevel, provider,
         interactionMode, parentThreadId, forkedFromMessageId, title,
         maxBudgetUsd, maxTurns,
+        copilotAgent,
       });
     }
 
@@ -452,6 +460,7 @@ export class AgentService {
       interactionMode,
       maxBudgetUsd,
       maxTurns,
+      copilotAgent,
     );
 
     // Re-read from DB to pick up model update applied by sendMessage
@@ -482,12 +491,14 @@ export class AgentService {
     title: string;
     maxBudgetUsd?: number;
     maxTurns?: number;
+    copilotAgent?: string;
   }): Promise<Thread> {
     const {
       workspaceId, content, model, permissionMode, mode, branch,
       existingWorktreePath, attachments, reasoningLevel, provider,
       interactionMode, parentThreadId, forkedFromMessageId, title,
       maxBudgetUsd, maxTurns,
+      copilotAgent,
     } = params;
 
     // Validate parent
@@ -652,6 +663,7 @@ export class AgentService {
         interactionMode,
         maxBudgetUsd,
         maxTurns,
+        copilotAgent,
       );
     } finally {
       // Ensure override is cleaned up even if sendMessage throws before consuming it.
