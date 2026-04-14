@@ -1271,6 +1271,39 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         }));
       }
 
+      // Surface guardrail stop reasons as a visible system message
+      if (method === "session.turnComplete") {
+        const reason = params.reason as string | undefined;
+        if (reason === "error_max_budget_usd" || reason === "max_turns") {
+          const label = reason === "error_max_budget_usd"
+            ? "Budget cap reached"
+            : "Max turns reached";
+
+          const systemMsg: Message = {
+            id: crypto.randomUUID(),
+            thread_id: threadId,
+            role: "system",
+            content: `Agent stopped: ${label}. You can adjust guardrails in Settings > Agent.`,
+            sequence: 0,
+            tokens_used: null,
+            cost_usd: null,
+            timestamp: new Date().toISOString(),
+            tool_calls: null,
+            files_changed: null,
+            attachments: null,
+          };
+
+          set((state) => {
+            if (state.currentThreadId !== threadId) return {};
+            const { messages: capped, evicted } = capMessages([...state.messages, systemMsg]);
+            return {
+              messages: capped,
+              ...(evicted ? { hasMoreMessages: { ...state.hasMoreMessages, [threadId]: true } } : {}),
+            };
+          });
+        }
+      }
+
       // Tool calls remain in state (all marked complete). They render as
       // a collapsed summary in-place. When turn.persisted fires, the DB-backed
       // summary replaces them and tool calls are cleared.
