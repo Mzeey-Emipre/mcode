@@ -13,6 +13,7 @@ import type {
   Settings,
   GitCommit,
   ProviderModelInfo,
+  CopilotSubagent,
 } from "./types";
 import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
@@ -317,6 +318,8 @@ export function createWsTransport(
         ...guardrails,
       });
     },
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?, copilotAgent?: string) =>
+      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode, copilotAgent }),
     createAndSendMessage: (
       workspaceId,
       content,
@@ -337,6 +340,9 @@ export function createWsTransport(
         ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
         : {};
       return rpc<Thread>("agent.createAndSend", {
+      copilotAgent?,
+    ) =>
+      rpc<Thread>("agent.createAndSend", {
         workspaceId,
         content,
         model,
@@ -353,6 +359,8 @@ export function createWsTransport(
         ...guardrails,
       });
     },
+        copilotAgent,
+      }),
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
     answerPlanQuestions: (threadId, answers, permissionMode?, reasoningLevel?) =>
       rpc<void>("agent.answerQuestions", { threadId, answers, permissionMode, reasoningLevel }),
@@ -467,6 +475,9 @@ export function createWsTransport(
       rpc<ProviderModelInfo[]>("provider.listModels", { providerId }),
     getProviderUsage: (providerId) =>
       rpc<ProviderUsageInfo>("provider.getUsage", { providerId }),
+    /** Fetches all available Copilot sub-agents for the given workspace (built-in + user + project). */
+    listCopilotAgents: (workspaceId) =>
+      rpc<CopilotSubagent[]>("provider.copilotAgents", { workspaceId }),
 
     // Memory pressure
     setBackground: (background) => rpc<void>("memory.setBackground", { background }),
