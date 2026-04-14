@@ -182,6 +182,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     permissionMode: string;
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
+    maxBudgetUsd?: number;
+    maxTurns?: number;
   }): Promise<void> {
     try {
       await this.doSendMessage(params);
@@ -280,6 +282,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     permissionMode: string;
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
+    maxBudgetUsd?: number;
+    maxTurns?: number;
   }): Promise<void> {
     const {
       sessionId,
@@ -381,6 +385,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
       includePartialMessages: true,
+      ...(params.maxBudgetUsd != null && params.maxBudgetUsd > 0 && { maxBudgetUsd: params.maxBudgetUsd }),
+      ...(params.maxTurns != null && params.maxTurns > 0 && { maxTurns: params.maxTurns }),
       hooks: {
         PostCompact: [{
           // @ts-expect-error: HookCallback accepts 3 params but we only need input
