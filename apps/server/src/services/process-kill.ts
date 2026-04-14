@@ -61,7 +61,10 @@ export async function killProcessTree(pid: number): Promise<void> {
 
 /**
  * Recursively find descendant processes matching a given name.
- * On Windows uses wmic to query the process tree. On Unix uses pgrep.
+ * On Windows uses wmic to query the process tree (returns name + PID).
+ * On Unix uses pgrep (returns PIDs only, without names), so name matching
+ * will never produce results there. Callers that need name-based filtering
+ * should guard with a platform check (see {@link killDescendantsByName}).
  * Best-effort: returns an empty array on failure.
  */
 export async function findDescendantsByName(

@@ -311,6 +311,10 @@ export class GitService {
       try {
         await rename(wtPath, pendingPath);
         logger.info("Renamed stuck worktree for deferred deletion", { wtPath, pendingPath });
+        // Best-effort: .catch() intentionally swallows errors because the
+        // original worktree path is already gone (renamed). If the deferred rm
+        // fails the .deleting-* dir persists but the worktree is effectively
+        // removed, so retrying the entire cleanup job would be pointless.
         deferredRm = rm(pendingPath, RM_RETRY_OPTIONS).catch(
           (err) => {
             logger.warn("Deferred deletion of renamed worktree failed", {

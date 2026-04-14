@@ -153,6 +153,12 @@ export class CleanupWorker {
       //    descendant of this server process. waitForSessionExit only confirms
       //    the stream ended, not that the OS process exited.  Its cwd handle
       //    locks the worktree directory and ancestors on Windows.
+      //
+      //    Scope: targets all claude.exe descendants of the server, not just
+      //    this session's subprocess. The SDK does not expose subprocess PIDs,
+      //    so per-session targeting is not possible. This is acceptable because
+      //    cleanup jobs only exist for deleted threads whose sessions have
+      //    already been asked to exit in step 1.
       await killDescendantsByName(process.pid, "claude.exe");
 
       // 4. Brief delay on Windows so the OS releases directory handles.
