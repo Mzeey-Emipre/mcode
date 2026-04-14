@@ -109,6 +109,7 @@ function defaultWorkspaceState() {
     pendingNewThread: false,
     threads: [makeThread()],
     prUrlsByThreadId: {} as Record<string, string>,
+    checksById: {} as Record<string, import("@mcode/contracts").ChecksStatus>,
     loadWorkspaces: vi.fn(),
     loadThreads: vi.fn(),
     setActiveWorkspace: vi.fn(),
