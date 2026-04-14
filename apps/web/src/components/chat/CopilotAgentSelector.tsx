@@ -12,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuGroup,
 } from "@/components/ui/dropdown-menu";
+import { CopilotIcon } from "./ProviderIcons";
 
 /** Built-in agents always available regardless of workspace config. */
 const DEFAULT_AGENTS: CopilotSubagent[] = [
@@ -60,21 +61,32 @@ function AgentItem({
     <DropdownMenuItem
       onClick={onSelect}
       className={cn(
-        "flex cursor-pointer items-start gap-2 px-2 py-1.5 text-xs",
+        "flex cursor-pointer items-start gap-2 px-2 py-1.5 text-sm",
         isSelected ? "text-foreground" : "text-popover-foreground",
       )}
     >
       {/* Fixed-width slot keeps text aligned regardless of selection state. */}
-      <span className="mt-0.5 flex w-3 shrink-0 items-center justify-center">
-        {isSelected && <Check size={10} className="text-muted-foreground" />}
+      <span className="mt-[3px] flex w-3 shrink-0 items-center justify-center">
+        {isSelected && (
+          <Check size={10} className="text-violet-400 dark:text-violet-300" />
+        )}
       </span>
       <span className="flex flex-col gap-0.5">
         <span className="font-medium leading-none">{agent.displayName}</span>
-        <span className="text-[10px] leading-snug text-muted-foreground">
+        <span className="text-[11px] leading-snug text-muted-foreground">
           {agent.description}
         </span>
       </span>
     </DropdownMenuItem>
+  );
+}
+
+/** Section label rendered as all-caps category header with a separator line. */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <DropdownMenuLabel className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+      {children}
+    </DropdownMenuLabel>
   );
 }
 
@@ -112,10 +124,11 @@ export function CopilotAgentSelector({
     return (
       <span
         aria-label={`Copilot agent: ${activeAgent.displayName} (locked)`}
-        className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground/70"
+        className="flex h-6 items-center gap-1.5 rounded px-1.5 text-sm text-muted-foreground/50"
       >
+        <CopilotIcon size={12} className="shrink-0" />
         {activeAgent.displayName}
-        <ChevronDown size={10} />
+        <ChevronDown size={11} />
       </span>
     );
   }
@@ -124,15 +137,16 @@ export function CopilotAgentSelector({
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="Select Copilot agent"
-        className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="flex h-6 items-center gap-1.5 rounded px-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground data-[state=open]:bg-muted/40 data-[state=open]:text-foreground"
       >
+        <CopilotIcon size={12} className="shrink-0 text-violet-400 dark:text-violet-300" />
         {activeAgent.displayName}
-        <ChevronDown size={10} />
+        <ChevronDown size={11} />
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="start" sideOffset={4} className="min-w-[200px]">
+      <DropdownMenuContent align="start" sideOffset={4} className="min-w-[210px]">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>Default</DropdownMenuLabel>
+          <SectionLabel>Default</SectionLabel>
           {DEFAULT_AGENTS.map((agent) => (
             <AgentItem
               key={agent.name}
@@ -147,7 +161,7 @@ export function CopilotAgentSelector({
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuLabel>User</DropdownMenuLabel>
+              <SectionLabel>User</SectionLabel>
               {userAgents.map((agent) => (
                 <AgentItem
                   key={agent.name}
@@ -164,7 +178,7 @@ export function CopilotAgentSelector({
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Project</DropdownMenuLabel>
+              <SectionLabel>Project</SectionLabel>
               {projectAgents.map((agent) => (
                 <AgentItem
                   key={agent.name}
