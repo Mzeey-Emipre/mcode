@@ -70,6 +70,32 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openKeybindingsFile: (): Promise<string> =>
     ipcRenderer.invoke("open-keybindings-file"),
 
+  /** Spellcheck context menu and dictionary management. */
+  spellcheck: {
+    /** Listen for context-menu events with spelling data from the main process. Returns the listener reference for targeted cleanup. */
+    onContextMenu(callback: (data: unknown) => void) {
+      const listener = (_event: unknown, data: unknown) => callback(data);
+      ipcRenderer.on("spellcheck:context-menu", listener);
+      return listener;
+    },
+    /** Remove a specific context-menu listener (avoids removing other listeners on the channel). */
+    offContextMenu(listener: (...args: unknown[]) => void) {
+      ipcRenderer.removeListener("spellcheck:context-menu", listener);
+    },
+    /** Replace the misspelled word under the cursor with the given word. */
+    replaceMisspelling(word: string): Promise<void> {
+      return ipcRenderer.invoke("spellcheck:replace-misspelling", word);
+    },
+    /** Add a word to the user's custom dictionary. */
+    addToDictionary(word: string): Promise<void> {
+      return ipcRenderer.invoke("spellcheck:add-to-dictionary", word);
+    },
+    /** Paste from clipboard via Electron's native webContents.paste(). */
+    paste(): Promise<void> {
+      return ipcRenderer.invoke("spellcheck:paste");
+    },
+  },
+
   /** IPC push transport relayed from the main process. */
   ipc: {
     /** Listen for push messages forwarded by the main process IPC relay. */
