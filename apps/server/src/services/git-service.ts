@@ -354,13 +354,13 @@ export class GitService {
       await deferredRm;
     }
 
-    // 7. Best-effort cleanup of any empty managed parent directories left behind.
-    //    Failure here is cosmetic (empty slug dir left behind) and should not
-    //    cause the cleanup worker to retry the entire pipeline for an already-
-    //    removed worktree.
-    await removeEmptyManagedParentDirs(wtPath);
+    // 7. Remove empty managed parent directories. Returns false on transient
+    //    lock errors (EBUSY/EPERM) so the cleanup worker can retry later when
+    //    the OS releases handles.
+    const parentsCleaned = await removeEmptyManagedParentDirs(wtPath);
 
-    // 8. Delete the branch when explicitly requested.
+    // 8. Delete the branch when explicitly requested (independent of parent
+    //    dir state - always attempt this).
     if (branch) {
       try {
         await execFile("git", ["-C", repoPath, "branch", "-d", branch], {
@@ -374,7 +374,7 @@ export class GitService {
       }
     }
 
-    return true;
+    return parentsCleaned;
   }
 
   /**
