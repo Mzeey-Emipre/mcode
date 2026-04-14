@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Shield, ChevronDown, Check, X } from "lucide-react";
+import { Shield, ChevronDown, Check, X, Zap, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -7,6 +7,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { getTransport } from "@/transport";
@@ -42,9 +43,9 @@ function badgeVariantFor(
 function decisionLabel(decision: PermissionDecision): string {
   switch (decision) {
     case "allow":
-      return "Allowed";
+      return "Allowed once";
     case "allow-session":
-      return "Allowed this session";
+      return "Allowed in session";
     case "deny":
       return "Denied";
     case "cancelled":
@@ -55,9 +56,9 @@ function decisionLabel(decision: PermissionDecision): string {
 /**
  * Renders an inline permission request card inside the chat message list.
  *
- * In the pending state it shows the tool name, an input preview, and split
- * Allow / Allow in session / Deny controls. Once resolved it collapses to a
- * single line showing the tool name and an outcome badge.
+ * In the pending state it shows the tool name, an input preview, and an Allow
+ * dropdown (Allow once / Allow in session) plus a Deny button. Once resolved
+ * it collapses to a single line with an outcome badge.
  */
 export function PermissionRequestCard({
   requestId,
@@ -92,12 +93,11 @@ export function PermissionRequestCard({
 
   // ── Settled (collapsed) state ──────────────────────────────────────────────
   if (settled && decision) {
-    const variant = badgeVariantFor(decision);
     return (
       <div className="flex items-center gap-2 border-l-2 border-border/30 pl-3 py-1 text-xs text-muted-foreground/70">
         <Icon size={13} className="shrink-0 text-muted-foreground/50" />
         <span className="font-medium">{label}</span>
-        <Badge variant={variant} size="sm" className="ml-1">
+        <Badge variant={badgeVariantFor(decision)} size="sm" className="ml-1">
           {decisionLabel(decision)}
         </Badge>
       </div>
@@ -126,53 +126,65 @@ export function PermissionRequestCard({
       </pre>
 
       {/* Controls */}
-      <div className="flex items-center gap-2">
-        {/* Split Allow button */}
-        <div className="inline-flex rounded-lg overflow-hidden">
-          {/* Primary: Allow once */}
-          <Button
-            variant="default"
-            size="xs"
+      <div className="flex items-center gap-1.5">
+        {/* Allow dropdown — shows both options */}
+        <DropdownMenu>
+          <DropdownMenuTrigger
             disabled={responding}
-            onClick={() => respond("allow")}
-            className="rounded-r-none border-r border-primary-foreground/20"
+            aria-label="Allow options"
+            className={cn(
+              "inline-flex h-6 items-center gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs font-medium",
+              "bg-primary text-primary-foreground",
+              "transition-colors hover:bg-primary/90",
+              "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+              "disabled:pointer-events-none disabled:opacity-50",
+              "select-none cursor-default",
+            )}
           >
-            <Check size={11} className="mr-1" />
+            <Check size={11} />
             Allow
-          </Button>
-
-          {/* Chevron dropdown: Allow in session */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
+            <ChevronDown size={10} className="opacity-70 -mr-0.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" sideOffset={4} className="min-w-[170px]">
+            <DropdownMenuItem
               disabled={responding}
-              aria-label="More allow options"
-              className="inline-flex h-6 items-center justify-center rounded-l-none rounded-r-[min(var(--radius-md),10px)] border border-transparent bg-primary px-1 text-primary-foreground transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 active:translate-y-px"
+              onSelect={() => respond("allow")}
+              className="gap-2"
             >
-              <ChevronDown size={11} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" sideOffset={4}>
-              <DropdownMenuItem
-                disabled={responding}
-                onSelect={() => respond("allow-session")}
-              >
-                <Check size={11} className="opacity-75" />
-                Allow in session
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+              <Zap size={12} className="text-amber-500 shrink-0" />
+              <div className="flex flex-col">
+                <span className="text-xs font-medium">Allow once</span>
+                <span className="text-[10px] text-muted-foreground">Prompt again next time</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={responding}
+              onSelect={() => respond("allow-session")}
+              className="gap-2"
+            >
+              <Clock size={12} className="text-blue-400 shrink-0" />
+              <div className="flex flex-col">
+                <span className="text-xs font-medium">Allow in session</span>
+                <span className="text-[10px] text-muted-foreground">Skip prompts this session</span>
+              </div>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
-        {/* Deny */}
+        {/* Deny — quiet by default, destructive on hover */}
         <Button
-          variant="destructive"
+          variant="ghost"
           size="xs"
           disabled={responding}
           onClick={() => respond("deny")}
+          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 gap-1"
         >
-          <X size={11} className="mr-1" />
+          <X size={11} />
           Deny
         </Button>
       </div>
+
       {error && (
         <p className="text-xs text-destructive">{error}</p>
       )}
