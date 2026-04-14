@@ -12,7 +12,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuGroup,
 } from "@/components/ui/dropdown-menu";
-import { CopilotIcon } from "./ProviderIcons";
 
 /** Built-in agents always available regardless of workspace config. */
 const DEFAULT_AGENTS: CopilotSubagent[] = [
@@ -126,7 +125,6 @@ export function CopilotAgentSelector({
         aria-label={`Copilot agent: ${activeAgent.displayName} (locked)`}
         className="flex h-6 items-center gap-1.5 rounded px-1.5 text-sm text-muted-foreground/50"
       >
-        <CopilotIcon size={12} className="shrink-0" />
         {activeAgent.displayName}
         <ChevronDown size={11} />
       </span>
@@ -139,7 +137,6 @@ export function CopilotAgentSelector({
         aria-label="Select Copilot agent"
         className="flex h-6 items-center gap-1.5 rounded px-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground data-[state=open]:bg-muted/40 data-[state=open]:text-foreground"
       >
-        <CopilotIcon size={12} className="shrink-0 text-violet-400 dark:text-violet-300" />
         {activeAgent.displayName}
         <ChevronDown size={11} />
       </DropdownMenuTrigger>
