@@ -212,7 +212,7 @@ async function dispatch(
         reasoning_level: params.reasoningLevel,
         interaction_mode: params.interactionMode,
         permission_mode: params.permissionMode,
-        copilotAgent: params.copilotAgent,
+        copilot_agent: params.copilotAgent,
       });
     case "thread.markViewed":
       deps.threadService.markViewed(params.threadId);

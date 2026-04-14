@@ -124,8 +124,8 @@ export const WS_METHODS = lazySchema(() => ({
       reasoningLevel: ReasoningLevelSchema.optional(),
       interactionMode: InteractionModeSchema.optional(),
       permissionMode: PermissionModeSchema.optional(),
-      /** Copilot-specific: name of the selected sub-agent. */
-      copilotAgent: z.string().optional(),
+      /** Copilot-specific: name of the selected sub-agent. Pass null to clear back to provider default. */
+      copilotAgent: z.string().max(128).regex(/^[\w.-]+$/).nullable().optional(),
     }).refine(
       (data) =>
         data.reasoningLevel !== undefined ||
