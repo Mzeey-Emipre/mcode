@@ -13,7 +13,10 @@ export interface WatchEntry {
 /** Broadcast function signature matching the server push system. */
 type BroadcastFn = (channel: string, data: unknown) => void;
 
+// 10s for in-progress checks: responsive enough to catch completion within a PR review window.
+// Worst case: 5 active threads × 6 calls/min = 30 calls/min, well within GitHub's 5000/hr limit.
 const ACTIVE_INTERVAL_MS = 10_000;
+// 60s for terminal checks: keeps open-PR state fresh without burning API quota.
 const PASSIVE_INTERVAL_MS = 60_000;
 
 /**
@@ -62,6 +65,17 @@ export class CiWatcherService {
   }
 
   /**
+   * Update the cached status for a thread and broadcast the change.
+   * Used by the manual-refresh RPC to keep all clients in sync.
+   */
+  refresh(threadId: string, checks: ChecksStatus): void {
+    const entry = this.active.get(threadId) ?? this.passive.get(threadId);
+    if (!entry) return;
+    entry.cache = checks;
+    this.broadcast("thread.checksUpdated", { threadId, checks });
+  }
+
+  /**
    * Seed the watcher from existing threads with open PRs.
    * Called once on server startup.
    */
@@ -81,14 +95,22 @@ export class CiWatcherService {
       const repoPath = wsId ? workspacePaths.get(wsId) : undefined;
       if (!repoPath || t.pr_number == null) return;
 
+      // Insert placeholder synchronously so concurrent watch() calls see this threadId
+      // and skip re-insertion during the async fetch window.
+      if (!this.active.has(t.id) && !this.passive.has(t.id)) {
+        this.passive.set(t.id, { threadId: t.id, prNumber: t.pr_number, repoPath, cache: null });
+      }
+
       try {
         const checks = await this.githubService.getCheckRuns(t.pr_number, repoPath);
-        const entry: WatchEntry = { threadId: t.id, prNumber: t.pr_number, repoPath, cache: checks };
+        const entry = this.passive.get(t.id) ?? this.active.get(t.id);
+        if (!entry) return; // was unwatched during fetch
+        entry.cache = checks;
 
+        // Promote to active if checks are pending; it's already in passive
         if (checks.aggregate === "pending") {
+          this.passive.delete(t.id);
           this.active.set(t.id, entry);
-        } else {
-          this.passive.set(t.id, entry);
         }
       } catch (err) {
         logger.debug("CiWatcher seed failed for thread", { threadId: t.id, error: String(err) });

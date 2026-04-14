@@ -22,6 +22,11 @@ const MIN_RECONNECT_MS = 1000;
 /** Maximum reconnect delay in milliseconds. */
 const MAX_RECONNECT_MS = 30_000;
 
+/** Timestamp of the last github.checkStatus fetch triggered on connect/reconnect. */
+let lastCheckStatusFetchAt = 0;
+/** Minimum interval between reconnect-triggered checkStatus fetches to avoid subprocess storms. */
+const CHECK_STATUS_RECONNECT_COOLDOWN_MS = 30_000;
+
 type Listener = (data: unknown) => void;
 
 /**
@@ -134,18 +139,23 @@ export function createWsTransport(
       // Auth token is conveyed via HttpOnly cookie (Set-Cookie on /health).
       // No need to store it in localStorage - the cookie handles reconnection.
 
-      // On reconnect, refresh CI checks for the active thread (best-effort).
+      // On connect/reconnect, refresh CI checks for the active thread (best-effort).
+      // Cooldown prevents subprocess storms during rapid reconnect loops.
       // Deferred import avoids a circular dependency at module evaluation time.
-      import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
-        const { activeThreadId } = useWorkspaceStore.getState();
-        if (activeThreadId) {
-          rpc<ChecksStatus>("github.checkStatus", { threadId: activeThreadId }).then((checks) => {
-            useWorkspaceStore.setState((ws) => ({
-              checksById: { ...ws.checksById, [activeThreadId]: checks },
-            }));
-          }).catch(() => { /* best-effort */ });
-        }
-      });
+      const now = Date.now();
+      if (now - lastCheckStatusFetchAt > CHECK_STATUS_RECONNECT_COOLDOWN_MS) {
+        lastCheckStatusFetchAt = now;
+        import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
+          const { activeThreadId } = useWorkspaceStore.getState();
+          if (activeThreadId) {
+            rpc<ChecksStatus>("github.checkStatus", { threadId: activeThreadId }).then((checks) => {
+              useWorkspaceStore.setState((ws) => ({
+                checksById: { ...ws.checksById, [activeThreadId]: checks },
+              }));
+            }).catch(() => { /* best-effort */ });
+          }
+        });
+      }
     };
 
     ws.onmessage = (event) => {

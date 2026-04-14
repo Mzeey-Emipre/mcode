@@ -6,7 +6,7 @@
 
 import { injectable, inject } from "tsyringe";
 import { execFile } from "child_process";
-import type { PrInfo, PrDetail, ChecksStatus } from "@mcode/contracts";
+import type { PrInfo, PrDetail, ChecksStatus, CheckRun } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 /** Handles GitHub PR lookups and listing via the gh CLI. */
@@ -193,15 +193,25 @@ export class GithubService {
               const ghState = (item.state ?? "").toUpperCase();
               const completed = ghState === "SUCCESS" || ghState === "FAILURE"
                 || ghState === "CANCELLED" || ghState === "SKIPPED"
-                || ghState === "TIMED_OUT" || ghState === "NEUTRAL";
+                || ghState === "TIMED_OUT" || ghState === "NEUTRAL"
+                || ghState === "ACTION_REQUIRED" || ghState === "STALE";
 
               const status = completed ? "completed" as const
                 : ghState === "QUEUED" ? "queued" as const
                 : "in_progress" as const;
 
-              const conclusion = completed
-                ? ghState.toLowerCase() as "success" | "failure" | "cancelled" | "skipped" | "timed_out" | "neutral"
-                : null;
+              // ACTION_REQUIRED blocks merge like a failure; STALE is abandoned (terminal like cancelled).
+              const conclusionMap: Record<string, CheckRun["conclusion"]> = {
+                SUCCESS: "success",
+                FAILURE: "failure",
+                CANCELLED: "cancelled",
+                SKIPPED: "skipped",
+                TIMED_OUT: "timed_out",
+                NEUTRAL: "neutral",
+                ACTION_REQUIRED: "failure",
+                STALE: "cancelled",
+              };
+              const conclusion = completed ? (conclusionMap[ghState] ?? "cancelled") : null;
 
               let durationMs: number | null = null;
               if (completed && item.startedAt && item.completedAt) {
@@ -223,6 +233,12 @@ export class GithubService {
               aggregate = "pending";
             } else {
               aggregate = "passing";
+            }
+
+            // If all runs completed but none succeeded (all skipped/cancelled/neutral),
+            // treat as no_checks to avoid a misleading green badge.
+            if (aggregate === "passing" && !runs.some((r) => r.conclusion === "success")) {
+              aggregate = "no_checks";
             }
 
             resolve({ aggregate, runs, fetchedAt: now });

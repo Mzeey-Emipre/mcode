@@ -369,7 +369,7 @@ async function dispatch(
         return { aggregate: "no_checks" as const, runs: [], fetchedAt: Date.now() };
       }
       const checks = await deps.githubService.getCheckRuns(entry.prNumber, entry.repoPath);
-      entry.cache = checks;
+      deps.ciWatcherService.refresh(params.threadId, checks);
       return checks;
     }
 
