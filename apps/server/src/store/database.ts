@@ -25,6 +25,7 @@ import * as m012 from "./migrations/012_thread_reasoning_interaction_permission.
 import * as m013 from "./migrations/013_clear_non_claude_context_window.js";
 import * as m014 from "./migrations/014_thread_branching.js";
 import * as m015 from "./migrations/015_thread_compact_summary.js";
+import * as m016 from "./migrations/016_copilot_agent.js";
 
 /**
  * Resolve the correct native binding for better-sqlite3 based on runtime.
@@ -81,6 +82,7 @@ export function loadMigrations(): Map<number, MigrationModule> {
   migrations.set(13, m013);
   migrations.set(14, m014);
   migrations.set(15, m015);
+  migrations.set(16, m016);
   return migrations;
 }
 
