@@ -81,7 +81,7 @@ interface PendingCall {
 }
 
 /** Describes the current state of the WebSocket connection. */
-export type ConnectionStatus = "connecting" | "connected" | "reconnecting";
+export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "auth_failed";
 
 /** Options for configuring `createWsTransport` behavior. */
 export interface WsTransportOptions {
@@ -166,11 +166,12 @@ export function createWsTransport(
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event: CloseEvent) => {
       rejectPending("WebSocket disconnected");
       if (!closed) {
-        options?.onStatusChange?.("reconnecting");
-        scheduleReconnect();
+        const isAuthFailure = event.code === 4001;
+        options?.onStatusChange?.(isAuthFailure ? "auth_failed" : "reconnecting");
+        scheduleReconnect(isAuthFailure);
       }
     };
 
@@ -186,11 +187,18 @@ export function createWsTransport(
     pending = new Map();
   }
 
-  function scheduleReconnect() {
+  function scheduleReconnect(immediate = false) {
     if (reconnectTimer) return;
+
+    const delay = immediate ? 0 : reconnectDelay;
+
     reconnectTimer = setTimeout(async () => {
       reconnectTimer = null;
-      reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
+      // Only increase backoff for connectivity failures; auth failures are
+      // not retried with backoff because the token refresh happens immediately.
+      if (!immediate) {
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
+      }
       if (options?.discoverServerUrl) {
         try {
           const newUrl = await options.discoverServerUrl();
@@ -200,7 +208,7 @@ export function createWsTransport(
         }
       }
       connect();
-    }, reconnectDelay);
+    }, delay);
   }
 
   /** Send a JSON-RPC request and return the result. */

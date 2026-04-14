@@ -4,7 +4,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 export function ConnectionBanner() {
   const status = useConnectionStore((s) => s.status);
 
-  if (status !== "reconnecting") return null;
+  if (status !== "reconnecting" && status !== "auth_failed") return null;
 
   return (
     <div className="flex items-center justify-center gap-2 bg-yellow-600/90 px-4 py-1.5 text-xs font-medium text-white">
