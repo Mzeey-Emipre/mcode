@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { discoverCopilotAgents, COPILOT_DEFAULT_AGENTS } from "./copilot-agent-discovery.js";
+import { discoverCopilotAgents } from "./copilot-agent-discovery.js";
 
 describe("discoverCopilotAgents", () => {
   let tmpDir: string;
