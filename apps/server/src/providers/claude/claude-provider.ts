@@ -8,7 +8,7 @@ import { injectable } from "tsyringe";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
-import type { Query, SDKUserMessage, PostCompactHookInput } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage, PostCompactHookInput, CanUseTool, PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type {
@@ -18,6 +18,8 @@ import type {
   AgentEvent,
   AttachmentMeta,
   ProviderUsageInfo,
+  PermissionDecision,
+  PermissionRequest,
 } from "@mcode/contracts";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
 
@@ -161,6 +163,17 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
+  /** Pending permission requests awaiting user decision, keyed by requestId. */
+  private pendingPermissions = new Map<
+    string,
+    {
+      threadId: string;
+      toolName: string;
+      input: unknown;
+      title?: string;
+      resolve: (decision: PermissionDecision) => void;
+    }
+  >();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
   private lastSessionCostUsd?: number;
   private lastServiceTier?: "standard" | "priority" | "batch";
@@ -312,6 +325,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const uuid = sessionId.startsWith("mcode-")
       ? sessionId.slice(6)
       : sessionId;
+    const tid = uuid;
     const resolvedCwd = cwd || process.cwd();
     const resolvedModel = model || "claude-sonnet-4-6";
 
@@ -382,6 +396,59 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
       permissionMode: sdkPermissionMode,
       ...(isBypass && { allowDangerouslySkipPermissions: true }),
+      ...(isBypass
+        ? {}
+        : {
+            canUseTool: (async (
+              toolName: string,
+              input: Record<string, unknown>,
+              options: Parameters<CanUseTool>[2],
+            ) => {
+              const requestId = crypto.randomUUID();
+              const decision = await new Promise<PermissionDecision>((resolve) => {
+                this.pendingPermissions.set(requestId, {
+                  threadId: tid,
+                  toolName,
+                  input,
+                  title: options?.title,
+                  resolve,
+                });
+                this.emit("permission_request", {
+                  requestId,
+                  threadId: tid,
+                  toolName,
+                  input,
+                  title: options?.title,
+                } satisfies PermissionRequest);
+              });
+              switch (decision) {
+                case "allow":
+                  return { behavior: "allow" as const };
+                case "allow-session": {
+                  // Persist "always allow" for this tool into the session-scoped
+                  // permission rules so subsequent calls are auto-approved.
+                  const sessionUpdate: PermissionUpdate = {
+                    type: "addRules",
+                    rules: [{ toolName }],
+                    behavior: "allow",
+                    destination: "session",
+                  };
+                  return {
+                    behavior: "allow" as const,
+                    updatedPermissions: [sessionUpdate],
+                  };
+                }
+                case "deny":
+                case "cancelled":
+                  return {
+                    behavior: "deny" as const,
+                    message: decision === "cancelled"
+                      ? "Session stopped by user"
+                      : "User denied",
+                  };
+              }
+            }) satisfies CanUseTool,
+          }),
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
       includePartialMessages: true,
@@ -999,6 +1066,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
   /** Abort a running session. */
   stopSession(sessionId: string): void {
+    // Normalize to the raw UUID that canUseTool stores as threadId.
+    const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+    // Reject all pending permission requests for this session and notify frontend.
+    for (const [requestId, entry] of this.pendingPermissions) {
+      if (entry.threadId === tid) {
+        this.pendingPermissions.delete(requestId);
+        entry.resolve("cancelled");
+        this.emit("permission_resolved", { requestId, decision: "cancelled" });
+      }
+    }
     const entry = this.sessions.get(sessionId);
     if (entry) {
       this.sessions.delete(sessionId);
@@ -1056,11 +1133,43 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     };
   }
 
+  /** @inheritdoc */
+  resolvePermission(requestId: string, decision: PermissionDecision): boolean {
+    const entry = this.pendingPermissions.get(requestId);
+    if (!entry) return false;
+    this.pendingPermissions.delete(requestId);
+    entry.resolve(decision);
+    return true;
+  }
+
+  /** @inheritdoc */
+  listPendingPermissions(threadId: string): PermissionRequest[] {
+    const results: PermissionRequest[] = [];
+    for (const [requestId, entry] of this.pendingPermissions) {
+      if (entry.threadId === threadId) {
+        results.push({
+          requestId,
+          threadId: entry.threadId,
+          toolName: entry.toolName,
+          input: entry.input,
+          title: entry.title,
+        });
+      }
+    }
+    return results;
+  }
+
   /** Tear down all sessions and release resources. */
   shutdown(): void {
     if (this.evictionTimer) {
       clearInterval(this.evictionTimer);
       this.evictionTimer = null;
+    }
+    // Drain all pending permission requests so their promises settle
+    for (const [requestId, entry] of this.pendingPermissions) {
+      this.pendingPermissions.delete(requestId);
+      entry.resolve("cancelled");
+      this.emit("permission_resolved", { requestId, decision: "cancelled" as const });
     }
     for (const [, entry] of this.sessions) {
       entry.closeQueue();
