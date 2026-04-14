@@ -8,7 +8,7 @@ import { injectable } from "tsyringe";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
-import type { Query, SDKUserMessage, PostCompactHookInput, CanUseTool, PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage, PostCompactHookInput, CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type {
@@ -428,21 +428,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                       behavior: "allow" as const,
                       decisionClassification: "user_temporary" as const,
                     };
-                  case "allow-session": {
-                    // Persist "always allow" for this tool into the session-scoped
-                    // permission rules so subsequent calls are auto-approved.
-                    const sessionUpdate: PermissionUpdate = {
-                      type: "addRules",
-                      rules: [{ toolName }],
-                      behavior: "allow",
-                      destination: "session",
-                    };
+                  case "allow-session":
+                    // Use the SDK-provided suggestions — they encode the correct
+                    // PermissionUpdate shape for the specific tool being allowed.
                     return {
                       behavior: "allow" as const,
-                      updatedPermissions: [sessionUpdate],
+                      updatedPermissions: options?.suggestions,
                       decisionClassification: "user_permanent" as const,
                     };
-                  }
                   case "deny":
                   case "cancelled":
                     return {
