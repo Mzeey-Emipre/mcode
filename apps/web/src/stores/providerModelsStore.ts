@@ -52,7 +52,8 @@ export const useProviderModelsStore = create<ProviderModelsState>((set, get) => 
         lastFetched: { ...s.lastFetched, [providerId]: Date.now() },
         loading: { ...s.loading, [providerId]: false },
       }));
-    } catch {
+    } catch (err) {
+      console.warn(`[providerModelsStore] Failed to fetch models for "${providerId}":`, err);
       set((s) => ({ loading: { ...s.loading, [providerId]: false } }));
     }
   },

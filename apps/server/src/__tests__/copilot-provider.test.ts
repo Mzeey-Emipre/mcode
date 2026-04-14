@@ -349,7 +349,7 @@ describe("CopilotProvider session.usage_info", () => {
 });
 
 // ---------------------------------------------------------------------------
-// complete() — one-shot text completion
+// complete() - one-shot text completion
 // ---------------------------------------------------------------------------
 
 describe("CopilotProvider.complete()", () => {
@@ -450,7 +450,7 @@ describe("CopilotProvider.complete()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// listModels() — TTL cache
+// listModels() - TTL cache
 // ---------------------------------------------------------------------------
 
 describe("CopilotProvider.listModels() cache", () => {
@@ -476,7 +476,7 @@ describe("CopilotProvider.listModels() cache", () => {
     const second = await provider.listModels();
 
     expect(first).toEqual(second);
-    // SDK listModels called only once — second call served from cache
+    // SDK listModels called only once - second call served from cache
     expect(mockClient.listModels).toHaveBeenCalledTimes(1);
   });
 

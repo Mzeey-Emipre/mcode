@@ -42,7 +42,7 @@ describe("PrDraftService", () => {
   const mockSettingsService = {
     get: vi.fn().mockResolvedValue({
       model: { defaults: { provider: "claude" } },
-      prDraft: { model: "" },
+      prDraft: { provider: "", model: "" },
     }),
   };
   const mockProviderRegistry = {
@@ -53,7 +53,7 @@ describe("PrDraftService", () => {
     vi.clearAllMocks();
     mockSettingsService.get.mockResolvedValue({
       model: { defaults: { provider: "claude" } },
-      prDraft: { model: "" },
+      prDraft: { provider: "", model: "" },
     });
     mockProviderRegistry.resolve.mockReturnValue({ complete: mockComplete, supportsCompletion: true });
     // Default: direct thread in workspace ws-1
