@@ -199,11 +199,13 @@ async function dispatch(
         params.mode,
         params.branch,
       );
-    case "thread.delete":
+    case "thread.delete": {
+      deps.ciWatcherService.unwatch(params.threadId);
       return deps.threadService.delete(
         params.threadId,
         params.cleanupWorktree,
       );
+    }
     case "thread.updateTitle":
       return deps.threadService.updateTitle(
         params.threadId,
@@ -240,6 +242,13 @@ async function dispatch(
             if (numberChanged || statusChanged) {
               deps.threadService.linkPr(t.id, pr.number, pr.state);
               results.push({ threadId: t.id, prNumber: pr.number, prStatus: pr.state });
+            }
+            // Start CI watching if PR is not in terminal state
+            const prState = pr.state.toLowerCase();
+            if (prState !== "merged" && prState !== "closed") {
+              deps.ciWatcherService.watch(t.id, pr.number, workspace.path);
+            } else {
+              deps.ciWatcherService.unwatch(t.id);
             }
           }
         }),

@@ -219,6 +219,11 @@ for (const provider of providerRegistry.resolveAll()) {
               broadcast("thread.prLinked", prPayload);
               portPush.send("thread.prLinked", prPayload);
             }
+            // Start CI watching if PR is open/active
+            const prState = pr.state.toLowerCase();
+            if (prState !== "merged" && prState !== "closed") {
+              ciWatcherService.watch(thread.id, pr.number, workspace.path);
+            }
           }).catch((err) => {
             logger.debug("PR lookup failed on turnComplete", {
               threadId: thread.id,
