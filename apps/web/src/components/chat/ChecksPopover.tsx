@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { getCiVisual } from "@/lib/ci-status";
 import type { ChecksStatus, CheckRun } from "@mcode/contracts";
 
 /** Props for {@link ChecksPopover}. */
@@ -26,18 +27,18 @@ interface ChecksPopoverProps {
 /** Status icon for an individual check run. */
 function CheckIcon({ run }: { run: CheckRun }) {
   if (run.status === "in_progress" || run.status === "queued") {
-    return <Loader2 size={12} className="text-orange-500 animate-spin" />;
+    return <Loader2 size={12} className="text-amber-500 animate-spin shrink-0" />;
   }
   switch (run.conclusion) {
     case "success":
-      return <CircleCheck size={12} className="text-green-500" />;
+      return <CircleCheck size={12} className="text-green-500 shrink-0" />;
     case "failure":
     case "timed_out":
-      return <CircleX size={12} className="text-red-500" />;
+      return <CircleX size={12} className="text-red-500 shrink-0" />;
     case "cancelled":
-      return <CircleX size={12} className="text-muted-foreground" />;
+      return <CircleX size={12} className="text-muted-foreground/50 shrink-0" />;
     default:
-      return <CircleCheck size={12} className="text-muted-foreground" />;
+      return <CircleCheck size={12} className="text-muted-foreground/50 shrink-0" />;
   }
 }
 
@@ -51,21 +52,33 @@ function formatDuration(ms: number): string {
   return remainSecs > 0 ? `${mins}m ${remainSecs}s` : `${mins}m`;
 }
 
-/** Summarise the check runs as a human-readable string. */
-function summarise(checks: ChecksStatus): string {
+/** Summarise the aggregate CI state as a headline string. */
+function aggregateHeadline(checks: ChecksStatus): string {
   const total = checks.runs.length;
-  const passing = checks.runs.filter((r) => r.conclusion === "success").length;
   const failing = checks.runs.filter(
     (r) => r.conclusion === "failure" || r.conclusion === "timed_out",
   ).length;
   const running = checks.runs.filter((r) => r.status !== "completed").length;
 
-  const parts: string[] = [`${total} check${total !== 1 ? "s" : ""}`];
-  if (passing > 0) parts.push(`${passing} passing`);
-  if (failing > 0) parts.push(`${failing} failing`);
-  if (running > 0) parts.push(`${running} running`);
-  return parts.join(" · ");
+  switch (checks.aggregate) {
+    case "passing":
+      return total === 1 ? "1 check passed" : `All ${total} checks passed`;
+    case "failing":
+      return failing === 1 ? "1 check failed" : `${failing} of ${total} checks failed`;
+    case "pending":
+      return running === 1 ? "1 check running" : `${running} checks running`;
+    case "no_checks":
+      return "No checks configured";
+  }
 }
+
+/** Tailwind bg class for the colored accent strip at the top of the popover. */
+const ACCENT_BG: Record<ChecksStatus["aggregate"], string> = {
+  passing: "bg-green-500",
+  failing: "bg-red-500",
+  pending: "bg-amber-500",
+  no_checks: "bg-border",
+};
 
 /**
  * Popover that shows PR metadata and individual CI check run details.
@@ -134,6 +147,10 @@ export function ChecksPopover({
         ? `${elapsed}s ago`
         : `${Math.floor(elapsed / 60)}m ago`;
 
+  const visual = getCiVisual(checks.aggregate);
+  const StatusIcon = visual.icon;
+  const accentBg = ACCENT_BG[checks.aggregate];
+
   return (
     <Popover>
       <PopoverTrigger
@@ -142,64 +159,85 @@ export function ChecksPopover({
       >
         {children}
       </PopoverTrigger>
-      <PopoverContent side="bottom" align="start" sideOffset={6} className="w-72 p-0">
-        {/* Header: PR title and summary */}
-        {prTitle && (
-          <div className="border-b border-border px-3 py-2">
-            <div className="text-sm font-medium text-foreground truncate">{prTitle}</div>
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              {prAuthor && <span>by {prAuthor}</span>}
-              <span>·</span>
-              <span>{summarise(checks)}</span>
+      <PopoverContent side="bottom" align="start" sideOffset={6} className="w-80 p-0 overflow-hidden">
+        {/* Colored status accent strip */}
+        <div className={cn("h-[2px] w-full", accentBg)} />
+
+        {/* Aggregate status header */}
+        <div className="flex items-center gap-3 px-4 pt-3 pb-2.5">
+          <StatusIcon size={16} className={cn("shrink-0", visual.color)} />
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-foreground leading-tight">
+              {aggregateHeadline(checks)}
             </div>
+            {prTitle && (
+              <div className="text-xs text-muted-foreground truncate mt-0.5">
+                {prTitle}
+                {prAuthor && <span className="opacity-70"> · {prAuthor}</span>}
+              </div>
+            )}
           </div>
-        )}
+        </div>
+
+        {/* Divider */}
+        <div className="h-px bg-border/50 mx-4" />
 
         {/* Check run list */}
-        <div className="px-3 py-2 space-y-1.5 max-h-48 overflow-y-auto">
-          {sortedRuns.map((run) => (
-            <div key={run.name} className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 min-w-0">
+        <div className="py-1.5 max-h-52 overflow-y-auto">
+          {sortedRuns.map((run) => {
+            const isRunning = run.status !== "completed";
+            const isFailing =
+              run.conclusion === "failure" || run.conclusion === "timed_out";
+            return (
+              <div
+                key={run.name}
+                className={cn(
+                  "flex items-center gap-2.5 px-4 py-[5px] text-xs",
+                  isFailing && "bg-red-500/[0.06]",
+                )}
+              >
                 <CheckIcon run={run} />
                 <span
                   className={cn(
-                    "truncate",
-                    run.conclusion === "failure" || run.conclusion === "timed_out"
+                    "truncate flex-1",
+                    isFailing
                       ? "text-red-400 font-medium"
                       : "text-foreground/80",
                   )}
                 >
                   {run.name}
                 </span>
+                <span className="font-mono text-[10px] shrink-0 tabular-nums">
+                  {isRunning ? (
+                    <span className="text-amber-500/80">running</span>
+                  ) : run.durationMs != null ? (
+                    <span className="text-muted-foreground">{formatDuration(run.durationMs)}</span>
+                  ) : null}
+                </span>
               </div>
-              <span className="text-muted-foreground shrink-0 ml-2">
-                {run.status !== "completed"
-                  ? "running…"
-                  : run.durationMs != null
-                    ? formatDuration(run.durationMs)
-                    : ""}
-              </span>
-            </div>
-          ))}
+            );
+          })}
           {sortedRuns.length === 0 && (
-            <div className="text-xs text-muted-foreground text-center py-2">
+            <div className="text-xs text-muted-foreground text-center py-3">
               No checks configured
             </div>
           )}
         </div>
 
-        {/* Footer: GitHub link, staleness label, and refresh button */}
-        <div className="flex items-center justify-between border-t border-border px-3 py-2">
+        {/* Footer */}
+        <div className="h-px bg-border/50 mx-4" />
+        <div className="flex items-center justify-between px-4 py-2">
           <button
             onClick={handleOpenGitHub}
-            className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            View on GitHub <ExternalLink size={10} />
+            <ExternalLink size={10} className="opacity-60" />
+            View on GitHub
           </button>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-muted-foreground">{staleLabel}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground tabular-nums">{staleLabel}</span>
             {refreshError && (
-              <span className="text-[10px] text-red-400">Refresh failed</span>
+              <span className="text-[10px] text-red-400">failed</span>
             )}
             <Button
               variant="ghost"
@@ -208,7 +246,7 @@ export function ChecksPopover({
               disabled={refreshing}
               aria-label="Refresh checks"
             >
-              <RefreshCw size={10} className={cn(refreshing && "animate-spin")} />
+              <RefreshCw size={9} className={cn(refreshing && "animate-spin")} />
             </Button>
           </div>
         </div>

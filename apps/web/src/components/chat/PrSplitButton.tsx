@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Github, ChevronDown, GitPullRequest } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { ChecksPopover } from "./ChecksPopover";
 import { getCiVisual } from "@/lib/ci-status";
 import type { ChecksStatus } from "@mcode/contracts";
@@ -79,26 +80,48 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
         ? "text-[#f85149] hover:text-[#ff6b63]"
         : "text-[#3fb950] hover:text-[#5ee375]";
 
-  const label = ciVisual
-    ? `PR #${pr.number} · ${ciVisual.label}`
-    : state === "merged"
-      ? `PR #${pr.number} merged`
-      : state === "closed"
-        ? `PR #${pr.number} closed`
-        : `View PR #${pr.number}`;
+  // When CI is active, show just the PR number — the status dot carries the state signal.
+  const label = state === "merged"
+    ? `PR #${pr.number} merged`
+    : state === "closed"
+      ? `PR #${pr.number} closed`
+      : `PR #${pr.number}`;
 
   const showChevron = state === "merged" || state === "closed";
 
   // Whether to wrap the primary button in ChecksPopover instead of navigating to GitHub
   const usePopover = hasActiveChecks && threadId != null;
 
+  // Glow dot shown next to the PR number when CI checks are active.
+  const statusDot = hasActiveChecks ? (
+    <span
+      className={cn(
+        "w-1.5 h-1.5 rounded-full shrink-0",
+        checks!.aggregate === "passing" && "bg-green-400",
+        checks!.aggregate === "failing" && "bg-red-400",
+        checks!.aggregate === "pending" && "bg-amber-400 animate-pulse",
+      )}
+      style={
+        checks!.aggregate === "passing"
+          ? { boxShadow: "0 0 5px 1px rgba(74,222,128,0.5)" }
+          : checks!.aggregate === "failing"
+            ? { boxShadow: "0 0 5px 1px rgba(248,113,113,0.5)" }
+            : checks!.aggregate === "pending"
+              ? { boxShadow: "0 0 5px 1px rgba(251,191,36,0.45)" }
+              : undefined
+      }
+    />
+  ) : null;
+
   const primaryButton = (
     <button
       className={`inline-flex items-center gap-1.5 px-2 h-6 text-xs bg-muted/10 hover:bg-muted/20 transition-colors ${stateColour}`}
+      title={ciVisual?.label}
       onClick={usePopover ? undefined : () => onOpenPr(pr.url)}
     >
       <Github size={12} className="opacity-80 flex-shrink-0" />
       <span>{label}</span>
+      {statusDot}
     </button>
   );
 

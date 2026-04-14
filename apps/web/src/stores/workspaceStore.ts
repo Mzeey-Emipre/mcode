@@ -424,7 +424,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         const remainingUrls = Object.fromEntries(
           Object.entries(state.prUrlsByThreadId).filter(([k]) => k !== threadId),
         ) as Record<string, string>;
-        const { [threadId]: _, ...remainingChecks } = state.checksById;
+        const remainingChecks = Object.fromEntries(
+          Object.entries(state.checksById).filter(([k]) => k !== threadId),
+        ) as typeof state.checksById;
         return {
           threads: state.threads.filter((t) => t.id !== threadId),
           activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
