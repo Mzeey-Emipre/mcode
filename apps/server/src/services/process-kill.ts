@@ -99,11 +99,18 @@ export async function findDescendantsByName(
  * Find descendant processes matching a name and kill each one.
  * Best-effort: never throws. Used to clean up SDK subprocesses that
  * outlive their stream connection.
+ *
+ * Windows-only: on Unix, process cwd does not hold ancestor directory
+ * handles, so the directory locking problem this solves does not occur.
+ * The wmic-based process tree scan also has no Unix equivalent that
+ * returns process names without additional per-PID lookups.
  */
 export async function killDescendantsByName(
   parentPid: number,
   processName: string,
 ): Promise<void> {
+  if (process.platform !== "win32") return;
+
   const pids = await findDescendantsByName(parentPid, processName);
   if (pids.length === 0) return;
 

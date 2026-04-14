@@ -351,8 +351,10 @@ export class GitService {
     }
 
     // 7. Best-effort cleanup of any empty managed parent directories left behind.
-    //    Returns false if parent removal failed (triggers cleanup worker retry).
-    const parentCleaned = await removeEmptyManagedParentDirs(wtPath);
+    //    Failure here is cosmetic (empty slug dir left behind) and should not
+    //    cause the cleanup worker to retry the entire pipeline for an already-
+    //    removed worktree.
+    await removeEmptyManagedParentDirs(wtPath);
 
     // 8. Delete the branch when explicitly requested.
     if (branch) {
@@ -368,7 +370,7 @@ export class GitService {
       }
     }
 
-    return parentCleaned;
+    return true;
   }
 
   /**

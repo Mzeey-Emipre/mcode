@@ -84,7 +84,7 @@ describe("CleanupWorker", () => {
   }
 
   describe("poll", () => {
-    it("stops agent session and awaits exit before filesystem operations", async () => {
+    it("runs cleanup steps in correct order: session exit, terminal kill, SDK kill, worktree removal", async () => {
       const callOrder: string[] = [];
       (mockClaudeProvider.waitForSessionExit as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         callOrder.push("waitForSessionExit");
@@ -112,41 +112,6 @@ describe("CleanupWorker", () => {
       await worker.poll();
 
       expect(callOrder).toEqual(["waitForSessionExit", "killByThread", "killDescendants", "removeWorktree"]);
-    });
-
-    it("kills SDK subprocess descendants after terminal kill and before fs operations", async () => {
-      const callOrder: string[] = [];
-      (mockClaudeProvider.waitForSessionExit as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-        callOrder.push("waitForSessionExit");
-      });
-      (mockTerminalService.killByThread as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        callOrder.push("killByThread");
-      });
-      (vi.mocked(killDescendantsByName)).mockImplementation(async () => {
-        callOrder.push("killDescendants");
-      });
-      (mockGitService.removeWorktree as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-        callOrder.push("removeWorktree");
-        return true;
-      });
-
-      const ws = workspaceRepo.create("test", "/repo");
-      insertThread("t-kill", ws.id, "mcode/kill-test", wt("feat-kill"));
-      cleanupJobRepo.insert({
-        thread_id: "t-kill",
-        workspace_path: "/repo",
-        worktree_path: wt("feat-kill"),
-        branch: "mcode/kill-test",
-      });
-
-      await worker.poll();
-
-      expect(callOrder).toEqual([
-        "waitForSessionExit",
-        "killByThread",
-        "killDescendants",
-        "removeWorktree",
-      ]);
       expect(killDescendantsByName).toHaveBeenCalledWith(
         process.pid,
         expect.stringMatching(/claude/i),

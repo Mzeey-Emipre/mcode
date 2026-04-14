@@ -286,7 +286,8 @@ describe("GitService.removeWorktree", () => {
 
     const result = await gitService.removeWorktree("/repo", "my-worktree", { deleteBranch: false });
 
-    expect(result).toBe(false);
+    // Parent cleanup is best-effort; worktree itself was removed so result is true
+    expect(result).toBe(true);
     expect(mockRmdir).toHaveBeenCalledTimes(5);
     expect(mockLogger.warn).toHaveBeenCalledWith(
       "Failed to remove empty managed worktree parent dir",
