@@ -50,9 +50,9 @@ describe("CiWatcherService", () => {
   it("broadcasts when check state changes on tick", async () => {
     const pending = makeChecks("pending");
     mockGithubService.getCheckRuns.mockResolvedValue(pending);
-    watcher.watch("t1", 42, "/repo");
+    // skipInitialFetch so the assertion exercises the scheduled passive tick, not the eager fetch.
+    watcher.watch("t1", 42, "/repo", { skipInitialFetch: true });
 
-    // Trigger passive tick (30s)
     await vi.advanceTimersByTimeAsync(30_000);
 
     expect(mockBroadcast).toHaveBeenCalledWith("thread.checksUpdated", {
@@ -64,12 +64,12 @@ describe("CiWatcherService", () => {
   it("does NOT broadcast when state is unchanged", async () => {
     const passing = makeChecks("passing");
     mockGithubService.getCheckRuns.mockResolvedValue(passing);
-    watcher.watch("t1", 42, "/repo");
+    watcher.watch("t1", 42, "/repo", { skipInitialFetch: true });
 
     await vi.advanceTimersByTimeAsync(30_000);
     mockBroadcast.mockClear();
 
-    // Same state on second tick
+    // Same state on second tick — no change, no broadcast.
     await vi.advanceTimersByTimeAsync(30_000);
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
@@ -77,8 +77,9 @@ describe("CiWatcherService", () => {
   it("promotes to active set when checks are pending", async () => {
     const pending = makeChecks("pending");
     mockGithubService.getCheckRuns.mockResolvedValue(pending);
-    watcher.watch("t1", 42, "/repo");
+    watcher.watch("t1", 42, "/repo", { skipInitialFetch: true });
 
+    // Passive tick promotes to active when aggregate is pending.
     await vi.advanceTimersByTimeAsync(30_000);
 
     // Active set ticks at 10s
@@ -96,7 +97,7 @@ describe("CiWatcherService", () => {
   it("getEntry returns cached status", async () => {
     const passing = makeChecks("passing");
     mockGithubService.getCheckRuns.mockResolvedValue(passing);
-    watcher.watch("t1", 42, "/repo");
+    watcher.watch("t1", 42, "/repo", { skipInitialFetch: true });
 
     await vi.advanceTimersByTimeAsync(30_000);
 

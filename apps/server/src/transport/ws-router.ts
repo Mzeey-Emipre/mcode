@@ -371,9 +371,13 @@ async function dispatch(
         const thread = deps.threadRepo.findById(params.threadId);
         const prState = thread?.pr_status?.toLowerCase();
         const isTerminal = prState === "merged" || prState === "closed";
-        if (thread?.pr_number && !isTerminal) {
+        if (thread?.pr_number) {
           const workspace = deps.workspaceRepo.findById(thread.workspace_id);
           if (workspace) {
+            if (isTerminal) {
+              // Terminal PR: one-shot fetch without registering in the watcher — no need to poll.
+              return deps.githubService.getCheckRuns(thread.pr_number, workspace.path);
+            }
             // skipInitialFetch: checkStatus will fetch and broadcast below, no need for a second subprocess.
             deps.ciWatcherService.watch(params.threadId, thread.pr_number, workspace.path, { skipInitialFetch: true });
             entry = deps.ciWatcherService.getEntry(params.threadId);
