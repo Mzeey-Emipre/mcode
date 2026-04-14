@@ -127,7 +127,7 @@ export function PermissionRequestCard({
       {/* Controls */}
       <div className="flex items-center gap-2">
         {/* Split button: left side fires Allow immediately; right chevron opens more options */}
-        <div className="flex items-stretch rounded-md overflow-hidden ring-1 ring-primary/60">
+        <div className="flex items-stretch rounded-md overflow-hidden">
           <button
             disabled={responding}
             onClick={() => respond("allow")}
