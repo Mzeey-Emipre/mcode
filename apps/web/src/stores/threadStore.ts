@@ -1365,6 +1365,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               next.displayContent,
               next.reasoningLevel,
               next.provider,
+              next.copilotAgent,
             );
           }
         }, 400);

@@ -826,7 +826,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const { content, display } = await injectFileContent(trimmed);
       const currentAttachments = collectAndClearAttachments();
 
-      const queueProvider = provider;
       useQueueStore.getState().enqueue(threadId, {
         content,
         displayContent: display,
@@ -834,7 +833,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         model: modelId,
         permissionMode: access,
         reasoningLevel: reasoning,
-        provider: queueProvider,
+        provider,
+        copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
       });
 
       setInput("");
@@ -1186,7 +1186,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               disabled={isModelFullyLocked}
               onChange={(agentName) => {
                 setCopilotAgent(agentName);
-                if (threadId) void setThreadSettings(threadId, { copilotAgent: agentName });
+                // Don't persist to parent thread when in branch mode — the
+                // selection only applies to the branch being created.
+                if (threadId && !branchFromMessageId) void setThreadSettings(threadId, { copilotAgent: agentName });
               }}
             />
           ) : (

@@ -21,7 +21,7 @@ import {
 import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
 import { ProviderUsageInfoSchema } from "../providers/usage.js";
-import { CopilotSubagentSchema } from "../providers/copilot-agent.js";
+import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 
 /** Schema for creating a new thread. */
 export const CreateThreadSchema = lazySchema(() =>
@@ -50,7 +50,7 @@ export const SendMessageSchema = lazySchema(() =>
     /** Maximum agent turns. 0 or absent disables. */
     maxTurns: z.number().int().nonnegative().optional(),
     /** Copilot sub-agent to activate for this message. Ignored by other providers. */
-    copilotAgent: z.string().max(128).regex(/^[\w.-]+$/).optional(),
+    copilotAgent: CopilotAgentNameSchema.optional(),
   }),
 );
 
@@ -74,7 +74,7 @@ export const CreateAndSendSchema = lazySchema(() =>
     /** Maximum agent turns. 0 or absent disables. */
     maxTurns: z.number().int().nonnegative().optional(),
     /** Copilot sub-agent to activate for this thread. Ignored by other providers. */
-    copilotAgent: z.string().max(128).regex(/^[\w.-]+$/).optional(),
+    copilotAgent: CopilotAgentNameSchema.optional(),
     /** Source thread ID when branching from an existing thread. */
   parentThreadId: z.string().optional(),
   /** Fork-point message ID in the parent thread. Defaults to last persisted message. */
@@ -125,7 +125,7 @@ export const WS_METHODS = lazySchema(() => ({
       interactionMode: InteractionModeSchema.optional(),
       permissionMode: PermissionModeSchema.optional(),
       /** Copilot-specific: name of the selected sub-agent. Pass null to clear back to provider default. */
-      copilotAgent: z.string().max(128).regex(/^[\w.-]+$/).nullable().optional(),
+      copilotAgent: CopilotAgentNameSchema.nullable().optional(),
     }).refine(
       (data) =>
         data.reasoningLevel !== undefined ||
