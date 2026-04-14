@@ -120,13 +120,14 @@ export interface McodeTransport {
 
   // Thread mutations
   updateThreadTitle(threadId: string, title: string): Promise<boolean>;
-  /** Persist per-thread composer settings (reasoning, mode, permission). */
+  /** Persist per-thread composer settings (reasoning, mode, permission, copilot agent). */
   updateThreadSettings(
     threadId: string,
     settings: {
       reasoningLevel?: ReasoningLevel;
       interactionMode?: InteractionMode;
       permissionMode?: PermissionMode;
+      copilotAgent?: string;
     },
   ): Promise<boolean>;
   /** Clear the "completed" badge for a thread. Transitions completed -> paused in the DB. */

@@ -295,6 +295,7 @@ export function createWsTransport(
         reasoningLevel: settings.reasoningLevel,
         interactionMode: settings.interactionMode,
         permissionMode: settings.permissionMode,
+        copilotAgent: settings.copilotAgent,
       }),
     markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
     syncThreadPrs: (workspaceId) =>
