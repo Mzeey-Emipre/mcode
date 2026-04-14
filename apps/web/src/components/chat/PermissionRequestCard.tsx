@@ -163,7 +163,7 @@ export function PermissionRequestCard({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" sideOffset={4} className="min-w-[180px]">
               <DropdownMenuItem
-                onSelect={() => setAllowMode("allow")}
+                onClick={() => setAllowMode("allow")}
                 className="gap-2"
               >
                 <Zap size={12} className="text-amber-500 shrink-0" />
@@ -175,7 +175,7 @@ export function PermissionRequestCard({
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onSelect={() => setAllowMode("allow-session")}
+                onClick={() => setAllowMode("allow-session")}
                 className="gap-2"
               >
                 <Clock size={12} className="text-blue-400 shrink-0" />
