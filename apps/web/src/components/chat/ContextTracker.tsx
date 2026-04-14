@@ -99,7 +99,9 @@ export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, 
             </svg>
 
             {hasLowQuota && (
-              <div className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-background bg-destructive" />
+              <div className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-background bg-destructive">
+                <span className="sr-only">Low quota</span>
+              </div>
             )}
 
             {/* Centre percentage — positioned absolutely so it doesn't rotate */}

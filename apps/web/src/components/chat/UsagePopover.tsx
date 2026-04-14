@@ -67,14 +67,15 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
   const contextEntry = useThreadStore((s) => threadId ? s.contextByThread[threadId] : undefined);
   const activeThread = useWorkspaceStore((s) => s.threads.find((t) => t.id === threadId));
   const providerId = (activeThread?.provider ?? "claude") as string;
-  const usageInfo = useThreadStore((s) => s.usageByProvider[providerId]);
+  const usageKey = threadId ? `${threadId}:${providerId}` : null;
+  const usageInfo = useThreadStore((s) => usageKey ? s.usageByProvider[usageKey] : undefined);
   const fetchProviderUsage = useThreadStore((s) => s.fetchProviderUsage);
   const hasFetched = useRef(false);
 
   const handleOpenChange = (open: boolean) => {
-    if (open && !hasFetched.current) {
+    if (open && !hasFetched.current && threadId) {
       hasFetched.current = true;
-      fetchProviderUsage(providerId);
+      fetchProviderUsage(threadId, providerId);
     }
     onOpenChange?.(open);
   };

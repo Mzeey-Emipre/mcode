@@ -313,8 +313,10 @@ describe("CodexEventMapper", () => {
       threadId: "test-thread",
       reason: "end_turn",
       costUsd: null,
-      tokensIn: 15,
+      tokensIn: 10,
       tokensOut: 20,
+      cacheReadTokens: 5,
+      providerId: "codex",
       contextWindow: undefined,
       totalProcessedTokens: 35,
     });

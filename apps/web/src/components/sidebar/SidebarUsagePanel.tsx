@@ -83,18 +83,19 @@ export function SidebarUsagePanel() {
 
   const providerId = (activeThread?.provider ?? "claude") as string;
 
-  const usageInfo = useThreadStore((s) => s.usageByProvider[providerId]);
+  const usageKey = activeThreadId ? `${activeThreadId}:${providerId}` : null;
+  const usageInfo = useThreadStore((s) => usageKey ? s.usageByProvider[usageKey] : undefined);
   const contextEntry = useThreadStore((s) =>
     activeThreadId ? s.contextByThread[activeThreadId] : undefined,
   );
   const fetchProviderUsage = useThreadStore((s) => s.fetchProviderUsage);
 
   // Hydrate immediately — bars appear without waiting for a hover.
+  // fetchProviderUsage is a stable Zustand store action.
   useEffect(() => {
     if (activeThreadId && !usageInfo) {
-      void fetchProviderUsage(providerId);
+      void fetchProviderUsage(activeThreadId, providerId);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreadId, providerId]);
 
   if (!activeThreadId) return null;
