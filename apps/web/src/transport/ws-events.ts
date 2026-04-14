@@ -1,4 +1,5 @@
 import type { Settings } from "@mcode/contracts";
+import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { pushEmitter } from "./ws-transport";
 import { useThreadStore } from "@/stores/threadStore";
 import { useTerminalStore } from "@/stores/terminalStore";
@@ -25,6 +26,8 @@ let unsubs: (() => void)[] = [];
  * - `settings.changed` -- server-pushed settings updates forwarded to settingsStore
  * - `branch.changed` -- refreshes branch list and updates current branch if not manually overridden
  * - `plan.questions` -- model-proposed plan questions forwarded to threadStore wizard
+ * - `permission.request` -- tool permission awaiting user decision
+ * - `permission.resolved` -- a permission was settled (by user or session stop)
  */
 export function startPushListeners(): void {
   // Guard against double-init
@@ -225,6 +228,27 @@ export function startPushListeners(): void {
       };
       if (!threadId || !Array.isArray(questions)) return;
       useThreadStore.getState().setPlanQuestions(threadId, questions);
+    }),
+  );
+
+  // permission.request: tool permission awaiting user decision
+  unsubs.push(
+    pushEmitter.on("permission.request", (data) => {
+      const request = data as PermissionRequest;
+      if (!request.requestId || !request.threadId) return;
+      useThreadStore.getState().addPermissionRequest(request);
+    }),
+  );
+
+  // permission.resolved: a permission was settled (by user or session stop)
+  unsubs.push(
+    pushEmitter.on("permission.resolved", (data) => {
+      const { requestId, decision } = data as {
+        requestId: string;
+        decision: PermissionDecision;
+      };
+      if (!requestId) return;
+      useThreadStore.getState().resolvePermissionRequest(requestId, decision);
     }),
   );
 
