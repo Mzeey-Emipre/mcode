@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay, getNotificationDot } from "@/lib/thread-status";
+import { getCiDotClass } from "@/lib/ci-status";
 import type { Workspace, Thread } from "@/transport/types";
 
 // Persist expand/collapse in localStorage
@@ -587,6 +588,7 @@ function VirtualizedThreadList({
   // Normalized set of existing worktree paths for stale detection.
   const worktrees = useWorkspaceStore((s) => s.worktrees);
   const worktreesLoadedFor = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
+  const checksById = useWorkspaceStore((s) => s.checksById);
   const validWorktreePaths = useMemo(() => {
     const set = new Set<string>();
     for (const wt of worktrees) {
@@ -706,7 +708,13 @@ function VirtualizedThreadList({
               >
                 {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
-                  const dot = getNotificationDot(thread, runningThreadIds.has(thread.id));
+                  const ciChecks = checksById[thread.id];
+                  const ciDotClass = ciChecks ? getCiDotClass(ciChecks.aggregate) : null;
+                  const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id));
+                  // CI dot takes priority when present; fall back to agent notification dot
+                  const dot = ciDotClass
+                    ? { dotClass: ciDotClass, animate: ciChecks!.aggregate === "pending" }
+                    : agentDot;
                   return (
                     <span
                       title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
