@@ -53,7 +53,9 @@ function UsageBar({ percent, className, label }: { percent: number; className?: 
 function QuotaRow({ category }: { category: QuotaCategory }) {
   const usedDisplay = category.isUnlimited
     ? `${category.used}`
-    : `${category.used} / ${category.total}`;
+    : category.total != null
+      ? `${category.used} / ${category.total}`
+      : `${category.used}`;
   const percent = category.isUnlimited ? 0 : (1 - category.remainingPercent);
   return (
     <div className="space-y-1">
@@ -72,7 +74,7 @@ function QuotaRow({ category }: { category: QuotaCategory }) {
 export function UsagePopover({ threadId, children, onOpenChange, side = "top", align = "end" }: UsagePopoverProps) {
   const contextEntry = useThreadStore((s) => threadId ? s.contextByThread[threadId] : undefined);
   const activeThread = useWorkspaceStore((s) => s.threads.find((t) => t.id === threadId));
-  const providerId = (activeThread?.provider ?? "claude") as string;
+  const providerId = activeThread?.provider ?? "claude";
   const usageKey = threadId ? `${threadId}:${providerId}` : null;
   const usageInfo = useThreadStore((s) => usageKey ? s.usageByProvider[usageKey] : undefined);
   const fetchProviderUsage = useThreadStore((s) => s.fetchProviderUsage);
@@ -188,7 +190,7 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
                 <div className="rounded bg-muted/40 px-2 py-1.5">
                   <div className="text-[9px] text-muted-foreground">out</div>
                   <div className="text-xs text-foreground/80">
-                    {formatTokens(contextEntry?.tokensOut ?? 0)}
+                    {formatTokens(tokensOut)}
                   </div>
                 </div>
                 {contextEntry?.cacheReadTokens != null && (

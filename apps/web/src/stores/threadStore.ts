@@ -1525,7 +1525,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    */
   fetchProviderUsage: async (threadId, providerId) => {
     try {
-      const { getTransport } = await import("../transport/index.js");
       const usage = await getTransport().getProviderUsage(providerId);
       const key = `${threadId}:${providerId}`;
       set((state) => ({
