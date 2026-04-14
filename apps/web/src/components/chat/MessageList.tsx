@@ -11,6 +11,7 @@ import { StreamingIndicator } from "./StreamingIndicator";
 import { StreamingCard } from "./StreamingCard";
 import { ToolCallSummary } from "./ToolCallSummary";
 import { TurnChangeSummary } from "./TurnChangeSummary";
+import { PermissionRequestCard } from "./PermissionRequestCard";
 import {
   buildStableItems,
   buildVolatileItems,
@@ -64,6 +65,17 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
           filesChanged={item.filesChanged}
           isLatestTurn={item.isLatestTurn}
           manualExpandRef={turnExpandRef}
+        />
+      );
+    case "permission-request":
+      return (
+        <PermissionRequestCard
+          requestId={item.requestId}
+          toolName={item.toolName}
+          input={item.input}
+          title={item.title}
+          settled={item.settled}
+          decision={item.decision}
         />
       );
   }
@@ -134,6 +146,10 @@ export function MessageList({ onBranch }: MessageListProps) {
     activeThreadId ? s.isLoadingMore[activeThreadId] ?? false : false,
   );
   const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
+  const currentThreadId = activeThreadId;
+  const permissions = useThreadStore(
+    useShallow((s) => currentThreadId ? (s.permissionsByThread[currentThreadId] ?? []) : []),
+  );
 
   const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
 
@@ -165,8 +181,8 @@ export function MessageList({ onBranch }: MessageListProps) {
   );
 
   const volatileItems = useMemo(
-    () => buildVolatileItems(toolCalls, isAgentRunning, agentStartTime, streamingText),
-    [toolCalls, isAgentRunning, agentStartTime, streamingText],
+    () => buildVolatileItems(toolCalls, isAgentRunning, agentStartTime, streamingText, permissions),
+    [toolCalls, isAgentRunning, agentStartTime, streamingText, permissions],
   );
 
   const hasToolCalls = toolCalls.length > 0;
