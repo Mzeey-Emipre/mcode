@@ -109,7 +109,7 @@ interface SessionEntry {
 @injectable()
 export class CopilotProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "copilot";
-  readonly supportsCompletion = false;
+  readonly supportsCompletion = true;
 
   private client: CopilotClient | null = null;
   private lastCliPath: string | undefined;
@@ -125,6 +125,73 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     @inject(SettingsService) private readonly settingsService: SettingsService,
   ) {
     super();
+  }
+
+  /**
+   * One-shot text completion using an ephemeral Copilot session.
+   * Creates a temporary session, sends the prompt, collects the response
+   * text from SDK callbacks, then tears down the session.
+   */
+  async complete(prompt: string, model: string, cwd: string): Promise<string> {
+    await this.refreshClient();
+    const client = this.client;
+    if (!client) {
+      throw new Error("Copilot client not available");
+    }
+
+    const session = await client.createSession({
+      onPermissionRequest: approveAll,
+      model: model || undefined,
+      workingDirectory: cwd,
+    });
+
+    try {
+      let messageText = "";
+      let deltaText = "";
+
+      const turnPromise = new Promise<void>((resolve, reject) => {
+        const unsubscribers: Array<() => void> = [];
+
+        unsubscribers.push(
+          session.on("assistant.message_delta", (event: { data: { deltaContent: string } }) => {
+            deltaText += event.data.deltaContent;
+          }),
+        );
+
+        unsubscribers.push(
+          session.on("assistant.message", (event: { data: { content: string } }) => {
+            if (event.data.content) messageText = event.data.content;
+          }),
+        );
+
+        unsubscribers.push(
+          session.on("session.error", (event: { data: { message: string } }) => {
+            for (const unsub of unsubscribers) unsub();
+            reject(new Error(event.data.message));
+          }),
+        );
+
+        unsubscribers.push(
+          session.on("session.idle", () => {
+            for (const unsub of unsubscribers) unsub();
+            resolve();
+          }),
+        );
+      });
+
+      await session.send({ prompt });
+      await turnPromise;
+
+      const text = messageText || deltaText;
+      if (!text) throw new Error("Copilot returned no text content");
+      return text.trim();
+    } finally {
+      await session.disconnect().catch((err: unknown) =>
+        logger.debug("CopilotProvider: error disconnecting ephemeral session", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
   }
 
   /** Fetch available models from the Copilot SDK. */
