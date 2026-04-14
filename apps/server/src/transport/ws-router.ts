@@ -16,6 +16,7 @@ import {
   type WebSocketResponse,
   type WsMethodName,
   type IProviderRegistry,
+  type ProviderUsageInfo,
   getExtension,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
@@ -485,6 +486,13 @@ async function dispatch(
         throw new Error(`Provider "${params.providerId}" does not support model listing`);
       }
       return provider.listModels();
+    }
+    case "provider.getUsage": {
+      const provider = deps.providerRegistry.resolve(params.providerId);
+      if (!provider.getUsage) {
+        return { providerId: provider.id, quotaCategories: [] } satisfies ProviderUsageInfo;
+      }
+      return provider.getUsage();
     }
 
     // Memory pressure
