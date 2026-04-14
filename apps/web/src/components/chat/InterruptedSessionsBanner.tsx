@@ -44,13 +44,15 @@ export function InterruptedSessionsBanner({
         <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${resuming ? "animate-spin" : ""}`} />
         {resuming ? "Resuming..." : "Resume all"}
       </Button>
-      <button
+      <Button
+        variant="ghost"
+        size="icon"
         onClick={onDismiss}
-        className="text-muted-foreground hover:text-foreground"
         aria-label="Dismiss"
+        className="h-7 w-7 text-muted-foreground hover:text-foreground"
       >
         <X className="h-4 w-4" />
-      </button>
+      </Button>
     </div>
   );
 }

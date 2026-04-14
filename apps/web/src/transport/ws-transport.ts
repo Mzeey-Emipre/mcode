@@ -111,6 +111,9 @@ export function createWsTransport(
   let closed = false;
   let reconnectDelay = MIN_RECONNECT_MS;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // Track consecutive auth failures so we apply backoff after 3 immediate
+  // retries, preventing a tight loop when the token is persistently wrong.
+  let consecutiveAuthFailures = 0;
 
   /** Resolves when the current WebSocket connection is open. */
   let ready: Promise<void>;
@@ -128,6 +131,7 @@ export function createWsTransport(
 
     ws.onopen = () => {
       reconnectDelay = MIN_RECONNECT_MS;
+      consecutiveAuthFailures = 0;
       resolveReady();
       options?.onStatusChange?.("connected");
 
@@ -190,13 +194,18 @@ export function createWsTransport(
   function scheduleReconnect(immediate = false) {
     if (reconnectTimer) return;
 
-    const delay = immediate ? 0 : reconnectDelay;
+    // Auth failures use immediate reconnect (delay=0) for the first 3
+    // attempts, then fall back to normal backoff to avoid a tight loop
+    // when the token is persistently wrong.
+    const useImmediate = immediate && consecutiveAuthFailures < 3;
+    if (immediate) consecutiveAuthFailures++;
+    const delay = useImmediate ? 0 : reconnectDelay;
 
     reconnectTimer = setTimeout(async () => {
       reconnectTimer = null;
-      // Only increase backoff for connectivity failures; auth failures are
-      // not retried with backoff because the token refresh happens immediately.
-      if (!immediate) {
+      // Increase backoff for connectivity failures and for auth failures that
+      // have exceeded the immediate-retry limit.
+      if (!useImmediate) {
         reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
       }
       if (options?.discoverServerUrl) {

@@ -30,7 +30,7 @@ export async function scanPortRange(
                 let freshToken = token;
                 try {
                   const body = await r.json();
-                  if (body.authToken) freshToken = body.authToken;
+                  if (typeof body.authToken === "string" && body.authToken.length > 0) freshToken = body.authToken;
                 } catch {
                   // Fall back to saved token if response parsing fails
                 }

@@ -27,7 +27,9 @@ export function ConnectionBanner() {
           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
         />
       </svg>
-      Connection lost. Reconnecting to server...
+      {status === "auth_failed"
+        ? "Re-authenticating after server restart..."
+        : "Connection lost. Reconnecting to server..."}
     </div>
   );
 }
