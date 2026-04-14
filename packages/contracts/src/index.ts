@@ -7,6 +7,8 @@ export {
   PERMISSION_MODES,
   InteractionModeSchema,
   INTERACTION_MODES,
+  CopilotSubagentSourceSchema,
+  COPILOT_SUBAGENT_SOURCES,
 } from "./models/enums.js";
 export type {
   ThreadStatus,
@@ -14,6 +16,7 @@ export type {
   MessageRole,
   PermissionMode,
   InteractionMode,
+  CopilotSubagentSource,
 } from "./models/enums.js";
 
 export {
@@ -160,3 +163,6 @@ export type {
   QuotaCategory,
   ProviderUsageInfo,
 } from "./providers/usage.js";
+
+export { CopilotSubagentSchema } from "./providers/copilot-agent.js";
+export type { CopilotSubagent } from "./providers/copilot-agent.js";
