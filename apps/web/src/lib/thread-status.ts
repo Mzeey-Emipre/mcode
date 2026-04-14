@@ -16,12 +16,19 @@ export interface NotificationDot {
 /**
  * Returns notification dot info for threads with PRs, or null if idle.
  * Used to overlay a small colored dot on the PR icon in the sidebar.
+ * @param thread - The thread whose PR notification dot is being computed.
+ * @param isActuallyRunning - True when the agent process is currently live.
+ * @param hasPendingPermission - True when the thread has at least one unsettled permission request; renders an amber dot.
  */
 export function getNotificationDot(
   thread: Thread,
   isActuallyRunning: boolean,
+  hasPendingPermission = false,
 ): NotificationDot | null {
   if (isActuallyRunning) {
+    if (hasPendingPermission) {
+      return { dotClass: "bg-amber-500", animate: true };
+    }
     return { dotClass: "bg-yellow-500", animate: true };
   }
   switch (thread.status) {
@@ -34,13 +41,27 @@ export function getNotificationDot(
   }
 }
 
-/** Returns the display label, text color, and dot class for a thread's status. */
+/**
+ * Returns the display label, text color, and dot class for a thread's status.
+ * @param thread - The thread whose status display is being computed.
+ * @param isActuallyRunning - True when the agent process is currently live.
+ * @param hasPendingPermission - True when the thread has at least one unsettled permission request; renders an amber pulsing dot.
+ */
 export function getStatusDisplay(
   thread: Thread,
   isActuallyRunning: boolean,
+  hasPendingPermission = false,
 ): StatusDisplay {
   // Live process state takes priority over DB status
   if (isActuallyRunning) {
+    // Permission requests are a sub-state of running — amber overrides the normal yellow.
+    if (hasPendingPermission) {
+      return {
+        label: "",
+        color: "text-amber-500",
+        dotClass: "bg-amber-500 animate-pulse",
+      };
+    }
     return {
       label: "",
       color: "text-yellow-500",

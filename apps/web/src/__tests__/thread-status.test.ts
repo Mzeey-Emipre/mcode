@@ -58,6 +58,17 @@ describe("getStatusDisplay", () => {
     const result = getStatusDisplay(makeThread({ status: "active" }), false);
     expect(result.label).toBe("");
   });
+
+  it("shows amber pulsing dot when thread has a pending permission and is running", () => {
+    const result = getStatusDisplay(makeThread(), true, true);
+    expect(result.dotClass).toBe("bg-amber-500 animate-pulse");
+    expect(result.color).toBe("text-amber-500");
+  });
+
+  it("does not show amber dot when thread has pending permission but is not running", () => {
+    const result = getStatusDisplay(makeThread({ status: "active" }), false, true);
+    expect(result.dotClass).not.toContain("amber");
+  });
 });
 
 describe("getNotificationDot", () => {
@@ -90,5 +101,12 @@ describe("getNotificationDot", () => {
   it("returns null for paused thread", () => {
     const result = getNotificationDot(makeThread({ status: "paused" }), false);
     expect(result).toBeNull();
+  });
+
+  it("returns amber dot when thread has pending permission and is running", () => {
+    const result = getNotificationDot(makeThread(), true, true);
+    expect(result).not.toBeNull();
+    expect(result!.dotClass).toBe("bg-amber-500");
+    expect(result!.animate).toBe(true);
   });
 });
