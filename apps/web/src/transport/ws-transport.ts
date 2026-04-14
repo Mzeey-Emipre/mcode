@@ -18,7 +18,7 @@ import type {
 import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
-import type { PermissionDecision, PermissionRequest } from "@mcode/contracts";
+import type { PermissionRequest } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;

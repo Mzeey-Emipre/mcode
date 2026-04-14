@@ -637,6 +637,10 @@ async function dispatch(
     // Permission
     case "permission.respond": {
       deps.agentService.respondToPermission(params.requestId, params.decision);
+      broadcast("permission.resolved", {
+        requestId: params.requestId,
+        decision: params.decision,
+      });
       return;
     }
     case "permission.listPending":

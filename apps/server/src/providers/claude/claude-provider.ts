@@ -1133,7 +1133,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     };
   }
 
-  /** @inheritdoc */
+  /** Resolves a pending permission request by ID. Deletes the entry before calling resolve to prevent re-entrant calls. Returns false if the requestId is unknown. */
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
     const entry = this.pendingPermissions.get(requestId);
     if (!entry) return false;
@@ -1143,7 +1143,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     return true;
   }
 
-  /** @inheritdoc */
+  /** Returns all pending permission requests for the given thread, including tool input and optional title for display. Used by the frontend to re-hydrate cards after a WebSocket reconnect. */
   listPendingPermissions(threadId: string): PermissionRequest[] {
     const results: PermissionRequest[] = [];
     for (const [requestId, entry] of this.pendingPermissions) {
