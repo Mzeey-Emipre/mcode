@@ -26,10 +26,48 @@ import type {
   AgentEvent,
   AttachmentMeta,
   ProviderModelInfo,
+  QuotaCategory,
 } from "@mcode/contracts";
+import { AgentEventType } from "@mcode/contracts";
 
 /** Promisified execFile used to retrieve the gh auth token. */
 const execFileAsync = promisify(execFile);
+
+/** Maps raw Copilot quota snapshot keys to human-readable labels. */
+const QUOTA_LABELS: Record<string, string> = {
+  premium_interactions: "Premium requests",
+  chat: "Chat",
+  completions: "Completions",
+};
+
+/** Shape of a single quota snapshot entry from the Copilot SDK assistant.usage event. */
+interface QuotaSnapshot {
+  isUnlimitedEntitlement?: boolean;
+  entitlementRequests?: number;
+  usedRequests?: number;
+  remainingPercentage?: number;
+  resetDate?: string;
+  overage?: number;
+  overageAllowedWithExhaustedQuota?: boolean;
+  usageAllowedWithExhaustedQuota?: boolean;
+}
+
+/**
+ * Converts a raw Copilot quota snapshot map into an array of normalized QuotaCategory objects
+ * suitable for the QuotaUpdate AgentEvent.
+ */
+function normalizeQuotaSnapshots(
+  snapshots: Record<string, QuotaSnapshot>,
+): QuotaCategory[] {
+  return Object.entries(snapshots).map(([key, snap]) => ({
+    label: QUOTA_LABELS[key] ?? key,
+    used: snap.usedRequests ?? 0,
+    total: snap.isUnlimitedEntitlement ? null : (snap.entitlementRequests ?? 0),
+    remainingPercent: snap.remainingPercentage ?? 1.0,
+    resetDate: snap.resetDate,
+    isUnlimited: snap.isUnlimitedEntitlement ?? false,
+  }));
+}
 
 /** Infer vendor group from model ID prefix for UI section headers. */
 function inferModelGroup(modelId: string): string | undefined {
@@ -508,19 +546,40 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
         // assistant.usage — token counts after a model call
         unsubscribers.push(
           session.on("assistant.usage", (event) => {
-            const { inputTokens = 0, outputTokens = 0, cacheReadTokens = 0 } = event.data;
-            const tokensIn = inputTokens + cacheReadTokens;
+            const {
+              inputTokens = 0,
+              outputTokens = 0,
+              cacheReadTokens = 0,
+              cacheWriteTokens = 0,
+              cost,
+              quotaSnapshots,
+            } = event.data;
             const contextWindow = this.contextWindowBySession.get(sessionId);
+
             this.emit("event", {
-              type: "turnComplete",
+              type: AgentEventType.TurnComplete,
               threadId,
               reason: "end_turn",
               costUsd: null,
-              tokensIn,
+              tokensIn: inputTokens,
               tokensOut: outputTokens,
               contextWindow,
-              totalProcessedTokens: tokensIn + outputTokens,
+              totalProcessedTokens: inputTokens + cacheReadTokens + cacheWriteTokens + outputTokens,
+              cacheReadTokens,
+              cacheWriteTokens,
+              costMultiplier: cost,
+              providerId: "copilot",
             } satisfies AgentEvent);
+
+            // Emit quota update if snapshots are present
+            if (quotaSnapshots && typeof quotaSnapshots === "object") {
+              this.emit("event", {
+                type: AgentEventType.QuotaUpdate,
+                threadId,
+                providerId: "copilot",
+                categories: normalizeQuotaSnapshots(quotaSnapshots as Record<string, QuotaSnapshot>),
+              } satisfies AgentEvent);
+            }
           }),
         );
 
