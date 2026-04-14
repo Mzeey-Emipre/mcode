@@ -86,17 +86,18 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
     onOpenChange?.(open);
   };
 
-  // Reset fetch flag when provider changes
+  // Reset fetch flag when thread or provider changes
   useEffect(() => {
     hasFetched.current = false;
-  }, [providerId]);
+  }, [threadId, providerId]);
 
   const categories = usageInfo?.quotaCategories ?? [];
   const sessionCost = usageInfo?.sessionCostUsd;
   const tokensIn = contextEntry?.lastTokensIn ?? 0;
+  const tokensOut = contextEntry?.tokensOut ?? 0;
   const contextWindow = contextEntry?.contextWindow;
   const hasContext = tokensIn > 0 && contextWindow;
-  const hasTurn = tokensIn > 0;
+  const hasTurn = tokensIn > 0 || tokensOut > 0;
 
   // Earliest reset date across quota categories
   const resetDays = categories
@@ -166,7 +167,10 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
                   {formatTokens(tokensIn)} / {formatTokens(contextWindow)}
                 </span>
               </div>
-              <UsageBar percent={tokensIn / contextWindow} />
+              <UsageBar
+                percent={tokensIn / contextWindow}
+                label={`Context usage: ${formatTokens(tokensIn)} of ${formatTokens(contextWindow)} tokens`}
+              />
             </div>
           )}
 

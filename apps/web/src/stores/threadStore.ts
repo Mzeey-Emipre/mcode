@@ -694,6 +694,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         planAnswersByThread: omitKey(state.planAnswersByThread, threadId),
         activeQuestionIndexByThread: omitKey(state.activeQuestionIndexByThread, threadId),
         planQuestionsStatusByThread: omitKey(state.planQuestionsStatusByThread, threadId),
+        usageByProvider: Object.fromEntries(
+          Object.entries(state.usageByProvider).filter(([k]) => !k.startsWith(`${threadId}:`)),
+        ),
         // Clear message-keyed globals only when deleting the currently loaded thread.
         // For background threads, message-keyed maps (persistedToolCallCounts, etc.)
         // belong to the active thread's messages and must not be touched.
@@ -768,6 +771,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         planAnswersByThread: pruneAll(state.planAnswersByThread),
         activeQuestionIndexByThread: pruneAll(state.activeQuestionIndexByThread),
         planQuestionsStatusByThread: pruneAll(state.planQuestionsStatusByThread),
+        usageByProvider: Object.fromEntries(
+          Object.entries(state.usageByProvider).filter(([k]) => !threadIds.some((tid) => k.startsWith(`${tid}:`))),
+        ),
         ...(deletingCurrentThread
           ? {
               currentThreadId: null,
@@ -1256,7 +1262,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               lastTokensIn: tokensIn,
               contextWindow,
               totalProcessedTokens,
-              tokensOut: params.tokensOut as number | undefined,
+              tokensOut,
               cacheReadTokens: params.cacheReadTokens as number | undefined,
               cacheWriteTokens: params.cacheWriteTokens as number | undefined,
               costMultiplier: params.costMultiplier as number | undefined,
