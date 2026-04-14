@@ -66,12 +66,19 @@ export function AgentSection() {
         />
       </SettingRow>
 
-      <SectionHeading>Guardrails</SectionHeading>
+      <div className="mt-6 mb-1 flex items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+          Guardrails
+        </span>
+        <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-amber-400/90">
+          Beta
+        </span>
+      </div>
 
       <SettingRow
         label="Budget cap"
         configKey="agent.guardrails.maxBudgetUsd"
-        hint="Stop the agent when session cost exceeds this USD amount. 0 disables. Claude only."
+        hint="Stop the agent when session cost exceeds this USD amount. 0 disables. Claude only. Budget is checked between turns, so actual cost may slightly exceed the cap."
       >
         <RangeControl
           min={0}
