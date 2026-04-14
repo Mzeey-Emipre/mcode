@@ -1139,6 +1139,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     if (!entry) return false;
     this.pendingPermissions.delete(requestId);
     entry.resolve(decision);
+    this.emit("permission_resolved", { requestId, decision });
     return true;
   }
 

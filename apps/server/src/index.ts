@@ -180,6 +180,16 @@ for (const ws of allWorkspaces) {
 // listener fires. We read the stack via getCurrentParentToolCallId to enrich
 // non-Agent tool calls with their parent ID.
 for (const provider of providerRegistry.resolveAll()) {
+  provider.on("permission_request", (request) => {
+    broadcast("permission.request", request);
+    portPush.send("permission.request", request);
+  });
+
+  provider.on("permission_resolved", (payload) => {
+    broadcast("permission.resolved", payload);
+    portPush.send("permission.resolved", payload);
+  });
+
   provider.on("event", (event: AgentEvent) => {
     let enrichedEvent = event;
 

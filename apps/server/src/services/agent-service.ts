@@ -18,6 +18,8 @@ import type {
   AgentEvent,
   ProviderId,
   InteractionMode,
+  PermissionDecision,
+  PermissionRequest,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -712,6 +714,30 @@ export class AgentService {
   /** Get all currently active thread IDs. */
   activeThreadIds(): string[] {
     return [...this.activeSessionIds];
+  }
+
+  /**
+   * Forward a user's permission decision to the provider holding the request.
+   * Tries all registered providers; the first one that holds the requestId resolves it.
+   */
+  respondToPermission(requestId: string, decision: PermissionDecision): void {
+    for (const provider of this.providerRegistry.resolveAll()) {
+      if (provider.resolvePermission?.(requestId, decision)) {
+        return;
+      }
+    }
+    logger.warn("permission.respond: no provider holds requestId %s", requestId);
+  }
+
+  /** Collect all pending permission requests for a thread across all providers. */
+  listPendingPermissions(threadId: string): PermissionRequest[] {
+    const results: PermissionRequest[] = [];
+    for (const provider of this.providerRegistry.resolveAll()) {
+      if (provider.listPendingPermissions) {
+        results.push(...provider.listPendingPermissions(threadId));
+      }
+    }
+    return results;
   }
 
   /**
