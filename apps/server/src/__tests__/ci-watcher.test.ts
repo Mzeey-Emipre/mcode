@@ -94,6 +94,29 @@ describe("CiWatcherService", () => {
     });
   });
 
+  it("refresh() does not broadcast when state is unchanged", () => {
+    const passing = makeChecks("passing");
+    watcher.watch("t1", 42, "/repo", { skipInitialFetch: true });
+    // First call: cache is null → always broadcasts.
+    watcher.refresh("t1", passing);
+    mockBroadcast.mockClear();
+    // Second call with identical aggregate — no change, no broadcast.
+    watcher.refresh("t1", makeChecks("passing"));
+    expect(mockBroadcast).not.toHaveBeenCalled();
+  });
+
+  it("refresh() broadcasts when aggregate changes", () => {
+    watcher.watch("t1", 42, "/repo", { skipInitialFetch: true });
+    watcher.refresh("t1", makeChecks("passing"));
+    mockBroadcast.mockClear();
+    const failing = makeChecks("failing");
+    watcher.refresh("t1", failing);
+    expect(mockBroadcast).toHaveBeenCalledWith("thread.checksUpdated", {
+      threadId: "t1",
+      checks: failing,
+    });
+  });
+
   it("getEntry returns cached status", async () => {
     const passing = makeChecks("passing");
     mockGithubService.getCheckRuns.mockResolvedValue(passing);

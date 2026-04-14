@@ -90,7 +90,7 @@ export class CiWatcherService {
   }
 
   /**
-   * Update the cached status for a thread and broadcast the change.
+   * Update the cached status for a thread and broadcast if anything changed.
    * Mirrors tick()'s promote/demote logic so a manual refresh keeps the
    * polling cadence correct (e.g. pending → active set, terminal → passive set).
    * Used by the manual-refresh RPC to keep all clients in sync.
@@ -98,8 +98,11 @@ export class CiWatcherService {
   refresh(threadId: string, checks: ChecksStatus): void {
     const entry = this.active.get(threadId) ?? this.passive.get(threadId);
     if (!entry) return;
+    const changed = this.hasChanged(entry.cache, checks);
     entry.cache = checks;
-    this.broadcast("thread.checksUpdated", { threadId, checks });
+    if (changed) {
+      this.broadcast("thread.checksUpdated", { threadId, checks });
+    }
 
     // Promote to active when checks are running, demote to passive when terminal.
     if (this.passive.has(threadId) && checks.aggregate === "pending") {
@@ -201,6 +204,17 @@ export class CiWatcherService {
     }
   }
 
+  /** Returns true when `next` differs semantically from `cached` (aggregate, run count, or per-run status/conclusion). */
+  private hasChanged(cached: ChecksStatus | null, next: ChecksStatus): boolean {
+    return cached == null
+      || cached.aggregate !== next.aggregate
+      || cached.runs.length !== next.runs.length
+      || cached.runs.some((r, i) => {
+        const nr = next.runs[i];
+        return nr && (r.status !== nr.status || r.conclusion !== nr.conclusion);
+      });
+  }
+
   private async tick(set: Map<string, WatchEntry>): Promise<void> {
     if (set.size === 0) return;
 
@@ -219,13 +233,7 @@ export class CiWatcherService {
       // Guard: thread was unwatched while the fetch was in flight
       if (!this.active.has(entry.threadId) && !this.passive.has(entry.threadId)) continue;
 
-      const changed = entry.cache == null || entry.cache.aggregate !== checks.aggregate
-        || entry.cache.runs.length !== checks.runs.length
-        || entry.cache.runs.some((r, i) => {
-          const nr = checks.runs[i];
-          return nr && (r.status !== nr.status || r.conclusion !== nr.conclusion);
-        });
-
+      const changed = this.hasChanged(entry.cache, checks);
       entry.cache = checks;
 
       if (changed) {

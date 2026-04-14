@@ -141,20 +141,45 @@ export function createWsTransport(
       // Auth token is conveyed via HttpOnly cookie (Set-Cookie on /health).
       // No need to store it in localStorage - the cookie handles reconnection.
 
-      // On connect/reconnect, refresh CI checks for the active thread (best-effort).
+      // On connect/reconnect, refresh CI checks for all visible PR threads (best-effort).
       // Cooldown prevents subprocess storms during rapid reconnect loops.
       // Deferred import avoids a circular dependency at module evaluation time.
       const now = Date.now();
       if (now - lastCheckStatusFetchAt > CHECK_STATUS_RECONNECT_COOLDOWN_MS) {
         lastCheckStatusFetchAt = now;
         import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
-          const { activeThreadId } = useWorkspaceStore.getState();
-          if (activeThreadId) {
-            rpc<ChecksStatus>("github.checkStatus", { threadId: activeThreadId }).then((checks) => {
+          const state = useWorkspaceStore.getState();
+
+          // Refresh all non-terminal PR threads visible in the sidebar.
+          const prThreads = state.threads.filter(
+            (t) => t.pr_number != null
+              && t.pr_status?.toLowerCase() !== "merged"
+              && t.pr_status?.toLowerCase() !== "closed",
+          );
+
+          for (const thread of prThreads) {
+            rpc<ChecksStatus>("github.checkStatus", { threadId: thread.id }).then((checks) => {
               useWorkspaceStore.setState((ws) => ({
-                checksById: { ...ws.checksById, [activeThreadId]: checks },
+                checksById: { ...ws.checksById, [thread.id]: checks },
               }));
             }).catch(() => { /* best-effort */ });
+          }
+
+          // On initial connect, threads haven't loaded yet; subscribe to backfill the active
+          // PR thread's CI status once the store is populated.
+          if (state.threads.length === 0) {
+            const unsub = useWorkspaceStore.subscribe((s) => {
+              if (!s.activeThreadId) return;
+              unsub();
+              const tid = s.activeThreadId;
+              const thread = s.threads.find((t) => t.id === tid);
+              if (thread?.pr_number == null) return;
+              rpc<ChecksStatus>("github.checkStatus", { threadId: tid }).then((checks) => {
+                useWorkspaceStore.setState((ws) => ({
+                  checksById: { ...ws.checksById, [tid]: checks },
+                }));
+              }).catch(() => { /* best-effort */ });
+            });
           }
         });
       }
