@@ -17,6 +17,7 @@ import type {
   ReasoningLevel,
   AgentEvent,
   AttachmentMeta,
+  ProviderUsageInfo,
 } from "@mcode/contracts";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
 
@@ -161,6 +162,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
+  private lastSessionCostUsd?: number;
+  private lastServiceTier?: "standard" | "priority" | "batch";
+  private lastNumTurns?: number;
+  private lastDurationMs?: number;
 
   constructor() {
     super();
@@ -659,6 +664,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 (usage.cache_creation_input_tokens ?? 0)
               );
 
+              this.lastSessionCostUsd = (anyMsg.total_cost_usd as number) ?? undefined;
+              this.lastNumTurns = (anyMsg.num_turns as number) ?? undefined;
+              this.lastDurationMs = (anyMsg.duration_ms as number) ?? undefined;
+              const resultUsage = (anyMsg.usage ?? {}) as { service_tier?: string };
+              const rawTier = resultUsage.service_tier;
+              this.lastServiceTier = (rawTier === "standard" || rawTier === "priority" || rawTier === "batch")
+                ? rawTier
+                : undefined;
+
               this.emit("event", {
                 type: AgentEventType.TurnComplete,
                 threadId,
@@ -672,6 +686,20 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 tokensOut: usage.output_tokens ?? 0,
                 contextWindow: sdkContextWindow,
                 totalProcessedTokens,
+                cacheReadTokens: usage.cache_read_input_tokens ?? undefined,
+                cacheWriteTokens: usage.cache_creation_input_tokens ?? undefined,
+                providerId: "claude",
+              } satisfies AgentEvent);
+
+              this.emit("event", {
+                type: AgentEventType.QuotaUpdate,
+                threadId,
+                providerId: "claude",
+                categories: [],
+                sessionCostUsd: this.lastSessionCostUsd,
+                serviceTier: this.lastServiceTier,
+                numTurns: this.lastNumTurns,
+                durationMs: this.lastDurationMs,
               } satisfies AgentEvent);
 
               lastContextWindow = sdkContextWindow;
@@ -1004,6 +1032,18 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       entry.closeQueue();
       entry.query.close();
     });
+  }
+
+  /** Return accumulated session data. Claude has no quota API via the SDK. */
+  async getUsage(): Promise<ProviderUsageInfo> {
+    return {
+      providerId: "claude",
+      quotaCategories: [],
+      sessionCostUsd: this.lastSessionCostUsd,
+      serviceTier: this.lastServiceTier,
+      numTurns: this.lastNumTurns,
+      durationMs: this.lastDurationMs,
+    };
   }
 
   /** Tear down all sessions and release resources. */

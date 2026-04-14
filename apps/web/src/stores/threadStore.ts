@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
-import type { ReasoningLevel, PlanQuestion, PlanAnswer } from "@mcode/contracts";
+import type { ReasoningLevel, PlanQuestion, PlanAnswer, ProviderUsageInfo, QuotaCategory } from "@mcode/contracts";
 import { PlanQuestionSchema } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
@@ -59,7 +59,9 @@ interface ThreadState {
   /** Monotonic counter incremented on each loadMessages call, used to discard stale loadOlderMessages responses. */
   loadEpochByThread: Record<string, number>;
   /** Last known token usage and context window size per thread, updated on turn completion. */
-  contextByThread: Record<string, { lastTokensIn: number; contextWindow?: number; totalProcessedTokens?: number }>;
+  contextByThread: Record<string, { lastTokensIn: number; contextWindow?: number; totalProcessedTokens?: number; tokensOut?: number; cacheReadTokens?: number; cacheWriteTokens?: number; costMultiplier?: number }>;
+  /** Provider-level quota and usage info, keyed by `${threadId}:${providerId}`. Updated on session.quotaUpdate events and explicit fetches. */
+  usageByProvider: Record<string, ProviderUsageInfo>;
   /** Whether the SDK is currently compacting the context window for a thread. */
   isCompactingByThread: Record<string, boolean>;
   /** Transient fallback state per thread. Cleared when the user sends the next message. */
@@ -110,6 +112,8 @@ interface ThreadState {
   /** Merge partial settings and persist to server. Resolves to false if RPC fails or patch is empty. */
   setThreadSettings: (threadId: string, settings: Partial<ThreadSettings>) => Promise<boolean>;
 
+  /** Fetch and refresh provider usage info from the server for the given thread and provider. */
+  fetchProviderUsage: (threadId: string, providerId: string) => Promise<void>;
   /** Remove all per-thread state for a deleted thread. Clears visible-thread globals when the deleted thread is the current one. */
   clearThreadState: (threadId: string) => void;
   /** Batch variant of clearThreadState. Prunes all IDs in a single Zustand set() call to avoid N sequential re-renders. Used by deleteWorkspace. */
@@ -226,6 +230,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   isLoadingMore: {},
   loadEpochByThread: {},
   contextByThread: {},
+  usageByProvider: {},
   isCompactingByThread: {},
   lastFallbackByThread: {},
   planQuestionsByThread: {},
@@ -689,6 +694,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         planAnswersByThread: omitKey(state.planAnswersByThread, threadId),
         activeQuestionIndexByThread: omitKey(state.activeQuestionIndexByThread, threadId),
         planQuestionsStatusByThread: omitKey(state.planQuestionsStatusByThread, threadId),
+        usageByProvider: Object.fromEntries(
+          Object.entries(state.usageByProvider).filter(([k]) => !k.startsWith(`${threadId}:`)),
+        ),
         // Clear message-keyed globals only when deleting the currently loaded thread.
         // For background threads, message-keyed maps (persistedToolCallCounts, etc.)
         // belong to the active thread's messages and must not be touched.
@@ -763,6 +771,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         planAnswersByThread: pruneAll(state.planAnswersByThread),
         activeQuestionIndexByThread: pruneAll(state.activeQuestionIndexByThread),
         planQuestionsStatusByThread: pruneAll(state.planQuestionsStatusByThread),
+        usageByProvider: Object.fromEntries(
+          Object.entries(state.usageByProvider).filter(([k]) => !threadIds.some((tid) => k.startsWith(`${tid}:`))),
+        ),
         ...(deletingCurrentThread
           ? {
               currentThreadId: null,
@@ -1251,6 +1262,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               lastTokensIn: tokensIn,
               contextWindow,
               totalProcessedTokens,
+              tokensOut,
+              cacheReadTokens: params.cacheReadTokens as number | undefined,
+              cacheWriteTokens: params.cacheWriteTokens as number | undefined,
+              costMultiplier: params.costMultiplier as number | undefined,
             },
           },
         }));
@@ -1308,22 +1323,55 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
+    if (method === "session.quotaUpdate") {
+      const providerId = params.providerId as string;
+      const categories = params.categories as QuotaCategory[];
+      const sessionCostUsd = params.sessionCostUsd as number | undefined;
+      const serviceTier = params.serviceTier as "standard" | "priority" | "batch" | undefined;
+      const numTurns = params.numTurns as number | undefined;
+      const durationMs = params.durationMs as number | undefined;
+      if (providerId) {
+        const key = `${threadId}:${providerId}`;
+        set((state) => {
+          const existing = state.usageByProvider[key];
+          return {
+            usageByProvider: {
+              ...state.usageByProvider,
+              [key]: {
+                providerId,
+                quotaCategories: categories ?? [],
+                sessionCostUsd: sessionCostUsd ?? existing?.sessionCostUsd,
+                serviceTier: serviceTier ?? existing?.serviceTier,
+                numTurns: numTurns ?? existing?.numTurns,
+                durationMs: durationMs ?? existing?.durationMs,
+              },
+            },
+          };
+        });
+      }
+      return;
+    }
+
     if (method === "session.contextEstimate") {
       const tokensIn = params.tokensIn as number;
       const ctxWindow = params.contextWindow as number | undefined;
       // Only apply if not compacting — the compaction-start zero sentinel is
       // authoritative while compaction is in progress.
       if (tokensIn > 0 && !get().isCompactingByThread[threadId]) {
-        set((state) => ({
-          contextByThread: {
-            ...state.contextByThread,
-            [threadId]: {
-              lastTokensIn: tokensIn,
-              contextWindow: ctxWindow ?? state.contextByThread[threadId]?.contextWindow,
-              totalProcessedTokens: state.contextByThread[threadId]?.totalProcessedTokens,
+        set((state) => {
+          const prev = state.contextByThread[threadId];
+          return {
+            contextByThread: {
+              ...state.contextByThread,
+              [threadId]: {
+                ...prev,
+                lastTokensIn: tokensIn,
+                contextWindow: ctxWindow ?? prev?.contextWindow,
+                totalProcessedTokens: prev?.totalProcessedTokens,
+              },
             },
-          },
-        }));
+          };
+        });
       }
       return;
     }
@@ -1365,10 +1413,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         // back to the stale persisted value from the thread record.
         // When active=false, leave contextByThread untouched: the post-compaction
         // turnComplete may have already written fresh data.
+        const prev = state.contextByThread[threadId];
         const nextCtx = active
           ? {
               ...state.contextByThread,
-              [threadId]: { lastTokensIn: 0, contextWindow: state.contextByThread[threadId]?.contextWindow, totalProcessedTokens: state.contextByThread[threadId]?.totalProcessedTokens },
+              [threadId]: { ...prev, lastTokensIn: 0, contextWindow: prev?.contextWindow, totalProcessedTokens: prev?.totalProcessedTokens },
             }
           : state.contextByThread;
         return { isCompactingByThread: next, contextByThread: nextCtx };
@@ -1468,6 +1517,25 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
+  },
+
+  /**
+   * Fetch provider usage from the server and merge it into usageByProvider.
+   * Silently ignores errors so the popover shows stale or empty state rather than crashing.
+   */
+  fetchProviderUsage: async (threadId, providerId) => {
+    try {
+      const usage = await getTransport().getProviderUsage(providerId);
+      const key = `${threadId}:${providerId}`;
+      set((state) => ({
+        usageByProvider: {
+          ...state.usageByProvider,
+          [key]: { ...state.usageByProvider[key], ...usage },
+        },
+      }));
+    } catch {
+      // Silently fail — popover shows stale or empty state
+    }
   },
 
   handleTurnPersisted: (payload) => {

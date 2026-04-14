@@ -396,6 +396,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const threads = useWorkspaceStore((s) => s.threads);
   const activeThread = threadId ? threads.find((t) => t.id === threadId) : undefined;
 
+  const activeProviderId = activeThread?.provider ?? "claude";
+  const usageInfo = useThreadStore((s) => s.usageByProvider[activeProviderId]);
+  const hasLowQuota = usageInfo?.quotaCategories.some((c) => !c.isUnlimited && c.remainingPercent < 0.2) ?? false;
+
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
   const newThreadMode = useWorkspaceStore((s) => s.newThreadMode);
@@ -1262,6 +1266,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               tokensIn={contextEntry?.lastTokensIn ?? activeThread?.last_context_tokens ?? 0}
               contextWindow={contextEntry?.contextWindow ?? activeThread?.context_window ?? undefined}
               totalProcessedTokens={contextEntry?.totalProcessedTokens}
+              hasLowQuota={hasLowQuota}
             />
           )}
 

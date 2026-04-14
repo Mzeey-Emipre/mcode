@@ -19,6 +19,7 @@ import type {
   PlanAnswer,
   InteractionMode,
   ProviderModelInfo,
+  ProviderUsageInfo,
   PrDraft,
   CreatePrResult,
 } from "@mcode/contracts";
@@ -235,6 +236,8 @@ export interface McodeTransport {
   // Provider models
   /** Fetch dynamically discovered models from a provider (e.g. Copilot). */
   listProviderModels(providerId: string): Promise<ProviderModelInfo[]>;
+  /** Fetch current usage/quota state for a provider. */
+  getProviderUsage(providerId: string): Promise<ProviderUsageInfo>;
 
   // Memory pressure
   /** Notify server of window background/foreground state for memory management. */

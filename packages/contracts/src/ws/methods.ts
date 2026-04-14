@@ -20,6 +20,7 @@ import {
 } from "../models/settings.js";
 import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
+import { ProviderUsageInfoSchema } from "../providers/usage.js";
 
 /** Schema for creating a new thread. */
 export const CreateThreadSchema = z.object({
@@ -375,6 +376,10 @@ export const WS_METHODS = lazySchema(() => ({
   "provider.listModels": {
     params: z.object({ providerId: ProviderIdSchema }),
     result: z.array(ProviderModelInfoSchema()),
+  },
+  "provider.getUsage": {
+    params: z.object({ providerId: ProviderIdSchema }),
+    result: ProviderUsageInfoSchema(),
   },
   "memory.setBackground": {
     params: z.object({ background: z.boolean() }),

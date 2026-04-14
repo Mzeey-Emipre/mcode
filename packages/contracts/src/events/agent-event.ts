@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
+import { QuotaCategorySchema } from "../providers/usage.js";
 
 /**
  * All valid `type` discriminants for `AgentEvent`.
@@ -24,6 +25,7 @@ export const AgentEventType = {
   ToolInputDelta: "toolInputDelta",
   ToolProgress: "toolProgress",
   ContextEstimate: "contextEstimate",
+  QuotaUpdate: "quotaUpdate",
 } as const;
 
 /** Union of all valid `AgentEvent` type discriminants. */
@@ -66,6 +68,10 @@ export const AgentEventSchema = lazySchema(() =>
       contextWindow: z.number().optional(),
       /** Accumulated total tokens processed across all API calls in the session. */
       totalProcessedTokens: z.number().optional(),
+      cacheReadTokens: z.number().optional(),
+      cacheWriteTokens: z.number().optional(),
+      costMultiplier: z.number().optional(),
+      providerId: z.string().optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.Error),
@@ -141,6 +147,16 @@ export const AgentEventSchema = lazySchema(() =>
       tokensIn: z.number(),
       /** Model context window size, forwarded from SDK when available. */
       contextWindow: z.number().optional(),
+    }),
+    z.object({
+      type: z.literal(AgentEventType.QuotaUpdate),
+      threadId: z.string(),
+      providerId: z.string(),
+      categories: z.array(QuotaCategorySchema()),
+      sessionCostUsd: z.number().optional(),
+      serviceTier: z.enum(["standard", "priority", "batch"]).optional(),
+      numTurns: z.number().int().optional(),
+      durationMs: z.number().optional(),
     }),
   ]),
 );

@@ -149,3 +149,14 @@ export {
 } from "./providers/models.js";
 export type { ProviderModelInfo } from "./providers/models.js";
 export { isCompletionCapable } from "./providers/interfaces.js";
+
+export {
+  TurnUsageSchema,
+  QuotaCategorySchema,
+  ProviderUsageInfoSchema,
+} from "./providers/usage.js";
+export type {
+  TurnUsage,
+  QuotaCategory,
+  ProviderUsageInfo,
+} from "./providers/usage.js";
