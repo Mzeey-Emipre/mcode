@@ -308,11 +308,13 @@ export function createWsTransport(
 
     // Agent
     sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?) => {
-      const { maxBudgetUsd, maxTurns } = useSettingsStore.getState().settings.agent.guardrails;
+      const state = useSettingsStore.getState();
+      const guardrails = state.loaded
+        ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
+        : {};
       return rpc<void>("agent.send", {
         threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode,
-        maxBudgetUsd,
-        maxTurns,
+        ...guardrails,
       });
     },
     createAndSendMessage: (
@@ -330,7 +332,10 @@ export function createWsTransport(
       parentThreadId?,
       forkedFromMessageId?,
     ) => {
-      const { maxBudgetUsd, maxTurns } = useSettingsStore.getState().settings.agent.guardrails;
+      const state = useSettingsStore.getState();
+      const guardrails = state.loaded
+        ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
+        : {};
       return rpc<Thread>("agent.createAndSend", {
         workspaceId,
         content,
@@ -345,8 +350,7 @@ export function createWsTransport(
         interactionMode,
         parentThreadId,
         forkedFromMessageId,
-        maxBudgetUsd,
-        maxTurns,
+        ...guardrails,
       });
     },
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),

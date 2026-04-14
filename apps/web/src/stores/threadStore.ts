@@ -1318,7 +1318,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Auto-dequeue: send next queued message after a brief visual pause.
       // Only on turnComplete (not session.ended) so explicit stops don't drain the queue.
       // Uses tracked timers to prevent double-dequeue from duplicate events.
-      if (method === "session.turnComplete") {
+      // Skip dequeue when a guardrail stopped the session to avoid restarting
+      // an agent that was intentionally capped by budget or turn limits.
+      if (method === "session.turnComplete" && !isGuardrailStop) {
         clearDequeueTimer(threadId);
         const timer = setTimeout(() => {
           dequeueTimers.delete(threadId);
