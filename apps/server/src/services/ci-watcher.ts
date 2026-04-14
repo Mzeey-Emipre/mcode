@@ -39,11 +39,24 @@ export class CiWatcherService {
     this.startPassiveTimer();
   }
 
-  /** Add a thread to the watcher. Starts in the passive set. */
+  /** Add a thread to the watcher. Starts in the passive set with an immediate first fetch. */
   watch(threadId: string, prNumber: number, repoPath: string): void {
     if (this.active.has(threadId) || this.passive.has(threadId)) return;
     this.passive.set(threadId, { threadId, prNumber, repoPath, cache: null });
     this.startPassiveTimer();
+
+    // Fetch immediately so the client gets data without waiting up to 60s for the passive tick.
+    this.githubService.getCheckRuns(prNumber, repoPath).then((checks) => {
+      const entry = this.passive.get(threadId) ?? this.active.get(threadId);
+      if (!entry) return; // unwatched during fetch
+      entry.cache = checks;
+      this.broadcast("thread.checksUpdated", { threadId, checks });
+      if (checks.aggregate === "pending") {
+        this.passive.delete(threadId);
+        this.active.set(threadId, entry);
+        this.startActiveTimer();
+      }
+    }).catch(() => { /* ignore — passive tick will retry */ });
   }
 
   /** Remove a thread from the watcher entirely. */

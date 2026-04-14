@@ -22,6 +22,8 @@ describe("CiWatcherService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mockGithubService = { getCheckRuns: vi.fn() };
+    // Default: return no_checks so watch() immediate fetch resolves without side effects.
+    mockGithubService.getCheckRuns.mockResolvedValue(makeChecks("no_checks"));
     mockBroadcast = vi.fn();
     watcher = new CiWatcherService(
       mockGithubService as unknown as GithubService,

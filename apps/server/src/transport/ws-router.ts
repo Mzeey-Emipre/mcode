@@ -364,7 +364,19 @@ async function dispatch(
     case "github.prByUrl":
       return deps.githubService.getPrByUrl(params.url);
     case "github.checkStatus": {
-      const entry = deps.ciWatcherService.getEntry(params.threadId);
+      let entry = deps.ciWatcherService.getEntry(params.threadId);
+      if (!entry) {
+        // Bootstrap: thread may not be in the watcher yet (e.g. connect race before syncThreadPrs).
+        // Look up the stored PR number and start watching so future polls work automatically.
+        const thread = deps.threadRepo.findById(params.threadId);
+        if (thread?.pr_number) {
+          const workspace = deps.workspaceRepo.findById(thread.workspace_id);
+          if (workspace) {
+            deps.ciWatcherService.watch(params.threadId, thread.pr_number, workspace.path);
+            entry = deps.ciWatcherService.getEntry(params.threadId);
+          }
+        }
+      }
       if (!entry) {
         return { aggregate: "no_checks" as const, runs: [], fetchedAt: Date.now() };
       }
