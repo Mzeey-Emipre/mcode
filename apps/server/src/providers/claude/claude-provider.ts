@@ -1051,6 +1051,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const now = Date.now();
     for (const [sessionId, entry] of this.sessions) {
       if (now - entry.lastUsedAt > IDLE_TTL_MS) {
+        // Never evict a session that is actively awaiting a user permission response —
+        // the user may be on another thread and is about to respond.
+        const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+        const hasPending = [...this.pendingPermissions.values()].some(
+          (p) => p.threadId === tid,
+        );
+        if (hasPending) continue;
+
         logger.info("Evicting idle session", { sessionId });
         this.sessions.delete(sessionId);
         entry.closeQueue();
@@ -1138,6 +1146,13 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const entry = this.pendingPermissions.get(requestId);
     if (!entry) return false;
     this.pendingPermissions.delete(requestId);
+
+    // Reset the session's idle timer so the 10-minute eviction clock starts
+    // from the moment the user responds, not from when the request was sent.
+    const sessionId = `mcode-${entry.threadId}`;
+    const session = this.sessions.get(sessionId);
+    if (session) session.lastUsedAt = Date.now();
+
     entry.resolve(decision);
     this.emit("permission_resolved", { requestId, decision });
     return true;

@@ -25,10 +25,12 @@ export function getNotificationDot(
   isActuallyRunning: boolean,
   hasPendingPermission = false,
 ): NotificationDot | null {
+  // Amber takes top priority — show even if the thread has temporarily dropped
+  // from runningThreadIds (reconnect race, another tab, etc.).
+  if (hasPendingPermission) {
+    return { dotClass: "bg-amber-500", animate: true };
+  }
   if (isActuallyRunning) {
-    if (hasPendingPermission) {
-      return { dotClass: "bg-amber-500", animate: true };
-    }
     return { dotClass: "bg-yellow-500", animate: true };
   }
   switch (thread.status) {
@@ -52,16 +54,17 @@ export function getStatusDisplay(
   isActuallyRunning: boolean,
   hasPendingPermission = false,
 ): StatusDisplay {
+  // Pending permission is top priority — show amber even if the thread has
+  // temporarily dropped from runningThreadIds (reconnect race, another tab).
+  if (hasPendingPermission) {
+    return {
+      label: "",
+      color: "text-amber-500",
+      dotClass: "bg-amber-500 animate-pulse",
+    };
+  }
   // Live process state takes priority over DB status
   if (isActuallyRunning) {
-    // Permission requests are a sub-state of running — amber overrides the normal yellow.
-    if (hasPendingPermission) {
-      return {
-        label: "",
-        color: "text-amber-500",
-        dotClass: "bg-amber-500 animate-pulse",
-      };
-    }
     return {
       label: "",
       color: "text-yellow-500",
