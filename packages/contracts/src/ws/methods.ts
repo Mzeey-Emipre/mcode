@@ -7,7 +7,7 @@ import { AttachmentMetaSchema } from "../models/attachment.js";
 import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { GitBranchSchema, WorktreeSchema } from "../git.js";
 import { GitCommitSchema } from "../models/git-commit.js";
-import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema } from "../github.js";
+import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
@@ -259,6 +259,10 @@ export const WS_METHODS = lazySchema(() => ({
       isDraft: z.boolean().default(false),
     }),
     result: CreatePrResultSchema(),
+  },
+  "github.checkStatus": {
+    params: z.object({ threadId: z.string() }),
+    result: ChecksStatusSchema(),
   },
   "config.discover": {
     params: z.object({ workspacePath: z.string() }),

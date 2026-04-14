@@ -3,6 +3,7 @@ import { AgentEventSchema } from "../events/agent-event.js";
 import { ThreadStatusSchema } from "../models/enums.js";
 import { SettingsSchema } from "../models/settings.js";
 import { PlanQuestionSchema } from "../models/plan-questions.js";
+import { ChecksStatusSchema } from "../github.js";
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
@@ -17,6 +18,10 @@ export const WS_CHANNELS = {
     threadId: z.string(),
     prNumber: z.number(),
     prStatus: z.string(),
+  }),
+  "thread.checksUpdated": z.object({
+    threadId: z.string(),
+    checks: ChecksStatusSchema(),
   }),
   "files.changed": z.object({
     workspaceId: z.string(),
