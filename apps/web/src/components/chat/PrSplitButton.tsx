@@ -109,7 +109,6 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
         {usePopover ? (
           <ChecksPopover
             threadId={threadId!}
-            prNumber={pr.number}
             prUrl={pr.url}
             prTitle={prTitle}
             prAuthor={prAuthor}

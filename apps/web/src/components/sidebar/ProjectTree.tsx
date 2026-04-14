@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useCallback, useState, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2, AlertTriangle } from "lucide-react";
@@ -588,7 +589,7 @@ function VirtualizedThreadList({
   // Normalized set of existing worktree paths for stale detection.
   const worktrees = useWorkspaceStore((s) => s.worktrees);
   const worktreesLoadedFor = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
-  const checksById = useWorkspaceStore((s) => s.checksById);
+  const checksById = useWorkspaceStore(useShallow((s) => s.checksById));
   const validWorktreePaths = useMemo(() => {
     const set = new Set<string>();
     for (const wt of worktrees) {

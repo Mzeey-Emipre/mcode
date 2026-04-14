@@ -181,6 +181,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
       // Remove threads from store FIRST (same ordering as deleteThread) so
       // any in-flight timer callbacks see threads as gone before timers are cancelled.
+      const deletedIdSet = new Set(deletedThreadIds);
       set((state) => ({
         workspaces: state.workspaces.filter((w) => w.id !== id),
         activeWorkspaceId:
@@ -191,6 +192,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           deletedThreadIds.includes(state.activeThreadId)
             ? null
             : state.activeThreadId,
+        checksById: Object.fromEntries(
+          Object.entries(state.checksById).filter(([tid]) => !deletedIdSet.has(tid)),
+        ),
       }));
       // One batched Zustand set() for all threads instead of N sequential calls.
       useThreadStore.getState().clearThreadStateMany(deletedThreadIds);

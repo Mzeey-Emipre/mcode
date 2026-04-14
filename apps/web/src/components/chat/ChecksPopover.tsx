@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { CircleCheck, CircleX, Loader2, RefreshCw, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,6 @@ import type { ChecksStatus, CheckRun } from "@mcode/contracts";
 interface ChecksPopoverProps {
   /** Thread ID used for refresh requests. */
   threadId: string;
-  /** GitHub PR number. */
-  prNumber: number;
   /** GitHub PR URL, used for the "View on GitHub" link. */
   prUrl: string;
   /** Optional PR title shown in the header. */
@@ -75,7 +73,6 @@ function summarise(checks: ChecksStatus): string {
  */
 export function ChecksPopover({
   threadId,
-  prNumber: _prNumber,
   prUrl,
   prTitle,
   prAuthor,
@@ -83,14 +80,25 @@ export function ChecksPopover({
   children,
 }: ChecksPopoverProps) {
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  // Keep the staleness label current while the popover is mounted.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
+    setRefreshError(false);
     try {
       const fresh = await getTransport().checkStatus(threadId);
       useWorkspaceStore.setState((ws) => ({
         checksById: { ...ws.checksById, [threadId]: fresh },
       }));
+    } catch {
+      setRefreshError(true);
     } finally {
       setRefreshing(false);
     }
@@ -118,7 +126,7 @@ export function ChecksPopover({
     return order(a) - order(b);
   });
 
-  const elapsed = Math.round((Date.now() - checks.fetchedAt) / 1000);
+  const elapsed = Math.round((now - checks.fetchedAt) / 1000);
   const staleLabel =
     elapsed < 5
       ? "just now"
@@ -190,6 +198,9 @@ export function ChecksPopover({
           </button>
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-muted-foreground">{staleLabel}</span>
+            {refreshError && (
+              <span className="text-[10px] text-red-400">Refresh failed</span>
+            )}
             <Button
               variant="ghost"
               size="icon-xs"
