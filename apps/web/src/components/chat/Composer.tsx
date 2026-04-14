@@ -46,6 +46,7 @@ import { PrDetectedCard } from "./PrDetectedCard";
 import type { PrDetail } from "@/transport/types";
 import { QueuePopover } from "./QueuePopover";
 import { ContextTracker } from "./ContextTracker";
+import { UsagePopover } from "./UsagePopover";
 import { CompactingBanner } from "./CompactingBanner";
 import { useQueueStore } from "@/stores/queueStore";
 import {
@@ -152,6 +153,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [detectedPr, setDetectedPr] = useState<PrDetail | null>(null);
   const [prDismissed, setPrDismissed] = useState(false);
   const prDetectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [usagePopoverOpen, setUsagePopoverOpen] = useState(false);
 
   const editorRef = useRef<LexicalEditor | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
@@ -395,6 +397,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const threads = useWorkspaceStore((s) => s.threads);
   const activeThread = threadId ? threads.find((t) => t.id === threadId) : undefined;
+
+  const activeProviderId = activeThread?.provider ?? "claude";
+  const usageInfo = useThreadStore((s) => s.usageByProvider[activeProviderId]);
+  const hasLowQuota = usageInfo?.quotaCategories.some((c) => !c.isUnlimited && c.remainingPercent < 0.2) ?? false;
 
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
@@ -1258,11 +1264,15 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
           {/* Context window tracker — live data from turnComplete, fallback to persisted thread record */}
           {threadId && (
-            <ContextTracker
-              tokensIn={contextEntry?.lastTokensIn ?? activeThread?.last_context_tokens ?? 0}
-              contextWindow={contextEntry?.contextWindow ?? activeThread?.context_window ?? undefined}
-              totalProcessedTokens={contextEntry?.totalProcessedTokens}
-            />
+            <UsagePopover threadId={threadId} onOpenChange={setUsagePopoverOpen}>
+              <ContextTracker
+                tokensIn={contextEntry?.lastTokensIn ?? activeThread?.last_context_tokens ?? 0}
+                contextWindow={contextEntry?.contextWindow ?? activeThread?.context_window ?? undefined}
+                totalProcessedTokens={contextEntry?.totalProcessedTokens}
+                hasLowQuota={hasLowQuota}
+                popoverOpen={usagePopoverOpen}
+              />
+            </UsagePopover>
           )}
 
           {/* Send / Queue / Stop button */}
