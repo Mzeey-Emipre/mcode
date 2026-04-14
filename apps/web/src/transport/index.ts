@@ -111,7 +111,7 @@ export async function initTransport(): Promise<McodeTransport> {
         // is replaced with the latest values.
         if (status === "connected") {
           void useSettingsStore.getState().fetch();
-          useProviderModelsStore.getState().initialize();
+          void useProviderModelsStore.getState().initialize();
         }
       },
       discoverServerUrl: async () => {

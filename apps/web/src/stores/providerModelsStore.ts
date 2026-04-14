@@ -32,12 +32,17 @@ export const useProviderModelsStore = create<ProviderModelsState>((set, get) => 
   loading: {},
 
   fetchModels: async (providerId: string) => {
-    const state = get();
-    const lastFetch = state.lastFetched[providerId] ?? 0;
-    if (state.loading[providerId]) return;
-    if (Date.now() - lastFetch < MODEL_CACHE_TTL_MS) return;
-
-    set((s) => ({ loading: { ...s.loading, [providerId]: true } }));
+    // Atomic check-and-set: read loading + TTL inside the updater to avoid a
+    // TOCTOU race where two concurrent callers both pass the guard.
+    let shouldFetch = false;
+    set((s) => {
+      if (s.loading[providerId]) return s;
+      const lastFetch = s.lastFetched[providerId] ?? 0;
+      if (Date.now() - lastFetch < MODEL_CACHE_TTL_MS) return s;
+      shouldFetch = true;
+      return { loading: { ...s.loading, [providerId]: true } };
+    });
+    if (!shouldFetch) return;
     try {
       const info = await getTransport().listProviderModels(providerId);
       const mapped: ModelDefinition[] = info.map((m) => ({

@@ -465,6 +465,10 @@ describe("CopilotProvider.listModels() cache", () => {
     );
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("returns cached models on the second call within TTL", async () => {
     mockClient.listModels.mockResolvedValue([
       { id: "gpt-4.1", name: "GPT-4.1", capabilities: {}, billing: {} },
@@ -494,6 +498,5 @@ describe("CopilotProvider.listModels() cache", () => {
     await provider.listModels();
 
     expect(mockClient.listModels).toHaveBeenCalledTimes(2);
-    vi.useRealTimers();
   });
 });

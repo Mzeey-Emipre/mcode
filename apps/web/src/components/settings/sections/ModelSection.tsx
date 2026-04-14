@@ -81,7 +81,9 @@ const CODEX_REASONING_LABELS: Record<string, string> = {
 };
 
 /**
- * Model settings section: provider, default model, fallback model, and reasoning effort.
+ * Model settings section: provider, default model, fallback model, reasoning effort,
+ * PR draft provider/model, and CLI paths.
+ *
  * Model options update when the provider changes. Switching provider resets the default
  * model to the new provider's first model and clears the fallback. Switching to a
  * non-Opus model clamps the reasoning level from "max" to "high".
