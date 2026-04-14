@@ -77,6 +77,23 @@ describe("GithubService.getCheckRuns", () => {
     expect(result.runs[1].durationMs).toBeNull();
   });
 
+  it("returns pending status when a check is queued", async () => {
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+        cb(null, JSON.stringify([
+          { name: "deploy", state: "QUEUED", startedAt: null, completedAt: null },
+        ]));
+      },
+    );
+
+    const result = await ghService.getCheckRuns(42, "/repo");
+
+    expect(result.aggregate).toBe("pending");
+    expect(result.runs[0].status).toBe("queued");
+    expect(result.runs[0].conclusion).toBeNull();
+    expect(result.runs[0].durationMs).toBeNull();
+  });
+
   it("returns no_checks when array is empty", async () => {
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
