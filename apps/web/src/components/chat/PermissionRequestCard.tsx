@@ -135,7 +135,7 @@ export function PermissionRequestCard({
               "inline-flex h-6 items-center gap-1 pl-2 pr-2 text-xs font-medium",
               "bg-primary text-primary-foreground",
               "hover:bg-primary/90 transition-colors",
-              "disabled:pointer-events-none disabled:opacity-50",
+              "cursor-pointer disabled:pointer-events-none disabled:opacity-50",
             )}
           >
             <Check size={11} />
@@ -154,7 +154,7 @@ export function PermissionRequestCard({
                 "bg-primary text-primary-foreground",
                 "hover:bg-primary/90 transition-colors",
                 "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                "disabled:pointer-events-none disabled:opacity-50",
+                "cursor-pointer disabled:pointer-events-none disabled:opacity-50",
               )}
             >
               <ChevronDown size={11} className="opacity-80" />
@@ -195,7 +195,7 @@ export function PermissionRequestCard({
             "inline-flex h-6 items-center gap-1 px-2 text-xs font-medium rounded-md",
             "text-muted-foreground/70 hover:text-destructive",
             "hover:bg-destructive/10 transition-colors",
-            "disabled:pointer-events-none disabled:opacity-50",
+            "cursor-pointer disabled:pointer-events-none disabled:opacity-50",
           )}
         >
           <X size={11} />
