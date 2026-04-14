@@ -921,15 +921,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
 
   addPermissionRequest: (request) => {
-    set((s) => ({
-      permissionsByThread: {
-        ...s.permissionsByThread,
-        [request.threadId]: [
-          ...(s.permissionsByThread[request.threadId] ?? []),
-          { ...request, settled: false },
-        ],
-      },
-    }));
+    set((s) => {
+      const existing = s.permissionsByThread[request.threadId] ?? [];
+      // Guard against duplicate push events (e.g., IPC + WebSocket double delivery)
+      if (existing.some((p) => p.requestId === request.requestId)) return s;
+      return {
+        permissionsByThread: {
+          ...s.permissionsByThread,
+          [request.threadId]: [...existing, { ...request, settled: false }],
+        },
+      };
+    });
   },
 
   resolvePermissionRequest: (requestId, decision) => {

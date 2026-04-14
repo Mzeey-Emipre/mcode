@@ -87,6 +87,7 @@ export function PermissionRequestCard({
         await getTransport().respondToPermission(requestId, d);
       } catch {
         setError("Failed to send response. Please try again.");
+      } finally {
         setResponding(false);
       }
     },
