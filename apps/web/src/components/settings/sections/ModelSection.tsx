@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useProviderModelsStore } from "@/stores/providerModelsStore";
 import {
   MODEL_PROVIDERS,
   isMaxEffortModel,
@@ -80,7 +81,9 @@ const CODEX_REASONING_LABELS: Record<string, string> = {
 };
 
 /**
- * Model settings section: provider, default model, fallback model, and reasoning effort.
+ * Model settings section: provider, default model, fallback model, reasoning effort,
+ * PR draft provider/model, and CLI paths.
+ *
  * Model options update when the provider changes. Switching provider resets the default
  * model to the new provider's first model and clears the fallback. Switching to a
  * non-Opus model clamps the reasoning level from "max" to "high".
@@ -104,6 +107,9 @@ export function ModelSection() {
     (p) => p.id === (prDraftProvider || provider),
   );
 
+  const prDraftEffectiveId = prDraftProvider || provider;
+  const dynamicPrDraftModels = useProviderModelsStore((s) => s.models[prDraftEffectiveId]);
+
   const modelOptions = useMemo(
     () => (activeProvider?.models ?? []).map((m) => ({
       value: m.id,
@@ -118,13 +124,18 @@ export function ModelSection() {
     [modelOptions],
   );
 
-  // PR draft model options: "Auto" (provider default) + all models for the effective provider
+  // PR draft model options: "Auto" (provider default) + all models for the effective provider.
+  // Dynamic models from the store take priority; static registry is the fallback when the
+  // store hasn't fetched yet (e.g. Copilot not connected).
   const prDraftModelOptions = useMemo(
     () => [
       { value: "", label: "Auto" },
-      ...(prDraftEffectiveProvider?.models ?? []).map((m) => ({ value: m.id, label: m.label })),
+      ...(dynamicPrDraftModels ?? prDraftEffectiveProvider?.models ?? []).map((m) => ({
+        value: m.id,
+        label: m.label,
+      })),
     ],
-    [prDraftEffectiveProvider],
+    [dynamicPrDraftModels, prDraftEffectiveProvider],
   );
 
   const codexLevels = useMemo(() => getCodexReasoningLevels(modelId), [modelId]);

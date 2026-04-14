@@ -42,7 +42,7 @@ describe("PrDraftService", () => {
   const mockSettingsService = {
     get: vi.fn().mockResolvedValue({
       model: { defaults: { provider: "claude" } },
-      prDraft: { model: "" },
+      prDraft: { provider: "", model: "" },
     }),
   };
   const mockProviderRegistry = {
@@ -53,7 +53,7 @@ describe("PrDraftService", () => {
     vi.clearAllMocks();
     mockSettingsService.get.mockResolvedValue({
       model: { defaults: { provider: "claude" } },
-      prDraft: { model: "" },
+      prDraft: { provider: "", model: "" },
     });
     mockProviderRegistry.resolve.mockReturnValue({ complete: mockComplete, supportsCompletion: true });
     // Default: direct thread in workspace ws-1
@@ -260,6 +260,50 @@ describe("PrDraftService", () => {
 
     await expect(service.generateDraft("ws-1", "thread-1", "main")).rejects.toThrow(
       /does not support.*completion/i,
+    );
+  });
+
+  it("uses Copilot provider with gpt-4.1 default when configured", async () => {
+    mockSettingsService.get.mockResolvedValue({
+      model: { defaults: { provider: "claude" } },
+      prDraft: { provider: "copilot", model: "" },
+    });
+    mockProviderRegistry.resolve.mockReturnValue({ complete: mockComplete, supportsCompletion: true });
+    mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
+    mockGitService.log.mockResolvedValue([{ message: "feat: thing", sha: "aaa" }]);
+    mockGitService.diffStat.mockResolvedValue("1 file changed");
+    mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
+    mockComplete.mockResolvedValue(JSON.stringify({ title: "feat: thing", body: "body" }));
+
+    await service.generateDraft("ws-1", "thread-1", "main");
+
+    expect(mockProviderRegistry.resolve).toHaveBeenCalledWith("copilot");
+    expect(mockComplete).toHaveBeenCalledWith(
+      expect.any(String),
+      "gpt-4.1",
+      "/repo",
+    );
+  });
+
+  it("auto-delegates to Copilot when it is the default provider and supports completion", async () => {
+    mockSettingsService.get.mockResolvedValue({
+      model: { defaults: { provider: "copilot" } },
+      prDraft: { provider: "", model: "" },
+    });
+    mockProviderRegistry.resolve.mockReturnValue({ complete: mockComplete, supportsCompletion: true });
+    mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
+    mockGitService.log.mockResolvedValue([{ message: "feat: thing", sha: "aaa" }]);
+    mockGitService.diffStat.mockResolvedValue("1 file changed");
+    mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
+    mockComplete.mockResolvedValue(JSON.stringify({ title: "feat: thing", body: "body" }));
+
+    await service.generateDraft("ws-1", "thread-1", "main");
+
+    expect(mockProviderRegistry.resolve).toHaveBeenCalledWith("copilot");
+    expect(mockComplete).toHaveBeenCalledWith(
+      expect.any(String),
+      "gpt-4.1",
+      "/repo",
     );
   });
 
