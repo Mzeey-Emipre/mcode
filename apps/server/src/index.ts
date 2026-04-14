@@ -12,6 +12,7 @@ import { logger, getMcodeDir } from "@mcode/shared";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
+import { killOrphanedServer } from "./services/orphan-cleanup";
 
 // Services
 import { WorkspaceService } from "./services/workspace-service";
@@ -304,6 +305,11 @@ function startServerAndSubscribe(): void {
     }
   });
 }
+
+// Kill any orphaned server from a previous unclean shutdown before binding
+// the new IPC socket and HTTP port, so zombie SDK subprocesses are stopped
+// before the new server accepts work.
+killOrphanedServer({ lockFilePath: LOCK_FILE_PATH, logger });
 
 ipcServer.listen(ipcPath).then(() => {
   startServerAndSubscribe();
