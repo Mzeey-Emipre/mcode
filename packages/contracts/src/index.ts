@@ -95,6 +95,16 @@ export type {
   PlanQuestionBatch,
 } from "./models/plan-questions.js";
 
+// Permissions
+export {
+  PermissionDecisionSchema,
+  PermissionRequestSchema,
+} from "./models/permission.js";
+export type {
+  PermissionDecision,
+  PermissionRequest,
+} from "./models/permission.js";
+
 // Git / GitHub
 export { GitBranchSchema, WorktreeSchema, GitCommitSchema } from "./git.js";
 export type { GitBranch, WorktreeInfo, GitCommit } from "./git.js";

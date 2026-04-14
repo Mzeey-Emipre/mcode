@@ -22,6 +22,7 @@ import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
 import { ProviderUsageInfoSchema } from "../providers/usage.js";
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
+import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
 
 /** Schema for creating a new thread. */
 export const CreateThreadSchema = lazySchema(() =>
@@ -223,6 +224,18 @@ export const WS_METHODS = lazySchema(() => ({
       reasoningLevel: ReasoningLevelSchema.optional(),
     }),
     result: z.void(),
+  },
+  "permission.respond": {
+    params: z.object({
+      requestId: z.string(),
+      decision: PermissionDecisionSchema,
+    }),
+    result: z.void(),
+  },
+  /** Returns pending permission requests for a thread; used to re-hydrate the frontend after a WebSocket reconnect. */
+  "permission.listPending": {
+    params: z.object({ threadId: z.string() }),
+    result: z.array(PermissionRequestSchema),
   },
   "message.list": {
     params: z.object({

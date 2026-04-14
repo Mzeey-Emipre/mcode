@@ -4,6 +4,7 @@ import { ThreadStatusSchema } from "../models/enums.js";
 import { SettingsSchema } from "../models/settings.js";
 import { PlanQuestionSchema } from "../models/plan-questions.js";
 import { ChecksStatusSchema } from "../github.js";
+import { PermissionRequestSchema, PermissionDecisionSchema } from "../models/permission.js";
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
@@ -40,6 +41,13 @@ export const WS_CHANNELS = {
   "plan.questions": z.object({
     threadId: z.string(),
     questions: z.array(PlanQuestionSchema),
+  }),
+  /** A tool permission request awaiting user decision. */
+  "permission.request": PermissionRequestSchema,
+  /** Notification that a permission request has been settled. */
+  "permission.resolved": z.object({
+    requestId: z.string(),
+    decision: PermissionDecisionSchema,
   }),
 } as const;
 
