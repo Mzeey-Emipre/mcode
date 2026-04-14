@@ -58,3 +58,102 @@ export async function killProcessTree(pid: number): Promise<void> {
     }
   }
 }
+
+/**
+ * Recursively find descendant processes matching a given name.
+ * On Windows uses wmic to query the process tree. On Unix uses pgrep.
+ * Best-effort: returns an empty array on failure.
+ */
+export async function findDescendantsByName(
+  parentPid: number,
+  processName: string,
+): Promise<number[]> {
+  const matched: number[] = [];
+  const visited = new Set<number>();
+  const queue = [parentPid];
+
+  while (queue.length > 0) {
+    const pid = queue.shift()!;
+    if (visited.has(pid)) continue;
+    visited.add(pid);
+
+    let children: Array<{ name: string; pid: number }>;
+    try {
+      children = await listDirectChildren(pid);
+    } catch {
+      continue;
+    }
+
+    for (const child of children) {
+      if (child.name.toLowerCase() === processName.toLowerCase()) {
+        matched.push(child.pid);
+      }
+      queue.push(child.pid);
+    }
+  }
+
+  return matched;
+}
+
+/**
+ * Find descendant processes matching a name and kill each one.
+ * Best-effort: never throws. Used to clean up SDK subprocesses that
+ * outlive their stream connection.
+ */
+export async function killDescendantsByName(
+  parentPid: number,
+  processName: string,
+): Promise<void> {
+  const pids = await findDescendantsByName(parentPid, processName);
+  if (pids.length === 0) return;
+
+  logger.info("Killing descendant processes", { parentPid, processName, pids });
+  await Promise.all(pids.map((pid) => killProcessTree(pid)));
+}
+
+/**
+ * List direct child processes of a given PID.
+ * Returns name and PID for each child.
+ */
+async function listDirectChildren(
+  pid: number,
+): Promise<Array<{ name: string; pid: number }>> {
+  if (process.platform === "win32") {
+    const { stdout } = await execFile(
+      "wmic",
+      ["process", "where", `ParentProcessId=${pid}`, "get", "Name,ProcessId", "/format:csv"],
+      { timeout: TASKKILL_TIMEOUT_MS },
+    );
+    return parseWmicCsv(stdout);
+  }
+
+  // Unix: pgrep -P returns child PIDs, one per line
+  const { stdout } = await execFile("pgrep", ["-P", String(pid)], {
+    timeout: TASKKILL_TIMEOUT_MS,
+  });
+  return stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => ({ name: "", pid: parseInt(line.trim(), 10) }))
+    .filter((entry) => !isNaN(entry.pid));
+}
+
+/** Parse wmic CSV output into name/pid pairs. */
+function parseWmicCsv(output: string): Array<{ name: string; pid: number }> {
+  const lines = output.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return [];
+
+  const header = lines[0]!.toLowerCase();
+  const nameIdx = header.split(",").findIndex((col) => col.trim() === "name");
+  const pidIdx = header.split(",").findIndex((col) => col.trim() === "processid");
+  if (nameIdx === -1 || pidIdx === -1) return [];
+
+  return lines.slice(1).reduce<Array<{ name: string; pid: number }>>((acc, line) => {
+    const cols = line.split(",");
+    const name = cols[nameIdx]?.trim() ?? "";
+    const pid = parseInt(cols[pidIdx]?.trim() ?? "", 10);
+    if (name && !isNaN(pid)) acc.push({ name, pid });
+    return acc;
+  }, []);
+}
