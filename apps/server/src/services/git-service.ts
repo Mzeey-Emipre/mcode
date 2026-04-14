@@ -22,6 +22,12 @@ const execFile = promisify(execFileCb);
  */
 const RM_RETRY_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 } as const;
 
+/** Max retries for rmdir on parent directories (handles transient Windows NTFS/AV locks). */
+const PARENT_RMDIR_MAX_RETRIES = 5;
+
+/** Delay between rmdir retries in milliseconds. */
+const PARENT_RMDIR_RETRY_DELAY_MS = 300;
+
 /**
  * Options for {@link GitService.removeWorktree}.
  * Controls which worktree path is removed and whether the associated branch is deleted.
@@ -60,25 +66,52 @@ function worktreeSlug(repoPath: string): string {
   return basename(repoPath).toLowerCase().replace(/[^a-z0-9-]/g, "-");
 }
 
-/** Best-effort cleanup of empty managed parent directories after a worktree is removed. */
-async function removeEmptyManagedParentDirs(wtPath: string): Promise<void> {
+/**
+ * Retry rmdir for transient EBUSY/EPERM locks on Windows.
+ * After a child directory is removed, NTFS journal updates, antivirus scans,
+ * or the search indexer can briefly hold the parent directory.
+ */
+async function rmdirWithRetry(dirPath: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rmdir(dirPath);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? "";
+      if (
+        (code === "EBUSY" || code === "EPERM") &&
+        attempt < PARENT_RMDIR_MAX_RETRIES - 1
+      ) {
+        await new Promise<void>((r) => setTimeout(r, PARENT_RMDIR_RETRY_DELAY_MS));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/**
+ * Best-effort cleanup of empty managed parent directories after a worktree is removed.
+ * Returns true if all empty parents were removed, false if any failed.
+ */
+async function removeEmptyManagedParentDirs(wtPath: string): Promise<boolean> {
   const managedRoot = resolve(getMcodeDir(), "worktrees");
   const rel = relative(managedRoot, resolve(wtPath));
   if (rel.startsWith("..") || isAbsolute(rel)) {
-    return;
+    return true;
   }
 
   let current = dirname(resolve(wtPath));
   while (current !== managedRoot) {
     try {
-      await rmdir(current);
+      await rmdirWithRetry(current);
       logger.info("Removed empty managed worktree parent dir", { path: current });
       current = dirname(current);
     } catch (err) {
       const code = err && typeof err === "object" && "code" in err
         ? String((err as NodeJS.ErrnoException).code)
         : "";
-      if (code === "ENOTEMPTY" || code === "EEXIST" || code === "EBUSY") {
+      if (code === "ENOTEMPTY" || code === "EEXIST") {
         break;
       }
       if (code === "ENOENT") {
@@ -89,9 +122,10 @@ async function removeEmptyManagedParentDirs(wtPath: string): Promise<void> {
         path: current,
         error: err instanceof Error ? err.message : String(err),
       });
-      break;
+      return false;
     }
   }
+  return true;
 }
 
 /** Check whether a branch ref exists in the repository. */
@@ -269,6 +303,7 @@ export class GitService {
     // 3. Rename-then-delete: atomically unblock the path even if deletion is slow.
     // Renaming succeeds even when the directory has open handles, so the original
     // path becomes available immediately while the OS drains remaining handles.
+    let deferredRm: Promise<void> | undefined;
     if (existsSync(wtPath)) {
       // Use a timestamp suffix to avoid collision with stale .deleting directories
       // left by previous crashed cleanup attempts.
@@ -276,8 +311,11 @@ export class GitService {
       try {
         await rename(wtPath, pendingPath);
         logger.info("Renamed stuck worktree for deferred deletion", { wtPath, pendingPath });
-        // Best-effort: fire-and-forget deletion of the renamed directory.
-        rm(pendingPath, RM_RETRY_OPTIONS).catch(
+        // Best-effort: .catch() intentionally swallows errors because the
+        // original worktree path is already gone (renamed). If the deferred rm
+        // fails the .deleting-* dir persists but the worktree is effectively
+        // removed, so retrying the entire cleanup job would be pointless.
+        deferredRm = rm(pendingPath, RM_RETRY_OPTIONS).catch(
           (err) => {
             logger.warn("Deferred deletion of renamed worktree failed", {
               pendingPath,
@@ -310,26 +348,33 @@ export class GitService {
       });
     }
 
-    // 6. Best-effort cleanup of any empty managed parent directories left behind.
-    await removeEmptyManagedParentDirs(wtPath);
-
-    // 7. Delete the branch when explicitly requested.
-    if (!branch) {
-      return true;
+    // 6. Wait for any deferred deletion to finish so the parent directory is
+    //    actually empty before we try to rmdir it.
+    if (deferredRm) {
+      await deferredRm;
     }
 
-    try {
-      await execFile("git", ["-C", repoPath, "branch", "-d", branch], {
-        timeout: 10_000,
-      });
-    } catch (err) {
-      logger.warn("Branch deletion failed (may not exist)", {
-        branch,
-        error: err instanceof Error ? err.message : String(err),
-      });
+    // 7. Remove empty managed parent directories. Returns false on transient
+    //    lock errors (EBUSY/EPERM) so the cleanup worker can retry later when
+    //    the OS releases handles.
+    const parentsCleaned = await removeEmptyManagedParentDirs(wtPath);
+
+    // 8. Delete the branch when explicitly requested (independent of parent
+    //    dir state - always attempt this).
+    if (branch) {
+      try {
+        await execFile("git", ["-C", repoPath, "branch", "-d", branch], {
+          timeout: 10_000,
+        });
+      } catch (err) {
+        logger.warn("Branch deletion failed (may not exist)", {
+          branch,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
-    return true;
+    return parentsCleaned;
   }
 
   /**
