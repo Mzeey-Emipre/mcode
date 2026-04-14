@@ -22,6 +22,7 @@ import type {
   ProviderUsageInfo,
   PrDraft,
   CreatePrResult,
+  ChecksStatus,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -167,6 +168,8 @@ export interface McodeTransport {
   listOpenPrs(workspaceId: string): Promise<PrDetail[]>;
   fetchBranch(workspaceId: string, branch: string, prNumber?: number): Promise<void>;
   getPrByUrl(url: string): Promise<PrDetail | null>;
+  /** Fetch fresh CI check status for a thread (manual refresh). */
+  checkStatus(threadId: string): Promise<ChecksStatus>;
 
   // Skills
   listSkills(cwd?: string): Promise<SkillInfo[]>;

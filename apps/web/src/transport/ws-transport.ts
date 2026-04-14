@@ -14,7 +14,7 @@ import type {
   GitCommit,
   ProviderModelInfo,
 } from "./types";
-import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo } from "@mcode/contracts";
+import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
@@ -376,6 +376,8 @@ export function createWsTransport(
     fetchBranch: (workspaceId, branch, prNumber?) =>
       rpc<void>("git.fetchBranch", { workspaceId, branch, prNumber }),
     getPrByUrl: (url) => rpc<PrDetail | null>("github.prByUrl", { url }),
+    checkStatus: (threadId) =>
+      rpc<ChecksStatus>("github.checkStatus", { threadId }),
 
     // Skills
     listSkills: (cwd?) => rpc<SkillInfo[]>("skill.list", { cwd }),

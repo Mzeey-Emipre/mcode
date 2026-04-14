@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo, AttachmentMeta, PrDetail } from "@/transport";
+import type { ChecksStatus } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { useTerminalStore } from "./terminalStore";
@@ -49,6 +50,8 @@ interface WorkspaceState {
   branchManuallySelected: boolean;
   /** In-memory map of thread ID → PR URL, populated immediately on PR creation so the header can link without waiting for the next poll. */
   prUrlsByThreadId: Record<string, string>;
+  /** In-memory map of thread ID → latest CI check status, updated by the thread.checksUpdated push channel. */
+  checksById: Record<string, ChecksStatus>;
 
   // Workspace actions
   loadWorkspaces: () => Promise<void>;
@@ -135,6 +138,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   fetchingBranch: null,
   branchManuallySelected: false,
   prUrlsByThreadId: {},
+  checksById: {},
 
   loadWorkspaces: async () => {
     set({ loading: true, error: null });
