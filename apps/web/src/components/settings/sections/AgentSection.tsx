@@ -91,7 +91,7 @@ export function AgentSection() {
         <RangeControl
           min={0}
           max={100}
-          step={5}
+          step={1}
           value={maxTurns}
           onCommit={(v) => void update({ agent: { guardrails: { maxTurns: v } } })}
           formatValue={(v) => v === 0 ? "Off" : `${v}`}

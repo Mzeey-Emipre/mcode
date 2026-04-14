@@ -75,7 +75,7 @@ export const SettingsSchema = lazySchema(() =>
         guardrails: z
           .object({
             /** Stop the agent if session cost exceeds this USD amount. 0 disables. */
-            maxBudgetUsd: z.number().nonnegative().default(0),
+            maxBudgetUsd: z.number().nonnegative().finite().default(0),
             /** Stop the agent after this many turns. 0 disables. */
             maxTurns: z.number().int().nonnegative().default(0),
           })
@@ -221,7 +221,7 @@ export const PartialSettingsSchema = lazySchema(() =>
           .optional(),
         guardrails: z
           .object({
-            maxBudgetUsd: z.number().nonnegative().optional(),
+            maxBudgetUsd: z.number().nonnegative().finite().optional(),
             maxTurns: z.number().int().nonnegative().optional(),
           })
           .optional(),

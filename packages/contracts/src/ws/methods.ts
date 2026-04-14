@@ -42,7 +42,7 @@ export const SendMessageSchema = z.object({
   /** When "plan", the server wraps the message with the plan-mode question prompt. */
   interactionMode: InteractionModeSchema.optional(),
   /** USD budget cap for this session. 0 or absent disables. */
-  maxBudgetUsd: z.number().nonnegative().optional(),
+  maxBudgetUsd: z.number().nonnegative().finite().optional(),
   /** Maximum agent turns. 0 or absent disables. */
   maxTurns: z.number().int().nonnegative().optional(),
 });
@@ -62,7 +62,7 @@ export const CreateAndSendSchema = z.object({
   /** When "plan", the server wraps the message with the plan-mode question prompt. */
   interactionMode: InteractionModeSchema.optional(),
   /** USD budget cap for this session. 0 or absent disables. */
-  maxBudgetUsd: z.number().nonnegative().optional(),
+  maxBudgetUsd: z.number().nonnegative().finite().optional(),
   /** Maximum agent turns. 0 or absent disables. */
   maxTurns: z.number().int().nonnegative().optional(),
   /** Source thread ID when branching from an existing thread. */

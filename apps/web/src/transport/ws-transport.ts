@@ -311,8 +311,8 @@ export function createWsTransport(
       const { maxBudgetUsd, maxTurns } = useSettingsStore.getState().settings.agent.guardrails;
       return rpc<void>("agent.send", {
         threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode,
-        ...(maxBudgetUsd > 0 && { maxBudgetUsd }),
-        ...(maxTurns > 0 && { maxTurns }),
+        maxBudgetUsd,
+        maxTurns,
       });
     },
     createAndSendMessage: (
@@ -345,8 +345,8 @@ export function createWsTransport(
         interactionMode,
         parentThreadId,
         forkedFromMessageId,
-        ...(maxBudgetUsd > 0 && { maxBudgetUsd }),
-        ...(maxTurns > 0 && { maxTurns }),
+        maxBudgetUsd,
+        maxTurns,
       });
     },
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),

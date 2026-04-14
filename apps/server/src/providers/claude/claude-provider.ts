@@ -385,6 +385,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
       includePartialMessages: true,
+      // Guardrails are fixed at session creation. If the user changes the
+      // setting between turns while the session is still live in memory, the
+      // original values remain in effect until the session is evicted or the
+      // server restarts.
       ...(params.maxBudgetUsd != null && params.maxBudgetUsd > 0 && { maxBudgetUsd: params.maxBudgetUsd }),
       ...(params.maxTurns != null && params.maxTurns > 0 && { maxTurns: params.maxTurns }),
       hooks: {
