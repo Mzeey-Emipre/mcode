@@ -448,3 +448,52 @@ describe("CopilotProvider.complete()", () => {
     expect(mockSession.disconnect).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// listModels() — TTL cache
+// ---------------------------------------------------------------------------
+
+describe("CopilotProvider.listModels() cache", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.start.mockResolvedValue(undefined);
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null, result?: { stdout: string }) => void) => {
+        cb(null, { stdout: "gho_faketoken\n" });
+      },
+    );
+  });
+
+  it("returns cached models on the second call within TTL", async () => {
+    mockClient.listModels.mockResolvedValue([
+      { id: "gpt-4.1", name: "GPT-4.1", capabilities: {}, billing: {} },
+    ]);
+
+    const provider = new CopilotProvider(makeSettingsService() as any);
+
+    const first = await provider.listModels();
+    const second = await provider.listModels();
+
+    expect(first).toEqual(second);
+    // SDK listModels called only once — second call served from cache
+    expect(mockClient.listModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-fetches after cache expires", async () => {
+    vi.useFakeTimers();
+    mockClient.listModels.mockResolvedValue([
+      { id: "gpt-4.1", name: "GPT-4.1", capabilities: {}, billing: {} },
+    ]);
+
+    const provider = new CopilotProvider(makeSettingsService() as any);
+
+    await provider.listModels();
+    // Advance past the 10-minute TTL
+    vi.advanceTimersByTime(11 * 60 * 1000);
+    await provider.listModels();
+
+    expect(mockClient.listModels).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+});

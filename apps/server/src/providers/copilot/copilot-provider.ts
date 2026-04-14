@@ -121,6 +121,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
   /** Serialises concurrent refreshClient() calls so only one rebuild runs at a time. */
   private clientStartLock: Promise<void> = Promise.resolve();
 
+  private modelCache: ProviderModelInfo[] | null = null;
+  private modelCacheTimestamp = 0;
+  /** Avoid hammering the Copilot SDK on every call — results are stable within a session. */
+  private static readonly MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
+
   constructor(
     @inject(SettingsService) private readonly settingsService: SettingsService,
   ) {
@@ -194,8 +199,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     }
   }
 
-  /** Fetch available models from the Copilot SDK. */
+  /** Fetch available models from the Copilot SDK, with a 10-minute TTL cache. */
   async listModels(): Promise<ProviderModelInfo[]> {
+    const now = Date.now();
+    if (this.modelCache && (now - this.modelCacheTimestamp) < CopilotProvider.MODEL_CACHE_TTL_MS) {
+      return this.modelCache;
+    }
+
     await this.refreshClient();
     const client = this.client;
     if (!client) {
@@ -223,7 +233,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       }
     }
 
-    return sdkModels.map((m) => ({
+    const result = sdkModels.map((m) => ({
       id: m.id,
       name: m.name,
       group: inferModelGroup(m.id),
@@ -235,6 +245,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       policy: m.policy ? { state: m.policy.state as "enabled" | "disabled" | "unconfigured" } : undefined,
       multiplier: m.billing?.multiplier,
     }));
+    this.modelCache = result;
+    this.modelCacheTimestamp = Date.now();
+    return result;
   }
 
   /** Return current usage/quota state by fetching from account.getQuota(). */
