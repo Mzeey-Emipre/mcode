@@ -369,7 +369,9 @@ async function dispatch(
         // Bootstrap: thread may not be in the watcher yet (e.g. connect race before syncThreadPrs).
         // Look up the stored PR number and start watching so future polls work automatically.
         const thread = deps.threadRepo.findById(params.threadId);
-        if (thread?.pr_number) {
+        const prState = thread?.pr_status?.toLowerCase();
+        const isTerminal = prState === "merged" || prState === "closed";
+        if (thread?.pr_number && !isTerminal) {
           const workspace = deps.workspaceRepo.findById(thread.workspace_id);
           if (workspace) {
             // skipInitialFetch: checkStatus will fetch and broadcast below, no need for a second subprocess.

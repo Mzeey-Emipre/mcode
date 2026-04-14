@@ -91,6 +91,8 @@ export class CiWatcherService {
 
   /**
    * Update the cached status for a thread and broadcast the change.
+   * Mirrors tick()'s promote/demote logic so a manual refresh keeps the
+   * polling cadence correct (e.g. pending → active set, terminal → passive set).
    * Used by the manual-refresh RPC to keep all clients in sync.
    */
   refresh(threadId: string, checks: ChecksStatus): void {
@@ -98,6 +100,19 @@ export class CiWatcherService {
     if (!entry) return;
     entry.cache = checks;
     this.broadcast("thread.checksUpdated", { threadId, checks });
+
+    // Promote to active when checks are running, demote to passive when terminal.
+    if (this.passive.has(threadId) && checks.aggregate === "pending") {
+      this.passive.delete(threadId);
+      this.active.set(threadId, entry);
+      this.startActiveTimer();
+      if (this.passive.size === 0) this.stopPassiveTimer();
+    } else if (this.active.has(threadId) && checks.aggregate !== "pending") {
+      this.active.delete(threadId);
+      this.passive.set(threadId, entry);
+      this.startPassiveTimer();
+      if (this.active.size === 0) this.stopActiveTimer();
+    }
   }
 
   /**

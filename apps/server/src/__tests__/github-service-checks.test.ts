@@ -107,6 +107,39 @@ describe("GithubService.getCheckRuns", () => {
     expect(result.runs).toHaveLength(0);
   });
 
+  it("maps ACTION_REQUIRED state to failing aggregate and failure conclusion", async () => {
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+        cb(null, JSON.stringify([
+          { name: "security-check", state: "ACTION_REQUIRED", startedAt: "2026-04-14T10:00:00Z", completedAt: "2026-04-14T10:00:10Z" },
+        ]));
+      },
+    );
+
+    const result = await ghService.getCheckRuns(42, "/repo");
+
+    expect(result.aggregate).toBe("failing");
+    expect(result.runs[0].conclusion).toBe("failure");
+    expect(result.runs[0].status).toBe("completed");
+  });
+
+  it("maps STALE state to cancelled conclusion without affecting passing aggregate", async () => {
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+        cb(null, JSON.stringify([
+          { name: "build", state: "SUCCESS", startedAt: "2026-04-14T10:00:00Z", completedAt: "2026-04-14T10:00:23Z" },
+          { name: "old-check", state: "STALE", startedAt: "2026-04-14T10:00:00Z", completedAt: "2026-04-14T10:00:05Z" },
+        ]));
+      },
+    );
+
+    const result = await ghService.getCheckRuns(42, "/repo");
+
+    expect(result.aggregate).toBe("passing");
+    expect(result.runs[1].conclusion).toBe("cancelled");
+    expect(result.runs[1].status).toBe("completed");
+  });
+
   it("returns no_checks on gh CLI error", async () => {
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {

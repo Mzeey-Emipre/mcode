@@ -52,8 +52,8 @@ describe("CiWatcherService", () => {
     mockGithubService.getCheckRuns.mockResolvedValue(pending);
     watcher.watch("t1", 42, "/repo");
 
-    // Trigger passive tick (60s)
-    await vi.advanceTimersByTimeAsync(60_000);
+    // Trigger passive tick (30s)
+    await vi.advanceTimersByTimeAsync(30_000);
 
     expect(mockBroadcast).toHaveBeenCalledWith("thread.checksUpdated", {
       threadId: "t1",
@@ -66,11 +66,11 @@ describe("CiWatcherService", () => {
     mockGithubService.getCheckRuns.mockResolvedValue(passing);
     watcher.watch("t1", 42, "/repo");
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     mockBroadcast.mockClear();
 
     // Same state on second tick
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 
@@ -79,7 +79,7 @@ describe("CiWatcherService", () => {
     mockGithubService.getCheckRuns.mockResolvedValue(pending);
     watcher.watch("t1", 42, "/repo");
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(30_000);
 
     // Active set ticks at 10s
     mockBroadcast.mockClear();
@@ -98,7 +98,7 @@ describe("CiWatcherService", () => {
     mockGithubService.getCheckRuns.mockResolvedValue(passing);
     watcher.watch("t1", 42, "/repo");
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(30_000);
 
     const entry = watcher.getEntry("t1");
     expect(entry).not.toBeNull();
