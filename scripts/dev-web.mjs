@@ -3,13 +3,15 @@
  * web development (no Electron needed).
  *
  * The server runs under Electron's Node.js (ELECTRON_RUN_AS_NODE=1) so
- * the better-sqlite3 native module matches the expected ABI. No
- * MCODE_AUTH_TOKEN is set, so WebSocket auth is bypassed.
+ * the better-sqlite3 native module matches the expected ABI. A dev-only
+ * auth token is generated and passed to both the server and the Vite
+ * dev server so the browser can authenticate WebSocket connections.
  */
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -69,6 +71,7 @@ async function waitForHealth(port, timeoutMs = 15_000) {
 }
 
 const port = await findPort(SERVER_PORT);
+const devToken = randomUUID();
 const electronBin = getElectronBinary();
 
 if (!electronBin) {
@@ -84,7 +87,6 @@ console.log(`\x1b[36m[dev:web]\x1b[0m Starting server on port ${port}...`);
 let serverFailed = false;
 
 // Start the server using Electron's Node.js (matches better-sqlite3 ABI).
-// No MCODE_AUTH_TOKEN = auth bypassed for standalone dev.
 const server = spawn(
   electronBin,
   ["--import", "tsx", "src/index.ts"],
@@ -95,7 +97,7 @@ const server = spawn(
       ELECTRON_RUN_AS_NODE: "1",
       MCODE_PORT: String(port),
       MCODE_HOST: "127.0.0.1",
-      MCODE_AUTH_TOKEN: "",
+      MCODE_AUTH_TOKEN: devToken,
     },
     stdio: "inherit",
   },
@@ -131,7 +133,7 @@ const vite = spawn("bun", ["run", "dev"], {
   env: {
     ...process.env,
     NODE_ENV: "development",
-    VITE_SERVER_URL: `ws://localhost:${port}`,
+    VITE_SERVER_URL: `ws://localhost:${port}?token=${devToken}`,
   },
   stdio: "inherit",
 });
