@@ -1,0 +1,235 @@
+# Usage Tracking and Quota Display
+
+**Issue:** #261
+**Date:** 2026-04-14
+**Status:** Design
+
+## Problem
+
+Users juggle multiple AI providers with different billing models. Without visible usage data, they cannot judge when to switch models or providers. Each provider reports usage differently, but the UI should present a unified view.
+
+## Decision: Ring-Anchored Popover (Option I)
+
+The existing context window ring in the Composer becomes the single entry point for all usage information. Click it to open a structured popover with three sections: Quota, Context Window, and Last Turn token breakdown.
+
+**Why this approach:**
+- Zero new UI chrome - reuses the element users already watch
+- One click for full detail, zero clicks for the ambient ring signal
+- Adapts per provider - sections hide when data is unavailable
+- A red dot badge on the ring warns when quota drops below 20%, independent of context fill
+
+**Rejected alternatives:**
+- Right sidebar tab - too much screen real estate for data checked occasionally
+- Inline status bar chips - Composer bar has limited horizontal space, scales poorly to multiple providers
+- Turn receipts in chat stream - adds visual noise to every conversation
+- Dedicated settings page - not visible while working
+
+## Provider-Agnostic Contract
+
+Defined in `packages/contracts/src/providers/`. The frontend renders one shape regardless of provider.
+
+### TurnUsage
+
+Per-turn token breakdown. All providers can populate at least `inputTokens` and `outputTokens`.
+
+```ts
+interface TurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  costMultiplier?: number;       // Copilot billing multiplier (1x, 0.33x, 30x)
+}
+```
+
+### QuotaCategory
+
+A single quota bucket (e.g. "Premium requests", "Chat").
+
+```ts
+interface QuotaCategory {
+  label: string;                 // Display name
+  used: number;
+  total: number | null;          // null = unlimited
+  remainingPercent: number;      // 0.0 to 1.0
+  resetDate?: string;            // ISO 8601
+  isUnlimited: boolean;
+}
+```
+
+### ProviderUsageInfo
+
+Top-level usage state per provider. This is what the popover renders.
+
+```ts
+interface ProviderUsageInfo {
+  providerId: ProviderId;
+  quotaCategories: QuotaCategory[];  // empty = "quota not available"
+  sessionCostUsd?: number;           // Claude only (accumulated)
+  lastTurn?: TurnUsage;
+  contextWindow?: number;
+  contextUsed?: number;
+}
+```
+
+### Provider mapping
+
+| Field | Copilot | Claude | Codex |
+|-------|---------|--------|-------|
+| `quotaCategories` | `quotaSnapshots` from `assistant.usage` keyed by "chat", "completions", "premium_interactions" | Empty (no quota API accessible through SDK) | Empty (rate limit notifications exist but have no documented schema) |
+| `sessionCostUsd` | Not available (`null`) | `result.total_cost_usd` (accumulated session total) | Not available (`null`) |
+| `lastTurn.inputTokens` | `assistant.usage.inputTokens` | `stream_event.message_start.usage.input_tokens` | `turn/completed.usage.input_tokens` |
+| `lastTurn.outputTokens` | `assistant.usage.outputTokens` | `result.usage.output_tokens` | `turn/completed.usage.output_tokens` |
+| `lastTurn.cacheReadTokens` | `assistant.usage.cacheReadTokens` | `cache_read_input_tokens` | `cached_input_tokens` |
+| `lastTurn.cacheWriteTokens` | `assistant.usage.cacheWriteTokens` (currently dropped) | `cache_creation_input_tokens` | Not available |
+| `lastTurn.costMultiplier` | `assistant.usage.cost` | Not applicable | Not applicable |
+| `contextWindow` | `session.usage_info.tokenLimit` | `modelUsage[*].contextWindow` | Not available |
+| `contextUsed` | `session.usage_info.currentTokens` | `message_start.usage` sum | Not available |
+
+## Data Flow
+
+### Fetch strategy: initial hydration + piggybacked updates
+
+Two data paths, no polling:
+
+1. **Initial hydration** - On session start (or first popover open), call `provider.getUsage` RPC. For Copilot this delegates to `client.rpc.account.getQuota()`. For Claude and Codex, it returns whatever accumulated state exists (cost, last turn tokens).
+
+2. **Per-turn updates** - After each assistant reply, the provider emits a `quotaUpdate` AgentEvent with fresh quota data extracted from the response. The Copilot SDK's `assistant.usage` event already includes `quotaSnapshots` - we just need to extract and normalize them. Claude and Codex emit `quotaUpdate` with empty categories but populated turn/cost fields.
+
+This covers the low-quota warning requirement: quota is checked after every turn, so warnings fire without polling.
+
+### New AgentEvent: `quotaUpdate`
+
+```ts
+{
+  type: "quotaUpdate",
+  threadId: string,
+  providerId: ProviderId,
+  categories: QuotaCategory[],
+}
+```
+
+Rides the existing `agent.event` push channel. The `providerId` field lets the frontend aggregate at the provider level despite the event being thread-scoped.
+
+### New RPC: `provider.getUsage`
+
+```ts
+"provider.getUsage": {
+  params: { providerId: ProviderIdSchema },
+  result: ProviderUsageInfoSchema,
+}
+```
+
+Server-side handler delegates to each provider's native API. Copilot calls `account.getQuota()`, Claude returns accumulated session state, Codex returns what it has.
+
+### Extended TurnComplete event
+
+Add optional fields to the existing `TurnComplete` AgentEvent:
+
+```ts
+{
+  // ... existing fields (tokensIn, tokensOut, costUsd, contextWindow, totalProcessedTokens)
+  cacheReadTokens?: number,
+  cacheWriteTokens?: number,
+  costMultiplier?: number,
+  providerId?: ProviderId,
+}
+```
+
+## Server-Side Changes
+
+### Copilot provider
+
+1. **`assistant.usage` handler** - Extend to extract `cacheWriteTokens`, `cost` (multiplier), and `quotaSnapshots` from `event.data`. Normalize `quotaSnapshots` into `QuotaCategory[]` and emit `quotaUpdate`.
+2. **Session start** - Call `client.rpc.account.getQuota()` once after session initialization. Emit `quotaUpdate` with the result.
+3. **`session.shutdown` handler** (new) - Extract `totalPremiumRequests` and `modelMetrics` for session summary. Optional enhancement.
+
+### Claude provider
+
+1. **`result` handler** - Populate `cacheReadTokens` (from `cache_read_input_tokens`) and `cacheWriteTokens` (from `cache_creation_input_tokens`) on the `TurnComplete` event.
+
+### Codex provider
+
+1. **`turn/completed` handler** - Break out `cached_input_tokens` as `cacheReadTokens` on `TurnComplete` instead of folding it into `tokensIn`.
+
+### RPC handler
+
+Add `provider.getUsage` case in `ws-router.ts`. Each provider implements a `getUsage(): ProviderUsageInfo` method (or the handler constructs it from available state).
+
+## Frontend Changes
+
+### Store: `threadStore` extension
+
+Add to existing `threadStore`:
+
+```ts
+usageByProvider: Record<ProviderId, ProviderUsageInfo>
+```
+
+The `handleAgentEvent` dispatcher gets:
+- `quotaUpdate` case: updates `usageByProvider[event.providerId].quotaCategories`
+- `turnComplete` case (extended): updates `usageByProvider[providerId].lastTurn` with token breakdown
+
+On first popover open or session start, call `provider.getUsage` RPC to hydrate.
+
+### New component: `UsagePopover.tsx`
+
+A Radix popover anchored to the context ring. Three sections that show or hide based on available data:
+
+**Quota section** - Renders each `QuotaCategory` as a label + progress bar + used/total. Hidden when `quotaCategories` is empty, replaced with "Quota data not available for this provider."
+
+**Context window section** - Shows `contextUsed / contextWindow` as a progress bar. Hidden when `contextWindow` is undefined (Codex).
+
+**Last turn section** - A 2x2 grid of token counts (in, out, cache read, cache write). Shows after the first turn completes.
+
+**Provider header** - Shows provider name, current model (from thread state), cost multiplier if available, and days until quota reset.
+
+**Per-provider rendering:**
+- Copilot: all sections visible (quota, context, last turn)
+- Claude: no quota section, shows session cost instead, context + last turn
+- Codex: no quota, no context, last turn only + "Usage data limited for this provider"
+
+### ContextTracker changes
+
+- Add `onClick` handler to the ring SVG to toggle the popover
+- Add a red dot badge (8px circle) when any `QuotaCategory.remainingPercent < 0.20`
+- Ring color continues to reflect context window fill only - the badge is the quota signal
+
+### Composer wiring
+
+Add popover state management in `Composer.tsx`. The `UsagePopover` renders as a child of the ring area.
+
+## Error Handling
+
+| Scenario | Behavior |
+|----------|----------|
+| `account.getQuota()` throws on session start | Log server-side, skip `quotaUpdate` emission. Popover shows empty quota until first turn provides `quotaSnapshots`. |
+| `provider.getUsage` RPC fails on popover open | Frontend shows last known state with muted "Unable to refresh" text. |
+| Popover opened before first turn | Context data from `contextEstimate` events (already flowing). Quota shows initial hydration. Last turn section shows "No turn data yet." |
+| Provider switched mid-session | `usageByProvider` is keyed by provider ID. Switching renders a different entry. Old provider data persists. |
+| Multiple threads, same provider | Quota is provider-scoped. All threads share the same `usageByProvider[providerId]` entry. Last turn reflects the most recent turn across threads. |
+| Provider not configured | `provider.getUsage` returns error. Popover shows "Provider not configured." |
+
+## What This Does Not Include
+
+- **Usage history or trends.** No historical data, no charts. Per-turn data is transient.
+- **New database tables or migrations.** Quota is refreshed every turn. Per-turn tokens flow through events.
+- **Cost estimation for Copilot.** The SDK reports `totalNanoAiu` but there is no USD conversion. The `costMultiplier` is shown as a raw number.
+- **Codex rate limit capture.** The `account/rateLimits/updated` notification exists but has no documented payload schema. We skip it until the schema stabilizes.
+- **Anthropic rate limit headers.** Not accessible through the Claude Agent SDK subprocess.
+
+## Files Changed
+
+| Package | File | Change |
+|---------|------|--------|
+| `packages/contracts` | `providers/usage.ts` (new) | `TurnUsage`, `QuotaCategory`, `ProviderUsageInfo` schemas |
+| `packages/contracts` | `events/agent-event.ts` | Add `quotaUpdate` event type, extend `TurnComplete` with cache/multiplier fields |
+| `packages/contracts` | `ws/methods.ts` | Add `provider.getUsage` RPC |
+| `apps/server` | `providers/copilot/copilot-provider.ts` | Extract `quotaSnapshots`, `cacheWriteTokens`, `cost` from `assistant.usage`; call `account.getQuota()` on session start |
+| `apps/server` | `providers/claude/claude-provider.ts` | Populate cache token fields on `TurnComplete` |
+| `apps/server` | `providers/codex/codex-event-mapper.ts` | Break out `cached_input_tokens` as `cacheReadTokens` |
+| `apps/server` | `transport/ws-router.ts` | Handle `provider.getUsage` RPC |
+| `apps/web` | `stores/threadStore.ts` | Add `usageByProvider`, handle `quotaUpdate` and extended `turnComplete` |
+| `apps/web` | `components/chat/UsagePopover.tsx` (new) | Popover component with quota/context/turn sections |
+| `apps/web` | `components/chat/ContextTracker.tsx` | Add click handler, low-quota badge |
+| `apps/web` | `components/chat/Composer.tsx` | Wire popover state |
