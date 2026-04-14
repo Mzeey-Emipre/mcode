@@ -69,6 +69,8 @@ export function PermissionRequestCard({
 }: PermissionRequestCardProps) {
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Tracks which allow mode is active — dropdown picks the mode, primary button fires it.
+  const [allowMode, setAllowMode] = useState<"allow" | "allow-session">("allow");
 
   const respond = useCallback(
     async (d: PermissionDecision) => {
@@ -126,11 +128,11 @@ export function PermissionRequestCard({
 
       {/* Controls */}
       <div className="flex items-center gap-2">
-        {/* Split button: left side fires Allow immediately; right chevron opens more options */}
+        {/* Split button: left fires the active mode; chevron picks the mode */}
         <div className="flex items-stretch rounded-md overflow-hidden">
           <button
             disabled={responding}
-            onClick={() => respond("allow")}
+            onClick={() => respond(allowMode)}
             className={cn(
               "inline-flex h-6 items-center gap-1 pl-2 pr-2 text-xs font-medium",
               "bg-primary text-primary-foreground",
@@ -138,17 +140,17 @@ export function PermissionRequestCard({
               "cursor-pointer disabled:pointer-events-none disabled:opacity-50",
             )}
           >
-            <Check size={11} />
-            Allow
+            {allowMode === "allow" ? <Check size={11} /> : <Clock size={11} />}
+            {allowMode === "allow" ? "Allow" : "Allow in session"}
           </button>
 
-          {/* Divider — the visual demarcator between Allow and the dropdown */}
+          {/* Divider — visual demarcator between primary action and mode picker */}
           <div className="w-px bg-primary-foreground/20 self-stretch" />
 
           <DropdownMenu>
             <DropdownMenuTrigger
               disabled={responding}
-              aria-label="More allow options"
+              aria-label="Change allow mode"
               className={cn(
                 "inline-flex h-6 w-6 items-center justify-center",
                 "bg-primary text-primary-foreground",
@@ -161,8 +163,7 @@ export function PermissionRequestCard({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" sideOffset={4} className="min-w-[180px]">
               <DropdownMenuItem
-                disabled={responding}
-                onSelect={() => respond("allow")}
+                onSelect={() => setAllowMode("allow")}
                 className="gap-2"
               >
                 <Zap size={12} className="text-amber-500 shrink-0" />
@@ -170,11 +171,11 @@ export function PermissionRequestCard({
                   <span className="text-xs font-medium">Allow once</span>
                   <span className="text-[10px] text-muted-foreground">Prompt again next time</span>
                 </div>
+                {allowMode === "allow" && <Check size={11} className="ml-auto text-primary" />}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                disabled={responding}
-                onSelect={() => respond("allow-session")}
+                onSelect={() => setAllowMode("allow-session")}
                 className="gap-2"
               >
                 <Clock size={12} className="text-blue-400 shrink-0" />
@@ -182,6 +183,7 @@ export function PermissionRequestCard({
                   <span className="text-xs font-medium">Allow in session</span>
                   <span className="text-[10px] text-muted-foreground">Skip prompts this session</span>
                 </div>
+                {allowMode === "allow-session" && <Check size={11} className="ml-auto text-primary" />}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
