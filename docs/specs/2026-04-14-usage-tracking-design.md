@@ -102,6 +102,7 @@ This covers the low-quota warning requirement: quota is checked after every turn
   threadId: string,
   providerId: ProviderId,
   categories: QuotaCategory[],
+  sessionCostUsd?: number,       // Claude: updated from result.total_cost_usd each turn
 }
 ```
 
@@ -150,7 +151,7 @@ Note: The Copilot SDK also emits a `session.shutdown` event with `totalPremiumRe
 
 ### RPC handler
 
-Add `provider.getUsage` case in `ws-router.ts`. Add an optional `getUsage?(): Promise<ProviderUsageInfo>` method to the `IAgentProvider` interface, following the same pattern as `listModels?()`. Providers that support usage reporting implement it; the RPC handler checks for the method and returns a "not supported" response if absent.
+Add `provider.getUsage` case in `ws-router.ts`. Add an optional `getUsage?(): Promise<ProviderUsageInfo>` method to the `IAgentProvider` interface, following the same pattern as `listModels?()`. Providers that support usage reporting implement it; the RPC handler checks for the method and returns a `ProviderUsageInfo` with empty `quotaCategories` and no `sessionCostUsd` if the method is absent. Use `ProviderIdSchema` from `providers/interfaces.ts` (which covers all provider IDs including `cursor` and `opencode`) for the RPC param and contract types.
 
 ## Frontend Changes
 
@@ -178,7 +179,7 @@ contextByThread: Record<string, {
 
 The `handleAgentEvent` dispatcher gets:
 - `quotaUpdate` case: updates `usageByProvider[event.providerId].quotaCategories`
-- `turnComplete` case (extended): updates `contextByThread[threadId]` with the new cache/multiplier fields alongside the existing token fields
+- `turnComplete` case (extended): updates `contextByThread[threadId]` with the new cache/multiplier fields alongside the existing token fields. Note: the Copilot provider currently folds `cacheReadTokens` into `tokensIn` before emitting `TurnComplete`. This changes - `tokensIn` will carry only `inputTokens`, and `cacheReadTokens` becomes a separate field. The same separation applies to Claude and Codex.
 
 **Hydration trigger:** The frontend calls `provider.getUsage` RPC when the popover opens for the first time (lazy). The result is cached in `usageByProvider`. Subsequent turns keep it fresh via `quotaUpdate` events. No server-push on session start.
 
