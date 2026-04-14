@@ -26,7 +26,8 @@ export class CiWatcherService {
   private passive = new Map<string, WatchEntry>();
   private activeTimer: ReturnType<typeof setInterval> | null = null;
   private passiveTimer: ReturnType<typeof setInterval> | null = null;
-  private rateLimitedUntil = 0;
+  private activeTicking = false;
+  private passiveTicking = false;
 
   constructor(
     private readonly githubService: GithubService,
@@ -39,6 +40,7 @@ export class CiWatcherService {
   watch(threadId: string, prNumber: number, repoPath: string): void {
     if (this.active.has(threadId) || this.passive.has(threadId)) return;
     this.passive.set(threadId, { threadId, prNumber, repoPath, cache: null });
+    this.startPassiveTimer();
   }
 
   /** Remove a thread from the watcher entirely. */
@@ -46,6 +48,7 @@ export class CiWatcherService {
     this.active.delete(threadId);
     this.passive.delete(threadId);
     if (this.active.size === 0) this.stopActiveTimer();
+    if (this.passive.size === 0 && this.active.size === 0) this.stopPassiveTimer();
   }
 
   /** Check if a thread is being watched. */
@@ -106,7 +109,11 @@ export class CiWatcherService {
 
   private startActiveTimer(): void {
     if (this.activeTimer) return;
-    this.activeTimer = setInterval(() => this.tick(this.active), ACTIVE_INTERVAL_MS);
+    this.activeTimer = setInterval(async () => {
+      if (this.activeTicking) return;
+      this.activeTicking = true;
+      try { await this.tick(this.active); } finally { this.activeTicking = false; }
+    }, ACTIVE_INTERVAL_MS);
   }
 
   private stopActiveTimer(): void {
@@ -118,7 +125,11 @@ export class CiWatcherService {
 
   private startPassiveTimer(): void {
     if (this.passiveTimer) return;
-    this.passiveTimer = setInterval(() => this.tick(this.passive), PASSIVE_INTERVAL_MS);
+    this.passiveTimer = setInterval(async () => {
+      if (this.passiveTicking) return;
+      this.passiveTicking = true;
+      try { await this.tick(this.passive); } finally { this.passiveTicking = false; }
+    }, PASSIVE_INTERVAL_MS);
   }
 
   private stopPassiveTimer(): void {
@@ -130,7 +141,6 @@ export class CiWatcherService {
 
   private async tick(set: Map<string, WatchEntry>): Promise<void> {
     if (set.size === 0) return;
-    if (Date.now() < this.rateLimitedUntil) return;
 
     const entries = [...set.values()];
     const results = await Promise.allSettled(
@@ -143,6 +153,9 @@ export class CiWatcherService {
     for (const result of results) {
       if (result.status === "rejected") continue;
       const { entry, checks } = result.value;
+
+      // Guard: thread was unwatched while the fetch was in flight
+      if (!this.active.has(entry.threadId) && !this.passive.has(entry.threadId)) continue;
 
       const changed = entry.cache == null || entry.cache.aggregate !== checks.aggregate
         || entry.cache.runs.length !== checks.runs.length
