@@ -13,9 +13,11 @@ import type {
   Settings,
   GitCommit,
   ProviderModelInfo,
+  CopilotSubagent,
 } from "./types";
 import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
@@ -316,6 +318,7 @@ export function createWsTransport(
         reasoningLevel: settings.reasoningLevel,
         interactionMode: settings.interactionMode,
         permissionMode: settings.permissionMode,
+        copilotAgent: settings.copilotAgent,
       }),
     markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
     syncThreadPrs: (workspaceId) =>
@@ -329,8 +332,16 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?) =>
-      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode }),
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?, copilotAgent?: string) => {
+      const state = useSettingsStore.getState();
+      const guardrails = state.loaded
+        ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
+        : {};
+      return rpc<void>("agent.send", {
+        threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode, copilotAgent,
+        ...guardrails,
+      });
+    },
     createAndSendMessage: (
       workspaceId,
       content,
@@ -345,8 +356,13 @@ export function createWsTransport(
       interactionMode?,
       parentThreadId?,
       forkedFromMessageId?,
-    ) =>
-      rpc<Thread>("agent.createAndSend", {
+      copilotAgent?,
+    ) => {
+      const state = useSettingsStore.getState();
+      const guardrails = state.loaded
+        ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
+        : {};
+      return rpc<Thread>("agent.createAndSend", {
         workspaceId,
         content,
         model,
@@ -360,7 +376,10 @@ export function createWsTransport(
         interactionMode,
         parentThreadId,
         forkedFromMessageId,
-      }),
+        copilotAgent,
+        ...guardrails,
+      });
+    },
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
     answerPlanQuestions: (threadId, answers, permissionMode?, reasoningLevel?) =>
       rpc<void>("agent.answerQuestions", { threadId, answers, permissionMode, reasoningLevel }),
@@ -477,6 +496,9 @@ export function createWsTransport(
       rpc<ProviderModelInfo[]>("provider.listModels", { providerId }),
     getProviderUsage: (providerId) =>
       rpc<ProviderUsageInfo>("provider.getUsage", { providerId }),
+    /** Fetches all available Copilot sub-agents for the given workspace (built-in + user + project). */
+    listCopilotAgents: (workspaceId) =>
+      rpc<CopilotSubagent[]>("provider.copilotAgents", { workspaceId }),
 
     // Memory pressure
     setBackground: (background) => rpc<void>("memory.setBackground", { background }),

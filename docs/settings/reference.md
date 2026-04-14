@@ -12,6 +12,8 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `agent.maxConcurrent` | integer | `5` | > 0 | - | Maximum concurrent agent sessions |
 | `agent.defaults.mode` | enum | `"chat"` | `"plan"` \| `"chat"` \| `"agent"` | - | Default interaction mode for new agents |
 | `agent.defaults.permission` | enum | `"full"` | `"full"` \| `"supervised"` | - | Default permission mode for new agents |
+| `agent.guardrails.maxBudgetUsd` | number | `0` | >= 0 | - | Stop the agent when session cost exceeds this USD amount. `0` disables. Claude only. |
+| `agent.guardrails.maxTurns` | integer | `0` | >= 0 | - | Stop the agent after this many turns. `0` disables. Claude only. |
 | `model.defaults.provider` | enum | `"claude"` | `"claude"` \| `"codex"` \| `"gemini"` \| `"copilot"` | - | Default AI provider |
 | `model.defaults.id` | string | `"claude-sonnet-4-6"` | - | - | Default model identifier |
 | `model.defaults.reasoning` | enum | `"high"` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | - | Default reasoning effort level. `"xhigh"` applies to Codex models only. `"max"` is only valid for Opus 4.6; it normalizes to `"high"` at runtime on all other Claude models |

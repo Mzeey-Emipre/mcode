@@ -99,6 +99,7 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     id: "copilot",
     name: "GitHub Copilot",
     comingSoon: false,
+    supportsCompletion: true,
     supportsModelListing: true,
     // Minimal static fallback — the live list from listProviderModels() is the
     // source of truth. These are shown only while the spinner is loading or if

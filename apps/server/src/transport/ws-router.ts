@@ -20,6 +20,7 @@ import {
   getExtension,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
+import { discoverCopilotAgents } from "../providers/copilot/copilot-agent-discovery.js";
 import type { WorkspaceService } from "../services/workspace-service";
 import type { ThreadService } from "../services/thread-service";
 import type { AgentService } from "../services/agent-service";
@@ -216,6 +217,7 @@ async function dispatch(
         reasoning_level: params.reasoningLevel,
         interaction_mode: params.interactionMode,
         permission_mode: params.permissionMode,
+        copilot_agent: params.copilotAgent,
       });
     case "thread.markViewed":
       deps.threadService.markViewed(params.threadId);
@@ -243,9 +245,11 @@ async function dispatch(
               deps.threadService.linkPr(t.id, pr.number, pr.state);
               results.push({ threadId: t.id, prNumber: pr.number, prStatus: pr.state });
             }
-            // Start CI watching if PR is not in terminal state
+            // Start CI watching if PR is not in terminal state.
+            // Unwatch first when the PR number changed so the watcher targets the new PR.
             const prState = pr.state.toLowerCase();
             if (prState !== "merged" && prState !== "closed") {
+              if (numberChanged) deps.ciWatcherService.unwatch(t.id);
               deps.ciWatcherService.watch(t.id, pr.number, workspace.path);
             } else {
               deps.ciWatcherService.unwatch(t.id);
@@ -300,6 +304,9 @@ async function dispatch(
         params.reasoningLevel,
         params.provider,
         params.interactionMode,
+        params.maxBudgetUsd,
+        params.maxTurns,
+        params.copilotAgent,
       );
       return;
     case "agent.createAndSend":
@@ -317,6 +324,9 @@ async function dispatch(
         params.interactionMode,
         params.parentThreadId,
         params.forkedFromMessageId,
+        params.maxBudgetUsd,
+        params.maxTurns,
+        params.copilotAgent,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);
@@ -534,6 +544,11 @@ async function dispatch(
       }
       return provider.getUsage();
     }
+    case "provider.copilotAgents": {
+      const workspace = deps.workspaceService.findById(params.workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${params.workspaceId}`);
+      return discoverCopilotAgents(workspace.path);
+    }
 
     // Memory pressure
     case "memory.setBackground":
@@ -608,7 +623,8 @@ async function dispatch(
         prStatus: "OPEN",
       });
 
-      // Start watching CI checks for the newly created PR
+      // Replace any stale watcher (e.g. previous PR on this thread) before registering the new one.
+      deps.ciWatcherService.unwatch(params.threadId);
       deps.ciWatcherService.watch(params.threadId, result.number, repoPath);
 
       return result;

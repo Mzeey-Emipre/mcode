@@ -33,6 +33,17 @@ export interface IAgentProvider {
     permissionMode: string;
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
+    /** USD budget cap for this session. Provider stops if exceeded. Undefined or 0 disables. */
+    maxBudgetUsd?: number;
+    /** Maximum agent turns for this session. Provider stops after this count. Undefined or 0 disables. */
+    maxTurns?: number;
+    /**
+     * Copilot-specific: name of the sub-agent to activate for this session.
+     * Built-in modes: "interactive" | "plan" | "autopilot".
+     * Custom agents: any name defined in user/project YAML config.
+     * Ignored by non-Copilot providers.
+     */
+    copilotAgent?: string;
   }): void | Promise<void>;
 
   /** Abort a running session. */
