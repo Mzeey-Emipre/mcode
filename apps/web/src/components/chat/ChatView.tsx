@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { GitBranch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useConnectionStore } from "@/stores/connectionStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { Composer } from "./Composer";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
 import { HeaderActions } from "./HeaderActions";
 import { CliErrorBanner, isCliError } from "./CliErrorBanner";
+import { InterruptedSessionsBanner } from "./InterruptedSessionsBanner";
 import { ThreadTitleEditor } from "./ThreadTitleEditor";
 
 /** Prompt suggestions shown in the empty state. */
@@ -81,6 +83,11 @@ export function ChatView() {
     activeThreadId ? s.errorByThread[activeThreadId] ?? null : null,
   );
   const [dismissedError, setDismissedError] = useState<string | null>(null);
+  const [interruptedThreadIds, setInterruptedThreadIds] = useState<string[]>([]);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  const connectionStatus = useConnectionStore((s) => s.status);
+  const sendMessage = useThreadStore((s) => s.sendMessage);
 
   const handleDismissCliError = useCallback(() => {
     setDismissedError(sessionError);
@@ -101,6 +108,41 @@ export function ChatView() {
   const handleOpenSettings = useCallback(() => {
     window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: { section: "model" } }));
   }, []);
+
+  // Detect interrupted threads whenever the connection is re-established so the
+  // banner can offer to resume any sessions that were cut off by a server restart.
+  useEffect(() => {
+    if (connectionStatus === "connected" && !bannerDismissed) {
+      const interrupted = threads
+        .filter((t) => t.status === "interrupted")
+        .map((t) => t.id);
+      if (interrupted.length > 0) {
+        setInterruptedThreadIds(interrupted);
+      }
+    }
+  }, [connectionStatus, threads, bannerDismissed]);
+
+  /** Sends a continuation message to each interrupted thread, then hides the banner. */
+  const handleResumeInterrupted = useCallback(
+    async (threadIds: string[]) => {
+      for (const threadId of threadIds) {
+        try {
+          const thread = threads.find((t) => t.id === threadId);
+          if (!thread) continue;
+          await sendMessage(
+            threadId,
+            "Continue where you left off. The server was restarted.",
+            thread.model ?? undefined,
+            thread.permission_mode ?? undefined,
+          );
+        } catch (err) {
+          console.error("Failed to resume thread", threadId, err);
+        }
+      }
+      setInterruptedThreadIds([]);
+    },
+    [threads, sendMessage],
+  );
 
   /** Activates inline branch mode on the composer for the given message. */
   const handleBranch = useCallback((messageId: string) => {
@@ -228,6 +270,20 @@ export function ChatView() {
         </div>
         <HeaderActions thread={activeThread} />
       </div>
+
+      {/* Interrupted sessions banner — shown after server restart when threads were mid-task */}
+      {interruptedThreadIds.length > 0 && !bannerDismissed && (
+        <div className="px-4 pt-2">
+          <InterruptedSessionsBanner
+            threadIds={interruptedThreadIds}
+            onResume={handleResumeInterrupted}
+            onDismiss={() => {
+              setBannerDismissed(true);
+              setInterruptedThreadIds([]);
+            }}
+          />
+        </div>
+      )}
 
       {/* Messages, tool calls, and streaming - all in one scrollable area */}
       <div key={activeThread.id} className="animate-fade-up-in flex-1 min-h-0">
