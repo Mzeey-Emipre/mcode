@@ -102,7 +102,9 @@ const IDLE_TTL_MS = 10 * 60 * 1000;
 const EVICTION_INTERVAL_MS = 60 * 1000;
 
 /** Names of built-in Copilot session modes, derived from COPILOT_DEFAULT_AGENTS. */
-const BUILTIN_MODE_NAMES = new Set(COPILOT_DEFAULT_AGENTS.map((a) => a.name));
+const BUILTIN_MODE_NAMES = new Set<"interactive" | "plan" | "autopilot">(
+  COPILOT_DEFAULT_AGENTS.map((a) => a.name as "interactive" | "plan" | "autopilot"),
+);
 
 interface SessionEntry {
   session: CopilotSession;
@@ -493,6 +495,16 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     const existing = this.sessions.get(sessionId);
     if (existing) {
       existing.lastUsedAt = Date.now();
+      // Apply agent routing so mid-thread agent changes take effect on cached sessions.
+      if (copilotAgent) {
+        if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
+          await existing.session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
+          logger.info("CopilotProvider: set built-in mode on cached session", { sessionId, mode: copilotAgent });
+        } else {
+          await existing.session.rpc.agent.select({ name: copilotAgent });
+          logger.info("CopilotProvider: selected custom agent on cached session", { sessionId, agent: copilotAgent });
+        }
+      }
       // Abort in-flight turn by sending a new message on the existing session.
       // The previous runTurn promise will resolve when session.idle fires.
       void this.runTurn(sessionId, threadId, existing.session, message);
@@ -510,6 +522,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     // Discover custom YAML agents so the SDK knows about them before agent.select() is called.
     // Only non-default agents are passed; built-in modes ("interactive", "plan", "autopilot")
     // are handled via mode.set() and do not need to be in customAgents.
+    // Discovery runs only here (new session path) to avoid sync FS calls on every message.
     const discoveredAgents = discoverCopilotAgents(cwd);
     const customAgents = discoveredAgents
       .filter((a) => a.source !== "default")
@@ -559,7 +572,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     // Route to the appropriate Copilot SDK API based on the selected sub-agent.
     // Built-in modes use session.rpc.mode.set(); custom YAML agents use session.rpc.agent.select().
     if (copilotAgent) {
-      if (BUILTIN_MODE_NAMES.has(copilotAgent)) {
+      if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
         await session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
         logger.info("CopilotProvider: set built-in mode", { sessionId, mode: copilotAgent });
       } else {
