@@ -117,6 +117,10 @@ When adding a new setting, ask these questions in order:
     "defaults": {
       "mode": "chat",                  // "plan" | "chat" | "agent"
       "permission": "full"             // "full" | "supervised"
+    },
+    "guardrails": {
+      "maxBudgetUsd": 0,               // 0 disables, USD cap per session (Claude only)
+      "maxTurns": 0                    // 0 disables, turn limit per session (Claude only)
     }
   },
   "model": {

@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
@@ -306,8 +307,16 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?) =>
-      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode }),
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?) => {
+      const state = useSettingsStore.getState();
+      const guardrails = state.loaded
+        ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
+        : {};
+      return rpc<void>("agent.send", {
+        threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode,
+        ...guardrails,
+      });
+    },
     createAndSendMessage: (
       workspaceId,
       content,
@@ -322,8 +331,12 @@ export function createWsTransport(
       interactionMode?,
       parentThreadId?,
       forkedFromMessageId?,
-    ) =>
-      rpc<Thread>("agent.createAndSend", {
+    ) => {
+      const state = useSettingsStore.getState();
+      const guardrails = state.loaded
+        ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
+        : {};
+      return rpc<Thread>("agent.createAndSend", {
         workspaceId,
         content,
         model,
@@ -337,7 +350,9 @@ export function createWsTransport(
         interactionMode,
         parentThreadId,
         forkedFromMessageId,
-      }),
+        ...guardrails,
+      });
+    },
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
     answerPlanQuestions: (threadId, answers, permissionMode?, reasoningLevel?) =>
       rpc<void>("agent.answerQuestions", { threadId, answers, permissionMode, reasoningLevel }),

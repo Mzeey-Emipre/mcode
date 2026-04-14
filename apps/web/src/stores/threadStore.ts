@@ -1157,6 +1157,24 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Tool calls remain in-place and collapse into a summary.
       const streamContent = get().streamingByThread[threadId] ?? "";
 
+      // Build an ephemeral system message for guardrail stops (budget/turn limit).
+      // Folded into the same set() call to avoid a double render pass.
+      const reason = method === "session.turnComplete" ? params.reason as string | undefined : undefined;
+      const isGuardrailStop = reason === "error_max_budget_usd" || reason === "max_turns";
+      const guardrailMsg: Message | null = isGuardrailStop ? {
+        id: crypto.randomUUID(),
+        thread_id: threadId,
+        role: "system",
+        content: `Agent stopped: ${reason === "error_max_budget_usd" ? "Budget cap reached" : "Max turns reached"}. You can adjust guardrails in Settings > Agent.`,
+        sequence: 0,
+        tokens_used: null,
+        cost_usd: null,
+        timestamp: new Date().toISOString(),
+        tool_calls: null,
+        files_changed: null,
+        attachments: null,
+      } : null;
+
       // First: mark all tool calls as complete (in place) and commit the message
       if (streamContent) {
         const message: Message = {
@@ -1188,10 +1206,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const completedCalls = currentCalls.map((tc) =>
             tc.isComplete ? tc : { ...tc, isComplete: true }
           );
+          const dedupedGuardrail = guardrailMsg && !state.messages.some(
+            (m) => m.role === "system" && m.content.startsWith("Agent stopped:"),
+          ) ? guardrailMsg : null;
+          const pending = [message, ...(dedupedGuardrail ? [dedupedGuardrail] : [])];
           return {
             ...(state.currentThreadId === threadId
               ? (() => {
-                  const { messages: capped, evicted } = capMessages([...state.messages, message]);
+                  const { messages: capped, evicted } = capMessages([...state.messages, ...pending]);
                   return { messages: capped, ...(evicted && state.currentThreadId ? { hasMoreMessages: { ...state.hasMoreMessages, [state.currentThreadId]: true } } : {}) };
                 })()
               : {}),
@@ -1221,7 +1243,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const completedCalls = currentCalls.map((tc) =>
             tc.isComplete ? tc : { ...tc, isComplete: true }
           );
+          const dedupedGuardrail = guardrailMsg && !state.messages.some(
+            (m) => m.role === "system" && m.content.startsWith("Agent stopped:"),
+          ) ? guardrailMsg : null;
           return {
+            ...(dedupedGuardrail && state.currentThreadId === threadId
+              ? (() => {
+                  const { messages: capped, evicted } = capMessages([...state.messages, dedupedGuardrail]);
+                  return { messages: capped, ...(evicted ? { hasMoreMessages: { ...state.hasMoreMessages, [threadId]: true } } : {}) };
+                })()
+              : {}),
             runningThreadIds: nextRunning,
             streamingByThread: nextStreaming,
             streamingPreviewByThread: nextPreview,
@@ -1293,7 +1324,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Auto-dequeue: send next queued message after a brief visual pause.
       // Only on turnComplete (not session.ended) so explicit stops don't drain the queue.
       // Uses tracked timers to prevent double-dequeue from duplicate events.
-      if (method === "session.turnComplete") {
+      // Skip dequeue when a guardrail stopped the session to avoid restarting
+      // an agent that was intentionally capped by budget or turn limits.
+      if (method === "session.turnComplete" && !isGuardrailStop) {
         clearDequeueTimer(threadId);
         const timer = setTimeout(() => {
           dequeueTimers.delete(threadId);

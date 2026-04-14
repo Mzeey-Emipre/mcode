@@ -288,6 +288,8 @@ async function dispatch(
         params.reasoningLevel,
         params.provider,
         params.interactionMode,
+        params.maxBudgetUsd,
+        params.maxTurns,
       );
       return;
     case "agent.createAndSend":
@@ -305,6 +307,8 @@ async function dispatch(
         params.interactionMode,
         params.parentThreadId,
         params.forkedFromMessageId,
+        params.maxBudgetUsd,
+        params.maxTurns,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);

@@ -33,6 +33,10 @@ export interface IAgentProvider {
     permissionMode: string;
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
+    /** USD budget cap for this session. Provider stops if exceeded. Undefined or 0 disables. */
+    maxBudgetUsd?: number;
+    /** Maximum agent turns for this session. Provider stops after this count. Undefined or 0 disables. */
+    maxTurns?: number;
   }): void | Promise<void>;
 
   /** Abort a running session. */
