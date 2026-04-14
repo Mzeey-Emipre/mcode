@@ -16,12 +16,13 @@ type BroadcastFn = (channel: string, data: unknown) => void;
 // 10s for in-progress checks: responsive enough to catch completion within a PR review window.
 // Worst case: 5 active threads × 6 calls/min = 30 calls/min, well within GitHub's 5000/hr limit.
 const ACTIVE_INTERVAL_MS = 10_000;
-// 60s for terminal checks: keeps open-PR state fresh without burning API quota.
-const PASSIVE_INTERVAL_MS = 60_000;
+// 30s for terminal checks: catches re-triggered CI runs within half a minute.
+// Worst case: 5 passive threads × 2 calls/min = 10 calls/min, well within GitHub's 5000/hr limit.
+const PASSIVE_INTERVAL_MS = 30_000;
 
 /**
  * Server-side CI check watcher with adaptive dual-interval polling.
- * Threads with in-progress checks poll at 10s; terminal checks poll at 60s.
+ * Threads with in-progress checks poll at 10s; terminal checks poll at 30s.
  * Broadcasts `thread.checksUpdated` only when state changes.
  */
 export class CiWatcherService {
@@ -39,13 +40,19 @@ export class CiWatcherService {
     this.startPassiveTimer();
   }
 
-  /** Add a thread to the watcher. Starts in the passive set with an immediate first fetch. */
-  watch(threadId: string, prNumber: number, repoPath: string): void {
+  /**
+   * Add a thread to the watcher. Starts in the passive set with an immediate first fetch.
+   * Pass `skipInitialFetch: true` when the caller will fetch and broadcast the result itself,
+   * to avoid spawning a redundant concurrent subprocess.
+   */
+  watch(threadId: string, prNumber: number, repoPath: string, opts?: { skipInitialFetch?: boolean }): void {
     if (this.active.has(threadId) || this.passive.has(threadId)) return;
     this.passive.set(threadId, { threadId, prNumber, repoPath, cache: null });
     this.startPassiveTimer();
 
-    // Fetch immediately so the client gets data without waiting up to 60s for the passive tick.
+    if (opts?.skipInitialFetch) return;
+
+    // Fetch immediately so the client gets data without waiting for the passive tick.
     this.githubService.getCheckRuns(prNumber, repoPath).then((checks) => {
       const entry = this.passive.get(threadId) ?? this.active.get(threadId);
       if (!entry) return; // unwatched during fetch
@@ -55,8 +62,12 @@ export class CiWatcherService {
         this.passive.delete(threadId);
         this.active.set(threadId, entry);
         this.startActiveTimer();
+        // Passive set just shrank — stop passive timer if it's now empty.
+        if (this.passive.size === 0) this.stopPassiveTimer();
       }
-    }).catch(() => { /* ignore — passive tick will retry */ });
+    }).catch((err) => {
+      logger.debug("CiWatcher initial fetch failed", { threadId, error: String(err) });
+    });
   }
 
   /** Remove a thread from the watcher entirely. */
@@ -64,7 +75,8 @@ export class CiWatcherService {
     this.active.delete(threadId);
     this.passive.delete(threadId);
     if (this.active.size === 0) this.stopActiveTimer();
-    if (this.passive.size === 0 && this.active.size === 0) this.stopPassiveTimer();
+    // Stop the passive timer independently — it's not needed just because active is non-empty.
+    if (this.passive.size === 0) this.stopPassiveTimer();
   }
 
   /** Check if a thread is being watched. */
@@ -213,9 +225,12 @@ export class CiWatcherService {
         this.passive.delete(entry.threadId);
         this.active.set(entry.threadId, entry);
         this.startActiveTimer();
+        // Passive set shrank — stop timer if now empty.
+        if (this.passive.size === 0) this.stopPassiveTimer();
       } else if (set === this.active && checks.aggregate !== "pending") {
         this.active.delete(entry.threadId);
         this.passive.set(entry.threadId, entry);
+        this.startPassiveTimer();
         if (this.active.size === 0) this.stopActiveTimer();
       }
     }

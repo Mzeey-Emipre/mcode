@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { CircleCheck, CircleX, Loader2, RefreshCw, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -113,8 +113,8 @@ export function ChecksPopover({
   const handleOpenGitHub = useCallback(() => {
     try {
       const parsed = new URL(prUrl);
-      // Only allow https URLs to prevent javascript: or other protocol abuse
-      if (parsed.protocol === "https:") {
+      // Only allow https GitHub URLs to prevent protocol abuse or open-redirect to arbitrary hosts.
+      if (parsed.protocol === "https:" && parsed.hostname === "github.com") {
         window.desktopBridge?.openExternalUrl(prUrl);
       }
     } catch {
@@ -122,15 +122,15 @@ export function ChecksPopover({
     }
   }, [prUrl]);
 
-  // Sort: failing first, then running, then passing/other
-  const sortedRuns = [...checks.runs].sort((a, b) => {
+  // Sort: failing first, then running, then passing/other. Memoized to avoid re-sorting on every render.
+  const sortedRuns = useMemo(() => [...checks.runs].sort((a, b) => {
     const order = (r: CheckRun) => {
       if (r.conclusion === "failure" || r.conclusion === "timed_out") return 0;
       if (r.status !== "completed") return 1;
       return 2;
     };
     return order(a) - order(b);
-  });
+  }), [checks.runs]);
 
   const elapsed = Math.round((now - checks.fetchedAt) / 1000);
   const staleLabel =

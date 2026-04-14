@@ -372,7 +372,8 @@ async function dispatch(
         if (thread?.pr_number) {
           const workspace = deps.workspaceRepo.findById(thread.workspace_id);
           if (workspace) {
-            deps.ciWatcherService.watch(params.threadId, thread.pr_number, workspace.path);
+            // skipInitialFetch: checkStatus will fetch and broadcast below, no need for a second subprocess.
+            deps.ciWatcherService.watch(params.threadId, thread.pr_number, workspace.path, { skipInitialFetch: true });
             entry = deps.ciWatcherService.getEntry(params.threadId);
           }
         }
