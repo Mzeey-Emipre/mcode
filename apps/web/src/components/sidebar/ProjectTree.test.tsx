@@ -32,7 +32,7 @@ vi.mock("@/stores/workspaceStore", () => ({
 
 vi.mock("@/stores/threadStore", () => ({
   useThreadStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({ runningThreadIds: new Set() })
+    selector({ runningThreadIds: new Set(), permissionsByThread: {} })
   ),
 }));
 

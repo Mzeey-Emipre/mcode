@@ -149,7 +149,7 @@ export function ProjectTree() {
   const pendingPermissionThreadIds = useMemo(
     () =>
       new Set(
-        Object.entries(permissionsByThread)
+        Object.entries(permissionsByThread ?? {})
           .filter(([, perms]) => perms.some((p) => !p.settled))
           .map(([id]) => id),
       ),
