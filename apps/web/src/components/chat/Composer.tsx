@@ -46,7 +46,6 @@ import { PrDetectedCard } from "./PrDetectedCard";
 import type { PrDetail } from "@/transport/types";
 import { QueuePopover } from "./QueuePopover";
 import { ContextTracker } from "./ContextTracker";
-import { UsagePopover } from "./UsagePopover";
 import { CompactingBanner } from "./CompactingBanner";
 import { useQueueStore } from "@/stores/queueStore";
 import {
@@ -153,7 +152,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [detectedPr, setDetectedPr] = useState<PrDetail | null>(null);
   const [prDismissed, setPrDismissed] = useState(false);
   const prDetectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [usagePopoverOpen, setUsagePopoverOpen] = useState(false);
 
   const editorRef = useRef<LexicalEditor | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
@@ -1264,15 +1262,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
           {/* Context window tracker — live data from turnComplete, fallback to persisted thread record */}
           {threadId && (
-            <UsagePopover threadId={threadId} onOpenChange={setUsagePopoverOpen}>
-              <ContextTracker
-                tokensIn={contextEntry?.lastTokensIn ?? activeThread?.last_context_tokens ?? 0}
-                contextWindow={contextEntry?.contextWindow ?? activeThread?.context_window ?? undefined}
-                totalProcessedTokens={contextEntry?.totalProcessedTokens}
-                hasLowQuota={hasLowQuota}
-                popoverOpen={usagePopoverOpen}
-              />
-            </UsagePopover>
+            <ContextTracker
+              tokensIn={contextEntry?.lastTokensIn ?? activeThread?.last_context_tokens ?? 0}
+              contextWindow={contextEntry?.contextWindow ?? activeThread?.context_window ?? undefined}
+              totalProcessedTokens={contextEntry?.totalProcessedTokens}
+              hasLowQuota={hasLowQuota}
+            />
           )}
 
           {/* Send / Queue / Stop button */}

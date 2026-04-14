@@ -9,6 +9,8 @@ interface UsagePopoverProps {
   threadId: string | undefined;
   children: ReactNode;
   onOpenChange?: (open: boolean) => void;
+  side?: "top" | "right" | "bottom" | "left";
+  align?: "start" | "center" | "end";
 }
 
 /** Format token counts for display (e.g., 1500 → "1.5k"). */
@@ -60,8 +62,8 @@ function QuotaRow({ category }: { category: QuotaCategory }) {
   );
 }
 
-/** Usage popover anchored to the context ring. Shows quota, context window, and last turn data. */
-export function UsagePopover({ threadId, children, onOpenChange }: UsagePopoverProps) {
+/** Usage popover showing quota, context window, and last turn data. */
+export function UsagePopover({ threadId, children, onOpenChange, side = "top", align = "end" }: UsagePopoverProps) {
   const contextEntry = useThreadStore((s) => threadId ? s.contextByThread[threadId] : undefined);
   const activeThread = useWorkspaceStore((s) => s.threads.find((t) => t.id === threadId));
   const providerId = (activeThread?.provider ?? "claude") as string;
@@ -97,8 +99,10 @@ export function UsagePopover({ threadId, children, onOpenChange }: UsagePopoverP
 
   return (
     <Popover onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent align="end" className="w-72 p-0">
+      <PopoverTrigger render={<span style={{ display: "contents" }} />}>
+        {children}
+      </PopoverTrigger>
+      <PopoverContent side={side} align={align} sideOffset={8} className="w-72 p-0">
         <div className="space-y-3 p-3">
           {/* Provider header */}
           <div className="flex items-center justify-between">

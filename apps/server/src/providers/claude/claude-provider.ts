@@ -163,6 +163,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   private sdkSessionIds = new Map<string, string>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
   private lastSessionCostUsd?: number;
+  private lastServiceTier?: "standard" | "priority" | "batch";
+  private lastNumTurns?: number;
+  private lastDurationMs?: number;
 
   constructor() {
     super();
@@ -662,6 +665,13 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               );
 
               this.lastSessionCostUsd = (anyMsg.total_cost_usd as number) ?? undefined;
+              this.lastNumTurns = (anyMsg.num_turns as number) ?? undefined;
+              this.lastDurationMs = (anyMsg.duration_ms as number) ?? undefined;
+              const resultUsage = (anyMsg.usage ?? {}) as { service_tier?: string };
+              const rawTier = resultUsage.service_tier;
+              this.lastServiceTier = (rawTier === "standard" || rawTier === "priority" || rawTier === "batch")
+                ? rawTier
+                : undefined;
 
               this.emit("event", {
                 type: AgentEventType.TurnComplete,
@@ -687,6 +697,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                 providerId: "claude",
                 categories: [],
                 sessionCostUsd: this.lastSessionCostUsd,
+                serviceTier: this.lastServiceTier,
+                numTurns: this.lastNumTurns,
+                durationMs: this.lastDurationMs,
               } satisfies AgentEvent);
 
               lastContextWindow = sdkContextWindow;
@@ -1021,12 +1034,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     });
   }
 
-  /** Return accumulated session cost. Claude has no quota API via the SDK. */
+  /** Return accumulated session data. Claude has no quota API via the SDK. */
   async getUsage(): Promise<ProviderUsageInfo> {
     return {
       providerId: "claude",
       quotaCategories: [],
       sessionCostUsd: this.lastSessionCostUsd,
+      serviceTier: this.lastServiceTier,
+      numTurns: this.lastNumTurns,
+      durationMs: this.lastDurationMs,
     };
   }
 

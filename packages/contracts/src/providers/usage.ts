@@ -45,6 +45,12 @@ export const ProviderUsageInfoSchema = lazySchema(() =>
     quotaCategories: z.array(QuotaCategorySchema()),
     /** Accumulated cost for the current session in USD. Absent when the provider does not report cost. */
     sessionCostUsd: z.number().optional(),
+    /** API service tier used for the last turn (Claude only). */
+    serviceTier: z.enum(["standard", "priority", "batch"]).optional(),
+    /** Total number of agent turns in the current session (Claude only). */
+    numTurns: z.number().int().optional(),
+    /** Total wall-clock duration of the current session in ms (Claude only). */
+    durationMs: z.number().optional(),
   }),
 );
 

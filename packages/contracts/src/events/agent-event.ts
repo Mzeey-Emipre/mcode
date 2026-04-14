@@ -154,6 +154,9 @@ export const AgentEventSchema = lazySchema(() =>
       providerId: z.string(),
       categories: z.array(QuotaCategorySchema()),
       sessionCostUsd: z.number().optional(),
+      serviceTier: z.enum(["standard", "priority", "batch"]).optional(),
+      numTurns: z.number().int().optional(),
+      durationMs: z.number().optional(),
     }),
   ]),
 );

@@ -19,8 +19,6 @@ interface ContextTrackerProps {
   className?: string;
   /** Show red dot badge when any quota category is below 20%. */
   hasLowQuota?: boolean;
-  /** When true, suppress the tooltip (popover is visible). */
-  popoverOpen?: boolean;
 }
 
 /** Returns the color tier class for the fill ring and label. */
@@ -38,7 +36,7 @@ function colorTier(pct: number) {
  * from muted → amber (70%) → red (90%) to signal urgency. When the provider
  * compacts, the ring silently animates backward.
  */
-export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, className, hasLowQuota, popoverOpen }: ContextTrackerProps) {
+export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, className, hasLowQuota }: ContextTrackerProps) {
   if (tokensIn <= 0 || !contextWindow) return null;
 
   const pct = Math.min(100, contextWindow > 0 ? (tokensIn / contextWindow) * 100 : 0);
@@ -55,7 +53,7 @@ export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, 
   const tooltipLine = `${displayPct}% · ${abbrev(tokensIn)}/${abbrev(contextWindow)} context used`;
 
   return (
-    <Tooltip open={popoverOpen ? false : undefined}>
+    <Tooltip>
       <TooltipTrigger
         render={
           <div

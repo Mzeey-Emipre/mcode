@@ -60,14 +60,22 @@ interface QuotaSnapshot {
 function normalizeQuotaSnapshots(
   snapshots: Record<string, QuotaSnapshot>,
 ): QuotaCategory[] {
-  return Object.entries(snapshots).map(([key, snap]) => ({
-    label: QUOTA_LABELS[key] ?? key,
-    used: snap.usedRequests ?? 0,
-    total: snap.isUnlimitedEntitlement ? null : (snap.entitlementRequests ?? 0),
-    remainingPercent: snap.remainingPercentage ?? 1.0,
-    resetDate: snap.resetDate,
-    isUnlimited: snap.isUnlimitedEntitlement ?? false,
-  }));
+  return Object.entries(snapshots).map(([key, snap]) => {
+    // A category is limited only when the API provides a positive entitlement value
+    // and does not mark it as unlimited. Categories returned with no entitlement
+    // data (entitlementRequests = 0 or absent) default to unlimited so we never
+    // display a misleading 0/0.
+    const hasLimit = (snap.entitlementRequests ?? 0) > 0;
+    const isUnlimited = snap.isUnlimitedEntitlement ?? !hasLimit;
+    return {
+      label: QUOTA_LABELS[key] ?? key,
+      used: snap.usedRequests ?? 0,
+      total: hasLimit ? snap.entitlementRequests! : null,
+      remainingPercent: (snap.remainingPercentage ?? 100) / 100,
+      resetDate: snap.resetDate,
+      isUnlimited,
+    };
+  });
 }
 
 /** Infer vendor group from model ID prefix for UI section headers. */

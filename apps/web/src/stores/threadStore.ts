@@ -1321,17 +1321,26 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const providerId = params.providerId as string;
       const categories = params.categories as QuotaCategory[];
       const sessionCostUsd = params.sessionCostUsd as number | undefined;
+      const serviceTier = params.serviceTier as "standard" | "priority" | "batch" | undefined;
+      const numTurns = params.numTurns as number | undefined;
+      const durationMs = params.durationMs as number | undefined;
       if (providerId) {
-        set((state) => ({
-          usageByProvider: {
-            ...state.usageByProvider,
-            [providerId]: {
-              providerId,
-              quotaCategories: categories ?? [],
-              sessionCostUsd: sessionCostUsd ?? state.usageByProvider[providerId]?.sessionCostUsd,
+        set((state) => {
+          const existing = state.usageByProvider[providerId];
+          return {
+            usageByProvider: {
+              ...state.usageByProvider,
+              [providerId]: {
+                providerId,
+                quotaCategories: categories ?? [],
+                sessionCostUsd: sessionCostUsd ?? existing?.sessionCostUsd,
+                serviceTier: serviceTier ?? existing?.serviceTier,
+                numTurns: numTurns ?? existing?.numTurns,
+                durationMs: durationMs ?? existing?.durationMs,
+              },
             },
-          },
-        }));
+          };
+        });
       }
       return;
     }

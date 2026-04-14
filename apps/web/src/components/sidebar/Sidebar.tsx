@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import type { SettingsSection } from "@/components/settings/settings-nav";
+import { SidebarUsagePanel } from "./SidebarUsagePanel";
 
 /** True when running inside the Electron shell. */
 const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;
@@ -34,6 +35,7 @@ export function Sidebar({
 
   // Force-expand sidebar when settings is open
   const isCollapsed = collapsed && !settingsOpen;
+
 
   const handleEditJson = () => {
     if (window.desktopBridge) {
@@ -94,7 +96,8 @@ export function Sidebar({
 
       {/* Footer */}
       {!isCollapsed && (
-        <div className="border-t border-border p-3">
+        <div className="border-t border-border p-3 space-y-1">
+          {!settingsOpen && <SidebarUsagePanel />}
           {settingsOpen ? (
             IS_DESKTOP && (
               <Button
