@@ -16,6 +16,7 @@ import { ThreadRepo } from "../repositories/thread-repo.js";
 import { ClaudeProvider } from "../providers/claude/claude-provider.js";
 import { TerminalService } from "./terminal-service.js";
 import { GitService } from "./git-service.js";
+import { killDescendantsByName } from "./process-kill.js";
 
 /** How often to check for due cleanup jobs (ms). */
 const POLL_INTERVAL_MS = 5_000;
@@ -148,12 +149,18 @@ export class CleanupWorker {
         });
       }
 
-      // 3. Brief delay on Windows so the OS releases directory handles.
+      // 3. Force-kill any lingering SDK subprocess (claude.exe) that is a
+      //    descendant of this server process. waitForSessionExit only confirms
+      //    the stream ended, not that the OS process exited.  Its cwd handle
+      //    locks the worktree directory and ancestors on Windows.
+      await killDescendantsByName(process.pid, "claude.exe");
+
+      // 4. Brief delay on Windows so the OS releases directory handles.
       if (process.platform === "win32") {
         await new Promise<void>((resolve) => setTimeout(resolve, HANDLE_RELEASE_DELAY_MS));
       }
 
-      // 4. Remove the worktree directory and delete the exact thread branch when
+      // 5. Remove the worktree directory and delete the exact thread branch when
       //    the thread record has one. The delete-thread dialog is the user intent
       //    boundary; rollback paths are handled separately in ThreadService.
       const wtName = resolvedWt.replace(/\\/g, "/").split("/").pop() ?? resolvedWt;
@@ -171,7 +178,7 @@ export class CleanupWorker {
         throw new Error(`Worktree directory still exists after removal: ${resolvedWt}`);
       }
 
-      // 5. Hard-delete thread row and cleanup job atomically.
+      // 6. Hard-delete thread row and cleanup job atomically.
       //    Wrapping in a transaction ensures no orphaned job if either statement fails.
       this.db.transaction(() => {
         this.threadRepo.hardDelete(job.thread_id);
