@@ -111,23 +111,25 @@ export function ChatView() {
 
   // Detect interrupted threads whenever the connection is re-established so the
   // banner can offer to resume any sessions that were cut off by a server restart.
+  // Always update so the banner clears when threads recover on their own.
   useEffect(() => {
     if (connectionStatus === "connected" && !bannerDismissed) {
       const interrupted = threads
         .filter((t) => t.status === "interrupted")
         .map((t) => t.id);
-      if (interrupted.length > 0) {
-        setInterruptedThreadIds(interrupted);
-      }
+      setInterruptedThreadIds(interrupted);
     }
   }, [connectionStatus, threads, bannerDismissed]);
 
   /** Sends a continuation message to each interrupted thread, then hides the banner. */
   const handleResumeInterrupted = useCallback(
     async (threadIds: string[]) => {
+      // Read threads from store at call time to avoid closing over a stale
+      // `threads` array, which would also make this callback unstable.
+      const currentThreads = useWorkspaceStore.getState().threads;
       for (const threadId of threadIds) {
         try {
-          const thread = threads.find((t) => t.id === threadId);
+          const thread = currentThreads.find((t) => t.id === threadId);
           if (!thread) continue;
           await sendMessage(
             threadId,
@@ -141,7 +143,7 @@ export function ChatView() {
       }
       setInterruptedThreadIds([]);
     },
-    [threads, sendMessage],
+    [sendMessage],
   );
 
   /** Activates inline branch mode on the composer for the given message. */
