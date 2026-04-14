@@ -27,6 +27,7 @@ import type {
   AttachmentMeta,
   ProviderModelInfo,
   QuotaCategory,
+  ProviderUsageInfo,
 } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 
@@ -159,6 +160,21 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       policy: m.policy ? { state: m.policy.state as "enabled" | "disabled" | "unconfigured" } : undefined,
       multiplier: m.billing?.multiplier,
     }));
+  }
+
+  /** Return current usage/quota state by fetching from account.getQuota(). */
+  async getUsage(): Promise<ProviderUsageInfo> {
+    try {
+      await this.refreshClient();
+      const result = await this.client!.rpc.account.getQuota();
+      const categories = result?.quotaSnapshots
+        ? normalizeQuotaSnapshots(result.quotaSnapshots)
+        : [];
+      return { providerId: "copilot", quotaCategories: categories };
+    } catch (error) {
+      logger.warn("Failed to fetch Copilot quota", { error });
+      return { providerId: "copilot", quotaCategories: [] };
+    }
   }
 
   /**
