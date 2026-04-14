@@ -256,4 +256,57 @@ describe("GitService.removeWorktree", () => {
 
     expect(mockRmdir).not.toHaveBeenCalled();
   });
+
+  it("retries EBUSY on parent dir rmdir and succeeds on later attempt", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    const ebusyErr = Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+    mockRmdir
+      .mockRejectedValueOnce(ebusyErr)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue(undefined);
+
+    const result = await gitService.removeWorktree("/repo", "my-worktree", { deleteBranch: false });
+
+    expect(result).toBe(true);
+    expect(mockRmdir.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      "Removed empty managed worktree parent dir",
+      expect.objectContaining({ path: expect.any(String) }),
+    );
+  });
+
+  it("gives up parent dir cleanup after exhausting EBUSY retries", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    const ebusyErr = Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+    mockRmdir.mockRejectedValue(ebusyErr);
+
+    const result = await gitService.removeWorktree("/repo", "my-worktree", { deleteBranch: false });
+
+    expect(result).toBe(false);
+    expect(mockRmdir).toHaveBeenCalledTimes(5);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      "Failed to remove empty managed worktree parent dir",
+      expect.objectContaining({ error: expect.stringContaining("EBUSY") }),
+    );
+  });
+
+  it("retries EPERM on parent dir rmdir the same as EBUSY", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    const epermErr = Object.assign(new Error("EPERM"), { code: "EPERM" });
+    mockRmdir
+      .mockRejectedValueOnce(epermErr)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue(undefined);
+
+    const result = await gitService.removeWorktree("/repo", "my-worktree", { deleteBranch: false });
+
+    expect(result).toBe(true);
+    expect(mockRmdir.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
 });
