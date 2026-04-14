@@ -101,11 +101,11 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "thread.list": {
     params: z.object({ workspaceId: z.string() }),
-    result: z.array(ThreadSchema),
+    result: z.array(ThreadSchema()),
   },
   "thread.create": {
     params: CreateThreadSchema(),
-    result: ThreadSchema,
+    result: ThreadSchema(),
   },
   "thread.delete": {
     params: z.object({
@@ -205,7 +205,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "agent.createAndSend": {
     params: CreateAndSendSchema(),
-    result: ThreadSchema,
+    result: ThreadSchema(),
   },
   "agent.stop": {
     params: z.object({ threadId: z.string() }),

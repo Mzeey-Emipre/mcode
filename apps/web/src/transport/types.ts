@@ -127,7 +127,7 @@ export interface McodeTransport {
       reasoningLevel?: ReasoningLevel;
       interactionMode?: InteractionMode;
       permissionMode?: PermissionMode;
-      copilotAgent?: string;
+      copilotAgent?: string | null;
     },
   ): Promise<boolean>;
   /** Clear the "completed" badge for a thread. Transitions completed -> paused in the DB. */

@@ -9,7 +9,7 @@ import { CopilotSubagentSourceSchema } from "../models/enums.js";
 export const CopilotSubagentSchema = lazySchema(() =>
   z.object({
     /** Unique identifier passed to the SDK (mode name or custom agent name). */
-    name: z.string(),
+    name: z.string().min(1),
     /** Human-readable label shown in the UI. */
     displayName: z.string(),
     /** Brief description of the agent's purpose. */

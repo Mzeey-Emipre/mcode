@@ -143,6 +143,9 @@ export class AgentService {
     // Use the thread's stored provider as authoritative fallback; only override
     // when the caller explicitly supplies a provider (new thread or explicit switch).
     const effectiveProvider: ProviderId = provider ?? (thread.provider as ProviderId) ?? "claude";
+    // Fall back to the thread's persisted Copilot agent when the caller doesn't supply one.
+    // Converts null (DB "cleared") to undefined (provider ignores it) so the SDK defaults.
+    const effectiveCopilotAgent = copilotAgent ?? (thread.copilot_agent ?? undefined);
     if (thread.status === "deleted" || thread.deleted_at != null) {
       throw new Error(`Cannot send message to deleted thread: ${threadId}`);
     }
@@ -277,7 +280,7 @@ export class AgentService {
         reasoningLevel,
         ...(effectiveBudget > 0 && { maxBudgetUsd: effectiveBudget }),
         ...(effectiveTurns > 0 && { maxTurns: effectiveTurns }),
-        copilotAgent,
+        copilotAgent: effectiveCopilotAgent,
       });
       logger.info("Message sent via provider", {
         threadId,

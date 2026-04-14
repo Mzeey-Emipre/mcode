@@ -115,7 +115,9 @@ export function CopilotAgentSelector({
         setProjectAgents(agents.filter((a) => a.source === "project"));
       })
       .catch(() => {
-        // Defaults are always shown; remote failures are non-fatal.
+        // Clear stale user/project agents so they don't desync from the workspace.
+        setUserAgents([]);
+        setProjectAgents([]);
       });
   }, [workspaceId]);
 

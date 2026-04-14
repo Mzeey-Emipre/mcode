@@ -665,18 +665,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       },
     }));
 
-    // Strip null copilotAgent before transport: the RPC accepts undefined (omit) but not null.
+    // copilotAgent: null clears the persisted agent; undefined means don't change.
     const transportPatch: {
       reasoningLevel?: ReturnType<typeof get>["settingsByThread"][string]["reasoningLevel"];
       interactionMode?: ReturnType<typeof get>["settingsByThread"][string]["interactionMode"];
       permissionMode?: ReturnType<typeof get>["settingsByThread"][string]["permissionMode"];
-      copilotAgent?: string;
+      copilotAgent?: string | null;
     } = {
       ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
       ...(patch.interactionMode !== undefined ? { interactionMode: patch.interactionMode } : {}),
       ...(patch.reasoningLevel !== undefined ? { reasoningLevel: patch.reasoningLevel } : {}),
-      // Convert null → undefined: the RPC uses undefined to mean "omit field", null is not accepted.
-      ...(patch.copilotAgent != null ? { copilotAgent: patch.copilotAgent } : {}),
+      ...("copilotAgent" in patch ? { copilotAgent: patch.copilotAgent } : {}),
     };
     return getTransport().updateThreadSettings(threadId, transportPatch).catch(() => false);
   },

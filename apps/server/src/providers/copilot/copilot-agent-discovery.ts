@@ -51,7 +51,9 @@ function scanAgentDir(dir: string, source: "user" | "project"): CopilotSubagent[
       try {
         const raw = fs.readFileSync(path.join(dir, f), "utf-8");
         const parsed = parseYaml(raw) as AgentYaml;
-        if (!parsed?.name) return [];
+        if (typeof parsed?.name !== "string" || !parsed.name.trim()) return [];
+        if (parsed.displayName !== undefined && typeof parsed.displayName !== "string") return [];
+        if (parsed.description !== undefined && typeof parsed.description !== "string") return [];
         return [
           {
             name: parsed.name,
@@ -89,8 +91,8 @@ function userAgentsDir(): string {
  *
  * Always returns at least the three built-in defaults.
  */
-export function discoverCopilotAgents(workingDirectory: string): CopilotSubagent[] {
-  const user = scanAgentDir(userAgentsDir(), "user");
+export function discoverCopilotAgents(workingDirectory: string, userDir?: string): CopilotSubagent[] {
+  const user = scanAgentDir(userDir ?? userAgentsDir(), "user");
   const project = [
     ...scanAgentDir(path.join(workingDirectory, ".github", "agents"), "project"),
     ...scanAgentDir(path.join(workingDirectory, ".copilot", "agents"), "project"),
