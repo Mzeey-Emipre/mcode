@@ -38,6 +38,7 @@ import type { SettingsService } from "../services/settings-service";
 import type { GitWatcherService } from "../services/git-watcher-service";
 import type { MemoryPressureService } from "../services/memory-pressure-service";
 import type { PrDraftService } from "../services/pr-draft-service";
+import type { CiWatcherService } from "../services/ci-watcher";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import { broadcast } from "./push";
@@ -67,6 +68,8 @@ export interface RouterDeps {
   providerRegistry: IProviderRegistry;
   /** Generates AI-powered PR draft titles and bodies. */
   prDraftService: PrDraftService;
+  /** CI check watcher for adaptive polling and manual refresh. */
+  ciWatcherService: CiWatcherService;
   /** Thread repository for resolving worktree paths in git operations. */
   threadRepo: ThreadRepo;
   /** Workspace repository for resolving repo paths in git operations. */
@@ -351,6 +354,15 @@ async function dispatch(
       return deps.githubService.listOpenPrs(params.workspaceId);
     case "github.prByUrl":
       return deps.githubService.getPrByUrl(params.url);
+    case "github.checkStatus": {
+      const entry = deps.ciWatcherService.getEntry(params.threadId);
+      if (!entry) {
+        return { aggregate: "no_checks" as const, runs: [], fetchedAt: Date.now() };
+      }
+      const checks = await deps.githubService.getCheckRuns(entry.prNumber, entry.repoPath);
+      entry.cache = checks;
+      return checks;
+    }
 
     // Config
     case "config.discover":
@@ -567,6 +579,9 @@ async function dispatch(
         prNumber: result.number,
         prStatus: "OPEN",
       });
+
+      // Start watching CI checks for the newly created PR
+      deps.ciWatcherService.watch(params.threadId, result.number, repoPath);
 
       return result;
     }
