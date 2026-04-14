@@ -892,7 +892,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode, copilotAgent ?? undefined);
+        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode, provider === "copilot" ? (copilotAgent ?? undefined) : undefined);
       } finally {
         setPreparingWorktree(false);
       }
@@ -925,11 +925,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         branch: branchBranch,
         existingWorktreePath: branchWorktree,
         forkedFromMessageId: branchFromMessageId,
-        copilotAgent: copilotAgent ?? undefined,
+        copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
       });
       onBranchModeExit?.();
     } else if (threadId) {
-      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider, copilotAgent ?? undefined);
+      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider, provider === "copilot" ? (copilotAgent ?? undefined) : undefined);
     }
 
     // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
