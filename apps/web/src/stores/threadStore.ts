@@ -1206,7 +1206,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const completedCalls = currentCalls.map((tc) =>
             tc.isComplete ? tc : { ...tc, isComplete: true }
           );
-          const pending = [message, ...(guardrailMsg ? [guardrailMsg] : [])];
+          const dedupedGuardrail = guardrailMsg && !state.messages.some(
+            (m) => m.role === "system" && m.content.startsWith("Agent stopped:"),
+          ) ? guardrailMsg : null;
+          const pending = [message, ...(dedupedGuardrail ? [dedupedGuardrail] : [])];
           return {
             ...(state.currentThreadId === threadId
               ? (() => {
@@ -1240,10 +1243,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const completedCalls = currentCalls.map((tc) =>
             tc.isComplete ? tc : { ...tc, isComplete: true }
           );
+          const dedupedGuardrail = guardrailMsg && !state.messages.some(
+            (m) => m.role === "system" && m.content.startsWith("Agent stopped:"),
+          ) ? guardrailMsg : null;
           return {
-            ...(guardrailMsg && state.currentThreadId === threadId
+            ...(dedupedGuardrail && state.currentThreadId === threadId
               ? (() => {
-                  const { messages: capped, evicted } = capMessages([...state.messages, guardrailMsg]);
+                  const { messages: capped, evicted } = capMessages([...state.messages, dedupedGuardrail]);
                   return { messages: capped, ...(evicted ? { hasMoreMessages: { ...state.hasMoreMessages, [threadId]: true } } : {}) };
                 })()
               : {}),
