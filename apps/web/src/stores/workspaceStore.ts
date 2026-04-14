@@ -420,10 +420,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         const remainingUrls = Object.fromEntries(
           Object.entries(state.prUrlsByThreadId).filter(([k]) => k !== threadId),
         ) as Record<string, string>;
+        const { [threadId]: _, ...remainingChecks } = state.checksById;
         return {
           threads: state.threads.filter((t) => t.id !== threadId),
           activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
           prUrlsByThreadId: remainingUrls,
+          checksById: remainingChecks,
         };
       });
       useThreadStore.getState().clearThreadState(threadId);
