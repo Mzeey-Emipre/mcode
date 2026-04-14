@@ -333,7 +333,7 @@ export class ServerManager {
         cwd,
         env,
         detached: true,
-        stdio: "ignore",
+        stdio: isDev ? "inherit" : "ignore",
       });
       child.unref();
       this.serverProcess = child;
