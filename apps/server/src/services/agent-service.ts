@@ -134,6 +134,8 @@ export class AgentService {
     reasoningLevel?: ReasoningLevel,
     provider?: ProviderId,
     interactionMode?: InteractionMode,
+    maxBudgetUsd?: number,
+    maxTurns?: number,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -220,9 +222,15 @@ export class AgentService {
     }
 
     const resolvedModel = model;
-    const { fallbackId } = (await this.settingsService.get()).model.defaults;
+    const settings = await this.settingsService.get();
+    const { fallbackId } = settings.model.defaults;
     const fallbackModel =
       fallbackId && fallbackId !== resolvedModel ? fallbackId : undefined;
+
+    // Resolve guardrails: per-request values override settings defaults.
+    // A value of 0 means "disabled" — do not pass to provider.
+    const effectiveBudget = maxBudgetUsd ?? settings.agent.guardrails.maxBudgetUsd;
+    const effectiveTurns = maxTurns ?? settings.agent.guardrails.maxTurns;
     this.threadRepo.updateModel(threadId, resolvedModel);
     // Only persist provider when the caller explicitly supplied one (new thread or deliberate switch).
     if (provider !== undefined) {
@@ -265,6 +273,8 @@ export class AgentService {
         permissionMode,
         attachments: persisted.length > 0 ? persisted : undefined,
         reasoningLevel,
+        ...(effectiveBudget > 0 && { maxBudgetUsd: effectiveBudget }),
+        ...(effectiveTurns > 0 && { maxTurns: effectiveTurns }),
       });
       logger.info("Message sent via provider", {
         threadId,
@@ -371,6 +381,8 @@ export class AgentService {
     interactionMode?: InteractionMode,
     parentThreadId?: string,
     forkedFromMessageId?: string,
+    maxBudgetUsd?: number,
+    maxTurns?: number,
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
@@ -379,6 +391,7 @@ export class AgentService {
         workspaceId, content, model, permissionMode, mode, branch,
         existingWorktreePath, attachments, reasoningLevel, provider,
         interactionMode, parentThreadId, forkedFromMessageId, title,
+        maxBudgetUsd, maxTurns,
       });
     }
 
@@ -437,6 +450,8 @@ export class AgentService {
       reasoningLevel,
       provider,
       interactionMode,
+      maxBudgetUsd,
+      maxTurns,
     );
 
     // Re-read from DB to pick up model update applied by sendMessage
@@ -465,11 +480,14 @@ export class AgentService {
     parentThreadId: string;
     forkedFromMessageId?: string;
     title: string;
+    maxBudgetUsd?: number;
+    maxTurns?: number;
   }): Promise<Thread> {
     const {
       workspaceId, content, model, permissionMode, mode, branch,
       existingWorktreePath, attachments, reasoningLevel, provider,
       interactionMode, parentThreadId, forkedFromMessageId, title,
+      maxBudgetUsd, maxTurns,
     } = params;
 
     // Validate parent
@@ -632,6 +650,8 @@ export class AgentService {
         reasoningLevel,
         provider,
         interactionMode,
+        maxBudgetUsd,
+        maxTurns,
       );
     } finally {
       // Ensure override is cleaned up even if sendMessage throws before consuming it.
