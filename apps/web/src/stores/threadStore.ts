@@ -1306,6 +1306,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             toolCallsByThread: completedCalls.length > 0
               ? { ...state.toolCallsByThread, [threadId]: completedCalls }
               : state.toolCallsByThread,
+            // Clear permission cards now that the agent has responded.
+            permissionsByThread: (() => {
+              const next = { ...state.permissionsByThread };
+              delete next[threadId];
+              return next;
+            })(),
           };
         });
       } else {
@@ -1342,6 +1348,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             toolCallsByThread: completedCalls.length > 0
               ? { ...state.toolCallsByThread, [threadId]: completedCalls }
               : state.toolCallsByThread,
+            // Clear permission cards now that the agent has responded.
+            permissionsByThread: (() => {
+              const next = { ...state.permissionsByThread };
+              delete next[threadId];
+              return next;
+            })(),
           };
         });
       }

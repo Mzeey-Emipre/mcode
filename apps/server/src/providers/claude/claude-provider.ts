@@ -404,48 +404,61 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               input: Record<string, unknown>,
               options: Parameters<CanUseTool>[2],
             ) => {
-              const requestId = crypto.randomUUID();
-              const decision = await new Promise<PermissionDecision>((resolve) => {
-                this.pendingPermissions.set(requestId, {
-                  threadId: tid,
-                  toolName,
-                  input,
-                  title: options?.title,
-                  resolve,
+              try {
+                const requestId = crypto.randomUUID();
+                const decision = await new Promise<PermissionDecision>((resolve) => {
+                  this.pendingPermissions.set(requestId, {
+                    threadId: tid,
+                    toolName,
+                    input,
+                    title: options?.title,
+                    resolve,
+                  });
+                  this.emit("permission_request", {
+                    requestId,
+                    threadId: tid,
+                    toolName,
+                    input,
+                    title: options?.title,
+                  } satisfies PermissionRequest);
                 });
-                this.emit("permission_request", {
-                  requestId,
-                  threadId: tid,
-                  toolName,
-                  input,
-                  title: options?.title,
-                } satisfies PermissionRequest);
-              });
-              switch (decision) {
-                case "allow":
-                  return { behavior: "allow" as const };
-                case "allow-session": {
-                  // Persist "always allow" for this tool into the session-scoped
-                  // permission rules so subsequent calls are auto-approved.
-                  const sessionUpdate: PermissionUpdate = {
-                    type: "addRules",
-                    rules: [{ toolName }],
-                    behavior: "allow",
-                    destination: "session",
-                  };
-                  return {
-                    behavior: "allow" as const,
-                    updatedPermissions: [sessionUpdate],
-                  };
+                switch (decision) {
+                  case "allow":
+                    return {
+                      behavior: "allow" as const,
+                      decisionClassification: "user_temporary" as const,
+                    };
+                  case "allow-session": {
+                    // Persist "always allow" for this tool into the session-scoped
+                    // permission rules so subsequent calls are auto-approved.
+                    const sessionUpdate: PermissionUpdate = {
+                      type: "addRules",
+                      rules: [{ toolName }],
+                      behavior: "allow",
+                      destination: "session",
+                    };
+                    return {
+                      behavior: "allow" as const,
+                      updatedPermissions: [sessionUpdate],
+                      decisionClassification: "user_permanent" as const,
+                    };
+                  }
+                  case "deny":
+                  case "cancelled":
+                    return {
+                      behavior: "deny" as const,
+                      message: decision === "cancelled"
+                        ? "Session stopped by user"
+                        : "User denied",
+                      decisionClassification: "user_reject" as const,
+                    };
                 }
-                case "deny":
-                case "cancelled":
-                  return {
-                    behavior: "deny" as const,
-                    message: decision === "cancelled"
-                      ? "Session stopped by user"
-                      : "User denied",
-                  };
+              } catch (err) {
+                logger.error("canUseTool callback threw unexpectedly", { toolName, err });
+                return {
+                  behavior: "deny" as const,
+                  message: "Permission check encountered an internal error",
+                };
               }
             }) satisfies CanUseTool,
           }),

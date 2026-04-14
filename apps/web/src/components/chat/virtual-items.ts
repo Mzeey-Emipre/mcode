@@ -109,9 +109,10 @@ export function buildVolatileItems(
     items.push({ key: "active-tools", type: "active-tools", toolCalls });
   }
 
-  // Permission requests follow because they are caused by the tool calls above.
+  // Only show unsettled permission requests — settled cards disappear once the
+  // agent's response arrives so they don't trail below the agent's message.
   if (permissions && permissions.length > 0) {
-    for (const p of permissions) {
+    for (const p of permissions.filter((p) => !p.settled)) {
       items.push({
         key: `permission-${p.requestId}`,
         type: "permission-request" as const,
