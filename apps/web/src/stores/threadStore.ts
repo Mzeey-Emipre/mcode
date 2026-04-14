@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
-import type { ReasoningLevel, PlanQuestion, PlanAnswer } from "@mcode/contracts";
+import type { ReasoningLevel, PlanQuestion, PlanAnswer, ProviderUsageInfo, QuotaCategory } from "@mcode/contracts";
 import { PlanQuestionSchema } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
@@ -59,7 +59,9 @@ interface ThreadState {
   /** Monotonic counter incremented on each loadMessages call, used to discard stale loadOlderMessages responses. */
   loadEpochByThread: Record<string, number>;
   /** Last known token usage and context window size per thread, updated on turn completion. */
-  contextByThread: Record<string, { lastTokensIn: number; contextWindow?: number; totalProcessedTokens?: number }>;
+  contextByThread: Record<string, { lastTokensIn: number; contextWindow?: number; totalProcessedTokens?: number; tokensOut?: number; cacheReadTokens?: number; cacheWriteTokens?: number; costMultiplier?: number }>;
+  /** Provider-level quota and usage info, keyed by providerId. Updated on session.quotaUpdate events and explicit fetches. */
+  usageByProvider: Record<string, ProviderUsageInfo>;
   /** Whether the SDK is currently compacting the context window for a thread. */
   isCompactingByThread: Record<string, boolean>;
   /** Transient fallback state per thread. Cleared when the user sends the next message. */
@@ -110,6 +112,8 @@ interface ThreadState {
   /** Merge partial settings and persist to server. Resolves to false if RPC fails or patch is empty. */
   setThreadSettings: (threadId: string, settings: Partial<ThreadSettings>) => Promise<boolean>;
 
+  /** Fetch and refresh provider usage info from the server for the given provider. */
+  fetchProviderUsage: (providerId: string) => Promise<void>;
   /** Remove all per-thread state for a deleted thread. Clears visible-thread globals when the deleted thread is the current one. */
   clearThreadState: (threadId: string) => void;
   /** Batch variant of clearThreadState. Prunes all IDs in a single Zustand set() call to avoid N sequential re-renders. Used by deleteWorkspace. */
@@ -226,6 +230,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   isLoadingMore: {},
   loadEpochByThread: {},
   contextByThread: {},
+  usageByProvider: {},
   isCompactingByThread: {},
   lastFallbackByThread: {},
   planQuestionsByThread: {},
@@ -1251,6 +1256,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               lastTokensIn: tokensIn,
               contextWindow,
               totalProcessedTokens,
+              tokensOut: params.tokensOut as number | undefined,
+              cacheReadTokens: params.cacheReadTokens as number | undefined,
+              cacheWriteTokens: params.cacheWriteTokens as number | undefined,
+              costMultiplier: params.costMultiplier as number | undefined,
             },
           },
         }));
@@ -1304,6 +1313,25 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
         }, 400);
         dequeueTimers.set(threadId, timer);
+      }
+      return;
+    }
+
+    if (method === "session.quotaUpdate") {
+      const providerId = params.providerId as string;
+      const categories = params.categories as QuotaCategory[];
+      const sessionCostUsd = params.sessionCostUsd as number | undefined;
+      if (providerId) {
+        set((state) => ({
+          usageByProvider: {
+            ...state.usageByProvider,
+            [providerId]: {
+              providerId,
+              quotaCategories: categories ?? [],
+              sessionCostUsd: sessionCostUsd ?? state.usageByProvider[providerId]?.sessionCostUsd,
+            },
+          },
+        }));
       }
       return;
     }
@@ -1468,6 +1496,25 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
+  },
+
+  /**
+   * Fetch provider usage from the server and merge it into usageByProvider.
+   * Silently ignores errors so the popover shows stale or empty state rather than crashing.
+   */
+  fetchProviderUsage: async (providerId) => {
+    try {
+      const { getTransport } = await import("../transport/index.js");
+      const usage = await getTransport().getProviderUsage(providerId);
+      set((state) => ({
+        usageByProvider: {
+          ...state.usageByProvider,
+          [providerId]: usage,
+        },
+      }));
+    } catch {
+      // Silently fail - popover shows stale or empty state
+    }
   },
 
   handleTurnPersisted: (payload) => {
