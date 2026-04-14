@@ -41,6 +41,10 @@ export const SendMessageSchema = z.object({
   provider: ProviderIdSchema.optional(),
   /** When "plan", the server wraps the message with the plan-mode question prompt. */
   interactionMode: InteractionModeSchema.optional(),
+  /** USD budget cap for this session. 0 or absent disables. */
+  maxBudgetUsd: z.number().nonnegative().optional(),
+  /** Maximum agent turns. 0 or absent disables. */
+  maxTurns: z.number().int().nonnegative().optional(),
 });
 
 /** Schema for creating a thread and sending a message in one call. */
@@ -57,6 +61,10 @@ export const CreateAndSendSchema = z.object({
   provider: ProviderIdSchema.optional(),
   /** When "plan", the server wraps the message with the plan-mode question prompt. */
   interactionMode: InteractionModeSchema.optional(),
+  /** USD budget cap for this session. 0 or absent disables. */
+  maxBudgetUsd: z.number().nonnegative().optional(),
+  /** Maximum agent turns. 0 or absent disables. */
+  maxTurns: z.number().int().nonnegative().optional(),
   /** Source thread ID when branching from an existing thread. */
   parentThreadId: z.string().optional(),
   /** Fork-point message ID in the parent thread. Defaults to last persisted message. */
