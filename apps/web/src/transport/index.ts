@@ -3,6 +3,7 @@ import { createWsTransport } from "./ws-transport";
 import { ipcPushClient } from "./ipc-push-client";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useProviderModelsStore } from "@/stores/providerModelsStore";
 
 /** Re-exported transport and domain types for use across the web app. */
 export type { McodeTransport, Workspace, Thread, Message, ToolCall, GitBranch, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, SkillInfo, PrInfo, PrDetail, ToolCallRecord, Settings, PartialSettings, PlanAnswer } from "./types";
@@ -110,6 +111,7 @@ export async function initTransport(): Promise<McodeTransport> {
         // is replaced with the latest values.
         if (status === "connected") {
           void useSettingsStore.getState().fetch();
+          useProviderModelsStore.getState().initialize();
         }
       },
       discoverServerUrl: async () => {
