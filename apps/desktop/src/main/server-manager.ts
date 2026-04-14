@@ -1,16 +1,17 @@
 /**
- * Utility process lifecycle manager for the Mcode server.
- * Spawns the server as an Electron utilityProcess, polls for readiness,
+ * Child process lifecycle manager for the Mcode server.
+ * Spawns the server as a detached child process, polls for readiness,
  * and provides restart/shutdown capabilities.
  *
- * Uses utilityProcess instead of child_process.fork to enable
- * MessagePort transfer for direct renderer streaming.
+ * Uses detached child_process.spawn so the server outlives Electron
+ * and manages its own lifecycle via the grace period.
  */
 
-import { app, utilityProcess, type UtilityProcess, MessageChannelMain } from "electron";
-import { existsSync, readFileSync } from "fs";
+import { app } from "electron";
+import { spawn, type ChildProcess } from "child_process";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { readFile } from "fs/promises";
 import { createServer, type AddressInfo } from "net";
-import { randomUUID } from "crypto";
 import { resolve, join, dirname } from "path";
 import { getMcodeDir } from "@mcode/shared";
 import { SettingsSchema as BundledSettingsSchema } from "@mcode/contracts";
@@ -25,7 +26,7 @@ const SettingsSchema = globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? Bun
  * tsx bootstrap at `src/entry.mjs`.
  *
  * Also returns the native binding path for better-sqlite3 when packaged so
- * the server utility process can find it outside the asar archive.
+ * the server child process can find it outside the asar archive.
  */
 function getServerPaths(): {
   entry: string;
@@ -34,7 +35,7 @@ function getServerPaths(): {
 } {
   if (app.isPackaged) {
     // The server bundle and native deps are asarUnpack'd to real filesystem
-    // paths. utilityProcess.fork() needs a real entry path and cwd - it does
+    // paths. child_process.spawn() needs a real entry path and cwd - it does
     // not go through Electron's asar virtual filesystem layer.
     const unpackedRoot = resolve(process.resourcesPath, "app.asar.unpacked");
     const serverBundle = resolve(unpackedRoot, "dist", "server", "server.cjs");
@@ -46,7 +47,7 @@ function getServerPaths(): {
   }
 
   const serverDir = resolve(__dirname, "../../../server");
-  return { entry: resolve(serverDir, "src/entry.mjs"), cwd: serverDir };
+  return { entry: resolve(serverDir, "src/index.ts"), cwd: serverDir };
 }
 
 /**
@@ -100,6 +101,7 @@ function readServerHeapMb(): number {
     if (result.success) {
       return result.data.server.memory.heapMb;
     }
+    console.warn("[server-manager] settings.json parse failed, using default heap");
   } catch {
     // File missing or unreadable, fall through to default
   }
@@ -113,7 +115,7 @@ function readServerHeapMb(): number {
  * then immediately closes it.
  */
 async function findAvailablePort(min: number, max: number): Promise<number> {
-  for (let port = min; port <= max; port++) {
+  for (let port = min; port < max; port++) {
     const available = await new Promise<boolean>((resolve) => {
       const srv = createServer();
       srv.once("error", () => resolve(false));
@@ -138,6 +140,8 @@ interface ServerLock {
   authToken: string;
   pid: number;
   startedAt: string;
+  version: string;
+  ipcPath: string;
 }
 
 /**
@@ -145,8 +149,9 @@ interface ServerLock {
  * probing its health endpoint. Returns the lock info if healthy, null otherwise.
  */
 async function tryExistingServer(portMin: number, portMax: number): Promise<ServerLock | null> {
+  const lockPath = lockFilePath();
   try {
-    const raw = readFileSync(lockFilePath(), "utf-8");
+    const raw = readFileSync(lockPath, "utf-8");
     const lock: ServerLock = JSON.parse(raw);
 
     // Validate the lock file has the expected shape
@@ -158,6 +163,15 @@ async function tryExistingServer(portMin: number, portMax: number): Promise<Serv
     // Prevents dev instances from hijacking a packaged-app server (or vice versa).
     if (lock.port < portMin || lock.port >= portMax) {
       console.log(`[server-manager] Ignored existing server on port ${lock.port} (outside ${portMin}-${portMax})`);
+      return null;
+    }
+
+    // Check PID liveness before wasting time on HTTP probe
+    try {
+      process.kill(lock.pid, 0); // throws if process doesn't exist
+    } catch {
+      console.log(`[server-manager] Stale lock file: PID ${lock.pid} not alive`);
+      try { unlinkSync(lockPath); } catch { /* ok */ }
       return null;
     }
 
@@ -174,17 +188,17 @@ async function tryExistingServer(portMin: number, portMax: number): Promise<Serv
 }
 
 /**
- * Manages the lifecycle of the Mcode server utility process.
+ * Manages the lifecycle of the Mcode server child process.
  * Handles spawning, health-check polling, restart, and shutdown.
- * Supports MessagePort transfer for direct streaming to renderer.
  *
  * If another server instance is already running (detected via lock file),
  * reuses it instead of spawning a new one to avoid SQLite lock contention.
  */
 export class ServerManager {
-  private serverProcess: UtilityProcess | null = null;
+  private serverProcess: ChildProcess | null = null;
   private _port = 0;
   private _authToken = "";
+  private _ipcPath = "";
   private _reusedExisting = false;
 
   /**
@@ -208,6 +222,11 @@ export class ServerManager {
     return this._reusedExisting;
   }
 
+  /** IPC path for the server's fast-path push transport. */
+  get ipcPath(): string {
+    return this._ipcPath;
+  }
+
   /**
    * Start the server. If another instance is already running (lock file),
    * reuses it. Otherwise spawns a new utility process.
@@ -219,112 +238,223 @@ export class ServerManager {
     // (dev, source-prod, packaged) share the same data directory.
     const existing = await tryExistingServer(PORT_MIN, PORT_MAX);
     if (existing) {
-      this._port = existing.port;
-      this._authToken = existing.authToken;
-      this._reusedExisting = true;
-      return { port: this._port, authToken: this._authToken };
+      if (existing.version && existing.version !== app.getVersion()) {
+        console.log(`[server-manager] Version mismatch: running=${existing.version}, expected=${app.getVersion()}, replacing`);
+        await this.forceReplace();
+        // Fall through to spawn new server
+      } else {
+        this._port = existing.port;
+        this._authToken = existing.authToken;
+        this._ipcPath = existing.ipcPath ?? "";
+        this._reusedExisting = true;
+        return { port: this._port, authToken: this._authToken };
+      }
     }
 
-    this._port = await findAvailablePort(PORT_MIN, PORT_MAX);
-    this._authToken = randomUUID();
+    const sentinelPath = join(getMcodeDir(), "server.starting");
 
-    const heapMb = readServerHeapMb();
-    console.log(`Starting server with --max-old-space-size=${heapMb}`);
+    // Acquire startup lock to prevent duplicate server spawns
+    try {
+      writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        console.log("[server-manager] Startup lock held by another process, waiting for server");
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 200));
+          const existingNow = await tryExistingServer(PORT_MIN, PORT_MAX);
+          if (existingNow) {
+            this._port = existingNow.port;
+            this._authToken = existingNow.authToken;
+            this._ipcPath = existingNow.ipcPath ?? "";
+            this._reusedExisting = true;
+            return { port: this._port, authToken: this._authToken };
+          }
+        }
+        // Timeout: other spawner may have crashed. Re-acquire the lock before spawning.
+        try {
+          writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
+        } catch {
+          // Another process grabbed it first - retry the whole start flow
+          try { unlinkSync(sentinelPath); } catch { /* ok */ }
+        }
+      }
+    }
 
-    const { entry, cwd, nativeBindingPath } = getServerPaths();
+    try {
+      // Port pinning: prefer the previous port if lock file exists
+      let preferredPort: number | null = null;
+      const lockPath = lockFilePath();
+      if (existsSync(lockPath)) {
+        try {
+          const oldLock: ServerLock = JSON.parse(readFileSync(lockPath, "utf-8"));
+          if (oldLock.port >= PORT_MIN && oldLock.port < PORT_MAX) {
+            preferredPort = oldLock.port;
+          }
+        } catch { /* corrupt lock, ignore */ }
+      }
 
-    // V8 flags are processed at engine level before JS runs, so they work
-    // in utilityProcess. Module loader flags (--import) do NOT work here;
-    // tsx registration is handled by the entry.mjs bootstrap instead.
-    const child = utilityProcess.fork(entry, [], {
-      cwd,
-      execArgv: [
-        `--max-old-space-size=${heapMb}`,
-        "--max-semi-space-size=2",
-        "--expose-gc",
-      ],
-      env: {
-        ...process.env,
+      this._port = preferredPort
+        ? await findAvailablePort(preferredPort, preferredPort + 1).catch(() =>
+            findAvailablePort(PORT_MIN, PORT_MAX),
+          )
+        : await findAvailablePort(PORT_MIN, PORT_MAX);
+
+      const heapMb = readServerHeapMb();
+      console.log(`[server-manager] Server configured: --max-old-space-size=${heapMb}`);
+
+      const { entry, cwd, nativeBindingPath } = getServerPaths();
+
+      const env: Record<string, string> = {
+        ...(process.env as Record<string, string>),
+        // Run the Electron binary as a plain Node.js process so the server
+        // script executes without launching another Electron window.
+        ELECTRON_RUN_AS_NODE: "1",
         MCODE_PORT: String(this._port),
-        MCODE_AUTH_TOKEN: this._authToken,
         MCODE_MODE: "desktop",
         MCODE_DATA_DIR: getMcodeDir(),
         MCODE_TEMP_DIR: app.getPath("temp"),
         MCODE_VERSION: app.getVersion(),
-        ...(nativeBindingPath ? { BETTER_SQLITE3_BINDING: nativeBindingPath } : {}),
-      },
-      stdio: "pipe",
-    });
-    this.serverProcess = child;
+      };
 
-    // Forward server stdout/stderr to the main process console
-    child.stdout?.on("data", (data: Buffer) => {
-      process.stdout.write(`[server] ${data.toString()}`);
-    });
-    child.stderr?.on("data", (data: Buffer) => {
-      process.stderr.write(`[server] ${data.toString()}`);
-    });
-
-    child.on("exit", (code) => {
-      console.error(`Server process exited with code ${code}`);
-      if (this.serverProcess === child) {
-        this.serverProcess = null;
-        this.onUnexpectedExit?.(code);
+      if (nativeBindingPath) {
+        env.BETTER_SQLITE3_BINDING = nativeBindingPath;
       }
-    });
 
-    await this.waitForReady(10_000);
-    return { port: this._port, authToken: this._authToken };
+      // V8 flags go in the args array for child_process.spawn.
+      // Module loader flags (--import tsx) are supported here, unlike utilityProcess.
+      const v8Flags = [`--max-old-space-size=${heapMb}`, "--max-semi-space-size=2", "--expose-gc"];
+      const entryArgs = entry.endsWith(".cjs")
+        ? [entry]
+        : ["--import", "tsx", entry];
+      const args = [...v8Flags, ...entryArgs];
+
+      const child = spawn(process.execPath, args, {
+        cwd,
+        env,
+        detached: true,
+        stdio: isDev ? "inherit" : "ignore",
+      });
+      child.unref();
+      this.serverProcess = child;
+
+      child.on("exit", (code) => {
+        console.error(`Server process exited with code ${code}`);
+        if (this.serverProcess === child) {
+          this.serverProcess = null;
+          this.onUnexpectedExit?.(code);
+        }
+      });
+
+      await this.waitForReady(10_000);
+
+      // Read auth token from lock file (server writes it on startup).
+      // Retry briefly in case the lock file write races the health endpoint.
+      this._authToken = await this.readAuthTokenFromLock();
+
+      return { port: this._port, authToken: this._authToken };
+    } finally {
+      // Release startup lock whether spawn succeeded or failed
+      try { unlinkSync(sentinelPath); } catch { /* ok */ }
+    }
   }
 
   /**
-   * Kill the current server and start a fresh one.
-   * Waits for the old process to fully terminate before spawning.
+   * Force-replace the current server and start a fresh one.
+   * Uses {@link forceReplace} to gracefully shut down the old server,
+   * then waits briefly before spawning a new one.
    */
   async restart(): Promise<void> {
-    this.shutdown();
-    // Allow a brief window for the OS to reclaim the port
+    if (!this._reusedExisting) {
+      await this.forceReplace();
+    }
     await new Promise((r) => setTimeout(r, 500));
     await this.start();
   }
 
   /**
-   * Create a MessagePort pair and send one end to the server utility process.
-   * Returns the renderer-facing port for forwarding to the BrowserWindow.
-   * Not available when reusing an external server (no utility process to message).
+   * Detach from the server process reference.
+   * Intentional: the server outlives Electron and shuts itself down
+   * via the grace-period timer when all sessions disconnect.
    */
-  createStreamPort(): Electron.MessagePortMain {
-    if (!this.serverProcess) {
-      throw new Error("Cannot create stream port: server not running");
-    }
-    const { port1, port2 } = new MessageChannelMain();
-    this.serverProcess.postMessage({ type: "stream-port" }, [port2]);
-    return port1;
+  shutdown(): void {
+    if (this._reusedExisting || !this.serverProcess) return;
+    this.serverProcess = null;
   }
 
   /**
-   * Gracefully terminate the server process.
-   * No-op when reusing an external server (we don't own it).
-   * Sends kill() and retries after 5 seconds if the process has not exited.
-   * utilityProcess.kill() does not accept signal arguments.
+   * Force-stop the server for version replacement.
+   * Sends POST /shutdown for graceful teardown, falls back to SIGKILL.
    */
-  shutdown(): void {
-    if (this._reusedExisting) return;
-    if (!this.serverProcess) return;
+  async forceReplace(): Promise<void> {
+    const lockPath = lockFilePath();
+    if (!existsSync(lockPath)) return;
 
-    const proc = this.serverProcess;
-    this.serverProcess = null;
+    let lock: ServerLock;
+    try {
+      lock = JSON.parse(readFileSync(lockPath, "utf-8"));
+    } catch {
+      return;
+    }
 
-    proc.kill();
-    const forceKill = setTimeout(() => {
+    // Validate lock port is within this mode's range to prevent sending
+    // auth tokens to arbitrary localhost ports from a crafted lock file.
+    if (lock.port < PORT_MIN || lock.port >= PORT_MAX) {
+      console.warn(`[server-manager] forceReplace: port ${lock.port} outside allowed range, skipping`);
+      try { unlinkSync(lockPath); } catch { /* ok */ }
+      return;
+    }
+
+    // 1. Graceful HTTP shutdown
+    try {
+      await fetch(`http://localhost:${lock.port}/shutdown`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${lock.authToken}` },
+      });
+    } catch { /* server may already be down */ }
+
+    // 2. Poll for exit (200ms intervals, 10s timeout)
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
       try {
-        proc.kill();
+        process.kill(lock.pid, 0); // throws if dead
+        await new Promise((r) => setTimeout(r, 200));
       } catch {
-        // Already dead
+        break; // process exited
       }
-    }, 5000);
+    }
 
-    proc.once("exit", () => clearTimeout(forceKill));
+    // 3. Force kill if still alive
+    try {
+      process.kill(lock.pid, 0);
+      process.kill(lock.pid, "SIGKILL");
+    } catch { /* already dead */ }
+
+    // 4. Clean up stale lock
+    try { unlinkSync(lockPath); } catch { /* ok */ }
+  }
+
+  /**
+   * Read the auth token from the server lock file with retry.
+   * The lock file may not exist immediately after /health returns 200
+   * if the write races the listen callback under heavy I/O.
+   */
+  private async readAuthTokenFromLock(): Promise<string> {
+    const maxAttempts = 10;
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const raw = await readFile(lockFilePath(), "utf-8");
+        const lock: ServerLock = JSON.parse(raw);
+        if (lock.authToken) {
+          this._ipcPath = lock.ipcPath ?? "";
+          return lock.authToken;
+        }
+      } catch {
+        // File not ready yet
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error("Server lock file not available after health check passed");
   }
 
   /**

@@ -12,31 +12,52 @@ import { BinaryUploadHeaderSchema, type BinaryUploadHeader } from "@mcode/contra
 import { routeMessage, type RouterDeps } from "./ws-router";
 import { addClient, removeClient } from "./push";
 import { handleBinaryUpload } from "./binary-upload";
+import { timingSafeEqual } from "crypto";
+import { extractToken, buildAuthCookie } from "./auth";
+
+/** Constant-time string comparison to prevent timing attacks on token validation. */
+function safeTokenEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 /** Create and configure the HTTP + WebSocket server. */
-export function createWsServer(deps: RouterDeps): {
+export function createWsServer(deps: RouterDeps & { authToken: string }): {
   httpServer: Server;
   wss: WebSocketServer;
 } {
-  const authToken = process.env.MCODE_AUTH_TOKEN;
+  const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+    const token = extractToken(req);
 
-  const httpServer = createServer(
-    (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method === "GET" && req.url === "/health") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            status: "ok",
-            activeAgents: deps.agentService.activeCount(),
-          }),
-        );
+    if (req.method === "GET" && req.url?.startsWith("/health")) {
+      const body = JSON.stringify({
+        status: "ok",
+        activeAgents: deps.agentService.activeCount(),
+      });
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token && safeTokenEqual(token, deps.authToken)) {
+        headers["Set-Cookie"] = buildAuthCookie(deps.authToken);
+      }
+      res.writeHead(200, headers);
+      res.end(body);
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/shutdown") {
+      if (!token || !safeTokenEqual(token, deps.authToken)) {
+        res.writeHead(401);
+        res.end("Unauthorized");
         return;
       }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "shutting_down" }));
+      process.kill(process.pid, "SIGTERM");
+      return;
+    }
 
-      res.writeHead(404);
-      res.end();
-    },
-  );
+    res.writeHead(404);
+    res.end("Not found");
+  });
 
   const wss = new WebSocketServer({ server: httpServer, maxPayload: 45 * 1024 * 1024 });
 
@@ -53,18 +74,11 @@ export function createWsServer(deps: RouterDeps): {
   });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-    // Auth: validate token from query params if configured
-    if (authToken) {
-      const url = new URL(
-        req.url ?? "/",
-        `http://${req.headers.host ?? "localhost"}`,
-      );
-      const token = url.searchParams.get("token");
-      if (token !== authToken) {
-        logger.warn("WebSocket connection rejected: invalid token");
-        ws.close(4001, "Unauthorized");
-        return;
-      }
+    const token = extractToken(req);
+    if (!token || !safeTokenEqual(token, deps.authToken)) {
+      logger.warn("WebSocket connection rejected: invalid token");
+      ws.close(4001, "Unauthorized");
+      return;
     }
 
     logger.info("WebSocket client connected");

@@ -1,13 +1,23 @@
 import type { AttachmentMeta } from "./types";
 
+/** IPC push transport relayed from the Electron main process. */
+interface IpcBridge {
+  /** Register a callback for push messages forwarded by the main process. */
+  onPush(callback: (data: unknown) => void): void;
+  /** Register a callback for IPC connection close events. */
+  onDisconnect(callback: () => void): void;
+  /** Remove all IPC push listeners. */
+  off(): void;
+}
+
 /**
  * Thin bridge exposed by the Electron preload script for native
  * desktop operations that cannot go through the WebSocket transport
  * (file dialogs, clipboard, editor launching, etc.).
  */
 interface DesktopBridge {
-  /** Return the URL of the local mcode server (e.g. ws://localhost:PORT). */
-  getServerUrl(): Promise<string>;
+  /** Return the URL and IPC path of the local mcode server. */
+  getServerUrl(): Promise<{ url: string; ipcPath: string }>;
   /** Open a native folder-picker dialog. Returns the selected path or null. */
   showOpenDialog(options: { title?: string }): Promise<string | null>;
   /** Launch an external editor at the given directory. */
@@ -28,8 +38,6 @@ interface DesktopBridge {
   getRecentLogs(lines: number): Promise<string>;
   /** Map a browser File object to its real filesystem path. */
   getPathForFile(file: File): string;
-  /** Register a callback for streaming events received via MessagePort. */
-  onStreamEvent(callback: (data: unknown) => void): void;
   /** Clear Blink's in-memory resource caches (images, scripts, CSS).
    * Typically called after a thread switch to reclaim memory. */
   clearRendererCache(): void;
@@ -39,6 +47,8 @@ interface DesktopBridge {
   openSettingsFile(): Promise<string>;
   /** Open keybindings.json in the OS default editor. Creates the file if it doesn't exist. */
   openKeybindingsFile(): Promise<string>;
+  /** IPC push transport relayed from the main process. */
+  ipc: IpcBridge;
 }
 
 declare global {

@@ -87,6 +87,8 @@ export type ConnectionStatus = "connecting" | "connected" | "reconnecting";
 export interface WsTransportOptions {
   /** Called whenever the connection status changes. */
   onStatusChange?: (status: ConnectionStatus) => void;
+  /** Called between reconnect attempts to refresh the server URL. */
+  discoverServerUrl?: () => Promise<string>;
 }
 
 /**
@@ -99,9 +101,10 @@ export interface WsTransportOptions {
  * re-subscription to push channels on reconnect.
  */
 export function createWsTransport(
-  url: string,
+  initialUrl: string,
   options?: WsTransportOptions,
 ): McodeTransport & { close(): void; waitForConnection(timeoutMs: number): Promise<void> } {
+  let url = initialUrl;
   let ws: WebSocket;
   let idCounter = 0;
   let pending = new Map<string, PendingCall>();
@@ -119,14 +122,17 @@ export function createWsTransport(
     });
   }
 
-  function connect() {
+  function connect(targetUrl?: string) {
     resetReady();
-    ws = new WebSocket(url);
+    ws = new WebSocket(targetUrl ?? url);
 
     ws.onopen = () => {
       reconnectDelay = MIN_RECONNECT_MS;
       resolveReady();
       options?.onStatusChange?.("connected");
+
+      // Auth token is conveyed via HttpOnly cookie (Set-Cookie on /health).
+      // No need to store it in localStorage - the cookie handles reconnection.
     };
 
     ws.onmessage = (event) => {
@@ -182,9 +188,17 @@ export function createWsTransport(
 
   function scheduleReconnect() {
     if (reconnectTimer) return;
-    reconnectTimer = setTimeout(() => {
+    reconnectTimer = setTimeout(async () => {
       reconnectTimer = null;
       reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
+      if (options?.discoverServerUrl) {
+        try {
+          const newUrl = await options.discoverServerUrl();
+          url = newUrl;
+        } catch {
+          // Discovery failed, retry with current URL
+        }
+      }
       connect();
     }, reconnectDelay);
   }

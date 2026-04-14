@@ -5,11 +5,13 @@
 
 import { setupContainer } from "./container";
 import { createWsServer } from "./transport/ws-server";
-import { broadcast } from "./transport/push";
-import { PortPush, type MessagePortLike } from "./transport/port-push";
+import { broadcast, onSessionChange, sessionCount } from "./transport/push";
+import { PortPush } from "./transport/port-push";
+import { IpcPushServer, generateIpcPath } from "./transport/ipc-push-server";
 import { logger, getMcodeDir } from "@mcode/shared";
-import { writeFileSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
+import { randomUUID } from "crypto";
 
 // Services
 import { WorkspaceService } from "./services/workspace-service";
@@ -52,6 +54,30 @@ const LOCK_FILE_PATH = join(getMcodeDir(), "server.lock");
  */
 const HOST = process.env.MCODE_HOST ?? "127.0.0.1";
 
+/**
+ * Resolve the auth token with precedence:
+ * 1. MCODE_AUTH_TOKEN env var (for testing / standalone override)
+ * 2. ~/.mcode/auth-secret file (stable across restarts)
+ * 3. Generate new UUID and persist to file
+ */
+function resolveAuthToken(): string {
+  const fromEnv = process.env.MCODE_AUTH_TOKEN;
+  if (fromEnv) return fromEnv;
+
+  const secretPath = join(getMcodeDir(), "auth-secret");
+  if (existsSync(secretPath)) {
+    const token = readFileSync(secretPath, "utf-8").trim();
+    if (token) return token;
+  }
+
+  const token = randomUUID();
+  mkdirSync(getMcodeDir(), { recursive: true });
+  writeFileSync(secretPath, token, { mode: 0o600 });
+  return token;
+}
+
+const AUTH_TOKEN = resolveAuthToken();
+
 // Initialize DI container
 const container = setupContainer();
 
@@ -82,26 +108,16 @@ const db = container.resolve<Database.Database>("Database");
 
 const portPush = new PortPush();
 
-/** Electron utilityProcess parentPort shape (only present when running as a utility process). */
-interface ParentPort {
-  on(event: string, listener: (e: { data: unknown; ports: unknown[] }) => void): void;
-}
+/** IPC push server for named pipe / Unix domain socket transport. */
+const ipcServer = new IpcPushServer();
 
-// Listen for MessagePort from parent utility process.
-// `parentPort` exists only when running inside Electron's utilityProcess.
-// Calling start() is not needed: Electron auto-starts the port when the
-// first "message" listener is added.
-const parentPort = (process as NodeJS.Process & { parentPort?: ParentPort }).parentPort;
+/** Platform-appropriate IPC path for this server process. */
+const ipcPath = generateIpcPath(process.pid, getMcodeDir());
 
-if (parentPort) {
-  parentPort.on("message", (e: { data: unknown; ports: unknown[] }) => {
-    const msg = e.data as { type?: string };
-    if (msg?.type === "stream-port" && e.ports[0]) {
-      portPush.attach(e.ports[0] as MessagePortLike);
-      logger.info("Stream MessagePort attached");
-    }
-  });
-}
+ipcServer.onConnection((port) => {
+  logger.info("IPC push client connected");
+  portPush.attach(port);
+});
 
 // Wire up PTY sender to broadcast push events
 terminalService.setSender((channel, data) => {
@@ -220,6 +236,7 @@ const { httpServer, wss } = createWsServer({
   prDraftService,
   threadRepo,
   workspaceRepo,
+  authToken: AUTH_TOKEN,
 });
 
 /**
@@ -240,13 +257,16 @@ function listen(port: number, attempt = 1): void {
     logger.info(`Mcode server listening on ${HOST}:${port}`);
 
     // Write lock file so other instances can discover this server
-    const authToken = process.env.MCODE_AUTH_TOKEN ?? "";
     try {
-      writeFileSync(
-        LOCK_FILE_PATH,
-        JSON.stringify({ port, authToken, pid: process.pid, startedAt: new Date().toISOString() }),
-        { mode: 0o600 },
-      );
+      const lockData = JSON.stringify({
+        port,
+        authToken: AUTH_TOKEN,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        version: process.env.MCODE_VERSION ?? "0.0.0",
+        ipcPath,
+      });
+      writeFileSync(LOCK_FILE_PATH, lockData, { mode: 0o600 });
       logger.info("Server lock file written", { path: LOCK_FILE_PATH });
     } catch (err) {
       logger.warn("Failed to write server lock file", { error: String(err) });
@@ -254,7 +274,45 @@ function listen(port: number, attempt = 1): void {
   });
 }
 
-listen(PREFERRED_PORT);
+/** Grace period in milliseconds before shutting down when all sessions disconnect. */
+const GRACE_PERIOD_MS = 30_000;
+
+/** Timer handle for the active grace period, null when no grace period is running. */
+let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Start HTTP server and subscribe to session changes for grace period shutdown. */
+function startServerAndSubscribe(): void {
+  listen(PREFERRED_PORT);
+
+  // Subscribe to session changes after the server starts so the grace period
+  // only activates once the server is ready to accept connections.
+  onSessionChange((count) => {
+    if (count === 0 && !graceTimer) {
+      logger.info("All sessions disconnected, grace period started", {
+        graceMs: GRACE_PERIOD_MS,
+      });
+      graceTimer = setTimeout(() => {
+        if (sessionCount() === 0) {
+          logger.info("Grace period expired with zero sessions, shutdown initiated");
+          shutdown();
+        }
+      }, GRACE_PERIOD_MS);
+    } else if (count > 0 && graceTimer) {
+      logger.info("New session connected, grace period cancelled");
+      clearTimeout(graceTimer);
+      graceTimer = null;
+    }
+  });
+}
+
+ipcServer.listen(ipcPath).then(() => {
+  startServerAndSubscribe();
+}).catch((err) => {
+  logger.error("IPC server failed to start, fell back to WebSocket-only push", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+  startServerAndSubscribe();
+});
 
 /**
  * Gracefully shut down all services, close WebSocket connections,
@@ -262,10 +320,24 @@ listen(PREFERRED_PORT);
  * Awaits server close handshakes so in-flight connections drain cleanly.
  */
 async function shutdown(): Promise<void> {
-  logger.info("Shutting down...");
+  logger.info("Shutdown initiated");
+
+  // Clear any pending grace period timer
+  if (graceTimer) {
+    clearTimeout(graceTimer);
+    graceTimer = null;
+  }
 
   // 0. Close the MessagePort stream transport
   portPush.detach();
+
+  // Close IPC push server
+  await ipcServer.close();
+
+  // Clean up IPC socket file on non-Windows
+  if (process.platform !== "win32") {
+    try { unlinkSync(ipcPath); } catch { /* already removed */ }
+  }
 
   // 1. Capture active thread IDs before stopAll() clears them
   const activeThreadIds = agentService.activeThreadIds();

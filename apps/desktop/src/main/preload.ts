@@ -7,34 +7,9 @@
 
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
-/**
- * Stream port callback registry.
- * The preload receives a MessagePort via webContents.postMessage('stream-port')
- * and forwards messages to the registered callback in the renderer world.
- *
- * Messages arriving before the callback is registered are buffered and
- * flushed in FIFO order once onStreamEvent is called.
- */
-let streamCallback: ((data: unknown) => void) | null = null;
-const streamQueue: unknown[] = [];
-
-ipcRenderer.on("stream-port", (event) => {
-  const port = event.ports[0];
-  if (!port) return;
-
-  port.onmessage = (e: MessageEvent) => {
-    if (streamCallback) {
-      streamCallback(e.data);
-    } else {
-      streamQueue.push(e.data);
-    }
-  };
-  port.start();
-});
-
 contextBridge.exposeInMainWorld("desktopBridge", {
-  /** Get the WebSocket URL (with auth token) for connecting to the server. */
-  getServerUrl: (): Promise<string> => ipcRenderer.invoke("get-server-url"),
+  /** Get the WebSocket URL (with auth token) and IPC path for connecting to the server. */
+  getServerUrl: (): Promise<{ url: string; ipcPath: string }> => ipcRenderer.invoke("get-server-url"),
 
   /** Show a native open-directory dialog. Returns the selected path or null. */
   showOpenDialog: (opts: Record<string, unknown>): Promise<string | null> =>
@@ -73,15 +48,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   /** Resolve the native file path for a File object (drag-and-drop). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 
-  /** Register a callback for streaming events received via MessagePort. */
-  onStreamEvent: (callback: (data: unknown) => void): void => {
-    streamCallback = callback;
-    // Flush any messages that arrived before the callback was registered
-    while (streamQueue.length > 0) {
-      callback(streamQueue.shift()!);
-    }
-  },
-
   /** Clear Blink's in-memory resource caches (images, scripts, CSS).
    * Typically called after a thread switch to reclaim memory. */
   clearRendererCache: (): void => webFrame.clearCache(),
@@ -103,4 +69,21 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   /** Open keybindings.json in the OS default editor. Creates the file if it doesn't exist. */
   openKeybindingsFile: (): Promise<string> =>
     ipcRenderer.invoke("open-keybindings-file"),
+
+  /** IPC push transport relayed from the main process. */
+  ipc: {
+    /** Listen for push messages forwarded by the main process IPC relay. */
+    onPush(callback: (data: unknown) => void) {
+      ipcRenderer.on("ipc-push-message", (_event: unknown, data: unknown) => callback(data));
+    },
+    /** Listen for IPC connection close events. */
+    onDisconnect(callback: () => void) {
+      ipcRenderer.on("ipc-push-disconnect", () => callback());
+    },
+    /** Remove all IPC push listeners. */
+    off() {
+      ipcRenderer.removeAllListeners("ipc-push-message");
+      ipcRenderer.removeAllListeners("ipc-push-disconnect");
+    },
+  },
 });

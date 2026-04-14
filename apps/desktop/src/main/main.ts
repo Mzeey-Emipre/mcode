@@ -14,11 +14,13 @@ import {
   dialog,
   ipcMain,
   protocol,
+  session,
   shell,
 } from "electron";
 import { execFileSync, spawn, type ChildProcess } from "child_process";
 import { existsSync, createReadStream } from "fs";
 import { mkdir, writeFile } from "fs/promises";
+import { connect as netConnect } from "net";
 import { isAbsolute, join } from "path";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
@@ -212,6 +214,62 @@ function openIfAllowed(url: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// IPC push relay (main process → renderer via webContents.send)
+// ---------------------------------------------------------------------------
+
+/**
+ * Connect to the server's IPC push endpoint and forward parsed frames
+ * to the renderer via webContents.send("ipc-push-message", data).
+ * The main process owns the net.Socket because the preload runs in a
+ * sandbox that doesn't have access to the Node.js `net` module.
+ */
+function startIpcRelay(ipcPath: string, window: BrowserWindow): void {
+  if (!ipcPath) return;
+
+  const socket = netConnect(ipcPath);
+  const chunks: Buffer[] = [];
+  let totalLen = 0;
+
+  socket.on("data", (chunk: Buffer) => {
+    chunks.push(chunk);
+    totalLen += chunk.length;
+
+    // Only concat when we have enough data for at least one frame header
+    let buffer = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, totalLen);
+    chunks.length = 0;
+    totalLen = 0;
+
+    while (buffer.length >= 4) {
+      const frameLen = buffer.readUInt32BE(0);
+      if (buffer.length < 4 + frameLen) break;
+
+      const json = buffer.subarray(4, 4 + frameLen).toString("utf-8");
+      buffer = buffer.subarray(4 + frameLen);
+
+      try {
+        const data = JSON.parse(json);
+        if (!window.isDestroyed()) {
+          window.webContents.send("ipc-push-message", data);
+        }
+      } catch { /* malformed frame, skip */ }
+    }
+
+    // Retain leftover bytes for the next data event
+    if (buffer.length > 0) {
+      chunks.push(buffer);
+      totalLen = buffer.length;
+    }
+  });
+
+  socket.on("error", () => socket.destroy());
+  socket.on("close", () => {
+    if (!window.isDestroyed()) {
+      window.webContents.send("ipc-push-disconnect");
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------
 
@@ -294,9 +352,10 @@ function createWindow(): void {
 /** Register all native-only IPC handlers. */
 function registerIpcHandlers(): void {
   // Server URL for WebSocket connection
-  ipcMain.handle("get-server-url", () => {
-    return `ws://localhost:${serverManager.port}?token=${serverManager.authToken}`;
-  });
+  ipcMain.handle("get-server-url", () => ({
+    url: `ws://localhost:${serverManager.port}?token=${serverManager.authToken}`,
+    ipcPath: serverManager.ipcPath,
+  }));
 
   // Native file dialog
   ipcMain.handle(
@@ -513,11 +572,8 @@ function setupCloseHandler(): void {
       });
 
       if (response === 0) {
-        serverManager.shutdown();
         app.quit();
       }
-    } else {
-      serverManager.shutdown();
     }
   });
 }
@@ -585,17 +641,22 @@ app.whenReady().then(async () => {
     // invoke get-server-url as soon as it loads, without racing the handler.
     registerIpcHandlers();
 
+    // Set auth cookie so the renderer can authenticate to the server via HTTP
+    await session.defaultSession.cookies.set({
+      url: `http://localhost:${serverManager.port}`,
+      name: "mcode-auth",
+      value: serverManager.authToken,
+      httpOnly: true,
+      sameSite: "strict",
+    });
 
     // Create window
     createWindow();
     console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
 
-    // Create and distribute streaming MessagePort pair.
-    // MessagePort requires an owned UtilityProcess handle - skip when reusing
-    // an external server (the renderer falls back to pure WebSocket).
-    if (!serverManager.reusedExisting) {
-      const rendererPort = serverManager.createStreamPort();
-      mainWindow!.webContents.postMessage("stream-port", null, [rendererPort]);
+    // Start IPC push relay (main process → renderer via webContents.send)
+    if (mainWindow && serverManager.ipcPath) {
+      startIpcRelay(serverManager.ipcPath, mainWindow);
     }
 
     // Set up close handler
@@ -605,12 +666,10 @@ app.whenReady().then(async () => {
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
-        // Re-distribute stream port to the new window (only if we own the process)
-        if (!serverManager.reusedExisting) {
-          const port = serverManager.createStreamPort();
-          mainWindow!.webContents.postMessage("stream-port", null, [port]);
-        }
         setupCloseHandler();
+        if (mainWindow && serverManager.ipcPath) {
+          startIpcRelay(serverManager.ipcPath, mainWindow);
+        }
       }
     });
 
@@ -628,13 +687,8 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    serverManager.shutdown();
     app.quit();
   }
-});
-
-app.on("before-quit", () => {
-  serverManager.shutdown();
 });
 
 export { mainWindow };
