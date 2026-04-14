@@ -1525,7 +1525,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       set((state) => ({
         usageByProvider: {
           ...state.usageByProvider,
-          [key]: usage,
+          [key]: { ...state.usageByProvider[key], ...usage },
         },
       }));
     } catch {

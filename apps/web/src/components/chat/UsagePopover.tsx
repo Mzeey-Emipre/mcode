@@ -28,16 +28,22 @@ function daysUntil(iso: string | undefined): number | undefined {
 }
 
 /** Horizontal fill bar for usage visualization. */
-function UsageBar({ percent, className }: { percent: number; className?: string }) {
+function UsageBar({ percent, className, label }: { percent: number; className?: string; label?: string }) {
   const color =
     percent >= 0.9 ? "bg-destructive" :
     percent >= 0.7 ? "bg-amber-500" :
     "bg-emerald-500";
+  const valuenow = Math.round(Math.min(percent * 100, 100));
   return (
     <div className="h-1 w-full rounded-full bg-muted">
       <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={valuenow}
+        aria-label={label}
         className={`h-1 rounded-full transition-all ${color} ${className ?? ""}`}
-        style={{ width: `${Math.min(percent * 100, 100)}%` }}
+        style={{ width: `${valuenow}%` }}
       />
     </div>
   );
@@ -57,7 +63,7 @@ function QuotaRow({ category }: { category: QuotaCategory }) {
           {category.isUnlimited ? "unlimited" : usedDisplay}
         </span>
       </div>
-      {!category.isUnlimited && <UsageBar percent={percent} />}
+      {!category.isUnlimited && <UsageBar percent={percent} label={`${category.label} usage`} />}
     </div>
   );
 }
