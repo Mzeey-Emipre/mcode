@@ -1,6 +1,5 @@
 import { useState, useCallback } from "react";
 import { Shield, ChevronDown, Check, X, Zap, Clock } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -126,63 +125,82 @@ export function PermissionRequestCard({
       </pre>
 
       {/* Controls */}
-      <div className="flex items-center gap-1.5">
-        {/* Allow dropdown — shows both options */}
-        <DropdownMenu>
-          <DropdownMenuTrigger
+      <div className="flex items-center gap-2">
+        {/* Split button: left side fires Allow immediately; right chevron opens more options */}
+        <div className="flex items-stretch rounded-md overflow-hidden ring-1 ring-primary/60">
+          <button
             disabled={responding}
-            aria-label="Allow options"
+            onClick={() => respond("allow")}
             className={cn(
-              "inline-flex h-6 items-center gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs font-medium",
+              "inline-flex h-6 items-center gap-1 pl-2 pr-2 text-xs font-medium",
               "bg-primary text-primary-foreground",
-              "transition-colors hover:bg-primary/90",
-              "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+              "hover:bg-primary/90 transition-colors",
               "disabled:pointer-events-none disabled:opacity-50",
-              "select-none cursor-default",
             )}
           >
             <Check size={11} />
             Allow
-            <ChevronDown size={10} className="opacity-70 -mr-0.5" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" sideOffset={4} className="min-w-[170px]">
-            <DropdownMenuItem
-              disabled={responding}
-              onSelect={() => respond("allow")}
-              className="gap-2"
-            >
-              <Zap size={12} className="text-amber-500 shrink-0" />
-              <div className="flex flex-col">
-                <span className="text-xs font-medium">Allow once</span>
-                <span className="text-[10px] text-muted-foreground">Prompt again next time</span>
-              </div>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={responding}
-              onSelect={() => respond("allow-session")}
-              className="gap-2"
-            >
-              <Clock size={12} className="text-blue-400 shrink-0" />
-              <div className="flex flex-col">
-                <span className="text-xs font-medium">Allow in session</span>
-                <span className="text-[10px] text-muted-foreground">Skip prompts this session</span>
-              </div>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </button>
 
-        {/* Deny — quiet by default, destructive on hover */}
-        <Button
-          variant="ghost"
-          size="xs"
+          {/* Divider — the visual demarcator between Allow and the dropdown */}
+          <div className="w-px bg-primary-foreground/20 self-stretch" />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              disabled={responding}
+              aria-label="More allow options"
+              className={cn(
+                "inline-flex h-6 w-6 items-center justify-center",
+                "bg-primary text-primary-foreground",
+                "hover:bg-primary/90 transition-colors",
+                "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                "disabled:pointer-events-none disabled:opacity-50",
+              )}
+            >
+              <ChevronDown size={11} className="opacity-80" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" sideOffset={4} className="min-w-[180px]">
+              <DropdownMenuItem
+                disabled={responding}
+                onSelect={() => respond("allow")}
+                className="gap-2"
+              >
+                <Zap size={12} className="text-amber-500 shrink-0" />
+                <div className="flex flex-col">
+                  <span className="text-xs font-medium">Allow once</span>
+                  <span className="text-[10px] text-muted-foreground">Prompt again next time</span>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                disabled={responding}
+                onSelect={() => respond("allow-session")}
+                className="gap-2"
+              >
+                <Clock size={12} className="text-blue-400 shrink-0" />
+                <div className="flex flex-col">
+                  <span className="text-xs font-medium">Allow in session</span>
+                  <span className="text-[10px] text-muted-foreground">Skip prompts this session</span>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Deny — muted ghost, goes red on hover */}
+        <button
           disabled={responding}
           onClick={() => respond("deny")}
-          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 gap-1"
+          className={cn(
+            "inline-flex h-6 items-center gap-1 px-2 text-xs font-medium rounded-md",
+            "text-muted-foreground/70 hover:text-destructive",
+            "hover:bg-destructive/10 transition-colors",
+            "disabled:pointer-events-none disabled:opacity-50",
+          )}
         >
           <X size={11} />
           Deny
-        </Button>
+        </button>
       </div>
 
       {error && (
