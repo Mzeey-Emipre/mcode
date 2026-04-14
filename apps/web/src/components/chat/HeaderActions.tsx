@@ -41,6 +41,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   // poll resolves. Only use it when cachedPrUrl is present — otherwise we'd produce
   // a PR object with url: "" which breaks the Open-in-browser action.
   const cachedPrUrl = useWorkspaceStore((s) => s.prUrlsByThreadId[thread.id]);
+  const checks = useWorkspaceStore((s) => s.checksById[thread.id]) ?? null;
   const storePr = thread.pr_number != null && cachedPrUrl
     ? { number: thread.pr_number, url: cachedPrUrl, state: thread.pr_status ?? "OPEN" }
     : null;
@@ -126,6 +127,8 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
               hasCommitsAhead={hasCommitsAhead}
               onCreatePr={() => setCreatePrOpen(true)}
               onOpenPr={handleOpenPr}
+              checks={checks}
+              threadId={thread.id}
             />
           )}
           <OpenInEditorMenu dirPath={dirPath} />
