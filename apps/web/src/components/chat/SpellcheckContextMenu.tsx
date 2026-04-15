@@ -88,11 +88,15 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
   // Note: ContextMenu auto-calls onClose() after every item click,
   // so individual onClick handlers must NOT call setMenuState(null) themselves.
   const handleReplace = useCallback((word: string) => {
-    window.desktopBridge?.spellcheck.replaceMisspelling(word);
+    window.desktopBridge?.spellcheck.replaceMisspelling(word).catch(() => {
+      // IPC rejection is non-recoverable from the renderer; the word stays uncorrected.
+    });
   }, []);
 
   const handleAddToDictionary = useCallback((word: string) => {
-    window.desktopBridge?.spellcheck.addToDictionary(word);
+    window.desktopBridge?.spellcheck.addToDictionary(word).catch(() => {
+      // IPC rejection is non-recoverable from the renderer; the word is not added.
+    });
   }, []);
 
   if (!menuState) return null;
@@ -162,7 +166,9 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
       label: "Paste",
       onClick: () => {
         // Use Electron's native paste via IPC (execCommand('paste') is unreliable).
-        window.desktopBridge?.spellcheck.paste();
+        window.desktopBridge?.spellcheck.paste().catch(() => {
+          // IPC rejection is non-recoverable from the renderer; paste is skipped.
+        });
       },
     });
   }
