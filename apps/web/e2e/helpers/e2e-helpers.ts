@@ -31,7 +31,9 @@ export async function mockWebSocketServer(
     resolveWs = r;
   });
 
-  await page.routeWebSocket(/ws:\/\/localhost:\d+/, (ws) => {
+  // Match 5-digit ports (19400-19800 mcode range) to avoid intercepting Vite's
+  // HMR socket at port 5173 (4 digits), which would trigger a page reload.
+  await page.routeWebSocket(/ws:\/\/localhost:\d{5}/, (ws) => {
     resolveWs(ws);
 
     ws.onMessage((data) => {
@@ -60,6 +62,18 @@ export async function mockWebSocketServer(
       else if (method === "agent.activeCount") result = 0;
       else if (method === "app.version") result = "0.0.1-test";
       else if (method === "config.discover") result = {};
+      // Return valid settings defaults so App can read settings.appearance.theme.
+      else if (method === "settings.get") result = {
+        appearance: { theme: "system" },
+        agent: { maxConcurrent: 3, defaults: { mode: "chat", permission: "full" }, guardrails: { maxBudgetUsd: 0, maxTurns: 0 } },
+        model: { defaults: { provider: "claude", id: "claude-sonnet-4-6", fallbackId: "claude-sonnet-4-6", reasoning: "high" } },
+        provider: { cli: { codex: "", claude: "", copilot: "" } },
+        prDraft: { provider: "", model: "" },
+        terminal: { scrollback: 1000 },
+        notifications: { enabled: false },
+        worktree: { naming: { mode: "auto", aiConfirmation: true } },
+        server: { memory: { heapMb: 96 } },
+      };
       else {
         ws.send(
           JSON.stringify({
