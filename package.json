@@ -37,8 +37,5 @@
     "node-pty",
     "@electron/rebuild"
   ],
-  "dependencies": {
-    "@github/copilot": "^1.0.21",
-    "@github/copilot-sdk": "^0.2.2"
-  }
+  "dependencies": {}
 }
