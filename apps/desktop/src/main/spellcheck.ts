@@ -39,9 +39,16 @@ export function setupSpellcheck(win: BrowserWindow): void {
 
   // Intercept every right-click and forward spelling data to the renderer.
   const handleContextMenu = (
-    _event: Electron.Event,
+    event: Electron.Event,
     params: Electron.ContextMenuParams,
   ): void => {
+    // Suppress Chromium's native context menu. We must do this here (main process)
+    // rather than via e.preventDefault() in the renderer, because calling
+    // preventDefault() on the renderer's DOM contextmenu event tells Chromium
+    // the event is handled - it then skips sending ShowContextMenu to the browser
+    // process, so this handler would never fire.
+    event.preventDefault();
+
     if (win.isDestroyed()) return;
 
     const data: SpellcheckContextMenuData = {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach, useRef } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { useRef as reactUseRef } from "react";
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
@@ -49,7 +49,7 @@ function TestWrapper() {
  * from the Electron main process with optional overrides.
  */
 function fireContextMenu(overrides: Record<string, unknown> = {}) {
-  // Step 1: Fire DOM contextmenu on the editor to set pendingRef.
+  // Step 1: Fire DOM contextmenu on the editor to set pendingPos.
   const editor = screen.getByTestId("editor");
   fireEvent.contextMenu(editor);
 
@@ -70,7 +70,7 @@ function fireContextMenu(overrides: Record<string, unknown> = {}) {
 
 describe("SpellcheckContextMenu", () => {
   it("renders nothing when no context-menu event received", () => {
-    const { container } = render(<TestWrapper />);
+    render(<TestWrapper />);
     // Only the wrapper div and the editor div should be present - no menu.
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });

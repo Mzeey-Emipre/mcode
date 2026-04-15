@@ -29,18 +29,25 @@ interface SpellcheckContextMenuProps {
  */
 export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps) {
   const [menuState, setMenuState] = useState<ContextMenuEvent | null>(null);
-  // Set to true when the most recent contextmenu event came from the editor element.
-  // Cleared after the IPC data arrives so stale events don't trigger the menu.
-  const pendingRef = useRef(false);
+  // Stores the CSS-pixel viewport coordinates captured from the DOM contextmenu
+  // event. Non-null means a right-click on the editor is pending an IPC response.
+  // Cleared once the IPC data arrives so stale events don't trigger the menu.
+  const pendingPos = useRef<{ x: number; y: number } | null>(null);
 
-  // Prevent the native context menu on the editor and mark the next IPC event as local.
+  // Capture click position from the DOM event and mark the next IPC event as local.
   useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
 
     const handleContextMenu = (e: MouseEvent) => {
-      pendingRef.current = true;
-      e.preventDefault();
+      // Capture viewport-relative CSS pixel coordinates from the DOM event.
+      // We use these for menu positioning instead of the Electron IPC coordinates,
+      // which can be in physical pixels on high-DPI displays causing offset menus.
+      // Do NOT call e.preventDefault() here - that would tell Chromium the event
+      // is handled and it would skip the ShowContextMenu IPC to the main process,
+      // meaning the Electron context-menu event never fires and we lose spelling data.
+      // The main process calls event.preventDefault() in its handler instead.
+      pendingPos.current = { x: e.clientX, y: e.clientY };
     };
 
     el.addEventListener("contextmenu", handleContextMenu);
@@ -54,13 +61,16 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
 
     // onContextMenu returns the listener reference for targeted cleanup.
     const listener = bridge.onContextMenu((data) => {
-      if (!pendingRef.current) return;
-      pendingRef.current = false;
+      const pos = pendingPos.current;
+      if (!pos) return;
+      pendingPos.current = null;
 
       const event = data as ContextMenuEvent;
       if (!event.isEditable) return;
 
-      setMenuState(event);
+      // Override x/y with DOM coordinates so the menu appears exactly at the
+      // cursor regardless of how Electron reports coordinates on this display.
+      setMenuState({ ...event, x: pos.x, y: pos.y });
     });
 
     return () => bridge.offContextMenu(listener);
