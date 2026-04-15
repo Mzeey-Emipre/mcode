@@ -235,7 +235,7 @@ export const WS_METHODS = lazySchema(() => ({
   /** Returns pending permission requests for a thread; used to re-hydrate the frontend after a WebSocket reconnect. */
   "permission.listPending": {
     params: z.object({ threadId: z.string() }),
-    result: z.array(PermissionRequestSchema),
+    result: z.array(PermissionRequestSchema()),
   },
   "message.list": {
     params: z.object({

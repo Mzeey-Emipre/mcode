@@ -43,7 +43,7 @@ export const WS_CHANNELS = {
     questions: z.array(PlanQuestionSchema),
   }),
   /** A tool permission request awaiting user decision. */
-  "permission.request": PermissionRequestSchema,
+  "permission.request": PermissionRequestSchema(),
   /** Notification that a permission request has been settled. */
   "permission.resolved": z.object({
     requestId: z.string(),
