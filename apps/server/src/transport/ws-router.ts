@@ -636,6 +636,7 @@ async function dispatch(
 
     // Permission
     case "permission.respond": {
+      logger.info("ws-router: permission.respond received", { requestId: params.requestId, decision: params.decision });
       deps.agentService.respondToPermission(params.requestId, params.decision);
       broadcast("permission.resolved", {
         requestId: params.requestId,

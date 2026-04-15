@@ -329,6 +329,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const resolvedCwd = cwd || process.cwd();
     const resolvedModel = model || "claude-sonnet-4-6";
 
+    logger.info("doSendMessage permissionMode", { sessionId, permissionMode, isBypass, hasExisting: !!existing });
+
     if (isBypass) {
       logger.warn("Using bypassPermissions for session", { sessionId });
     }
@@ -406,6 +408,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             ) => {
               try {
                 const requestId = crypto.randomUUID();
+                logger.info("canUseTool called", { toolName, requestId, threadId: tid, hasSuggestions: !!options?.suggestions?.length });
                 const decision = await new Promise<PermissionDecision>((resolve) => {
                   this.pendingPermissions.set(requestId, {
                     threadId: tid,
@@ -422,30 +425,43 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                     title: options?.title,
                   } satisfies PermissionRequest);
                 });
+                logger.info("canUseTool decision received", { toolName, requestId, decision, signalAborted: options?.signal?.aborted });
+                let result;
                 switch (decision) {
                   case "allow":
-                    return {
+                    result = {
                       behavior: "allow" as const,
                       decisionClassification: "user_temporary" as const,
                     };
+                    break;
                   case "allow-session":
                     // Use the SDK-provided suggestions — they encode the correct
                     // PermissionUpdate shape for the specific tool being allowed.
-                    return {
+                    result = {
                       behavior: "allow" as const,
                       updatedPermissions: options?.suggestions,
                       decisionClassification: "user_permanent" as const,
                     };
+                    break;
                   case "deny":
                   case "cancelled":
-                    return {
+                    result = {
                       behavior: "deny" as const,
                       message: decision === "cancelled"
                         ? "Session stopped by user"
                         : "User denied",
                       decisionClassification: "user_reject" as const,
                     };
+                    break;
+                  default:
+                    logger.error("canUseTool received unexpected decision", { toolName, requestId, decision });
+                    result = {
+                      behavior: "deny" as const,
+                      message: "Unexpected permission decision value",
+                    };
                 }
+                logger.info("canUseTool returning", { toolName, requestId, behavior: result.behavior });
+                return result;
               } catch (err) {
                 logger.error("canUseTool callback threw unexpectedly", { toolName, err });
                 return {
@@ -1150,7 +1166,11 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
   /** Resolves a pending permission request by ID. Deletes the entry before calling resolve to prevent re-entrant calls. Returns false if the requestId is unknown. */
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
     const entry = this.pendingPermissions.get(requestId);
-    if (!entry) return false;
+    if (!entry) {
+      logger.warn("resolvePermission: requestId not found in pendingPermissions", { requestId, decision, mapSize: this.pendingPermissions.size });
+      return false;
+    }
+    logger.info("resolvePermission: resolving", { requestId, decision, toolName: entry.toolName, threadId: entry.threadId });
     this.pendingPermissions.delete(requestId);
 
     // Reset the session's idle timer so the 10-minute eviction clock starts
