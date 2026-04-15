@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Shield, ChevronDown, Check, X, Zap, Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -71,6 +71,14 @@ export function PermissionRequestCard({
   const [error, setError] = useState<string | null>(null);
   // Tracks which allow mode is active — dropdown picks the mode, primary button fires it.
   const [allowMode, setAllowMode] = useState<"allow" | "allow-session">("allow");
+  // Guard against accidental clicks caused by the card appearing under the cursor.
+  // Buttons are disabled for 600ms after the card mounts so layout shifts don't
+  // register as intentional clicks.
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 600);
+    return () => clearTimeout(t);
+  }, []);
 
   const respond = useCallback(
     async (d: PermissionDecision) => {
@@ -131,7 +139,7 @@ export function PermissionRequestCard({
         {/* Split button: left fires the active mode; chevron picks the mode */}
         <div className="flex items-stretch rounded-md overflow-hidden">
           <button
-            disabled={responding}
+            disabled={responding || !ready}
             onClick={() => respond(allowMode)}
             className={cn(
               "inline-flex h-6 items-center gap-1 pl-2 pr-2 text-xs font-medium",
@@ -149,7 +157,7 @@ export function PermissionRequestCard({
 
           <DropdownMenu>
             <DropdownMenuTrigger
-              disabled={responding}
+              disabled={responding || !ready}
               aria-label="Change allow mode"
               className={cn(
                 "inline-flex h-6 w-6 items-center justify-center",
@@ -191,7 +199,7 @@ export function PermissionRequestCard({
 
         {/* Deny — muted ghost, goes red on hover */}
         <button
-          disabled={responding}
+          disabled={responding || !ready}
           onClick={() => respond("deny")}
           className={cn(
             "inline-flex h-6 items-center gap-1 px-2 text-xs font-medium rounded-md",

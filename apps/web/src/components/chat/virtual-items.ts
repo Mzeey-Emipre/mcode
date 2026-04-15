@@ -109,10 +109,13 @@ export function buildVolatileItems(
     items.push({ key: "active-tools", type: "active-tools", toolCalls });
   }
 
-  // Only show unsettled permission requests — settled cards disappear once the
-  // agent's response arrives so they don't trail below the agent's message.
+  // Show all permission requests (settled and unsettled) so the user gets
+  // visual confirmation of their allow/deny decision. Settled cards collapse
+  // to a single-line badge. The full permissionsByThread entry is cleared
+  // when the agent turn ends, so settled cards never trail below the agent's
+  // persisted message.
   if (permissions && permissions.length > 0) {
-    for (const p of permissions.filter((p) => !p.settled)) {
+    for (const p of permissions) {
       items.push({
         key: `permission-${p.requestId}`,
         type: "permission-request" as const,
