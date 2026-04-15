@@ -18,6 +18,10 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
   // event. Non-null means a right-click on the editor is pending an IPC response.
   // Cleared once the IPC data arrives so stale events don't trigger the menu.
   const pendingPos = useRef<{ x: number; y: number } | null>(null);
+  // Timer that clears pendingPos if no IPC arrives within 500ms (e.g. the
+  // main process did not fire, or IPC was delayed). Prevents stale coordinates
+  // from leaking into a later, unrelated IPC event.
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Capture click position from the DOM event and mark the next IPC event as local.
   useEffect(() => {
@@ -25,6 +29,10 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
     if (!el) return;
 
     const handleContextMenu = (e: MouseEvent) => {
+      // Cancel any existing stale-clear timer before overwriting pendingPos.
+      if (pendingTimerRef.current !== null) {
+        clearTimeout(pendingTimerRef.current);
+      }
       // Capture viewport-relative CSS pixel coordinates from the DOM event.
       // We use these for menu positioning instead of the Electron IPC coordinates,
       // which can be in physical pixels on high-DPI displays causing offset menus.
@@ -33,10 +41,20 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
       // meaning the Electron context-menu event never fires and we lose spelling data.
       // The main process calls event.preventDefault() in its handler instead.
       pendingPos.current = { x: e.clientX, y: e.clientY };
+      // Auto-expire the pending position so it never leaks into a future IPC event.
+      pendingTimerRef.current = setTimeout(() => {
+        pendingPos.current = null;
+        pendingTimerRef.current = null;
+      }, 500);
     };
 
     el.addEventListener("contextmenu", handleContextMenu);
-    return () => el.removeEventListener("contextmenu", handleContextMenu);
+    return () => {
+      el.removeEventListener("contextmenu", handleContextMenu);
+      if (pendingTimerRef.current !== null) {
+        clearTimeout(pendingTimerRef.current);
+      }
+    };
   }, [editorRef]);
 
   // Listen for spellcheck context-menu IPC events from the Electron main process.
@@ -49,6 +67,11 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
       const pos = pendingPos.current;
       if (!pos) return;
       pendingPos.current = null;
+      // IPC arrived in time - cancel the stale-clear timer.
+      if (pendingTimerRef.current !== null) {
+        clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = null;
+      }
 
       if (!data.isEditable) return;
 
@@ -122,9 +145,15 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
   if (editFlags.canCopy) {
     items.push({
       label: "Copy",
-      onClick: () => {
-        const sel = window.getSelection();
-        if (sel) navigator.clipboard.writeText(sel.toString());
+      onClick: async () => {
+        const text = window.getSelection()?.toString();
+        if (text) {
+          try {
+            await navigator.clipboard.writeText(text);
+          } catch {
+            // Clipboard write failed - nothing to roll back for a copy.
+          }
+        }
       },
     });
   }
