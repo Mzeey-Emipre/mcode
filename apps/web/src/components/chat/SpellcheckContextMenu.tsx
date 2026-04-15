@@ -80,12 +80,10 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
 
   // Note: ContextMenu auto-calls onClose() after every item click,
   // so individual onClick handlers must NOT call setMenuState(null) themselves.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleReplace = useCallback((word: string) => {
     window.desktopBridge?.spellcheck.replaceMisspelling(word);
   }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleAddToDictionary = useCallback((word: string) => {
     window.desktopBridge?.spellcheck.addToDictionary(word);
   }, []);
