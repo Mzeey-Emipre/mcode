@@ -26,6 +26,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     reasoning_level: null,
     interaction_mode: null,
     permission_mode: null,
+    copilot_agent: null,
     parent_thread_id: null,
     forked_from_message_id: null,
     last_compact_summary: null,
@@ -56,6 +57,17 @@ describe("getStatusDisplay", () => {
   it("default status returns empty label", () => {
     const result = getStatusDisplay(makeThread({ status: "active" }), false);
     expect(result.label).toBe("");
+  });
+
+  it("shows amber pulsing dot when thread has a pending permission and is running", () => {
+    const result = getStatusDisplay(makeThread(), true, true);
+    expect(result.dotClass).toBe("bg-amber-500 animate-pulse");
+    expect(result.color).toBe("text-amber-500");
+  });
+
+  it("shows amber dot when thread has pending permission even if not running", () => {
+    const result = getStatusDisplay(makeThread({ status: "active" }), false, true);
+    expect(result.dotClass).toContain("amber");
   });
 });
 
@@ -89,5 +101,12 @@ describe("getNotificationDot", () => {
   it("returns null for paused thread", () => {
     const result = getNotificationDot(makeThread({ status: "paused" }), false);
     expect(result).toBeNull();
+  });
+
+  it("returns amber dot when thread has pending permission and is running", () => {
+    const result = getNotificationDot(makeThread(), true, true);
+    expect(result).not.toBeNull();
+    expect(result!.dotClass).toBe("bg-amber-500");
+    expect(result!.animate).toBe(true);
   });
 });

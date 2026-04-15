@@ -69,14 +69,13 @@ try {
     cwd: serverRoot,
     stdio: "inherit",
   });
-} catch {
-  // tsc may report errors (e.g. missing third-party type declarations) yet still
-  // emit JavaScript output. Verify the entry file exists before continuing.
+} catch (err) {
   const tscEntry = resolve(serverRoot, "dist-tsc/index.js");
   if (!existsSync(tscEntry)) {
     throw new Error(`tsc failed and did not emit ${tscEntry}`);
   }
-  console.warn("tsc reported errors but emitted output — continuing with esbuild bundle");
+  console.warn("⚠ tsc reported errors but emitted output — continuing with esbuild bundle");
+  console.warn("  Fix the type errors above to avoid runtime issues in the packaged app");
 }
 
 // Phase 2b: esbuild bundles the tsc output into a single CJS file.
@@ -90,7 +89,7 @@ await build({
   ...shared,
   entryPoints: [resolve(serverRoot, "dist-tsc/index.js")],
   outfile: "dist/server/server.cjs",
-  external: ["better-sqlite3", "node-pty", "electron", "@github/copilot-sdk"],
+  external: ["better-sqlite3", "node-pty", "electron"],
   banner: {
     js: 'var __importMetaUrl = require("url").pathToFileURL(__filename).href;',
   },

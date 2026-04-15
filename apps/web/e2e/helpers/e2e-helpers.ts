@@ -55,7 +55,7 @@ export async function mockWebSocketServer(
       }
       // Default responses
       let result: unknown;
-      if (method?.endsWith(".list")) result = [];
+      if (method?.endsWith(".list") || method === "provider.listModels") result = [];
       else if (method === "git.currentBranch") result = "main";
       else if (method === "agent.activeCount") result = 0;
       else if (method === "app.version") result = "0.0.1-test";

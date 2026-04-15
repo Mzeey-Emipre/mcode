@@ -347,3 +347,156 @@ describe("CopilotProvider session.usage_info", () => {
     expect(events.find((e) => e.type === "contextEstimate")).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// complete() - one-shot text completion
+// ---------------------------------------------------------------------------
+
+describe("CopilotProvider.complete()", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.start.mockResolvedValue(undefined);
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null, result?: { stdout: string }) => void) => {
+        cb(null, { stdout: "gho_faketoken\n" });
+      },
+    );
+  });
+
+  it("returns collected text from assistant.message event", async () => {
+    const mockSession = makeMockSession();
+    mockClient.createSession.mockResolvedValue(mockSession);
+
+    const jsonResponse = JSON.stringify({
+      title: "feat: add widget",
+      body: "## What\nAdded widget",
+    });
+
+    mockSession.send.mockImplementation(async () => {
+      mockSession.fire("assistant.message", { content: jsonResponse, outputTokens: 42 });
+      mockSession.fire("session.idle");
+    });
+
+    const provider = new CopilotProvider(makeSettingsService() as any);
+    const result = await provider.complete("Generate PR draft", "gpt-4.1", "/tmp");
+
+    expect(result).toBe(jsonResponse);
+    expect(mockSession.disconnect).toHaveBeenCalled();
+  });
+
+  it("falls back to accumulated deltas when assistant.message has no content", async () => {
+    const mockSession = makeMockSession();
+    mockClient.createSession.mockResolvedValue(mockSession);
+
+    mockSession.send.mockImplementation(async () => {
+      mockSession.fire("assistant.message_delta", { deltaContent: '{"title":' });
+      mockSession.fire("assistant.message_delta", { deltaContent: '"feat: x","body":"b"}' });
+      mockSession.fire("assistant.message", { content: "", outputTokens: 10 });
+      mockSession.fire("session.idle");
+    });
+
+    const provider = new CopilotProvider(makeSettingsService() as any);
+    const result = await provider.complete("Generate PR draft", "gpt-4.1", "/tmp");
+
+    expect(result).toBe('{"title":"feat: x","body":"b"}');
+    expect(mockSession.disconnect).toHaveBeenCalled();
+  });
+
+  it("throws when session.error fires", async () => {
+    const mockSession = makeMockSession();
+    mockClient.createSession.mockResolvedValue(mockSession);
+
+    mockSession.send.mockImplementation(async () => {
+      mockSession.fire("session.error", { message: "Model not available" });
+    });
+
+    const provider = new CopilotProvider(makeSettingsService() as any);
+
+    await expect(provider.complete("prompt", "gpt-4.1", "/tmp")).rejects.toThrow(
+      "Model not available",
+    );
+    expect(mockSession.disconnect).toHaveBeenCalled();
+  });
+
+  it("throws when no text is returned", async () => {
+    const mockSession = makeMockSession();
+    mockClient.createSession.mockResolvedValue(mockSession);
+
+    mockSession.send.mockImplementation(async () => {
+      mockSession.fire("session.idle");
+    });
+
+    const provider = new CopilotProvider(makeSettingsService() as any);
+
+    await expect(provider.complete("prompt", "gpt-4.1", "/tmp")).rejects.toThrow(
+      "no text content",
+    );
+    expect(mockSession.disconnect).toHaveBeenCalled();
+  });
+
+  it("disconnects the session even when send() throws", async () => {
+    const mockSession = makeMockSession();
+    mockClient.createSession.mockResolvedValue(mockSession);
+    mockSession.send.mockRejectedValue(new Error("network error"));
+
+    const provider = new CopilotProvider(makeSettingsService() as any);
+
+    await expect(provider.complete("prompt", "gpt-4.1", "/tmp")).rejects.toThrow(
+      "network error",
+    );
+    expect(mockSession.disconnect).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listModels() - TTL cache
+// ---------------------------------------------------------------------------
+
+describe("CopilotProvider.listModels() cache", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.start.mockResolvedValue(undefined);
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null, result?: { stdout: string }) => void) => {
+        cb(null, { stdout: "gho_faketoken\n" });
+      },
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns cached models on the second call within TTL", async () => {
+    mockClient.listModels.mockResolvedValue([
+      { id: "gpt-4.1", name: "GPT-4.1", capabilities: {}, billing: {} },
+    ]);
+
+    const provider = new CopilotProvider(makeSettingsService() as any);
+
+    const first = await provider.listModels();
+    const second = await provider.listModels();
+
+    expect(first).toEqual(second);
+    // SDK listModels called only once - second call served from cache
+    expect(mockClient.listModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-fetches after cache expires", async () => {
+    vi.useFakeTimers();
+    mockClient.listModels.mockResolvedValue([
+      { id: "gpt-4.1", name: "GPT-4.1", capabilities: {}, billing: {} },
+    ]);
+
+    const provider = new CopilotProvider(makeSettingsService() as any);
+
+    await provider.listModels();
+    // Advance past the 10-minute TTL
+    vi.advanceTimersByTime(11 * 60 * 1000);
+    await provider.listModels();
+
+    expect(mockClient.listModels).toHaveBeenCalledTimes(2);
+  });
+});

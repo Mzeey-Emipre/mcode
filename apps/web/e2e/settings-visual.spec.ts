@@ -17,6 +17,8 @@ const DEFAULT_SETTINGS = {
       reasoning: "high",
     },
   },
+  provider: { cli: { codex: "", claude: "", copilot: "" } },
+  prDraft: { provider: "", model: "" },
   terminal: { scrollback: 1000 },
   notifications: { enabled: false },
   worktree: { naming: { mode: "auto", aiConfirmation: true } },
@@ -69,7 +71,7 @@ test.describe("Settings visual review", () => {
     const modelNav = page.getByRole("button", { name: "Model", exact: true });
     await modelNav.click();
     await page.waitForTimeout(300);
-    const codexBtn = page.getByRole("button", { name: /Codex/ });
+    const codexBtn = page.getByRole("radio", { name: /Codex/ });
     await codexBtn.hover();
     await page.waitForTimeout(500);
     await page.screenshot({

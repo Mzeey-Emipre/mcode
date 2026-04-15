@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useCallback, useState, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2, AlertTriangle } from "lucide-react";
@@ -19,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay, getNotificationDot } from "@/lib/thread-status";
+import { getCiDotClass } from "@/lib/ci-status";
 import type { Workspace, Thread } from "@/transport/types";
 
 // Persist expand/collapse in localStorage
@@ -141,6 +143,18 @@ export function ProjectTree() {
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const error = useWorkspaceStore((s) => s.error);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+  const permissionsByThread = useThreadStore((s) => s.permissionsByThread);
+  // Derive a set of thread IDs that have at least one unsettled permission request,
+  // so the sidebar can render the amber pending indicator without per-thread subscriptions.
+  const pendingPermissionThreadIds = useMemo(
+    () =>
+      new Set(
+        Object.entries(permissionsByThread ?? {})
+          .filter(([, perms]) => perms.some((p) => !p.settled))
+          .map(([id]) => id),
+      ),
+    [permissionsByThread],
+  );
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
   const [threadListExpanded, setThreadListExpandedState] = useState<Record<string, boolean>>(getThreadListExpanded);
@@ -354,6 +368,7 @@ export function ProjectTree() {
               activeThreadId={activeThreadId}
               threads={threads.filter((t) => t.workspace_id === ws.id)}
               runningThreadIds={runningThreadIds}
+              pendingPermissionThreadIds={pendingPermissionThreadIds}
               isThreadListExpanded={threadListExpanded[ws.id] ?? false}
               onToggleThreadList={() => toggleThreadList(ws.id)}
               scrollElementRef={scrollViewportRef}
@@ -552,6 +567,8 @@ interface VirtualizedThreadListProps {
   maxVisible: number;
   activeThreadId: string | null;
   runningThreadIds: Set<string>;
+  /** Thread IDs with at least one unsettled permission request. */
+  pendingPermissionThreadIds: Set<string>;
   scrollElementRef: React.RefObject<HTMLDivElement | null>;
   inlineEdit: InlineEditState | null;
   onInlineEditChange: (title: string) => void;
@@ -569,6 +586,7 @@ function VirtualizedThreadList({
   maxVisible,
   activeThreadId,
   runningThreadIds,
+  pendingPermissionThreadIds,
   scrollElementRef,
   inlineEdit,
   onInlineEditChange,
@@ -587,6 +605,7 @@ function VirtualizedThreadList({
   // Normalized set of existing worktree paths for stale detection.
   const worktrees = useWorkspaceStore((s) => s.worktrees);
   const worktreesLoadedFor = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
+  const checksById = useWorkspaceStore(useShallow((s) => s.checksById));
   const validWorktreePaths = useMemo(() => {
     const set = new Set<string>();
     for (const wt of worktrees) {
@@ -660,7 +679,7 @@ function VirtualizedThreadList({
     >
       {virtualizer.getVirtualItems().map((virtualItem) => {
         const { thread, depth } = treeItems[virtualItem.index];
-        const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
+        const status = getStatusDisplay(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
         const isEditing = inlineEdit?.threadId === thread.id;
         // Worktree thread whose directory no longer exists on disk.
         // Only check threads from the workspace whose worktrees are loaded — comparing
@@ -706,7 +725,13 @@ function VirtualizedThreadList({
               >
                 {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
-                  const dot = getNotificationDot(thread, runningThreadIds.has(thread.id));
+                  const ciChecks = checksById[thread.id];
+                  const ciDotClass = ciChecks ? getCiDotClass(ciChecks.aggregate) : null;
+                  const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
+                  // CI dot takes priority when present; fall back to agent notification dot
+                  const dot = ciDotClass
+                    ? { dotClass: ciDotClass, animate: ciChecks!.aggregate === "pending" }
+                    : agentDot;
                   return (
                     <span
                       title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
@@ -787,6 +812,8 @@ interface ProjectNodeProps {
   activeThreadId: string | null;
   threads: Thread[];
   runningThreadIds: Set<string>;
+  /** Thread IDs with at least one unsettled permission request. */
+  pendingPermissionThreadIds: Set<string>;
   /** Whether the thread list is fully expanded (persisted by parent). */
   isThreadListExpanded: boolean;
   /** Callback to toggle the thread list expanded state (persisted by parent). */
@@ -813,6 +840,7 @@ function ProjectNode({
   activeThreadId,
   threads,
   runningThreadIds,
+  pendingPermissionThreadIds,
   isThreadListExpanded,
   onToggleThreadList,
   scrollElementRef,
@@ -885,6 +913,7 @@ function ProjectNode({
               maxVisible={maxVisible}
               activeThreadId={activeThreadId}
               runningThreadIds={runningThreadIds}
+              pendingPermissionThreadIds={pendingPermissionThreadIds}
               scrollElementRef={scrollElementRef}
               inlineEdit={inlineEdit}
               onInlineEditChange={onInlineEditChange}

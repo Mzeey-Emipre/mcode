@@ -90,9 +90,11 @@ export class CodexEventMapper {
 
       const text = this.lastAssistantText;
       const usage = turn?.usage ?? {};
-      const tokensIn = (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0);
+      const inputTokens = usage.input_tokens ?? 0;
+      const cachedInputTokens = usage.cached_input_tokens ?? 0;
+      const tokensIn = inputTokens;
       const tokensOut = usage.output_tokens ?? 0;
-      const totalProcessedTokens = tokensIn + tokensOut;
+      const totalProcessedTokens = inputTokens + cachedInputTokens + tokensOut;
 
       const events: AgentEvent[] = [];
       if (text) {
@@ -107,6 +109,8 @@ export class CodexEventMapper {
         tokensOut,
         contextWindow: undefined,
         totalProcessedTokens,
+        cacheReadTokens: cachedInputTokens || undefined,
+        providerId: "codex",
       });
       this.reset();
       return events;

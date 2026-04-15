@@ -7,6 +7,8 @@ export {
   PERMISSION_MODES,
   InteractionModeSchema,
   INTERACTION_MODES,
+  CopilotSubagentSourceSchema,
+  COPILOT_SUBAGENT_SOURCES,
 } from "./models/enums.js";
 export type {
   ThreadStatus,
@@ -14,6 +16,7 @@ export type {
   MessageRole,
   PermissionMode,
   InteractionMode,
+  CopilotSubagentSource,
 } from "./models/enums.js";
 
 export {
@@ -92,12 +95,22 @@ export type {
   PlanQuestionBatch,
 } from "./models/plan-questions.js";
 
+// Permissions
+export {
+  PermissionDecisionSchema,
+  PermissionRequestSchema,
+} from "./models/permission.js";
+export type {
+  PermissionDecision,
+  PermissionRequest,
+} from "./models/permission.js";
+
 // Git / GitHub
 export { GitBranchSchema, WorktreeSchema, GitCommitSchema } from "./git.js";
 export type { GitBranch, WorktreeInfo, GitCommit } from "./git.js";
 
-export { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrParamsSchema, CreatePrResultSchema } from "./github.js";
-export type { PrInfo, PrDetail, PrDraft, CreatePrParams, CreatePrResult } from "./github.js";
+export { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrParamsSchema, CreatePrResultSchema, CheckRunSchema, ChecksStatusSchema } from "./github.js";
+export type { PrInfo, PrDetail, PrDraft, CreatePrParams, CreatePrResult, CheckRun, ChecksStatus } from "./github.js";
 
 // Skills
 export { SkillInfoSchema } from "./skills.js";
@@ -149,3 +162,17 @@ export {
 } from "./providers/models.js";
 export type { ProviderModelInfo } from "./providers/models.js";
 export { isCompletionCapable } from "./providers/interfaces.js";
+
+export {
+  TurnUsageSchema,
+  QuotaCategorySchema,
+  ProviderUsageInfoSchema,
+} from "./providers/usage.js";
+export type {
+  TurnUsage,
+  QuotaCategory,
+  ProviderUsageInfo,
+} from "./providers/usage.js";
+
+export { CopilotSubagentSchema } from "./providers/copilot-agent.js";
+export type { CopilotSubagent } from "./providers/copilot-agent.js";

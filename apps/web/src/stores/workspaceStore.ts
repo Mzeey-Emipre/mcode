@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo, AttachmentMeta, PrDetail } from "@/transport";
+import type { ChecksStatus } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { useTerminalStore } from "./terminalStore";
@@ -49,6 +50,8 @@ interface WorkspaceState {
   branchManuallySelected: boolean;
   /** In-memory map of thread ID → PR URL, populated immediately on PR creation so the header can link without waiting for the next poll. */
   prUrlsByThreadId: Record<string, string>;
+  /** In-memory map of thread ID → latest CI check status, updated by the thread.checksUpdated push channel. */
+  checksById: Record<string, ChecksStatus>;
 
   // Workspace actions
   loadWorkspaces: () => Promise<void>;
@@ -63,7 +66,7 @@ interface WorkspaceState {
     mode: "direct" | "worktree",
     branch: string,
   ) => Promise<Thread>;
-  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?: InteractionMode) => Promise<Thread>;
+  createAndSendMessage: (content: string, model: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?: InteractionMode, copilotAgent?: string) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: {
     sourceThreadId: string;
@@ -78,6 +81,7 @@ interface WorkspaceState {
     reasoningLevel?: ReasoningLevel;
     attachments?: AttachmentMeta[];
     interactionMode?: InteractionMode;
+    copilotAgent?: string;
   }) => Promise<Thread>;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
@@ -135,6 +139,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   fetchingBranch: null,
   branchManuallySelected: false,
   prUrlsByThreadId: {},
+  checksById: {},
 
   loadWorkspaces: async () => {
     set({ loading: true, error: null });
@@ -177,6 +182,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
       // Remove threads from store FIRST (same ordering as deleteThread) so
       // any in-flight timer callbacks see threads as gone before timers are cancelled.
+      const deletedIdSet = new Set(deletedThreadIds);
       set((state) => ({
         workspaces: state.workspaces.filter((w) => w.id !== id),
         activeWorkspaceId:
@@ -187,6 +193,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           deletedThreadIds.includes(state.activeThreadId)
             ? null
             : state.activeThreadId,
+        checksById: Object.fromEntries(
+          Object.entries(state.checksById).filter(([tid]) => !deletedIdSet.has(tid)),
+        ),
       }));
       // One batched Zustand set() for all threads instead of N sequential calls.
       useThreadStore.getState().clearThreadStateMany(deletedThreadIds);
@@ -282,7 +291,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  createAndSendMessage: async (content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode) => {
+  createAndSendMessage: async (content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode, copilotAgent) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
 
@@ -315,7 +324,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
     try {
       const thread = await getTransport().createAndSendMessage(
-        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments, reasoningLevel, provider, interactionMode,
+        workspaceId, content, model, permissionMode, mode, branch, existingWorktreePath, attachments, reasoningLevel, provider, interactionMode, undefined, undefined, copilotAgent,
       );
       set((state) => ({
         threads: [thread, ...state.threads],
@@ -375,6 +384,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         params.interactionMode,
         params.sourceThreadId,
         params.forkedFromMessageId,
+        params.copilotAgent,
       );
 
       set((state) => ({
@@ -416,10 +426,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         const remainingUrls = Object.fromEntries(
           Object.entries(state.prUrlsByThreadId).filter(([k]) => k !== threadId),
         ) as Record<string, string>;
+        const remainingChecks = Object.fromEntries(
+          Object.entries(state.checksById).filter(([k]) => k !== threadId),
+        ) as typeof state.checksById;
         return {
           threads: state.threads.filter((t) => t.id !== threadId),
           activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
           prUrlsByThreadId: remainingUrls,
+          checksById: remainingChecks,
         };
       });
       useThreadStore.getState().clearThreadState(threadId);

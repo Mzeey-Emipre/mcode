@@ -28,6 +28,7 @@ import { NamingModeSelector } from "./NamingModeSelector";
 import type { NamingMode } from "@mcode/contracts";
 import { BranchNameInput } from "./BranchNameInput";
 const LazyWorktreePicker = lazy(() => import("./WorktreePicker"));
+import { CopilotAgentSelector } from "./CopilotAgentSelector";
 import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
@@ -136,6 +137,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [provider, setProvider] = useState<string>(getDefaultProviderId());
   const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
   const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.CHAT);
+  const [copilotAgent, setCopilotAgent] = useState<string | null>(null);
   const [access, setAccess] = useState<AccessMode>(PERMISSION_MODES.FULL);
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
   const [composerMode, setComposerModeLocal] = useState<ComposerMode>("direct");
@@ -250,10 +252,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             }
           });
         }
-        // Restore mode and permission from thread settings (drafts don't save these)
+        // Restore mode, permission, and copilot agent from thread settings (drafts don't save these)
         const threadSettings = useThreadStore.getState().getThreadSettings(threadId);
         setMode(threadSettings.interactionMode);
         setAccess(threadSettings.permissionMode);
+        setCopilotAgent(threadSettings.copilotAgent ?? null);
       } else {
         // No saved draft: use thread's persisted settings as-is
         setInput("");
@@ -285,6 +288,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             ? (nextThread.permission_mode as PermissionMode)
             : globalSettings.agent.defaults.permission,
         );
+        setCopilotAgent(nextThread?.copilot_agent ?? null);
 
         // Reset Lexical editor
         if (editorRef.current) {
@@ -307,6 +311,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const { settings } = useSettingsStore.getState();
       setMode(settings.agent.defaults.mode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
       setAccess(settings.agent.defaults.permission);
+      setCopilotAgent(null);
       if (editorRef.current) {
         editorRef.current.update(() => {
           const root = $getRoot();
@@ -396,6 +401,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const threads = useWorkspaceStore((s) => s.threads);
   const activeThread = threadId ? threads.find((t) => t.id === threadId) : undefined;
+
+  const activeProviderId = activeThread?.provider ?? "claude";
+  const usageInfo = useThreadStore((s) => s.usageByProvider[activeProviderId]);
+  const hasLowQuota = usageInfo?.quotaCategories.some((c) => !c.isUnlimited && c.remainingPercent < 0.2) ?? false;
 
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
@@ -818,7 +827,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const { content, display } = await injectFileContent(trimmed);
       const currentAttachments = collectAndClearAttachments();
 
-      const queueProvider = provider;
       useQueueStore.getState().enqueue(threadId, {
         content,
         displayContent: display,
@@ -826,7 +834,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         model: modelId,
         permissionMode: access,
         reasoningLevel: reasoning,
-        provider: queueProvider,
+        provider,
+        copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
       });
 
       setInput("");
@@ -884,7 +893,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode);
+        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode, provider === "copilot" ? (copilotAgent ?? undefined) : undefined);
       } finally {
         setPreparingWorktree(false);
       }
@@ -917,10 +926,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         branch: branchBranch,
         existingWorktreePath: branchWorktree,
         forkedFromMessageId: branchFromMessageId,
+        copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
       });
       onBranchModeExit?.();
     } else if (threadId) {
-      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider);
+      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider, provider === "copilot" ? (copilotAgent ?? undefined) : undefined);
     }
 
     // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
@@ -937,7 +947,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, mode, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore, preparingWorktree, branchFromMessageId, branchExecMode, branchTargetBranch, branchNamingMode, branchCustomName, branchWorktreePath, activeThread, branchThread, autoPreviewBranch, onBranchModeExit]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore, preparingWorktree, branchFromMessageId, branchExecMode, branchTargetBranch, branchNamingMode, branchCustomName, branchWorktreePath, activeThread, branchThread, autoPreviewBranch, onBranchModeExit]);
 
   const handleEditorChange = useCallback((text: string) => {
     setInput(text);
@@ -1170,28 +1180,42 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             )}
           </div>
 
-          {/* Chat / Plan toggle */}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => {
-                    const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
-                    setMode(next);
-                    agentSettingsTouchedRef.current = true;
-                    if (threadId) void setThreadSettings(threadId, { interactionMode: next });
-                  }}
-                  className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
-                >
-                  {mode === INTERACTION_MODES.CHAT ? <MessageSquare size={14} /> : <FileEdit size={14} />}
-                  <span className="text-sm">{mode === INTERACTION_MODES.CHAT ? "Chat" : "Plan"}</span>
-                </Button>
-              }
+          {/* Chat / Plan toggle — replaced by CopilotAgentSelector when Copilot is active */}
+          {provider === "copilot" ? (
+            <CopilotAgentSelector
+              selected={copilotAgent}
+              workspaceId={workspaceId ?? ""}
+              disabled={isModelFullyLocked}
+              onChange={(agentName) => {
+                setCopilotAgent(agentName);
+                // Don't persist to parent thread when in branch mode — the
+                // selection only applies to the branch being created.
+                if (threadId && !branchFromMessageId) void setThreadSettings(threadId, { copilotAgent: agentName });
+              }}
             />
-            <TooltipContent>{mode === INTERACTION_MODES.CHAT ? "Chat mode" : "Plan mode"}</TooltipContent>
-          </Tooltip>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => {
+                      const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
+                      setMode(next);
+                      agentSettingsTouchedRef.current = true;
+                      if (threadId) void setThreadSettings(threadId, { interactionMode: next });
+                    }}
+                    className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+                  >
+                    {mode === INTERACTION_MODES.CHAT ? <MessageSquare size={14} /> : <FileEdit size={14} />}
+                    <span className="text-sm">{mode === INTERACTION_MODES.CHAT ? "Chat" : "Plan"}</span>
+                  </Button>
+                }
+              />
+              <TooltipContent>{mode === INTERACTION_MODES.CHAT ? "Chat mode" : "Plan mode"}</TooltipContent>
+            </Tooltip>
+          )}
 
           {/* Full access / Supervised toggle */}
           <Tooltip>
@@ -1264,6 +1288,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               tokensIn={contextEntry?.lastTokensIn ?? activeThread?.last_context_tokens ?? 0}
               contextWindow={contextEntry?.contextWindow ?? activeThread?.context_window ?? undefined}
               totalProcessedTokens={contextEntry?.totalProcessedTokens}
+              hasLowQuota={hasLowQuota}
             />
           )}
 

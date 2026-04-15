@@ -6,7 +6,7 @@
 
 import { injectable, inject } from "tsyringe";
 import { execFile } from "child_process";
-import type { PrInfo, PrDetail } from "@mcode/contracts";
+import type { PrInfo, PrDetail, ChecksStatus, CheckRun } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 /** Handles GitHub PR lookups and listing via the gh CLI. */
@@ -155,6 +155,96 @@ export class GithubService {
           const number = parseInt(prUrlMatch[1], 10);
           const url = prUrlMatch[0];
           resolve({ number, url });
+        },
+      );
+    });
+  }
+
+  /**
+   * Fetch CI check runs for a PR. Uses `gh pr checks` for simplicity.
+   * Returns aggregate status and individual check details.
+   */
+  getCheckRuns(prNumber: number, repoPath: string): Promise<ChecksStatus> {
+    return new Promise((resolve) => {
+      execFile(
+        "gh",
+        ["pr", "checks", String(prNumber), "--json", "name,state,startedAt,completedAt"],
+        { cwd: repoPath, encoding: "utf-8", timeout: 15_000 },
+        (error, stdout) => {
+          const now = Date.now();
+          if (error || !stdout) {
+            resolve({ aggregate: "no_checks", runs: [], fetchedAt: now });
+            return;
+          }
+          try {
+            const items = JSON.parse(stdout) as Array<{
+              name?: string;
+              state?: string;
+              startedAt?: string | null;
+              completedAt?: string | null;
+            }>;
+
+            if (items.length === 0) {
+              resolve({ aggregate: "no_checks", runs: [], fetchedAt: now });
+              return;
+            }
+
+            const runs = items.map((item) => {
+              const ghState = (item.state ?? "").toUpperCase();
+              const completed = ghState === "SUCCESS" || ghState === "FAILURE"
+                || ghState === "CANCELLED" || ghState === "SKIPPED"
+                || ghState === "TIMED_OUT" || ghState === "NEUTRAL"
+                || ghState === "ACTION_REQUIRED" || ghState === "STALE";
+
+              const status = completed ? "completed" as const
+                : ghState === "QUEUED" ? "queued" as const
+                : "in_progress" as const;
+
+              // ACTION_REQUIRED blocks merge like a failure; STALE is abandoned (terminal like cancelled).
+              const conclusionMap: Record<string, CheckRun["conclusion"]> = {
+                SUCCESS: "success",
+                FAILURE: "failure",
+                CANCELLED: "cancelled",
+                SKIPPED: "skipped",
+                TIMED_OUT: "timed_out",
+                NEUTRAL: "neutral",
+                ACTION_REQUIRED: "failure",
+                STALE: "cancelled",
+              };
+              const conclusion = completed ? (conclusionMap[ghState] ?? "cancelled") : null;
+
+              let durationMs: number | null = null;
+              if (completed && item.startedAt && item.completedAt) {
+                durationMs = new Date(item.completedAt).getTime() - new Date(item.startedAt).getTime();
+              }
+
+              return {
+                name: item.name ?? "unknown",
+                status,
+                conclusion,
+                durationMs,
+              };
+            });
+
+            let aggregate: "passing" | "failing" | "pending" | "no_checks";
+            if (runs.some((r) => r.conclusion === "failure" || r.conclusion === "timed_out")) {
+              aggregate = "failing";
+            } else if (runs.some((r) => r.status !== "completed")) {
+              aggregate = "pending";
+            } else {
+              aggregate = "passing";
+            }
+
+            // If all runs completed but none succeeded (all skipped/cancelled/neutral),
+            // treat as no_checks to avoid a misleading green badge.
+            if (aggregate === "passing" && !runs.some((r) => r.conclusion === "success")) {
+              aggregate = "no_checks";
+            }
+
+            resolve({ aggregate, runs, fetchedAt: now });
+          } catch {
+            resolve({ aggregate: "no_checks", runs: [], fetchedAt: now });
+          }
         },
       );
     });

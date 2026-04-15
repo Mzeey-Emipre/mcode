@@ -10,7 +10,12 @@ import { CleanupWorker } from "../services/cleanup-worker";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalService } from "../services/terminal-service";
 import type { GitService } from "../services/git-service";
+import { killDescendantsByName } from "../services/process-kill";
 import { getMcodeDir } from "@mcode/shared";
+
+vi.mock("../services/process-kill.js", () => ({
+  killDescendantsByName: vi.fn().mockResolvedValue(undefined),
+}));
 
 // Stub filesystem checks - paths in tests are synthetic; we test logic not fs state.
 vi.mock("fs", async (importOriginal) => {
@@ -79,13 +84,16 @@ describe("CleanupWorker", () => {
   }
 
   describe("poll", () => {
-    it("stops agent session and awaits exit before filesystem operations", async () => {
+    it("runs cleanup steps in correct order: session exit, terminal kill, SDK kill, worktree removal", async () => {
       const callOrder: string[] = [];
       (mockClaudeProvider.waitForSessionExit as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         callOrder.push("waitForSessionExit");
       });
       (mockTerminalService.killByThread as ReturnType<typeof vi.fn>).mockImplementation(() => {
         callOrder.push("killByThread");
+      });
+      (vi.mocked(killDescendantsByName)).mockImplementation(async () => {
+        callOrder.push("killDescendants");
       });
       (mockGitService.removeWorktree as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         callOrder.push("removeWorktree");
@@ -103,7 +111,11 @@ describe("CleanupWorker", () => {
 
       await worker.poll();
 
-      expect(callOrder).toEqual(["waitForSessionExit", "killByThread", "removeWorktree"]);
+      expect(callOrder).toEqual(["waitForSessionExit", "killByThread", "killDescendants", "removeWorktree"]);
+      expect(killDescendantsByName).toHaveBeenCalledWith(
+        process.pid,
+        expect.stringMatching(/claude/i),
+      );
     });
 
     it("calls waitForSessionExit with the correct session ID", async () => {

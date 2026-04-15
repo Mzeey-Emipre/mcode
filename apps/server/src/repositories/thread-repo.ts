@@ -31,6 +31,7 @@ interface ThreadRow {
   reasoning_level: string | null;
   interaction_mode: string | null;
   permission_mode: string | null;
+  copilot_agent: string | null;
   parent_thread_id: string | null;
   forked_from_message_id: string | null;
   last_compact_summary: string | null;
@@ -60,6 +61,7 @@ function rowToThread(row: ThreadRow): Thread {
     reasoning_level: (row.reasoning_level ?? null) as ReasoningLevel | null,
     interaction_mode: (row.interaction_mode ?? null) as InteractionMode | null,
     permission_mode: (row.permission_mode ?? null) as PermissionMode | null,
+    copilot_agent: (row.copilot_agent ?? null) as string | null,
     parent_thread_id: row.parent_thread_id,
     forked_from_message_id: row.forked_from_message_id,
     last_compact_summary: row.last_compact_summary,
@@ -67,7 +69,7 @@ function rowToThread(row: ThreadRow): Thread {
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, parent_thread_id, forked_from_message_id, last_compact_summary";
+  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, copilot_agent, parent_thread_id, forked_from_message_id, last_compact_summary";
 
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
@@ -133,6 +135,7 @@ export class ThreadRepo {
       reasoning_level: null,
       interaction_mode: null,
       permission_mode: null,
+      copilot_agent: null,
       parent_thread_id: lineage?.parentThreadId ?? null,
       forked_from_message_id: lineage?.forkedFromMessageId ?? null,
       last_compact_summary: null,
@@ -280,13 +283,14 @@ export class ThreadRepo {
     return result.changes > 0;
   }
 
-  /** Persist per-thread composer settings (reasoning, mode, permission). */
+  /** Persist per-thread composer settings (reasoning, mode, permission, copilot agent). */
   updateSettings(
     id: string,
     settings: {
       reasoning_level?: string;
       interaction_mode?: string;
       permission_mode?: string;
+      copilot_agent?: string | null;
     },
   ): boolean {
     const fields: string[] = [];
@@ -302,6 +306,10 @@ export class ThreadRepo {
     if (settings.permission_mode !== undefined) {
       fields.push("permission_mode = ?");
       values.push(settings.permission_mode);
+    }
+    if (settings.copilot_agent !== undefined) {
+      fields.push("copilot_agent = ?");
+      values.push(settings.copilot_agent);
     }
     if (fields.length === 0) return false;
 

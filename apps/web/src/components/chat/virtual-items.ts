@@ -1,3 +1,4 @@
+import type { PermissionDecision } from "@mcode/contracts";
 import type { Message, ToolCall } from "@/transport/types";
 
 /** Compile-time exhaustive check; throws at runtime for unhandled discriminants. */
@@ -26,6 +27,16 @@ export type ChatVirtualItem =
       messageId: string;
       filesChanged: string[];
       isLatestTurn: boolean;
+    }
+  | {
+      key: string;
+      type: "permission-request";
+      requestId: string;
+      toolName: string;
+      input: unknown;
+      title?: string;
+      settled: boolean;
+      decision?: PermissionDecision;
     };
 
 /**
@@ -74,7 +85,7 @@ export function buildStableItems(
 }
 
 /**
- * Build the volatile segment: active tool calls, streaming text, and indicator.
+ * Build the volatile segment: permission requests, active tool calls, streaming text, and indicator.
  * This changes on every tool call event but doesn't depend on messages.
  */
 export function buildVolatileItems(
@@ -82,11 +93,40 @@ export function buildVolatileItems(
   isAgentRunning: boolean,
   agentStartTime: number | undefined,
   streamingText: string | undefined,
+  permissions?: readonly {
+    requestId: string;
+    toolName: string;
+    input?: unknown;
+    title?: string;
+    settled: boolean;
+    decision?: PermissionDecision;
+  }[],
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
 
+  // Tool calls first — the agent invoked a tool before the permission gate fires.
   if (toolCalls.length > 0) {
     items.push({ key: "active-tools", type: "active-tools", toolCalls });
+  }
+
+  // Show all permission requests (settled and unsettled) so the user gets
+  // visual confirmation of their allow/deny decision. Settled cards collapse
+  // to a single-line badge. The full permissionsByThread entry is cleared
+  // when the agent turn ends, so settled cards never trail below the agent's
+  // persisted message.
+  if (permissions && permissions.length > 0) {
+    for (const p of permissions) {
+      items.push({
+        key: `permission-${p.requestId}`,
+        type: "permission-request" as const,
+        requestId: p.requestId,
+        toolName: p.toolName,
+        input: p.input,
+        title: p.title,
+        settled: p.settled,
+        decision: p.decision,
+      });
+    }
   }
 
   if (isAgentRunning) {
@@ -257,6 +297,8 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
       const overflowRow = item.filesChanged.length > 50 ? 28 : 0;
       return item.isLatestTurn ? 44 + visibleFiles * 32 + overflowRow : 44;
     }
+    case "permission-request":
+      return item.settled ? 36 : 120;
     default:
       return assertNever(item);
   }
