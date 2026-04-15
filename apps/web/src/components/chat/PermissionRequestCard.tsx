@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Shield, ChevronDown, Check, X, Zap, Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -97,8 +97,10 @@ export function PermissionRequestCard({
 
   const Icon = TOOL_ICONS[toolName] ?? Shield;
   const label = title ?? toolName;
-  const inputPreview =
-    typeof input === "string" ? input : JSON.stringify(input, null, 2);
+  const inputPreview = useMemo(
+    () => (typeof input === "string" ? input : JSON.stringify(input, null, 2)),
+    [input],
+  );
 
   // ── Settled (collapsed) state ──────────────────────────────────────────────
   if (settled && decision) {

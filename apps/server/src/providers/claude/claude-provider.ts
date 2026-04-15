@@ -329,8 +329,6 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const resolvedCwd = cwd || process.cwd();
     const resolvedModel = model || "claude-sonnet-4-6";
 
-    logger.info("doSendMessage permissionMode", { sessionId, permissionMode, isBypass, hasExisting: !!existing });
-
     if (isBypass) {
       logger.warn("Using bypassPermissions for session", { sessionId });
     }
@@ -408,7 +406,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             ) => {
               try {
                 const requestId = crypto.randomUUID();
-                logger.info("canUseTool called", { toolName, requestId, threadId: tid, hasSuggestions: !!options?.suggestions?.length });
+                logger.debug("canUseTool called", { toolName, requestId, threadId: tid });
                 const decision = await new Promise<PermissionDecision>((resolve) => {
                   this.pendingPermissions.set(requestId, {
                     threadId: tid,
@@ -424,13 +422,27 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                     input,
                     title: options?.title,
                   } satisfies PermissionRequest);
+
+                  // Auto-cancel if the SDK aborts the tool call (e.g. timeout).
+                  if (options?.signal) {
+                    const onAbort = () => {
+                      if (this.pendingPermissions.delete(requestId)) {
+                        resolve("cancelled");
+                        this.emit("permission_resolved", { requestId, decision: "cancelled" as const });
+                      }
+                    };
+                    options.signal.addEventListener("abort", onAbort, { once: true });
+                  }
                 });
-                logger.info("canUseTool decision received", { toolName, requestId, decision, signalAborted: options?.signal?.aborted });
+                logger.debug("canUseTool decision", { toolName, requestId, decision });
                 let result;
                 switch (decision) {
                   case "allow":
+                    // updatedInput is required by the CLI's runtime Zod schema (not optional
+                    // despite the SDK TypeScript type). Pass the original input unchanged.
                     result = {
                       behavior: "allow" as const,
+                      updatedInput: input,
                     };
                     break;
                   case "allow-session":
@@ -438,6 +450,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                     // PermissionUpdate shape for the specific tool being allowed.
                     result = {
                       behavior: "allow" as const,
+                      updatedInput: input,
                       updatedPermissions: options?.suggestions,
                     };
                     break;
@@ -457,7 +470,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                       message: "Unexpected permission decision value",
                     };
                 }
-                logger.info("canUseTool returning", { toolName, requestId, behavior: result.behavior });
+                logger.debug("canUseTool returning", { toolName, requestId, behavior: result.behavior });
                 return result;
               } catch (err) {
                 logger.error("canUseTool callback threw unexpectedly", { toolName, err });
@@ -1167,7 +1180,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       logger.warn("resolvePermission: requestId not found in pendingPermissions", { requestId, decision, mapSize: this.pendingPermissions.size });
       return false;
     }
-    logger.info("resolvePermission: resolving", { requestId, decision, toolName: entry.toolName, threadId: entry.threadId });
+    logger.debug("resolvePermission", { requestId, decision, toolName: entry.toolName });
     this.pendingPermissions.delete(requestId);
 
     // Reset the session's idle timer so the 10-minute eviction clock starts

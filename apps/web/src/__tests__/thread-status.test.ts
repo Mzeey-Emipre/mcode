@@ -65,9 +65,9 @@ describe("getStatusDisplay", () => {
     expect(result.color).toBe("text-amber-500");
   });
 
-  it("does not show amber dot when thread has pending permission but is not running", () => {
+  it("shows amber dot when thread has pending permission even if not running", () => {
     const result = getStatusDisplay(makeThread({ status: "active" }), false, true);
-    expect(result.dotClass).not.toContain("amber");
+    expect(result.dotClass).toContain("amber");
   });
 });
 
