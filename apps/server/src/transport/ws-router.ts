@@ -634,6 +634,15 @@ async function dispatch(
     case "app.version":
       return process.env.MCODE_VERSION ?? "0.0.1";
 
+    // Permission
+    case "permission.respond": {
+      deps.agentService.respondToPermission(params.requestId, params.decision);
+      // broadcast is handled by the provider's "permission_resolved" event → index.ts listener
+      return;
+    }
+    case "permission.listPending":
+      return deps.agentService.listPendingPermissions(params.threadId);
+
     default:
       throw new Error(`Unhandled method: ${method}`);
   }

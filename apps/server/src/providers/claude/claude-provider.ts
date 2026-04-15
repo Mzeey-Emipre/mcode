@@ -8,7 +8,7 @@ import { injectable } from "tsyringe";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
-import type { Query, SDKUserMessage, PostCompactHookInput } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage, PostCompactHookInput, CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type {
@@ -18,6 +18,8 @@ import type {
   AgentEvent,
   AttachmentMeta,
   ProviderUsageInfo,
+  PermissionDecision,
+  PermissionRequest,
 } from "@mcode/contracts";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
 
@@ -161,6 +163,17 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
   private sessions = new Map<string, SessionEntry>();
   private sdkSessionIds = new Map<string, string>();
+  /** Pending permission requests awaiting user decision, keyed by requestId. */
+  private pendingPermissions = new Map<
+    string,
+    {
+      threadId: string;
+      toolName: string;
+      input: unknown;
+      title?: string;
+      resolve: (decision: PermissionDecision) => void;
+    }
+  >();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
   private lastSessionCostUsd?: number;
   private lastServiceTier?: "standard" | "priority" | "batch";
@@ -312,6 +325,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const uuid = sessionId.startsWith("mcode-")
       ? sessionId.slice(6)
       : sessionId;
+    const tid = uuid;
     const resolvedCwd = cwd || process.cwd();
     const resolvedModel = model || "claude-sonnet-4-6";
 
@@ -382,6 +396,91 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
       permissionMode: sdkPermissionMode,
       ...(isBypass && { allowDangerouslySkipPermissions: true }),
+      ...(isBypass
+        ? {}
+        : {
+            canUseTool: (async (
+              toolName: string,
+              input: Record<string, unknown>,
+              options: Parameters<CanUseTool>[2],
+            ) => {
+              try {
+                const requestId = crypto.randomUUID();
+                logger.debug("canUseTool called", { toolName, requestId, threadId: tid });
+                const decision = await new Promise<PermissionDecision>((resolve) => {
+                  this.pendingPermissions.set(requestId, {
+                    threadId: tid,
+                    toolName,
+                    input,
+                    title: options?.title,
+                    resolve,
+                  });
+                  this.emit("permission_request", {
+                    requestId,
+                    threadId: tid,
+                    toolName,
+                    input,
+                    title: options?.title,
+                  } satisfies PermissionRequest);
+
+                  // Auto-cancel if the SDK aborts the tool call (e.g. timeout).
+                  if (options?.signal) {
+                    const onAbort = () => {
+                      if (this.pendingPermissions.delete(requestId)) {
+                        resolve("cancelled");
+                        this.emit("permission_resolved", { requestId, decision: "cancelled" as const });
+                      }
+                    };
+                    options.signal.addEventListener("abort", onAbort, { once: true });
+                  }
+                });
+                logger.debug("canUseTool decision", { toolName, requestId, decision });
+                let result;
+                switch (decision) {
+                  case "allow":
+                    // updatedInput is required by the CLI's runtime Zod schema (not optional
+                    // despite the SDK TypeScript type). Pass the original input unchanged.
+                    result = {
+                      behavior: "allow" as const,
+                      updatedInput: input,
+                    };
+                    break;
+                  case "allow-session":
+                    // Use the SDK-provided suggestions — they encode the correct
+                    // PermissionUpdate shape for the specific tool being allowed.
+                    result = {
+                      behavior: "allow" as const,
+                      updatedInput: input,
+                      updatedPermissions: options?.suggestions,
+                    };
+                    break;
+                  case "deny":
+                  case "cancelled":
+                    result = {
+                      behavior: "deny" as const,
+                      message: decision === "cancelled"
+                        ? "Session stopped by user"
+                        : "User denied",
+                    };
+                    break;
+                  default:
+                    logger.error("canUseTool received unexpected decision", { toolName, requestId, decision });
+                    result = {
+                      behavior: "deny" as const,
+                      message: "Unexpected permission decision value",
+                    };
+                }
+                logger.debug("canUseTool returning", { toolName, requestId, behavior: result.behavior });
+                return result;
+              } catch (err) {
+                logger.error("canUseTool callback threw unexpectedly", { toolName, err });
+                return {
+                  behavior: "deny" as const,
+                  message: "Permission check encountered an internal error",
+                };
+              }
+            }) satisfies CanUseTool,
+          }),
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
       includePartialMessages: true,
@@ -984,6 +1083,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const now = Date.now();
     for (const [sessionId, entry] of this.sessions) {
       if (now - entry.lastUsedAt > IDLE_TTL_MS) {
+        // Never evict a session that is actively awaiting a user permission response —
+        // the user may be on another thread and is about to respond.
+        const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+        const hasPending = [...this.pendingPermissions.values()].some(
+          (p) => p.threadId === tid,
+        );
+        if (hasPending) continue;
+
         logger.info("Evicting idle session", { sessionId });
         this.sessions.delete(sessionId);
         entry.closeQueue();
@@ -999,6 +1106,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
   /** Abort a running session. */
   stopSession(sessionId: string): void {
+    // Normalize to the raw UUID that canUseTool stores as threadId.
+    const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+    // Reject all pending permission requests for this session and notify frontend.
+    for (const [requestId, entry] of this.pendingPermissions) {
+      if (entry.threadId === tid) {
+        this.pendingPermissions.delete(requestId);
+        entry.resolve("cancelled");
+        this.emit("permission_resolved", { requestId, decision: "cancelled" });
+      }
+    }
     const entry = this.sessions.get(sessionId);
     if (entry) {
       this.sessions.delete(sessionId);
@@ -1056,11 +1173,55 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     };
   }
 
+  /** Resolves a pending permission request by ID. Deletes the entry before calling resolve to prevent re-entrant calls. Returns false if the requestId is unknown. */
+  resolvePermission(requestId: string, decision: PermissionDecision): boolean {
+    const entry = this.pendingPermissions.get(requestId);
+    if (!entry) {
+      logger.warn("resolvePermission: requestId not found in pendingPermissions", { requestId, decision, mapSize: this.pendingPermissions.size });
+      return false;
+    }
+    logger.debug("resolvePermission", { requestId, decision, toolName: entry.toolName });
+    this.pendingPermissions.delete(requestId);
+
+    // Reset the session's idle timer so the 10-minute eviction clock starts
+    // from the moment the user responds, not from when the request was sent.
+    const sessionId = `mcode-${entry.threadId}`;
+    const session = this.sessions.get(sessionId);
+    if (session) session.lastUsedAt = Date.now();
+
+    entry.resolve(decision);
+    this.emit("permission_resolved", { requestId, decision });
+    return true;
+  }
+
+  /** Returns all pending permission requests for the given thread, including tool input and optional title for display. Used by the frontend to re-hydrate cards after a WebSocket reconnect. */
+  listPendingPermissions(threadId: string): PermissionRequest[] {
+    const results: PermissionRequest[] = [];
+    for (const [requestId, entry] of this.pendingPermissions) {
+      if (entry.threadId === threadId) {
+        results.push({
+          requestId,
+          threadId: entry.threadId,
+          toolName: entry.toolName,
+          input: entry.input,
+          title: entry.title,
+        });
+      }
+    }
+    return results;
+  }
+
   /** Tear down all sessions and release resources. */
   shutdown(): void {
     if (this.evictionTimer) {
       clearInterval(this.evictionTimer);
       this.evictionTimer = null;
+    }
+    // Drain all pending permission requests so their promises settle
+    for (const [requestId, entry] of this.pendingPermissions) {
+      this.pendingPermissions.delete(requestId);
+      entry.resolve("cancelled");
+      this.emit("permission_resolved", { requestId, decision: "cancelled" as const });
     }
     for (const [, entry] of this.sessions) {
       entry.closeQueue();

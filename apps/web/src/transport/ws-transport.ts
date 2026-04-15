@@ -18,6 +18,7 @@ import type {
 import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
+import type { PermissionRequest } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
@@ -408,6 +409,10 @@ export function createWsTransport(
       });
     },
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
+    respondToPermission: (requestId, decision) =>
+      rpc<void>("permission.respond", { requestId, decision }),
+    listPendingPermissions: (threadId) =>
+      rpc<PermissionRequest[]>("permission.listPending", { threadId }),
     answerPlanQuestions: (threadId, answers, permissionMode?, reasoningLevel?) =>
       rpc<void>("agent.answerQuestions", { threadId, answers, permissionMode, reasoningLevel }),
     readClipboardImage: () =>

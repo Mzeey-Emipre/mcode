@@ -24,6 +24,8 @@ import type {
   CreatePrResult,
   ChecksStatus,
   CopilotSubagent,
+  PermissionDecision,
+  PermissionRequest,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -107,6 +109,10 @@ export interface McodeTransport {
     copilotAgent?: string,
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
+  /** Respond to a tool permission request from the agent. */
+  respondToPermission(requestId: string, decision: PermissionDecision): Promise<void>;
+  /** List pending permission requests for a thread (used to re-hydrate after reconnect). */
+  listPendingPermissions(threadId: string): Promise<PermissionRequest[]>;
   /** Submit answers to a plan-mode question batch and resume the agent session. */
   answerPlanQuestions(
     threadId: string,
