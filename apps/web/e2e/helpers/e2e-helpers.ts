@@ -1,4 +1,5 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
+import { getDefaultSettings } from "@mcode/contracts";
 
 /**
  * Optional overrides for RPC responses. Keyed by method name.
@@ -31,7 +32,9 @@ export async function mockWebSocketServer(
     resolveWs = r;
   });
 
-  await page.routeWebSocket(/ws:\/\/localhost:\d+/, (ws) => {
+  // Match 5-digit ports (19400-19800 mcode range) to avoid intercepting Vite's
+  // HMR socket at port 5173 (4 digits), which would trigger a page reload.
+  await page.routeWebSocket(/ws:\/\/localhost:\d{5}/, (ws) => {
     resolveWs(ws);
 
     ws.onMessage((data) => {
@@ -60,6 +63,9 @@ export async function mockWebSocketServer(
       else if (method === "agent.activeCount") result = 0;
       else if (method === "app.version") result = "0.0.1-test";
       else if (method === "config.discover") result = {};
+      // Return canonical settings defaults so App can bootstrap correctly.
+      // Using getDefaultSettings() ensures this stays in sync with schema changes.
+      else if (method === "settings.get") result = getDefaultSettings();
       else {
         ws.send(
           JSON.stringify({

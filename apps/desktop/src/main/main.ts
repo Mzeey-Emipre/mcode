@@ -31,6 +31,7 @@ import { getExtension as bundledGetExtension } from "@mcode/contracts";
 const getExtension = globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 import { ServerManager } from "./server-manager.js";
 import { initAutoUpdater } from "./auto-updater.js";
+import { setupSpellcheck } from "./spellcheck.js";
 
 // ---------------------------------------------------------------------------
 // Editor detection (inlined from editors.ts)
@@ -293,6 +294,9 @@ function createWindow(): void {
       preload: join(__dirname, "../preload/preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Documented explicitly; defaults to true in Electron but we set it
+      // here for clarity. The load-bearing call is setSpellCheckerLanguages().
+      spellcheck: true,
     },
   });
 
@@ -488,6 +492,27 @@ function registerIpcHandlers(): void {
   ipcMain.handle("open-keybindings-file", () =>
     ensureAndOpenConfigFile("keybindings.json", "[]\n"),
   );
+
+  // Spellcheck: replace misspelled word under cursor.
+  // Registered here (not in setupSpellcheck) so it is only registered once,
+  // avoiding "second handler" crashes on macOS window re-creation.
+  ipcMain.handle("spellcheck:replace-misspelling", (_event, word: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.replaceMisspelling(word);
+    }
+  });
+
+  // Spellcheck: add word to Chromium's custom dictionary (persists across sessions).
+  ipcMain.handle("spellcheck:add-to-dictionary", (_event, word: string) => {
+    session.defaultSession.addWordToSpellCheckerDictionary(word);
+  });
+
+  // Spellcheck: paste via Electron's native webContents.paste() (execCommand is unreliable).
+  ipcMain.handle("spellcheck:paste", () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.paste();
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -654,6 +679,9 @@ app.whenReady().then(async () => {
     createWindow();
     console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
 
+    // Enable spellchecker and attach per-window context-menu handler.
+    setupSpellcheck(mainWindow!);
+
     // Start IPC push relay (main process → renderer via webContents.send)
     if (mainWindow && serverManager.ipcPath) {
       startIpcRelay(serverManager.ipcPath, mainWindow);
@@ -666,6 +694,7 @@ app.whenReady().then(async () => {
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
+        setupSpellcheck(mainWindow!);
         setupCloseHandler();
         if (mainWindow && serverManager.ipcPath) {
           startIpcRelay(serverManager.ipcPath, mainWindow);

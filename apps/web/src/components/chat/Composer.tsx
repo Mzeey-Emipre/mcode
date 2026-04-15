@@ -33,6 +33,7 @@ import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
+import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
 import { AgentStatusBar } from "./AgentStatusBar";
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
@@ -1106,6 +1107,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             listRef={filePopup.listRef}
             selectedIndex={filePopup.selectedIndex}
           />
+          <SpellcheckContextMenu editorRef={editorContainerRef} />
         </div>
 
         {/* Attachment previews */}
