@@ -11,7 +11,7 @@ interface IpcBridge {
 }
 
 /** Data pushed from the main process when the user right-clicks in an editable area. */
-interface SpellcheckContextMenuData {
+export interface SpellcheckContextMenuData {
   readonly x: number;
   readonly y: number;
   readonly misspelledWord: string;

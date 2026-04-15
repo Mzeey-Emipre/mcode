@@ -42,14 +42,18 @@ export function setupSpellcheck(win: BrowserWindow): void {
     event: Electron.Event,
     params: Electron.ContextMenuParams,
   ): void => {
-    // Suppress Chromium's native context menu. We must do this here (main process)
-    // rather than via e.preventDefault() in the renderer, because calling
-    // preventDefault() on the renderer's DOM contextmenu event tells Chromium
-    // the event is handled - it then skips sending ShowContextMenu to the browser
-    // process, so this handler would never fire.
-    event.preventDefault();
-
     if (win.isDestroyed()) return;
+
+    // Only handle editable areas where our custom spellcheck menu applies.
+    // Non-editable areas (links, images, sidebar elements) keep Chromium's
+    // native context menu so they remain usable.
+    if (!params.isEditable) return;
+
+    // Suppress the native menu here (main process) rather than via
+    // e.preventDefault() in the renderer. Doing it in the renderer tells
+    // Chromium the event is handled and it skips sending ShowContextMenu to
+    // the browser process, so this handler would never fire.
+    event.preventDefault();
 
     const data: SpellcheckContextMenuData = {
       x: params.x,

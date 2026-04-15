@@ -1,4 +1,5 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
+import { getDefaultSettings } from "@mcode/contracts";
 
 /**
  * Optional overrides for RPC responses. Keyed by method name.
@@ -62,18 +63,9 @@ export async function mockWebSocketServer(
       else if (method === "agent.activeCount") result = 0;
       else if (method === "app.version") result = "0.0.1-test";
       else if (method === "config.discover") result = {};
-      // Return valid settings defaults so App can read settings.appearance.theme.
-      else if (method === "settings.get") result = {
-        appearance: { theme: "system" },
-        agent: { maxConcurrent: 3, defaults: { mode: "chat", permission: "full" }, guardrails: { maxBudgetUsd: 0, maxTurns: 0 } },
-        model: { defaults: { provider: "claude", id: "claude-sonnet-4-6", fallbackId: "claude-sonnet-4-6", reasoning: "high" } },
-        provider: { cli: { codex: "", claude: "", copilot: "" } },
-        prDraft: { provider: "", model: "" },
-        terminal: { scrollback: 1000 },
-        notifications: { enabled: false },
-        worktree: { naming: { mode: "auto", aiConfirmation: true } },
-        server: { memory: { heapMb: 96 } },
-      };
+      // Return canonical settings defaults so App can bootstrap correctly.
+      // Using getDefaultSettings() ensures this stays in sync with schema changes.
+      else if (method === "settings.get") result = getDefaultSettings();
       else {
         ws.send(
           JSON.stringify({

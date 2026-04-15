@@ -1,21 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { ContextMenu } from "@/components/ui/context-menu";
-
-/** Data pushed from the Electron main process on right-click. */
-interface ContextMenuEvent {
-  readonly x: number;
-  readonly y: number;
-  readonly misspelledWord: string;
-  readonly suggestions: readonly string[];
-  readonly selectionText: string;
-  readonly isEditable: boolean;
-  readonly editFlags: {
-    readonly canCut: boolean;
-    readonly canCopy: boolean;
-    readonly canPaste: boolean;
-    readonly canSelectAll: boolean;
-  };
-}
+import type { SpellcheckContextMenuData } from "@/transport/desktop-bridge";
 
 interface SpellcheckContextMenuProps {
   /** Ref to the editor container element, used to scope context-menu events to the Composer. */
@@ -28,7 +13,7 @@ interface SpellcheckContextMenuProps {
  * running in a browser without the Electron desktop bridge.
  */
 export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps) {
-  const [menuState, setMenuState] = useState<ContextMenuEvent | null>(null);
+  const [menuState, setMenuState] = useState<SpellcheckContextMenuData | null>(null);
   // Stores the CSS-pixel viewport coordinates captured from the DOM contextmenu
   // event. Non-null means a right-click on the editor is pending an IPC response.
   // Cleared once the IPC data arrives so stale events don't trigger the menu.
@@ -65,12 +50,11 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
       if (!pos) return;
       pendingPos.current = null;
 
-      const event = data as ContextMenuEvent;
-      if (!event.isEditable) return;
+      if (!data.isEditable) return;
 
       // Override x/y with DOM coordinates so the menu appears exactly at the
       // cursor regardless of how Electron reports coordinates on this display.
-      setMenuState({ ...event, x: pos.x, y: pos.y });
+      setMenuState({ ...data, x: pos.x, y: pos.y });
     });
 
     return () => bridge.offContextMenu(listener);
@@ -119,11 +103,18 @@ export function SpellcheckContextMenu({ editorRef }: SpellcheckContextMenuProps)
   if (editFlags.canCut) {
     items.push({
       label: "Cut",
-      onClick: () => {
+      onClick: async () => {
         const sel = window.getSelection();
-        if (sel?.toString()) {
-          navigator.clipboard.writeText(sel.toString());
-          sel.deleteFromDocument();
+        const text = sel?.toString();
+        if (text) {
+          try {
+            await navigator.clipboard.writeText(text);
+            // Only delete after the clipboard write succeeds - deleting first
+            // would lose the text if writeText rejects (e.g. permission denied).
+            sel!.deleteFromDocument();
+          } catch {
+            // Clipboard write failed; leave the selection intact.
+          }
         }
       },
     });
