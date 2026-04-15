@@ -431,7 +431,6 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                   case "allow":
                     result = {
                       behavior: "allow" as const,
-                      decisionClassification: "user_temporary" as const,
                     };
                     break;
                   case "allow-session":
@@ -440,7 +439,6 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                     result = {
                       behavior: "allow" as const,
                       updatedPermissions: options?.suggestions,
-                      decisionClassification: "user_permanent" as const,
                     };
                     break;
                   case "deny":
@@ -450,7 +448,6 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
                       message: decision === "cancelled"
                         ? "Session stopped by user"
                         : "User denied",
-                      decisionClassification: "user_reject" as const,
                     };
                     break;
                   default:
