@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "*",
+    "@github/copilot-sdk": "^0.2.2",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
     "better-sqlite3": "^12.0.0",
