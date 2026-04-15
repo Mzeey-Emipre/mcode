@@ -106,6 +106,7 @@ export const mockTransport: McodeTransport = {
   listOpenPrs: vi.fn().mockResolvedValue([]),
   fetchBranch: vi.fn().mockResolvedValue(undefined),
   getPrByUrl: vi.fn().mockResolvedValue(null),
+  checkStatus: vi.fn().mockResolvedValue({ aggregate: "no_checks", runs: [], fetchedAt: 0 }),
   listSkills: vi.fn().mockResolvedValue([] as SkillInfo[]),
   terminalCreate: vi.fn().mockResolvedValue("pty-mock-1"),
   terminalWrite: vi.fn().mockResolvedValue(undefined),

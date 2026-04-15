@@ -18,6 +18,7 @@ let unsubs: (() => void)[] = [];
  * - `terminal.exit` -- PTY exit forwarded via custom DOM event
  * - `thread.status` -- thread status changes reflected in threadStore
  * - `thread.prLinked` -- PR detected for a thread, updates pr_number/pr_status
+ * - `thread.checksUpdated` -- CI check status polled for a thread's PR, updates checksById
  * - `files.changed` -- invalidates the file autocomplete cache
  * - `skills.changed` -- reserved for future skill cache invalidation
  * - `turn.persisted` -- tool call persistence confirmation forwarded to threadStore
@@ -105,6 +106,21 @@ export function startPushListeners(): void {
               ? { ...t, pr_number: prNumber, pr_status: prStatus }
               : t,
           ),
+        }));
+      });
+    }),
+  );
+
+  // thread.checksUpdated: CI check status polled for a thread's PR
+  unsubs.push(
+    pushEmitter.on("thread.checksUpdated", (data) => {
+      const { threadId, checks } = data as {
+        threadId: string;
+        checks: import("@mcode/contracts").ChecksStatus;
+      };
+      import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
+        useWorkspaceStore.setState((ws) => ({
+          checksById: { ...ws.checksById, [threadId]: checks },
         }));
       });
     }),

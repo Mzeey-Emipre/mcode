@@ -22,6 +22,7 @@ import type {
   ProviderUsageInfo,
   PrDraft,
   CreatePrResult,
+  ChecksStatus,
   CopilotSubagent,
 } from "@mcode/contracts";
 
@@ -170,6 +171,8 @@ export interface McodeTransport {
   listOpenPrs(workspaceId: string): Promise<PrDetail[]>;
   fetchBranch(workspaceId: string, branch: string, prNumber?: number): Promise<void>;
   getPrByUrl(url: string): Promise<PrDetail | null>;
+  /** Fetch fresh CI check status for a thread (manual refresh). */
+  checkStatus(threadId: string): Promise<ChecksStatus>;
 
   // Skills
   listSkills(cwd?: string): Promise<SkillInfo[]>;

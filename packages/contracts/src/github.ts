@@ -59,3 +59,30 @@ export const CreatePrResultSchema = lazySchema(() =>
 );
 
 export type CreatePrResult = z.infer<ReturnType<typeof CreatePrResultSchema>>;
+
+/** Individual CI check run (one job in a GitHub Actions workflow). */
+export const CheckRunSchema = lazySchema(() =>
+  z.object({
+    name: z.string(),
+    status: z.enum(["queued", "in_progress", "completed"]),
+    conclusion: z
+      .enum(["success", "failure", "cancelled", "skipped", "timed_out", "neutral"])
+      .nullable(),
+    durationMs: z.number().nullable(),
+  }),
+);
+
+/** Individual CI check run. */
+export type CheckRun = z.infer<ReturnType<typeof CheckRunSchema>>;
+
+/** Aggregate CI check status for a thread's PR. */
+export const ChecksStatusSchema = lazySchema(() =>
+  z.object({
+    aggregate: z.enum(["passing", "failing", "pending", "no_checks"]),
+    runs: z.array(CheckRunSchema()),
+    fetchedAt: z.number(),
+  }),
+);
+
+/** Aggregate CI check status for a thread's PR. */
+export type ChecksStatus = z.infer<ReturnType<typeof ChecksStatusSchema>>;

@@ -110,6 +110,7 @@ function defaultWorkspaceState() {
     pendingNewThread: false,
     threads: [makeThread()],
     prUrlsByThreadId: {} as Record<string, string>,
+    checksById: {} as Record<string, import("@mcode/contracts").ChecksStatus>,
     loadWorkspaces: vi.fn(),
     loadThreads: vi.fn(),
     setActiveWorkspace: vi.fn(),
@@ -172,7 +173,7 @@ describe("HeaderActions - Create PR button", () => {
     mockUseBranchPr.mockReturnValue({ number: 42, state: "OPEN", url: "https://github.com/test/pr/42" });
     render(<HeaderActions thread={makeThread()} />);
     expect(screen.queryByRole("button", { name: /create pr/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/View PR #42/)).toBeInTheDocument();
+    expect(screen.getByText("PR #42")).toBeInTheDocument();
   });
 
   it("shows tooltip explaining why button is disabled when no commits", () => {
