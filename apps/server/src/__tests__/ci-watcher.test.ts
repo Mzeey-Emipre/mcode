@@ -127,5 +127,6 @@ describe("CiWatcherService", () => {
     const entry = watcher.getEntry("t1");
     expect(entry).not.toBeNull();
     expect(entry!.prNumber).toBe(42);
+    expect(entry!.cache).toEqual(passing);
   });
 });

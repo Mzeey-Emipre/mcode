@@ -150,35 +150,37 @@ export function createWsTransport(
         import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
           const state = useWorkspaceStore.getState();
 
-          // Refresh all non-terminal PR threads visible in the sidebar.
-          const prThreads = state.threads.filter(
-            (t) => t.pr_number != null
-              && t.pr_status?.toLowerCase() !== "merged"
-              && t.pr_status?.toLowerCase() !== "closed",
-          );
+          // Refresh all PR threads visible in the sidebar (including terminal ones — server
+          // handles merged/closed with a one-shot fetch rather than registering a watcher).
+          const prThreads = state.threads.filter((t) => t.pr_number != null);
 
           for (const thread of prThreads) {
             rpc<ChecksStatus>("github.checkStatus", { threadId: thread.id }).then((checks) => {
-              useWorkspaceStore.setState((ws) => ({
-                checksById: { ...ws.checksById, [thread.id]: checks },
-              }));
+              useWorkspaceStore.setState((ws) => {
+                const existing = ws.checksById[thread.id];
+                // Ignore stale in-flight responses that arrived after a newer update.
+                if (existing && existing.fetchedAt >= checks.fetchedAt) return ws;
+                return { checksById: { ...ws.checksById, [thread.id]: checks } };
+              });
             }).catch(() => { /* best-effort */ });
           }
 
-          // On initial connect, threads haven't loaded yet; subscribe to backfill the active
-          // PR thread's CI status once the store is populated.
+          // On initial connect, threads haven't loaded yet; subscribe to backfill all PR
+          // threads' CI status once the store is populated.
           if (state.threads.length === 0) {
             const unsub = useWorkspaceStore.subscribe((s) => {
-              if (!s.activeThreadId) return;
+              if (s.threads.length === 0) return;
               unsub();
-              const tid = s.activeThreadId;
-              const thread = s.threads.find((t) => t.id === tid);
-              if (thread?.pr_number == null) return;
-              rpc<ChecksStatus>("github.checkStatus", { threadId: tid }).then((checks) => {
-                useWorkspaceStore.setState((ws) => ({
-                  checksById: { ...ws.checksById, [tid]: checks },
-                }));
-              }).catch(() => { /* best-effort */ });
+              for (const t of s.threads) {
+                if (t.pr_number == null) continue;
+                rpc<ChecksStatus>("github.checkStatus", { threadId: t.id }).then((checks) => {
+                  useWorkspaceStore.setState((ws) => {
+                    const existing = ws.checksById[t.id];
+                    if (existing && existing.fetchedAt >= checks.fetchedAt) return ws;
+                    return { checksById: { ...ws.checksById, [t.id]: checks } };
+                  });
+                }).catch(() => { /* best-effort */ });
+              }
             });
           }
         });
