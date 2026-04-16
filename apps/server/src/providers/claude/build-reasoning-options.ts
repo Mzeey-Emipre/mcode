@@ -47,8 +47,8 @@ export function buildReasoningOptions(
   }
 
   return {
-    // SDK EffortLevel doesn't include "xhigh" yet; the API accepts it
-    effort: level as Exclude<ReasoningLevel, "xhigh">,
+    // @ts-expect-error: SDK EffortLevel type doesn't include "xhigh" yet; remove when it does
+    effort: level,
     thinking: { type: "adaptive" },
   };
 }
