@@ -1002,14 +1002,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const reasoningLabel = (level: string) =>
     level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
 
-  const codexLevels = getCodexReasoningLevels(modelId);
-  const reasoningLevels: ReasoningLevel[] = codexLevels
-    ? (codexLevels as unknown as ReasoningLevel[])
-    : isXhighEffortModel(modelId)
-      ? ["low", "medium", "high", "max", "xhigh"]
-      : isMaxEffortModel(modelId)
-        ? ["low", "medium", "high", "max"]
-        : ["low", "medium", "high"];
+  const reasoningLevels = useMemo<ReasoningLevel[]>(() => {
+    const codexLevels = getCodexReasoningLevels(modelId);
+    if (codexLevels) return codexLevels as unknown as ReasoningLevel[];
+    if (isXhighEffortModel(modelId)) return ["low", "medium", "high", "max", "xhigh"];
+    if (isMaxEffortModel(modelId)) return ["low", "medium", "high", "max"];
+    return ["low", "medium", "high"];
+  }, [modelId]);
 
   return (
     <div className="relative px-8 py-4">
