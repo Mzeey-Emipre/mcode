@@ -14,11 +14,17 @@ import {
 } from "@/lib/model-registry";
 
 describe("ModelRegistry", () => {
-  it("MODEL_PROVIDERS contains Claude with 3 models", () => {
+  it("MODEL_PROVIDERS contains Claude with 4 models", () => {
     const claude = MODEL_PROVIDERS.find((p) => p.id === "claude");
     expect(claude).toBeTruthy();
-    expect(claude?.models).toHaveLength(3);
+    expect(claude?.models).toHaveLength(4);
     expect(claude?.comingSoon).toBe(false);
+  });
+
+  it("findModelById returns Opus 4.7", () => {
+    const model = findModelById("claude-opus-4-7");
+    expect(model?.label).toBe("Claude Opus 4.7");
+    expect(model?.providerId).toBe("claude");
   });
 
   it("findModelById returns correct model", () => {
@@ -145,6 +151,11 @@ describe("findModelById dated variants", () => {
     expect(model?.id).toBe("claude-opus-4-6");
   });
 
+  it("resolves claude-opus-4-7-20260401 to claude-opus-4-7", () => {
+    const model = findModelById("claude-opus-4-7-20260401");
+    expect(model?.id).toBe("claude-opus-4-7");
+  });
+
   it("returns undefined for a totally unknown dated-style string", () => {
     expect(findModelById("claude-unknown-99-9-20251001")).toBeUndefined();
   });
@@ -160,6 +171,10 @@ describe("findModelById dated variants", () => {
 describe("findProviderForModel dated variants", () => {
   it("resolves claude-haiku-4-5-20251001 to claude provider", () => {
     expect(findProviderForModel("claude-haiku-4-5-20251001")?.id).toBe("claude");
+  });
+
+  it("resolves claude-opus-4-7-20260401 to claude provider", () => {
+    expect(findProviderForModel("claude-opus-4-7-20260401")?.id).toBe("claude");
   });
 
   it("returns undefined for a totally unknown dated-style string", () => {
@@ -193,6 +208,14 @@ describe("isMaxEffortModel", () => {
 
   it("returns false for claude-haiku-4-5", () => {
     expect(isMaxEffortModel("claude-haiku-4-5")).toBe(false);
+  });
+
+  it("returns true for claude-opus-4-7", () => {
+    expect(isMaxEffortModel("claude-opus-4-7")).toBe(true);
+  });
+
+  it("returns true for dated Opus 4.7 variant", () => {
+    expect(isMaxEffortModel("claude-opus-4-7-20260401")).toBe(true);
   });
 
   it("returns false for unknown model", () => {

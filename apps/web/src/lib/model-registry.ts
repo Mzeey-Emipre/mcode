@@ -46,6 +46,7 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     comingSoon: false,
     supportsCompletion: true,
     models: [
+      { id: "claude-opus-4-7", label: "Claude Opus 4.7", providerId: "claude" },
       { id: "claude-opus-4-6", label: "Claude Opus 4.6", providerId: "claude" },
       { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", providerId: "claude" },
       { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", providerId: "claude" },
@@ -186,7 +187,7 @@ export function findProviderForModel(modelId: string): ModelProvider | undefined
 
 /** @deprecated Use `getDefaultModelId()` for settings-aware defaults. */
 export function getDefaultModel(): ModelDefinition {
-  return MODEL_PROVIDERS[0].models[1]; // Claude Sonnet 4.6
+  return MODEL_PROVIDERS[0].models[2]; // Claude Sonnet 4.6
 }
 
 /**
@@ -221,7 +222,7 @@ export function getDefaultReasoningLevel(): ReasoningLevel {
 }
 
 /** Opus model IDs that support the "max" effort level. */
-const MAX_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-6"];
+const MAX_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-7", "claude-opus-4-6"];
 
 /**
  * Returns true when the given model supports "max" reasoning effort.
