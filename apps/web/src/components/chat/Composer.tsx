@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, findModelById, isMaxEffortModel, isXhighEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -1005,9 +1005,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const codexLevels = getCodexReasoningLevels(modelId);
   const reasoningLevels: ReasoningLevel[] = codexLevels
     ? (codexLevels as unknown as ReasoningLevel[])
-    : isMaxEffortModel(modelId)
-      ? ["low", "medium", "high", "max"]
-      : ["low", "medium", "high"];
+    : isXhighEffortModel(modelId)
+      ? ["low", "medium", "high", "max", "xhigh"]
+      : isMaxEffortModel(modelId)
+        ? ["low", "medium", "high", "max"]
+        : ["low", "medium", "high"];
 
   return (
     <div className="relative px-8 py-4">
