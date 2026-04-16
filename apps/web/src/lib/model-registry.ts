@@ -226,7 +226,7 @@ const MAX_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-7", "claude-opus
 
 /**
  * Returns true when the given model supports "max" reasoning effort.
- * Only Opus 4.6 exposes the max effort tier. Accepts dated SDK variants
+ * Opus 4.6 and 4.7 expose the max effort tier. Accepts dated SDK variants
  * (e.g. `claude-opus-4-6-20251001`) by normalizing through `findModelById`.
  */
 export function isMaxEffortModel(modelId: string): boolean {

@@ -232,6 +232,10 @@ describe("normalizeReasoningLevelForModel", () => {
     expect(normalizeReasoningLevelForModel("claude-opus-4-6-20251001", "max")).toBe("max");
   });
 
+  it("returns max unchanged for Opus 4.7", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-7", "max")).toBe("max");
+  });
+
   it("clamps max to high for Sonnet", () => {
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "max")).toBe("high");
   });
