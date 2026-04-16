@@ -101,4 +101,14 @@ describe("buildReasoningOptions", () => {
   it("returns empty object when reasoning level is undefined", () => {
     expect(buildReasoningOptions(undefined, OPUS)).toEqual({});
   });
+
+  it("passes xhigh through for a dated Opus 4.7 variant", () => {
+    const result = buildReasoningOptions("xhigh", "claude-opus-4-7-20260401");
+    expect(result.effort).toBe("xhigh");
+  });
+
+  it("passes max through for a dated Opus 4.7 variant", () => {
+    const result = buildReasoningOptions("max", "claude-opus-4-7-20260401");
+    expect(result.effort).toBe("max");
+  });
 });
