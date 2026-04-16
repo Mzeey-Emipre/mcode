@@ -244,6 +244,10 @@ describe("isXhighEffortModel", () => {
   it("returns false for unknown model", () => {
     expect(isXhighEffortModel("nonexistent")).toBe(false);
   });
+
+  it("returns false for dated Opus 4.6 variant", () => {
+    expect(isXhighEffortModel("claude-opus-4-6-20251001")).toBe(false);
+  });
 });
 
 describe("normalizeReasoningLevelForModel", () => {
@@ -291,6 +295,10 @@ describe("normalizeReasoningLevelForModel", () => {
 
   it("clamps xhigh to high for Sonnet", () => {
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "xhigh")).toBe("high");
+  });
+
+  it("clamps xhigh to high for Haiku", () => {
+    expect(normalizeReasoningLevelForModel("claude-haiku-4-5", "xhigh")).toBe("high");
   });
 });
 
