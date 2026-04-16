@@ -224,6 +224,9 @@ export function getDefaultReasoningLevel(): ReasoningLevel {
 /** Opus model IDs that support the "max" effort level. */
 const MAX_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-7", "claude-opus-4-6"];
 
+/** Claude model IDs that support the "xhigh" effort level. */
+const XHIGH_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-7"];
+
 /**
  * Returns true when the given model supports "max" reasoning effort.
  * Opus 4.6 and 4.7 expose the max effort tier. Accepts dated SDK variants
@@ -235,9 +238,19 @@ export function isMaxEffortModel(modelId: string): boolean {
 }
 
 /**
+ * Returns true when the given Claude model supports "xhigh" reasoning effort.
+ * Only Opus 4.7+ exposes the xhigh effort tier. Accepts dated SDK variants
+ * by normalizing through `findModelById`.
+ */
+export function isXhighEffortModel(modelId: string): boolean {
+  const baseId = findModelById(modelId)?.id ?? modelId;
+  return XHIGH_EFFORT_MODEL_IDS.includes(baseId);
+}
+
+/**
  * Normalizes a reasoning level for the given model.
  * - Clamps "max" to "high" for non-Opus Claude models.
- * - Clamps "xhigh" to "high" for Claude models (xhigh is Codex-only).
+ * - Clamps "xhigh" to "high" for Claude models below Opus 4.7.
  */
 export function normalizeReasoningLevelForModel(
   modelId: string,
@@ -251,8 +264,8 @@ export function normalizeReasoningLevelForModel(
     if (level === "max") return codexLevels.includes("xhigh") ? "xhigh" : "high";
     return level;
   }
-  // Claude: xhigh is not valid, clamp to high
-  if (level === "xhigh") return "high";
+  // Claude: xhigh requires Opus 4.7+
+  if (level === "xhigh" && !isXhighEffortModel(modelId)) return "high";
   if (level === "max" && !isMaxEffortModel(modelId)) return "high";
   return level;
 }

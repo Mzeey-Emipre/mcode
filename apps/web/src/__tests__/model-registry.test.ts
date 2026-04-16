@@ -9,6 +9,7 @@ import {
   getDefaultModelId,
   getDefaultReasoningLevel,
   isMaxEffortModel,
+  isXhighEffortModel,
   normalizeReasoningLevelForModel,
   resolveThreadModelId,
 } from "@/lib/model-registry";
@@ -223,6 +224,28 @@ describe("isMaxEffortModel", () => {
   });
 });
 
+describe("isXhighEffortModel", () => {
+  it("returns true for claude-opus-4-7", () => {
+    expect(isXhighEffortModel("claude-opus-4-7")).toBe(true);
+  });
+
+  it("returns true for dated Opus 4.7 variant", () => {
+    expect(isXhighEffortModel("claude-opus-4-7-20260401")).toBe(true);
+  });
+
+  it("returns false for claude-opus-4-6", () => {
+    expect(isXhighEffortModel("claude-opus-4-6")).toBe(false);
+  });
+
+  it("returns false for claude-sonnet-4-6", () => {
+    expect(isXhighEffortModel("claude-sonnet-4-6")).toBe(false);
+  });
+
+  it("returns false for unknown model", () => {
+    expect(isXhighEffortModel("nonexistent")).toBe(false);
+  });
+});
+
 describe("normalizeReasoningLevelForModel", () => {
   it("returns max unchanged for Opus 4.6", () => {
     expect(normalizeReasoningLevelForModel("claude-opus-4-6", "max")).toBe("max");
@@ -252,6 +275,22 @@ describe("normalizeReasoningLevelForModel", () => {
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "high")).toBe("high");
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "medium")).toBe("medium");
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "low")).toBe("low");
+  });
+
+  it("returns xhigh unchanged for Opus 4.7", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-7", "xhigh")).toBe("xhigh");
+  });
+
+  it("returns xhigh unchanged for dated Opus 4.7 variant", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-7-20260401", "xhigh")).toBe("xhigh");
+  });
+
+  it("clamps xhigh to high for Opus 4.6", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-6", "xhigh")).toBe("high");
+  });
+
+  it("clamps xhigh to high for Sonnet", () => {
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "xhigh")).toBe("high");
   });
 });
 
