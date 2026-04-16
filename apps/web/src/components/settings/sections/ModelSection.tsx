@@ -4,6 +4,7 @@ import { useProviderModelsStore } from "@/stores/providerModelsStore";
 import {
   MODEL_PROVIDERS,
   isMaxEffortModel,
+  isXhighEffortModel,
   normalizeReasoningLevelForModel,
   getCodexReasoningLevels,
 } from "@/lib/model-registry";
@@ -152,6 +153,7 @@ export function ModelSection() {
     return [
       ...REASONING_OPTIONS_BASE,
       { value: "max", label: "Max", disabled: !isMaxEffortModel(modelId) },
+      { value: "xhigh", label: "X-High", disabled: !isXhighEffortModel(modelId) },
     ];
   }, [modelId, codexLevels]);
 
@@ -164,7 +166,7 @@ export function ModelSection() {
     if (provider === "copilot") {
       return "Reasoning effort passed to the Copilot model. Not all models support all levels.";
     }
-    return "Default reasoning level. Max requires Opus 4.6.";
+    return "Default reasoning level. Max requires Opus. X-High requires Opus 4.7.";
   }, [codexLevels, provider]);
 
   const handleProviderChange = (v: string) => {

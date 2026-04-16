@@ -26,7 +26,7 @@ export type AgentDefaultMode = z.infer<typeof AgentDefaultModeSchema>;
 
 /**
  * Reasoning effort level for model inference.
- * "max" maps to Claude's extended thinking; "xhigh" maps to Codex's xhigh effort tier.
+ * "max" maps to Claude's extended thinking; "xhigh" maps to Codex's xhigh effort tier and Claude Opus 4.7+.
  */
 export const ReasoningLevelSchema = z.enum(["low", "medium", "high", "max", "xhigh"]);
 /** Reasoning effort level value. */

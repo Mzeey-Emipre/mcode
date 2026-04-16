@@ -13,6 +13,7 @@ vi.mock("@mcode/shared", () => ({
 import { logger } from "@mcode/shared";
 
 const OPUS = "claude-opus-4-6";
+const OPUS_47 = "claude-opus-4-7";
 const HAIKU = "claude-haiku-4-5";
 const SONNET = "claude-sonnet-4-6";
 
@@ -71,7 +72,43 @@ describe("buildReasoningOptions", () => {
     );
   });
 
+  it("passes xhigh through for claude-opus-4-7", () => {
+    const result = buildReasoningOptions("xhigh", OPUS_47);
+    expect(result.effort).toBe("xhigh");
+    expect(result.thinking).toEqual({ type: "adaptive" });
+  });
+
+  it("clamps xhigh to high for claude-opus-4-6 with warning", () => {
+    const result = buildReasoningOptions("xhigh", OPUS);
+    expect(result.effort).toBe("high");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("xhigh"),
+      expect.objectContaining({ modelId: OPUS }),
+    );
+  });
+
+  it("clamps xhigh to high for claude-sonnet-4-6", () => {
+    const result = buildReasoningOptions("xhigh", SONNET);
+    expect(result.effort).toBe("high");
+  });
+
+  it("passes max through for claude-opus-4-7", () => {
+    const result = buildReasoningOptions("max", OPUS_47);
+    expect(result.effort).toBe("max");
+    expect(result.thinking).toEqual({ type: "adaptive" });
+  });
+
   it("returns empty object when reasoning level is undefined", () => {
     expect(buildReasoningOptions(undefined, OPUS)).toEqual({});
+  });
+
+  it("passes xhigh through for a dated Opus 4.7 variant", () => {
+    const result = buildReasoningOptions("xhigh", "claude-opus-4-7-20260401");
+    expect(result.effort).toBe("xhigh");
+  });
+
+  it("passes max through for a dated Opus 4.7 variant", () => {
+    const result = buildReasoningOptions("max", "claude-opus-4-7-20260401");
+    expect(result.effort).toBe("max");
   });
 });
