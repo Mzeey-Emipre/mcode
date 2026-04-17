@@ -25,34 +25,48 @@ async function openComposerInNewThread(page: Page): Promise<void> {
   await page.waitForTimeout(GLOW_WAIT_MS);
 }
 
-test.describe("Composer overflow popover", () => {
+test.describe("Composer options — wide viewport (md+)", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
   });
 
-  test("hides Mode/Permissions toggles inline; reveals them inside the popover", async ({ page }) => {
+  test("renders Chat / Full access toggles inline and hides the overflow trigger", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     await openComposerInNewThread(page);
 
-    // The old inline "Chat" / "Plan" / "Full access" / "Supervised" buttons
-    // must NOT be visible in the status bar.
-    await expect(page.getByRole("button", { name: /^Chat$/i })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /^Plan$/i })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /^Full access$/i })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /^Supervised$/i })).toHaveCount(0);
+    // Inline buttons are visible above the md breakpoint.
+    await expect(page.getByRole("button", { name: /^Chat$/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Full access$/ })).toBeVisible();
 
-    // Composer options trigger is present.
+    // The overflow trigger is reserved for narrow viewports.
+    await expect(page.getByRole("button", { name: "Composer options" })).toHaveCount(0);
+  });
+});
+
+test.describe("Composer options — narrow viewport (below md)", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
+    await page.setViewportSize({ width: 600, height: 800 });
+  });
+
+  test("hides inline toggles and reveals them inside the overflow popover", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await openComposerInNewThread(page);
+
+    // Inline Chat / Full access buttons collapse below md.
+    await expect(page.getByRole("button", { name: /^Chat$/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Full access$/ })).toHaveCount(0);
+
     const trigger = page.getByRole("button", { name: "Composer options" });
     await expect(trigger).toBeVisible();
-
     await trigger.click();
 
-    // Popover content should expose grouped Mode + Permissions controls.
+    // Popover exposes grouped Mode + Permissions controls.
     await expect(page.getByText("Mode", { exact: true })).toBeVisible();
     await expect(page.getByText("Permissions", { exact: true })).toBeVisible();
-
-    // Both segmented options for each group are present.
     await expect(page.getByRole("button", { name: "Chat" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Plan" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Full" })).toBeVisible();
@@ -83,8 +97,6 @@ test.describe("Composer overflow popover", () => {
     await openComposerInNewThread(page);
 
     await page.getByRole("button", { name: "Composer options" }).click();
-
-    // The Tasks panel option should be absent for an empty new thread.
     await expect(page.getByText("Tasks panel")).toHaveCount(0);
   });
 });
@@ -191,8 +203,9 @@ test.describe("Visual regression — floating layout", () => {
     });
   });
 
-  test("captures composer popover open", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
+  test("captures composer popover open at narrow viewport", async ({ page }) => {
+    // Overflow popover only renders below the md breakpoint.
+    await page.setViewportSize({ width: 600, height: 800 });
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 

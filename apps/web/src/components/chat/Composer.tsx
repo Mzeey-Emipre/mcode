@@ -59,6 +59,7 @@ import {
 import type { ReasoningLevel } from "@mcode/contracts";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 interface ComposerProps {
   threadId?: string;
@@ -215,6 +216,106 @@ function ComposerOptionsMenu({
 }
 
 /**
+ * Inline rendering of the same controls — Mode (Chat/Plan), Permissions
+ * (Full/Supervised), and the Tasks-panel toggle. Used at md+ widths where the
+ * controls fit comfortably in the model bar; below md the parent renders
+ * `ComposerOptionsMenu` instead so they collapse behind a single trigger.
+ */
+function InlineComposerOptions({
+  threadId,
+  mode,
+  access,
+  onModeChange,
+  onAccessChange,
+}: {
+  threadId?: string;
+  mode: InteractionMode;
+  access: PermissionMode;
+  onModeChange: (next: InteractionMode) => void;
+  onAccessChange: (next: PermissionMode) => void;
+}) {
+  const hasTasks = useTaskStore(
+    (s) => !!(threadId && s.tasksByThread[threadId]?.length),
+  );
+  const panelVisible = useDiffStore(
+    (s) => !!(threadId && s.rightPanelByThread[threadId]?.visible),
+  );
+
+  const toggleTasksPanel = () => {
+    if (!threadId) return;
+    if (panelVisible) {
+      useDiffStore.getState().hideRightPanel(threadId);
+    } else {
+      useDiffStore.getState().showRightPanel(threadId);
+      useDiffStore.getState().setRightPanelTab(threadId, "tasks");
+    }
+  };
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => onModeChange(mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT)}
+              className="gap-1.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+            >
+              {mode === INTERACTION_MODES.CHAT ? <MessageSquare size={14} /> : <FileEdit size={14} />}
+              <span className="text-sm">{mode === INTERACTION_MODES.CHAT ? "Chat" : "Plan"}</span>
+            </Button>
+          }
+        />
+        <TooltipContent>{mode === INTERACTION_MODES.CHAT ? "Chat mode" : "Plan mode"}</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => onAccessChange(access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL)}
+              className="gap-1.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+            >
+              {access === PERMISSION_MODES.FULL ? <Unlock size={14} /> : <Lock size={14} />}
+              <span className="text-sm">{access === PERMISSION_MODES.FULL ? "Full access" : "Supervised"}</span>
+            </Button>
+          }
+        />
+        <TooltipContent>{access === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode"}</TooltipContent>
+      </Tooltip>
+
+      {hasTasks && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={toggleTasksPanel}
+                aria-pressed={panelVisible}
+                className={cn(
+                  "gap-1.5 transition-colors hover:bg-muted/40",
+                  panelVisible
+                    ? "text-primary hover:text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <ListTodo size={14} />
+                <span className="text-sm">Tasks</span>
+              </Button>
+            }
+          />
+          <TooltipContent>{panelVisible ? "Hide tasks panel" : "Show tasks panel"}</TooltipContent>
+        </Tooltip>
+      )}
+    </>
+  );
+}
+
+/**
  * Main message composer with model/mode selectors and branch controls.
  *
  * Status bar layout varies by mode:
@@ -224,6 +325,11 @@ function ComposerOptionsMenu({
  * - **Locked (existing thread):** read-only branch badge
  */
 export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit }: ComposerProps) {
+  // Mode/permissions/tasks toggles render inline at md+ widths and collapse
+  // behind a single overflow trigger below md, where the model bar would
+  // otherwise wrap onto a second row.
+  const showInlineComposerOptions = useMediaQuery("(min-width: 768px)");
+
   const [input, setInput] = useState("");
   const [modelId, setModelId] = useState(getDefaultModelId());
   // Track provider explicitly: multiple providers share the same model IDs
@@ -1253,23 +1359,40 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             )}
           </div>
 
-          {/* Overflow menu — Chat/Plan, permissions, Tasks live inside a popover so the
-              status bar stays compact and never overflows on narrow viewports. */}
-          <ComposerOptionsMenu
-            threadId={threadId}
-            mode={mode}
-            access={access}
-            onModeChange={(next) => {
-              setMode(next);
-              agentSettingsTouchedRef.current = true;
-              if (threadId) void setThreadSettings(threadId, { interactionMode: next });
-            }}
-            onAccessChange={(next) => {
-              setAccess(next);
-              agentSettingsTouchedRef.current = true;
-              if (threadId) void setThreadSettings(threadId, { permissionMode: next });
-            }}
-          />
+          {/* Mode / Permissions / Tasks — inline at md+, overflow popover below md. */}
+          {showInlineComposerOptions ? (
+            <InlineComposerOptions
+              threadId={threadId}
+              mode={mode}
+              access={access}
+              onModeChange={(next) => {
+                setMode(next);
+                agentSettingsTouchedRef.current = true;
+                if (threadId) void setThreadSettings(threadId, { interactionMode: next });
+              }}
+              onAccessChange={(next) => {
+                setAccess(next);
+                agentSettingsTouchedRef.current = true;
+                if (threadId) void setThreadSettings(threadId, { permissionMode: next });
+              }}
+            />
+          ) : (
+            <ComposerOptionsMenu
+              threadId={threadId}
+              mode={mode}
+              access={access}
+              onModeChange={(next) => {
+                setMode(next);
+                agentSettingsTouchedRef.current = true;
+                if (threadId) void setThreadSettings(threadId, { interactionMode: next });
+              }}
+              onAccessChange={(next) => {
+                setAccess(next);
+                agentSettingsTouchedRef.current = true;
+                if (threadId) void setThreadSettings(threadId, { permissionMode: next });
+              }}
+            />
+          )}
 
           {/* Spacer */}
           <div className="flex-1" />
