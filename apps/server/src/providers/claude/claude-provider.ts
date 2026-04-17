@@ -610,6 +610,26 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
          * Reset to undefined after each turnComplete. */
         let lastStreamInputTokens: number | undefined = undefined;
 
+        const emitResultError = (anyMsg: Record<string, unknown>): void => {
+          const errors = (anyMsg.errors as string[] | undefined) ?? [];
+          const errorMessage =
+            errors.length > 0
+              ? errors.join(", ")
+              : ((anyMsg.result as string | undefined) ||
+                "Claude SDK returned an error result");
+          logger.error("Claude SDK result error", {
+            sessionId,
+            threadId,
+            errors,
+            subtype: anyMsg.subtype,
+          });
+          this.emit("event", {
+            type: AgentEventType.Error,
+            threadId,
+            error: errorMessage,
+          } satisfies AgentEvent);
+        };
+
         for await (const msg of q) {
           const entry = this.sessions.get(sessionId);
           if (entry) entry.lastUsedAt = Date.now();
@@ -706,6 +726,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             }
 
             case "result": {
+              if (anyMsg.is_error === true) {
+                // The "No conversation found" resume-recovery branch above
+                // handles its own flow and returns early; any other is_error
+                // result lands here and must be surfaced as an Error event
+                // rather than silently completing the turn.
+                emitResultError(anyMsg);
+                lastAssistantText = "";
+                lastStreamInputTokens = undefined;
+                break;
+              }
               if (lastAssistantText) {
                 this.emit("event", {
                   type: AgentEventType.Message,
