@@ -134,9 +134,6 @@ export function createWsTransport(
       consecutiveAuthFailures = 0;
       resolveReady();
       options?.onStatusChange?.("connected");
-
-      // Auth token is conveyed via HttpOnly cookie (Set-Cookie on /health).
-      // No need to store it in localStorage - the cookie handles reconnection.
     };
 
     ws.onmessage = (event) => {
