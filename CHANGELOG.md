@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.3.0...mcode-v0.4.0) (2026-04-17)
+
+
+### Features
+
+* add Claude Opus 4.7 with xhigh reasoning effort ([#283](https://github.com/Mzeey-Emipre/mcode/issues/283)) ([6aa9913](https://github.com/Mzeey-Emipre/mcode/commit/6aa99132168c873db8d3723def6112570a59ecdd))
+* spellcheck context menu for Composer editor ([#280](https://github.com/Mzeey-Emipre/mcode/issues/280)) ([bbbfad6](https://github.com/Mzeey-Emipre/mcode/commit/bbbfad64185cb14d71cafd77210a330c1850e22b))
+
+
+### Bug Fixes
+
+* **desktop:** bundle copilot-sdk into server instead of externalizing it ([2113fda](https://github.com/Mzeey-Emipre/mcode/commit/2113fdafd0380d63ab60e1dd4d9fb68af0dc8f2d))
+* **desktop:** bundle copilot-sdk to fix server startup in packaged app ([#279](https://github.com/Mzeey-Emipre/mcode/issues/279)) ([2113fda](https://github.com/Mzeey-Emipre/mcode/commit/2113fdafd0380d63ab60e1dd4d9fb68af0dc8f2d))
+
 ## [0.3.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.2.0...mcode-v0.3.0) (2026-04-15)
 
 
