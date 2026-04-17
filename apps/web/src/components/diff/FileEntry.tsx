@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { ChevronsDownUp, Eye, EyeOff } from "lucide-react";
+import { ChevronsDownUp, Code2, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
@@ -218,9 +218,8 @@ export function FileEntry({ filePath, source, id, depth = 0 }: FileEntryProps) {
           </span>
         )}
 
-        {/* Markdown preview toggle — shown only while expanded, to the left of the extension marker */}
+        {/* Markdown preview toggle — span+role because the parent row is itself a <button>. */}
         {expanded && isMarkdown && (
-          // span+role avoids invalid nested <button> while still being accessible.
           <span
             role="button"
             tabIndex={0}
@@ -237,13 +236,14 @@ export function FileEntry({ filePath, source, id, depth = 0 }: FileEntryProps) {
                 setPreviewMode((prev) => !prev);
               }
             }}
-            className={`shrink-0 rounded p-0.5 transition-colors ${
+            className={`shrink-0 cursor-pointer rounded p-0.5 outline-none transition-colors focus-visible:ring-[2px] focus-visible:ring-ring/60 ${
               previewMode
                 ? "text-foreground/70 hover:text-foreground"
                 : "text-muted-foreground/40 hover:text-foreground/60"
             }`}
           >
-            {previewMode ? <EyeOff size={11} /> : <Eye size={11} />}
+            {/* Action-as-icon, mirroring MermaidBlock's source/render toggle: in preview, offer Code2 ("see source"); on raw diff, offer FileText ("see rendered"). */}
+            {previewMode ? <Code2 size={11} /> : <FileText size={11} />}
           </span>
         )}
 
