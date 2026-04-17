@@ -8,6 +8,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   localStorage.clear();
 });
 
@@ -104,11 +105,16 @@ describe("scanPortRange", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string) => {
-        // Only port 19401 is healthy
         if (url === "http://localhost:19401/health") {
           return Promise.resolve({
             ok: true,
             json: () => Promise.resolve({ authToken: "token-from-19401" }),
+          });
+        }
+        if (url === "http://localhost:19402/health") {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ authToken: "token-from-19402" }),
           });
         }
         return Promise.resolve({ ok: false });
@@ -117,6 +123,7 @@ describe("scanPortRange", () => {
 
     const result = await scanPortRange(19400, 19403, "old-token");
 
+    // Both 19401 and 19402 are healthy, but the first healthy port wins.
     expect(result).toBe("ws://localhost:19401?token=token-from-19401");
   });
 
