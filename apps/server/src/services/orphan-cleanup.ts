@@ -36,7 +36,7 @@ export interface OrphanCleanupDeps {
    * Runs a shell command synchronously.
    * Defaults to execSync from child_process.
    */
-  execSync?: (cmd: string, opts?: { stdio?: "ignore" }) => Buffer | string;
+  execSync?: (cmd: string, opts?: { stdio?: "ignore"; timeout?: number }) => Buffer | string;
   /** Current process PID. Defaults to process.pid. */
   currentPid?: number;
   /** Current platform string. Defaults to process.platform. */
@@ -77,9 +77,10 @@ export function killOrphanedServer(deps: OrphanCleanupDeps): void {
     logger.warn("Found orphaned server process, killing", { pid: lock.pid });
 
     if (platform === "win32") {
-      // /T kills the process tree, /F forces termination.
+      // /T kills the process tree, /F forces termination. Timeout prevents
+      // blocking server startup if taskkill hangs on a deep process tree.
       try {
-        execSyncFn(`taskkill /T /F /PID ${lock.pid}`, { stdio: "ignore" });
+        execSyncFn(`taskkill /T /F /PID ${lock.pid}`, { stdio: "ignore", timeout: 5000 });
       } catch {
         // Process may have exited between the liveness check and the kill.
       }

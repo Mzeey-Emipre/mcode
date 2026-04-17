@@ -127,7 +127,7 @@ describe("killOrphanedServer", () => {
       execSync,
     });
     killOrphanedServer(deps);
-    expect(execSync).toHaveBeenCalledWith("taskkill /T /F /PID 99999", { stdio: "ignore" });
+    expect(execSync).toHaveBeenCalledWith("taskkill /T /F /PID 99999", { stdio: "ignore", timeout: 5000 });
   });
 
   it("logs a warning but does not throw when lock file contains invalid JSON", () => {
