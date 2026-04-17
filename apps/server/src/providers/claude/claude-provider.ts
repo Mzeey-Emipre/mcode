@@ -388,6 +388,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
           error: "Message could not be delivered: session was shutting down. Please try again.",
         } satisfies AgentEvent);
         // Drop the stale entry so the next send creates a fresh session.
+        // Safe to delete here even if startStreamLoop is mid-iteration: its
+        // finally block guards with `current?.query === q` before re-deleting,
+        // so a second delete is a no-op and the terminal Ended event still
+        // fires via the `(!current || current.query === q)` condition.
         this.sessions.delete(sessionId);
         throw err;
       }
