@@ -90,7 +90,8 @@ describe("buildFileTree", () => {
   it("does not compress a folder that contains both a subfolder and a file", () => {
     const tree = buildFileTree(["src/foo.ts", "src/nested/bar.ts"]);
     const root = tree[0];
-    if (root.type !== "folder") return;
+    expect(root.type).toBe("folder");
+    if (root.type !== "folder") throw new Error("root must be a folder");
     expect(root.name).toBe("src");
     expect(root.children.map((c) => c.name)).toEqual(["nested", "foo.ts"]);
   });
@@ -98,9 +99,11 @@ describe("buildFileTree", () => {
   it("preserves the original path on file leaves for diff lookups", () => {
     const tree = buildFileTree(["src/stores/__tests__/foo.ts"]);
     const folder = tree[0];
-    if (folder.type !== "folder") return;
+    expect(folder.type).toBe("folder");
+    if (folder.type !== "folder") throw new Error("folder must be a folder");
     const file = folder.children[0];
-    if (file.type !== "file") return;
+    expect(file.type).toBe("file");
+    if (file.type !== "file") throw new Error("file must be a file");
     expect(file.path).toBe("src/stores/__tests__/foo.ts");
   });
 

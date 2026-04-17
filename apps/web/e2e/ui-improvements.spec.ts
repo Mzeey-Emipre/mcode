@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test";
 test("brand color is amber (not indigo hue 264) in dark mode", async ({
   page,
 }) => {
-  await page.goto("http://localhost:5173");
+  await page.goto("/");
 
   // Add the dark class to html so we can read the dark-mode CSS variable
   await page.evaluate(() => {
@@ -25,7 +25,7 @@ test("brand color is amber (not indigo hue 264) in dark mode", async ({
 });
 
 test("body font-family does not include DM Sans", async ({ page }) => {
-  await page.goto("http://localhost:5173");
+  await page.goto("/");
 
   const fontFamily = await page.evaluate(() => {
     return getComputedStyle(document.body).fontFamily;
@@ -35,7 +35,7 @@ test("body font-family does not include DM Sans", async ({ page }) => {
 });
 
 test("glow-primary box-shadow uses amber, not hue 264", async ({ page }) => {
-  await page.goto("http://localhost:5173");
+  await page.goto("/");
 
   await page.evaluate(() => {
     const el = document.createElement("div");
@@ -75,7 +75,7 @@ test("glow-primary box-shadow uses amber, not hue 264", async ({ page }) => {
 });
 
 test(".animate-shimmer-text has no gradient background", async ({ page }) => {
-  await page.goto("http://localhost:5173");
+  await page.goto("/");
 
   await page.evaluate(() => {
     const el = document.createElement("span");
@@ -113,7 +113,7 @@ test(".animate-shimmer-text has no gradient background", async ({ page }) => {
 test(".animate-shimmer-text uses text-pulse animation, not shimmer-text", async ({
   page,
 }) => {
-  await page.goto("http://localhost:5173");
+  await page.goto("/");
 
   await page.evaluate(() => {
     const el = document.createElement("span");

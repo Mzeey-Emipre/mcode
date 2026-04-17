@@ -5,11 +5,16 @@
  * The previous border-l-2 left-stripe must not appear on any row.
  */
 import { render, screen } from "@testing-library/react";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { SlashCommandPopup } from "../SlashCommandPopup";
 import type { Command } from "../useSlashCommand";
 
-// jsdom doesn't implement ResizeObserver or scrollIntoView
+// jsdom doesn't implement ResizeObserver or scrollIntoView. Capture originals
+// so the polyfills are reverted after the suite to avoid leaking into other
+// tests that share the same jsdom instance.
+const originalResizeObserver = globalThis.ResizeObserver;
+const originalScrollIntoView = Element.prototype.scrollIntoView;
+
 beforeAll(() => {
   if (typeof window.ResizeObserver === "undefined") {
     window.ResizeObserver = class ResizeObserver {
@@ -18,8 +23,17 @@ beforeAll(() => {
       disconnect() {}
     };
   }
-  // jsdom doesn't implement scrollIntoView
   Element.prototype.scrollIntoView = () => {};
+});
+
+afterAll(() => {
+  if (originalResizeObserver === undefined) {
+    // @ts-expect-error -- intentional cleanup of polyfilled global
+    delete globalThis.ResizeObserver;
+  } else {
+    globalThis.ResizeObserver = originalResizeObserver;
+  }
+  Element.prototype.scrollIntoView = originalScrollIntoView;
 });
 
 /** Minimal DOMRect-like object for anchorRect. */

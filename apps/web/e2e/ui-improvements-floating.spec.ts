@@ -9,20 +9,16 @@ import { mockWebSocketServer } from "./helpers/e2e-helpers";
  *     inter-panel border lines).
  */
 
-const GLOW_WAIT_MS = 150;
-
 async function openComposerInNewThread(page: Page): Promise<void> {
-  // The "New Thread" command sets pendingNewThread which renders the composer.
-  await page.evaluate(() => {
-    // App.tsx registers a "thread.new" command via the command registry.
-    // Easier path: dispatch the workspaceStore action directly via window for tests.
-    // Since the store isn't exposed by default, fall back to the keyboard shortcut
-    // (Cmd/Ctrl+N) which the shortcut layer wires to thread.new.
-  });
-  // Cmd+N opens a new thread.
+  // App.tsx registers a "thread.new" command via the command registry; the
+  // shortcut layer wires Cmd/Ctrl+N to thread.new which sets pendingNewThread
+  // and renders the composer.
   const isMac = process.platform === "darwin";
   await page.keyboard.press(isMac ? "Meta+n" : "Control+n");
-  await page.waitForTimeout(GLOW_WAIT_MS);
+  // Wait for the composer's send button to mount instead of sleeping a fixed
+  // interval. Send is the stable terminal control on the composer; if it's in
+  // the DOM the surrounding mode/permissions controls have rendered too.
+  await expect(page.getByRole("button", { name: /^(Send message|Queue message|Stop agent)$/ })).toBeVisible();
 }
 
 test.describe("Composer options — wide viewport (md+)", () => {
@@ -183,27 +179,27 @@ test.describe("Visual regression — floating layout", () => {
     await mockWebSocketServer(page);
   });
 
-  test("captures wide-viewport screenshot (1280×800) showing floating panels", async ({ page }) => {
+  test("captures wide-viewport screenshot (1280×800) showing floating panels", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     await page.screenshot({
-      path: "e2e/screenshots/floating-wide.png",
+      path: testInfo.outputPath("floating-wide.png"),
       fullPage: false,
     });
   });
 
-  test("captures narrow-viewport screenshot (600×800)", async ({ page }) => {
+  test("captures narrow-viewport screenshot (600×800)", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 600, height: 800 });
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     await page.screenshot({
-      path: "e2e/screenshots/floating-narrow.png",
+      path: testInfo.outputPath("floating-narrow.png"),
       fullPage: false,
     });
   });
 
-  test("captures composer popover open at narrow viewport", async ({ page }) => {
+  test("captures composer popover open at narrow viewport", async ({ page }, testInfo) => {
     // Overflow popover only renders below the md breakpoint.
     await page.setViewportSize({ width: 600, height: 800 });
     await page.goto("/");
@@ -211,12 +207,14 @@ test.describe("Visual regression — floating layout", () => {
 
     const isMac = process.platform === "darwin";
     await page.keyboard.press(isMac ? "Meta+n" : "Control+n");
-    await page.waitForTimeout(150);
-
-    await page.getByRole("button", { name: "Composer options" }).click();
-    await page.waitForTimeout(150);
+    // Wait for the composer's overflow trigger to mount.
+    const trigger = page.getByRole("button", { name: "Composer options" });
+    await expect(trigger).toBeVisible();
+    await trigger.click();
+    // Wait for the popover to render its grouped controls before screenshotting.
+    await expect(page.getByText("Mode", { exact: true })).toBeVisible();
     await page.screenshot({
-      path: "e2e/screenshots/composer-popover.png",
+      path: testInfo.outputPath("composer-popover.png"),
       fullPage: false,
     });
   });
