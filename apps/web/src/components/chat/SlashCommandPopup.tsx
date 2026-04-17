@@ -157,8 +157,8 @@ function CommandRow({
       className={cn(
         "flex w-full items-center gap-3 px-3 py-2 text-left transition-colors",
         selected
-          ? "bg-accent border-l-2 border-primary"
-          : "hover:bg-accent/50 border-l-2 border-transparent",
+          ? "bg-accent"
+          : "hover:bg-accent/50",
       )}
     >
       {/* Icon column */}
