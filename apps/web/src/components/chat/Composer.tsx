@@ -59,7 +59,7 @@ import {
 import type { ReasoningLevel } from "@mcode/contracts";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useElementWidth } from "@/hooks/useElementWidth";
 
 interface ComposerProps {
   threadId?: string;
@@ -325,10 +325,21 @@ function InlineComposerOptions({
  * - **Locked (existing thread):** read-only branch badge
  */
 export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit }: ComposerProps) {
-  // Mode/permissions/tasks toggles render inline at md+ widths and collapse
-  // behind a single overflow trigger below md, where the model bar would
-  // otherwise wrap onto a second row.
-  const showInlineComposerOptions = useMediaQuery("(min-width: 768px)");
+  // Mode/permissions/tasks toggles render inline when the composer's own
+  // container is wide enough; below the threshold they collapse behind a
+  // single overflow trigger so the send button never wraps to a new row.
+  // Container-based (not viewport-based) so the layout responds to the right
+  // panel opening, sidebar resizing, etc. — not just window resizes.
+  const composerContainerRef = useRef<HTMLDivElement>(null);
+  const composerWidth = useElementWidth(composerContainerRef);
+  // Threshold tuned so model + reasoning + Chat/Plan + Full/Supervised + Tasks
+  // + send button fit on one row with the standard gaps. Below this the row
+  // collapses to a single "Composer options" trigger.
+  const COMPOSER_INLINE_OPTIONS_THRESHOLD = 640;
+  // Default to inline before the first measurement lands so the first frame
+  // doesn't briefly render the popover trigger and snap to inline buttons.
+  const showInlineComposerOptions =
+    composerWidth === 0 || composerWidth >= COMPOSER_INLINE_OPTIONS_THRESHOLD;
 
   const [input, setInput] = useState("");
   const [modelId, setModelId] = useState(getDefaultModelId());
@@ -1229,6 +1240,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       {/* Main composer container - dark bg, rounded */}
       <div
+        ref={composerContainerRef}
         className={cn(
           "relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 shadow-lg shadow-black/20 focus-within:ring-2 focus-within:ring-primary/70",
           isDragOver && "ring-2 ring-primary"
@@ -1300,10 +1312,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           </div>
         )}
 
-        {/* Controls row - inside the container. flex-wrap lets toggles wrap to a
-            second row on narrow viewports without overflowing or pushing the
-            send button off-screen. Tighter gap below sm keeps the row compact. */}
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 sm:gap-x-2.5 border-t border-border/20 px-3 py-1.5">
+        {/* Controls row - inside the container. The container-width hook above
+            collapses Mode/Permissions/Tasks into a popover before this row would
+            need to wrap, so the send button stays anchored on the right. */}
+        <div className="flex items-center gap-x-1.5 sm:gap-x-2.5 border-t border-border/20 px-3 py-1.5">
           {/* Model picker */}
           <ModelSelector
             selectedModelId={modelId}
