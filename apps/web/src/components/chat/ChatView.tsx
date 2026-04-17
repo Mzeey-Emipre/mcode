@@ -109,6 +109,12 @@ export function ChatView() {
     window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: { section: "model" } }));
   }, []);
 
+  // Reset the banner dismissal on each new disconnect so a second server restart
+  // in the same session can show the banner again.
+  useEffect(() => {
+    if (connectionStatus !== "connected") setBannerDismissed(false);
+  }, [connectionStatus]);
+
   // Detect interrupted threads whenever the connection is re-established so the
   // banner can offer to resume any sessions that were cut off by a server restart.
   // Always update so the banner clears when threads recover on their own.
