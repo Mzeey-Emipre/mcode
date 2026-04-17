@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import { Terminal, Zap, Puzzle } from "lucide-react";
+import { Terminal, Zap, Puzzle, Sparkles } from "lucide-react";
 import { NAMESPACE_BADGE_STYLES } from "@/lib/slash-command-styles";
 import type { Command } from "./useSlashCommand";
 
@@ -167,7 +167,9 @@ function CommandRow({
           <Zap size={12} />
         ) : cmd.namespace === "plugin" ? (
           <Puzzle size={12} />
-        ) : /* skill | command */ (
+        ) : cmd.namespace === "skill" ? (
+          <Sparkles size={12} />
+        ) : (
           <Terminal size={12} />
         )}
       </span>
