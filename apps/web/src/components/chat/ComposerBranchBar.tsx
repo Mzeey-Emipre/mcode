@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface ComposerBranchBarProps {
   /** ID of the message being branched from; bar is hidden when absent. */
@@ -27,14 +28,16 @@ export function ComposerBranchBar({ branchFromMessageId, branchFromMessageConten
           </p>
         )}
       </div>
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="icon-xs"
         onClick={onBranchModeExit}
-        className="shrink-0 rounded p-0.5 text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/40 transition-colors"
+        disabled={!onBranchModeExit}
+        className="shrink-0 text-muted-foreground/30 hover:bg-muted/40 hover:text-muted-foreground"
         aria-label="Exit branch mode"
       >
         <X className="size-3.5" />
-      </button>
+      </Button>
     </div>
   );
 }

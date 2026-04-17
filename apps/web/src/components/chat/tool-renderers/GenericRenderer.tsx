@@ -14,9 +14,9 @@ function formatValue(value: unknown): string {
 
 function summarizeInput(input: Record<string, unknown>): string {
   for (const key of ["pattern", "file_path", "query", "path"]) {
-    if (input[key]) return formatValue(input[key]);
+    if (input[key] != null) return formatValue(input[key]);
   }
-  if (input.command) return formatValue(input.command).slice(0, 80);
+  if (input.command != null) return formatValue(input.command).slice(0, 80);
   // TodoWrite-style: array of todo items — summarize as "N todos"
   if (Array.isArray(input.todos)) return `${input.todos.length} todo${input.todos.length === 1 ? "" : "s"}`;
   const keys = Object.keys(input);

@@ -17,11 +17,15 @@ export function useElementWidth<T extends HTMLElement>(ref: RefObject<T | null>)
 
   useEffect(() => {
     const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!el) return;
 
     // Seed with the current size so consumers don't get a 0 → real flash
-    // when the element is already laid out at mount time.
+    // when the element is already laid out at mount time. Done unconditionally
+    // so environments without ResizeObserver (older test runners, SSR
+    // hydration) still get a valid initial measurement.
     setWidth(el.getBoundingClientRect().width);
+
+    if (typeof ResizeObserver === "undefined") return;
 
     let rafId: number | null = null;
     let pending = 0;

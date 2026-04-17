@@ -76,7 +76,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
                 "h-5 w-5 rounded-full",
                 "bg-foreground/75 text-background",
                 "opacity-0 transition-all duration-150",
-                "hover:bg-destructive hover:text-destructive-foreground",
+                "hover:bg-destructive hover:text-white",
                 "group-hover:opacity-100",
                 "focus:opacity-100 focus:outline-none focus:ring-1 focus:ring-primary",
               )}
