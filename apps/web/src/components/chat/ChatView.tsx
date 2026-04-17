@@ -4,7 +4,6 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -13,40 +12,55 @@ import { HeaderActions } from "./HeaderActions";
 import { CliErrorBanner, isCliError } from "./CliErrorBanner";
 import { ThreadTitleEditor } from "./ThreadTitleEditor";
 
-/** Prompt suggestions shown in the empty state. */
-const PROMPT_CHIPS = [
-  "Explain the current architecture",
-  "Find and fix bugs in this codebase",
-  "Write tests for the main module",
-  "Refactor for better readability",
+/** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
+const ENTRY_POINTS = [
+  {
+    label: "Start agent in new worktree",
+    description: "Isolated branch, no stash needed",
+    prompt: "Start a new worktree and run an agent to ",
+  },
+  {
+    label: "Run agent on this branch",
+    description: "Direct mode, commits to current branch",
+    prompt: "On the current branch, ",
+  },
+  {
+    label: "Orchestrate parallel tasks",
+    description: "Multiple agents, one goal",
+    prompt: "Spawn parallel agents to ",
+  },
+  {
+    label: "Review open PRs",
+    description: "Diff + summary for each",
+    prompt: "List and summarize open pull requests in this repo",
+  },
 ] as const;
 
 /** Props for {@link EmptyState}. */
 interface EmptyStateProps {
-  /** Called when the user clicks a prompt suggestion chip. */
+  /** Called when the user clicks an entry point — prefills the composer. */
   onPromptSelect: (text: string) => void;
 }
 
-/** Centered empty state with logo and clickable prompt suggestion chips. */
+/** Centered empty state selling Mcode's multi-agent, worktree-based value. */
 function EmptyState({ onPromptSelect }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center gap-6 px-8 text-center">
+    <div className="flex flex-col items-center justify-center gap-8 px-8 text-center">
       <div className="flex flex-col items-center gap-1.5">
-        <p className="text-base font-semibold tracking-tight text-foreground">Mcode</p>
-        <p className="text-sm text-muted-foreground">What would you like to work on?</p>
+        <p className="text-lg font-semibold tracking-tight text-foreground">Mcode</p>
+        <p className="text-sm text-muted-foreground">Multi-agent orchestration for your codebase</p>
       </div>
-      <div className="flex flex-wrap justify-center gap-2">
-        {PROMPT_CHIPS.map((chip) => (
-          <Button
-            key={chip}
+      <div className="grid grid-cols-2 gap-2 w-full max-w-sm">
+        {ENTRY_POINTS.map((ep) => (
+          <button
+            key={ep.label}
             type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onPromptSelect(chip)}
-            className="rounded-full border-border/50 text-xs text-muted-foreground hover:border-border hover:bg-muted/30 hover:text-foreground"
+            onClick={() => onPromptSelect(ep.prompt)}
+            className="flex flex-col items-start gap-0.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2.5 text-left transition-colors hover:border-border/70 hover:bg-muted/40"
           >
-            {chip}
-          </Button>
+            <span className="text-xs font-medium text-foreground/80">{ep.label}</span>
+            <span className="text-[11px] text-muted-foreground/60">{ep.description}</span>
+          </button>
         ))}
       </div>
     </div>
