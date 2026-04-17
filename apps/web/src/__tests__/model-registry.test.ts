@@ -9,16 +9,24 @@ import {
   getDefaultModelId,
   getDefaultReasoningLevel,
   isMaxEffortModel,
+  isXhighEffortModel,
   normalizeReasoningLevelForModel,
   resolveThreadModelId,
+  supportsEffortParameter,
 } from "@/lib/model-registry";
 
 describe("ModelRegistry", () => {
-  it("MODEL_PROVIDERS contains Claude with 3 models", () => {
+  it("MODEL_PROVIDERS contains Claude with 4 models", () => {
     const claude = MODEL_PROVIDERS.find((p) => p.id === "claude");
     expect(claude).toBeTruthy();
-    expect(claude?.models).toHaveLength(3);
+    expect(claude?.models).toHaveLength(4);
     expect(claude?.comingSoon).toBe(false);
+  });
+
+  it("findModelById returns Opus 4.7", () => {
+    const model = findModelById("claude-opus-4-7");
+    expect(model?.label).toBe("Claude Opus 4.7");
+    expect(model?.providerId).toBe("claude");
   });
 
   it("findModelById returns correct model", () => {
@@ -40,9 +48,9 @@ describe("ModelRegistry", () => {
     expect(findProviderForModel("nonexistent")).toBeUndefined();
   });
 
-  it("getDefaultModel returns Claude Sonnet 4.6", () => {
+  it("getDefaultModel returns Claude Opus 4.7", () => {
     const model = getDefaultModel();
-    expect(model.id).toBe("claude-sonnet-4-6");
+    expect(model.id).toBe("claude-opus-4-7");
   });
 });
 
@@ -78,8 +86,8 @@ describe("Settings-aware defaults", () => {
     expect(getDefaultModelId()).toBe("claude-sonnet-4-6");
   });
 
-  it("getDefaultModelId returns sonnet from default settings", () => {
-    expect(getDefaultModelId()).toBe("claude-sonnet-4-6");
+  it("getDefaultModelId returns opus-4-7 from default settings", () => {
+    expect(getDefaultModelId()).toBe("claude-opus-4-7");
   });
 
   it("getDefaultReasoningLevel returns settings value", () => {
@@ -123,6 +131,11 @@ describe("ReasoningLevelSchema", () => {
     expect(ReasoningLevelSchema.parse("max")).toBe("max");
   });
 
+  it("accepts xhigh", () => {
+    expect(() => ReasoningLevelSchema.parse("xhigh")).not.toThrow();
+    expect(ReasoningLevelSchema.parse("xhigh")).toBe("xhigh");
+  });
+
   it("rejects unknown values", () => {
     expect(() => ReasoningLevelSchema.parse("extreme")).toThrow();
   });
@@ -145,6 +158,11 @@ describe("findModelById dated variants", () => {
     expect(model?.id).toBe("claude-opus-4-6");
   });
 
+  it("resolves claude-opus-4-7-20260401 to claude-opus-4-7", () => {
+    const model = findModelById("claude-opus-4-7-20260401");
+    expect(model?.id).toBe("claude-opus-4-7");
+  });
+
   it("returns undefined for a totally unknown dated-style string", () => {
     expect(findModelById("claude-unknown-99-9-20251001")).toBeUndefined();
   });
@@ -162,6 +180,10 @@ describe("findProviderForModel dated variants", () => {
     expect(findProviderForModel("claude-haiku-4-5-20251001")?.id).toBe("claude");
   });
 
+  it("resolves claude-opus-4-7-20260401 to claude provider", () => {
+    expect(findProviderForModel("claude-opus-4-7-20260401")?.id).toBe("claude");
+  });
+
   it("returns undefined for a totally unknown dated-style string", () => {
     expect(findProviderForModel("claude-unknown-99-9-20251001")).toBeUndefined();
   });
@@ -175,24 +197,36 @@ describe("findProviderForModel dated variants", () => {
 });
 
 describe("isMaxEffortModel", () => {
+  it("returns true for claude-opus-4-7", () => {
+    expect(isMaxEffortModel("claude-opus-4-7")).toBe(true);
+  });
+
   it("returns true for claude-opus-4-6", () => {
     expect(isMaxEffortModel("claude-opus-4-6")).toBe(true);
   });
 
-  it("returns true for dated Opus variant claude-opus-4-6-20251001", () => {
+  it("returns true for dated Opus 4.6 variant claude-opus-4-6-20251001", () => {
     expect(isMaxEffortModel("claude-opus-4-6-20251001")).toBe(true);
   });
 
-  it("returns false for claude-sonnet-4-6", () => {
-    expect(isMaxEffortModel("claude-sonnet-4-6")).toBe(false);
+  it("returns true for claude-sonnet-4-6", () => {
+    expect(isMaxEffortModel("claude-sonnet-4-6")).toBe(true);
   });
 
-  it("returns false for dated Sonnet variant", () => {
-    expect(isMaxEffortModel("claude-sonnet-4-6-20251001")).toBe(false);
+  it("returns true for dated Sonnet variant", () => {
+    expect(isMaxEffortModel("claude-sonnet-4-6-20251001")).toBe(true);
   });
 
   it("returns false for claude-haiku-4-5", () => {
     expect(isMaxEffortModel("claude-haiku-4-5")).toBe(false);
+  });
+
+  it("returns true for claude-opus-4-7", () => {
+    expect(isMaxEffortModel("claude-opus-4-7")).toBe(true);
+  });
+
+  it("returns true for dated Opus 4.7 variant", () => {
+    expect(isMaxEffortModel("claude-opus-4-7-20260401")).toBe(true);
   });
 
   it("returns false for unknown model", () => {
@@ -200,31 +234,121 @@ describe("isMaxEffortModel", () => {
   });
 });
 
+describe("isXhighEffortModel", () => {
+  it("returns true for claude-opus-4-7", () => {
+    expect(isXhighEffortModel("claude-opus-4-7")).toBe(true);
+  });
+
+  it("returns true for dated Opus 4.7 variant", () => {
+    expect(isXhighEffortModel("claude-opus-4-7-20260401")).toBe(true);
+  });
+
+  it("returns false for claude-opus-4-6", () => {
+    expect(isXhighEffortModel("claude-opus-4-6")).toBe(false);
+  });
+
+  it("returns false for claude-sonnet-4-6", () => {
+    expect(isXhighEffortModel("claude-sonnet-4-6")).toBe(false);
+  });
+
+  it("returns false for unknown model", () => {
+    expect(isXhighEffortModel("nonexistent")).toBe(false);
+  });
+
+  it("returns false for dated Opus 4.6 variant", () => {
+    expect(isXhighEffortModel("claude-opus-4-6-20251001")).toBe(false);
+  });
+});
+
 describe("normalizeReasoningLevelForModel", () => {
+  it("returns xhigh unchanged for Opus 4.7", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-7", "xhigh")).toBe("xhigh");
+  });
+
+  it("returns max unchanged for Opus 4.7", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-7", "max")).toBe("max");
+  });
+
   it("returns max unchanged for Opus 4.6", () => {
     expect(normalizeReasoningLevelForModel("claude-opus-4-6", "max")).toBe("max");
   });
 
-  it("returns max unchanged for dated Opus variant", () => {
+  it("clamps xhigh to high for Opus 4.6 (xhigh not supported)", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-6", "xhigh")).toBe("high");
+  });
+
+  it("returns max unchanged for dated Opus 4.6 variant", () => {
     expect(normalizeReasoningLevelForModel("claude-opus-4-6-20251001", "max")).toBe("max");
   });
 
-  it("clamps max to high for Sonnet", () => {
-    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "max")).toBe("high");
+  it("returns max unchanged for Opus 4.7", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-7", "max")).toBe("max");
   });
 
-  it("clamps max to high for dated Sonnet variant", () => {
-    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6-20251001", "max")).toBe("high");
+  it("returns max unchanged for Sonnet 4.6 (now in MAX_EFFORT_MODEL_IDS)", () => {
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "max")).toBe("max");
   });
 
-  it("clamps max to high for Haiku", () => {
+  it("returns max unchanged for dated Sonnet variant", () => {
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6-20251001", "max")).toBe("max");
+  });
+
+  it("short-circuits to high for Haiku regardless of requested level", () => {
     expect(normalizeReasoningLevelForModel("claude-haiku-4-5", "max")).toBe("high");
+    expect(normalizeReasoningLevelForModel("claude-haiku-4-5", "low")).toBe("high");
+    expect(normalizeReasoningLevelForModel("claude-haiku-4-5", "xhigh")).toBe("high");
   });
 
-  it("passes through non-max levels unchanged for any model", () => {
+  it("passes through non-max levels unchanged for Sonnet", () => {
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "high")).toBe("high");
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "medium")).toBe("medium");
     expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "low")).toBe("low");
+  });
+
+  it("returns xhigh unchanged for Opus 4.7", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-7", "xhigh")).toBe("xhigh");
+  });
+
+  it("returns xhigh unchanged for dated Opus 4.7 variant", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-7-20260401", "xhigh")).toBe("xhigh");
+  });
+
+  it("clamps xhigh to high for Opus 4.6", () => {
+    expect(normalizeReasoningLevelForModel("claude-opus-4-6", "xhigh")).toBe("high");
+  });
+
+  it("clamps xhigh to high for Sonnet", () => {
+    expect(normalizeReasoningLevelForModel("claude-sonnet-4-6", "xhigh")).toBe("high");
+  });
+
+  it("clamps xhigh to high for Haiku", () => {
+    expect(normalizeReasoningLevelForModel("claude-haiku-4-5", "xhigh")).toBe("high");
+  });
+});
+
+describe("supportsEffortParameter", () => {
+  it("returns true for claude-opus-4-7", () => {
+    expect(supportsEffortParameter("claude-opus-4-7")).toBe(true);
+  });
+
+  it("returns true for claude-opus-4-6", () => {
+    expect(supportsEffortParameter("claude-opus-4-6")).toBe(true);
+  });
+
+  it("returns true for claude-sonnet-4-6", () => {
+    expect(supportsEffortParameter("claude-sonnet-4-6")).toBe(true);
+  });
+
+  it("returns false for claude-haiku-4-5", () => {
+    expect(supportsEffortParameter("claude-haiku-4-5")).toBe(false);
+  });
+
+  it("returns false for dated Haiku variant", () => {
+    expect(supportsEffortParameter("claude-haiku-4-5-20251001")).toBe(false);
+  });
+
+  it("returns true for unknown model (defaults to supported)", () => {
+    expect(supportsEffortParameter("nonexistent")).toBe(true);
   });
 });
 

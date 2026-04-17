@@ -17,6 +17,7 @@ import which from "which";
 import { EventEmitter } from "events";
 import { CopilotClient, approveAll } from "@github/copilot-sdk";
 import type { CopilotSession, ModelInfo } from "@github/copilot-sdk";
+import { discoverCopilotAgents, COPILOT_DEFAULT_AGENTS } from "./copilot-agent-discovery.js";
 import { logger } from "@mcode/shared";
 import { SettingsService } from "../../services/settings-service.js";
 import type {
@@ -100,6 +101,11 @@ const IDLE_TTL_MS = 10 * 60 * 1000;
 /** How often to check for idle sessions (1 minute). */
 const EVICTION_INTERVAL_MS = 60 * 1000;
 
+/** Names of built-in Copilot session modes, derived from COPILOT_DEFAULT_AGENTS. */
+const BUILTIN_MODE_NAMES = new Set<"interactive" | "plan" | "autopilot">(
+  COPILOT_DEFAULT_AGENTS.map((a) => a.name as "interactive" | "plan" | "autopilot"),
+);
+
 interface SessionEntry {
   session: CopilotSession;
   lastUsedAt: number;
@@ -109,7 +115,7 @@ interface SessionEntry {
 @injectable()
 export class CopilotProvider extends EventEmitter implements IAgentProvider {
   readonly id: ProviderId = "copilot";
-  readonly supportsCompletion = false;
+  readonly supportsCompletion = true;
 
   private client: CopilotClient | null = null;
   private lastCliPath: string | undefined;
@@ -121,14 +127,105 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
   /** Serialises concurrent refreshClient() calls so only one rebuild runs at a time. */
   private clientStartLock: Promise<void> = Promise.resolve();
 
+  private modelCache: ProviderModelInfo[] | null = null;
+  private modelCacheTimestamp = 0;
+  /** Avoid hammering the Copilot SDK on every call - results are stable within a session. */
+  private static readonly MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
+
   constructor(
     @inject(SettingsService) private readonly settingsService: SettingsService,
   ) {
     super();
   }
 
-  /** Fetch available models from the Copilot SDK. */
+  /**
+   * One-shot text completion using an ephemeral Copilot session.
+   * Creates a temporary session, sends the prompt, collects the response
+   * text from SDK callbacks, then tears down the session.
+   */
+  async complete(prompt: string, model: string, cwd: string): Promise<string> {
+    await this.refreshClient();
+    const client = this.client;
+    if (!client) {
+      throw new Error("Copilot client not available");
+    }
+
+    const session = await client.createSession({
+      onPermissionRequest: approveAll,
+      model: model || undefined,
+      workingDirectory: cwd,
+    });
+
+    const unsubscribers: Array<() => void> = [];
+
+    try {
+      let messageText = "";
+      let deltaText = "";
+
+      const turnPromise = new Promise<void>((resolve, reject) => {
+        unsubscribers.push(
+          session.on("assistant.message_delta", (event: { data: { deltaContent: string } }) => {
+            deltaText += event.data.deltaContent;
+          }),
+        );
+
+        unsubscribers.push(
+          session.on("assistant.message", (event: { data: { content: string } }) => {
+            if (event.data.content) messageText = event.data.content;
+          }),
+        );
+
+        unsubscribers.push(
+          session.on("session.error", (event: { data: { message: string } }) => {
+            reject(new Error(event.data.message));
+          }),
+        );
+
+        unsubscribers.push(
+          session.on("session.idle", () => {
+            resolve();
+          }),
+        );
+      });
+
+      const COMPLETE_TIMEOUT_MS = 60_000;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("Copilot complete() timed out after 60 seconds")),
+          COMPLETE_TIMEOUT_MS,
+        );
+      });
+
+      await session.send({ prompt });
+
+      try {
+        await Promise.race([turnPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      const text = messageText || deltaText;
+      if (!text) throw new Error("Copilot returned no text content");
+      return text.trim();
+    } finally {
+      for (const unsub of unsubscribers) unsub();
+      await session.disconnect().catch((err: unknown) =>
+        logger.debug("CopilotProvider: error disconnecting ephemeral session", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
+  }
+
+  /** Fetch available models from the Copilot SDK, with a 10-minute TTL cache. */
   async listModels(): Promise<ProviderModelInfo[]> {
+    const now = Date.now();
+    if (this.modelCache && (now - this.modelCacheTimestamp) < CopilotProvider.MODEL_CACHE_TTL_MS) {
+      return this.modelCache;
+    }
+
     await this.refreshClient();
     const client = this.client;
     if (!client) {
@@ -145,6 +242,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       if (msg.includes("not connected")) {
         logger.warn("CopilotProvider: listModels connection lost, reconnecting", { error: msg });
         this.client = null;
+        this.modelCache = null;
+        this.modelCacheTimestamp = 0;
         await this.refreshClient();
         const freshClient = this.client as CopilotClient | null;
         if (!freshClient) {
@@ -156,7 +255,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       }
     }
 
-    return sdkModels.map((m) => ({
+    const result = sdkModels.map((m) => ({
       id: m.id,
       name: m.name,
       group: inferModelGroup(m.id),
@@ -168,6 +267,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       policy: m.policy ? { state: m.policy.state as "enabled" | "disabled" | "unconfigured" } : undefined,
       multiplier: m.billing?.multiplier,
     }));
+    this.modelCache = result;
+    this.modelCacheTimestamp = Date.now();
+    return result;
   }
 
   /** Return current usage/quota state by fetching from account.getQuota(). */
@@ -220,6 +322,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
         logger.warn("CopilotProvider: error stopping old client", { error: String(err) }),
       );
       this.client = null;
+      this.modelCache = null;
+      this.modelCacheTimestamp = 0;
     }
 
     const opts: {
@@ -305,7 +409,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
   /** Cached context window limit from the last session.usage_info event, keyed by sessionId. */
   private contextWindowBySession = new Map<string, number>();
 
-  /** Start or continue a session by sending a message via the Copilot SDK. */
+  /** Start or continue a session by sending a message via the Copilot SDK. When `copilotAgent` is provided, routes the session to the appropriate built-in mode or custom agent before sending. */
   async sendMessage(params: {
     sessionId: string;
     message: string;
@@ -316,6 +420,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     permissionMode: string;
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
+    /** Copilot sub-agent name. Built-in modes: "interactive" | "plan" | "autopilot". Custom: any YAML agent name. */
+    copilotAgent?: string;
   }): Promise<void> {
     try {
       await this.doSendMessage(params);
@@ -330,9 +436,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
       const threadId = this.toThreadId(params.sessionId);
 
       if (msg.includes("CLI server exited")) {
-        // The @github/copilot process died — discard the dead client so
+        // The @github/copilot process died - discard the dead client so
         // refreshClient() rebuilds it on the next attempt.
         this.client = null;
+        this.modelCache = null;
+        this.modelCacheTimestamp = 0;
         const userMsg =
           "GitHub Copilot CLI exited unexpectedly.\n\n" +
           "Ensure you are authenticated: run `gh auth login` and confirm you have an active GitHub Copilot subscription.";
@@ -365,10 +473,12 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     permissionMode: string;
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
+    /** Copilot sub-agent name. Built-in modes: "interactive" | "plan" | "autopilot". Custom: any YAML agent name. */
+    copilotAgent?: string;
   }): Promise<void> {
     await this.refreshClient();
 
-    const { sessionId, message, cwd, model, resume } = params;
+    const { sessionId, message, cwd, model, resume, copilotAgent } = params;
 
     if (!this.evictionTimer) {
       this.evictionTimer = setInterval(
@@ -385,6 +495,16 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
     const existing = this.sessions.get(sessionId);
     if (existing) {
       existing.lastUsedAt = Date.now();
+      // Apply agent routing so mid-thread agent changes take effect on cached sessions.
+      if (copilotAgent) {
+        if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
+          await existing.session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
+          logger.info("CopilotProvider: set built-in mode on cached session", { sessionId, mode: copilotAgent });
+        } else {
+          await existing.session.rpc.agent.select({ name: copilotAgent });
+          logger.info("CopilotProvider: selected custom agent on cached session", { sessionId, agent: copilotAgent });
+        }
+      }
       // Abort in-flight turn by sending a new message on the existing session.
       // The previous runTurn promise will resolve when session.idle fires.
       void this.runTurn(sessionId, threadId, existing.session, message);
@@ -399,6 +519,21 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
 
     let session: CopilotSession;
 
+    // Discover custom YAML agents so the SDK knows about them before agent.select() is called.
+    // Only non-default agents are passed; built-in modes ("interactive", "plan", "autopilot")
+    // are handled via mode.set() and do not need to be in customAgents.
+    // Discovery runs only here (new session path) to avoid sync FS calls on every message.
+    const discoveredAgents = discoverCopilotAgents(cwd);
+    const customAgents = discoveredAgents
+      .filter((a) => a.source !== "default")
+      .map((a) => ({
+        name: a.name,
+        displayName: a.displayName,
+        description: a.description,
+        // SDK uses its own YAML-loaded prompt; empty string defers to CLI config.
+        prompt: "",
+      }));
+
     // TODO(#258): respect params.permissionMode. Currently approveAll is used
     // unconditionally because the Copilot SDK does not expose per-action gating.
     // Until the SDK adds granular permission control, all tool actions are
@@ -409,6 +544,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           onPermissionRequest: approveAll,
           model: model || undefined,
           workingDirectory: cwd,
+          ...(customAgents.length > 0 && { customAgents }),
         });
         logger.info("Resumed Copilot session", { sessionId, sdkSessionId });
       } catch (err) {
@@ -421,6 +557,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           onPermissionRequest: approveAll,
           model: model || undefined,
           workingDirectory: cwd,
+          ...(customAgents.length > 0 && { customAgents }),
         });
       }
     } else {
@@ -428,7 +565,20 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
         onPermissionRequest: approveAll,
         model: model || undefined,
         workingDirectory: cwd,
+        ...(customAgents.length > 0 && { customAgents }),
       });
+    }
+
+    // Route to the appropriate Copilot SDK API based on the selected sub-agent.
+    // Built-in modes use session.rpc.mode.set(); custom YAML agents use session.rpc.agent.select().
+    if (copilotAgent) {
+      if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
+        await session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
+        logger.info("CopilotProvider: set built-in mode", { sessionId, mode: copilotAgent });
+      } else {
+        await session.rpc.agent.select({ name: copilotAgent });
+        logger.info("CopilotProvider: selected custom agent", { sessionId, agent: copilotAgent });
+      }
     }
 
     // Capture the SDK session ID for future resume and notify the service layer
@@ -470,7 +620,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
 
     try {
       const turnPromise = new Promise<void>((resolve) => {
-        // assistant.message_delta — streaming text chunk
+        // assistant.message_delta - streaming text chunk
         unsubscribers.push(
           session.on("assistant.message_delta", (event) => {
             const entry = this.sessions.get(sessionId);
@@ -484,7 +634,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // assistant.message — final complete assistant response
+        // assistant.message - final complete assistant response
         unsubscribers.push(
           session.on("assistant.message", (event) => {
             this.emit("event", {
@@ -496,7 +646,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // tool.execution_start — assistant is invoking a tool
+        // tool.execution_start - assistant is invoking a tool
         unsubscribers.push(
           session.on("tool.execution_start", (event) => {
             const { toolCallId, toolName, arguments: toolArgs } = event.data;
@@ -511,7 +661,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // tool.execution_complete — tool has finished
+        // tool.execution_complete - tool has finished
         unsubscribers.push(
           session.on("tool.execution_complete", (event) => {
             const { toolCallId, success, result } = event.data;
@@ -526,7 +676,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // tool.execution_progress — heartbeat while a tool runs
+        // tool.execution_progress - heartbeat while a tool runs
         unsubscribers.push(
           session.on("tool.execution_progress", (event) => {
             const { toolCallId } = event.data;
@@ -550,7 +700,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // session.usage_info — live context window metrics emitted each turn
+        // session.usage_info - live context window metrics emitted each turn
         unsubscribers.push(
           session.on("session.usage_info", (event) => {
             const { tokenLimit, currentTokens } = event.data as {
@@ -567,7 +717,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // assistant.usage — token counts after a model call
+        // assistant.usage - token counts after a model call
         unsubscribers.push(
           session.on("assistant.usage", (event) => {
             const {
@@ -607,7 +757,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // session.error — provider-level error; resolve so cleanup runs.
+        // session.error - provider-level error; resolve so cleanup runs.
         // Also evict the session entry so the next sendMessage creates a fresh
         // session rather than reusing a potentially dead one.
         unsubscribers.push(
@@ -623,7 +773,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // session.compaction_start — context window compaction beginning
+        // session.compaction_start - context window compaction beginning
         unsubscribers.push(
           session.on("session.compaction_start", () => {
             this.emit("event", {
@@ -634,7 +784,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // session.compaction_complete — compaction finished; emit summary if present
+        // session.compaction_complete - compaction finished; emit summary if present
         unsubscribers.push(
           session.on("session.compaction_complete", (event) => {
             if (event.data.summaryContent) {
@@ -652,7 +802,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
           }),
         );
 
-        // session.idle — turn is complete; resolve and clean up handlers
+        // session.idle - turn is complete; resolve and clean up handlers
         unsubscribers.push(
           session.on("session.idle", () => {
             resolve();
@@ -746,6 +896,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider {
         }),
       );
       this.client = null;
+      this.modelCache = null;
+      this.modelCacheTimestamp = 0;
     }
 
     logger.info("CopilotProvider shutdown complete");

@@ -13,14 +13,22 @@ import type {
   Settings,
   GitCommit,
   ProviderModelInfo,
+  CopilotSubagent,
 } from "./types";
-import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo } from "@mcode/contracts";
+import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
+import { useSettingsStore } from "@/stores/settingsStore";
+import type { PermissionRequest } from "@mcode/contracts";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
 /** Maximum reconnect delay in milliseconds. */
 const MAX_RECONNECT_MS = 30_000;
+
+/** Timestamp of the last github.checkStatus fetch triggered on connect/reconnect. */
+let lastCheckStatusFetchAt = 0;
+/** Minimum interval between reconnect-triggered checkStatus fetches to avoid subprocess storms. */
+const CHECK_STATUS_RECONNECT_COOLDOWN_MS = 30_000;
 
 type Listener = (data: unknown) => void;
 
@@ -133,6 +141,51 @@ export function createWsTransport(
 
       // Auth token is conveyed via HttpOnly cookie (Set-Cookie on /health).
       // No need to store it in localStorage - the cookie handles reconnection.
+
+      // On connect/reconnect, refresh CI checks for all visible PR threads (best-effort).
+      // Cooldown prevents subprocess storms during rapid reconnect loops.
+      // Deferred import avoids a circular dependency at module evaluation time.
+      const now = Date.now();
+      if (now - lastCheckStatusFetchAt > CHECK_STATUS_RECONNECT_COOLDOWN_MS) {
+        lastCheckStatusFetchAt = now;
+        import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
+          const state = useWorkspaceStore.getState();
+
+          // Refresh all PR threads visible in the sidebar (including terminal ones — server
+          // handles merged/closed with a one-shot fetch rather than registering a watcher).
+          const prThreads = state.threads.filter((t) => t.pr_number != null);
+
+          for (const thread of prThreads) {
+            rpc<ChecksStatus>("github.checkStatus", { threadId: thread.id }).then((checks) => {
+              useWorkspaceStore.setState((ws) => {
+                const existing = ws.checksById[thread.id];
+                // Ignore stale in-flight responses that arrived after a newer update.
+                if (existing && existing.fetchedAt >= checks.fetchedAt) return ws;
+                return { checksById: { ...ws.checksById, [thread.id]: checks } };
+              });
+            }).catch(() => { /* best-effort */ });
+          }
+
+          // On initial connect, threads haven't loaded yet; subscribe to backfill all PR
+          // threads' CI status once the store is populated.
+          if (state.threads.length === 0) {
+            const unsub = useWorkspaceStore.subscribe((s) => {
+              if (s.threads.length === 0) return;
+              unsub();
+              for (const t of s.threads) {
+                if (t.pr_number == null) continue;
+                rpc<ChecksStatus>("github.checkStatus", { threadId: t.id }).then((checks) => {
+                  useWorkspaceStore.setState((ws) => {
+                    const existing = ws.checksById[t.id];
+                    if (existing && existing.fetchedAt >= checks.fetchedAt) return ws;
+                    return { checksById: { ...ws.checksById, [t.id]: checks } };
+                  });
+                }).catch(() => { /* best-effort */ });
+              }
+            });
+          }
+        });
+      }
     };
 
     ws.onmessage = (event) => {
@@ -293,6 +346,7 @@ export function createWsTransport(
         reasoningLevel: settings.reasoningLevel,
         interactionMode: settings.interactionMode,
         permissionMode: settings.permissionMode,
+        copilotAgent: settings.copilotAgent,
       }),
     markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
     syncThreadPrs: (workspaceId) =>
@@ -306,8 +360,16 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?) =>
-      rpc<void>("agent.send", { threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode }),
+    sendMessage: (threadId, content, model?, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?, copilotAgent?: string) => {
+      const state = useSettingsStore.getState();
+      const guardrails = state.loaded
+        ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
+        : {};
+      return rpc<void>("agent.send", {
+        threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode, copilotAgent,
+        ...guardrails,
+      });
+    },
     createAndSendMessage: (
       workspaceId,
       content,
@@ -322,8 +384,13 @@ export function createWsTransport(
       interactionMode?,
       parentThreadId?,
       forkedFromMessageId?,
-    ) =>
-      rpc<Thread>("agent.createAndSend", {
+      copilotAgent?,
+    ) => {
+      const state = useSettingsStore.getState();
+      const guardrails = state.loaded
+        ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
+        : {};
+      return rpc<Thread>("agent.createAndSend", {
         workspaceId,
         content,
         model,
@@ -337,8 +404,15 @@ export function createWsTransport(
         interactionMode,
         parentThreadId,
         forkedFromMessageId,
-      }),
+        copilotAgent,
+        ...guardrails,
+      });
+    },
     stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
+    respondToPermission: (requestId, decision) =>
+      rpc<void>("permission.respond", { requestId, decision }),
+    listPendingPermissions: (threadId) =>
+      rpc<PermissionRequest[]>("permission.listPending", { threadId }),
     answerPlanQuestions: (threadId, answers, permissionMode?, reasoningLevel?) =>
       rpc<void>("agent.answerQuestions", { threadId, answers, permissionMode, reasoningLevel }),
     readClipboardImage: () =>
@@ -376,6 +450,8 @@ export function createWsTransport(
     fetchBranch: (workspaceId, branch, prNumber?) =>
       rpc<void>("git.fetchBranch", { workspaceId, branch, prNumber }),
     getPrByUrl: (url) => rpc<PrDetail | null>("github.prByUrl", { url }),
+    checkStatus: (threadId) =>
+      rpc<ChecksStatus>("github.checkStatus", { threadId }),
 
     // Skills
     listSkills: (cwd?) => rpc<SkillInfo[]>("skill.list", { cwd }),
@@ -452,6 +528,9 @@ export function createWsTransport(
       rpc<ProviderModelInfo[]>("provider.listModels", { providerId }),
     getProviderUsage: (providerId) =>
       rpc<ProviderUsageInfo>("provider.getUsage", { providerId }),
+    /** Fetches all available Copilot sub-agents for the given workspace (built-in + user + project). */
+    listCopilotAgents: (workspaceId) =>
+      rpc<CopilotSubagent[]>("provider.copilotAgents", { workspaceId }),
 
     // Memory pressure
     setBackground: (background) => rpc<void>("memory.setBackground", { background }),

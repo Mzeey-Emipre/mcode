@@ -20,6 +20,7 @@ import {
   getExtension,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
+import { discoverCopilotAgents } from "../providers/copilot/copilot-agent-discovery.js";
 import type { WorkspaceService } from "../services/workspace-service";
 import type { ThreadService } from "../services/thread-service";
 import type { AgentService } from "../services/agent-service";
@@ -38,6 +39,7 @@ import type { SettingsService } from "../services/settings-service";
 import type { GitWatcherService } from "../services/git-watcher-service";
 import type { MemoryPressureService } from "../services/memory-pressure-service";
 import type { PrDraftService } from "../services/pr-draft-service";
+import type { CiWatcherService } from "../services/ci-watcher";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import { broadcast } from "./push";
@@ -67,6 +69,8 @@ export interface RouterDeps {
   providerRegistry: IProviderRegistry;
   /** Generates AI-powered PR draft titles and bodies. */
   prDraftService: PrDraftService;
+  /** CI check watcher for adaptive polling and manual refresh. */
+  ciWatcherService: CiWatcherService;
   /** Thread repository for resolving worktree paths in git operations. */
   threadRepo: ThreadRepo;
   /** Workspace repository for resolving repo paths in git operations. */
@@ -196,11 +200,13 @@ async function dispatch(
         params.mode,
         params.branch,
       );
-    case "thread.delete":
+    case "thread.delete": {
+      deps.ciWatcherService.unwatch(params.threadId);
       return deps.threadService.delete(
         params.threadId,
         params.cleanupWorktree,
       );
+    }
     case "thread.updateTitle":
       return deps.threadService.updateTitle(
         params.threadId,
@@ -211,6 +217,7 @@ async function dispatch(
         reasoning_level: params.reasoningLevel,
         interaction_mode: params.interactionMode,
         permission_mode: params.permissionMode,
+        copilot_agent: params.copilotAgent,
       });
     case "thread.markViewed":
       deps.threadService.markViewed(params.threadId);
@@ -237,6 +244,15 @@ async function dispatch(
             if (numberChanged || statusChanged) {
               deps.threadService.linkPr(t.id, pr.number, pr.state);
               results.push({ threadId: t.id, prNumber: pr.number, prStatus: pr.state });
+            }
+            // Start CI watching if PR is not in terminal state.
+            // Unwatch first when the PR number changed so the watcher targets the new PR.
+            const prState = pr.state.toLowerCase();
+            if (prState !== "merged" && prState !== "closed") {
+              if (numberChanged) deps.ciWatcherService.unwatch(t.id);
+              deps.ciWatcherService.watch(t.id, pr.number, workspace.path);
+            } else {
+              deps.ciWatcherService.unwatch(t.id);
             }
           }
         }),
@@ -288,6 +304,9 @@ async function dispatch(
         params.reasoningLevel,
         params.provider,
         params.interactionMode,
+        params.maxBudgetUsd,
+        params.maxTurns,
+        params.copilotAgent,
       );
       return;
     case "agent.createAndSend":
@@ -305,6 +324,9 @@ async function dispatch(
         params.interactionMode,
         params.parentThreadId,
         params.forkedFromMessageId,
+        params.maxBudgetUsd,
+        params.maxTurns,
+        params.copilotAgent,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);
@@ -351,6 +373,34 @@ async function dispatch(
       return deps.githubService.listOpenPrs(params.workspaceId);
     case "github.prByUrl":
       return deps.githubService.getPrByUrl(params.url);
+    case "github.checkStatus": {
+      let entry = deps.ciWatcherService.getEntry(params.threadId);
+      if (!entry) {
+        // Bootstrap: thread may not be in the watcher yet (e.g. connect race before syncThreadPrs).
+        // Look up the stored PR number and start watching so future polls work automatically.
+        const thread = deps.threadRepo.findById(params.threadId);
+        const prState = thread?.pr_status?.toLowerCase();
+        const isTerminal = prState === "merged" || prState === "closed";
+        if (thread?.pr_number) {
+          const workspace = deps.workspaceRepo.findById(thread.workspace_id);
+          if (workspace) {
+            if (isTerminal) {
+              // Terminal PR: one-shot fetch without registering in the watcher — no need to poll.
+              return deps.githubService.getCheckRuns(thread.pr_number, workspace.path);
+            }
+            // skipInitialFetch: checkStatus will fetch and broadcast below, no need for a second subprocess.
+            deps.ciWatcherService.watch(params.threadId, thread.pr_number, workspace.path, { skipInitialFetch: true });
+            entry = deps.ciWatcherService.getEntry(params.threadId);
+          }
+        }
+      }
+      if (!entry) {
+        return { aggregate: "no_checks" as const, runs: [], fetchedAt: Date.now() };
+      }
+      const checks = await deps.githubService.getCheckRuns(entry.prNumber, entry.repoPath);
+      deps.ciWatcherService.refresh(params.threadId, checks);
+      return checks;
+    }
 
     // Config
     case "config.discover":
@@ -494,6 +544,11 @@ async function dispatch(
       }
       return provider.getUsage();
     }
+    case "provider.copilotAgents": {
+      const workspace = deps.workspaceService.findById(params.workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${params.workspaceId}`);
+      return discoverCopilotAgents(workspace.path);
+    }
 
     // Memory pressure
     case "memory.setBackground":
@@ -568,12 +623,25 @@ async function dispatch(
         prStatus: "OPEN",
       });
 
+      // Replace any stale watcher (e.g. previous PR on this thread) before registering the new one.
+      deps.ciWatcherService.unwatch(params.threadId);
+      deps.ciWatcherService.watch(params.threadId, result.number, repoPath);
+
       return result;
     }
 
     // App
     case "app.version":
       return process.env.MCODE_VERSION ?? "0.0.1";
+
+    // Permission
+    case "permission.respond": {
+      deps.agentService.respondToPermission(params.requestId, params.decision);
+      // broadcast is handled by the provider's "permission_resolved" event → index.ts listener
+      return;
+    }
+    case "permission.listPending":
+      return deps.agentService.listPendingPermissions(params.threadId);
 
     default:
       throw new Error(`Unhandled method: ${method}`);

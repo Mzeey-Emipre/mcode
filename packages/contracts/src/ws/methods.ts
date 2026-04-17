@@ -7,7 +7,7 @@ import { AttachmentMetaSchema } from "../models/attachment.js";
 import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { GitBranchSchema, WorktreeSchema } from "../git.js";
 import { GitCommitSchema } from "../models/git-commit.js";
-import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema } from "../github.js";
+import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
 import { SkillInfoSchema } from "../skills.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
@@ -21,49 +21,69 @@ import {
 import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
 import { ProviderUsageInfoSchema } from "../providers/usage.js";
+import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
+import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
 
 /** Schema for creating a new thread. */
-export const CreateThreadSchema = z.object({
-  workspaceId: z.string(),
-  title: z.string(),
-  mode: ThreadModeSchema,
-  branch: z.string(),
-});
+export const CreateThreadSchema = lazySchema(() =>
+  z.object({
+    workspaceId: z.string(),
+    title: z.string(),
+    mode: ThreadModeSchema,
+    branch: z.string(),
+  }),
+);
 
 /** Schema for sending a message to an existing thread. */
-export const SendMessageSchema = z.object({
-  threadId: z.string(),
-  content: z.string(),
-  model: z.string().optional(),
-  permissionMode: PermissionModeSchema.optional(),
-  attachments: z.array(AttachmentMetaSchema).optional(),
-  reasoningLevel: ReasoningLevelSchema.optional(),
-  provider: ProviderIdSchema.optional(),
-  /** When "plan", the server wraps the message with the plan-mode question prompt. */
-  interactionMode: InteractionModeSchema.optional(),
-});
+export const SendMessageSchema = lazySchema(() =>
+  z.object({
+    threadId: z.string(),
+    content: z.string(),
+    model: z.string().optional(),
+    permissionMode: PermissionModeSchema.optional(),
+    attachments: z.array(AttachmentMetaSchema).optional(),
+    reasoningLevel: ReasoningLevelSchema.optional(),
+    provider: ProviderIdSchema.optional(),
+    /** When "plan", the server wraps the message with the plan-mode question prompt. */
+    interactionMode: InteractionModeSchema.optional(),
+    /** USD budget cap for this session. 0 or absent disables. */
+    maxBudgetUsd: z.number().nonnegative().finite().optional(),
+    /** Maximum agent turns. 0 or absent disables. */
+    maxTurns: z.number().int().nonnegative().optional(),
+    /** Copilot sub-agent to activate for this message. Ignored by other providers. */
+    copilotAgent: CopilotAgentNameSchema.optional(),
+  }),
+);
 
 /** Schema for creating a thread and sending a message in one call. */
-export const CreateAndSendSchema = z.object({
-  workspaceId: z.string(),
-  content: z.string(),
-  model: z.string(),
-  permissionMode: PermissionModeSchema.optional(),
-  mode: ThreadModeSchema.optional(),
-  branch: z.string().optional(),
-  existingWorktreePath: z.string().optional(),
-  attachments: z.array(AttachmentMetaSchema).optional(),
-  reasoningLevel: ReasoningLevelSchema.optional(),
-  provider: ProviderIdSchema.optional(),
-  /** When "plan", the server wraps the message with the plan-mode question prompt. */
-  interactionMode: InteractionModeSchema.optional(),
-  /** Source thread ID when branching from an existing thread. */
+export const CreateAndSendSchema = lazySchema(() =>
+  z.object({
+    workspaceId: z.string(),
+    content: z.string(),
+    model: z.string(),
+    permissionMode: PermissionModeSchema.optional(),
+    mode: ThreadModeSchema.optional(),
+    branch: z.string().optional(),
+    existingWorktreePath: z.string().optional(),
+    attachments: z.array(AttachmentMetaSchema).optional(),
+    reasoningLevel: ReasoningLevelSchema.optional(),
+    provider: ProviderIdSchema.optional(),
+    /** When "plan", the server wraps the message with the plan-mode question prompt. */
+    interactionMode: InteractionModeSchema.optional(),
+    /** USD budget cap for this session. 0 or absent disables. */
+    maxBudgetUsd: z.number().nonnegative().finite().optional(),
+    /** Maximum agent turns. 0 or absent disables. */
+    maxTurns: z.number().int().nonnegative().optional(),
+    /** Copilot sub-agent to activate for this thread. Ignored by other providers. */
+    copilotAgent: CopilotAgentNameSchema.optional(),
+    /** Source thread ID when branching from an existing thread. */
   parentThreadId: z.string().optional(),
   /** Fork-point message ID in the parent thread. Defaults to last persisted message. */
   forkedFromMessageId: z.string().optional(),
 }).refine(
   (d) => !d.forkedFromMessageId || d.parentThreadId,
   { message: "forkedFromMessageId requires parentThreadId", path: ["forkedFromMessageId"] },
+  ),
 );
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
@@ -82,11 +102,11 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "thread.list": {
     params: z.object({ workspaceId: z.string() }),
-    result: z.array(ThreadSchema),
+    result: z.array(ThreadSchema()),
   },
   "thread.create": {
-    params: CreateThreadSchema,
-    result: ThreadSchema,
+    params: CreateThreadSchema(),
+    result: ThreadSchema(),
   },
   "thread.delete": {
     params: z.object({
@@ -105,8 +125,14 @@ export const WS_METHODS = lazySchema(() => ({
       reasoningLevel: ReasoningLevelSchema.optional(),
       interactionMode: InteractionModeSchema.optional(),
       permissionMode: PermissionModeSchema.optional(),
+      /** Copilot-specific: name of the selected sub-agent. Pass null to clear back to provider default. */
+      copilotAgent: CopilotAgentNameSchema.nullable().optional(),
     }).refine(
-      (data) => data.reasoningLevel !== undefined || data.interactionMode !== undefined || data.permissionMode !== undefined,
+      (data) =>
+        data.reasoningLevel !== undefined ||
+        data.interactionMode !== undefined ||
+        data.permissionMode !== undefined ||
+        data.copilotAgent !== undefined,
       { message: "Must provide at least one setting to update" },
     ),
     result: z.boolean(),
@@ -175,12 +201,12 @@ export const WS_METHODS = lazySchema(() => ({
     result: z.array(z.string()),
   },
   "agent.send": {
-    params: SendMessageSchema,
+    params: SendMessageSchema(),
     result: z.void(),
   },
   "agent.createAndSend": {
-    params: CreateAndSendSchema,
-    result: ThreadSchema,
+    params: CreateAndSendSchema(),
+    result: ThreadSchema(),
   },
   "agent.stop": {
     params: z.object({ threadId: z.string() }),
@@ -198,6 +224,18 @@ export const WS_METHODS = lazySchema(() => ({
       reasoningLevel: ReasoningLevelSchema.optional(),
     }),
     result: z.void(),
+  },
+  "permission.respond": {
+    params: z.object({
+      requestId: z.string(),
+      decision: PermissionDecisionSchema,
+    }),
+    result: z.void(),
+  },
+  /** Returns pending permission requests for a thread; used to re-hydrate the frontend after a WebSocket reconnect. */
+  "permission.listPending": {
+    params: z.object({ threadId: z.string() }),
+    result: z.array(PermissionRequestSchema()),
   },
   "message.list": {
     params: z.object({
@@ -259,6 +297,10 @@ export const WS_METHODS = lazySchema(() => ({
       isDraft: z.boolean().default(false),
     }),
     result: CreatePrResultSchema(),
+  },
+  "github.checkStatus": {
+    params: z.object({ threadId: z.string() }),
+    result: ChecksStatusSchema(),
   },
   "config.discover": {
     params: z.object({ workspacePath: z.string() }),
@@ -384,6 +426,12 @@ export const WS_METHODS = lazySchema(() => ({
   "memory.setBackground": {
     params: z.object({ background: z.boolean() }),
     result: z.void(),
+  },
+  "provider.copilotAgents": {
+    params: z.object({
+      workspaceId: z.string(),
+    }),
+    result: z.array(CopilotSubagentSchema()),
   },
 } as const));
 

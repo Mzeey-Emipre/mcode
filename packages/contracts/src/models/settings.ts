@@ -26,7 +26,7 @@ export type AgentDefaultMode = z.infer<typeof AgentDefaultModeSchema>;
 
 /**
  * Reasoning effort level for model inference.
- * "max" maps to Claude's extended thinking; "xhigh" maps to Codex's xhigh effort tier.
+ * "max" maps to Claude's extended thinking; "xhigh" maps to Codex's xhigh effort tier and Claude Opus 4.7+.
  */
 export const ReasoningLevelSchema = z.enum(["low", "medium", "high", "max", "xhigh"]);
 /** Reasoning effort level value. */
@@ -71,6 +71,15 @@ export const SettingsSchema = lazySchema(() =>
             permission: PermissionModeSchema.default("full"),
           })
           .default({}),
+        /** Per-session safety limits (Claude provider only). */
+        guardrails: z
+          .object({
+            /** Stop the agent if session cost exceeds this USD amount. 0 disables. */
+            maxBudgetUsd: z.number().nonnegative().finite().default(0),
+            /** Stop the agent after this many turns. 0 disables. */
+            maxTurns: z.number().int().nonnegative().default(0),
+          })
+          .default({}),
       })
       .default({}),
 
@@ -83,7 +92,7 @@ export const SettingsSchema = lazySchema(() =>
             /** Default AI provider. */
             provider: ProviderIdSchema.default("claude"),
             /** Default model identifier. */
-            id: z.string().default("claude-sonnet-4-6"),
+            id: z.string().default("claude-opus-4-7"),
             /** Default reasoning effort level. */
             reasoning: ReasoningLevelSchema.default("high"),
             /** Fallback model when the primary is unavailable. Empty string disables fallback. */
@@ -208,6 +217,12 @@ export const PartialSettingsSchema = lazySchema(() =>
           .object({
             mode: AgentDefaultModeSchema.optional(),
             permission: PermissionModeSchema.optional(),
+          })
+          .optional(),
+        guardrails: z
+          .object({
+            maxBudgetUsd: z.number().nonnegative().finite().optional(),
+            maxTurns: z.number().int().nonnegative().optional(),
           })
           .optional(),
       })

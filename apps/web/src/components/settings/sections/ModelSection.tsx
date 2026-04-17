@@ -1,8 +1,11 @@
 import { useMemo, type ReactNode } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useProviderModelsStore } from "@/stores/providerModelsStore";
 import {
   MODEL_PROVIDERS,
   isMaxEffortModel,
+  isXhighEffortModel,
+  supportsEffortParameter,
   normalizeReasoningLevelForModel,
   getCodexReasoningLevels,
 } from "@/lib/model-registry";
@@ -80,10 +83,12 @@ const CODEX_REASONING_LABELS: Record<string, string> = {
 };
 
 /**
- * Model settings section: provider, default model, fallback model, and reasoning effort.
+ * Model settings section: provider, default model, fallback model, reasoning effort,
+ * PR draft provider/model, and CLI paths.
+ *
  * Model options update when the provider changes. Switching provider resets the default
- * model to the new provider's first model and clears the fallback. Switching to a
- * non-Opus model clamps the reasoning level from "max" to "high".
+ * model to the new provider's first model and clears the fallback. The reasoning level
+ * is normalized down when the new model does not support the current tier.
  */
 export function ModelSection() {
   const provider = useSettingsStore((s) => s.settings.model.defaults.provider);
@@ -104,6 +109,9 @@ export function ModelSection() {
     (p) => p.id === (prDraftProvider || provider),
   );
 
+  const prDraftEffectiveId = prDraftProvider || provider;
+  const dynamicPrDraftModels = useProviderModelsStore((s) => s.models[prDraftEffectiveId]);
+
   const modelOptions = useMemo(
     () => (activeProvider?.models ?? []).map((m) => ({
       value: m.id,
@@ -118,31 +126,45 @@ export function ModelSection() {
     [modelOptions],
   );
 
-  // PR draft model options: "Auto" (provider default) + all models for the effective provider
+  // PR draft model options: "Auto" (provider default) + all models for the effective provider.
+  // Dynamic models from the store take priority; static registry is the fallback when the
+  // store hasn't fetched yet (e.g. Copilot not connected).
   const prDraftModelOptions = useMemo(
     () => [
       { value: "", label: "Auto" },
-      ...(prDraftEffectiveProvider?.models ?? []).map((m) => ({ value: m.id, label: m.label })),
+      ...(dynamicPrDraftModels ?? prDraftEffectiveProvider?.models ?? []).map((m) => ({
+        value: m.id,
+        label: m.label,
+      })),
     ],
-    [prDraftEffectiveProvider],
+    [dynamicPrDraftModels, prDraftEffectiveProvider],
   );
 
-  const codexLevels = useMemo(() => getCodexReasoningLevels(modelId), [modelId]);
+  // Gate on provider so Copilot models that share IDs with Codex models
+  // don't accidentally take the Codex reasoning branch.
+  const codexLevels = useMemo(
+    () => (provider === "codex" ? getCodexReasoningLevels(modelId) : null),
+    [provider, modelId],
+  );
 
   const reasoningOptions = useMemo(() => {
     if (codexLevels) {
-      // Codex model: show its specific supported levels
       return codexLevels.map((level) => ({
         value: level,
         label: CODEX_REASONING_LABELS[level] ?? level,
       }));
     }
-    // Standard Claude reasoning levels
+    if (provider === "copilot") {
+      return REASONING_OPTIONS_BASE;
+    }
+    // Claude: correct tier order is Low, Medium, High, X-High, Max.
+    // X-High and Max are disabled unless the selected model supports them.
     return [
       ...REASONING_OPTIONS_BASE,
-      { value: "max", label: "Max", disabled: !isMaxEffortModel(modelId) },
+      { value: "xhigh", label: "X-High", disabled: !isXhighEffortModel(modelId) },
+      { value: "max",   label: "Max",    disabled: !isMaxEffortModel(modelId) },
     ];
-  }, [modelId, codexLevels]);
+  }, [modelId, codexLevels, provider]);
 
   const reasoningHint = useMemo(() => {
     if (codexLevels) {
@@ -153,7 +175,7 @@ export function ModelSection() {
     if (provider === "copilot") {
       return "Reasoning effort passed to the Copilot model. Not all models support all levels.";
     }
-    return "Default reasoning level. Max requires Opus 4.6.";
+    return "Default reasoning level. Max requires Opus 4.7, Opus 4.6, or Sonnet 4.6. X-High requires Opus 4.7.";
   }, [codexLevels, provider]);
 
   const handleProviderChange = (v: string) => {
@@ -304,19 +326,21 @@ export function ModelSection() {
         )}
       </SettingRow>
 
-      <SettingRow
-        label="Reasoning effort"
-        configKey="model.defaults.reasoning"
-        hint={reasoningHint}
-      >
-        <SegControl
-          options={reasoningOptions}
-          value={reasoning}
-          onChange={(v) =>
-            update({ model: { defaults: { reasoning: v as ReasoningLevel } } })
-          }
-        />
-      </SettingRow>
+      {(provider !== "claude" || supportsEffortParameter(modelId)) && (
+        <SettingRow
+          label="Reasoning effort"
+          configKey="model.defaults.reasoning"
+          hint={reasoningHint}
+        >
+          <SegControl
+            options={reasoningOptions}
+            value={reasoning}
+            onChange={(v) =>
+              update({ model: { defaults: { reasoning: v as ReasoningLevel } } })
+            }
+          />
+        </SettingRow>
+      )}
       </div>
 
       <div className="mt-8">

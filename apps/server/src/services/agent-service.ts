@@ -18,6 +18,8 @@ import type {
   AgentEvent,
   ProviderId,
   InteractionMode,
+  PermissionDecision,
+  PermissionRequest,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -134,12 +136,18 @@ export class AgentService {
     reasoningLevel?: ReasoningLevel,
     provider?: ProviderId,
     interactionMode?: InteractionMode,
+    maxBudgetUsd?: number,
+    maxTurns?: number,
+    copilotAgent?: string,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     // Use the thread's stored provider as authoritative fallback; only override
     // when the caller explicitly supplies a provider (new thread or explicit switch).
     const effectiveProvider: ProviderId = provider ?? (thread.provider as ProviderId) ?? "claude";
+    // Fall back to the thread's persisted Copilot agent when the caller doesn't supply one.
+    // Converts null (DB "cleared") to undefined (provider ignores it) so the SDK defaults.
+    const effectiveCopilotAgent = copilotAgent ?? (thread.copilot_agent ?? undefined);
     if (thread.status === "deleted" || thread.deleted_at != null) {
       throw new Error(`Cannot send message to deleted thread: ${threadId}`);
     }
@@ -220,9 +228,15 @@ export class AgentService {
     }
 
     const resolvedModel = model;
-    const { fallbackId } = (await this.settingsService.get()).model.defaults;
+    const settings = await this.settingsService.get();
+    const { fallbackId } = settings.model.defaults;
     const fallbackModel =
       fallbackId && fallbackId !== resolvedModel ? fallbackId : undefined;
+
+    // Resolve guardrails: per-request values override settings defaults.
+    // A value of 0 means "disabled" — do not pass to provider.
+    const effectiveBudget = maxBudgetUsd ?? settings.agent.guardrails.maxBudgetUsd;
+    const effectiveTurns = maxTurns ?? settings.agent.guardrails.maxTurns;
     this.threadRepo.updateModel(threadId, resolvedModel);
     // Only persist provider when the caller explicitly supplied one (new thread or deliberate switch).
     if (provider !== undefined) {
@@ -233,6 +247,7 @@ export class AgentService {
       ...(reasoningLevel !== undefined && { reasoning_level: reasoningLevel }),
       ...(interactionMode !== undefined && { interaction_mode: interactionMode }),
       ...(permissionMode !== undefined && permissionMode !== "default" && { permission_mode: permissionMode }),
+      ...(copilotAgent !== undefined && { copilot_agent: copilotAgent }),
     });
 
     const sessionName = `mcode-${threadId}`;
@@ -265,6 +280,9 @@ export class AgentService {
         permissionMode,
         attachments: persisted.length > 0 ? persisted : undefined,
         reasoningLevel,
+        ...(effectiveBudget > 0 && { maxBudgetUsd: effectiveBudget }),
+        ...(effectiveTurns > 0 && { maxTurns: effectiveTurns }),
+        copilotAgent: effectiveCopilotAgent,
       });
       logger.info("Message sent via provider", {
         threadId,
@@ -371,6 +389,9 @@ export class AgentService {
     interactionMode?: InteractionMode,
     parentThreadId?: string,
     forkedFromMessageId?: string,
+    maxBudgetUsd?: number,
+    maxTurns?: number,
+    copilotAgent?: string,
   ): Promise<Thread> {
     const title = truncateTitle(content);
 
@@ -379,6 +400,8 @@ export class AgentService {
         workspaceId, content, model, permissionMode, mode, branch,
         existingWorktreePath, attachments, reasoningLevel, provider,
         interactionMode, parentThreadId, forkedFromMessageId, title,
+        maxBudgetUsd, maxTurns,
+        copilotAgent,
       });
     }
 
@@ -437,6 +460,9 @@ export class AgentService {
       reasoningLevel,
       provider,
       interactionMode,
+      maxBudgetUsd,
+      maxTurns,
+      copilotAgent,
     );
 
     // Re-read from DB to pick up model update applied by sendMessage
@@ -465,11 +491,16 @@ export class AgentService {
     parentThreadId: string;
     forkedFromMessageId?: string;
     title: string;
+    maxBudgetUsd?: number;
+    maxTurns?: number;
+    copilotAgent?: string;
   }): Promise<Thread> {
     const {
       workspaceId, content, model, permissionMode, mode, branch,
       existingWorktreePath, attachments, reasoningLevel, provider,
       interactionMode, parentThreadId, forkedFromMessageId, title,
+      maxBudgetUsd, maxTurns,
+      copilotAgent,
     } = params;
 
     // Validate parent
@@ -632,6 +663,9 @@ export class AgentService {
         reasoningLevel,
         provider,
         interactionMode,
+        maxBudgetUsd,
+        maxTurns,
+        copilotAgent,
       );
     } finally {
       // Ensure override is cleaned up even if sendMessage throws before consuming it.
@@ -680,6 +714,30 @@ export class AgentService {
   /** Get all currently active thread IDs. */
   activeThreadIds(): string[] {
     return [...this.activeSessionIds];
+  }
+
+  /**
+   * Forward a user's permission decision to the provider holding the request.
+   * Tries all registered providers; the first one that holds the requestId resolves it.
+   */
+  respondToPermission(requestId: string, decision: PermissionDecision): void {
+    for (const provider of this.providerRegistry.resolveAll()) {
+      if (provider.resolvePermission?.(requestId, decision)) {
+        return;
+      }
+    }
+    logger.warn("permission.respond: no provider holds requestId %s", requestId);
+  }
+
+  /** Collect all pending permission requests for a thread across all providers. */
+  listPendingPermissions(threadId: string): PermissionRequest[] {
+    const results: PermissionRequest[] = [];
+    for (const provider of this.providerRegistry.resolveAll()) {
+      if (provider.listPendingPermissions) {
+        results.push(...provider.listPendingPermissions(threadId));
+      }
+    }
+    return results;
   }
 
   /**

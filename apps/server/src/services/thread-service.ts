@@ -161,16 +161,22 @@ export class ThreadService {
     return this.threadRepo.updateTitle(threadId, title);
   }
 
-  /** Persist per-thread composer settings (reasoning, mode, permission). */
+  /** Persist per-thread composer settings (reasoning, mode, permission, copilot agent). */
   updateSettings(
     threadId: string,
     settings: {
       reasoning_level?: string;
       interaction_mode?: string;
       permission_mode?: string;
+      copilot_agent?: string | null;
     },
   ): boolean {
-    return this.threadRepo.updateSettings(threadId, settings);
+    return this.threadRepo.updateSettings(threadId, {
+      ...(settings.reasoning_level !== undefined && { reasoning_level: settings.reasoning_level }),
+      ...(settings.interaction_mode !== undefined && { interaction_mode: settings.interaction_mode }),
+      ...(settings.permission_mode !== undefined && { permission_mode: settings.permission_mode }),
+      ...("copilot_agent" in settings && { copilot_agent: settings.copilot_agent }),
+    });
   }
 
   /** Link a GitHub PR to a thread by updating pr_number and pr_status. Throws on failure. */

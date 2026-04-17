@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useCallback, useState, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2, AlertTriangle, FolderPlus } from "lucide-react";
@@ -19,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay, getNotificationDot } from "@/lib/thread-status";
+import { getCiDotClass } from "@/lib/ci-status";
 import type { Workspace, Thread } from "@/transport/types";
 
 // Persist expand/collapse in localStorage
@@ -34,8 +36,25 @@ function setExpandedState(state: Record<string, boolean>) {
   localStorage.setItem("mcode-expanded-projects", JSON.stringify(state));
 }
 
+/** Maximum threads shown per workspace before "Show more" appears. */
+const THREAD_LIST_CAP = 6;
+
 /** Time window in ms during which a second click on the same thread row is treated as a double-click. */
 const DOUBLE_CLICK_THRESHOLD_MS = 250;
+
+/** Read per-workspace "show all threads" state from localStorage. */
+function getThreadListExpanded(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem("mcode-expanded-thread-lists") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+/** Persist per-workspace "show all threads" state to localStorage. */
+function setThreadListExpanded(state: Record<string, boolean>) {
+  localStorage.setItem("mcode-expanded-thread-lists", JSON.stringify(state));
+}
 
 /**
  * Returns the parent directory name from an absolute path, or null if there isn't one
@@ -135,8 +154,21 @@ export function ProjectTree() {
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const error = useWorkspaceStore((s) => s.error);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+  const permissionsByThread = useThreadStore((s) => s.permissionsByThread);
+  // Derive a set of thread IDs that have at least one unsettled permission request,
+  // so the sidebar can render the amber pending indicator without per-thread subscriptions.
+  const pendingPermissionThreadIds = useMemo(
+    () =>
+      new Set(
+        Object.entries(permissionsByThread ?? {})
+          .filter(([, perms]) => perms.some((p) => !p.settled))
+          .map(([id]) => id),
+      ),
+    [permissionsByThread],
+  );
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
+  const [threadListExpanded, setThreadListExpandedState] = useState<Record<string, boolean>>(getThreadListExpanded);
   const [isCreating, setIsCreating] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -165,6 +197,15 @@ export function ProjectTree() {
   useEffect(() => {
     setExpandedState(expanded);
   }, [expanded]);
+
+  // Persist thread-list expanded state
+  useEffect(() => {
+    setThreadListExpanded(threadListExpanded);
+  }, [threadListExpanded]);
+
+  const toggleThreadList = useCallback((wsId: string) => {
+    setThreadListExpandedState((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
+  }, []);
 
   // Auto-load worktrees for the active workspace so stale-worktree detection has data.
   useEffect(() => {
@@ -347,6 +388,9 @@ export function ProjectTree() {
               activeThreadId={activeThreadId}
               threads={threads.filter((t) => t.workspace_id === ws.id)}
               runningThreadIds={runningThreadIds}
+              pendingPermissionThreadIds={pendingPermissionThreadIds}
+              isThreadListExpanded={threadListExpanded[ws.id] ?? false}
+              onToggleThreadList={() => toggleThreadList(ws.id)}
               scrollElementRef={scrollViewportRef}
               inlineEdit={inlineEdit}
               onInlineEditChange={(title) =>
@@ -551,8 +595,12 @@ export function ProjectTree() {
 /** Props for the virtualized thread list rendered inside an expanded workspace. */
 interface VirtualizedThreadListProps {
   threads: Thread[];
+  /** Maximum number of tree rows to render. Used by the parent to enforce the THREAD_LIST_CAP. */
+  maxVisible: number;
   activeThreadId: string | null;
   runningThreadIds: Set<string>;
+  /** Thread IDs with at least one unsettled permission request. */
+  pendingPermissionThreadIds: Set<string>;
   scrollElementRef: React.RefObject<HTMLDivElement | null>;
   inlineEdit: InlineEditState | null;
   onInlineEditChange: (title: string) => void;
@@ -567,8 +615,10 @@ interface VirtualizedThreadListProps {
 /** Renders a virtualized, scrollable list of threads for a single workspace. */
 function VirtualizedThreadList({
   threads,
+  maxVisible,
   activeThreadId,
   runningThreadIds,
+  pendingPermissionThreadIds,
   scrollElementRef,
   inlineEdit,
   onInlineEditChange,
@@ -581,12 +631,18 @@ function VirtualizedThreadList({
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
 
-  // Build nested tree from flat thread list
-  const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
+  // Build nested tree from flat thread list, then cap to `maxVisible` so the
+  // sidebar isn't dominated by a single busy workspace.
+  const allTreeItems = useMemo(() => buildThreadTree(threads), [threads]);
+  const treeItems = useMemo(
+    () => (Number.isFinite(maxVisible) ? allTreeItems.slice(0, maxVisible) : allTreeItems),
+    [allTreeItems, maxVisible],
+  );
 
   // Normalized set of existing worktree paths for stale detection.
   const worktrees = useWorkspaceStore((s) => s.worktrees);
   const worktreesLoadedFor = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
+  const checksById = useWorkspaceStore(useShallow((s) => s.checksById));
   const validWorktreePaths = useMemo(() => {
     const set = new Set<string>();
     for (const wt of worktrees) {
@@ -644,7 +700,7 @@ function VirtualizedThreadList({
     >
       {virtualizer.getVirtualItems().map((virtualItem) => {
         const { thread, depth } = treeItems[virtualItem.index];
-        const status = getStatusDisplay(thread, runningThreadIds.has(thread.id));
+        const status = getStatusDisplay(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
         const isEditing = inlineEdit?.threadId === thread.id;
         // Worktree thread whose directory no longer exists on disk.
         // Only check threads from the workspace whose worktrees are loaded — comparing
@@ -690,7 +746,13 @@ function VirtualizedThreadList({
               >
                 {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
-                  const dot = getNotificationDot(thread, runningThreadIds.has(thread.id));
+                  const ciChecks = checksById[thread.id];
+                  const ciDotClass = ciChecks ? getCiDotClass(ciChecks.aggregate) : null;
+                  const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
+                  // CI dot takes priority when present; fall back to agent notification dot
+                  const dot = ciDotClass
+                    ? { dotClass: ciDotClass, animate: ciChecks!.aggregate === "pending" }
+                    : agentDot;
                   return (
                     <span
                       title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
@@ -771,6 +833,12 @@ interface ProjectNodeProps {
   activeThreadId: string | null;
   threads: Thread[];
   runningThreadIds: Set<string>;
+  /** Thread IDs with at least one unsettled permission request. */
+  pendingPermissionThreadIds: Set<string>;
+  /** Whether the thread list is fully expanded (persisted by parent). */
+  isThreadListExpanded: boolean;
+  /** Callback to toggle the thread list expanded state (persisted by parent). */
+  onToggleThreadList: () => void;
   scrollElementRef: React.RefObject<HTMLDivElement | null>;
   inlineEdit: InlineEditState | null;
   onInlineEditChange: (title: string) => void;
@@ -793,6 +861,9 @@ function ProjectNode({
   activeThreadId,
   threads,
   runningThreadIds,
+  pendingPermissionThreadIds,
+  isThreadListExpanded,
+  onToggleThreadList,
   scrollElementRef,
   inlineEdit,
   onInlineEditChange,
@@ -810,6 +881,14 @@ function ProjectNode({
     () => threads.some((t) => runningThreadIds.has(t.id)),
     [threads, runningThreadIds],
   );
+  // Cap logic: show THREAD_LIST_CAP rows unless the user opted in, or the
+  // active thread sits beyond the cap (force expand so the active row is
+  // always visible without requiring the user to click Show more).
+  const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
+  const needsCap = treeItems.length > THREAD_LIST_CAP;
+  const activeIndex = activeThreadId ? treeItems.findIndex((item) => item.thread.id === activeThreadId) : -1;
+  const forceExpand = activeIndex >= THREAD_LIST_CAP;
+  const maxVisible = !needsCap || isThreadListExpanded || forceExpand ? Infinity : THREAD_LIST_CAP;
 
   return (
     <div className="mb-1">
@@ -903,8 +982,10 @@ function ProjectNode({
           ) : (
             <VirtualizedThreadList
               threads={threads}
+              maxVisible={maxVisible}
               activeThreadId={activeThreadId}
               runningThreadIds={runningThreadIds}
+              pendingPermissionThreadIds={pendingPermissionThreadIds}
               scrollElementRef={scrollElementRef}
               inlineEdit={inlineEdit}
               onInlineEditChange={onInlineEditChange}
@@ -914,6 +995,19 @@ function ProjectNode({
               onSelectThread={onSelectThread}
               onThreadContextMenu={onThreadContextMenu}
             />
+          )}
+
+          {needsCap && !forceExpand && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={onToggleThreadList}
+              className="mt-0.5 h-auto w-full justify-start rounded-md px-2 py-1 text-[11px] font-normal text-muted-foreground/55 hover:bg-accent/40 hover:text-foreground"
+            >
+              {isThreadListExpanded
+                ? "Show less"
+                : `Show more (${treeItems.length - THREAD_LIST_CAP})`}
+            </Button>
           )}
 
           {/* New thread action — quiet typographic button, not a filled CTA. */}

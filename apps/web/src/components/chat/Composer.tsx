@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, findModelById, isMaxEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, findModelById, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -28,10 +28,12 @@ import { NamingModeSelector } from "./NamingModeSelector";
 import type { NamingMode } from "@mcode/contracts";
 import { BranchNameInput } from "./BranchNameInput";
 const LazyWorktreePicker = lazy(() => import("./WorktreePicker"));
+import { CopilotAgentSelector } from "./CopilotAgentSelector";
 import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
+import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
 import { AgentStatusBar } from "./AgentStatusBar";
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
@@ -60,6 +62,14 @@ import type { ReasoningLevel } from "@mcode/contracts";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useElementWidth } from "@/hooks/useElementWidth";
+
+/** ReasoningLevel values as a Set for O(1) membership checks in the Codex level filter. */
+const VALID_REASONING_LEVELS_SET = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
+
+/** Display label for a reasoning level value. */
+function reasoningLabel(level: string): string {
+  return level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+}
 
 interface ComposerProps {
   threadId?: string;
@@ -357,6 +367,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [provider, setProvider] = useState<string>(getDefaultProviderId());
   const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
   const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.CHAT);
+  const [copilotAgent, setCopilotAgent] = useState<string | null>(null);
   const [access, setAccess] = useState<AccessMode>(PERMISSION_MODES.FULL);
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
   const [composerMode, setComposerModeLocal] = useState<ComposerMode>("direct");
@@ -471,10 +482,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             }
           });
         }
-        // Restore mode and permission from thread settings (drafts don't save these)
+        // Restore mode, permission, and copilot agent from thread settings (drafts don't save these)
         const threadSettings = useThreadStore.getState().getThreadSettings(threadId);
         setMode(threadSettings.interactionMode);
         setAccess(threadSettings.permissionMode);
+        setCopilotAgent(threadSettings.copilotAgent ?? null);
       } else {
         // No saved draft: use thread's persisted settings as-is
         setInput("");
@@ -506,6 +518,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             ? (nextThread.permission_mode as PermissionMode)
             : globalSettings.agent.defaults.permission,
         );
+        setCopilotAgent(nextThread?.copilot_agent ?? null);
 
         // Reset Lexical editor
         if (editorRef.current) {
@@ -528,6 +541,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const { settings } = useSettingsStore.getState();
       setMode(settings.agent.defaults.mode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT);
       setAccess(settings.agent.defaults.permission);
+      setCopilotAgent(null);
       if (editorRef.current) {
         editorRef.current.update(() => {
           const root = $getRoot();
@@ -1043,7 +1057,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const { content, display } = await injectFileContent(trimmed);
       const currentAttachments = collectAndClearAttachments();
 
-      const queueProvider = provider;
       useQueueStore.getState().enqueue(threadId, {
         content,
         displayContent: display,
@@ -1051,7 +1064,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         model: modelId,
         permissionMode: access,
         reasoningLevel: reasoning,
-        provider: queueProvider,
+        provider,
+        copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
       });
 
       setInput("");
@@ -1109,7 +1123,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         setPreparingWorktree(true);
       }
       try {
-        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode);
+        await useWorkspaceStore.getState().createAndSendMessage(messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, reasoning, provider, mode, provider === "copilot" ? (copilotAgent ?? undefined) : undefined);
       } finally {
         setPreparingWorktree(false);
       }
@@ -1142,10 +1156,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         branch: branchBranch,
         existingWorktreePath: branchWorktree,
         forkedFromMessageId: branchFromMessageId,
+        copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
       });
       onBranchModeExit?.();
     } else if (threadId) {
-      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider);
+      await sendMessage(threadId, messageContent, modelId, access, currentAttachments.length > 0 ? currentAttachments : undefined, displayContent, reasoning, provider, provider === "copilot" ? (copilotAgent ?? undefined) : undefined);
     }
 
     // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
@@ -1162,7 +1177,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, reasoning, mode, access, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore, preparingWorktree, branchFromMessageId, branchExecMode, branchTargetBranch, branchNamingMode, branchCustomName, branchWorktreePath, activeThread, branchThread, autoPreviewBranch, onBranchModeExit]);
+  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore, preparingWorktree, branchFromMessageId, branchExecMode, branchTargetBranch, branchNamingMode, branchCustomName, branchWorktreePath, activeThread, branchThread, autoPreviewBranch, onBranchModeExit]);
 
   const handleEditorChange = useCallback((text: string) => {
     setInput(text);
@@ -1220,16 +1235,28 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const toast = useQueueStore((s) => s.toast);
 
-  /** Display label for a reasoning level value. */
-  const reasoningLabel = (level: string) =>
-    level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+  const reasoningLevels = useMemo<ReasoningLevel[]>(() => {
+    // Gate on provider to prevent Copilot models sharing Codex IDs from taking Codex branch.
+    const codexLvls = provider === "codex" ? getCodexReasoningLevels(modelId) : null;
+    if (codexLvls) {
+      // Filter out Codex-only levels (e.g. "minimal") that have no ReasoningLevel equivalent.
+      return codexLvls.filter((l) => VALID_REASONING_LEVELS_SET.has(l)) as ReasoningLevel[];
+    }
+    if (!supportsEffortParameter(modelId)) return [];
+    return [
+      "low",
+      "medium",
+      "high",
+      ...(isXhighEffortModel(modelId) ? (["xhigh"] as const) : []),
+      ...(isMaxEffortModel(modelId)   ? (["max"]   as const) : []),
+    ];
+  }, [modelId, provider]);
 
-  const codexLevels = getCodexReasoningLevels(modelId);
-  const reasoningLevels: ReasoningLevel[] = codexLevels
-    ? (codexLevels as unknown as ReasoningLevel[])
-    : isMaxEffortModel(modelId)
-      ? ["low", "medium", "high", "max"]
-      : ["low", "medium", "high"];
+  // Close the picker when the user switches to a model with no effort tiers (e.g. Haiku).
+  // Without this the popover stays open and points at nothing.
+  useEffect(() => {
+    if (reasoningLevels.length === 0) setShowReasoningPicker(false);
+  }, [reasoningLevels.length]);
 
   return (
     <div className="relative px-8 py-4">
@@ -1305,6 +1332,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             listRef={filePopup.listRef}
             selectedIndex={filePopup.selectedIndex}
           />
+          <SpellcheckContextMenu editorRef={editorContainerRef} />
         </div>
 
         {/* Attachment previews */}
@@ -1333,7 +1361,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             providerLocked={isProviderLocked}
           />
 
-          {/* Reasoning level */}
+          {/* Reasoning level — hidden for models that have no effort tiers (e.g. Haiku) */}
+          {reasoningLevels.length > 0 && (
           <div className="relative">
             <Tooltip>
               <TooltipTrigger
@@ -1378,9 +1407,51 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               </div>
             )}
           </div>
+          )}
 
-          {/* Mode / Permissions / Tasks — inline at md+, overflow popover below md. */}
-          {showInlineComposerOptions ? (
+          {/*
+            Copilot exposes a per-agent selector inline (replaces Chat/Plan
+            toggle, since Copilot agents don't share that mode dimension).
+            All other providers use the responsive Mode/Permissions/Tasks
+            popover: inline at md+, collapsed behind a single overflow
+            trigger below the threshold so the send button never wraps.
+          */}
+          {provider === "copilot" ? (
+            <>
+              <CopilotAgentSelector
+                selected={copilotAgent}
+                workspaceId={workspaceId ?? ""}
+                disabled={isModelFullyLocked}
+                onChange={(agentName) => {
+                  setCopilotAgent(agentName);
+                  // Don't persist to parent thread when in branch mode — the
+                  // selection only applies to the branch being created.
+                  if (threadId && !branchFromMessageId) void setThreadSettings(threadId, { copilotAgent: agentName });
+                }}
+              />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => {
+                        const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
+                        setAccess(next);
+                        agentSettingsTouchedRef.current = true;
+                        if (threadId) void setThreadSettings(threadId, { permissionMode: next });
+                      }}
+                      className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+                    >
+                      {access === PERMISSION_MODES.FULL ? <Unlock size={14} /> : <Lock size={14} />}
+                      <span className="text-sm">{access === PERMISSION_MODES.FULL ? "Full access" : "Supervised"}</span>
+                    </Button>
+                  }
+                />
+                <TooltipContent>{access === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode"}</TooltipContent>
+              </Tooltip>
+            </>
+          ) : showInlineComposerOptions ? (
             <InlineComposerOptions
               threadId={threadId}
               mode={mode}

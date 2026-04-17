@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.4.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.3.0...mcode-v0.4.0) (2026-04-17)
+
+
+### Features
+
+* add Claude Opus 4.7 with xhigh reasoning effort ([#283](https://github.com/Mzeey-Emipre/mcode/issues/283)) ([6aa9913](https://github.com/Mzeey-Emipre/mcode/commit/6aa99132168c873db8d3723def6112570a59ecdd))
+* spellcheck context menu for Composer editor ([#280](https://github.com/Mzeey-Emipre/mcode/issues/280)) ([bbbfad6](https://github.com/Mzeey-Emipre/mcode/commit/bbbfad64185cb14d71cafd77210a330c1850e22b))
+
+
+### Bug Fixes
+
+* **desktop:** bundle copilot-sdk into server instead of externalizing it ([2113fda](https://github.com/Mzeey-Emipre/mcode/commit/2113fdafd0380d63ab60e1dd4d9fb68af0dc8f2d))
+* **desktop:** bundle copilot-sdk to fix server startup in packaged app ([#279](https://github.com/Mzeey-Emipre/mcode/issues/279)) ([2113fda](https://github.com/Mzeey-Emipre/mcode/commit/2113fdafd0380d63ab60e1dd4d9fb68af0dc8f2d))
+
+## [0.3.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.2.0...mcode-v0.3.0) (2026-04-15)
+
+
+### Features
+
+* add GitHub Copilot as an AI provider ([#253](https://github.com/Mzeey-Emipre/mcode/issues/253)) ([33360df](https://github.com/Mzeey-Emipre/mcode/commit/33360df77e2f42214214c2830b74a41bb0425207))
+* add maxBudgetUsd and maxTurns guardrails (Claude only) ([#271](https://github.com/Mzeey-Emipre/mcode/issues/271)) ([6406920](https://github.com/Mzeey-Emipre/mcode/commit/6406920e0550c0c89c6518e9593d6e1ea1c9e3b7))
+* add provider usage tracking panel ([#267](https://github.com/Mzeey-Emipre/mcode/issues/267)) ([11f01bd](https://github.com/Mzeey-Emipre/mcode/commit/11f01bddfc8bf1fd175391820628f895e9f9e724))
+* **db:** versioned migration framework with rollback and CLI ([#249](https://github.com/Mzeey-Emipre/mcode/issues/249)) ([49c3fbe](https://github.com/Mzeey-Emipre/mcode/commit/49c3fbeb5041bb2089c6b26303363d4f71f43801))
+* decouple server from Electron process lifecycle ([#265](https://github.com/Mzeey-Emipre/mcode/issues/265)) ([feab4da](https://github.com/Mzeey-Emipre/mcode/commit/feab4dac269e32461a9fd537bfc7a6fa25ba764a))
+* expose Copilot sub-agents as selectable modes in the Composer ([#272](https://github.com/Mzeey-Emipre/mcode/issues/272)) ([5af8fe1](https://github.com/Mzeey-Emipre/mcode/commit/5af8fe15a1488f38586e29d09b0e9fc8529b9a49))
+* GitHub Actions check status on threads ([#210](https://github.com/Mzeey-Emipre/mcode/issues/210)) ([#273](https://github.com/Mzeey-Emipre/mcode/issues/273)) ([eca6041](https://github.com/Mzeey-Emipre/mcode/commit/eca604184290e3fec25d95ffb4259ea1f4010a6e))
+* implement command palette with keyboard shortcuts ([#250](https://github.com/Mzeey-Emipre/mcode/issues/250)) ([ae34100](https://github.com/Mzeey-Emipre/mcode/commit/ae34100ece7645790fb9b38d4acd6d279a34f432))
+* implement complete() on CopilotProvider for PR draft generation ([#275](https://github.com/Mzeey-Emipre/mcode/issues/275)) ([b0e8646](https://github.com/Mzeey-Emipre/mcode/commit/b0e86467ab1f3326125ec4eed44ceb2063d34919))
+* implement supervised permission mode for Claude provider ([#277](https://github.com/Mzeey-Emipre/mcode/issues/277)) ([3a2d905](https://github.com/Mzeey-Emipre/mcode/commit/3a2d9051c9de98c311b5b995494977dfa720bed5))
+* markdown rendering for user messages and Mermaid diagram visualizer ([#264](https://github.com/Mzeey-Emipre/mcode/issues/264)) ([aeb1555](https://github.com/Mzeey-Emipre/mcode/commit/aeb1555c6b38e655192d6b68b9a27e01ee371ba0))
+* per-thread panel state for terminal and right panel ([#263](https://github.com/Mzeey-Emipre/mcode/issues/263)) ([f5c9663](https://github.com/Mzeey-Emipre/mcode/commit/f5c9663ae39460e68e701e6908c9ba8bf8b29cf9))
+* show context window usage gauge for Copilot sessions ([#262](https://github.com/Mzeey-Emipre/mcode/issues/262)) ([5e8dd70](https://github.com/Mzeey-Emipre/mcode/commit/5e8dd70638381da353104a24ce2ba18779caa95c))
+
+
+### Bug Fixes
+
+* clean worktree deletion and parent dir cleanup ([#252](https://github.com/Mzeey-Emipre/mcode/issues/252)) ([6a134a5](https://github.com/Mzeey-Emipre/mcode/commit/6a134a570f157a6f87fe5aee1d2c5760cb822d14))
+* open links in external browser instead of in-app ([#254](https://github.com/Mzeey-Emipre/mcode/issues/254)) ([0ed6350](https://github.com/Mzeey-Emipre/mcode/commit/0ed6350584d0f0611b9cf21fd38d565155628533))
+* pass auth token to browser in dev:web mode ([#268](https://github.com/Mzeey-Emipre/mcode/issues/268)) ([7b397d0](https://github.com/Mzeey-Emipre/mcode/commit/7b397d0d1df888d00d1688400ab37a5532050a52))
+* worktree parent directory cleanup on Windows ([#274](https://github.com/Mzeey-Emipre/mcode/issues/274)) ([aef5fe6](https://github.com/Mzeey-Emipre/mcode/commit/aef5fe626e5379c0f171d9b68ceef3486627af9e))
+
+
+### Performance Improvements
+
+* lazy-load react-markdown and cmdk ([#251](https://github.com/Mzeey-Emipre/mcode/issues/251)) ([3c6aa15](https://github.com/Mzeey-Emipre/mcode/commit/3c6aa15322fc8fc8fdaa93b152ba948f88207a53))
+
 ## [0.2.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.1.0...mcode-v0.2.0) (2026-04-09)
 
 

@@ -22,6 +22,10 @@ import type {
   ProviderUsageInfo,
   PrDraft,
   CreatePrResult,
+  ChecksStatus,
+  CopilotSubagent,
+  PermissionDecision,
+  PermissionRequest,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -45,7 +49,7 @@ export type {
   ProviderModelInfo,
 } from "@mcode/contracts";
 
-export type { PaginatedMessages, ToolCallRecord, TurnSnapshot } from "@mcode/contracts";
+export type { PaginatedMessages, ToolCallRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
@@ -87,7 +91,7 @@ export interface McodeTransport {
   listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands
-  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?: InteractionMode): Promise<void>;
+  sendMessage(threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], reasoningLevel?: ReasoningLevel, provider?: string, interactionMode?: InteractionMode, copilotAgent?: string): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
     content: string,
@@ -102,8 +106,13 @@ export interface McodeTransport {
     interactionMode?: InteractionMode,
     parentThreadId?: string,
     forkedFromMessageId?: string,
+    copilotAgent?: string,
   ): Promise<Thread>;
   stopAgent(threadId: string): Promise<void>;
+  /** Respond to a tool permission request from the agent. */
+  respondToPermission(requestId: string, decision: PermissionDecision): Promise<void>;
+  /** List pending permission requests for a thread (used to re-hydrate after reconnect). */
+  listPendingPermissions(threadId: string): Promise<PermissionRequest[]>;
   /** Submit answers to a plan-mode question batch and resume the agent session. */
   answerPlanQuestions(
     threadId: string,
@@ -118,13 +127,14 @@ export interface McodeTransport {
 
   // Thread mutations
   updateThreadTitle(threadId: string, title: string): Promise<boolean>;
-  /** Persist per-thread composer settings (reasoning, mode, permission). */
+  /** Persist per-thread composer settings (reasoning, mode, permission, copilot agent). */
   updateThreadSettings(
     threadId: string,
     settings: {
       reasoningLevel?: ReasoningLevel;
       interactionMode?: InteractionMode;
       permissionMode?: PermissionMode;
+      copilotAgent?: string | null;
     },
   ): Promise<boolean>;
   /** Clear the "completed" badge for a thread. Transitions completed -> paused in the DB. */
@@ -167,6 +177,8 @@ export interface McodeTransport {
   listOpenPrs(workspaceId: string): Promise<PrDetail[]>;
   fetchBranch(workspaceId: string, branch: string, prNumber?: number): Promise<void>;
   getPrByUrl(url: string): Promise<PrDetail | null>;
+  /** Fetch fresh CI check status for a thread (manual refresh). */
+  checkStatus(threadId: string): Promise<ChecksStatus>;
 
   // Skills
   listSkills(cwd?: string): Promise<SkillInfo[]>;
@@ -238,6 +250,8 @@ export interface McodeTransport {
   listProviderModels(providerId: string): Promise<ProviderModelInfo[]>;
   /** Fetch current usage/quota state for a provider. */
   getProviderUsage(providerId: string): Promise<ProviderUsageInfo>;
+  /** Fetches Copilot sub-agents available for the given workspace. */
+  listCopilotAgents(workspaceId: string): Promise<CopilotSubagent[]>;
 
   // Memory pressure
   /** Notify server of window background/foreground state for memory management. */

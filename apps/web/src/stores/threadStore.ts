@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Message, ToolCall, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
 import type { ReasoningLevel, PlanQuestion, PlanAnswer, ProviderUsageInfo, QuotaCategory } from "@mcode/contracts";
+import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { PlanQuestionSchema } from "@mcode/contracts";
 import { getTransport, PERMISSION_MODES, INTERACTION_MODES } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
@@ -11,6 +12,12 @@ import type { TaskItem } from "./taskStore";
 import { useToastStore } from "./toastStore";
 import { findModelById, getContextWindow } from "@/lib/model-registry";
 
+/** A permission request with its current resolution state. */
+interface StoredPermission extends PermissionRequest {
+  settled: boolean;
+  decision?: PermissionDecision;
+}
+
 /** Per-thread configuration for permission scope, interaction mode, and optional reasoning level. */
 export interface ThreadSettings {
   /** Permission scope applied when the agent calls tools on this thread. */
@@ -19,6 +26,8 @@ export interface ThreadSettings {
   interactionMode: InteractionMode;
   /** Reasoning level selected for this thread, forwarded on the post-wizard answer turn. */
   reasoningLevel?: ReasoningLevel;
+  /** Selected Copilot sub-agent name. Null means provider default. Only relevant when provider is "copilot". */
+  copilotAgent?: string | null;
 }
 
 interface ThreadState {
@@ -74,6 +83,8 @@ interface ThreadState {
   activeQuestionIndexByThread: Record<string, number>;
   /** Plan wizard status per thread. */
   planQuestionsStatusByThread: Record<string, "idle" | "pending" | "answered">;
+  /** Pending and recently-settled permission requests per thread. */
+  permissionsByThread: Record<string, StoredPermission[]>;
 
   /** Store tool call records in the cache. */
   cacheToolCallRecords: (key: string, records: ToolCallRecord[]) => void;
@@ -85,7 +96,7 @@ interface ThreadState {
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
   loadOlderMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
@@ -101,6 +112,10 @@ interface ThreadState {
   submitPlanAnswers: (threadId: string) => Promise<void>;
   /** Reset plan question state for a thread (called on clear/reload). */
   clearPlanQuestions: (threadId: string) => void;
+  /** Add a new pending permission request for a thread. */
+  addPermissionRequest: (request: PermissionRequest) => void;
+  /** Mark a permission request as settled with its decision. */
+  resolvePermissionRequest: (requestId: string, decision: PermissionDecision) => void;
   handleAgentEvent: (threadId: string, event: Record<string, unknown>) => void;
 
   /** Handle server-side tool call persistence confirmation. */
@@ -237,6 +252,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   planAnswersByThread: {},
   activeQuestionIndexByThread: {},
   planQuestionsStatusByThread: {},
+  permissionsByThread: {},
 
   cacheToolCallRecords: (key, records) => {
     get().toolCallRecordCache.set(key, records);
@@ -331,6 +347,23 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           hasMoreMessages: { [threadId]: hasMore },
           isLoadingMore: {},
         });
+
+        // Re-hydrate pending permissions (covers reconnect and thread switch)
+        void getTransport()
+          .listPendingPermissions(threadId)
+          .then((pending) => {
+            if (pending.length > 0) {
+              set((s) => ({
+                permissionsByThread: {
+                  ...s.permissionsByThread,
+                  [threadId]: pending.map((p) => ({ ...p, settled: false })),
+                },
+              }));
+            }
+          })
+          .catch(() => {
+            // non-critical; push events will update state if the server pushes
+          });
 
         // Hydrate task panel from persisted TodoWrite state.
         getTransport()
@@ -478,7 +511,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * message to local state, marks the thread as running, then dispatches
    * to the transport layer. On failure, rolls back the running state.
    */
-  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider) => {
+  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent) => {
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
     const userMessage: Message = {
@@ -528,7 +561,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
     try {
       const { interactionMode } = get().getThreadSettings(threadId);
-      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode);
+      await getTransport().sendMessage(threadId, content, model, permissionMode, attachments, reasoningLevel, provider, interactionMode, copilotAgent);
     } catch (e) {
       set((state) => {
         const next = new Set(state.runningThreadIds);
@@ -630,6 +663,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         reasoningLevel: thread.reasoning_level !== null
           ? (thread.reasoning_level as ReasoningLevel)
           : undefined,
+        copilotAgent: thread.copilot_agent,
       };
     }
 
@@ -650,6 +684,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (settings.permissionMode !== undefined) patch.permissionMode = settings.permissionMode;
     if (settings.interactionMode !== undefined) patch.interactionMode = settings.interactionMode;
     if (settings.reasoningLevel !== undefined) patch.reasoningLevel = settings.reasoningLevel;
+    // Use `in` check so explicit null clears the agent (null !== undefined).
+    if ("copilotAgent" in settings) patch.copilotAgent = settings.copilotAgent;
 
     if (Object.keys(patch).length === 0) return Promise.resolve(false);
 
@@ -660,7 +696,19 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       },
     }));
 
-    return getTransport().updateThreadSettings(threadId, patch).catch(() => false);
+    // copilotAgent: null clears the persisted agent; undefined means don't change.
+    const transportPatch: {
+      reasoningLevel?: ReturnType<typeof get>["settingsByThread"][string]["reasoningLevel"];
+      interactionMode?: ReturnType<typeof get>["settingsByThread"][string]["interactionMode"];
+      permissionMode?: ReturnType<typeof get>["settingsByThread"][string]["permissionMode"];
+      copilotAgent?: string | null;
+    } = {
+      ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
+      ...(patch.interactionMode !== undefined ? { interactionMode: patch.interactionMode } : {}),
+      ...(patch.reasoningLevel !== undefined ? { reasoningLevel: patch.reasoningLevel } : {}),
+      ...("copilotAgent" in patch ? { copilotAgent: patch.copilotAgent } : {}),
+    };
+    return getTransport().updateThreadSettings(threadId, transportPatch).catch(() => false);
   },
 
   clearThreadState: (threadId) => {
@@ -694,6 +742,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         planAnswersByThread: omitKey(state.planAnswersByThread, threadId),
         activeQuestionIndexByThread: omitKey(state.activeQuestionIndexByThread, threadId),
         planQuestionsStatusByThread: omitKey(state.planQuestionsStatusByThread, threadId),
+        permissionsByThread: omitKey(state.permissionsByThread, threadId),
         usageByProvider: Object.fromEntries(
           Object.entries(state.usageByProvider).filter(([k]) => !k.startsWith(`${threadId}:`)),
         ),
@@ -771,6 +820,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         planAnswersByThread: pruneAll(state.planAnswersByThread),
         activeQuestionIndexByThread: pruneAll(state.activeQuestionIndexByThread),
         planQuestionsStatusByThread: pruneAll(state.planQuestionsStatusByThread),
+        permissionsByThread: pruneAll(state.permissionsByThread),
         usageByProvider: Object.fromEntries(
           Object.entries(state.usageByProvider).filter(([k]) => !threadIds.some((tid) => k.startsWith(`${tid}:`))),
         ),
@@ -867,6 +917,37 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         activeQuestionIndexByThread: nextIndex,
         planQuestionsStatusByThread: nextStatus,
       };
+    });
+  },
+
+  addPermissionRequest: (request) => {
+    set((s) => {
+      const existing = s.permissionsByThread[request.threadId] ?? [];
+      // Guard against duplicate push events (e.g., IPC + WebSocket double delivery)
+      if (existing.some((p) => p.requestId === request.requestId)) return s;
+      return {
+        permissionsByThread: {
+          ...s.permissionsByThread,
+          [request.threadId]: [...existing, { ...request, settled: false }],
+        },
+      };
+    });
+  },
+
+  resolvePermissionRequest: (requestId, decision) => {
+    set((s) => {
+      const updated = { ...s.permissionsByThread };
+      for (const threadId of Object.keys(updated)) {
+        const list = updated[threadId];
+        const idx = list?.findIndex((p) => p.requestId === requestId);
+        if (idx !== undefined && idx >= 0 && list) {
+          updated[threadId] = list.map((p, i) =>
+            i === idx ? { ...p, settled: true, decision } : p,
+          );
+          break;
+        }
+      }
+      return { permissionsByThread: updated };
     });
   },
 
@@ -1147,6 +1228,24 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Tool calls remain in-place and collapse into a summary.
       const streamContent = get().streamingByThread[threadId] ?? "";
 
+      // Build an ephemeral system message for guardrail stops (budget/turn limit).
+      // Folded into the same set() call to avoid a double render pass.
+      const reason = method === "session.turnComplete" ? params.reason as string | undefined : undefined;
+      const isGuardrailStop = reason === "error_max_budget_usd" || reason === "max_turns";
+      const guardrailMsg: Message | null = isGuardrailStop ? {
+        id: crypto.randomUUID(),
+        thread_id: threadId,
+        role: "system",
+        content: `Agent stopped: ${reason === "error_max_budget_usd" ? "Budget cap reached" : "Max turns reached"}. You can adjust guardrails in Settings > Agent.`,
+        sequence: 0,
+        tokens_used: null,
+        cost_usd: null,
+        timestamp: new Date().toISOString(),
+        tool_calls: null,
+        files_changed: null,
+        attachments: null,
+      } : null;
+
       // First: mark all tool calls as complete (in place) and commit the message
       if (streamContent) {
         const message: Message = {
@@ -1178,10 +1277,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const completedCalls = currentCalls.map((tc) =>
             tc.isComplete ? tc : { ...tc, isComplete: true }
           );
+          const dedupedGuardrail = guardrailMsg && !state.messages.some(
+            (m) => m.role === "system" && m.content.startsWith("Agent stopped:"),
+          ) ? guardrailMsg : null;
+          const pending = [message, ...(dedupedGuardrail ? [dedupedGuardrail] : [])];
           return {
             ...(state.currentThreadId === threadId
               ? (() => {
-                  const { messages: capped, evicted } = capMessages([...state.messages, message]);
+                  const { messages: capped, evicted } = capMessages([...state.messages, ...pending]);
                   return { messages: capped, ...(evicted && state.currentThreadId ? { hasMoreMessages: { ...state.hasMoreMessages, [state.currentThreadId]: true } } : {}) };
                 })()
               : {}),
@@ -1193,6 +1296,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             toolCallsByThread: completedCalls.length > 0
               ? { ...state.toolCallsByThread, [threadId]: completedCalls }
               : state.toolCallsByThread,
+            // Clear permission cards now that the agent has responded.
+            permissionsByThread: (() => {
+              const next = { ...state.permissionsByThread };
+              delete next[threadId];
+              return next;
+            })(),
           };
         });
       } else {
@@ -1211,7 +1320,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const completedCalls = currentCalls.map((tc) =>
             tc.isComplete ? tc : { ...tc, isComplete: true }
           );
+          const dedupedGuardrail = guardrailMsg && !state.messages.some(
+            (m) => m.role === "system" && m.content.startsWith("Agent stopped:"),
+          ) ? guardrailMsg : null;
           return {
+            ...(dedupedGuardrail && state.currentThreadId === threadId
+              ? (() => {
+                  const { messages: capped, evicted } = capMessages([...state.messages, dedupedGuardrail]);
+                  return { messages: capped, ...(evicted ? { hasMoreMessages: { ...state.hasMoreMessages, [threadId]: true } } : {}) };
+                })()
+              : {}),
             runningThreadIds: nextRunning,
             streamingByThread: nextStreaming,
             streamingPreviewByThread: nextPreview,
@@ -1220,6 +1338,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             toolCallsByThread: completedCalls.length > 0
               ? { ...state.toolCallsByThread, [threadId]: completedCalls }
               : state.toolCallsByThread,
+            // Clear permission cards now that the agent has responded.
+            permissionsByThread: (() => {
+              const next = { ...state.permissionsByThread };
+              delete next[threadId];
+              return next;
+            })(),
           };
         });
       }
@@ -1283,7 +1407,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Auto-dequeue: send next queued message after a brief visual pause.
       // Only on turnComplete (not session.ended) so explicit stops don't drain the queue.
       // Uses tracked timers to prevent double-dequeue from duplicate events.
-      if (method === "session.turnComplete") {
+      // Skip dequeue when a guardrail stopped the session to avoid restarting
+      // an agent that was intentionally capped by budget or turn limits.
+      if (method === "session.turnComplete" && !isGuardrailStop) {
         clearDequeueTimer(threadId);
         const timer = setTimeout(() => {
           dequeueTimers.delete(threadId);
@@ -1305,6 +1431,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               next.displayContent,
               next.reasoningLevel,
               next.provider,
+              next.copilotAgent,
             );
           }
         }, 400);
@@ -1582,3 +1709,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
   };
 });
+
+/**
+ * Returns true if the given thread has any unsettled permission requests.
+ * Use inside components: `useThreadStore(s => hasPendingPermissions(s, threadId))`.
+ */
+export function hasPendingPermissions(state: ThreadState, threadId: string): boolean {
+  const perms = state.permissionsByThread[threadId];
+  return perms != null && perms.some((p) => !p.settled);
+}

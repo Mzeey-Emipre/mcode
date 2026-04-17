@@ -128,8 +128,11 @@ export class PrDraftService {
 
     const modelDefaults: Record<string, string> = {
       claude: "claude-haiku-4-5-20251001",
+      // gpt-4.1 is the recommended fast model on the Copilot backend
+      copilot: "gpt-4.1",
     };
-    const model = settings.prDraft.model || modelDefaults[provider] || "claude-haiku-4-5-20251001";
+    // Fall back to gpt-4.1 so Copilot users in Auto mode get a valid model instead of a Claude ID
+    const model = settings.prDraft.model || modelDefaults[provider] || "gpt-4.1";
 
     const repoTemplate = this.detectPrTemplate(repoPath);
     const conversationSummary = this.buildConversationSummary(
