@@ -55,10 +55,10 @@ function ToolCallWrapperInner({
 
   return (
     <div
-      className={`border-l-2 transition-colors ${
+      className={`transition-colors rounded-sm ${
         isActive
-          ? "border-primary/60 glow-primary"
-          : "border-border/30 hover:border-border/50"
+          ? "bg-primary/5"
+          : "hover:bg-muted/20"
       }`}
     >
       <button
