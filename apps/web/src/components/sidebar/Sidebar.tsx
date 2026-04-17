@@ -1,5 +1,5 @@
 import { ProjectTree } from "./ProjectTree";
-import { PanelLeftClose, PanelLeft, Settings, ArrowLeft, ExternalLink } from "lucide-react";
+import { PanelLeftClose, PanelLeft, Settings, ArrowLeft, ExternalLink, Braces } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -105,7 +105,7 @@ export function Sidebar({
                 className="flex w-full items-center gap-2 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
                 onClick={handleEditJson}
               >
-                <span className="font-mono text-xs">{"{}"}</span>
+                <Braces size={14} />
                 Edit settings.json
                 <ExternalLink size={11} />
               </Button>
