@@ -148,7 +148,7 @@ gh api "repos/{owner}/{repo}/pulls/<PR_NUMBER>/reviews" \
 ```
 
 The body typically contains a line like:
-```
+```text
 **Actionable comments posted: 3**
 ```
 Parse that count for quick triage. A count of `0` on the latest review is the happy path.
@@ -266,7 +266,7 @@ Go back to step **A**.
 CodeRabbit has internal rate limits, and aggressive re-triggering can cause the bot to skip reviews or rate-limit the account. Between iterations:
 
 - Wait at least 10 seconds after `git push` before posting `@coderabbitai review`.
-- If the review poll in step B returns the *same* SHA as the previous iteration after 5 minutes, CodeRabbit likely skipped it. Post `@coderabbitai full review` once to force a fresh pass, then continue.
+- If the review poll in step B returns the *same* SHA as the previous iteration after 10 minutes, CodeRabbit likely skipped it. Post `@coderabbitai full review` once to force a fresh pass, then continue.
 - Never post more than one `@coderabbitai review` comment per iteration.
 
 ### 4. Report
@@ -284,7 +284,7 @@ After exiting the loop, summarize:
 
 ## Output format
 
-```
+```text
 CodeRabbit loop complete.
   Platform:          GitHub
   PR:                #482
@@ -296,7 +296,7 @@ CodeRabbit loop complete.
 
 If stopped short:
 
-```
+```text
 CodeRabbit loop stopped after 5 iterations.
   Platform:          GitHub
   PR:                #482
