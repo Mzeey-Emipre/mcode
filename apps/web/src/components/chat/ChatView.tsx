@@ -141,6 +141,7 @@ export function ChatView() {
       // Read threads from store at call time to avoid closing over a stale
       // `threads` array, which would also make this callback unstable.
       const currentThreads = useWorkspaceStore.getState().threads;
+      const failedIds: string[] = [];
       for (const threadId of threadIds) {
         try {
           const thread = currentThreads.find((t) => t.id === threadId);
@@ -153,9 +154,16 @@ export function ChatView() {
           );
         } catch (err) {
           console.error("Failed to resume thread", threadId, err);
+          failedIds.push(threadId);
         }
       }
-      setInterruptedThreadIds([]);
+      if (failedIds.length > 0) {
+        // Keep banner visible for threads that failed to resume.
+        setInterruptedThreadIds(failedIds);
+        setBannerDismissed(false);
+      } else {
+        setInterruptedThreadIds([]);
+      }
     },
     [sendMessage],
   );
