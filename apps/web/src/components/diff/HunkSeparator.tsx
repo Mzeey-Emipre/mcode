@@ -1,3 +1,5 @@
+import { Separator } from "@/components/ui/separator";
+
 /** Props for HunkSeparator. */
 interface HunkSeparatorProps {
   hiddenLineCount: number;
@@ -10,11 +12,11 @@ interface HunkSeparatorProps {
 export function HunkSeparator({ hiddenLineCount }: HunkSeparatorProps) {
   return (
     <div className="flex select-none items-center gap-3 px-3 py-1.5 text-[10px] text-muted-foreground/45">
-      <span aria-hidden="true" className="h-px flex-1 bg-border/40" />
+      <Separator className="flex-1 bg-border/40" />
       <span className="font-mono italic tabular-nums tracking-tight">
         {hiddenLineCount} unchanged line{hiddenLineCount !== 1 ? "s" : ""}
       </span>
-      <span aria-hidden="true" className="h-px flex-1 bg-border/40" />
+      <Separator className="flex-1 bg-border/40" />
     </div>
   );
 }

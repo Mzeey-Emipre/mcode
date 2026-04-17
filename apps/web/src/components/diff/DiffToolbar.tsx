@@ -35,11 +35,13 @@ export function DiffToolbar() {
         {viewModes.map((mode) => {
           const active = viewMode === mode.value;
           return (
-            <button
+            <Button
               key={mode.value}
-              type="button"
+              variant="ghost"
+              size="xs"
               onClick={() => setViewMode(mode.value)}
-              className={`relative pb-1 text-[11px] font-medium tracking-tight transition-colors ${
+              aria-pressed={active}
+              className={`relative h-auto rounded-none border-0 bg-transparent px-0 pb-1 text-[11px] font-medium tracking-tight hover:bg-transparent ${
                 active
                   ? "text-foreground"
                   : "text-muted-foreground/60 hover:text-foreground/80"
@@ -52,7 +54,7 @@ export function DiffToolbar() {
                   className="absolute -bottom-[1px] left-0 right-0 h-[1.5px] bg-foreground/85"
                 />
               )}
-            </button>
+            </Button>
           );
         })}
       </div>

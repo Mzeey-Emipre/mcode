@@ -385,15 +385,16 @@ export function ProjectTree() {
               <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
                 No projects yet
               </p>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="xs"
                 disabled={isCreating}
                 onClick={handleOpenFolder}
-                className="group inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] text-muted-foreground/70 transition-colors hover:text-foreground disabled:opacity-50"
+                className="group h-auto gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-normal text-muted-foreground/70 hover:text-foreground"
               >
                 <FolderPlus size={11} className="opacity-70 group-hover:opacity-100" />
                 Open a folder
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -603,11 +604,12 @@ function VirtualizedThreadList({
     if (inlineEdit?.threadId === threadId) return;
 
     const now = Date.now();
+    const hadPrevious = lastClickTimeRef.current.has(threadId);
     const last = lastClickTimeRef.current.get(threadId) ?? 0;
     const elapsed = now - last;
     lastClickTimeRef.current.set(threadId, now);
 
-    if (last > 0 && elapsed < DOUBLE_CLICK_THRESHOLD_MS) {
+    if (hadPrevious && elapsed < DOUBLE_CLICK_THRESHOLD_MS) {
       // Double-click: enter inline rename. The first click has already navigated,
       // which is fine — the row is now active and rename happens in place.
       lastClickTimeRef.current.delete(threadId);
@@ -915,14 +917,15 @@ function ProjectNode({
           )}
 
           {/* New thread action — quiet typographic button, not a filled CTA. */}
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={onCreateThread}
-            className="mt-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] text-muted-foreground/55 transition-colors hover:bg-accent/40 hover:text-foreground"
+            className="mt-0.5 h-auto w-full justify-start gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-normal text-muted-foreground/55 hover:bg-accent/40 hover:text-foreground"
           >
             <Plus size={11} className="opacity-70" />
             New thread
-          </button>
+          </Button>
         </div>
       )}
     </div>

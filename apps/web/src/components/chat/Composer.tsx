@@ -128,34 +128,36 @@ function ComposerOptionsMenu({
           Mode
         </div>
         <div className="mb-2 flex rounded-md bg-muted/40 p-0.5">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => onModeChange(INTERACTION_MODES.CHAT)}
+            aria-pressed={mode === INTERACTION_MODES.CHAT}
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium transition-colors",
+              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
               mode === INTERACTION_MODES.CHAT
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
                 : "text-muted-foreground hover:text-foreground",
             )}
-            aria-pressed={mode === INTERACTION_MODES.CHAT}
           >
             <MessageSquare size={12} />
             Chat
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => onModeChange(INTERACTION_MODES.PLAN)}
+            aria-pressed={mode === INTERACTION_MODES.PLAN}
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium transition-colors",
+              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
               mode === INTERACTION_MODES.PLAN
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
                 : "text-muted-foreground hover:text-foreground",
             )}
-            aria-pressed={mode === INTERACTION_MODES.PLAN}
           >
             <FileEdit size={12} />
             Plan
-          </button>
+          </Button>
         </div>
 
         {/* Permissions */}
@@ -163,43 +165,46 @@ function ComposerOptionsMenu({
           Permissions
         </div>
         <div className={cn("flex rounded-md bg-muted/40 p-0.5", hasTasks && "mb-2")}>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => onAccessChange(PERMISSION_MODES.FULL)}
+            aria-pressed={access === PERMISSION_MODES.FULL}
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium transition-colors",
+              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
               access === PERMISSION_MODES.FULL
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
                 : "text-muted-foreground hover:text-foreground",
             )}
-            aria-pressed={access === PERMISSION_MODES.FULL}
           >
             <Unlock size={12} />
             Full
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => onAccessChange(PERMISSION_MODES.SUPERVISED)}
+            aria-pressed={access === PERMISSION_MODES.SUPERVISED}
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium transition-colors",
+              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
               access === PERMISSION_MODES.SUPERVISED
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
                 : "text-muted-foreground hover:text-foreground",
             )}
-            aria-pressed={access === PERMISSION_MODES.SUPERVISED}
           >
             <Lock size={12} />
             Supervised
-          </button>
+          </Button>
         </div>
 
         {/* Tasks panel — only available when the thread has tasks. */}
         {hasTasks && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={toggleTasksPanel}
-            className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted/40"
             aria-pressed={panelVisible}
+            className="h-auto w-full justify-between rounded-md px-2 py-1.5 text-xs font-normal text-foreground hover:bg-muted/40"
           >
             <span className="flex items-center gap-2">
               <ListTodo size={13} className={panelVisible ? "text-primary" : "text-muted-foreground"} />
@@ -208,7 +213,7 @@ function ComposerOptionsMenu({
             <span className={cn("text-[10px] font-medium uppercase tracking-[0.1em]", panelVisible ? "text-primary" : "text-muted-foreground/60")}>
               {panelVisible ? "On" : "Off"}
             </span>
-          </button>
+          </Button>
         )}
       </PopoverContent>
     </Popover>
