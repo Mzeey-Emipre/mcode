@@ -94,9 +94,9 @@ describe("EmptyState — Mcode-specific entry points", () => {
     setupWorkspaceMock(defaultWorkspaceState());
   });
 
-  it("shows the tagline 'Multi-agent orchestration for your codebase'", () => {
+  it("shows the typographic 'no messages yet' caption", () => {
     render(<ChatView />);
-    expect(screen.getByText("Multi-agent orchestration for your codebase")).toBeInTheDocument();
+    expect(screen.getByText("no messages yet")).toBeInTheDocument();
   });
 
   it("renders all four Mcode-specific entry point labels", () => {

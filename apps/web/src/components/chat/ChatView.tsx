@@ -46,9 +46,9 @@ interface EmptyStateProps {
 function EmptyState({ onPromptSelect }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center gap-8 px-8 text-center">
-      <div className="flex flex-col items-center gap-1.5">
-        <p className="text-lg font-semibold tracking-tight text-foreground">Mcode</p>
-        <p className="text-sm text-muted-foreground">Multi-agent orchestration for your codebase</p>
+      <div className="flex flex-col items-center gap-3">
+        <span aria-hidden="true" className="font-mono text-[36px] leading-none text-muted-foreground/15">⊕</span>
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/55">no messages yet</p>
       </div>
       <div className="grid grid-cols-2 gap-2 w-full max-w-sm">
         {ENTRY_POINTS.map((ep) => (
@@ -159,7 +159,7 @@ export function ChatView() {
     return (
       <div className="flex h-full flex-col bg-background">
         {/* Header */}
-        <div className="flex h-11 items-center justify-between border-b border-border px-4">
+        <div className="flex h-11 items-center justify-between border-b border-border/40 px-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">New thread</span>
             {activeWorkspaceId && (

@@ -1,15 +1,15 @@
 /**
  * Tests for the ScrollToBottomButton sub-component.
  *
- * Verifies that the button uses animate-pulse (not animate-bounce) when new
- * content has arrived while the user is scrolled up.
+ * Verifies that the button signals new content via a calm color shift to the
+ * primary palette rather than an attention-grabbing pulse animation.
  */
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { ScrollToBottomButton } from "../MessageList";
 
 describe("ScrollToBottomButton", () => {
-  it("applies animate-pulse when hasNewContent is true", () => {
+  it("uses primary color tokens when hasNewContent is true", () => {
     render(
       <ScrollToBottomButton
         hasNewContent={true}
@@ -17,10 +17,11 @@ describe("ScrollToBottomButton", () => {
       />
     );
     const btn = screen.getByRole("button", { name: /new messages below/i });
-    expect(btn.className).toContain("animate-pulse");
+    expect(btn.className).toContain("text-primary");
+    expect(btn.className).toContain("bg-primary/15");
   });
 
-  it("does NOT apply animate-bounce when hasNewContent is true", () => {
+  it("uses no animation classes (calm, not attention-grabbing)", () => {
     render(
       <ScrollToBottomButton
         hasNewContent={true}
@@ -28,10 +29,11 @@ describe("ScrollToBottomButton", () => {
       />
     );
     const btn = screen.getByRole("button", { name: /new messages below/i });
+    expect(btn.className).not.toContain("animate-pulse");
     expect(btn.className).not.toContain("animate-bounce");
   });
 
-  it("applies neither animate-pulse nor animate-bounce when hasNewContent is false", () => {
+  it("uses muted background when hasNewContent is false", () => {
     render(
       <ScrollToBottomButton
         hasNewContent={false}
@@ -39,6 +41,7 @@ describe("ScrollToBottomButton", () => {
       />
     );
     const btn = screen.getByRole("button", { name: /scroll to bottom/i });
+    expect(btn.className).toContain("bg-background/80");
     expect(btn.className).not.toContain("animate-pulse");
     expect(btn.className).not.toContain("animate-bounce");
   });
