@@ -75,6 +75,8 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     expect(errorEvents).toHaveLength(1);
     expect(errorEvents[0].error).toContain("rate_limit_exceeded");
     expect(turnComplete).toHaveLength(0);
+    const ended = events.filter((e) => e.type === AgentEventType.Ended);
+    expect(ended).toHaveLength(1);
   });
 
   it("emits TurnComplete (not Error) for a successful result", async () => {
@@ -97,5 +99,30 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
 
     expect(events.some((e) => e.type === AgentEventType.Error)).toBe(false);
     expect(events.some((e) => e.type === AgentEventType.TurnComplete)).toBe(true);
+  });
+
+  it("emits Error (not Message/TurnComplete) when is_error arrives after assistant text", async () => {
+    mockQuery.mockImplementation(mockSdkStream([
+      { type: "assistant", message: { content: [{ type: "text", text: "partial thought" }] } },
+      { type: "result", is_error: true, errors: ["api_overload"] },
+    ]));
+
+    const events: Array<{ type: string; error?: string; content?: string }> = [];
+    provider.on("event", (e: { type: string; error?: string; content?: string }) => events.push(e));
+
+    await provider.sendMessage({
+      sessionId: "mcode-thread-3",
+      message: "hi",
+      cwd: "/tmp",
+      model: "claude-sonnet-4-6",
+      resume: false,
+      permissionMode: "default",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(events.some((e) => e.type === AgentEventType.Error)).toBe(true);
+    expect(events.some((e) => e.type === AgentEventType.TurnComplete)).toBe(false);
+    // Partial assistant text is dropped because the result errored out
+    expect(events.some((e) => e.type === AgentEventType.Message)).toBe(false);
   });
 });

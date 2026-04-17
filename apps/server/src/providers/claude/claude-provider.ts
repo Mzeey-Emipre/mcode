@@ -610,6 +610,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
          * Reset to undefined after each turnComplete. */
         let lastStreamInputTokens: number | undefined = undefined;
 
+        /** Emit an Error event with a best-effort message extracted from an SDK result payload. */
         const emitResultError = (anyMsg: Record<string, unknown>): void => {
           const errors = (anyMsg.errors as string[] | undefined) ?? [];
           const errorMessage =
