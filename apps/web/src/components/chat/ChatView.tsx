@@ -117,13 +117,21 @@ export function ChatView() {
       const interrupted = threads
         .filter((t) => t.status === "interrupted")
         .map((t) => t.id);
-      setInterruptedThreadIds(interrupted);
+      // Use a functional update and bail out when content is identical to
+      // avoid a new array reference (and re-render) on every streaming token.
+      setInterruptedThreadIds((prev) => {
+        if (prev.length === interrupted.length && prev.every((id, i) => id === interrupted[i])) return prev;
+        return interrupted;
+      });
     }
   }, [connectionStatus, threads, bannerDismissed]);
 
   /** Sends a continuation message to each interrupted thread, then hides the banner. */
   const handleResumeInterrupted = useCallback(
     async (threadIds: string[]) => {
+      // Dismiss immediately so the effect does not repopulate the banner while
+      // resume messages are in flight and threads still read as "interrupted".
+      setBannerDismissed(true);
       // Read threads from store at call time to avoid closing over a stale
       // `threads` array, which would also make this callback unstable.
       const currentThreads = useWorkspaceStore.getState().threads;
