@@ -1,3 +1,6 @@
+/** localStorage key used to persist the mcode auth token across page loads and reconnects. */
+export const AUTH_TOKEN_STORAGE_KEY = "mcode-auth-token";
+
 /**
  * Scans a port range to find the mcode server and returns a WebSocket URL
  * with a fresh auth token read from the health endpoint response.
@@ -48,7 +51,7 @@ export async function scanPortRange(
 
     // Persist the fresh token so future reconnects use it rather than a stale one.
     // freshToken is always set (initialized to `token`, overwritten on success).
-    localStorage.setItem("mcode-auth-token", result.freshToken);
+    localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, result.freshToken);
 
     return `ws://localhost:${result.port}?token=${result.freshToken}`;
   } catch {

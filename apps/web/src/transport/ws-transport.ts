@@ -21,6 +21,8 @@ import type { ReasoningLevel } from "@mcode/contracts";
 const MIN_RECONNECT_MS = 1000;
 /** Maximum reconnect delay in milliseconds. */
 const MAX_RECONNECT_MS = 30_000;
+/** Number of immediate (delay=0) retries on auth failure before falling back to exponential backoff. */
+const MAX_IMMEDIATE_AUTH_RETRIES = 3;
 
 type Listener = (data: unknown) => void;
 
@@ -191,11 +193,12 @@ export function createWsTransport(
   function scheduleReconnect(immediate = false) {
     if (reconnectTimer) return;
 
-    // Auth failures use immediate reconnect (delay=0) for the first 3
-    // attempts, then fall back to normal backoff to avoid a tight loop
-    // when the token is persistently wrong.
-    const useImmediate = immediate && consecutiveAuthFailures < 3;
-    if (immediate) consecutiveAuthFailures++;
+    // Auth failures use immediate reconnect (delay=0) for the first
+    // MAX_IMMEDIATE_AUTH_RETRIES attempts, then fall back to normal backoff
+    // to avoid a tight loop when the token is persistently wrong.
+    const useImmediate = immediate && consecutiveAuthFailures < MAX_IMMEDIATE_AUTH_RETRIES;
+    // Cap the counter so it does not grow unboundedly past the threshold.
+    if (immediate && consecutiveAuthFailures < MAX_IMMEDIATE_AUTH_RETRIES) consecutiveAuthFailures++;
     const delay = useImmediate ? 0 : reconnectDelay;
 
     reconnectTimer = setTimeout(async () => {
