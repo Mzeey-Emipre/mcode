@@ -13,8 +13,6 @@ import {
   Loader2,
   Check,
   ListTodo,
-  GitBranch,
-  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -47,6 +45,7 @@ import type { PrDetail } from "@/transport/types";
 import { QueuePopover } from "./QueuePopover";
 import { ContextTracker } from "./ContextTracker";
 import { CompactingBanner } from "./CompactingBanner";
+import { ComposerBranchBar } from "./ComposerBranchBar";
 import { useQueueStore } from "@/stores/queueStore";
 import {
   classifyFile,
@@ -1036,29 +1035,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         onDrop={handleDrop}
       >
         {/* Branch mode quote bar */}
-        {branchFromMessageId && (
-          <div className="relative flex items-start gap-2.5 rounded-tl-xl border-l-2 border-l-primary/50 bg-gradient-to-r from-primary/[0.04] to-transparent px-3 py-2.5 animate-fade-up-in">
-            {/* Gradient separator — starts warm at the accent, fades right */}
-            <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-primary/25 to-border/20" />
-            <GitBranch className="size-3.5 shrink-0 mt-0.5 text-primary/60" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-semibold text-primary/80 leading-none mb-1">Branching from message</p>
-              {branchFromMessageContent && (
-                <p className="text-xs text-muted-foreground/55 truncate italic">
-                  {branchFromMessageContent.slice(0, 120)}{branchFromMessageContent.length > 120 ? "…" : ""}
-                </p>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={onBranchModeExit}
-              className="shrink-0 rounded p-0.5 text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/40 transition-colors"
-              aria-label="Exit branch mode"
-            >
-              <X className="size-3.5" />
-            </button>
-          </div>
-        )}
+        <ComposerBranchBar
+          branchFromMessageId={branchFromMessageId}
+          branchFromMessageContent={branchFromMessageContent}
+          onBranchModeExit={onBranchModeExit}
+        />
 
         {/* PR URL detection card */}
         {detectedPr && !prDismissed && (
