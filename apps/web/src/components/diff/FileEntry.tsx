@@ -3,7 +3,7 @@ import { Plus, Minus, ChevronsDownUp, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
-import { parseDiffLines } from "@/lib/diff-parser";
+import { parseDiffLines, isMarkdownFile } from "@/lib/diff-parser";
 import { langFromPath } from "@/lib/lang-from-path";
 import { UnifiedDiff } from "./UnifiedDiff";
 import { SideBySideDiff } from "./SideBySideDiff";
@@ -89,7 +89,7 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
     const bn = getFileBasename(filePath);
     const pr = getParentDir(filePath);
     const ex = getExtension(filePath);
-    return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath), isMarkdown: ex === "md" || ex === "mdx" };
+    return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath), isMarkdown: isMarkdownFile(filePath) };
   }, [filePath]);
   const extColor = EXT_COLORS[ext] ?? "text-muted-foreground";
 
@@ -226,12 +226,14 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
             role="button"
             tabIndex={0}
             aria-label={previewMode ? "Show raw diff" : "Preview rendered markdown"}
+            aria-pressed={previewMode}
             onClick={(e) => {
               e.stopPropagation();
               setPreviewMode((prev) => !prev);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault(); // prevent Space from scrolling the page
                 e.stopPropagation();
                 setPreviewMode((prev) => !prev);
               }

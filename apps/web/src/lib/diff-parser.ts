@@ -23,6 +23,7 @@ export function isMarkdownFile(filePath: string): boolean {
 export function reconstructNewContent(lines: ParsedDiffLine[]): string {
   return lines
     .filter((l) => l.type === "add" || l.type === "context")
+    .filter((l) => l.content !== "\\ No newline at end of file")
     .map((l) => l.content)
     .join("\n");
 }

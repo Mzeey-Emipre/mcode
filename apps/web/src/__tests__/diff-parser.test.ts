@@ -250,4 +250,12 @@ describe("reconstructNewContent", () => {
  last`);
     expect(reconstructNewContent(lines)).toBe("first\n\nlast");
   });
+
+  it("excludes the no-newline sentinel", () => {
+    const lines = parseDiffLines(`@@ -1,1 +1,1 @@
+-old
++new
+\\ No newline at end of file`);
+    expect(reconstructNewContent(lines)).toBe("new");
+  });
 });
