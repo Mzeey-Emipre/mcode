@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useCallback, useState, useRef, useMemo } fr
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
-import { FolderOpen, Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, ChevronRight, ChevronDown, GitBranch, Loader2, AlertTriangle, FolderPlus } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { getPrVisual } from "@/lib/pr-status";
 import { cn } from "@/lib/utils";
@@ -34,24 +34,18 @@ function setExpandedState(state: Record<string, boolean>) {
   localStorage.setItem("mcode-expanded-projects", JSON.stringify(state));
 }
 
-/** Maximum threads shown before "Show more" appears. */
-const THREAD_LIST_CAP = 6;
-
-/** Time in ms to wait for a potential second click before treating a click as a single-click navigation */
+/** Time window in ms during which a second click on the same thread row is treated as a double-click. */
 const DOUBLE_CLICK_THRESHOLD_MS = 250;
 
-/** Read per-workspace "show all threads" state from localStorage. */
-function getThreadListExpanded(): Record<string, boolean> {
-  try {
-    return JSON.parse(localStorage.getItem("mcode-expanded-thread-lists") || "{}");
-  } catch {
-    return {};
-  }
-}
-
-/** Persist per-workspace "show all threads" state to localStorage. */
-function setThreadListExpanded(state: Record<string, boolean>) {
-  localStorage.setItem("mcode-expanded-thread-lists", JSON.stringify(state));
+/**
+ * Returns the parent directory name from an absolute path, or null if there isn't one
+ * worth showing (e.g., the path is at the filesystem root).
+ */
+function parentDirName(path: string): string | null {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.length < 2) return null;
+  return segments[segments.length - 2];
 }
 
 interface ContextMenuState {
@@ -143,7 +137,6 @@ export function ProjectTree() {
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
-  const [threadListExpanded, setThreadListExpandedState] = useState<Record<string, boolean>>(getThreadListExpanded);
   const [isCreating, setIsCreating] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -173,11 +166,6 @@ export function ProjectTree() {
     setExpandedState(expanded);
   }, [expanded]);
 
-  // Persist thread-list expanded state
-  useEffect(() => {
-    setThreadListExpanded(threadListExpanded);
-  }, [threadListExpanded]);
-
   // Auto-load worktrees for the active workspace so stale-worktree detection has data.
   useEffect(() => {
     if (!activeWorkspaceId || worktreesLoadedForWorkspace === activeWorkspaceId) return;
@@ -188,10 +176,6 @@ export function ProjectTree() {
       loadWorktrees(activeWorkspaceId);
     }
   }, [activeWorkspaceId, threads, worktreesLoadedForWorkspace, loadWorktrees]);
-
-  const toggleThreadList = useCallback((wsId: string) => {
-    setThreadListExpandedState((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
-  }, []);
 
   // F2 shortcut: rename the active thread
   useEffect(() => {
@@ -335,12 +319,21 @@ export function ProjectTree() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 mb-0.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/55">
           Projects
         </span>
-        <Button variant="ghost" size="icon-xs" disabled={isCreating} onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground/60 hover:text-foreground">
-          <Plus size={14} />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button variant="ghost" size="icon-xs" disabled={isCreating} onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground/60 hover:text-foreground">
+                <Plus size={14} />
+              </Button>
+            }
+          />
+          <TooltipContent side="right" className="text-xs">
+            Open project folder
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
@@ -354,8 +347,6 @@ export function ProjectTree() {
               activeThreadId={activeThreadId}
               threads={threads.filter((t) => t.workspace_id === ws.id)}
               runningThreadIds={runningThreadIds}
-              isThreadListExpanded={threadListExpanded[ws.id] ?? false}
-              onToggleThreadList={() => toggleThreadList(ws.id)}
               scrollElementRef={scrollViewportRef}
               inlineEdit={inlineEdit}
               onInlineEditChange={(title) =>
@@ -387,12 +378,22 @@ export function ProjectTree() {
           ))}
 
           {workspaces.length === 0 && (
-            <div className="px-2 py-4 text-center">
-              <p className="text-xs text-muted-foreground">No projects yet.</p>
-              <Button variant="outline" size="sm" disabled={isCreating} onClick={handleOpenFolder} className="mt-2 w-full border-dashed text-muted-foreground hover:border-primary hover:text-primary">
-                <FolderOpen size={12} />
+            <div className="flex flex-col items-center justify-center gap-3 px-4 py-12">
+              <span aria-hidden="true" className="font-mono text-[28px] leading-none text-muted-foreground/15">
+                ⌂
+              </span>
+              <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
+                No projects yet
+              </p>
+              <button
+                type="button"
+                disabled={isCreating}
+                onClick={handleOpenFolder}
+                className="group inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] text-muted-foreground/70 transition-colors hover:text-foreground disabled:opacity-50"
+              >
+                <FolderPlus size={11} className="opacity-70 group-hover:opacity-100" />
                 Open a folder
-              </Button>
+              </button>
             </div>
           )}
         </div>
@@ -549,7 +550,6 @@ export function ProjectTree() {
 /** Props for the virtualized thread list rendered inside an expanded workspace. */
 interface VirtualizedThreadListProps {
   threads: Thread[];
-  maxVisible: number;
   activeThreadId: string | null;
   runningThreadIds: Set<string>;
   scrollElementRef: React.RefObject<HTMLDivElement | null>;
@@ -566,7 +566,6 @@ interface VirtualizedThreadListProps {
 /** Renders a virtualized, scrollable list of threads for a single workspace. */
 function VirtualizedThreadList({
   threads,
-  maxVisible,
   activeThreadId,
   runningThreadIds,
   scrollElementRef,
@@ -595,16 +594,9 @@ function VirtualizedThreadList({
     return set;
   }, [worktrees]);
 
-  // Per-thread timestamps and pending timeout IDs for the 250ms click-delay pattern.
+  // Per-thread last-click timestamp. Used to detect a second click within the
+  // double-click window without delaying the first click's navigation.
   const lastClickTimeRef = useRef<Map<string, number>>(new Map());
-  const clickTimeoutIdRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-
-  // Clear all pending click timeouts on unmount to prevent stale navigation.
-  useEffect(() => {
-    return () => {
-      clickTimeoutIdRef.current.forEach((id) => clearTimeout(id));
-    };
-  }, []);
 
   const handleThreadClick = useCallback((threadId: string, title: string) => {
     // If already editing this thread, clicks are absorbed to avoid conflicting with the input.
@@ -613,24 +605,16 @@ function VirtualizedThreadList({
     const now = Date.now();
     const last = lastClickTimeRef.current.get(threadId) ?? 0;
     const elapsed = now - last;
+    lastClickTimeRef.current.set(threadId, now);
 
-    const existing = clickTimeoutIdRef.current.get(threadId);
-    if (existing) clearTimeout(existing);
-
-    if (elapsed < DOUBLE_CLICK_THRESHOLD_MS) {
-      // Double-click: cancel the pending navigation and enter inline rename.
+    if (last > 0 && elapsed < DOUBLE_CLICK_THRESHOLD_MS) {
+      // Double-click: enter inline rename. The first click has already navigated,
+      // which is fine — the row is now active and rename happens in place.
       lastClickTimeRef.current.delete(threadId);
-      clickTimeoutIdRef.current.delete(threadId);
       onStartInlineEdit(threadId, title);
     } else {
-      // Single click: delay navigation so a second click can intercept it.
-      lastClickTimeRef.current.set(threadId, now);
-      const id = setTimeout(() => {
-        onSelectThread(threadId);
-        lastClickTimeRef.current.delete(threadId);
-        clickTimeoutIdRef.current.delete(threadId);
-      }, DOUBLE_CLICK_THRESHOLD_MS);
-      clickTimeoutIdRef.current.set(threadId, id);
+      // Single click navigates immediately. No artificial delay.
+      onSelectThread(threadId);
     }
   }, [inlineEdit, onSelectThread, onStartInlineEdit]);
 
@@ -643,10 +627,8 @@ function VirtualizedThreadList({
     });
   });
 
-  const visibleCount = Math.min(treeItems.length, maxVisible);
-
   const virtualizer = useVirtualizer({
-    count: visibleCount,
+    count: treeItems.length,
     getScrollElement: () => scrollElementRef.current,
     estimateSize: () => 28,
     overscan: 5,
@@ -697,12 +679,12 @@ function VirtualizedThreadList({
                 onClick={() => handleThreadClick(thread.id, thread.title)}
                 onContextMenu={(e) => onThreadContextMenu(e, thread)}
                 className={cn(
-                  "flex items-center gap-2 rounded-md pr-2 py-1 text-sm cursor-pointer transition-colors",
+                  "group/row flex items-center gap-2 rounded-md pr-2 py-1 text-[13px] cursor-pointer transition-colors",
                   activeThreadId === thread.id
                     ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                    : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
                 )}
-                style={{ paddingLeft: `${8 + depth * 16}px` }}
+                style={{ paddingLeft: `${10 + depth * 14}px` }}
               >
                 {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
@@ -725,10 +707,10 @@ function VirtualizedThreadList({
                     </span>
                   );
                 })() : (
-                  <span className={cn("h-2 w-2 shrink-0 rounded-full", status.dotClass)} />
+                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotClass)} />
                 )}
                 {!thread.pr_number && status.label && (
-                  <span className={cn("shrink-0 text-xs", status.color)}>
+                  <span className={cn("shrink-0 font-mono text-[9.5px] uppercase tracking-[0.12em]", status.color)}>
                     {status.label}
                   </span>
                 )}
@@ -751,10 +733,10 @@ function VirtualizedThreadList({
                     className="flex-1 border-ring"
                   />
                 ) : (
-                  <span className={cn("truncate flex-1 text-sm", isStaleWorktree && "text-destructive/80 line-through")} data-testid="thread-title">
+                  <span className={cn("truncate flex-1", isStaleWorktree && "text-[var(--diff-remove-strong)]/85 line-through")} data-testid="thread-title">
                     {isStaleWorktree && (
                       <Tooltip>
-                        <TooltipTrigger render={<AlertTriangle size={11} className="inline mr-1 align-text-bottom text-destructive/70" />} />
+                        <TooltipTrigger render={<AlertTriangle size={11} className="inline mr-1 align-text-bottom text-[var(--diff-remove-strong)]/80" />} />
                         <TooltipContent side="right" className="text-xs">Worktree directory no longer exists</TooltipContent>
                       </Tooltip>
                     )}
@@ -762,9 +744,9 @@ function VirtualizedThreadList({
                   </span>
                 )}
                 {!isEditing && (
-                  <span className="shrink-0 text-xs text-muted-foreground">
+                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/45">
                     {thread.pr_number != null && (
-                      <span className="mr-1 opacity-70">#{thread.pr_number}</span>
+                      <span className="mr-1 opacity-80">#{thread.pr_number}</span>
                     )}
                     {relativeTime(thread.updated_at)}
                   </span>
@@ -787,10 +769,6 @@ interface ProjectNodeProps {
   activeThreadId: string | null;
   threads: Thread[];
   runningThreadIds: Set<string>;
-  /** Whether the thread list is fully expanded (persisted by parent). */
-  isThreadListExpanded: boolean;
-  /** Callback to toggle the thread list expanded state (persisted by parent). */
-  onToggleThreadList: () => void;
   scrollElementRef: React.RefObject<HTMLDivElement | null>;
   inlineEdit: InlineEditState | null;
   onInlineEditChange: (title: string) => void;
@@ -813,8 +791,6 @@ function ProjectNode({
   activeThreadId,
   threads,
   runningThreadIds,
-  isThreadListExpanded,
-  onToggleThreadList,
   scrollElementRef,
   inlineEdit,
   onInlineEditChange,
@@ -827,18 +803,15 @@ function ProjectNode({
   onDelete,
   onThreadContextMenu,
 }: ProjectNodeProps) {
-  // Use the flattened tree order (same order VirtualizedThreadList renders) for cap decisions.
-  const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
-  const needsCap = treeItems.length > THREAD_LIST_CAP;
-
-  // Auto-expand when the active thread sits beyond the cap (temporary, not persisted).
-  const activeIndex = activeThreadId ? treeItems.findIndex((item) => item.thread.id === activeThreadId) : -1;
-  const forceExpand = activeIndex >= THREAD_LIST_CAP;
-  const maxVisible = (!needsCap || isThreadListExpanded || forceExpand) ? Infinity : THREAD_LIST_CAP;
+  const parentDir = useMemo(() => parentDirName(workspace.path), [workspace.path]);
+  const hasRunning = useMemo(
+    () => threads.some((t) => runningThreadIds.has(t.id)),
+    [threads, runningThreadIds],
+  );
 
   return (
-    <div className="mb-0.5">
-      {/* Workspace row */}
+    <div className="mb-1">
+      {/* Workspace row — typographic anchor. No folder icon; a quiet caret + name + parent caption. */}
       <div
         role="button"
         tabIndex={0}
@@ -851,38 +824,83 @@ function ProjectNode({
         }}
         onClick={onToggle}
         className={cn(
-          "group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm cursor-pointer",
+          "group/ws relative flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] cursor-pointer transition-colors",
           isActive
             ? "text-foreground"
-            : "text-muted-foreground hover:text-foreground"
+            : "text-muted-foreground/85 hover:text-foreground"
         )}
       >
         {isExpanded ? (
-          <ChevronDown size={14} className="shrink-0 text-muted-foreground" />
+          <ChevronDown size={12} className="shrink-0 text-muted-foreground/55 transition-transform" />
         ) : (
-          <ChevronRight size={14} className="shrink-0 text-muted-foreground" />
+          <ChevronRight size={12} className="shrink-0 text-muted-foreground/55 transition-transform" />
         )}
-        <FolderOpen size={14} className="shrink-0" />
-        <span className="truncate flex-1 font-medium">{workspace.name}</span>
-        <Button variant="ghost" size="icon-xs" aria-label={`Delete ${workspace.name}`} onClick={(e) => {
+
+        <span className="truncate font-medium tracking-tight">{workspace.name}</span>
+
+        {parentDir && (
+          <span
+            aria-hidden="true"
+            className="hidden min-w-0 truncate font-mono text-[9.5px] tracking-tight text-muted-foreground/35 group-hover/ws:inline"
+            title={workspace.path}
+          >
+            · {parentDir}
+          </span>
+        )}
+
+        <span className="flex-1" />
+
+        {hasRunning && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  aria-hidden="true"
+                  className="shrink-0 h-1.5 w-1.5 rounded-full bg-primary animate-pulse"
+                />
+              }
+            />
+            <TooltipContent side="right" className="text-xs">
+              Active agent in this project
+            </TooltipContent>
+          </Tooltip>
+        )}
+
+        {threads.length > 0 && (
+          <span className="shrink-0 font-mono text-[9.5px] tabular-nums text-muted-foreground/40">
+            {threads.length}
+          </span>
+        )}
+
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Delete ${workspace.name}`}
+          onClick={(e) => {
             e.stopPropagation();
             onDelete();
-          }} className="opacity-0 text-muted-foreground hover:text-destructive group-hover:opacity-100 focus:opacity-100">
-          <Trash2 size={12} />
+          }}
+          className="opacity-0 text-muted-foreground/60 hover:text-destructive group-hover/ws:opacity-100 focus:opacity-100"
+        >
+          <Trash2 size={11} />
         </Button>
       </div>
 
-      {/* Threads (when expanded) */}
+      {/* Threads (when expanded) — indented, no guide rail. */}
       {isExpanded && (
-        <div className="ml-3 border-l border-border/50 pl-2">
+        <div className="pl-3">
           {threads.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-muted-foreground italic">
-              No threads
-            </p>
+            <div className="flex items-center gap-2 px-2 py-2">
+              <span aria-hidden="true" className="font-mono text-[12px] leading-none text-muted-foreground/25">
+                ◌
+              </span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground/40">
+                Empty
+              </span>
+            </div>
           ) : (
             <VirtualizedThreadList
               threads={threads}
-              maxVisible={maxVisible}
               activeThreadId={activeThreadId}
               runningThreadIds={runningThreadIds}
               scrollElementRef={scrollElementRef}
@@ -896,28 +914,15 @@ function ProjectNode({
             />
           )}
 
-          {needsCap && !forceExpand && (
-            <div className="px-1">
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={onToggleThreadList}
-                className="w-full justify-start text-muted-foreground/60 hover:text-muted-foreground"
-              >
-                {isThreadListExpanded
-                  ? "Show less"
-                  : `Show more (${threads.length - THREAD_LIST_CAP})`}
-              </Button>
-            </div>
-          )}
-
-          {/* New thread button inside expanded project */}
-          <div className="mt-0.5 px-1">
-            <Button variant="ghost" size="xs" onClick={onCreateThread} className="w-full justify-start text-muted-foreground">
-              <Plus size={12} />
-              New thread
-            </Button>
-          </div>
+          {/* New thread action — quiet typographic button, not a filled CTA. */}
+          <button
+            type="button"
+            onClick={onCreateThread}
+            className="mt-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] text-muted-foreground/55 transition-colors hover:bg-accent/40 hover:text-foreground"
+          >
+            <Plus size={11} className="opacity-70" />
+            New thread
+          </button>
         </div>
       )}
     </div>
