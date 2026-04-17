@@ -105,7 +105,7 @@ describe("onStatusChange", () => {
 });
 
 describe("4001 auth failure handling", () => {
-  it("fires 'auth_failed' status when closed with code 4001", () => {
+  it("fires 'authFailed' status when closed with code 4001", () => {
     vi.useFakeTimers();
     const statusSpy = vi.fn();
     const transport = createWsTransport("ws://localhost:1234", {
@@ -114,7 +114,7 @@ describe("4001 auth failure handling", () => {
     mockWsInstance.simulateOpen();
     statusSpy.mockClear();
     mockWsInstance.simulateClose(4001);
-    expect(statusSpy).toHaveBeenCalledWith("auth_failed");
+    expect(statusSpy).toHaveBeenCalledWith("authFailed");
     expect(statusSpy).not.toHaveBeenCalledWith("reconnecting");
     transport.close();
     vi.useRealTimers();
@@ -130,7 +130,7 @@ describe("4001 auth failure handling", () => {
     statusSpy.mockClear();
     mockWsInstance.simulateClose(1006);
     expect(statusSpy).toHaveBeenCalledWith("reconnecting");
-    expect(statusSpy).not.toHaveBeenCalledWith("auth_failed");
+    expect(statusSpy).not.toHaveBeenCalledWith("authFailed");
     transport.close();
     vi.useRealTimers();
   });

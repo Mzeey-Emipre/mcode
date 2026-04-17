@@ -83,7 +83,7 @@ interface PendingCall {
 }
 
 /** Describes the current state of the WebSocket connection. */
-export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "auth_failed";
+export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "authFailed";
 
 /** Options for configuring `createWsTransport` behavior. */
 export interface WsTransportOptions {
@@ -173,7 +173,7 @@ export function createWsTransport(
       rejectPending("WebSocket disconnected");
       if (!closed) {
         const isAuthFailure = event.code === 4001;
-        options?.onStatusChange?.(isAuthFailure ? "auth_failed" : "reconnecting");
+        options?.onStatusChange?.(isAuthFailure ? "authFailed" : "reconnecting");
         scheduleReconnect(isAuthFailure);
       }
     };
