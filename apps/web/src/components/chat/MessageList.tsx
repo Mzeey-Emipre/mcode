@@ -74,6 +74,37 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   && prev.onBranch === next.onBranch,
 );
 
+/** Props for {@link ScrollToBottomButton}. */
+export interface ScrollToBottomButtonProps {
+  /** Whether new content arrived while the user was scrolled up. */
+  hasNewContent: boolean;
+  /** Called when the button is clicked. */
+  onScrollToBottom: () => void;
+}
+
+/**
+ * Floating button anchored at the bottom-center of the message list.
+ * Pulses when new content has arrived while the user is scrolled up.
+ */
+export function ScrollToBottomButton({ hasNewContent, onScrollToBottom }: ScrollToBottomButtonProps) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      onClick={onScrollToBottom}
+      className={`absolute bottom-4 left-1/2 -translate-x-1/2 h-8 w-8 rounded-full shadow-md ring-1 backdrop-blur-sm transition-all hover:bg-muted hover:text-foreground ${
+        hasNewContent
+          ? "bg-primary text-primary-foreground ring-primary/50 animate-pulse"
+          : "bg-muted/80 text-muted-foreground ring-border/40"
+      }`}
+      aria-label={hasNewContent ? "New messages below" : "Scroll to bottom"}
+    >
+      <ArrowDown size={14} />
+    </Button>
+  );
+}
+
 /** Props for {@link MessageList}. */
 interface MessageListProps {
   /** Called when the user clicks the branch icon on a message. */
@@ -378,23 +409,13 @@ export function MessageList({ onBranch }: MessageListProps) {
 
       {/* Scroll-to-bottom floating button — pulses when new content arrives */}
       {showScrollBtn && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => {
+        <ScrollToBottomButton
+          hasNewContent={hasNewContent}
+          onScrollToBottom={() => {
             setHasNewContent(false);
             scrollToBottom(true);
           }}
-          className={`absolute bottom-4 left-1/2 -translate-x-1/2 h-8 w-8 rounded-full shadow-md ring-1 backdrop-blur-sm transition-all hover:bg-muted hover:text-foreground ${
-            hasNewContent
-              ? "bg-primary text-primary-foreground ring-primary/50 animate-bounce"
-              : "bg-muted/80 text-muted-foreground ring-border/40"
-          }`}
-          aria-label={hasNewContent ? "New messages below" : "Scroll to bottom"}
-        >
-          <ArrowDown size={14} />
-        </Button>
+        />
       )}
     </div>
   );
