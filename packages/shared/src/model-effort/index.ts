@@ -10,6 +10,12 @@ import type { ReasoningLevel } from "@mcode/contracts";
 
 // Ordered lowest to highest. Walking DOWN from a disallowed tier finds the best
 // supported level without silently escalating effort.
+//
+// xhigh sits below max because xhigh is exclusive to Opus 4.7, while max is a
+// broader "extended thinking" tier supported by Opus 4.6 and Sonnet 4.6 as well.
+// This ordering means: requesting "max" on Opus 4.6 passes through (max is in its
+// allowed set), but requesting "xhigh" on Opus 4.6 correctly downgrades to "high"
+// by walking down past xhigh (not in allowed) and landing on high (in allowed).
 const TIER_LADDER: readonly ReasoningLevel[] = [
   "low",
   "medium",
@@ -31,14 +37,19 @@ const MAX_EFFORT_MODEL_IDS: readonly string[] = [
 /** Claude model IDs that do NOT support the effort parameter at all. */
 const EFFORT_UNSUPPORTED_CLAUDE_IDS: readonly string[] = ["claude-haiku-4-5"];
 
-// All known base IDs, used for dated-variant normalization.
+/** Base tiers supported by every Claude model that accepts the effort parameter. */
+const BASE_ALLOWED_TIERS: readonly ReasoningLevel[] = ["low", "medium", "high"];
+
+// All known base IDs, sorted longest-first so more-specific prefixes always match
+// before shorter ones (prevents a shorter ID from shadowing a longer variant like
+// "claude-opus-4-7" shadowing a hypothetical "claude-opus-4-7-turbo").
 const ALL_KNOWN_BASE_IDS: readonly string[] = [
   ...new Set([
     ...XHIGH_EFFORT_MODEL_IDS,
     ...MAX_EFFORT_MODEL_IDS,
     ...EFFORT_UNSUPPORTED_CLAUDE_IDS,
   ]),
-];
+].sort((a, b) => b.length - a.length);
 
 /**
  * Strip a date suffix (e.g. `-20260501`) from a Claude model ID to get the base ID.
@@ -61,7 +72,7 @@ function normalizeModelId(modelId: string): string {
  * Only `claude-opus-4-7` (and its dated variants) expose this tier.
  */
 export function isXhighEffortModel(modelId: string): boolean {
-  return (XHIGH_EFFORT_MODEL_IDS as string[]).includes(normalizeModelId(modelId));
+  return XHIGH_EFFORT_MODEL_IDS.includes(normalizeModelId(modelId));
 }
 
 /**
@@ -70,7 +81,7 @@ export function isXhighEffortModel(modelId: string): boolean {
  * Applies to the opus-4-7, opus-4-6, and sonnet-4-6 families.
  */
 export function isMaxEffortModel(modelId: string): boolean {
-  return (MAX_EFFORT_MODEL_IDS as string[]).includes(normalizeModelId(modelId));
+  return MAX_EFFORT_MODEL_IDS.includes(normalizeModelId(modelId));
 }
 
 /**
@@ -81,9 +92,7 @@ export function isMaxEffortModel(modelId: string): boolean {
  * Codex models are handled by the caller and are never passed here.
  */
 export function supportsEffortParameter(modelId: string): boolean {
-  return !(EFFORT_UNSUPPORTED_CLAUDE_IDS as string[]).includes(
-    normalizeModelId(modelId),
-  );
+  return !EFFORT_UNSUPPORTED_CLAUDE_IDS.includes(normalizeModelId(modelId));
 }
 
 /**
@@ -105,7 +114,7 @@ export function normalizeReasoningLevelForModel(
   }
 
   // Build the set of tiers this model supports.
-  const allowed = new Set<ReasoningLevel>(["low", "medium", "high"]);
+  const allowed = new Set<ReasoningLevel>(BASE_ALLOWED_TIERS);
   if (isMaxEffortModel(modelId)) {
     allowed.add("max");
   }
