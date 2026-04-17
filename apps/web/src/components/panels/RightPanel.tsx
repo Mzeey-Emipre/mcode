@@ -8,6 +8,8 @@ import { useDiffStore, PANEL_MIN_WIDTH, PANEL_DEFAULT_WIDTH, PANEL_WIDE_WIDTH, R
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TaskPanelHeader } from "@/components/tasks/TaskPanelHeader";
 import { DiffPanel } from "@/components/diff";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { cn } from "@/lib/utils";
 
 /** Right-side panel with tabs for Tasks and Changes. */
 export function RightPanel() {
@@ -30,6 +32,22 @@ export function RightPanel() {
     (s) => (activeThreadId ? s.tasksByThread[activeThreadId] : undefined),
   );
 
+  // Below the md breakpoint, render the panel as a modal overlay anchored to
+  // the right edge with a backdrop covering the chat. This avoids squeezing
+  // the chat area on narrow viewports where two side-by-side panes feel cramped.
+  const isWide = useMediaQuery("(min-width: 768px)");
+  const isOverlay = !isWide;
+
+  // Close on Escape when overlaid.
+  useEffect(() => {
+    if (!isOverlay || !panelVisible || !activeThreadId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") hideRightPanel(activeThreadId);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOverlay, panelVisible, activeThreadId, hideRightPanel]);
+
   const draggingRef = useRef(false);
   const dragListenersRef = useRef<{ move: (e: globalThis.MouseEvent) => void; up: () => void } | null>(null);
   // Ref keeps the latest panelWidth readable inside the resize handler without
@@ -39,10 +57,12 @@ export function RightPanel() {
 
   // Re-clamp stored width when the panel becomes visible or the window is resized
   // so the panel never exceeds the available space after the user shrinks the browser.
+  // Skipped in overlay mode — the panel renders fixed at min(panelWidth, 90vw),
+  // so the chat area no longer needs to be reserved next to it.
   // Re-registers when activeThreadId changes (each thread has its own stored width).
   // Throttled with rAF so rapid resize events only trigger one recalculation per frame.
   useEffect(() => {
-    if (!activeThreadId || !panelVisible) return;
+    if (!activeThreadId || !panelVisible || isOverlay) return;
     // Clamp immediately in case the stored width already exceeds the viewport.
     const maxAllowed = window.innerWidth - PANEL_MIN_WIDTH;
     if (panelWidthRef.current > maxAllowed) setRightPanelWidth(activeThreadId, maxAllowed);
@@ -61,7 +81,7 @@ export function RightPanel() {
       window.removeEventListener("resize", onResize);
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [activeThreadId, panelVisible]);
+  }, [activeThreadId, panelVisible, isOverlay]);
 
   const onDragStart = useCallback(
     (e: ReactMouseEvent) => {
@@ -105,40 +125,67 @@ export function RightPanel() {
 
   if (!panelVisible || !activeThreadId) return null;
 
+  // Overlay-mode width: cap to 90vw so the chat is still partially visible
+  // behind the backdrop and the panel doesn't dominate small screens.
+  const overlayWidth = isOverlay
+    ? `min(${panelWidth}px, 90vw)`
+    : undefined;
+
   return (
-    <div
-      style={{ width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: `calc(100vw - ${PANEL_MIN_WIDTH}px)` }}
-      className="relative flex flex-col border-l border-border bg-background/95"
-    >
-      {/* Drag handle (left edge) — double-click snaps between default and wide */}
+    <>
+      {/* Backdrop — only rendered in overlay mode. Click dismisses the panel. */}
+      {isOverlay && (
+        <div
+          role="presentation"
+          onClick={() => hideRightPanel(activeThreadId)}
+          className="fixed inset-0 z-40 bg-foreground/30 backdrop-blur-[2px] animate-fade-up-in"
+        />
+      )}
       <div
-        role="separator"
-        aria-orientation="vertical"
-        tabIndex={0}
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10
-                   hover:bg-primary/25 active:bg-primary/40 focus-visible:bg-primary/25 transition-colors duration-150"
-        onMouseDown={onDragStart}
-        onDoubleClick={() => {
-          const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
-          const target = panelWidth >= PANEL_WIDE_WIDTH
-            ? PANEL_DEFAULT_WIDTH
-            : Math.min(PANEL_WIDE_WIDTH, viewportCap);
-          setRightPanelWidth(activeThreadId!, Math.max(PANEL_MIN_WIDTH, target));
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
+        style={
+          isOverlay
+            ? { width: overlayWidth, minWidth: PANEL_MIN_WIDTH }
+            : { width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: `calc(100vw - ${PANEL_MIN_WIDTH}px)` }
+        }
+        className={cn(
+          "relative flex flex-col bg-background",
+          isOverlay
+            ? "fixed inset-y-0 right-0 z-50 shadow-2xl animate-fade-up-in"
+            : "rounded-lg shadow-sm overflow-hidden",
+        )}
+      >
+      {/* Drag handle (left edge) — double-click snaps between default and wide.
+          Hidden in overlay mode since the panel is a modal there. */}
+      {!isOverlay && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          tabIndex={0}
+          className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10
+                     hover:bg-primary/25 active:bg-primary/40 focus-visible:bg-primary/25 transition-colors duration-150"
+          onMouseDown={onDragStart}
+          onDoubleClick={() => {
             const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
             const target = panelWidth >= PANEL_WIDE_WIDTH
               ? PANEL_DEFAULT_WIDTH
               : Math.min(PANEL_WIDE_WIDTH, viewportCap);
             setRightPanelWidth(activeThreadId!, Math.max(PANEL_MIN_WIDTH, target));
-          }
-        }}
-      />
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
+              const target = panelWidth >= PANEL_WIDE_WIDTH
+                ? PANEL_DEFAULT_WIDTH
+                : Math.min(PANEL_WIDE_WIDTH, viewportCap);
+              setRightPanelWidth(activeThreadId!, Math.max(PANEL_MIN_WIDTH, target));
+            }
+          }}
+        />
+      )}
 
       {/* Tab header */}
-      <div className="flex-none border-b border-border/60">
+      <div className="flex-none border-b border-border/40">
         <div className="flex h-11 items-center justify-between px-3">
           <div className="flex items-center gap-0.5">
             <button
@@ -186,6 +233,7 @@ export function RightPanel() {
         </>
       )}
       {activeTab === "changes" && <DiffPanel />}
-    </div>
+      </div>
+    </>
   );
 }
