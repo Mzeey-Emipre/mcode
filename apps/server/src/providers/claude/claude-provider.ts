@@ -45,7 +45,7 @@ interface SessionEntry {
  * Messages pushed via `push()` are yielded by the iterable. Calling `close()`
  * terminates the iterator, signaling the SDK to shut down the subprocess.
  */
-function createPromptQueue(): {
+export function createPromptQueue(): {
   push: (msg: SDKUserMessage) => void;
   close: () => void;
   iterable: AsyncIterable<SDKUserMessage>;
@@ -56,7 +56,11 @@ function createPromptQueue(): {
   let done = false;
 
   const push = (msg: SDKUserMessage): void => {
-    if (done) return;
+    if (done) {
+      throw new Error(
+        "Prompt queue is closed; message cannot be delivered to the SDK",
+      );
+    }
     if (waiting) {
       const resolve = waiting;
       waiting = null;
@@ -366,7 +370,27 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         }
       }
 
-      existing.pushMessage(prompt);
+      try {
+        existing.pushMessage(prompt);
+      } catch (err) {
+        // The queue was closed between the session lookup and the push — most
+        // commonly a race with idle eviction or stopSession(). Surface the
+        // failure through the normal Error event path so the caller sees it.
+        const errorMessage =
+          err instanceof Error ? err.message : String(err);
+        logger.error("Prompt queue push failed on existing session", {
+          sessionId,
+          error: errorMessage,
+        });
+        this.emit("event", {
+          type: AgentEventType.Error,
+          threadId: tid,
+          error: "Message could not be delivered: session was shutting down. Please try again.",
+        } satisfies AgentEvent);
+        // Drop the stale entry so the next send creates a fresh session.
+        this.sessions.delete(sessionId);
+        throw err;
+      }
       return;
     }
 
