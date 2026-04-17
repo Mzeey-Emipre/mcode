@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { ChevronsDownUp } from "lucide-react";
+import { ChevronsDownUp, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
-import { parseDiffLines } from "@/lib/diff-parser";
+import { parseDiffLines, isMarkdownFile } from "@/lib/diff-parser";
 import { langFromPath } from "@/lib/lang-from-path";
 import { UnifiedDiff } from "./UnifiedDiff";
 import { SideBySideDiff } from "./SideBySideDiff";
+import { DiffPreview } from "./DiffPreview";
 
 /** Props for FileEntry. */
 interface FileEntryProps {
@@ -61,17 +62,18 @@ export function FileEntry({ filePath, source, id, depth = 0 }: FileEntryProps) {
   const nested = depth > 0;
   const [expanded, setExpanded] = useState(false);
   const [showAllLines, setShowAllLines] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
   const [diffState, setDiffState] = useState<DiffState>(null);
   const renderMode = useDiffStore((s) => s.renderMode);
   // Tracks whether a load has been kicked off so the effect doesn't cancel itself
   // when diffState transitions from null → {loading:true}
   const loadStartedRef = useRef(false);
 
-  const { basename, parent, ext, language } = useMemo(() => {
+  const { basename, parent, ext, language, isMarkdown } = useMemo(() => {
     const bn = getFileBasename(filePath);
     const pr = getParentDir(filePath);
     const ex = getExtension(filePath);
-    return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath) };
+    return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath), isMarkdown: isMarkdownFile(filePath) };
   }, [filePath]);
 
   // Load diff lazily on first expand. Uses a ref guard so that the state
@@ -149,7 +151,10 @@ export function FileEntry({ filePath, source, id, depth = 0 }: FileEntryProps) {
       <button
         type="button"
         onClick={() => setExpanded((prev) => {
-          if (prev) setShowAllLines(false); // reset truncation on collapse
+          if (prev) {
+            setShowAllLines(false);
+            setPreviewMode(false);
+          }
           return !prev;
         })}
         className={`group flex w-full items-center gap-2 py-[5px] pr-3 text-left transition-colors hover:bg-muted/20 ${
@@ -213,7 +218,36 @@ export function FileEntry({ filePath, source, id, depth = 0 }: FileEntryProps) {
           </span>
         )}
 
-        {/* Extension marker — single-color, monospace; lives quietly at the row's edge */}
+        {/* Markdown preview toggle — shown only while expanded, to the left of the extension marker */}
+        {expanded && isMarkdown && (
+          // span+role avoids invalid nested <button> while still being accessible.
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label={previewMode ? "Show raw diff" : "Preview rendered markdown"}
+            aria-pressed={previewMode}
+            onClick={(e) => {
+              e.stopPropagation();
+              setPreviewMode((prev) => !prev);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault(); // prevent Space from scrolling the page
+                e.stopPropagation();
+                setPreviewMode((prev) => !prev);
+              }
+            }}
+            className={`shrink-0 rounded p-0.5 transition-colors ${
+              previewMode
+                ? "text-foreground/70 hover:text-foreground"
+                : "text-muted-foreground/40 hover:text-foreground/60"
+            }`}
+          >
+            {previewMode ? <EyeOff size={11} /> : <Eye size={11} />}
+          </span>
+        )}
+
+        {/* Extension marker — single-color, monospace; lives quietly at the row's edge when collapsed */}
         {!expanded && ext && (
           <span className="shrink-0 font-mono text-[9.5px] uppercase tracking-[0.12em] text-muted-foreground/45">
             {ext}
@@ -234,6 +268,8 @@ export function FileEntry({ filePath, source, id, depth = 0 }: FileEntryProps) {
                 />
               ))}
             </div>
+          ) : previewMode && isMarkdown ? (
+            <DiffPreview lines={lines} />
           ) : lines.length > 0 ? (
             <>
               {renderMode === "unified" ? (
