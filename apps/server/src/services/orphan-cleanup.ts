@@ -20,6 +20,36 @@ interface MinLogger {
   debug(message: string, meta?: Record<string, unknown>): void;
 }
 
+/**
+ * Known process names for the mcode server binary.
+ * Checked case-insensitively via substring match.
+ */
+const KNOWN_SERVER_PROCESS_NAMES = ["node", "bun"];
+
+/**
+ * Reads the process image name for a PID using platform-specific tools.
+ * Returns null if the name cannot be determined (e.g., /proc unavailable).
+ * Used as the default for `OrphanCleanupDeps.getProcessName`.
+ */
+function defaultGetProcessName(pid: number): string | null {
+  try {
+    if (process.platform === "win32") {
+      // tasklist /FO CSV outputs: "node.exe","1234","Console","1","5,192 K"
+      const out = execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
+        timeout: 3000,
+        encoding: "utf-8",
+      } as Parameters<typeof execSync>[1]);
+      const match = /^"([^"]+)"/.exec(String(out).trim());
+      return match ? match[1] : null;
+    } else {
+      // /proc/pid/comm is the fastest path on Linux.
+      return readFileSync(`/proc/${pid}/comm`, "utf-8").trim();
+    }
+  } catch {
+    return null;
+  }
+}
+
 /** Dependencies injected into killOrphanedServer to make it unit-testable. */
 export interface OrphanCleanupDeps {
   /** Absolute path to the server lock file. */
@@ -37,6 +67,13 @@ export interface OrphanCleanupDeps {
    * Defaults to execSync from child_process.
    */
   execSync?: (cmd: string, opts?: { stdio?: "ignore"; timeout?: number }) => Buffer | string;
+  /**
+   * Returns the process image name for the given PID, or null if the name
+   * cannot be determined. Used to verify the PID belongs to a server process
+   * before killing, guarding against PID reuse (TOCTOU).
+   * Defaults to a platform-specific implementation using tasklist / /proc.
+   */
+  getProcessName?: (pid: number) => string | null;
   /** Current process PID. Defaults to process.pid. */
   currentPid?: number;
   /** Current platform string. Defaults to process.platform. */
@@ -45,9 +82,10 @@ export interface OrphanCleanupDeps {
 
 /**
  * Kill any orphaned server process from a previous unclean shutdown.
- * Reads the lock file to find the old PID and sends a kill signal to its
- * process tree. No-ops if there is no lock file, the PID matches the current
- * process, or the process is already dead.
+ * Reads the lock file to find the old PID, verifies the image name matches
+ * a known server binary to guard against PID reuse, then kills the process
+ * tree. No-ops if there is no lock file, the PID matches the current process,
+ * or the process is already dead.
  */
 export function killOrphanedServer(deps: OrphanCleanupDeps): void {
   const {
@@ -55,6 +93,7 @@ export function killOrphanedServer(deps: OrphanCleanupDeps): void {
     logger,
     processKill = (pid, signal) => process.kill(pid, signal as never),
     execSync: execSyncFn = (cmd, opts) => execSync(cmd, opts),
+    getProcessName = defaultGetProcessName,
     currentPid = process.pid,
     platform = process.platform,
   } = deps;
@@ -72,6 +111,24 @@ export function killOrphanedServer(deps: OrphanCleanupDeps): void {
     } catch {
       // Process is already dead; nothing to clean up.
       return;
+    }
+
+    // Verify the process image name matches a known server binary before
+    // killing. This guards against PID reuse: if the OS recycled the PID to an
+    // unrelated process between the liveness check and the kill, we skip.
+    // When the name cannot be determined (e.g., no /proc on macOS), we proceed
+    // since the lock-file PID validation already narrows the attack surface.
+    const processName = getProcessName(lock.pid);
+    if (processName !== null) {
+      const lower = processName.toLowerCase();
+      const isKnownServer = KNOWN_SERVER_PROCESS_NAMES.some((n) => lower.includes(n));
+      if (!isKnownServer) {
+        logger.warn("Orphaned lock PID does not belong to a known server process; skipping kill", {
+          pid: lock.pid,
+          name: processName,
+        });
+        return;
+      }
     }
 
     logger.warn("Found orphaned server process, killing", { pid: lock.pid });

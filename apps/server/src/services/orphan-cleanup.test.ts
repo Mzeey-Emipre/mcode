@@ -15,6 +15,8 @@ function makeDeps(overrides: Partial<OrphanCleanupDeps> = {}): OrphanCleanupDeps
     logger: { warn: vi.fn(), debug: vi.fn() },
     processKill: vi.fn(),
     execSync: vi.fn(),
+    // Default: process name is "node" so kill proceeds unless overridden.
+    getProcessName: vi.fn().mockReturnValue("node"),
     currentPid: 12345,
     platform: "linux",
     ...overrides,
@@ -139,6 +141,53 @@ describe("killOrphanedServer", () => {
       "Failed to clean up orphaned server",
       expect.objectContaining({ error: expect.any(String) }),
     );
+  });
+
+  describe("process image name verification", () => {
+    it("skips kill when getProcessName returns an unrelated process name", () => {
+      const lockFilePath = writeTempLock(tmpDir, { pid: 99999 });
+      const processKill = vi.fn(); // signal-0 probe succeeds (no throw)
+      const getProcessName = vi.fn().mockReturnValue("chrome.exe");
+      const deps = makeDeps({ lockFilePath, currentPid: 12345, processKill, getProcessName });
+      killOrphanedServer(deps);
+      // Should warn but NOT kill
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        "Orphaned lock PID does not belong to a known server process; skipping kill",
+        expect.objectContaining({ pid: 99999, name: "chrome.exe" }),
+      );
+      expect(processKill).toHaveBeenCalledTimes(1); // only signal-0 probe
+      expect(processKill).not.toHaveBeenCalledWith(-99999, "SIGTERM");
+    });
+
+    it("proceeds with kill when getProcessName returns 'node'", () => {
+      const lockFilePath = writeTempLock(tmpDir, { pid: 99999 });
+      const processKill = vi.fn();
+      const getProcessName = vi.fn().mockReturnValue("node");
+      const deps = makeDeps({ lockFilePath, currentPid: 12345, platform: "linux", processKill, getProcessName });
+      killOrphanedServer(deps);
+      expect(processKill).toHaveBeenCalledWith(-99999, "SIGTERM");
+    });
+
+    it("proceeds with kill when getProcessName returns 'bun.exe'", () => {
+      const lockFilePath = writeTempLock(tmpDir, { pid: 99999 });
+      const processKill = vi.fn();
+      const execSync = vi.fn();
+      const getProcessName = vi.fn().mockReturnValue("bun.exe");
+      const deps = makeDeps({ lockFilePath, currentPid: 12345, platform: "win32", processKill, execSync, getProcessName });
+      killOrphanedServer(deps);
+      expect(execSync).toHaveBeenCalledWith("taskkill /T /F /PID 99999", { stdio: "ignore", timeout: 5000 });
+    });
+
+    it("proceeds with kill when getProcessName returns null (name cannot be determined)", () => {
+      const lockFilePath = writeTempLock(tmpDir, { pid: 99999 });
+      const processKill = vi.fn();
+      const getProcessName = vi.fn().mockReturnValue(null);
+      const deps = makeDeps({ lockFilePath, currentPid: 12345, platform: "linux", processKill, getProcessName });
+      killOrphanedServer(deps);
+      // Should still kill because we can't verify, and fail-open is safer
+      // for zombie prevention than fail-closed.
+      expect(processKill).toHaveBeenCalledWith(-99999, "SIGTERM");
+    });
   });
 
   it("kills a real child process and verifies it is dead afterward", async () => {
