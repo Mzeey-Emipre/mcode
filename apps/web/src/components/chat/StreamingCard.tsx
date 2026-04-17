@@ -29,7 +29,7 @@ export function StreamingCard({ text }: StreamingCardProps) {
 
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded} asChild>
-      <div className="border-l-2 border-primary/40 transition-colors">
+      <div className="transition-colors">
         <CollapsibleTrigger asChild>
           <button
             type="button"

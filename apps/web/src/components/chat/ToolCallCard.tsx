@@ -40,8 +40,8 @@ function CollapsedGroup({
 
   return (
     <div
-      className={`border-l-2 transition-colors ${
-        isActive ? "border-primary/60 glow-primary" : "border-border/30 hover:border-border/50"
+      className={`transition-colors rounded-sm ${
+        isActive ? "bg-primary/5" : "hover:bg-muted/20"
       }`}
     >
       <button
@@ -58,7 +58,7 @@ function CollapsedGroup({
         />
         <span
           className={`font-medium ${
-            isActive ? "animate-shimmer-text" : "text-foreground/70"
+            isActive ? "text-foreground font-medium" : "text-foreground/70"
           }`}
         >
           {label}
@@ -113,7 +113,7 @@ function LiveAgentGroup({
   const isExpandable = hasChildren || isActive || !agentCall.isComplete;
 
   return (
-    <div className="border-l-2 border-ring/30 hover:border-ring/50 transition-colors">
+    <div className="transition-colors rounded-sm hover:bg-muted/20">
       <button
         type="button"
         onClick={() => isExpandable && setExpanded((p) => !p)}
@@ -137,7 +137,7 @@ function LiveAgentGroup({
         <span
           className={`truncate font-medium ${
             isActive || hasActiveChild
-              ? "animate-shimmer-text"
+              ? "text-foreground font-medium"
               : "text-foreground/60"
           }`}
         >

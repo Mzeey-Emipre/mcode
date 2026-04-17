@@ -24,30 +24,30 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
   const useDots = total <= 24;
 
   return (
-    <div className="flex-none border-b border-border/20 px-3 py-2">
-      <div className="flex items-center gap-2">
-        {/* Task status visualization */}
+    <div className="flex-none border-b border-border/20 px-3 py-2.5">
+      <div className="flex items-center gap-3">
+        {/* Task status visualization — slim ticks (vertical bars) read as a typographic ledger */}
         <div className="flex flex-1 min-w-0 items-center">
           {useDots ? (
-            <div className="flex flex-wrap gap-[3px]">
+            <div className="flex items-center gap-[3px]">
               {tasks.map((task, i) => (
-                <div
+                <span
                   key={i}
-                  className={`h-[5px] w-[5px] rounded-sm transition-colors duration-300 ${
+                  className={`h-[10px] w-[2px] rounded-[1px] transition-colors duration-300 ${
                     task.status === "completed"
-                      ? "bg-emerald-500/55"
+                      ? "bg-[var(--diff-add-strong)]/65"
                       : task.status === "in_progress"
-                        ? "bg-primary/70 animate-pulse"
-                        : "bg-muted-foreground/15"
+                        ? "bg-primary animate-pulse"
+                        : "bg-muted-foreground/20"
                   }`}
                 />
               ))}
             </div>
           ) : (
-            <div className="relative h-1 flex-1 rounded-full bg-border/30">
+            <div className="relative h-[3px] flex-1 rounded-full bg-border/30">
               <div
                 className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out ${
-                  hasActive ? "bg-primary/60" : "bg-emerald-500/50"
+                  hasActive ? "bg-primary/65" : "bg-[var(--diff-add-strong)]/55"
                 }`}
                 style={{ width: `${pct}%` }}
               />
@@ -55,20 +55,22 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
           )}
         </div>
 
-        {/* Fraction counter with tooltip */}
+        {/* Fraction counter — typographic ratio with a soft slash */}
         <Tooltip>
           <TooltipTrigger
             render={
               <span
-                className={`shrink-0 font-mono tabular-nums text-[10px] font-medium leading-none transition-colors duration-300 cursor-help ${
+                className={`shrink-0 font-mono tabular-nums text-[10.5px] leading-none transition-colors duration-300 cursor-help ${
                   hasActive
-                    ? "text-primary/80"
+                    ? "text-primary/85"
                     : allDone
-                      ? "text-emerald-500/70"
-                      : "text-muted-foreground/40"
+                      ? "text-[var(--diff-add-strong)]/75"
+                      : "text-muted-foreground/55"
                 }`}
               >
-                {completed}/{total}
+                <span className="font-medium">{completed}</span>
+                <span className="text-muted-foreground/30">/</span>
+                {total}
               </span>
             }
           />

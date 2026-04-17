@@ -1,12 +1,16 @@
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { ReasoningLevel } from "@mcode/contracts";
 
+// Import from the subpath, NOT the barrel. The barrel re-exports
+// winston-bound logging at the top of index.ts, which throws
+// "process is not defined" the moment it loads in a browser and
+// prevents React from mounting (blank screen).
 export {
   isXhighEffortModel,
   isMaxEffortModel,
   supportsEffortParameter,
   normalizeReasoningLevelForModel,
-} from "@mcode/shared";
+} from "@mcode/shared/model-effort";
 
 /** A provider entry in the model registry. */
 export interface ModelProvider {
