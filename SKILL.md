@@ -6,7 +6,7 @@ description: >
   pushes, re-triggers review, and repeats. Use when the user wants to fully resolve a
   PR/MR against CodeRabbit's review feedback before requesting human review.
 license: MIT
-compatibility: Requires git, gh (GitHub CLI) or glab (GitLab CLI) authenticated, and CodeRabbit installed on the repo (app or GitLab integration).
+compatibility: Requires git, gh (GitHub CLI) or glab (GitLab CLI) authenticated, and CodeRabbit installed on the repo (app or GitLab integration). GitHub paths use `gh --jq` and need no extra tools; the GitLab paths still shell out to `jq` and require it on PATH.
 metadata:
   author: cjnwo
   version: "1.0"
@@ -106,18 +106,33 @@ glab mr note <MR_IID> --message "@coderabbitai review"
 
 CodeRabbit typically posts a "walkthrough" / summary comment and a set of inline review threads when done. Poll until a new review appears that references the current HEAD SHA.
 
-**GitHub:**
+**GitHub:** CodeRabbit signals completion in one of two ways, so the poll must watch both:
+
+1. A **formal review** on `/reviews` with `commit_id == HEAD_SHA` (posted when there are findings).
+2. A **summary issue comment** containing `"No actionable comments were generated"` (posted on a clean incremental pass *instead of* a formal review).
+
+Use `gh --jq` inline rather than piping to external `jq` — `jq` is not guaranteed to be on PATH in every agent shell, but `gh` bundles a jq engine that `--jq` exposes.
+
 ```bash
+TRIGGER_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 HEAD_SHA=$(gh pr view <PR_NUMBER> --json headRefOid -q .headRefOid)
 
 for i in $(seq 1 60); do
-  LATEST_REVIEW=$(gh api "repos/{owner}/{repo}/pulls/<PR_NUMBER>/reviews" \
-    --jq "[.[] | select(.user.login == \"coderabbitai[bot]\")] | sort_by(.submitted_at) | last")
+  # Terminal state 1: formal review filed on HEAD
+  REVIEW_SHA=$(gh api "repos/{owner}/{repo}/pulls/<PR_NUMBER>/reviews" \
+    --jq '[.[] | select(.user.login == "coderabbitai[bot]")] | sort_by(.submitted_at) | last | .commit_id // ""')
 
-  LATEST_SHA=$(echo "$LATEST_REVIEW" | jq -r '.commit_id // empty')
-
-  if [ "$LATEST_SHA" = "$HEAD_SHA" ]; then
+  if [ "$REVIEW_SHA" = "$HEAD_SHA" ]; then
     echo "CodeRabbit review complete for $HEAD_SHA"
+    break
+  fi
+
+  # Terminal state 2: clean-pass summary comment (CodeRabbit posts this instead of a formal review)
+  CLEAN_PASS=$(gh api "repos/{owner}/{repo}/issues/<PR_NUMBER>/comments" \
+    --jq "[.[] | select(.user.login == \"coderabbitai[bot]\") | select(.created_at > \"$TRIGGER_TIME\") | select(.body | test(\"No actionable comments were generated\"))] | length")
+
+  if [ "$CLEAN_PASS" != "0" ]; then
+    echo "CodeRabbit clean pass for $HEAD_SHA (no actionable comments)"
     break
   fi
 
@@ -178,7 +193,7 @@ query {
       }
     }
   }
-}' | jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
   | select(.isResolved == false and .isOutdated == false)
   | select(.comments.nodes[0].author.login == "coderabbitai")]'
 ```
