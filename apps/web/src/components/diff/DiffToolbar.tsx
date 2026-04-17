@@ -29,22 +29,32 @@ export function DiffToolbar() {
   const viewModes = ALL_VIEW_MODES.filter((m) => !m.worktreeOnly || isWorktree);
 
   return (
-    <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/30">
-      <div className="flex items-center gap-0.5 rounded-md bg-muted/30 p-0.5">
-        {viewModes.map((mode) => (
-          <button
-            key={mode.value}
-            type="button"
-            onClick={() => setViewMode(mode.value)}
-            className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
-              viewMode === mode.value
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground/70"
-            }`}
-          >
-            {mode.label}
-          </button>
-        ))}
+    <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
+      {/* View mode segmented control — underline-on-active rather than the generic shadow-pill */}
+      <div className="flex items-center gap-4">
+        {viewModes.map((mode) => {
+          const active = viewMode === mode.value;
+          return (
+            <button
+              key={mode.value}
+              type="button"
+              onClick={() => setViewMode(mode.value)}
+              className={`relative pb-1 text-[11px] font-medium tracking-tight transition-colors ${
+                active
+                  ? "text-foreground"
+                  : "text-muted-foreground/60 hover:text-foreground/80"
+              }`}
+            >
+              {mode.label}
+              {active && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -bottom-[1px] left-0 right-0 h-[1.5px] bg-foreground/85"
+                />
+              )}
+            </button>
+          );
+        })}
       </div>
 
       <div className="flex items-center gap-0.5">

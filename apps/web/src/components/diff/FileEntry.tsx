@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Plus, Minus, ChevronsDownUp } from "lucide-react";
+import { ChevronsDownUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
@@ -13,6 +13,11 @@ interface FileEntryProps {
   filePath: string;
   source: SelectedFile["source"];
   id: string;
+  /**
+   * Indentation depth when rendered inside a folder tree. When > 0, the
+   * parent-path suffix is suppressed (the folder header above carries it).
+   */
+  depth?: number;
 }
 
 /** Extract the basename from a file path. */
@@ -33,28 +38,6 @@ function getExtension(filePath: string): string {
   return dot >= 0 ? basename.slice(dot + 1).toLowerCase() : "";
 }
 
-const EXT_COLORS: Record<string, string> = {
-  ts: "text-blue-600 dark:text-blue-400",
-  tsx: "text-sky-600 dark:text-sky-400",
-  js: "text-yellow-700 dark:text-yellow-400",
-  jsx: "text-yellow-700 dark:text-yellow-400",
-  mjs: "text-yellow-700 dark:text-yellow-400",
-  cjs: "text-yellow-700 dark:text-yellow-400",
-  json: "text-orange-700 dark:text-orange-400",
-  css: "text-pink-600 dark:text-pink-400",
-  scss: "text-pink-600 dark:text-pink-400",
-  md: "text-slate-600 dark:text-slate-400",
-  mdx: "text-slate-600 dark:text-slate-400",
-  py: "text-green-600 dark:text-green-400",
-  go: "text-cyan-600 dark:text-cyan-400",
-  rs: "text-orange-700 dark:text-orange-500",
-  sql: "text-purple-600 dark:text-purple-400",
-  sh: "text-emerald-600 dark:text-emerald-400",
-  yaml: "text-amber-700 dark:text-amber-400",
-  yml: "text-amber-700 dark:text-amber-400",
-  toml: "text-amber-700 dark:text-amber-400",
-};
-
 /**
  * Number of lines shown initially for large diffs before truncation.
  * Diffs with more than LARGE_DIFF_THRESHOLD lines start truncated.
@@ -74,7 +57,8 @@ type DiffState = null | { loading: true } | { loading: false; data: string };
  * Diff is loaded lazily on the first expand.
  * Large diffs (>200 lines) are truncated with a "Show all N lines" button.
  */
-export function FileEntry({ filePath, source, id }: FileEntryProps) {
+export function FileEntry({ filePath, source, id, depth = 0 }: FileEntryProps) {
+  const nested = depth > 0;
   const [expanded, setExpanded] = useState(false);
   const [showAllLines, setShowAllLines] = useState(false);
   const [diffState, setDiffState] = useState<DiffState>(null);
@@ -89,7 +73,6 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
     const ex = getExtension(filePath);
     return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath) };
   }, [filePath]);
-  const extColor = EXT_COLORS[ext] ?? "text-muted-foreground";
 
   // Load diff lazily on first expand. Uses a ref guard so that the state
   // transition to {loading:true} doesn't re-trigger cleanup and cancel the fetch.
@@ -169,54 +152,70 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
           if (prev) setShowAllLines(false); // reset truncation on collapse
           return !prev;
         })}
-        className={`group flex w-full items-center gap-2 py-[5px] pl-7 pr-3 text-left transition-colors hover:bg-muted/20 ${
+        className={`group flex w-full items-center gap-2 py-[5px] pr-3 text-left transition-colors hover:bg-muted/20 ${
           expanded
             ? "sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/20"
             : ""
         }`}
+        style={{ paddingLeft: nested ? `${12 + depth * 14}px` : "28px" }}
         title={filePath}
       >
-        {expanded ? (
-          <Minus size={10} className="shrink-0 text-muted-foreground/70" />
-        ) : (
-          <Plus size={10} className="shrink-0 text-muted-foreground/70" />
-        )}
-
-        {/* Status dot */}
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/60" />
-
-        {/* Filename + path */}
-        <span className="flex-1 min-w-0">
-          <span className="block truncate font-mono text-[11px] text-foreground/80">
-            {basename}
-          </span>
-          {expanded ? (
-            /* Show full path when expanded - no truncation so the full path is always readable */
-            <span className="block break-all font-mono text-[9px] text-muted-foreground/60">
-              {filePath}
-            </span>
-          ) : parent ? (
-            <span className="block truncate font-mono text-[9px] text-muted-foreground/70">
-              {parent}/
-            </span>
-          ) : null}
+        <span
+          aria-hidden="true"
+          className={`shrink-0 font-mono text-[11px] leading-none transition-transform duration-150 text-muted-foreground/45 ${
+            expanded ? "rotate-90" : ""
+          }`}
+        >
+          ›
         </span>
 
-        {/* +/- stats once loaded */}
+        {/* Filename + path. Inside a tree, the folder header above carries the
+            directory context, so we drop the redundant parent-path suffix. */}
+        <span className="flex-1 min-w-0">
+          <span className="block truncate font-mono text-[11.5px] text-foreground/85">
+            {basename}
+          </span>
+          {expanded && !nested && (
+            <span className="block break-all font-mono text-[10px] text-muted-foreground/55">
+              {filePath}
+            </span>
+          )}
+          {!expanded && !nested && parent && (
+            <span className="block truncate font-mono text-[10px] text-muted-foreground/55">
+              {parent}/
+            </span>
+          )}
+        </span>
+
+        {/* Stats: proportion bar + counts. The bar gives an at-a-glance sense of net impact. */}
         {isLoaded && (stats.additions > 0 || stats.deletions > 0) && (
-          <span className="flex shrink-0 items-center gap-1 font-mono text-[9px]">
+          <span className="flex shrink-0 items-center gap-2 font-mono text-[10px] tabular-nums">
+            <span className="flex h-[3px] w-12 items-stretch overflow-hidden rounded-full bg-border/40">
+              <span
+                className="block bg-[var(--diff-add-strong)]"
+                style={{
+                  width: `${(stats.additions / (stats.additions + stats.deletions)) * 100}%`,
+                }}
+              />
+              <span
+                className="block bg-[var(--diff-remove-strong)]"
+                style={{
+                  width: `${(stats.deletions / (stats.additions + stats.deletions)) * 100}%`,
+                }}
+              />
+            </span>
             {stats.additions > 0 && (
-              <span className="text-emerald-600 dark:text-emerald-400">+{stats.additions}</span>
+              <span className="text-[var(--diff-add-strong)]">+{stats.additions}</span>
             )}
             {stats.deletions > 0 && (
-              <span className="text-red-600 dark:text-red-400">-{stats.deletions}</span>
+              <span className="text-[var(--diff-remove-strong)]">−{stats.deletions}</span>
             )}
           </span>
         )}
 
-        {/* Extension badge (hidden while expanded to save space) */}
+        {/* Extension marker — single-color, monospace; lives quietly at the row's edge */}
         {!expanded && ext && (
-          <span className={`shrink-0 font-mono text-[9px] uppercase tracking-wide ${extColor}`}>
+          <span className="shrink-0 font-mono text-[9.5px] uppercase tracking-[0.12em] text-muted-foreground/45">
             {ext}
           </span>
         )}
