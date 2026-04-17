@@ -178,6 +178,19 @@ describe("killOrphanedServer", () => {
       expect(execSync).toHaveBeenCalledWith("taskkill /T /F /PID 99999", { stdio: "ignore", timeout: 5000 });
     });
 
+    it("skips kill for substring-matching names like 'nodemon' (exact basename required)", () => {
+      const lockFilePath = writeTempLock(tmpDir, { pid: 99999 });
+      const processKill = vi.fn();
+      const getProcessName = vi.fn().mockReturnValue("nodemon");
+      const deps = makeDeps({ lockFilePath, currentPid: 12345, processKill, getProcessName });
+      killOrphanedServer(deps);
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        "Orphaned lock PID does not belong to a known server process; skipping kill",
+        expect.objectContaining({ pid: 99999, name: "nodemon" }),
+      );
+      expect(processKill).toHaveBeenCalledTimes(1); // only signal-0 probe
+    });
+
     it("proceeds with kill when getProcessName returns null (name cannot be determined)", () => {
       const lockFilePath = writeTempLock(tmpDir, { pid: 99999 });
       const processKill = vi.fn();

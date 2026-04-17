@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { scanPortRange } from "../transport/scan-port-range";
+import { scanPortRange, AUTH_TOKEN_STORAGE_KEY } from "../transport/scan-port-range";
 
 beforeEach(() => {
   // Clear localStorage before each test
@@ -47,7 +47,7 @@ describe("scanPortRange", () => {
 
     await scanPortRange(19400, 19402, "stale-token");
 
-    expect(localStorage.getItem("mcode-auth-token")).toBe("fresh-token-abc");
+    expect(localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)).toBe("fresh-token-abc");
   });
 
   it("falls back to the saved token when the health response has no authToken", async () => {

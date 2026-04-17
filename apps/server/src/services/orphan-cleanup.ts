@@ -21,10 +21,11 @@ interface MinLogger {
 }
 
 /**
- * Known process names for the mcode server binary.
- * Checked case-insensitively via substring match.
+ * Exact basenames (case-insensitive) that identify a server binary.
+ * Using exact match avoids false positives on names like "nodemon" or
+ * "code-node-helper" that would pass a substring check.
  */
-const KNOWN_SERVER_PROCESS_NAMES = ["node", "bun"];
+const KNOWN_SERVER_BASENAMES = new Set(["node", "node.exe", "bun", "bun.exe"]);
 
 /**
  * Reads the process image name for a PID using platform-specific tools.
@@ -120,8 +121,8 @@ export function killOrphanedServer(deps: OrphanCleanupDeps): void {
     // since the lock-file PID validation already narrows the attack surface.
     const processName = getProcessName(lock.pid);
     if (processName !== null) {
-      const lower = processName.toLowerCase();
-      const isKnownServer = KNOWN_SERVER_PROCESS_NAMES.some((n) => lower.includes(n));
+      const basename = processName.toLowerCase().split(/[\\/]/).pop() ?? "";
+      const isKnownServer = KNOWN_SERVER_BASENAMES.has(basename);
       if (!isKnownServer) {
         logger.warn("Orphaned lock PID does not belong to a known server process; skipping kill", {
           pid: lock.pid,
