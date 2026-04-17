@@ -164,7 +164,7 @@ The server writes a `.clean-shutdown` marker file under the data dir at
 the end of its graceful `shutdown()` path. On startup it deletes the
 marker if present; if the marker is missing, it logs a warning. A
 missing marker at startup means the previous process died without
-running `shutdown()` — which is the primary diagnostic signal for
+running `shutdown()`, which is the primary diagnostic signal for
 issue #290-class restarts.
 
 ---

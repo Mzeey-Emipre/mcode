@@ -377,7 +377,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       try {
         existing.pushMessage(prompt);
       } catch (err) {
-        // The queue was closed between the session lookup and the push — most
+        // The queue was closed between the session lookup and the push: most
         // commonly a race with idle eviction or stopSession(). Surface the
         // failure through the normal Error event path so the caller sees it.
         const errorMessage =
@@ -1161,7 +1161,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const now = Date.now();
     for (const [sessionId, entry] of this.sessions) {
       if (now - entry.lastUsedAt > IDLE_TTL_MS) {
-        // Skip sessions with in-flight tool calls — a long-running tool (build,
+        // Skip sessions with in-flight tool calls: a long-running tool (build,
         // test suite, large file op) may not emit any SDK message for minutes.
         if (entry.pendingToolUses.size > 0) {
           logger.debug("Skipping eviction: pending tool calls", {

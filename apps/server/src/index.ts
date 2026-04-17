@@ -51,7 +51,7 @@ const LOCK_FILE_PATH = join(getMcodeDir(), "server.lock");
 /**
  * Path to the clean-shutdown breadcrumb. Written at the end of shutdown() and
  * deleted on startup. Absence at startup implies the previous process died
- * without running shutdown() — the primary diagnostic for #290-class restarts.
+ * without running shutdown(): the primary diagnostic for #290-class restarts.
  */
 const SHUTDOWN_MARKER_PATH = join(getMcodeDir(), ".clean-shutdown");
 
@@ -87,15 +87,15 @@ function resolveAuthToken(): string {
 const AUTH_TOKEN = resolveAuthToken();
 
 // Clean-shutdown breadcrumb check. If the marker is missing AND a prior lock
-// file exists, the previous server process did not run shutdown() to completion
-// — log it so operators have a diagnostic trail for issue #290-class unclean
+// file exists, the previous server process did not run shutdown() to completion.
+// Log it so operators have a diagnostic trail for issue #290-class unclean
 // exits. The lock-file gate prevents false positives on fresh installs and on
 // test runs that import this module without ever starting a server.
 if (existsSync(SHUTDOWN_MARKER_PATH)) {
   unlinkSync(SHUTDOWN_MARKER_PATH);
 } else if (existsSync(LOCK_FILE_PATH)) {
   logger.warn(
-    "Previous server process did not shut down gracefully — no clean-shutdown marker found",
+    "Previous server process did not shut down gracefully: no clean-shutdown marker found",
     { markerPath: SHUTDOWN_MARKER_PATH },
   );
 }
