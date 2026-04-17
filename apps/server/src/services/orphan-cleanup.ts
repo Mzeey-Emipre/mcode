@@ -104,7 +104,9 @@ export function killOrphanedServer(deps: OrphanCleanupDeps): void {
 
     const raw = readFileSync(lockFilePath, "utf-8");
     const lock = JSON.parse(raw) as LockFile;
-    if (typeof lock.pid !== "number" || !Number.isInteger(lock.pid) || lock.pid <= 0 || lock.pid === currentPid) return;
+    // Reject PID 1 explicitly: kill(-1, SIGTERM) signals every process owned
+    // by the calling user, which is catastrophic.
+    if (typeof lock.pid !== "number" || !Number.isInteger(lock.pid) || lock.pid <= 1 || lock.pid === currentPid) return;
 
     // Check if the old process is still alive by sending signal 0.
     try {
@@ -117,10 +119,9 @@ export function killOrphanedServer(deps: OrphanCleanupDeps): void {
     // Verify the process image name matches a known server binary before
     // killing. This guards against PID reuse: if the OS recycled the PID to an
     // unrelated process between the liveness check and the kill, we skip.
-    // When the name cannot be determined (e.g., no /proc on macOS), we proceed
-    // since the lock-file PID validation already narrows the attack surface.
     const processName = getProcessName(lock.pid);
-    if (processName !== null) {
+    const identityVerified = processName !== null;
+    if (identityVerified) {
       const basename = processName.toLowerCase().split(/[\\/]/).pop() ?? "";
       const isKnownServer = KNOWN_SERVER_BASENAMES.has(basename);
       if (!isKnownServer) {
@@ -142,9 +143,9 @@ export function killOrphanedServer(deps: OrphanCleanupDeps): void {
       } catch {
         // Process may have exited between the liveness check and the kill.
       }
-    } else {
+    } else if (identityVerified) {
+      // Identity confirmed: safe to kill the process group to catch SDK children.
       try {
-        // Kill the process group to catch child SDK subprocesses.
         processKill(-lock.pid, "SIGTERM");
       } catch {
         // Fallback: kill just the named process if process-group kill fails
@@ -154,6 +155,15 @@ export function killOrphanedServer(deps: OrphanCleanupDeps): void {
         } catch {
           // Already dead.
         }
+      }
+    } else {
+      // Identity unknown (e.g. no /proc on macOS): only kill the specific
+      // process, never the group, to avoid collateral damage on recycled PIDs.
+      logger.warn("Could not verify process identity; killing single process only", { pid: lock.pid });
+      try {
+        processKill(lock.pid, "SIGTERM");
+      } catch {
+        // Already dead.
       }
     }
   } catch (err) {

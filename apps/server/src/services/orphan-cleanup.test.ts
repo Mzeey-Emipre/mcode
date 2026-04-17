@@ -66,6 +66,13 @@ describe("killOrphanedServer", () => {
     expect(deps.processKill).not.toHaveBeenCalled();
   });
 
+  it("rejects PID 1 to prevent kill(-1) from signaling all user processes", () => {
+    const lockFilePath = writeTempLock(tmpDir, { pid: 1 });
+    const deps = makeDeps({ lockFilePath, currentPid: 12345 });
+    killOrphanedServer(deps);
+    expect(deps.processKill).not.toHaveBeenCalled();
+  });
+
   it("does nothing when lock file pid matches current process", () => {
     const lockFilePath = writeTempLock(tmpDir, { pid: 12345 });
     const deps = makeDeps({ lockFilePath, currentPid: 12345 });
@@ -191,15 +198,16 @@ describe("killOrphanedServer", () => {
       expect(processKill).toHaveBeenCalledTimes(1); // only signal-0 probe
     });
 
-    it("proceeds with kill when getProcessName returns null (name cannot be determined)", () => {
+    it("uses single-process kill (not group kill) when getProcessName returns null", () => {
       const lockFilePath = writeTempLock(tmpDir, { pid: 99999 });
       const processKill = vi.fn();
       const getProcessName = vi.fn().mockReturnValue(null);
       const deps = makeDeps({ lockFilePath, currentPid: 12345, platform: "linux", processKill, getProcessName });
       killOrphanedServer(deps);
-      // Should still kill because we can't verify, and fail-open is safer
-      // for zombie prevention than fail-closed.
-      expect(processKill).toHaveBeenCalledWith(-99999, "SIGTERM");
+      // Identity unknown: kill the specific process but never the group,
+      // to avoid collateral damage if the PID was recycled.
+      expect(processKill).toHaveBeenCalledWith(99999, "SIGTERM");
+      expect(processKill).not.toHaveBeenCalledWith(-99999, "SIGTERM");
     });
   });
 
