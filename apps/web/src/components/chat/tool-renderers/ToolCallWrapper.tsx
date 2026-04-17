@@ -78,7 +78,7 @@ function ToolCallWrapperInner({
           />
           <span
             className={`font-medium ${
-              isActive ? "animate-shimmer-text" : "text-foreground/70"
+              isActive ? "text-foreground font-medium" : "text-foreground/70"
             }`}
           >
             {label}

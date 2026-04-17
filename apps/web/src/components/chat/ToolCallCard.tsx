@@ -58,7 +58,7 @@ function CollapsedGroup({
         />
         <span
           className={`font-medium ${
-            isActive ? "animate-shimmer-text" : "text-foreground/70"
+            isActive ? "text-foreground font-medium" : "text-foreground/70"
           }`}
         >
           {label}
@@ -137,7 +137,7 @@ function LiveAgentGroup({
         <span
           className={`truncate font-medium ${
             isActive || hasActiveChild
-              ? "animate-shimmer-text"
+              ? "text-foreground font-medium"
               : "text-foreground/60"
           }`}
         >
