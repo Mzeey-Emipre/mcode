@@ -87,8 +87,8 @@ const CODEX_REASONING_LABELS: Record<string, string> = {
  * PR draft provider/model, and CLI paths.
  *
  * Model options update when the provider changes. Switching provider resets the default
- * model to the new provider's first model and clears the fallback. Switching to a
- * non-Opus model clamps the reasoning level from "max" to "high".
+ * model to the new provider's first model and clears the fallback. The reasoning level
+ * is normalized down when the new model does not support the current tier.
  */
 export function ModelSection() {
   const provider = useSettingsStore((s) => s.settings.model.defaults.provider);
@@ -140,7 +140,12 @@ export function ModelSection() {
     [dynamicPrDraftModels, prDraftEffectiveProvider],
   );
 
-  const codexLevels = useMemo(() => getCodexReasoningLevels(modelId), [modelId]);
+  // Gate on provider so Copilot models that share IDs with Codex models
+  // don't accidentally take the Codex reasoning branch.
+  const codexLevels = useMemo(
+    () => (provider === "codex" ? getCodexReasoningLevels(modelId) : null),
+    [provider, modelId],
+  );
 
   const reasoningOptions = useMemo(() => {
     if (codexLevels) {

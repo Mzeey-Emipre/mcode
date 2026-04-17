@@ -64,6 +64,11 @@ import { useSettingsStore } from "@/stores/settingsStore";
 /** ReasoningLevel values as a Set for O(1) membership checks in the Codex level filter. */
 const VALID_REASONING_LEVELS_SET = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
 
+/** Display label for a reasoning level value. */
+function reasoningLabel(level: string): string {
+  return level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+}
+
 interface ComposerProps {
   threadId?: string;
   isNewThread?: boolean;
@@ -1008,15 +1013,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const toast = useQueueStore((s) => s.toast);
 
-  /** Display label for a reasoning level value. */
-  const reasoningLabel = (level: string) =>
-    level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
-
-  const codexLevels = getCodexReasoningLevels(modelId);
   const reasoningLevels = useMemo<ReasoningLevel[]>(() => {
-    if (codexLevels) {
+    // Gate on provider to prevent Copilot models sharing Codex IDs from taking Codex branch.
+    const codexLvls = provider === "codex" ? getCodexReasoningLevels(modelId) : null;
+    if (codexLvls) {
       // Filter out Codex-only levels (e.g. "minimal") that have no ReasoningLevel equivalent.
-      return codexLevels.filter((l) => VALID_REASONING_LEVELS_SET.has(l)) as ReasoningLevel[];
+      return codexLvls.filter((l) => VALID_REASONING_LEVELS_SET.has(l)) as ReasoningLevel[];
     }
     if (!supportsEffortParameter(modelId)) return [];
     return [
@@ -1026,7 +1028,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       ...(isXhighEffortModel(modelId) ? (["xhigh"] as const) : []),
       ...(isMaxEffortModel(modelId)   ? (["max"]   as const) : []),
     ];
-  }, [modelId, codexLevels]);
+  }, [modelId, provider]);
+
+  // Close the picker when the user switches to a model with no effort tiers (e.g. Haiku).
+  // Without this the popover stays open and points at nothing.
+  useEffect(() => {
+    if (reasoningLevels.length === 0) setShowReasoningPicker(false);
+  }, [reasoningLevels.length]);
 
   return (
     <div className="relative px-8 py-4">
