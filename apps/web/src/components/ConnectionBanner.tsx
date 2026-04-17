@@ -4,7 +4,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 export function ConnectionBanner() {
   const status = useConnectionStore((s) => s.status);
 
-  if (status !== "reconnecting") return null;
+  if (status !== "reconnecting" && status !== "authFailed") return null;
 
   return (
     <div className="flex items-center justify-center gap-2 bg-yellow-600/90 px-4 py-1.5 text-xs font-medium text-white">
@@ -27,7 +27,9 @@ export function ConnectionBanner() {
           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
         />
       </svg>
-      Connection lost. Reconnecting to server...
+      {status === "authFailed"
+        ? "Re-authenticating after server restart..."
+        : "Connection lost. Reconnecting to server..."}
     </div>
   );
 }
