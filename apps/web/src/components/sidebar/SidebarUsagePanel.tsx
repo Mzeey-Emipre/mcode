@@ -185,12 +185,11 @@ export function SidebarUsagePanel() {
         </div>
       </PopoverTrigger>
 
-      {/* ── White hover panel ── */}
       <PopoverContent
         side="right"
         align="end"
         sideOffset={12}
-        className="w-60 p-0 !bg-white !border-black/[0.06] !shadow-[0_16px_48px_rgba(0,0,0,0.14),0_2px_8px_rgba(0,0,0,0.06)] overflow-hidden !rounded-2xl"
+        className="w-60 overflow-hidden rounded-lg border border-border bg-popover p-0 shadow-xl"
         onMouseEnter={show}
         onMouseLeave={hide}
       >
@@ -248,7 +247,7 @@ export function SidebarUsagePanel() {
                   </span>
                 )}
                 {serviceTier && serviceTier !== "standard" && (
-                  <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-500 capitalize">
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary capitalize">
                     {serviceTier}
                   </span>
                 )}
