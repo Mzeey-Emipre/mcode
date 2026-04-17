@@ -231,45 +231,48 @@ describe("subagent count via markPriorToolCallsComplete", () => {
 
   afterEach(() => { vi.useRealTimers(); });
 
-  it("decrements activeSubagentsByThread when markPriorToolCallsComplete completes an Agent call", () => {
-    // Trigger markPriorToolCallsComplete by dispatching a new top-level toolUse
+  it("does NOT complete an in-flight Agent call when a peer top-level toolUse arrives", () => {
+    // A subagent's child tool calls keep arriving on the same thread after a
+    // peer top-level event. Completing the parent Agent here would zero the
+    // subagent counter and hide the live LiveAgentGroup mid-run.
     useThreadStore.getState().handleAgentEvent("thread-1", {
       method: "session.toolUse",
       params: { toolCallId: "tc2", toolName: "Read", toolInput: {} },
     });
     vi.runAllTimers();
 
-    // The Agent call is marked complete by markPriorToolCallsComplete
     const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
-    expect(calls.find((c) => c.id === "agent-1")?.isComplete).toBe(true);
+    expect(calls.find((c) => c.id === "agent-1")?.isComplete).toBe(false);
 
-    // The subagent count must be decremented
-    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBeUndefined();
+    // Counter stays put — Agent completion is owned by session.toolResult.
+    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBe(1);
   });
 
-  it("decrements activeSubagentsByThread by the full count when multiple Agent calls are swept at once", () => {
+  it("leaves multiple in-flight Agent calls untouched while sweeping non-Agent peers", () => {
     useThreadStore.setState({
       toolCallsByThread: {
         "thread-1": [
           { id: "agent-1", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
           { id: "agent-2", toolName: "Agent", toolInput: {}, output: null, isError: false, isComplete: false },
+          { id: "read-1", toolName: "Read", toolInput: {}, output: null, isError: false, isComplete: false },
         ],
       },
       activeSubagentsByThread: { "thread-1": 2 },
     });
 
-    // A new top-level toolUse triggers markPriorToolCallsComplete
     useThreadStore.getState().handleAgentEvent("thread-1", {
       method: "session.toolUse",
-      params: { toolCallId: "tc3", toolName: "Read", toolInput: {} },
+      params: { toolCallId: "tc3", toolName: "Bash", toolInput: {} },
     });
     vi.runAllTimers();
 
     const calls = useThreadStore.getState().toolCallsByThread["thread-1"];
-    expect(calls.find((c) => c.id === "agent-1")?.isComplete).toBe(true);
-    expect(calls.find((c) => c.id === "agent-2")?.isComplete).toBe(true);
-
-    // Both completions must be accounted for — key deleted, not left at 0
-    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBeUndefined();
+    // Both Agent calls remain live
+    expect(calls.find((c) => c.id === "agent-1")?.isComplete).toBe(false);
+    expect(calls.find((c) => c.id === "agent-2")?.isComplete).toBe(false);
+    // The non-Agent peer is swept as expected
+    expect(calls.find((c) => c.id === "read-1")?.isComplete).toBe(true);
+    // Counter unchanged
+    expect(useThreadStore.getState().activeSubagentsByThread["thread-1"]).toBe(2);
   });
 });

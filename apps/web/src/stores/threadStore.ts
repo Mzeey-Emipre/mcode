@@ -887,30 +887,20 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     // delta, or turnComplete), we mark prior calls as done.
     const markPriorToolCallsComplete = () => {
       const calls = get().toolCallsByThread[threadId];
-      if (!calls || !calls.some((tc) => !tc.isComplete)) return;
+      if (!calls || !calls.some((tc) => !tc.isComplete && tc.toolName !== "Agent")) return;
       set((state) => {
         const current = state.toolCallsByThread[threadId] ?? [];
-        // Count how many Agent calls are being completed in this sweep.
-        const agentCompletions = current.filter(
-          (tc) => !tc.isComplete && tc.toolName === "Agent"
-        ).length;
+        // Agent tool calls represent in-flight subagent runs. Their child tool
+        // events keep arriving on the same thread after a peer top-level event,
+        // so completing them here would prematurely zero activeSubagentsByThread
+        // and hide the live LiveAgentGroup. Agent completion is driven only by
+        // its own session.toolResult event (see isAgentCompletion below).
         const updated = current.map((tc) =>
-          tc.isComplete ? tc : { ...tc, isComplete: true }
+          tc.isComplete || tc.toolName === "Agent" ? tc : { ...tc, isComplete: true }
         );
-        const result: Partial<ThreadState> = {
+        return {
           toolCallsByThread: { ...state.toolCallsByThread, [threadId]: updated },
         };
-        if (agentCompletions > 0) {
-          // Fall back to agentCompletions when the counter is absent — this keeps the
-          // arithmetic correct even if the increment was missed (e.g. the Agent toolUse
-          // event arrived on a thread we weren't tracking yet).
-          const count = (state.activeSubagentsByThread[threadId] ?? agentCompletions) - agentCompletions;
-          const nextSubagents = { ...state.activeSubagentsByThread };
-          if (count <= 0) delete nextSubagents[threadId];
-          else nextSubagents[threadId] = count;
-          result.activeSubagentsByThread = nextSubagents;
-        }
-        return result;
       });
     };
 
