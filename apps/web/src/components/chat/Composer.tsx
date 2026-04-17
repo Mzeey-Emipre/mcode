@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, findModelById, isMaxEffortModel, isXhighEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, findModelById, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -60,6 +60,14 @@ import {
 import type { ReasoningLevel } from "@mcode/contracts";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+
+/** ReasoningLevel values as a Set for O(1) membership checks in the Codex level filter. */
+const VALID_REASONING_LEVELS_SET = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
+
+/** Display label for a reasoning level value. */
+function reasoningLabel(level: string): string {
+  return level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+}
 
 interface ComposerProps {
   threadId?: string;
@@ -1005,17 +1013,28 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const toast = useQueueStore((s) => s.toast);
 
-  /** Display label for a reasoning level value. */
-  const reasoningLabel = (level: string) =>
-    level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
-
   const reasoningLevels = useMemo<ReasoningLevel[]>(() => {
-    const codexLevels = getCodexReasoningLevels(modelId);
-    if (codexLevels) return codexLevels as unknown as ReasoningLevel[];
-    if (isXhighEffortModel(modelId)) return ["low", "medium", "high", "max", "xhigh"];
-    if (isMaxEffortModel(modelId)) return ["low", "medium", "high", "max"];
-    return ["low", "medium", "high"];
-  }, [modelId]);
+    // Gate on provider to prevent Copilot models sharing Codex IDs from taking Codex branch.
+    const codexLvls = provider === "codex" ? getCodexReasoningLevels(modelId) : null;
+    if (codexLvls) {
+      // Filter out Codex-only levels (e.g. "minimal") that have no ReasoningLevel equivalent.
+      return codexLvls.filter((l) => VALID_REASONING_LEVELS_SET.has(l)) as ReasoningLevel[];
+    }
+    if (!supportsEffortParameter(modelId)) return [];
+    return [
+      "low",
+      "medium",
+      "high",
+      ...(isXhighEffortModel(modelId) ? (["xhigh"] as const) : []),
+      ...(isMaxEffortModel(modelId)   ? (["max"]   as const) : []),
+    ];
+  }, [modelId, provider]);
+
+  // Close the picker when the user switches to a model with no effort tiers (e.g. Haiku).
+  // Without this the popover stays open and points at nothing.
+  useEffect(() => {
+    if (reasoningLevels.length === 0) setShowReasoningPicker(false);
+  }, [reasoningLevels.length]);
 
   return (
     <div className="relative px-8 py-4">
@@ -1135,7 +1154,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             providerLocked={isProviderLocked}
           />
 
-          {/* Reasoning level */}
+          {/* Reasoning level — hidden for models that have no effort tiers (e.g. Haiku) */}
+          {reasoningLevels.length > 0 && (
           <div className="relative">
             <Tooltip>
               <TooltipTrigger
@@ -1180,6 +1200,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               </div>
             )}
           </div>
+          )}
 
           {/* Chat / Plan toggle — replaced by CopilotAgentSelector when Copilot is active */}
           {provider === "copilot" ? (
