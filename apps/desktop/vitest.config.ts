@@ -8,6 +8,9 @@ import { join } from "path";
 // what prevented the unclean server restart in issue #290: vitest and the
 // live server were both writing to the same log + sqlite files.
 const testDataDir = mkdtempSync(join(tmpdir(), "mcode-test-"));
+// Mirror into process.env so the shared globalSetup teardown can locate
+// and remove the dir after the run; workers still receive it via test.env.
+process.env.MCODE_DATA_DIR = testDataDir;
 
 export default defineConfig({
   test: {
@@ -17,6 +20,7 @@ export default defineConfig({
     env: {
       MCODE_DATA_DIR: testDataDir,
     },
+    globalSetup: ["../../scripts/vitest-global-setup.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary"],
