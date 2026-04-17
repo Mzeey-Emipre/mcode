@@ -61,6 +61,9 @@ import type { ReasoningLevel } from "@mcode/contracts";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 
+/** ReasoningLevel values as a Set for O(1) membership checks in the Codex level filter. */
+const VALID_REASONING_LEVELS_SET = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
+
 interface ComposerProps {
   threadId?: string;
   isNewThread?: boolean;
@@ -1010,17 +1013,20 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
 
   const codexLevels = getCodexReasoningLevels(modelId);
-  const reasoningLevels: ReasoningLevel[] = codexLevels
-    ? (codexLevels as unknown as ReasoningLevel[])
-    : supportsEffortParameter(modelId)
-      ? [
-          "low",
-          "medium",
-          "high",
-          ...(isXhighEffortModel(modelId) ? (["xhigh"] as const) : []),
-          ...(isMaxEffortModel(modelId)   ? (["max"]   as const) : []),
-        ]
-      : [];
+  const reasoningLevels = useMemo<ReasoningLevel[]>(() => {
+    if (codexLevels) {
+      // Filter out Codex-only levels (e.g. "minimal") that have no ReasoningLevel equivalent.
+      return codexLevels.filter((l) => VALID_REASONING_LEVELS_SET.has(l)) as ReasoningLevel[];
+    }
+    if (!supportsEffortParameter(modelId)) return [];
+    return [
+      "low",
+      "medium",
+      "high",
+      ...(isXhighEffortModel(modelId) ? (["xhigh"] as const) : []),
+      ...(isMaxEffortModel(modelId)   ? (["max"]   as const) : []),
+    ];
+  }, [modelId, codexLevels]);
 
   return (
     <div className="relative px-8 py-4">
