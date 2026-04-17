@@ -1,4 +1,4 @@
-@import "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap";
+@import "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap";
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -12,7 +12,7 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.488 0.217 264);
+  --primary: oklch(0.52 0.17 75);
   --primary-foreground: oklch(0.984 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -48,7 +48,7 @@
   --card-foreground: oklch(0.93 0 0);
   --popover: oklch(0.19 0.005 260);
   --popover-foreground: oklch(0.93 0 0);
-  --primary: oklch(0.62 0.19 264);
+  --primary: oklch(0.72 0.17 75);
   --primary-foreground: oklch(0.98 0 0);
   --secondary: oklch(0.24 0.005 260);
   --secondary-foreground: oklch(0.93 0 0);
@@ -76,7 +76,7 @@
 }
 
 @theme inline {
-  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -119,11 +119,6 @@
 }
 
 
-@keyframes shimmer-text {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
 @keyframes fade-up-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -134,23 +129,17 @@
 
 
 .glow-primary {
-  box-shadow: -2px 0 8px -1px oklch(0.62 0.19 264 / 0.35);
+  box-shadow: -2px 0 8px -1px oklch(0.72 0.17 75 / 0.35);
 }
 
 .animate-shimmer-text {
-  background-image: linear-gradient(
-    90deg,
-    oklch(0.55 0.005 260) 0%,
-    oklch(0.75 0.15 264) 40%,
-    oklch(0.85 0.12 264) 50%,
-    oklch(0.75 0.15 264) 60%,
-    oklch(0.55 0.005 260) 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer-text 2.5s ease-in-out infinite;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--muted-foreground);
+  animation: text-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes text-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 @layer base {
