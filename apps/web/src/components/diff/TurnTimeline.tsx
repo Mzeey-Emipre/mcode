@@ -1,4 +1,3 @@
-import { FileDiff } from "lucide-react";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { TurnEntry } from "./TurnEntry";
 
@@ -15,9 +14,13 @@ export function TurnTimeline({ snapshots }: TurnTimelineProps) {
 
   if (withFiles.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 py-10">
-        <FileDiff size={22} className="text-muted-foreground/15" strokeWidth={1.5} />
-        <p className="text-[11px] text-muted-foreground/30">No changes yet</p>
+      <div className="flex flex-col items-center justify-center gap-3 py-14">
+        <span aria-hidden="true" className="font-mono text-[28px] leading-none text-muted-foreground/15">
+          ⊘
+        </span>
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
+          No changes yet
+        </p>
       </div>
     );
   }

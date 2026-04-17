@@ -36,6 +36,7 @@ import { MemoryPressureService } from "./services/memory-pressure-service";
 import { WorkspaceRepo } from "./repositories/workspace-repo";
 import { CleanupWorker } from "./services/cleanup-worker";
 import { PrDraftService } from "./services/pr-draft-service";
+import { CiWatcherService } from "./services/ci-watcher";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { WebSocket } from "ws";
 import { AgentEventType } from "@mcode/contracts";
@@ -120,6 +121,12 @@ ipcServer.onConnection((port) => {
   portPush.attach(port);
 });
 
+// Construct CI watcher with a combined broadcast that covers both WebSocket and IPC push
+const ciWatcherService = new CiWatcherService(githubService, (channel, data) => {
+  broadcast(channel as Parameters<typeof broadcast>[0], data as Parameters<typeof broadcast>[1]);
+  portPush.send(channel as Parameters<typeof portPush.send>[0], data as Parameters<typeof portPush.send>[1]);
+});
+
 // Wire up PTY sender to broadcast push events
 terminalService.setSender((channel, data) => {
   if (channel === "terminal.data") {
@@ -146,8 +153,26 @@ if (removed > 0) {
 
 // Initialize HEAD file watchers for all existing workspaces so branch changes
 // are detected after a server restart.
-for (const ws of workspaceRepo.listAll()) {
+const allWorkspaces = workspaceRepo.listAll();
+for (const ws of allWorkspaces) {
   gitWatcherService.watchWorkspace(ws.id, ws.path);
+}
+
+// Seed CI check watcher with all threads that have open PRs
+{
+  const workspacePaths = new Map(allWorkspaces.map((ws) => [ws.id, ws.path]));
+  const allThreads: ReturnType<typeof threadService.list> = [];
+  for (const ws of allWorkspaces) {
+    const threads = threadService.list(ws.id);
+    allThreads.push(...threads);
+  }
+  ciWatcherService.seed(
+    allThreads,
+    workspacePaths,
+    (threadId) => allThreads.find((t) => t.id === threadId)?.workspace_id ?? null,
+  ).catch((err) => {
+    logger.warn("CiWatcher seed failed", { error: String(err) });
+  });
 }
 
 // Wire up push broadcasting for agent events and thread status changes.
@@ -156,6 +181,16 @@ for (const ws of workspaceRepo.listAll()) {
 // listener fires. We read the stack via getCurrentParentToolCallId to enrich
 // non-Agent tool calls with their parent ID.
 for (const provider of providerRegistry.resolveAll()) {
+  provider.on("permission_request", (request) => {
+    broadcast("permission.request", request);
+    portPush.send("permission.request", request);
+  });
+
+  provider.on("permission_resolved", (payload) => {
+    broadcast("permission.resolved", payload);
+    portPush.send("permission.resolved", payload);
+  });
+
   provider.on("event", (event: AgentEvent) => {
     let enrichedEvent = event;
 
@@ -194,6 +229,13 @@ for (const provider of providerRegistry.resolveAll()) {
               const prPayload = { threadId: thread.id, prNumber: pr.number, prStatus: pr.state };
               broadcast("thread.prLinked", prPayload);
               portPush.send("thread.prLinked", prPayload);
+            }
+            // Start CI watching if PR is open/active; stop watching if it became terminal.
+            const prState = pr.state.toLowerCase();
+            if (prState !== "merged" && prState !== "closed") {
+              ciWatcherService.watch(thread.id, pr.number, workspace.path);
+            } else {
+              ciWatcherService.unwatch(thread.id);
             }
           }).catch((err) => {
             logger.debug("PR lookup failed on turnComplete", {
@@ -235,6 +277,7 @@ const { httpServer, wss } = createWsServer({
   taskRepo,
   providerRegistry,
   prDraftService,
+  ciWatcherService,
   threadRepo,
   workspaceRepo,
   authToken: AUTH_TOKEN,
@@ -371,6 +414,9 @@ async function shutdown(): Promise<void> {
 
   // 8a. Dispose cleanup worker
   cleanupWorker.dispose();
+
+  // 8b. Dispose CI check watcher timers
+  ciWatcherService.dispose();
 
   // 9. Close all WebSocket clients and shut down the WS server
   for (const client of wss.clients) {

@@ -64,8 +64,8 @@ export function CommandPalette() {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={setOpen} modal="trap-focus">
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/50" />
-        <DialogPrimitive.Popup className="fixed left-1/2 top-[15%] z-50 w-full max-w-lg -translate-x-1/2 outline-none">
+        <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-foreground/40 backdrop-blur-sm" />
+        <DialogPrimitive.Popup className="fixed left-1/2 top-[clamp(4rem,15vh,9rem)] z-50 w-full max-w-lg -translate-x-1/2 outline-none">
           <Command
             className="rounded-lg border border-border bg-popover shadow-2xl"
             loop

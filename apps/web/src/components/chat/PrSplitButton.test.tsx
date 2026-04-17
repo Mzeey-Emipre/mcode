@@ -37,14 +37,14 @@ describe("PrSplitButton", () => {
 
   const openPr = { number: 42, url: "https://github.com/o/r/pull/42", state: "OPEN" };
 
-  it("renders View PR #42 when pr state is OPEN (uppercase — normalised)", () => {
+  it("renders PR #42 when pr state is OPEN (uppercase — normalised)", () => {
     render(<PrSplitButton pr={openPr} hasCommitsAhead={true} onCreatePr={noop} onOpenPr={noop} />);
-    expect(screen.getByText(/view pr #42/i)).toBeInTheDocument();
+    expect(screen.getByText("PR #42")).toBeInTheDocument();
   });
 
   it("applies green colour class when pr state is open", () => {
     render(<PrSplitButton pr={openPr} hasCommitsAhead={true} onCreatePr={noop} onOpenPr={noop} />);
-    const btn = screen.getByText(/view pr #42/i).closest("button");
+    const btn = screen.getByText("PR #42").closest("button");
     expect(btn?.className).toContain("text-[#3fb950]");
   });
 
@@ -53,10 +53,10 @@ describe("PrSplitButton", () => {
     expect(screen.queryByRole("button", { name: /open pr menu/i })).not.toBeInTheDocument();
   });
 
-  it("calls onOpenPr with the url when View PR is clicked", () => {
+  it("calls onOpenPr with the url when PR badge is clicked", () => {
     const onOpenPr = vi.fn();
     render(<PrSplitButton pr={openPr} hasCommitsAhead={true} onCreatePr={noop} onOpenPr={onOpenPr} />);
-    fireEvent.click(screen.getByText(/view pr #42/i));
+    fireEvent.click(screen.getByText("PR #42"));
     expect(onOpenPr).toHaveBeenCalledWith("https://github.com/o/r/pull/42");
   });
 

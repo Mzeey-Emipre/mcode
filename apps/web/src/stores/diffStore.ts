@@ -71,7 +71,6 @@ interface DiffState {
   diffContent: string | null;
   /** Whether diff content is currently loading. */
   diffLoading: boolean;
-
   getRightPanel: (threadId: string) => RightPanelState;
   toggleRightPanel: (threadId: string) => void;
   showRightPanel: (threadId: string) => void;

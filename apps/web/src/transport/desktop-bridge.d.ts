@@ -10,6 +10,36 @@ interface IpcBridge {
   off(): void;
 }
 
+/** Data pushed from the main process when the user right-clicks in an editable area. */
+export interface SpellcheckContextMenuData {
+  readonly x: number;
+  readonly y: number;
+  readonly misspelledWord: string;
+  readonly suggestions: readonly string[];
+  readonly selectionText: string;
+  readonly isEditable: boolean;
+  readonly editFlags: {
+    readonly canCut: boolean;
+    readonly canCopy: boolean;
+    readonly canPaste: boolean;
+    readonly canSelectAll: boolean;
+  };
+}
+
+/** Spellcheck IPC bridge for context menu and dictionary management. */
+interface SpellcheckBridge {
+  /** Listen for context-menu events. Returns the listener ref for targeted cleanup. */
+  onContextMenu(callback: (data: SpellcheckContextMenuData) => void): (...args: unknown[]) => void;
+  /** Remove a specific context-menu listener. */
+  offContextMenu(listener: (...args: unknown[]) => void): void;
+  /** Replace the misspelled word under the cursor with the given word. */
+  replaceMisspelling(word: string): Promise<void>;
+  /** Add a word to the user's custom dictionary. */
+  addToDictionary(word: string): Promise<void>;
+  /** Paste from clipboard via Electron's native webContents.paste(). */
+  paste(): Promise<void>;
+}
+
 /**
  * Thin bridge exposed by the Electron preload script for native
  * desktop operations that cannot go through the WebSocket transport
@@ -47,6 +77,8 @@ interface DesktopBridge {
   openSettingsFile(): Promise<string>;
   /** Open keybindings.json in the OS default editor. Creates the file if it doesn't exist. */
   openKeybindingsFile(): Promise<string>;
+  /** Spellcheck context menu and dictionary management. */
+  spellcheck: SpellcheckBridge;
   /** IPC push transport relayed from the main process. */
   ipc: IpcBridge;
 }

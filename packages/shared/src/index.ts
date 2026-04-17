@@ -10,3 +10,11 @@ export {
   validateBranchName,
   sanitizeBranchForFolder,
 } from "./git/index.js";
+
+// Model effort normalization
+export {
+  isXhighEffortModel,
+  isMaxEffortModel,
+  supportsEffortParameter,
+  normalizeReasoningLevelForModel,
+} from "./model-effort/index.js";

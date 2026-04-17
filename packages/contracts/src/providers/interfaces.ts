@@ -1,5 +1,6 @@
 import type { AgentEvent } from "../events/agent-event.js";
 import type { AttachmentMeta } from "../models/attachment.js";
+import type { PermissionDecision, PermissionRequest } from "../models/permission.js";
 import type { ReasoningLevel } from "../models/settings.js";
 import type { ProviderModelInfo } from "./models.js";
 import type { ProviderUsageInfo } from "./usage.js";
@@ -33,6 +34,17 @@ export interface IAgentProvider {
     permissionMode: string;
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
+    /** USD budget cap for this session. Provider stops if exceeded. Undefined or 0 disables. */
+    maxBudgetUsd?: number;
+    /** Maximum agent turns for this session. Provider stops after this count. Undefined or 0 disables. */
+    maxTurns?: number;
+    /**
+     * Copilot-specific: name of the sub-agent to activate for this session.
+     * Built-in modes: "interactive" | "plan" | "autopilot".
+     * Custom agents: any name defined in user/project YAML config.
+     * Ignored by non-Copilot providers.
+     */
+    copilotAgent?: string;
   }): void | Promise<void>;
 
   /** Abort a running session. */
@@ -50,10 +62,23 @@ export interface IAgentProvider {
   /** Return current usage/quota state for this provider. */
   getUsage?(): Promise<ProviderUsageInfo>;
 
+  /**
+   * Resolve a pending permission request.
+   * Returns true if the requestId was found and resolved, false otherwise.
+   */
+  resolvePermission?(requestId: string, decision: PermissionDecision): boolean;
+
+  /** Return all pending permission requests for a given thread. */
+  listPendingPermissions?(threadId: string): PermissionRequest[];
+
   /** Subscribe to agent events. */
   on(event: "event", handler: (event: AgentEvent) => void): void;
   /** Subscribe to provider-level errors. */
   on(event: "error", handler: (error: Error) => void): void;
+  /** Subscribe to permission request events (emitted when canUseTool fires). */
+  on(event: "permission_request", handler: (request: PermissionRequest) => void): void;
+  /** Subscribe to permission resolved events (emitted on session stop cancellation). */
+  on(event: "permission_resolved", handler: (payload: { requestId: string; decision: PermissionDecision }) => void): void;
 }
 
 /**

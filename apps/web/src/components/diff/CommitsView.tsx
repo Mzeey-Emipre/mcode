@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { GitCommit } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
@@ -66,9 +65,13 @@ export function CommitsView() {
 
   if (!commits || commits.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 py-10">
-        <GitCommit size={22} className="text-muted-foreground/15" strokeWidth={1.5} />
-        <p className="text-[11px] text-muted-foreground/30">No commits found</p>
+      <div className="flex flex-col items-center justify-center gap-3 py-14">
+        <span aria-hidden="true" className="font-mono text-[28px] leading-none text-muted-foreground/15">
+          ◌
+        </span>
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
+          No commits found
+        </p>
       </div>
     );
   }

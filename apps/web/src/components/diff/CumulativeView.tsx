@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { TurnSnapshot } from "@mcode/contracts";
-import { FileEntry } from "./FileEntry";
+import { FileList } from "./FileList";
 
 /** Props for CumulativeView. */
 interface CumulativeViewProps {
@@ -22,20 +22,28 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
 
   if (files.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center py-8">
-        <p className="text-xs text-muted-foreground/40">No changes yet</p>
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 py-14">
+        <span aria-hidden="true" className="font-mono text-[28px] leading-none text-muted-foreground/15">
+          ⊘
+        </span>
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
+          No changes yet
+        </p>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col">
-      <div className="px-3 py-1.5 text-[10px] text-muted-foreground/50">
-        {files.length} file{files.length !== 1 ? "s" : ""} changed across {snapshots.length} turn{snapshots.length !== 1 ? "s" : ""}
+      <div className="flex items-baseline gap-2 px-3 py-2 border-b border-border/15">
+        <span className="font-mono text-[11px] tabular-nums text-foreground/70">
+          {files.length}
+        </span>
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground/55">
+          file{files.length !== 1 ? "s" : ""} · {snapshots.length} turn{snapshots.length !== 1 ? "s" : ""}
+        </span>
       </div>
-      {files.map((filePath) => (
-        <FileEntry key={filePath} filePath={filePath} source="cumulative" id={threadId} />
-      ))}
+      <FileList files={files} source="cumulative" id={threadId} />
     </div>
   );
 }

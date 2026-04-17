@@ -11,6 +11,7 @@ import { StreamingIndicator } from "./StreamingIndicator";
 import { StreamingCard } from "./StreamingCard";
 import { ToolCallSummary } from "./ToolCallSummary";
 import { TurnChangeSummary } from "./TurnChangeSummary";
+import { PermissionRequestCard } from "./PermissionRequestCard";
 import {
   buildStableItems,
   buildVolatileItems,
@@ -66,6 +67,17 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
           manualExpandRef={turnExpandRef}
         />
       );
+    case "permission-request":
+      return (
+        <PermissionRequestCard
+          requestId={item.requestId}
+          toolName={item.toolName}
+          input={item.input}
+          title={item.title}
+          settled={item.settled}
+          decision={item.decision}
+        />
+      );
   }
 }, (prev, next) =>
   prev.item.key === next.item.key
@@ -73,6 +85,37 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   && prev.turnExpandRef === next.turnExpandRef
   && prev.onBranch === next.onBranch,
 );
+
+/** Props for {@link ScrollToBottomButton}. */
+export interface ScrollToBottomButtonProps {
+  /** Whether new content arrived while the user was scrolled up. */
+  hasNewContent: boolean;
+  /** Called when the button is clicked. */
+  onScrollToBottom: () => void;
+}
+
+/**
+ * Floating button anchored at the bottom-center of the message list.
+ * Pulses when new content has arrived while the user is scrolled up.
+ */
+export function ScrollToBottomButton({ hasNewContent, onScrollToBottom }: ScrollToBottomButtonProps) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      onClick={onScrollToBottom}
+      className={`absolute bottom-4 left-1/2 -translate-x-1/2 h-7 w-7 rounded-md border backdrop-blur-sm transition-colors ${
+        hasNewContent
+          ? "border-primary/40 bg-primary/15 text-primary hover:bg-primary/25"
+          : "border-border/40 bg-background/80 text-muted-foreground/70 hover:bg-muted/40 hover:text-foreground"
+      }`}
+      aria-label={hasNewContent ? "New messages below" : "Scroll to bottom"}
+    >
+      <ArrowDown size={13} />
+    </Button>
+  );
+}
 
 /** Props for {@link MessageList}. */
 interface MessageListProps {
@@ -134,6 +177,10 @@ export function MessageList({ onBranch }: MessageListProps) {
     activeThreadId ? s.isLoadingMore[activeThreadId] ?? false : false,
   );
   const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
+  const currentThreadId = activeThreadId;
+  const permissions = useThreadStore(
+    useShallow((s) => currentThreadId ? (s.permissionsByThread[currentThreadId] ?? []) : []),
+  );
 
   const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
 
@@ -165,8 +212,8 @@ export function MessageList({ onBranch }: MessageListProps) {
   );
 
   const volatileItems = useMemo(
-    () => buildVolatileItems(toolCalls, isAgentRunning, agentStartTime, streamingText),
-    [toolCalls, isAgentRunning, agentStartTime, streamingText],
+    () => buildVolatileItems(toolCalls, isAgentRunning, agentStartTime, streamingText, permissions),
+    [toolCalls, isAgentRunning, agentStartTime, streamingText, permissions],
   );
 
   const hasToolCalls = toolCalls.length > 0;
@@ -355,7 +402,7 @@ export function MessageList({ onBranch }: MessageListProps) {
                 key={vi.key}
                 ref={virtualizer.measureElement}
                 data-index={vi.index}
-                className="absolute left-0 w-full px-8 py-3"
+                className="absolute left-0 w-full px-8 py-2"
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className="mx-auto w-full max-w-4xl">
@@ -370,31 +417,21 @@ export function MessageList({ onBranch }: MessageListProps) {
       {/* Loading spinner overlay for scroll-up pagination */}
       {isLoadingMore && (
         <div className="absolute top-2 left-1/2 z-10 -translate-x-1/2">
-          <div className="rounded-full bg-muted/80 p-2 shadow-md ring-1 ring-border/40 backdrop-blur-sm">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <div className="rounded-md border border-border/40 bg-background/80 px-2 py-1 backdrop-blur-sm">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/70" />
           </div>
         </div>
       )}
 
       {/* Scroll-to-bottom floating button — pulses when new content arrives */}
       {showScrollBtn && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => {
+        <ScrollToBottomButton
+          hasNewContent={hasNewContent}
+          onScrollToBottom={() => {
             setHasNewContent(false);
             scrollToBottom(true);
           }}
-          className={`absolute bottom-4 left-1/2 -translate-x-1/2 h-8 w-8 rounded-full shadow-md ring-1 backdrop-blur-sm transition-all hover:bg-muted hover:text-foreground ${
-            hasNewContent
-              ? "bg-primary text-primary-foreground ring-primary/50 animate-bounce"
-              : "bg-muted/80 text-muted-foreground ring-border/40"
-          }`}
-          aria-label={hasNewContent ? "New messages below" : "Scroll to bottom"}
-        >
-          <ArrowDown size={14} />
-        </Button>
+        />
       )}
     </div>
   );

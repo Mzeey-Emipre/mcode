@@ -1,10 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Minus } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type { GitCommit } from "@mcode/contracts";
-import { FileEntry } from "./FileEntry";
+import { FileList } from "./FileList";
 
 /** Props for CommitEntry. */
 interface CommitEntryProps {
@@ -33,23 +31,10 @@ function getInitials(author: string): string {
     .toUpperCase();
 }
 
-const AVATAR_PALETTES = [
-  "bg-violet-500/20 text-violet-600 dark:text-violet-400",
-  "bg-blue-500/20 text-blue-600 dark:text-blue-400",
-  "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400",
-  "bg-amber-500/20 text-amber-600 dark:text-amber-400",
-  "bg-rose-500/20 text-rose-600 dark:text-rose-400",
-  "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
-];
-
-/** Deterministic avatar color from an author string. */
-function getAvatarColor(author: string): string {
-  let hash = 0;
-  for (const c of author) hash = ((hash * 31) + c.charCodeAt(0)) >>> 0;
-  return AVATAR_PALETTES[hash % AVATAR_PALETTES.length];
-}
-
-/** Single commit accordion: author avatar, SHA, message, relative time, and lazy file list. */
+/**
+ * Single commit row. Avatar is a quiet typographic mark (initials in muted square),
+ * not a colored chip. Hierarchy: SHA (mono leading) → message → time.
+ */
 export function CommitEntry({ commit }: CommitEntryProps) {
   const [expanded, setExpanded] = useState(false);
   const [files, setFiles] = useState<string[] | null>(null);
@@ -72,48 +57,56 @@ export function CommitEntry({ commit }: CommitEntryProps) {
   }, [expanded, files, loadFiles]);
 
   const initials = getInitials(commit.author);
-  const avatarColor = getAvatarColor(commit.author);
 
   return (
-    <div className={`border-b border-border/30 ${expanded ? "bg-muted/5" : ""}`}>
+    <div className={`border-b border-border/15 ${expanded ? "bg-muted/[0.04]" : ""}`}>
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
-        className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/20 transition-colors"
+        className="group flex w-full items-baseline gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/[0.08]"
       >
-        {expanded ? (
-          <Minus size={11} className="shrink-0 text-muted-foreground/70" />
-        ) : (
-          <Plus size={11} className="shrink-0 text-muted-foreground/70" />
-        )}
+        {/* Leading SHA — typographic anchor */}
+        <span className="shrink-0 font-mono text-[11px] text-foreground/55 group-hover:text-foreground/75 transition-colors tabular-nums">
+          {commit.shortSha}
+        </span>
 
-        {/* Author avatar */}
+        {/* Commit message */}
+        <span className="flex-1 min-w-0 truncate text-[11.5px] text-foreground/80">
+          {commit.message}
+        </span>
+
+        {/* Author initials — quiet square */}
         <span
-          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold ${avatarColor}`}
+          className="shrink-0 inline-flex h-[15px] min-w-[15px] items-center justify-center rounded-[2px] bg-muted/60 px-1 font-mono text-[8.5px] tracking-tight text-muted-foreground/75"
           title={commit.author}
         >
           {initials}
         </span>
 
-        {/* Commit message */}
-        <span className="flex-1 min-w-0 truncate text-[11px] text-foreground/80">
-          {commit.message}
+        {/* File count — quiet typographic label */}
+        {files !== null && files.length > 0 && (
+          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/55">
+            {files.length} file{files.length === 1 ? "" : "s"}
+          </span>
+        )}
+
+        {/* Relative time */}
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/45">
+          {relativeTime(commit.date)}
         </span>
 
-        {/* File count badge (shown once files have loaded) + SHA + time */}
-        <span className="flex shrink-0 items-center gap-1.5">
-          {files !== null && files.length > 0 && (
-            <Badge variant="ghost" size="sm" className="font-mono text-muted-foreground/60">
-              {files.length} {files.length === 1 ? "file" : "files"}
-            </Badge>
-          )}
-          <span className="font-mono text-[9px] text-muted-foreground/80">{commit.shortSha}</span>
-          <span className="text-[9px] text-muted-foreground/70">{relativeTime(commit.date)}</span>
+        <span
+          aria-hidden="true"
+          className={`shrink-0 font-mono text-[11px] leading-none text-muted-foreground/35 transition-transform duration-150 ${
+            expanded ? "rotate-90" : ""
+          }`}
+        >
+          ›
         </span>
       </button>
 
       {expanded && (
-        <div className="pb-0.5">
+        <div className="pb-1">
           {files === null ? (
             <div className="flex items-center gap-1.5 px-7 py-2">
               {[0, 150, 300].map((delay) => (
@@ -125,11 +118,11 @@ export function CommitEntry({ commit }: CommitEntryProps) {
               ))}
             </div>
           ) : files.length === 0 ? (
-            <p className="px-7 py-2 text-[10px] text-muted-foreground">No files changed</p>
+            <p className="px-7 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground/40">
+              No files changed
+            </p>
           ) : (
-            files.map((filePath) => (
-              <FileEntry key={filePath} filePath={filePath} source="commit" id={commit.sha} />
-            ))
+            <FileList files={files} source="commit" id={commit.sha} />
           )}
         </div>
       )}

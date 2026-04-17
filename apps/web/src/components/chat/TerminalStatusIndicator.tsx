@@ -29,7 +29,8 @@ export function TerminalStatusIndicator() {
         className="h-3 w-3 animate-spin text-muted-foreground"
         style={SLOW_SPIN_STYLE}
       />
-      <span className="animate-shimmer-text font-medium">
+      <span className="flex items-center gap-1.5 text-muted-foreground font-medium">
+        <span className="size-1.5 rounded-full bg-primary animate-pulse" />
         {count} active terminal{count !== 1 ? "s" : ""}
       </span>
     </button>

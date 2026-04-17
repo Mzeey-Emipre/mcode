@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Github, ChevronDown, GitPullRequest } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { ChecksPopover } from "./ChecksPopover";
+import { getCiVisual } from "@/lib/ci-status";
+import type { ChecksStatus } from "@mcode/contracts";
 
 /** Props for {@link PrSplitButton}. */
 interface PrSplitButtonProps {
@@ -12,6 +16,14 @@ interface PrSplitButtonProps {
   onCreatePr: () => void;
   /** Called with the PR URL when the user wants to open it in the browser. */
   onOpenPr: (url: string) => void;
+  /** CI check status for this thread, if available. */
+  checks?: ChecksStatus | null;
+  /** Thread ID for manual refresh via ChecksPopover. */
+  threadId?: string;
+  /** PR title shown in ChecksPopover header. */
+  prTitle?: string;
+  /** PR author shown in ChecksPopover header. */
+  prAuthor?: string;
 }
 
 /**
@@ -19,8 +31,9 @@ interface PrSplitButtonProps {
  * When no PR exists, renders a "Create PR" button (disabled until commits are detected).
  * When a PR exists, renders a primary action button coloured by state plus an optional
  * chevron that opens a dropdown for secondary actions (merged/closed only).
+ * When CI checks are available on an open PR, wraps the primary button in a ChecksPopover.
  */
-export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr }: PrSplitButtonProps) {
+export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, checks, threadId, prTitle, prAuthor }: PrSplitButtonProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -55,33 +68,80 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr }: PrS
 
   const state = pr.state.toLowerCase();
 
-  const stateColour =
-    state === "merged"
+  // When CI checks are active on an open PR, use the CI colour; otherwise use the PR state colour.
+  const hasActiveChecks = checks != null && checks.aggregate !== "no_checks" && state === "open";
+  const ciVisual = hasActiveChecks ? getCiVisual(checks!.aggregate) : null;
+
+  const stateColour = ciVisual
+    ? `${ciVisual.color} hover:opacity-80`
+    : state === "merged"
       ? "text-[#a371f7] hover:text-[#bc8fff]"
       : state === "closed"
         ? "text-[#f85149] hover:text-[#ff6b63]"
         : "text-[#3fb950] hover:text-[#5ee375]";
 
-  const label =
-    state === "merged"
-      ? `PR #${pr.number} merged`
-      : state === "closed"
-        ? `PR #${pr.number} closed`
-        : `View PR #${pr.number}`;
+  // When CI is active, show just the PR number — the status dot carries the state signal.
+  const label = state === "merged"
+    ? `PR #${pr.number} merged`
+    : state === "closed"
+      ? `PR #${pr.number} closed`
+      : `PR #${pr.number}`;
 
   const showChevron = state === "merged" || state === "closed";
+
+  // Whether to wrap the primary button in ChecksPopover instead of navigating to GitHub
+  const usePopover = hasActiveChecks && threadId != null;
+
+  // Glow dot shown next to the PR number when CI checks are active.
+  const statusDot = hasActiveChecks ? (
+    <span
+      className={cn(
+        "w-1.5 h-1.5 rounded-full shrink-0",
+        checks!.aggregate === "passing" && "bg-green-400",
+        checks!.aggregate === "failing" && "bg-red-400",
+        checks!.aggregate === "pending" && "bg-amber-400 animate-pulse",
+      )}
+      style={
+        checks!.aggregate === "passing"
+          ? { boxShadow: "0 0 5px 1px rgba(74,222,128,0.5)" }
+          : checks!.aggregate === "failing"
+            ? { boxShadow: "0 0 5px 1px rgba(248,113,113,0.5)" }
+            : checks!.aggregate === "pending"
+              ? { boxShadow: "0 0 5px 1px rgba(251,191,36,0.45)" }
+              : undefined
+      }
+    />
+  ) : null;
+
+  const primaryButton = (
+    <button
+      className={`inline-flex items-center gap-1.5 px-2 h-6 text-xs bg-muted/10 hover:bg-muted/20 transition-colors ${stateColour}`}
+      title={ciVisual?.label}
+      onClick={usePopover ? undefined : () => onOpenPr(pr.url)}
+    >
+      <Github size={12} className="opacity-80 flex-shrink-0" />
+      <span>{label}</span>
+      {statusDot}
+    </button>
+  );
 
   return (
     <div ref={containerRef} className="relative inline-flex">
       <div className="inline-flex rounded">
-        {/* Primary action */}
-        <button
-          className={`inline-flex items-center gap-1.5 px-2 h-6 text-xs bg-muted/10 hover:bg-muted/20 transition-colors ${stateColour}`}
-          onClick={() => onOpenPr(pr.url)}
-        >
-          <Github size={12} className="opacity-80 flex-shrink-0" />
-          <span>{label}</span>
-        </button>
+        {/* Primary action — wrapped in ChecksPopover when CI is active on an open PR */}
+        {usePopover ? (
+          <ChecksPopover
+            threadId={threadId!}
+            prUrl={pr.url}
+            prTitle={prTitle}
+            prAuthor={prAuthor}
+            checks={checks!}
+          >
+            {primaryButton}
+          </ChecksPopover>
+        ) : (
+          primaryButton
+        )}
 
         {/* Chevron — only for merged/closed */}
         {showChevron && (

@@ -38,6 +38,22 @@ bun run dev:desktop
 - Zustand
 - Bun
 
+## Installing Pre-built Downloads
+
+Mcode builds are currently **unsigned** while the project is in early development. Your OS will warn you before running them. This is expected and the binaries are safe — they are built in CI directly from this public repository (see [`.github/workflows/build-release.yml`](.github/workflows/build-release.yml)).
+
+**Windows:** SmartScreen will show *"Windows protected your PC"*. Click **More info** → **Run anyway**.
+
+**macOS:** Gatekeeper will say the app *"cannot be opened because the developer cannot be verified"*. Right-click the app → **Open** → **Open** in the dialog. Or run:
+
+```bash
+xattr -d com.apple.quarantine /Applications/Mcode.app
+```
+
+**Linux:** No warning. Make the AppImage executable with `chmod +x Mcode-*.AppImage`.
+
+Proper code signing (Azure Trusted Signing for Windows, Apple Developer ID + notarization for macOS) is planned once the project matures.
+
 ## Notes
 
 This project is in very early development. Expect bugs, breaking changes, and incomplete features. Use at your own risk for now.

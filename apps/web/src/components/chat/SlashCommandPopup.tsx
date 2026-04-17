@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import { Terminal, Zap, Puzzle } from "lucide-react";
+import { Terminal, Zap, Puzzle, Sparkles } from "lucide-react";
 import { NAMESPACE_BADGE_STYLES } from "@/lib/slash-command-styles";
 import type { Command } from "./useSlashCommand";
 
@@ -157,8 +157,8 @@ function CommandRow({
       className={cn(
         "flex w-full items-center gap-3 px-3 py-2 text-left transition-colors",
         selected
-          ? "bg-accent border-l-2 border-primary"
-          : "hover:bg-accent/50 border-l-2 border-transparent",
+          ? "bg-accent"
+          : "hover:bg-accent/50",
       )}
     >
       {/* Icon column */}
@@ -167,7 +167,9 @@ function CommandRow({
           <Zap size={12} />
         ) : cmd.namespace === "plugin" ? (
           <Puzzle size={12} />
-        ) : /* skill | command */ (
+        ) : cmd.namespace === "skill" ? (
+          <Sparkles size={12} />
+        ) : (
           <Terminal size={12} />
         )}
       </span>

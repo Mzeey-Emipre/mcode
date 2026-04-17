@@ -14,7 +14,7 @@ export function SettingsView({ section }: SettingsViewProps) {
 
   return (
     <div className="h-full overflow-y-auto bg-background">
-      <div className="mx-auto max-w-4xl px-10 py-7">
+      <div className="mx-auto max-w-4xl px-8 py-8">
         <ActiveSection />
       </div>
     </div>

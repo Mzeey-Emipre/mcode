@@ -64,7 +64,7 @@ function ImageThumbnail({ src, name, single }: { src: string; name: string; sing
         <img
           src={src}
           alt={name}
-          className="block h-auto max-h-[160px] w-full object-contain bg-black/20"
+          className="block h-auto max-h-[160px] w-full object-contain bg-muted"
           loading="lazy"
           onError={handleError}
           style={{ imageOrientation: "from-image" }}
@@ -198,7 +198,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
 
           {/* Text bubble — only if there's text or file attachments */}
           {(textContent.trim() || fileAttachments.length > 0) && (
-            <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground shadow-md shadow-primary/25">
+            <div className="rounded-lg rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground shadow-sm shadow-primary/15">
               {fileAttachments.length > 0 && (
                 <div className="mb-2 space-y-1">
                   {fileAttachments.map((file) => (
@@ -221,10 +221,12 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-1.5 pr-1">
-            {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
-            {textContent.trim() && <CopyButton content={textContent} />}
-            <span className="text-[11px] text-muted-foreground/80">{formattedTime}</span>
+          <div className="flex flex-col items-end gap-0.5 pr-1">
+            <div className="flex items-center gap-1.5">
+              {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
+              {textContent.trim() && <CopyButton content={textContent} />}
+            </div>
+            <span className="font-mono text-[10px] tabular-nums text-muted-foreground/55">{formattedTime}</span>
           </div>
         </div>
       </div>
@@ -234,6 +236,10 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
   // Assistant message — borderless prose flowing directly on the page
   return (
     <div className="group/msg space-y-2">
+      <div className="flex items-baseline gap-2">
+        <span aria-hidden="true" className="font-mono text-[10px] leading-none text-muted-foreground/50">▸</span>
+        <span className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted-foreground/55">assistant</span>
+      </div>
       <div className="text-sm text-foreground">
         <Suspense fallback={null}>
           <LazyMarkdownContent content={message.content} isStreaming={false} />
@@ -242,19 +248,15 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch }: 
       <div className="flex items-center gap-3 px-1">
         {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
         <CopyButton content={textContent} />
-        {message.tokens_used != null && (
-          <span className="text-xs text-muted-foreground/70 transition-opacity group-hover/msg:text-muted-foreground">
-            {message.tokens_used.toLocaleString()} tokens
+        {(message.tokens_used != null || message.cost_usd != null || formattedTime) && (
+          <span className="font-mono text-[10px] tabular-nums text-muted-foreground/55 transition-colors group-hover/msg:text-muted-foreground/80">
+            {[
+              message.tokens_used != null ? `${message.tokens_used.toLocaleString()} tok` : null,
+              message.cost_usd != null ? `$${message.cost_usd.toFixed(4)}` : null,
+              formattedTime,
+            ].filter(Boolean).join(" · ")}
           </span>
         )}
-        {message.cost_usd != null && (
-          <span className="text-xs text-muted-foreground/70 transition-opacity group-hover/msg:text-muted-foreground">
-            ${message.cost_usd.toFixed(4)}
-          </span>
-        )}
-        <span className="text-xs text-muted-foreground/70 transition-opacity group-hover/msg:text-muted-foreground">
-          {formattedTime}
-        </span>
       </div>
     </div>
   );

@@ -15,6 +15,8 @@ export interface QueuedMessage {
   reasoningLevel?: ReasoningLevel;
   /** Provider to use; undefined means inherit the thread's stored provider. */
   provider?: string;
+  /** Copilot sub-agent to use; undefined means inherit the thread's stored agent. */
+  copilotAgent?: string;
   /** Unix timestamp (ms) when this message was enqueued. */
   queuedAt: number;
 }

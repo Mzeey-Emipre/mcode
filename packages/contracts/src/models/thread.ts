@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { lazySchema } from "../utils/lazySchema.js";
 import { ThreadStatusSchema, ThreadModeSchema, InteractionModeSchema, PermissionModeSchema } from "./enums.js";
 import { ReasoningLevelSchema } from "./settings.js";
 
 /** Thread schema matching the SQLite row shape. */
-export const ThreadSchema = z.object({
+export const ThreadSchema = lazySchema(() =>
+  z.object({
   id: z.string(),
   workspace_id: z.string(),
   title: z.string(),
@@ -34,12 +36,15 @@ export const ThreadSchema = z.object({
   interaction_mode: InteractionModeSchema.nullable(),
   /** Permission mode last used (full or supervised). */
   permission_mode: PermissionModeSchema.nullable(),
+  /** Selected Copilot sub-agent name. Null means provider default (interactive). */
+  copilot_agent: z.string().nullable(),
   /** ID of the parent thread this was branched from. Null for root threads. */
   parent_thread_id: z.string().nullable(),
   /** ID of the message in the parent thread that marks the fork point. */
   forked_from_message_id: z.string().nullable(),
   /** Most recent compaction summary from the AI provider. Used to seed branched thread replays. */
   last_compact_summary: z.string().nullable(),
-});
+  }),
+);
 /** Thread record from the database. */
-export type Thread = z.infer<typeof ThreadSchema>;
+export type Thread = z.infer<ReturnType<typeof ThreadSchema>>;

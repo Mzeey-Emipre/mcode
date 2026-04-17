@@ -165,4 +165,5 @@ describe("diffStore", () => {
       expect(state.diffContent).toBe("other diff");
     });
   });
+
 });

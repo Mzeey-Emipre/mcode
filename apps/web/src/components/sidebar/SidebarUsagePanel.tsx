@@ -37,17 +37,17 @@ function QuotaRow({ cat }: { cat: QuotaCategory }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate text-[11px] text-gray-500">{cat.label}</span>
+        <span className="truncate text-[11px] text-muted-foreground">{cat.label}</span>
         {cat.isUnlimited ? (
-          <span className="shrink-0 text-[11px] text-gray-300">∞</span>
+          <span className="shrink-0 text-[11px] text-muted-foreground/40">∞</span>
         ) : (
-          <span className="shrink-0 font-mono text-[10px] tabular-nums text-gray-400">
+          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
             {abbrev(cat.used)}&thinsp;/&thinsp;{abbrev(cat.total ?? 0)}
           </span>
         )}
       </div>
       {!cat.isUnlimited && (
-        <div className="h-[3px] w-full rounded-full bg-gray-100">
+        <div className="h-[3px] w-full rounded-full bg-muted">
           <div
             className={cn(
               "h-[3px] rounded-full transition-[width] duration-700 ease-out",
@@ -185,29 +185,28 @@ export function SidebarUsagePanel() {
         </div>
       </PopoverTrigger>
 
-      {/* ── White hover panel ── */}
       <PopoverContent
         side="right"
         align="end"
         sideOffset={12}
-        className="w-60 p-0 !bg-white !border-black/[0.06] !shadow-[0_16px_48px_rgba(0,0,0,0.14),0_2px_8px_rgba(0,0,0,0.06)] overflow-hidden !rounded-2xl"
+        className="w-60 overflow-hidden rounded-lg border border-border bg-popover p-0 shadow-xl"
         onMouseEnter={show}
         onMouseLeave={hide}
       >
         {/* Header */}
         <div className="flex items-start justify-between px-4 pt-4 pb-3">
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold capitalize tracking-tight text-gray-900 leading-none">
+            <div className="text-[13px] font-semibold capitalize tracking-tight text-foreground leading-none">
               {providerId}
             </div>
             {displayModel && (
-              <div className="mt-0.5 truncate font-mono text-[10px] text-gray-400 leading-tight">
+              <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/70 leading-tight">
                 {displayModel.split("/").pop()}
               </div>
             )}
           </div>
           {resetDays !== undefined && (
-            <span className="shrink-0 ml-3 mt-0.5 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] tabular-nums text-gray-500">
+            <span className="shrink-0 ml-3 mt-0.5 rounded-full bg-muted px-2 py-0.5 text-[10px] tabular-nums text-muted-foreground">
               {resetDays}d left
             </span>
           )}
@@ -215,7 +214,7 @@ export function SidebarUsagePanel() {
 
         {/* Quota — all categories */}
         {categories.length > 0 && (
-          <div className="border-t border-gray-100 px-4 py-3 space-y-3">
+          <div className="border-t border-border px-4 py-3 space-y-3">
             {categories.map((cat) => (
               <QuotaRow key={cat.label} cat={cat} />
             ))}
@@ -224,11 +223,11 @@ export function SidebarUsagePanel() {
 
         {/* Session stats — cost, tier, turns, duration */}
         {(sessionCost != null || serviceTier || numTurns != null || durationMs != null) && (
-          <div className="border-t border-gray-100 px-4 py-3 space-y-2">
+          <div className="border-t border-border px-4 py-3 space-y-2">
             {sessionCost != null && (
               <div className="flex items-baseline justify-between">
-                <span className="text-[10px] text-gray-400">session cost</span>
-                <span className="font-mono text-[12px] font-medium tabular-nums text-gray-700">
+                <span className="text-[10px] text-muted-foreground/70">session cost</span>
+                <span className="font-mono text-[12px] font-medium tabular-nums text-foreground/80">
                   ${sessionCost.toFixed(4)}
                 </span>
               </div>
@@ -236,19 +235,19 @@ export function SidebarUsagePanel() {
             {(numTurns != null || durationMs != null || serviceTier) && (
               <div className="flex items-center gap-2 flex-wrap">
                 {numTurns != null && (
-                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] tabular-nums text-gray-500">
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] tabular-nums text-muted-foreground">
                     {numTurns} {numTurns === 1 ? "turn" : "turns"}
                   </span>
                 )}
                 {durationMs != null && (
-                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] tabular-nums text-gray-500">
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] tabular-nums text-muted-foreground">
                     {durationMs >= 60_000
                       ? `${Math.floor(durationMs / 60_000)}m ${Math.round((durationMs % 60_000) / 1000)}s`
                       : `${(durationMs / 1000).toFixed(1)}s`}
                   </span>
                 )}
                 {serviceTier && serviceTier !== "standard" && (
-                  <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-500 capitalize">
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary capitalize">
                     {serviceTier}
                   </span>
                 )}
@@ -259,16 +258,16 @@ export function SidebarUsagePanel() {
 
         {/* Context window */}
         {hasContext && (
-          <div className="border-t border-gray-100 px-4 py-3 space-y-1.5">
+          <div className="border-t border-border px-4 py-3 space-y-1.5">
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[11px] text-gray-500">context</span>
-              <span className="font-mono text-[10px] tabular-nums text-gray-400">
+              <span className="text-[11px] text-muted-foreground">context</span>
+              <span className="font-mono text-[10px] tabular-nums text-muted-foreground/70">
                 {abbrev(ctxTokens)}&thinsp;/&thinsp;{abbrev(ctxWindow!)}
               </span>
             </div>
-            <div className="h-[3px] w-full rounded-full bg-gray-100">
+            <div className="h-[3px] w-full rounded-full bg-muted">
               <div
-                className="h-[3px] rounded-full bg-gray-300 transition-[width] duration-700 ease-out"
+                className="h-[3px] rounded-full bg-muted-foreground/30 transition-[width] duration-700 ease-out"
                 style={{ width: `${Math.min((ctxTokens / ctxWindow!) * 100, 100)}%` }}
               />
             </div>
@@ -277,39 +276,39 @@ export function SidebarUsagePanel() {
 
         {/* Last turn — clean stat grid */}
         {hasTurn && (
-          <div className="border-t border-gray-100 px-4 py-3">
-            <div className="text-[9px] font-medium uppercase tracking-wider text-gray-300 mb-2">last turn</div>
+          <div className="border-t border-border px-4 py-3">
+            <div className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/40 mb-2">last turn</div>
             <div className="flex items-end gap-4">
               {tokensIn > 0 && (
                 <div>
-                  <span className="font-mono text-[14px] font-semibold leading-none text-gray-800">
+                  <span className="font-mono text-[14px] font-semibold leading-none text-foreground/80">
                     {abbrev(tokensIn)}
                   </span>
-                  <div className="text-[9px] text-gray-400 mt-0.5">in</div>
+                  <div className="text-[9px] text-muted-foreground/70 mt-0.5">in</div>
                 </div>
               )}
               {tokensOut > 0 && (
                 <div>
-                  <span className="font-mono text-[14px] font-semibold leading-none text-gray-800">
+                  <span className="font-mono text-[14px] font-semibold leading-none text-foreground/80">
                     {abbrev(tokensOut)}
                   </span>
-                  <div className="text-[9px] text-gray-400 mt-0.5">out</div>
+                  <div className="text-[9px] text-muted-foreground/70 mt-0.5">out</div>
                 </div>
               )}
               {cacheRead > 0 && (
                 <div>
-                  <span className="font-mono text-[14px] font-semibold leading-none text-gray-800">
+                  <span className="font-mono text-[14px] font-semibold leading-none text-foreground/80">
                     {abbrev(cacheRead)}
                   </span>
-                  <div className="text-[9px] text-gray-400 mt-0.5">cached</div>
+                  <div className="text-[9px] text-muted-foreground/70 mt-0.5">cached</div>
                 </div>
               )}
               {cacheWrite > 0 && (
                 <div>
-                  <span className="font-mono text-[14px] font-semibold leading-none text-gray-800">
+                  <span className="font-mono text-[14px] font-semibold leading-none text-foreground/80">
                     {abbrev(cacheWrite)}
                   </span>
-                  <div className="text-[9px] text-gray-400 mt-0.5">written</div>
+                  <div className="text-[9px] text-muted-foreground/70 mt-0.5">written</div>
                 </div>
               )}
             </div>
@@ -318,14 +317,14 @@ export function SidebarUsagePanel() {
 
         {/* No data at all yet for this provider */}
         {usageInfo && categories.length === 0 && sessionCost == null && numTurns == null && !hasTurn && !hasContext && (
-          <div className="border-t border-gray-100 px-4 py-3">
-            <span className="text-[11px] text-gray-400">Send a message to see usage</span>
+          <div className="border-t border-border px-4 py-3">
+            <span className="text-[11px] text-muted-foreground/70">Send a message to see usage</span>
           </div>
         )}
 
         {!usageInfo && !hasContext && (
-          <div className="border-t border-gray-100 px-4 py-3">
-            <span className="text-[11px] text-gray-400">Loading…</span>
+          <div className="border-t border-border px-4 py-3">
+            <span className="text-[11px] text-muted-foreground/70">Loading…</span>
           </div>
         )}
       </PopoverContent>

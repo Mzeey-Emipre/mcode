@@ -49,47 +49,46 @@ export function TaskGroup({ name, tasks, hideHeader }: TaskGroupProps) {
 
   return (
     <div>
-      {/* Group header */}
+      {/* Group header — small caps with a confident hairline rule, status carried by ratio color */}
       <button
         type="button"
         aria-expanded={expanded}
         aria-controls={panelId}
         onClick={() => { userToggledRef.current = true; setExpanded((p) => !p); }}
-        className="group flex w-full items-center gap-1.5 px-3 py-[5px] cursor-pointer hover:bg-muted/[0.06] transition-colors duration-100"
+        className="group flex w-full items-center gap-2 px-3 py-2 cursor-pointer hover:bg-muted/[0.05] transition-colors duration-100"
       >
         <ChevronRight
-          size={9}
+          size={10}
           className={`shrink-0 transition-transform duration-150 ${
             expanded ? "rotate-90" : ""
-          } ${
-            hasActive
-              ? "text-primary/40"
-              : allDone
-                ? "text-muted-foreground/15"
-                : "text-muted-foreground/25"
-          }`}
+          } text-muted-foreground/35`}
         />
         <span
-          className={`text-[10px] font-semibold tracking-[0.08em] uppercase transition-colors duration-150 ${
+          className={`text-[11px] font-medium tracking-tight transition-colors duration-150 ${
             hasActive
-              ? "text-primary/60"
+              ? "text-foreground/85"
               : allDone
-                ? "text-muted-foreground/25"
-                : "text-muted-foreground/40"
+                ? "text-muted-foreground/40"
+                : "text-foreground/65"
           }`}
         >
           {name}
         </span>
+        {/* Hairline that fills the remaining width — visually anchors the section */}
         <span
-          className={`ml-auto tabular-nums text-[10px] transition-colors duration-150 ${
+          aria-hidden="true"
+          className="h-px flex-1 bg-border/30"
+        />
+        <span
+          className={`tabular-nums font-mono text-[10px] transition-colors duration-150 ${
             hasActive
-              ? "text-primary/40"
+              ? "text-primary/75"
               : allDone
-                ? "text-muted-foreground/20"
-                : "text-muted-foreground/30"
+                ? "text-[var(--diff-add-strong)]/60"
+                : "text-muted-foreground/45"
           }`}
         >
-          {completedCount}/{tasks.length}
+          {completedCount}<span className="text-muted-foreground/25">/</span>{tasks.length}
         </span>
       </button>
 

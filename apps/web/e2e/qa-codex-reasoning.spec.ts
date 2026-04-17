@@ -19,7 +19,8 @@ function makeDefaultSettings(provider: string, modelId: string, reasoning: strin
     notifications: { enabled: false },
     worktree: { naming: { mode: "auto", aiConfirmation: true } },
     server: { memory: { heapMb: 96 } },
-    provider: { cli: { codex: "", claude: "" } },
+    provider: { cli: { codex: "", claude: "", copilot: "" } },
+    prDraft: { provider: "", model: "" },
   };
 }
 
@@ -128,8 +129,9 @@ test.describe("Codex reasoning selector QA", () => {
     await expect(xhighRadio).toHaveAttribute("aria-checked", "true");
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "qa-03-xhigh-selected.png") });
 
-    // Switch back to Claude
-    const claudeRadio = page.getByRole("radio", { name: "Claude" });
+    // Switch back to Claude (scoped to the first Provider radiogroup to avoid
+    // ambiguity with the PR Draft provider row which also contains "Claude")
+    const claudeRadio = page.locator('[role="radiogroup"]').first().getByRole("radio", { name: "Claude" });
     await claudeRadio.click();
     await page.waitForTimeout(1000);
 
