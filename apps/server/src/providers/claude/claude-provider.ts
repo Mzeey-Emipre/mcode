@@ -38,6 +38,10 @@ interface SessionEntry {
   lastUsedAt: number;
   /** When true, the finally block in startStreamLoop should not emit an "ended" event. */
   suppressEnded?: boolean;
+  /** Tool-use IDs whose matching tool_result has not yet been received.
+   *  While this set is non-empty, evictIdleSessions() must skip the session
+   *  regardless of how long it has been since an SDK message arrived. */
+  pendingToolUses: Set<string>;
 }
 
 /**
@@ -557,6 +561,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       closeQueue: queue.close,
       model: resolvedModel,
       lastUsedAt: Date.now(),
+      pendingToolUses: new Set<string>(),
     };
     this.sessions.set(sessionId, entry);
 
@@ -606,6 +611,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
           closeQueue: freshQueue.close,
           model: resolvedModel,
           lastUsedAt: Date.now(),
+          pendingToolUses: new Set<string>(),
         };
         this.sessions.set(sessionId, freshEntry);
         this.startStreamLoop(sessionId, freshQ);
@@ -736,11 +742,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
               for (const block of contentBlocks) {
                 if (block.type === "tool_use") {
+                  const toolId = (block.id as string) || "";
+                  if (toolId) {
+                    const entry = this.sessions.get(sessionId);
+                    entry?.pendingToolUses.add(toolId);
+                  }
                   this.emit("event", {
                     type: AgentEventType.ToolUse,
                     threadId,
-                    toolCallId:
-                      (block.id as string) || "",
+                    toolCallId: toolId,
                     toolName:
                       (block.name as string) || "unknown",
                     toolInput:
@@ -923,10 +933,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             }
 
             case "tool_use": {
+              const toolId = (anyMsg.id as string) || "";
+              if (toolId) {
+                const entry = this.sessions.get(sessionId);
+                entry?.pendingToolUses.add(toolId);
+              }
               this.emit("event", {
                 type: AgentEventType.ToolUse,
                 threadId,
-                toolCallId: (anyMsg.id as string) || "",
+                toolCallId: toolId,
                 toolName:
                   (anyMsg.tool_name as string) ||
                   (anyMsg.name as string) ||
@@ -946,18 +961,22 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             }
 
             case "tool_result": {
+              const toolUseId = (anyMsg.tool_use_id as string) || "";
               const content = anyMsg.content;
               this.emit("event", {
                 type: AgentEventType.ToolResult,
                 threadId,
-                toolCallId:
-                  (anyMsg.tool_use_id as string) || "",
+                toolCallId: toolUseId,
                 output:
                   typeof content === "string"
                     ? content
                     : JSON.stringify(content ?? ""),
                 isError: Boolean(anyMsg.is_error),
               } satisfies AgentEvent);
+              if (toolUseId) {
+                const entry = this.sessions.get(sessionId);
+                entry?.pendingToolUses.delete(toolUseId);
+              }
               break;
             }
 
@@ -1142,6 +1161,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const now = Date.now();
     for (const [sessionId, entry] of this.sessions) {
       if (now - entry.lastUsedAt > IDLE_TTL_MS) {
+        // Skip sessions with in-flight tool calls — a long-running tool (build,
+        // test suite, large file op) may not emit any SDK message for minutes.
+        if (entry.pendingToolUses.size > 0) {
+          logger.debug("Skipping eviction: pending tool calls", {
+            sessionId,
+            pending: entry.pendingToolUses.size,
+          });
+          continue;
+        }
         // Never evict a session that is actively awaiting a user permission response —
         // the user may be on another thread and is about to respond.
         const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
