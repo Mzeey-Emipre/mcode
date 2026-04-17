@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Plus, Minus, ChevronsDownUp } from "lucide-react";
+import { Plus, Minus, ChevronsDownUp, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
@@ -7,6 +7,7 @@ import { parseDiffLines } from "@/lib/diff-parser";
 import { langFromPath } from "@/lib/lang-from-path";
 import { UnifiedDiff } from "./UnifiedDiff";
 import { SideBySideDiff } from "./SideBySideDiff";
+import { DiffPreview } from "./DiffPreview";
 
 /** Props for FileEntry. */
 interface FileEntryProps {
@@ -77,17 +78,18 @@ type DiffState = null | { loading: true } | { loading: false; data: string };
 export function FileEntry({ filePath, source, id }: FileEntryProps) {
   const [expanded, setExpanded] = useState(false);
   const [showAllLines, setShowAllLines] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
   const [diffState, setDiffState] = useState<DiffState>(null);
   const renderMode = useDiffStore((s) => s.renderMode);
   // Tracks whether a load has been kicked off so the effect doesn't cancel itself
   // when diffState transitions from null → {loading:true}
   const loadStartedRef = useRef(false);
 
-  const { basename, parent, ext, language } = useMemo(() => {
+  const { basename, parent, ext, language, isMarkdown } = useMemo(() => {
     const bn = getFileBasename(filePath);
     const pr = getParentDir(filePath);
     const ex = getExtension(filePath);
-    return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath) };
+    return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath), isMarkdown: ex === "md" || ex === "mdx" };
   }, [filePath]);
   const extColor = EXT_COLORS[ext] ?? "text-muted-foreground";
 
@@ -166,7 +168,10 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
       <button
         type="button"
         onClick={() => setExpanded((prev) => {
-          if (prev) setShowAllLines(false); // reset truncation on collapse
+          if (prev) {
+            setShowAllLines(false);
+            setPreviewMode(false);
+          }
           return !prev;
         })}
         className={`group flex w-full items-center gap-2 py-[5px] pl-7 pr-3 text-left transition-colors hover:bg-muted/20 ${
@@ -214,6 +219,33 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
           </span>
         )}
 
+        {/* Markdown preview toggle — only shown when expanded */}
+        {expanded && isMarkdown && (
+          // span+role avoids invalid nested <button> while still being accessible
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label={previewMode ? "Show raw diff" : "Preview rendered markdown"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setPreviewMode((prev) => !prev);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.stopPropagation();
+                setPreviewMode((prev) => !prev);
+              }
+            }}
+            className={`shrink-0 rounded p-0.5 transition-colors ${
+              previewMode
+                ? "text-foreground/70 hover:text-foreground"
+                : "text-muted-foreground/40 hover:text-foreground/60"
+            }`}
+          >
+            {previewMode ? <EyeOff size={11} /> : <Eye size={11} />}
+          </span>
+        )}
+
         {/* Extension badge (hidden while expanded to save space) */}
         {!expanded && ext && (
           <span className={`shrink-0 font-mono text-[9px] uppercase tracking-wide ${extColor}`}>
@@ -235,6 +267,8 @@ export function FileEntry({ filePath, source, id }: FileEntryProps) {
                 />
               ))}
             </div>
+          ) : previewMode && isMarkdown ? (
+            <DiffPreview lines={lines} />
           ) : lines.length > 0 ? (
             <>
               {renderMode === "unified" ? (

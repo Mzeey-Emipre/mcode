@@ -1,3 +1,32 @@
+/**
+ * Returns true when the file path has a `.md` or `.mdx` extension (case-insensitive).
+ * Used to decide whether to show the markdown preview toggle in the diff toolbar.
+ */
+export function isMarkdownFile(filePath: string): boolean {
+  const dot = filePath.lastIndexOf(".");
+  if (dot < 0) return false;
+  const ext = filePath.slice(dot + 1).toLowerCase();
+  return ext === "md" || ext === "mdx";
+}
+
+/**
+ * Reconstructs the new (post-change) content of a file from its parsed diff lines.
+ *
+ * Only `add` and `context` lines contribute to the result; `remove` and `header` lines
+ * are omitted. Lines are joined with `\n`.
+ *
+ * Limitation: when a diff only covers hunks (not the full file), lines outside the hunks
+ * are not included. The reconstructed content is therefore hunk-only and may be incomplete
+ * for large files with changes in the middle. This is acceptable for the Phase 1 preview,
+ * which is intended for markdown files where diffs typically cover most of the file.
+ */
+export function reconstructNewContent(lines: ParsedDiffLine[]): string {
+  return lines
+    .filter((l) => l.type === "add" || l.type === "context")
+    .map((l) => l.content)
+    .join("\n");
+}
+
 /** Parsed diff line with type classification. */
 export interface ParsedDiffLine {
   type: "add" | "remove" | "context" | "header";
