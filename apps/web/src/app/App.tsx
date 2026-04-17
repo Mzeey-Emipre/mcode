@@ -212,21 +212,26 @@ export function App() {
 
   return (
     <TooltipProvider delay={400}>
-      <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      {/* Floating-panel layout: page chrome is a darker tone (--page) with small
+          gaps between panels. Each panel renders as a rounded surface that
+          appears lifted off the chrome — no inter-panel divider lines required. */}
+      <div className="flex h-screen flex-col overflow-hidden bg-page text-foreground">
         <ConnectionBanner />
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 gap-1.5 overflow-hidden p-1.5">
           {!sidebarCollapsed && (
-            <Sidebar
-              settingsOpen={settingsOpen}
-              settingsSection={settingsSection}
-              onSettingsSection={setSettingsSection}
-              onOpenSettings={() => setSettingsOpen(true)}
-              onCloseSettings={() => setSettingsOpen(false)}
-            />
+            <div className="flex shrink-0 overflow-hidden rounded-lg shadow-sm">
+              <Sidebar
+                settingsOpen={settingsOpen}
+                settingsSection={settingsSection}
+                onSettingsSection={setSettingsSection}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onCloseSettings={() => setSettingsOpen(false)}
+              />
+            </div>
           )}
-          <div className="flex flex-1 flex-col overflow-hidden">
-            <div className="flex flex-1 overflow-hidden">
-              <main className="flex-1 overflow-hidden">
+          <div className="flex flex-1 flex-col gap-1.5 overflow-hidden">
+            <div className="flex flex-1 gap-1.5 overflow-hidden">
+              <main className="flex-1 overflow-hidden rounded-lg bg-background shadow-sm">
                 {settingsOpen ? (
                   <SettingsView section={settingsSection} />
                 ) : (

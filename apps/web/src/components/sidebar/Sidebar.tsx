@@ -46,12 +46,14 @@ export function Sidebar({
   return (
     <div
       className={cn(
-        "flex h-full flex-col border-r border-border bg-sidebar transition-[width] duration-200",
-        isCollapsed ? "w-12" : "w-72",
+        "flex h-full flex-col bg-sidebar transition-[width] duration-200",
+        // Clamp expanded width on narrow viewports so the sidebar can't dominate the layout.
+        // Above md (>=768px), the cap is removed and the full w-72 applies.
+        isCollapsed ? "w-12" : "w-72 max-w-[55vw] md:max-w-none",
       )}
     >
       {/* Header */}
-      <div className="flex h-11 items-center justify-between border-b border-border px-3">
+      <div className="flex h-11 items-center justify-between border-b border-border/40 px-3">
         {settingsOpen && !isCollapsed ? (
           <div className="flex items-center gap-2">
             <Button
@@ -96,7 +98,7 @@ export function Sidebar({
 
       {/* Footer */}
       {!isCollapsed && (
-        <div className="border-t border-border p-3 space-y-1">
+        <div className="border-t border-border/40 p-3 space-y-1">
           {!settingsOpen && <SidebarUsagePanel />}
           {settingsOpen ? (
             IS_DESKTOP && (
