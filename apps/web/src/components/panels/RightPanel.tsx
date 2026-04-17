@@ -81,6 +81,22 @@ export function RightPanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [isOverlay, panelVisible, activeThreadId, hideRightPanel]);
 
+  // Focus handoff for overlay mode. When the panel pops out as a modal we
+  // must move focus into it so keyboard users aren't stranded behind the
+  // backdrop, and restore focus to whatever opened it when it closes.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!isOverlay || !panelVisible) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    // Defer to next frame so the panel is in the DOM before focus moves.
+    const rafId = requestAnimationFrame(() => panelRef.current?.focus());
+    return () => {
+      cancelAnimationFrame(rafId);
+      previousFocusRef.current?.focus?.();
+    };
+  }, [isOverlay, panelVisible]);
+
   const draggingRef = useRef(false);
   const dragListenersRef = useRef<{ move: (e: globalThis.MouseEvent) => void; up: () => void } | null>(null);
   // Ref keeps the latest panelWidth readable inside the resize handler without
@@ -175,15 +191,22 @@ export function RightPanel() {
         />
       )}
       <div
+        ref={panelRef}
+        role={isOverlay ? "dialog" : undefined}
+        aria-modal={isOverlay ? true : undefined}
+        aria-label={isOverlay ? "Thread side panel" : undefined}
+        tabIndex={isOverlay ? -1 : undefined}
         style={
           isOverlay
-            ? { width: overlayWidth, minWidth: PANEL_MIN_WIDTH }
+            // Drop minWidth entirely on overlay: on sub-300px viewports the
+            // 90vw cap would still be exceeded by a 300px minimum.
+            ? { width: overlayWidth }
             : { width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: `calc(100vw - ${PANEL_MIN_WIDTH}px)` }
         }
         className={cn(
-          "relative flex flex-col bg-background",
+          "relative flex flex-col bg-background focus:outline-none",
           isOverlay
-            ? "fixed inset-y-0 right-0 z-50 shadow-2xl animate-fade-up-in"
+            ? "fixed inset-y-0 right-0 z-50 shadow-sm animate-fade-up-in"
             : "rounded-lg shadow-sm overflow-hidden",
         )}
       >

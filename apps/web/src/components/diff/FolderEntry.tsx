@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 /** Props for FolderEntry. */
 interface FolderEntryProps {
@@ -26,6 +26,7 @@ export function FolderEntry({
   children,
 }: FolderEntryProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const contentId = useId();
 
   return (
     <div>
@@ -33,6 +34,7 @@ export function FolderEntry({
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
         aria-expanded={expanded}
+        aria-controls={contentId}
         className="group flex w-full items-baseline gap-2 py-[5px] pr-3 text-left transition-colors hover:bg-muted/[0.06]"
         style={{ paddingLeft: `${12 + depth * 14}px` }}
       >
@@ -54,7 +56,7 @@ export function FolderEntry({
         </span>
       </button>
 
-      {expanded && <div>{children}</div>}
+      {expanded && <div id={contentId}>{children}</div>}
     </div>
   );
 }

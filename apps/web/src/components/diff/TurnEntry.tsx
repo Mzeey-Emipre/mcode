@@ -17,11 +17,14 @@ export function TurnEntry({ snapshot, turnNumber }: TurnEntryProps) {
   const [expanded, setExpanded] = useState(false);
   const fileCount = snapshot.files_changed.length;
   const ordinal = String(turnNumber).padStart(2, "0");
+  const contentId = `turn-entry-content-${snapshot.id}`;
 
   return (
     <div className={`border-b border-border/15 ${expanded ? "bg-muted/[0.04]" : ""}`}>
       <button
         type="button"
+        aria-expanded={expanded}
+        aria-controls={contentId}
         onClick={() => setExpanded((prev) => !prev)}
         className="group flex w-full items-baseline gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/[0.08]"
       >
@@ -50,7 +53,7 @@ export function TurnEntry({ snapshot, turnNumber }: TurnEntryProps) {
       </button>
 
       {expanded && (
-        <div className="pb-1">
+        <div id={contentId} className="pb-1">
           <FileList files={snapshot.files_changed} source="snapshot" id={snapshot.id} />
         </div>
       )}
