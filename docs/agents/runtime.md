@@ -148,6 +148,27 @@ next startup.
 
 ---
 
+## Test Process Isolation
+
+`vitest` is configured in every package's `vitest.config.ts` to set
+`MCODE_DATA_DIR` to a unique `os.tmpdir()` subdirectory per run. This
+prevents test-time writes from colliding with a live `bun run dev`
+server that is writing to the same `~/.mcode` or `~/.mcode-dev`
+directory. Never remove that env injection.
+
+---
+
+## Unclean-Shutdown Breadcrumb
+
+The server writes a `.clean-shutdown` marker file under the data dir at
+the end of its graceful `shutdown()` path. On startup it deletes the
+marker if present; if the marker is missing, it logs a warning. A
+missing marker at startup means the previous process died without
+running `shutdown()` — which is the primary diagnostic signal for
+issue #290-class restarts.
+
+---
+
 ## Bootstrap from Scratch
 
 ```sh
