@@ -1310,7 +1310,13 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       entry.resolve("cancelled");
       this.emit("permission_resolved", { requestId, decision: "cancelled" as const });
     }
-    for (const [, entry] of this.sessions) {
+    for (const [sessionId, entry] of this.sessions) {
+      if (entry.pendingToolUses.size > 0) {
+        logger.warn("Shutting down session with pending tool calls", {
+          sessionId,
+          pending: entry.pendingToolUses.size,
+        });
+      }
       entry.closeQueue();
       entry.query.close();
     }

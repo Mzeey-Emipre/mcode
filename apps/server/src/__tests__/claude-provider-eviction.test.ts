@@ -83,6 +83,11 @@ describe("ClaudeProvider idle eviction with pending tool_use (#291)", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sessions = (provider as any).sessions as Map<string, unknown>;
     expect(sessions.has("mcode-t1")).toBe(true);
+    const { logger } = await import("@mcode/shared");
+    expect(logger.debug).toHaveBeenCalledWith(
+      "Skipping eviction: pending tool calls",
+      expect.objectContaining({ pending: 1 }),
+    );
   });
 
   it("evicts the session once the tool completes and the idle window elapses", async () => {
