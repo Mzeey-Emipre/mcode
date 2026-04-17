@@ -183,4 +183,52 @@ describe("4001 auth failure handling", () => {
     transport.close();
     vi.useRealTimers();
   });
+
+  it("falls back to backoff delay after MAX_IMMEDIATE_AUTH_RETRIES consecutive 4001s", async () => {
+    // This test simulates a server that persistently rejects every connection
+    // with 4001 (never sending onopen). After 3 immediate retries the client
+    // must fall back to backoff so it doesn't spin in a tight loop.
+    vi.useFakeTimers();
+
+    const instances: MockWebSocket[] = [];
+    vi.stubGlobal(
+      "WebSocket",
+      new Proxy(MockWebSocket, {
+        construct(Target) {
+          const instance = new Target();
+          mockWsInstance = instance;
+          instances.push(instance);
+          return instance;
+        },
+      }),
+    );
+
+    const transport = createWsTransport("ws://localhost:1234", {
+      onStatusChange: vi.fn(),
+    });
+
+    // Initial connection opens successfully, then the server starts rejecting.
+    instances[0].simulateOpen();
+
+    // Fail #1: immediate retry (counter 0→1)
+    instances[0].simulateClose(4001);
+    await vi.advanceTimersByTimeAsync(0); // instance[1] created, no open
+    // Fail #2: immediate retry (counter 1→2)
+    instances[1].simulateClose(4001);
+    await vi.advanceTimersByTimeAsync(0); // instance[2] created, no open
+    // Fail #3: immediate retry (counter 2→3)
+    instances[2].simulateClose(4001);
+    await vi.advanceTimersByTimeAsync(0); // instance[3] created, no open
+
+    // Fail #4: counter is now at MAX_IMMEDIATE_AUTH_RETRIES (3), so the next
+    // reconnect must use backoff, not delay=0.
+    const countBefore = instances.length;
+    instances[3].simulateClose(4001);
+    // Advancing by 0 ms must NOT create a new instance.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(instances.length).toBe(countBefore);
+
+    transport.close();
+    vi.useRealTimers();
+  });
 });
