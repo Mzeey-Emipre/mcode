@@ -332,10 +332,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   // panel opening, sidebar resizing, etc. — not just window resizes.
   const composerContainerRef = useRef<HTMLDivElement>(null);
   const composerWidth = useElementWidth(composerContainerRef);
-  // Threshold tuned so model + reasoning + Chat/Plan + Full/Supervised + Tasks
-  // + send button fit on one row with the standard gaps. Below this the row
-  // collapses to a single "Composer options" trigger.
-  const COMPOSER_INLINE_OPTIONS_THRESHOLD = 640;
+  // Threshold tuned so model + reasoning + Chat + Full access + Tasks +
+  // token-count badge + send button fit comfortably on one row with the
+  // standard gaps and breathing room. Below this the row collapses to a
+  // single "Composer options" trigger so the send button never gets clipped.
+  // Empirically the row needs roughly 720–740px of container width to render
+  // without crowding; 760 leaves a small safety margin for longer model names.
+  const COMPOSER_INLINE_OPTIONS_THRESHOLD = 760;
   // Default to inline before the first measurement lands so the first frame
   // doesn't briefly render the popover trigger and snap to inline buttons.
   const showInlineComposerOptions =
