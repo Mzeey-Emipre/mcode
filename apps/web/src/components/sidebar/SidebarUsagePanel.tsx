@@ -6,12 +6,29 @@ import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { cn } from "@/lib/utils";
 import type { QuotaCategory } from "@mcode/contracts";
 
+/** Usage ratio at or above which a quota/context bar reads as critical (red). */
+const CRIT_THRESHOLD = 0.9;
+/** Usage ratio at or above which a bar reads as warn (primary/amber). */
+const WARN_THRESHOLD = 0.7;
+/** Countdown ratio (hours) below which the reset badge flips to urgent styling. */
+const URGENT_HOURS = 2;
+
+/** Pressure level derived from a used-fraction in [0, 1]. */
+type Pressure = "safe" | "warn" | "crit";
+
+/**
+ * Abbreviate a token count for dense display. Preserves one decimal in the
+ * 1k–10k range so 1,420 and 1,500 don't both collapse to "1k / 2k" and hide
+ * that the user is at 95% of weekly quota. Rounds to whole units elsewhere.
+ */
 function abbrev(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  // Keep one decimal in the 1k–10k range so 1420/1500 doesn't collapse
-  // to "1k / 2k" and hide the fact the user is at 95% of weekly quota.
-  if (n >= 10_000) return `${Math.round(n / 1_000)}k`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  if (n >= 1_000) {
+    const scaled = n / 1_000;
+    // Decide format from the post-division value so 9,999 rounds to "10k"
+    // alongside 10,000 instead of producing the awkward "10.0k → 10k" jump.
+    return scaled >= 10 ? `${Math.round(scaled)}k` : `${scaled.toFixed(1)}k`;
+  }
   return String(n);
 }
 
@@ -26,87 +43,88 @@ function formatCost(usd: number | undefined | null): string | undefined {
   return `$${usd.toFixed(2)}`;
 }
 
+/** Countdown segment with a flag marking short-window urgency for styling. */
 interface TimeUntil {
   text: string;
   urgent: boolean;
 }
 
 /**
- * Turn an ISO reset timestamp into a scale-appropriate countdown. Unlike the
- * previous day-granularity formatter, this drops to hours under a day and
- * minutes under an hour, and flags the result as urgent when <1h remains.
+ * Turn an ISO reset timestamp into a scale-appropriate countdown. Drops to
+ * hours under a day, minutes under an hour, flips minutes→hours and hours→days
+ * at rounding boundaries so we never render "resets 60m" or "resets 24h".
+ * Flags as urgent when under an hour, or under URGENT_HOURS hours.
  */
 function formatTimeUntil(iso: string | undefined): TimeUntil | undefined {
   if (!iso) return undefined;
   const diff = new Date(iso).getTime() - Date.now();
   if (diff <= 0) return { text: "now", urgent: true };
-  // Minutes bucket: anything that would round to 60m flips to the hours bucket
-  // so we never render the awkward "resets 60m".
+
   const minutes = Math.max(1, Math.round(diff / 60_000));
   if (minutes < 60) return { text: `${minutes}m`, urgent: true };
-  if (diff < 24 * 60 * 60_000) {
-    return { text: `${Math.round(diff / (60 * 60_000))}h`, urgent: diff < 2 * 60 * 60_000 };
-  }
+
+  const hours = Math.round(diff / 3_600_000);
+  if (hours < 24) return { text: `${hours}h`, urgent: diff < URGENT_HOURS * 3_600_000 };
+
   return { text: `${Math.ceil(diff / 86_400_000)}d`, urgent: false };
 }
 
-function pressure(usedPercent: number): "safe" | "warn" | "crit" {
-  if (usedPercent >= 0.9) return "crit";
-  if (usedPercent >= 0.7) return "warn";
+/** Map a used-fraction [0, 1] onto a three-level pressure scale. */
+function pressure(usedFraction: number): Pressure {
+  if (usedFraction >= CRIT_THRESHOLD) return "crit";
+  if (usedFraction >= WARN_THRESHOLD) return "warn";
   return "safe";
 }
 
-function barFill(cat: QuotaCategory): string {
-  switch (pressure(1 - cat.remainingPercent)) {
-    case "crit": return "bg-destructive";
-    case "warn": return "bg-primary";
-    default: return "bg-emerald-500";
-  }
+/**
+ * Single Tailwind class for a pressure level. `safeClass` lets callers pick
+ * the neutral colour — bars inside the popover use a stronger emerald tint,
+ * the compact strip footer uses a low-contrast foreground/25 fill.
+ */
+function fillForPressure(level: Pressure, safeClass: string): string {
+  if (level === "crit") return "bg-destructive";
+  if (level === "warn") return "bg-primary";
+  return safeClass;
 }
 
-function contextFill(usedPercent: number): string {
-  switch (pressure(usedPercent)) {
-    case "crit": return "bg-destructive";
-    case "warn": return "bg-primary";
-    default: return "bg-foreground/30";
-  }
-}
-
-function compactFill(cat: QuotaCategory): string {
-  switch (pressure(1 - cat.remainingPercent)) {
-    case "crit": return "bg-destructive";
-    case "warn": return "bg-primary";
-    default: return "bg-foreground/25";
-  }
-}
-
-/** Single quota row — bar for limited, ∞ badge for unlimited. */
+/**
+ * Single quota row inside the popover. Renders a bar when the category
+ * reports a numeric limit, an ∞ badge when unlimited, and a plain used count
+ * when the provider declares the category limited but omits the cap (rare —
+ * in that case we skip both the bar and ARIA progressbar semantics since
+ * `aria-valuemax` would be undefined).
+ */
 function QuotaRow({ cat }: { cat: QuotaCategory }) {
+  const hasLimit = !cat.isUnlimited && cat.total != null && cat.total > 0;
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-3">
         <span className="truncate text-[11px] text-muted-foreground">{cat.label}</span>
         {cat.isUnlimited ? (
           <span className="shrink-0 text-[11px] text-muted-foreground/50">∞</span>
+        ) : hasLimit ? (
+          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/80">
+            {abbrev(cat.used)}&thinsp;/&thinsp;{abbrev(cat.total!)}
+          </span>
         ) : (
           <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/80">
-            {abbrev(cat.used)}&thinsp;/&thinsp;{abbrev(cat.total ?? 0)}
+            {abbrev(cat.used)}
           </span>
         )}
       </div>
-      {!cat.isUnlimited && (
+      {hasLimit && (
         <div
           className="h-[3px] w-full rounded-full bg-border/50"
           role="progressbar"
           aria-label={`${cat.label} quota`}
           aria-valuemin={0}
-          aria-valuemax={cat.total ?? 100}
+          aria-valuemax={cat.total!}
           aria-valuenow={cat.used}
         >
           <div
             className={cn(
               "h-[3px] rounded-full transition-[width] duration-300 ease-out",
-              barFill(cat),
+              fillForPressure(pressure(1 - cat.remainingPercent), "bg-emerald-500"),
             )}
             style={{ width: `${Math.min((1 - cat.remainingPercent) * 100, 100)}%` }}
           />
@@ -117,14 +135,9 @@ function QuotaRow({ cat }: { cat: QuotaCategory }) {
 }
 
 /** Small uppercase section label — the instrument-panel tracker. */
-function SectionLabel({ children, align }: { children: React.ReactNode; align?: "right" }) {
+function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      className={cn(
-        "text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60",
-        align === "right" && "text-right",
-      )}
-    >
+    <div className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">
       {children}
     </div>
   );
@@ -160,13 +173,19 @@ export function SidebarUsagePanel() {
   );
   const fetchProviderUsage = useThreadStore((s) => s.fetchProviderUsage);
 
-  // Hydrate immediately — bars appear without waiting for a hover.
-  // fetchProviderUsage is a stable Zustand store action.
+  // Hydrate immediately — bars appear without waiting for a hover. Intentionally
+  // omit fetchProviderUsage (stable Zustand action) and usageInfo (the guard)
+  // from deps so thread switches don't re-trigger a fetch mid-request.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (activeThreadId && !usageInfo) {
       void fetchProviderUsage(activeThreadId, providerId);
     }
   }, [activeThreadId, providerId]);
+
+  // Clear any in-flight close timer when the component unmounts so a late
+  // setOpen(false) can't fire against a destroyed component.
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
 
   if (!activeThreadId) return null;
 
@@ -192,10 +211,12 @@ export function SidebarUsagePanel() {
   const cacheRead = contextEntry?.cacheReadTokens ?? 0;
   const cacheWrite = contextEntry?.cacheWriteTokens ?? 0;
   const hasTurn = tokensIn > 0 || tokensOut > 0;
-  // Cache hit rate: fraction of the turn's total input that came from cache.
-  // This is the headline cost-saving metric for Claude — reused across turns.
-  const cacheHitRate = cacheRead > 0 && (cacheRead + tokensIn) > 0
-    ? Math.round((cacheRead / (cacheRead + tokensIn)) * 100)
+  // Cache hit rate: fraction of the turn's input that came from cache.
+  // The Claude adapter already folds cache_read_input_tokens and
+  // cache_creation_input_tokens into tokensIn, so tokensIn is the
+  // correct denominator — adding cacheRead again would double-count.
+  const cacheHitRate = cacheRead > 0 && tokensIn > 0
+    ? Math.round((cacheRead / tokensIn) * 100)
     : undefined;
 
   // Earliest reset across limited categories drives the header countdown.
@@ -253,19 +274,19 @@ export function SidebarUsagePanel() {
           </div>
 
           {/* Representative bar */}
-          {mostConstrained ? (
+          {mostConstrained && mostConstrained.total != null && mostConstrained.total > 0 ? (
             <div
               className="h-[2px] w-full rounded-full bg-border/40"
               role="progressbar"
               aria-label={`${mostConstrained.label} quota`}
               aria-valuemin={0}
-              aria-valuemax={mostConstrained.total ?? 100}
+              aria-valuemax={mostConstrained.total}
               aria-valuenow={mostConstrained.used}
             >
               <div
                 className={cn(
                   "h-[2px] rounded-full transition-[width] duration-300 ease-out",
-                  compactFill(mostConstrained),
+                  fillForPressure(pressure(1 - mostConstrained.remainingPercent), "bg-foreground/25"),
                 )}
                 style={{ width: `${Math.min((1 - mostConstrained.remainingPercent) * 100, 100)}%` }}
               />
@@ -282,7 +303,7 @@ export function SidebarUsagePanel() {
               <div
                 className={cn(
                   "h-[2px] rounded-full transition-[width] duration-300 ease-out",
-                  contextFill(ctxRatio),
+                  fillForPressure(ctxPressure, "bg-foreground/25"),
                 )}
                 style={{ width: `${Math.min(ctxRatio * 100, 100)}%` }}
               />
@@ -407,7 +428,7 @@ export function SidebarUsagePanel() {
               <div
                 className={cn(
                   "h-[3px] rounded-full transition-[width] duration-300 ease-out",
-                  contextFill(ctxRatio),
+                  fillForPressure(ctxPressure, "bg-emerald-500"),
                 )}
                 style={{ width: `${Math.min(ctxRatio * 100, 100)}%` }}
               />
