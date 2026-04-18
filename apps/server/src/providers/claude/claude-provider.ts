@@ -35,6 +35,13 @@ interface SessionEntry {
   pushMessage: (msg: SDKUserMessage) => void;
   closeQueue: () => void;
   model: string;
+  /**
+   * Permission mode the SDK subprocess was spawned with ("full" or "supervised").
+   * The SDK's canUseTool callback and allowDangerouslySkipPermissions flag are
+   * set at session creation and cannot be changed post-hoc, so if the caller
+   * requests a different mode the session must be torn down and recreated.
+   */
+  permissionMode: string;
   lastUsedAt: number;
   /** When true, the finally block in startStreamLoop should not emit an "ended" event. */
   suppressEnded?: boolean;
@@ -575,6 +582,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       pushMessage: queue.push,
       closeQueue: queue.close,
       model: resolvedModel,
+      permissionMode,
       lastUsedAt: Date.now(),
       pendingToolUses: new Set<string>(),
     };
@@ -625,6 +633,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
           pushMessage: freshQueue.push,
           closeQueue: freshQueue.close,
           model: resolvedModel,
+          permissionMode,
           lastUsedAt: Date.now(),
           pendingToolUses: new Set<string>(),
         };
