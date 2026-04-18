@@ -26,7 +26,7 @@ const POST_PUSH_BUMP_DELAYS_MS = [3_000, 8_000, 20_000];
 
 /**
  * Server-side CI check watcher with adaptive dual-interval polling.
- * Threads with in-progress checks poll at 10s; terminal checks poll at 30s.
+ * Threads with in-progress checks poll at 10s; terminal checks poll at 15s.
  * Broadcasts `thread.checksUpdated` only when state changes.
  */
 export class CiWatcherService {

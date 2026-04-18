@@ -405,11 +405,7 @@ function RunRow({ run }: { run: CheckRun }) {
       <span
         className={cn(
           "truncate flex-1",
-          lane === "failing"
-            ? "text-rose-400 font-medium"
-            : lane === "passing"
-              ? "text-foreground/80"
-              : "text-foreground/80",
+          lane === "failing" ? "text-rose-400 font-medium" : "text-foreground/80",
         )}
       >
         {run.name}
