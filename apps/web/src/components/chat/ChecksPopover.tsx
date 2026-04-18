@@ -1,11 +1,11 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { CircleCheck, CircleX, Loader2, RefreshCw, ExternalLink } from "lucide-react";
+import { CircleCheck, CircleX, Loader2, RefreshCw, ExternalLink, MinusCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { getCiVisual } from "@/lib/ci-status";
+import { getCiVisual, getBreakdown, getLeadRunningName, CI_ICON_STROKE } from "@/lib/ci-status";
 import type { ChecksStatus, CheckRun } from "@mcode/contracts";
 
 /** Props for {@link ChecksPopover}. */
@@ -22,24 +22,74 @@ interface ChecksPopoverProps {
   checks: ChecksStatus;
   /** Trigger element rendered inside the popover trigger. */
   children: React.ReactNode;
+  /**
+   * Controlled open state. When provided the popover becomes fully controlled,
+   * letting callers (e.g. a keyboard shortcut handler) open it programmatically.
+   * When omitted the popover is uncontrolled and opens on click.
+   */
+  open?: boolean;
+  /** Paired with `open` — called when Base UI wants to change the open state. */
+  onOpenChange?: (open: boolean) => void;
 }
 
-/** Status icon for an individual check run. */
-function CheckIcon({ run }: { run: CheckRun }) {
-  if (run.status === "in_progress" || run.status === "queued") {
-    return <Loader2 size={12} className="text-amber-500 animate-spin shrink-0" />;
-  }
-  switch (run.conclusion) {
-    case "success":
-      return <CircleCheck size={12} className="text-green-500 shrink-0" />;
-    case "failure":
-    case "timed_out":
-      return <CircleX size={12} className="text-red-500 shrink-0" />;
-    case "cancelled":
-      return <CircleX size={12} className="text-muted-foreground/50 shrink-0" />;
-    default:
-      return <CircleCheck size={12} className="text-muted-foreground/50 shrink-0" />;
-  }
+/** Lanes that runs can land in — controls grouping, colour, and sort priority. */
+type Lane = "failing" | "running" | "passing" | "other";
+
+/** Lane metadata used for the section header chrome. Only the failing lane carries a wash
+ *  so the popover stays calm: urgency is carried by one surface, not three. */
+const LANE_META: Record<Lane, { label: string; icon: typeof CircleCheck; iconClass: string; wash: string; accent: string }> = {
+  failing: {
+    label: "Failing",
+    icon: CircleX,
+    iconClass: "text-rose-500",
+    wash: "bg-rose-500/[0.05]",
+    accent: "text-rose-500",
+  },
+  running: {
+    label: "Running",
+    icon: Loader2,
+    iconClass: "text-amber-500",
+    wash: "",
+    accent: "text-amber-500",
+  },
+  passing: {
+    label: "Passing",
+    icon: CircleCheck,
+    iconClass: "text-emerald-500",
+    wash: "",
+    accent: "text-emerald-500/85",
+  },
+  other: {
+    label: "Skipped",
+    icon: MinusCircle,
+    iconClass: "text-muted-foreground/60",
+    wash: "",
+    accent: "text-muted-foreground",
+  },
+};
+
+function laneOf(run: CheckRun): Lane {
+  if (run.status !== "completed") return "running";
+  if (run.conclusion === "failure" || run.conclusion === "timed_out") return "failing";
+  if (run.conclusion === "success") return "passing";
+  return "other";
+}
+
+/** Status icon for an individual check run, colour-matched to its lane. */
+function RunIcon({ run }: { run: CheckRun }) {
+  const lane = laneOf(run);
+  const Meta = LANE_META[lane];
+  return (
+    <Meta.icon
+      size={12}
+      className={cn(
+        Meta.iconClass,
+        "shrink-0",
+        lane === "running" && "motion-safe:animate-spin",
+      )}
+      strokeWidth={CI_ICON_STROKE}
+    />
+  );
 }
 
 /** Format a duration in milliseconds to a human-readable string. */
@@ -52,30 +102,49 @@ function formatDuration(ms: number): string {
   return remainSecs > 0 ? `${mins}m ${remainSecs}s` : `${mins}m`;
 }
 
-/** Summarise the aggregate CI state as a headline string. */
-function aggregateHeadline(checks: ChecksStatus): string {
-  const total = checks.runs.length;
-  const failing = checks.runs.filter(
-    (r) => r.conclusion === "failure" || r.conclusion === "timed_out",
-  ).length;
-  const running = checks.runs.filter((r) => r.status !== "completed").length;
+/** Compute elapsed time since a startedAt timestamp, as a live-updating formatted string. */
+function useLiveElapsed(startedAtIso: string | null | undefined, active: boolean): string | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active || !startedAtIso) return;
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [active, startedAtIso]);
+  if (!startedAtIso) return null;
+  const started = new Date(startedAtIso).getTime();
+  if (isNaN(started)) return null;
+  return formatDuration(now - started);
+}
 
+/** Summarise the aggregate CI state as a headline string, e.g. "3 of 5 running". */
+function aggregateHeadline(checks: ChecksStatus, elapsedLive: string | null): string {
+  const b = getBreakdown(checks);
   switch (checks.aggregate) {
     case "passing":
-      return total === 1 ? "1 check passed" : `All ${total} checks passed`;
+      return b.total === 1 ? "1 check passed" : `All ${b.total} checks passed`;
     case "failing":
-      return failing === 1 ? "1 check failed" : `${failing} of ${total} checks failed`;
+      return b.failing === 1
+        ? `1 failing · ${b.total - b.failing} green`
+        : `${b.failing} of ${b.total} failing`;
     case "pending":
-      return running === 1 ? "1 check running" : `${running} checks running`;
+      return elapsedLive
+        ? `${b.total - b.running}/${b.total} · running for ${elapsedLive}`
+        : `${b.total - b.running} of ${b.total} running`;
     case "no_checks":
       return "No checks configured";
   }
 }
 
-
 /**
- * Popover that shows PR metadata and individual CI check run details.
- * The children prop is rendered as the trigger element.
+ * Popover that shows PR metadata and per-lane grouped CI check run details.
+ *
+ * Layout: premium editorial hierarchy.
+ * - Chrome header: large status icon + aggregate headline + PR title/author
+ * - Live progress strip when aggregate is pending
+ * - Grouped run lanes: Failing → Running → Passing → Skipped
+ *   - failing lane is auto-expanded with a red wash for urgency
+ *   - each run carries a live elapsed time while running
+ * - Footer: freshness label, refresh button, GitHub link
  */
 export function ChecksPopover({
   threadId,
@@ -84,6 +153,8 @@ export function ChecksPopover({
   prAuthor,
   checks,
   children,
+  open,
+  onOpenChange,
 }: ChecksPopoverProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(false);
@@ -113,7 +184,6 @@ export function ChecksPopover({
   const handleOpenGitHub = useCallback(() => {
     try {
       const parsed = new URL(prUrl);
-      // Only allow https GitHub URLs to prevent protocol abuse or open-redirect to arbitrary hosts.
       if (parsed.protocol === "https:" && parsed.hostname === "github.com") {
         window.desktopBridge?.openExternalUrl(prUrl);
       }
@@ -122,15 +192,27 @@ export function ChecksPopover({
     }
   }, [prUrl]);
 
-  // Sort: failing first, then running, then passing/other. Memoized to avoid re-sorting on every render.
-  const sortedRuns = useMemo(() => [...checks.runs].sort((a, b) => {
-    const order = (r: CheckRun) => {
-      if (r.conclusion === "failure" || r.conclusion === "timed_out") return 0;
-      if (r.status !== "completed") return 1;
-      return 2;
-    };
-    return order(a) - order(b);
-  }), [checks.runs]);
+  // Group runs by lane, ordered by priority.
+  const laned = useMemo(() => {
+    const groups: Record<Lane, CheckRun[]> = { failing: [], running: [], passing: [], other: [] };
+    for (const r of checks.runs) groups[laneOf(r)].push(r);
+    return groups;
+  }, [checks.runs]);
+
+  const breakdown = useMemo(() => getBreakdown(checks), [checks]);
+
+  // Lead running job for the subtitle ("currently running: lint").
+  const leadRunning = useMemo(
+    () => (checks.aggregate === "pending" ? getLeadRunningName(checks) : null),
+    [checks],
+  );
+  // Elapsed time of the lead running run, live-updating.
+  const leadRunningStartedAt = useMemo(() => {
+    if (checks.aggregate !== "pending") return null;
+    const r = checks.runs.find((x) => x.status !== "completed");
+    return r?.startedAt ?? null;
+  }, [checks]);
+  const liveElapsed = useLiveElapsed(leadRunningStartedAt, checks.aggregate === "pending");
 
   const elapsed = Math.round((now - checks.fetchedAt) / 1000);
   const staleLabel =
@@ -143,103 +225,200 @@ export function ChecksPopover({
   const visual = getCiVisual(checks.aggregate);
   const StatusIcon = visual.icon;
 
+  // Visible lane order (skip empty).
+  const laneOrder: Lane[] = ["failing", "running", "passing", "other"];
+  const visibleLanes = laneOrder.filter((l) => laned[l].length > 0);
+
+  // Progress bar fill ratio — completed / total, used when pending.
+  const progressPercent = breakdown.total > 0
+    ? Math.round(((breakdown.passing + breakdown.failing + breakdown.other) / breakdown.total) * 100)
+    : 0;
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
         className="inline-flex cursor-pointer"
         aria-label="View CI check details"
       >
         {children}
       </PopoverTrigger>
-      <PopoverContent side="bottom" align="start" sideOffset={6} className="w-80 p-0 overflow-hidden">
-        {/* Aggregate status header */}
-        <div className="flex items-center gap-3 px-4 pt-4 pb-2.5">
-          <StatusIcon size={16} className={cn("shrink-0", visual.color)} />
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-foreground leading-tight">
-              {aggregateHeadline(checks)}
-            </div>
-            {prTitle && (
-              <div className="text-xs text-muted-foreground truncate mt-0.5">
-                {prTitle}
-                {prAuthor && <span className="opacity-70"> · {prAuthor}</span>}
+      <PopoverContent side="bottom" align="start" sideOffset={8} className="w-[340px] p-0 overflow-hidden">
+        {/* Header chrome */}
+        <div className={cn("px-4 pt-3.5 pb-3", visual.surface)}>
+          <div className="flex items-start gap-2.5">
+            <StatusIcon
+              size={18}
+              className={cn(
+                "shrink-0 mt-0.5",
+                visual.color,
+                checks.aggregate === "pending" && "motion-safe:animate-spin",
+              )}
+              strokeWidth={CI_ICON_STROKE}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-foreground leading-tight">
+                {aggregateHeadline(checks, liveElapsed)}
               </div>
-            )}
+              {prTitle ? (
+                <div className="text-[11px] text-muted-foreground truncate mt-1 leading-snug">
+                  <span className="text-foreground/75">{prTitle}</span>
+                  {prAuthor && <span className="opacity-70"> · by {prAuthor}</span>}
+                </div>
+              ) : leadRunning ? (
+                <div className="text-[11px] text-muted-foreground truncate mt-1 leading-snug">
+                  Currently running: <span className="text-foreground/75">{leadRunning}</span>
+                </div>
+              ) : null}
+            </div>
           </div>
+
+          {/* Progress strip — pending only */}
+          {checks.aggregate === "pending" && breakdown.total > 0 && (
+            <div className="mt-3 h-[3px] w-full rounded-full bg-muted/50 overflow-hidden">
+              <div
+                className="h-full bg-amber-400/90 transition-[width] duration-500 ease-out"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          )}
         </div>
 
-        {/* Divider */}
-        <div className="h-px bg-border/50 mx-4" />
-
-        {/* Check run list */}
-        <div className="py-1.5 max-h-52 overflow-y-auto">
-          {sortedRuns.map((run) => {
-            const isRunning = run.status !== "completed";
-            const isFailing =
-              run.conclusion === "failure" || run.conclusion === "timed_out";
+        {/* Lane groups */}
+        <div className="max-h-72 overflow-y-auto scrollbar-on-hover">
+          {visibleLanes.map((lane, laneIdx) => {
+            const runs = laned[lane];
+            const meta = LANE_META[lane];
+            const LaneIcon = meta.icon;
             return (
-              <div
-                key={run.name}
+              <section
+                key={lane}
                 className={cn(
-                  "flex items-center gap-2.5 px-4 py-[5px] text-xs",
-                  isFailing && "bg-red-500/[0.06]",
+                  laneIdx > 0 && "border-t border-border/30",
+                  meta.wash,
                 )}
               >
-                <CheckIcon run={run} />
-                <span
-                  className={cn(
-                    "truncate flex-1",
-                    isFailing
-                      ? "text-red-400 font-medium"
-                      : "text-foreground/80",
-                  )}
-                >
-                  {run.name}
-                </span>
-                <span className="font-mono text-[10px] shrink-0 tabular-nums">
-                  {isRunning ? (
-                    <span className="text-amber-500/80">running</span>
-                  ) : run.durationMs != null ? (
-                    <span className="text-muted-foreground">{formatDuration(run.durationMs)}</span>
-                  ) : null}
-                </span>
-              </div>
+                <header className="flex items-center gap-1.5 px-4 pt-2 pb-1">
+                  <LaneIcon
+                    size={10}
+                    className={cn(
+                      meta.iconClass,
+                      lane === "running" && "motion-safe:animate-spin",
+                    )}
+                    strokeWidth={CI_ICON_STROKE}
+                  />
+                  <span className={cn("text-[10px] font-semibold uppercase tracking-wider", meta.accent)}>
+                    {meta.label}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground tabular-nums ml-1">
+                    {runs.length}
+                  </span>
+                </header>
+                <ul className="pb-1.5">
+                  {runs.map((run) => (
+                    <RunRow key={run.name} run={run} />
+                  ))}
+                </ul>
+              </section>
             );
           })}
-          {sortedRuns.length === 0 && (
-            <div className="text-xs text-muted-foreground text-center py-3">
+          {breakdown.total === 0 && (
+            <div className="text-xs text-muted-foreground text-center py-5">
               No checks configured
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="h-px bg-border/50 mx-4" />
+        <div className="border-t border-border/50" />
         <div className="flex items-center justify-between px-4 py-2">
           <button
             onClick={handleOpenGitHub}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
           >
             <ExternalLink size={10} className="opacity-60" />
             View on GitHub
           </button>
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-muted-foreground tabular-nums">{staleLabel}</span>
-            {refreshError && (
-              <span className="text-[10px] text-red-400">failed</span>
+            {refreshError ? (
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Last refresh failed — click to retry"
+                className="inline-flex items-center gap-1 text-[10px] text-rose-400 hover:text-rose-300 transition-colors tabular-nums disabled:opacity-60"
+              >
+                <span>refresh failed</span>
+                <span className="underline underline-offset-2">retry</span>
+              </button>
+            ) : (
+              <>
+                <span className="text-[10px] text-muted-foreground tabular-nums">
+                  refreshed {staleLabel}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  aria-label="Refresh checks"
+                >
+                  <RefreshCw
+                    size={10}
+                    strokeWidth={CI_ICON_STROKE}
+                    className={cn(refreshing && "motion-safe:animate-spin")}
+                  />
+                </Button>
+              </>
             )}
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={handleRefresh}
-              disabled={refreshing}
-              aria-label="Refresh checks"
-            >
-              <RefreshCw size={9} className={cn(refreshing && "animate-spin")} />
-            </Button>
           </div>
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** Single run row with live elapsed time while running, or static duration once completed. */
+function RunRow({ run }: { run: CheckRun }) {
+  const lane = laneOf(run);
+  const isRunning = lane === "running";
+  const live = useLiveElapsed(run.startedAt, isRunning);
+
+  const tailLabel = isRunning
+    ? live ?? "running"
+    : run.durationMs != null
+      ? formatDuration(run.durationMs)
+      : null;
+
+  const tailClass = isRunning
+    ? "text-amber-500/90"
+    : lane === "failing"
+      ? "text-rose-400/90"
+      : "text-muted-foreground/80";
+
+  return (
+    <li
+      className={cn(
+        "flex items-center gap-2.5 px-4 py-[5px] text-xs",
+      )}
+    >
+      <RunIcon run={run} />
+      <span
+        className={cn(
+          "truncate flex-1",
+          lane === "failing"
+            ? "text-rose-400 font-medium"
+            : lane === "passing"
+              ? "text-foreground/80"
+              : "text-foreground/80",
+        )}
+      >
+        {run.name}
+      </span>
+      {tailLabel && (
+        <span className={cn("font-mono text-[10px] shrink-0 tabular-nums", tailClass)}>
+          {tailLabel}
+        </span>
+      )}
+    </li>
   );
 }

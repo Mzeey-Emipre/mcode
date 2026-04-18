@@ -42,10 +42,11 @@ describe("PrSplitButton", () => {
     expect(screen.getByText("PR #42")).toBeInTheDocument();
   });
 
-  it("applies green colour class when pr state is open", () => {
+  it("applies emerald accent class when pr is open with no CI data", () => {
     render(<PrSplitButton pr={openPr} hasCommitsAhead={true} onCreatePr={noop} onOpenPr={noop} />);
     const btn = screen.getByText("PR #42").closest("button");
-    expect(btn?.className).toContain("text-[#3fb950]");
+    // Open PRs without CI data use the emerald family so the button still reads as healthy.
+    expect(btn?.className).toMatch(/text-emerald-/);
   });
 
   it("does not render chevron button when pr state is open", () => {

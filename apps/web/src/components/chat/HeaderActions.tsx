@@ -42,6 +42,14 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   // a PR object with url: "" which breaks the Open-in-browser action.
   const cachedPrUrl = useWorkspaceStore((s) => s.prUrlsByThreadId[thread.id]);
   const checks = useWorkspaceStore((s) => s.checksById[thread.id]) ?? null;
+
+  // Pull PR metadata (title/author) from the openPrs cache for the popover header.
+  // polledPr and storePr only carry {number, url, state}; listOpenPrs has the rest.
+  // openPrs is scoped to the active workspace, so no extra key is needed.
+  const openPrDetail = useWorkspaceStore((s) => {
+    if (thread.pr_number == null) return null;
+    return s.openPrs.find((p) => p.number === thread.pr_number) ?? null;
+  });
   const storePr = thread.pr_number != null && cachedPrUrl
     ? { number: thread.pr_number, url: cachedPrUrl, state: thread.pr_status ?? "OPEN" }
     : null;
@@ -129,6 +137,8 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
               onOpenPr={handleOpenPr}
               checks={checks}
               threadId={thread.id}
+              prTitle={openPrDetail?.title}
+              prAuthor={openPrDetail?.author}
             />
           )}
           <OpenInEditorMenu dirPath={dirPath} />
