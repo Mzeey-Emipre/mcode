@@ -47,6 +47,8 @@ async function mockWebSocketServer(
     permission_mode: null,
     parent_thread_id: null,
     forked_from_message_id: null,
+    copilot_agent: null,
+    last_compact_summary: null,
   };
 
   // Minimal valid settings object matching the server's SettingsSchema defaults.
@@ -113,10 +115,13 @@ test.describe("sidebar action-required indicator", () => {
     await page.goto("/");
     await page.waitForSelector("[data-testid='thread-list']");
 
-    // Expand the workspace so threads become visible.
-    // Use `.first()` because Playwright also matches the adjacent "Delete" button
-    // which has "Test Workspace" in its aria-label.
-    await page.getByRole("button", { name: /Test Workspace/ }).first().click();
+    // The workspace row is the only button with aria-expanded. Filtering by that
+    // avoids the nested "Delete Test Workspace" button, whose text bleeds into
+    // the parent row's accessible name.
+    await page
+      .locator('[role="button"][aria-expanded]')
+      .filter({ hasText: "Test Workspace" })
+      .click();
 
     const indicator = page.getByLabel("Action required");
     await expect(indicator).toBeVisible();
@@ -132,10 +137,13 @@ test.describe("sidebar action-required indicator", () => {
     await page.goto("/");
     await page.waitForSelector("[data-testid='thread-list']");
 
-    // Expand the workspace so threads become visible.
-    // Use `.first()` because Playwright also matches the adjacent "Delete" button
-    // which has "Test Workspace" in its aria-label.
-    await page.getByRole("button", { name: /Test Workspace/ }).first().click();
+    // The workspace row is the only button with aria-expanded. Filtering by that
+    // avoids the nested "Delete Test Workspace" button, whose text bleeds into
+    // the parent row's accessible name.
+    await page
+      .locator('[role="button"][aria-expanded]')
+      .filter({ hasText: "Test Workspace" })
+      .click();
 
     await expect(page.getByLabel("Action required")).toHaveCount(0);
   });
