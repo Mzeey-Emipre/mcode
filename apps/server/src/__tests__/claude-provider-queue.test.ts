@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { createPromptQueue } from "../providers/claude/claude-provider";
 
 /** Minimal SDKUserMessage shape for push() calls. */
@@ -52,6 +52,13 @@ import { ClaudeProvider } from "../providers/claude/claude-provider";
 import { queryMethodStubs } from "./helpers/mock-sdk-query";
 
 describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
+  let provider: ClaudeProvider | undefined;
+
+  afterEach(() => {
+    provider?.shutdown();
+    provider = undefined;
+  });
+
   it("emits Error event when the session's queue was already closed", async () => {
     // A mock Query that consumes the first user message then hangs.
     mockQuery.mockImplementation(({ prompt }) => {
@@ -71,7 +78,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
       });
     });
 
-    const provider = new ClaudeProvider();
+    provider = new ClaudeProvider();
     const events: Array<{ type: string; error?: string }> = [];
     provider.on("event", (e: { type: string; error?: string }) => events.push(e));
 

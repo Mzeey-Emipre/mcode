@@ -16,6 +16,7 @@ import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+/** Creates a unique per-run test data directory and sets `MCODE_DATA_DIR`. */
 export function createTestDataDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "mcode-test-"));
   // Mirror into process.env so the shared globalSetup teardown can locate

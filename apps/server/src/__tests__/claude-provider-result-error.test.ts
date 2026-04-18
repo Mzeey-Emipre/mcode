@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
 
@@ -43,6 +43,10 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     provider = new ClaudeProvider();
+  });
+
+  afterEach(() => {
+    provider.shutdown();
   });
 
   it("emits Error event and NO TurnComplete when result.is_error is true", async () => {

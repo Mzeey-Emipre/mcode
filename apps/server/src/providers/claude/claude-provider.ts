@@ -644,24 +644,37 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
          * Reset to undefined after each turnComplete. */
         let lastStreamInputTokens: number | undefined = undefined;
 
-        /** Emit an Error event with a best-effort message extracted from an SDK result payload. */
+        /**
+         * Emit an Error event with a best-effort message extracted from an SDK
+         * result payload. The full raw payload is logged so operators can see
+         * every field the SDK sent, while the Error event stays compatible with
+         * the string-shaped `error` field on AgentEvent.
+         */
         const emitResultError = (anyMsg: Record<string, unknown>): void => {
           const errors = (anyMsg.errors as string[] | undefined) ?? [];
-          const errorMessage =
-            errors.length > 0
-              ? errors.join(", ")
-              : ((anyMsg.result as string | undefined) ||
-                "Claude SDK returned an error result");
+          let errorMessage: string;
+          if (errors.length > 0) {
+            errorMessage = errors.join(", ");
+          } else if (typeof anyMsg.result === "string") {
+            errorMessage = anyMsg.result;
+          } else {
+            try {
+              errorMessage = JSON.stringify(anyMsg.result ?? anyMsg);
+            } catch {
+              errorMessage = "Claude SDK returned an error result";
+            }
+          }
           logger.error("Claude SDK result error", {
             sessionId,
             threadId,
             errors,
             subtype: anyMsg.subtype,
+            payload: anyMsg,
           });
           this.emit("event", {
             type: AgentEventType.Error,
             threadId,
-            error: errorMessage,
+            error: errorMessage || "Claude SDK returned an error result",
           } satisfies AgentEvent);
         };
 
