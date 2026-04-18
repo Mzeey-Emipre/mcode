@@ -25,6 +25,7 @@ vi.mock("@/stores/workspaceStore", () => ({
       loadWorktrees: vi.fn(),
       worktrees: [],
       worktreesLoadedForWorkspace: null,
+      checksById: {},
       error: null,
     })
   ),
@@ -126,6 +127,7 @@ function setupStoreMocks({
     loadWorktrees: vi.fn(),
     worktrees: [],
     worktreesLoadedForWorkspace: null,
+    checksById: {},
     error: null,
   };
 

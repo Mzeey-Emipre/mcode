@@ -158,6 +158,24 @@
   animation: fade-up-in 150ms ease-out;
 }
 
+/* Indeterminate progress sweep used on running-CI chrome (PrSplitButton).
+ * Belt-and-braces reduced-motion handling: callers gate .animate-ci-slide with
+ * motion-reduce:hidden, and this rule also neutralises the animation in case
+ * it leaks through elsewhere. */
+@keyframes ci-slide {
+  0%   { transform: translateX(-100%); }
+  60%  { transform: translateX(320%); }
+  100% { transform: translateX(320%); }
+}
+.animate-ci-slide {
+  animation: ci-slide 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-ci-slide {
+    animation: none;
+  }
+}
+
 
 .glow-primary {
   box-shadow: -2px 0 8px -1px oklch(0.72 0.17 75 / 0.35);
