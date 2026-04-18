@@ -751,7 +751,7 @@ function VirtualizedThreadList({
                   const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
                   // CI dot takes priority when present; fall back to agent notification dot
                   const dot = ciDotClass
-                    ? { dotClass: ciDotClass, animate: ciChecks!.aggregate === "pending" }
+                    ? { dotClass: ciDotClass, animate: ciChecks!.aggregate === "pending", shape: "solid" as const }
                     : agentDot;
                   return (
                     <span
@@ -771,7 +771,14 @@ function VirtualizedThreadList({
                     </span>
                   );
                 })() : (
-                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotClass)} />
+                  <span
+                    aria-label={status.shape === "ring" ? "Action required" : undefined}
+                    className={cn(
+                      "shrink-0 rounded-full",
+                      status.shape === "ring" ? "h-2 w-2" : "h-1.5 w-1.5",
+                      status.dotClass,
+                    )}
+                  />
                 )}
                 {!thread.pr_number && status.label && (
                   <span className={cn("shrink-0 font-mono text-[9.5px] uppercase tracking-[0.12em]", status.color)}>

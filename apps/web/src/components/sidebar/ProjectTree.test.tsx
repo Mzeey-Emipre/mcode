@@ -30,9 +30,16 @@ vi.mock("@/stores/workspaceStore", () => ({
   ),
 }));
 
+// Mutable holder so individual tests can inject unsettled permission requests
+// into the mocked thread store without re-registering the mock.
+const threadStoreOverrides: { permissionsByThread?: Record<string, Array<{ settled: boolean }>> } = {};
+
 vi.mock("@/stores/threadStore", () => ({
   useThreadStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({ runningThreadIds: new Set(), permissionsByThread: {} })
+    selector({
+      runningThreadIds: new Set(),
+      permissionsByThread: threadStoreOverrides.permissionsByThread ?? {},
+    })
   ),
 }));
 
@@ -250,5 +257,56 @@ describe("ProjectTree thread interactions", () => {
     // Navigation must fire immediately (no timer advance needed).
     expect(setActiveThread).toHaveBeenCalledWith("thread-1");
     expect(setActiveThread).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ProjectTree action-required indicator", () => {
+  beforeEach(() => {
+    threadStoreOverrides.permissionsByThread = undefined;
+    const thread = makeThread({ id: "thread-pending", status: "active" });
+    (useWorkspaceStore as unknown as { mockImplementation: (fn: (selector: (s: unknown) => unknown) => unknown) => void }).mockImplementation(
+      (selector) => selector({
+        workspaces: [{ id: "ws-1", name: "Test", path: "/test", provider_config: {}, created_at: "", updated_at: "" }],
+        activeWorkspaceId: "ws-1",
+        activeThreadId: null,
+        threads: [thread],
+        loadWorkspaces: vi.fn(),
+        loadThreads: vi.fn(),
+        setActiveWorkspace: vi.fn(),
+        setActiveThread: vi.fn(),
+        createWorkspace: vi.fn(),
+        deleteWorkspace: vi.fn(),
+        deleteThread: vi.fn(),
+        setPendingNewThread: vi.fn(),
+        updateThreadTitle: vi.fn(),
+        loadWorktrees: vi.fn(),
+        worktrees: [],
+        worktreesLoadedForWorkspace: null,
+        error: null,
+      })
+    );
+    // Pre-expand the workspace so its threads render.
+    window.localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": true }));
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("renders a ring indicator when the thread has an unsettled permission request", () => {
+    threadStoreOverrides.permissionsByThread = {
+      "thread-pending": [{ settled: false }],
+    };
+    render(<ProjectTree />);
+    const indicator = screen.getByLabelText("Action required");
+    expect(indicator.className).toContain("ring-amber-500");
+    expect(indicator.className).toContain("bg-transparent");
+    expect(indicator.className).toContain("animate-pulse");
+  });
+
+  it("renders a solid dot (no action-required label) when there is no pending permission", () => {
+    threadStoreOverrides.permissionsByThread = {};
+    render(<ProjectTree />);
+    expect(screen.queryByLabelText("Action required")).toBeNull();
   });
 });
