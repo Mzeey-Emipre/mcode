@@ -377,26 +377,41 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       try {
         existing.pushMessage(prompt);
       } catch (err) {
-        // The queue was closed between the session lookup and the push: most
-        // commonly a race with idle eviction or stopSession(). Surface the
-        // failure through the normal Error event path so the caller sees it.
         const errorMessage =
           err instanceof Error ? err.message : String(err);
-        logger.error("Prompt queue push failed on existing session", {
-          sessionId,
-          error: errorMessage,
-        });
-        this.emit("event", {
-          type: AgentEventType.Error,
-          threadId: tid,
-          error: "Message could not be delivered: session was shutting down. Please try again.",
-        } satisfies AgentEvent);
-        // Drop the stale entry so the next send creates a fresh session.
-        // Safe to delete here even if startStreamLoop is mid-iteration: its
-        // finally block guards with `current?.query === q` before re-deleting,
-        // so a second delete is a no-op and the terminal Ended event still
-        // fires via the `(!current || current.query === q)` condition.
-        this.sessions.delete(sessionId);
+        // push() throws two distinct errors: "Prompt queue is closed" (race
+        // with idle eviction / stopSession()) and "Prompt queue full" (caller
+        // is pushing faster than the SDK can drain). Only the closed case
+        // means the session is gone; overflow leaves the session healthy.
+        const isClosed = errorMessage.includes("queue is closed");
+        if (isClosed) {
+          logger.error("Prompt queue push failed on existing session", {
+            sessionId,
+            error: errorMessage,
+          });
+          this.emit("event", {
+            type: AgentEventType.Error,
+            threadId: tid,
+            error: "Message could not be delivered: session was shutting down. Please try again.",
+          } satisfies AgentEvent);
+          // Drop the stale entry so the next send creates a fresh session.
+          // Safe to delete here even if startStreamLoop is mid-iteration: its
+          // finally block guards with `current?.query === q` before re-deleting,
+          // so a second delete is a no-op and the terminal Ended event still
+          // fires via the `(!current || current.query === q)` condition.
+          this.sessions.delete(sessionId);
+        } else {
+          // Transient overflow: surface via Error event but keep the session.
+          logger.warn("Prompt queue full on existing session", {
+            sessionId,
+            error: errorMessage,
+          });
+          this.emit("event", {
+            type: AgentEventType.Error,
+            threadId: tid,
+            error: errorMessage,
+          } satisfies AgentEvent);
+        }
         throw err;
       }
       return;
