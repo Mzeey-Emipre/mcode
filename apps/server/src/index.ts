@@ -50,6 +50,13 @@ const MAX_PORT_ATTEMPTS = 10;
 const LOCK_FILE_PATH = join(getMcodeDir(), "server.lock");
 
 /**
+ * Path to the clean-shutdown breadcrumb. Written at the end of shutdown() and
+ * deleted on startup. Absence at startup implies the previous process died
+ * without running shutdown(): the primary diagnostic for #290-class restarts.
+ */
+const SHUTDOWN_MARKER_PATH = join(getMcodeDir(), ".clean-shutdown");
+
+/**
  * Host address to bind the server to.
  * Defaults to 127.0.0.1 (loopback only) for security. Set MCODE_HOST to
  * "0.0.0.0" or "::" to expose the server on all network interfaces.
@@ -79,6 +86,20 @@ function resolveAuthToken(): string {
 }
 
 const AUTH_TOKEN = resolveAuthToken();
+
+// Clean-shutdown breadcrumb check. If the marker is missing AND a prior lock
+// file exists, the previous server process did not run shutdown() to completion.
+// Log it so operators have a diagnostic trail for issue #290-class unclean
+// exits. The lock-file gate prevents false positives on fresh installs and on
+// test runs that import this module without ever starting a server.
+if (existsSync(SHUTDOWN_MARKER_PATH)) {
+  unlinkSync(SHUTDOWN_MARKER_PATH);
+} else if (existsSync(LOCK_FILE_PATH)) {
+  logger.warn(
+    "Previous server process did not shut down gracefully: no clean-shutdown marker found",
+    { markerPath: SHUTDOWN_MARKER_PATH },
+  );
+}
 
 // Initialize DI container
 const container = setupContainer();
@@ -442,7 +463,23 @@ async function shutdown(): Promise<void> {
     // Already closed or other non-fatal error
   }
 
-  // 12. Remove server lock file
+  // 12. Write clean-shutdown breadcrumb BEFORE removing the lock file. If the
+  // marker write fails, the lock file stays put so the next startup still
+  // detects an unclean exit (missing marker + present lock = warn).
+  try {
+    writeFileSync(SHUTDOWN_MARKER_PATH, String(Date.now()), {
+      mode: 0o600,
+      encoding: "utf-8",
+    });
+  } catch (err) {
+    logger.warn("Could not write clean-shutdown marker", {
+      markerPath: SHUTDOWN_MARKER_PATH,
+      error: err instanceof Error ? err.message : String(err),
+      code: (err as NodeJS.ErrnoException)?.code,
+    });
+  }
+
+  // 13. Remove server lock file
   try {
     unlinkSync(LOCK_FILE_PATH);
   } catch {

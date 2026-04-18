@@ -38,6 +38,10 @@ interface SessionEntry {
   lastUsedAt: number;
   /** When true, the finally block in startStreamLoop should not emit an "ended" event. */
   suppressEnded?: boolean;
+  /** Tool-use IDs whose matching tool_result has not yet been received.
+   *  While this set is non-empty, evictIdleSessions() must skip the session
+   *  regardless of how long it has been since an SDK message arrived. */
+  pendingToolUses: Set<string>;
 }
 
 /**
@@ -45,7 +49,7 @@ interface SessionEntry {
  * Messages pushed via `push()` are yielded by the iterable. Calling `close()`
  * terminates the iterator, signaling the SDK to shut down the subprocess.
  */
-function createPromptQueue(): {
+export function createPromptQueue(): {
   push: (msg: SDKUserMessage) => void;
   close: () => void;
   iterable: AsyncIterable<SDKUserMessage>;
@@ -56,7 +60,11 @@ function createPromptQueue(): {
   let done = false;
 
   const push = (msg: SDKUserMessage): void => {
-    if (done) return;
+    if (done) {
+      throw new Error(
+        "Prompt queue is closed; message cannot be delivered to the SDK",
+      );
+    }
     if (waiting) {
       const resolve = waiting;
       waiting = null;
@@ -366,7 +374,46 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         }
       }
 
-      existing.pushMessage(prompt);
+      try {
+        existing.pushMessage(prompt);
+      } catch (err) {
+        const errorMessage =
+          err instanceof Error ? err.message : String(err);
+        // push() throws two distinct errors: "Prompt queue is closed" (race
+        // with idle eviction / stopSession()) and "Prompt queue full" (caller
+        // is pushing faster than the SDK can drain). Only the closed case
+        // means the session is gone; overflow leaves the session healthy.
+        const isClosed = errorMessage.includes("queue is closed");
+        if (isClosed) {
+          logger.error("Prompt queue push failed on existing session", {
+            sessionId,
+            error: errorMessage,
+          });
+          this.emit("event", {
+            type: AgentEventType.Error,
+            threadId: tid,
+            error: "Message could not be delivered: session was shutting down. Please try again.",
+          } satisfies AgentEvent);
+          // Drop the stale entry so the next send creates a fresh session.
+          // Safe to delete here even if startStreamLoop is mid-iteration: its
+          // finally block guards with `current?.query === q` before re-deleting,
+          // so a second delete is a no-op and the terminal Ended event still
+          // fires via the `(!current || current.query === q)` condition.
+          this.sessions.delete(sessionId);
+        } else {
+          // Transient overflow: surface via Error event but keep the session.
+          logger.warn("Prompt queue full on existing session", {
+            sessionId,
+            error: errorMessage,
+          });
+          this.emit("event", {
+            type: AgentEventType.Error,
+            threadId: tid,
+            error: errorMessage,
+          } satisfies AgentEvent);
+        }
+        throw err;
+      }
       return;
     }
 
@@ -529,6 +576,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       closeQueue: queue.close,
       model: resolvedModel,
       lastUsedAt: Date.now(),
+      pendingToolUses: new Set<string>(),
     };
     this.sessions.set(sessionId, entry);
 
@@ -578,6 +626,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
           closeQueue: freshQueue.close,
           model: resolvedModel,
           lastUsedAt: Date.now(),
+          pendingToolUses: new Set<string>(),
         };
         this.sessions.set(sessionId, freshEntry);
         this.startStreamLoop(sessionId, freshQ);
@@ -609,6 +658,40 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
          * context fill vs. the accumulated result.usage which inflates across API calls).
          * Reset to undefined after each turnComplete. */
         let lastStreamInputTokens: number | undefined = undefined;
+
+        /**
+         * Emit an Error event with a best-effort message extracted from an SDK
+         * result payload. The full raw payload is logged so operators can see
+         * every field the SDK sent, while the Error event stays compatible with
+         * the string-shaped `error` field on AgentEvent.
+         */
+        const emitResultError = (anyMsg: Record<string, unknown>): void => {
+          const errors = (anyMsg.errors as string[] | undefined) ?? [];
+          let errorMessage: string;
+          if (errors.length > 0) {
+            errorMessage = errors.join(", ");
+          } else if (typeof anyMsg.result === "string") {
+            errorMessage = anyMsg.result;
+          } else {
+            try {
+              errorMessage = JSON.stringify(anyMsg.result ?? anyMsg);
+            } catch {
+              errorMessage = "Claude SDK returned an error result";
+            }
+          }
+          logger.error("Claude SDK result error", {
+            sessionId,
+            threadId,
+            errors,
+            subtype: anyMsg.subtype,
+            payload: anyMsg,
+          });
+          this.emit("event", {
+            type: AgentEventType.Error,
+            threadId,
+            error: errorMessage || "Claude SDK returned an error result",
+          } satisfies AgentEvent);
+        };
 
         for await (const msg of q) {
           const entry = this.sessions.get(sessionId);
@@ -687,11 +770,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
 
               for (const block of contentBlocks) {
                 if (block.type === "tool_use") {
+                  const toolId = (block.id as string) || "";
+                  if (toolId) {
+                    const entry = this.sessions.get(sessionId);
+                    entry?.pendingToolUses.add(toolId);
+                  }
                   this.emit("event", {
                     type: AgentEventType.ToolUse,
                     threadId,
-                    toolCallId:
-                      (block.id as string) || "",
+                    toolCallId: toolId,
                     toolName:
                       (block.name as string) || "unknown",
                     toolInput:
@@ -706,6 +793,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             }
 
             case "result": {
+              if (anyMsg.is_error === true) {
+                // The "No conversation found" resume-recovery branch above
+                // handles its own flow and returns early; any other is_error
+                // result lands here and must be surfaced as an Error event
+                // rather than silently completing the turn.
+                emitResultError(anyMsg);
+                lastAssistantText = "";
+                lastStreamInputTokens = undefined;
+                break;
+              }
               if (lastAssistantText) {
                 this.emit("event", {
                   type: AgentEventType.Message,
@@ -864,10 +961,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             }
 
             case "tool_use": {
+              const toolId = (anyMsg.id as string) || "";
+              if (toolId) {
+                const entry = this.sessions.get(sessionId);
+                entry?.pendingToolUses.add(toolId);
+              }
               this.emit("event", {
                 type: AgentEventType.ToolUse,
                 threadId,
-                toolCallId: (anyMsg.id as string) || "",
+                toolCallId: toolId,
                 toolName:
                   (anyMsg.tool_name as string) ||
                   (anyMsg.name as string) ||
@@ -887,18 +989,22 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
             }
 
             case "tool_result": {
+              const toolUseId = (anyMsg.tool_use_id as string) || "";
               const content = anyMsg.content;
               this.emit("event", {
                 type: AgentEventType.ToolResult,
                 threadId,
-                toolCallId:
-                  (anyMsg.tool_use_id as string) || "",
+                toolCallId: toolUseId,
                 output:
                   typeof content === "string"
                     ? content
                     : JSON.stringify(content ?? ""),
                 isError: Boolean(anyMsg.is_error),
               } satisfies AgentEvent);
+              if (toolUseId) {
+                const entry = this.sessions.get(sessionId);
+                entry?.pendingToolUses.delete(toolUseId);
+              }
               break;
             }
 
@@ -1083,6 +1189,15 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const now = Date.now();
     for (const [sessionId, entry] of this.sessions) {
       if (now - entry.lastUsedAt > IDLE_TTL_MS) {
+        // Skip sessions with in-flight tool calls: a long-running tool (build,
+        // test suite, large file op) may not emit any SDK message for minutes.
+        if (entry.pendingToolUses.size > 0) {
+          logger.debug("Skipping eviction: pending tool calls", {
+            sessionId,
+            pending: entry.pendingToolUses.size,
+          });
+          continue;
+        }
         // Never evict a session that is actively awaiting a user permission response —
         // the user may be on another thread and is about to respond.
         const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
@@ -1223,7 +1338,13 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       entry.resolve("cancelled");
       this.emit("permission_resolved", { requestId, decision: "cancelled" as const });
     }
-    for (const [, entry] of this.sessions) {
+    for (const [sessionId, entry] of this.sessions) {
+      if (entry.pendingToolUses.size > 0) {
+        logger.warn("Shutting down session with pending tool calls", {
+          sessionId,
+          pending: entry.pendingToolUses.size,
+        });
+      }
       entry.closeQueue();
       entry.query.close();
     }
