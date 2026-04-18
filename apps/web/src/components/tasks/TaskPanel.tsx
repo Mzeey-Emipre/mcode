@@ -38,8 +38,13 @@ export function TaskPanel() {
       </div>
     </ScrollArea>
   ) : (
-    <div className="flex flex-1 items-center justify-center">
-      <p className="text-xs text-muted-foreground/40">No tasks yet</p>
+    <div className="flex flex-1 flex-col items-center justify-center gap-3">
+      <span aria-hidden="true" className="font-mono text-[24px] leading-none text-muted-foreground/15">
+        ∅
+      </span>
+      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
+        Nothing on the docket
+      </p>
     </div>
   );
 }

@@ -33,6 +33,17 @@ import { ServerManager } from "./server-manager.js";
 import { initAutoUpdater } from "./auto-updater.js";
 import { setupSpellcheck } from "./spellcheck.js";
 
+// Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
+// from the installed prod build. Without this, both share %APPDATA%/Mcode/
+// and the running prod instance holds locks on the disk cache, which makes
+// dev fail to start with "Unable to move the cache: Access is denied" and
+// a black renderer. Server data is already split via getMcodeDir(), but
+// Electron's userData is derived from app.getName() and must be set here,
+// before app.whenReady() and any other path-dependent call.
+if (!app.isPackaged) {
+  app.setPath("userData", join(app.getPath("appData"), "Mcode-Dev"));
+}
+
 // ---------------------------------------------------------------------------
 // Editor detection (inlined from editors.ts)
 // ---------------------------------------------------------------------------

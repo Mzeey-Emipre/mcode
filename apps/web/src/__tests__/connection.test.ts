@@ -3,14 +3,14 @@ import { createWsTransport } from "../transport/ws-transport";
 
 class MockWebSocket {
   onopen: (() => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event: { code: number; reason: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   readyState = 0;
 
   close() {
     this.readyState = 3;
-    this.onclose?.();
+    this.onclose?.({ code: 1000, reason: "" });
   }
 
   send(_data: string) {}
@@ -20,9 +20,9 @@ class MockWebSocket {
     this.onopen?.();
   }
 
-  simulateClose() {
+  simulateClose(code = 1000) {
     this.readyState = 3;
-    this.onclose?.();
+    this.onclose?.({ code, reason: "" });
   }
 }
 
@@ -101,5 +101,134 @@ describe("onStatusChange", () => {
     statusSpy.mockClear();
     transport.close();
     expect(statusSpy).not.toHaveBeenCalledWith("reconnecting");
+  });
+});
+
+describe("4001 auth failure handling", () => {
+  it("fires 'authFailed' status when closed with code 4001", () => {
+    vi.useFakeTimers();
+    const statusSpy = vi.fn();
+    const transport = createWsTransport("ws://localhost:1234", {
+      onStatusChange: statusSpy,
+    });
+    mockWsInstance.simulateOpen();
+    statusSpy.mockClear();
+    mockWsInstance.simulateClose(4001);
+    expect(statusSpy).toHaveBeenCalledWith("authFailed");
+    expect(statusSpy).not.toHaveBeenCalledWith("reconnecting");
+    transport.close();
+    vi.useRealTimers();
+  });
+
+  it("fires 'reconnecting' for non-4001 close codes", () => {
+    vi.useFakeTimers();
+    const statusSpy = vi.fn();
+    const transport = createWsTransport("ws://localhost:1234", {
+      onStatusChange: statusSpy,
+    });
+    mockWsInstance.simulateOpen();
+    statusSpy.mockClear();
+    mockWsInstance.simulateClose(1006);
+    expect(statusSpy).toHaveBeenCalledWith("reconnecting");
+    expect(statusSpy).not.toHaveBeenCalledWith("authFailed");
+    transport.close();
+    vi.useRealTimers();
+  });
+
+  it("reconnects immediately after 4001 close without waiting", async () => {
+    vi.useFakeTimers();
+
+    // Track each reconnect attempt's URL
+    const transport = createWsTransport("ws://localhost:1234", {
+      onStatusChange: vi.fn(),
+      discoverServerUrl: async () => "ws://localhost:1234",
+    });
+
+    mockWsInstance.simulateOpen();
+
+    // Grab initial reconnect delay by triggering a 4001 close (immediate reconnect)
+    const firstInstance = mockWsInstance;
+    firstInstance.simulateClose(4001);
+
+    // With immediate=true, the reconnect fires at delay=0
+    await vi.advanceTimersByTimeAsync(0);
+
+    // A new WebSocket should have been created immediately
+    const secondInstance = mockWsInstance;
+    expect(secondInstance).not.toBe(firstInstance);
+
+    transport.close();
+    vi.useRealTimers();
+  });
+
+  it("calls discoverServerUrl on auth failure reconnect", async () => {
+    vi.useFakeTimers();
+    let discoverCalled = false;
+    const transport = createWsTransport("ws://localhost:1234", {
+      onStatusChange: vi.fn(),
+      discoverServerUrl: async () => {
+        discoverCalled = true;
+        return "ws://localhost:5678";
+      },
+    });
+
+    mockWsInstance.simulateOpen();
+    mockWsInstance.simulateClose(4001);
+
+    // Auth failure triggers immediate reconnect (delay=0)
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(discoverCalled).toBe(true);
+
+    transport.close();
+    vi.useRealTimers();
+  });
+
+  it("falls back to backoff delay after MAX_IMMEDIATE_AUTH_RETRIES consecutive 4001s", async () => {
+    // This test simulates a server that persistently rejects every connection
+    // with 4001 (never sending onopen). After 3 immediate retries the client
+    // must fall back to backoff so it doesn't spin in a tight loop.
+    vi.useFakeTimers();
+
+    const instances: MockWebSocket[] = [];
+    vi.stubGlobal(
+      "WebSocket",
+      new Proxy(MockWebSocket, {
+        construct(Target) {
+          const instance = new Target();
+          mockWsInstance = instance;
+          instances.push(instance);
+          return instance;
+        },
+      }),
+    );
+
+    const transport = createWsTransport("ws://localhost:1234", {
+      onStatusChange: vi.fn(),
+    });
+
+    // Initial connection opens successfully, then the server starts rejecting.
+    instances[0].simulateOpen();
+
+    // Fail #1: immediate retry (counter 0→1)
+    instances[0].simulateClose(4001);
+    await vi.advanceTimersByTimeAsync(0); // instance[1] created, no open
+    // Fail #2: immediate retry (counter 1→2)
+    instances[1].simulateClose(4001);
+    await vi.advanceTimersByTimeAsync(0); // instance[2] created, no open
+    // Fail #3: immediate retry (counter 2→3)
+    instances[2].simulateClose(4001);
+    await vi.advanceTimersByTimeAsync(0); // instance[3] created, no open
+
+    // Fail #4: counter is now at MAX_IMMEDIATE_AUTH_RETRIES (3), so the next
+    // reconnect must use backoff, not delay=0.
+    const countBefore = instances.length;
+    instances[3].simulateClose(4001);
+    // Advancing by 0 ms must NOT create a new instance.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(instances.length).toBe(countBefore);
+
+    transport.close();
+    vi.useRealTimers();
   });
 });

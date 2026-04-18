@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDiffLines } from "../lib/diff-parser";
+import { parseDiffLines, isMarkdownFile, reconstructNewContent } from "../lib/diff-parser";
 
 describe("parseDiffLines", () => {
   describe("hiddenLineCount on hunk headers", () => {
@@ -161,5 +161,101 @@ diff --git a/b.ts b/b.ts
       const lines = parseDiffLines(diff);
       expect(lines.find((l) => l.type === "context")?.content).toBe("unchanged");
     });
+  });
+});
+
+describe("isMarkdownFile", () => {
+  it("returns true for .md extension", () => {
+    expect(isMarkdownFile("README.md")).toBe(true);
+  });
+
+  it("returns true for .mdx extension", () => {
+    expect(isMarkdownFile("docs/guide.mdx")).toBe(true);
+  });
+
+  it("returns true for uppercase .MD extension", () => {
+    expect(isMarkdownFile("README.MD")).toBe(true);
+  });
+
+  it("returns false for .ts file", () => {
+    expect(isMarkdownFile("index.ts")).toBe(false);
+  });
+
+  it("returns false for .txt file", () => {
+    expect(isMarkdownFile("notes.txt")).toBe(false);
+  });
+
+  it("returns false for a file with no extension", () => {
+    expect(isMarkdownFile("Makefile")).toBe(false);
+  });
+
+  it("returns false for empty string", () => {
+    expect(isMarkdownFile("")).toBe(false);
+  });
+
+  it("handles path with directories", () => {
+    expect(isMarkdownFile("docs/guides/architecture.md")).toBe(true);
+  });
+});
+
+describe("reconstructNewContent", () => {
+  it("returns empty string for empty lines array", () => {
+    expect(reconstructNewContent([])).toBe("");
+  });
+
+  it("includes context lines", () => {
+    const lines = parseDiffLines(`@@ -1,2 +1,2 @@
+ first
+ second`);
+    expect(reconstructNewContent(lines)).toBe("first\nsecond");
+  });
+
+  it("includes added lines", () => {
+    const lines = parseDiffLines(`@@ -1,1 +1,2 @@
+ context
++added`);
+    expect(reconstructNewContent(lines)).toBe("context\nadded");
+  });
+
+  it("excludes removed lines", () => {
+    const lines = parseDiffLines(`@@ -1,2 +1,1 @@
+-removed
+ kept`);
+    expect(reconstructNewContent(lines)).toBe("kept");
+  });
+
+  it("excludes header lines", () => {
+    const lines = parseDiffLines(`diff --git a/foo.md b/foo.md
+--- a/foo.md
++++ b/foo.md
+@@ -1,1 +1,1 @@
+-old
++new`);
+    expect(reconstructNewContent(lines)).toBe("new");
+  });
+
+  it("reconstructs correct order: context before add", () => {
+    const lines = parseDiffLines(`@@ -1,2 +1,3 @@
+ line1
+-old
++new
+ line3`);
+    expect(reconstructNewContent(lines)).toBe("line1\nnew\nline3");
+  });
+
+  it("preserves empty lines from context", () => {
+    const lines = parseDiffLines(`@@ -1,3 +1,3 @@
+ first
+
+ last`);
+    expect(reconstructNewContent(lines)).toBe("first\n\nlast");
+  });
+
+  it("excludes the no-newline sentinel", () => {
+    const lines = parseDiffLines(`@@ -1,1 +1,1 @@
+-old
++new
+\\ No newline at end of file`);
+    expect(reconstructNewContent(lines)).toBe("new");
   });
 });

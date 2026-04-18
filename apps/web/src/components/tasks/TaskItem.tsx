@@ -3,8 +3,8 @@ import { Check } from "lucide-react";
 import type { TaskItem as TaskItemType } from "@/stores/taskStore";
 
 /**
- * Single task row. Status is communicated through icon shape, color, and
- * background — never through strikethrough or spinners alone.
+ * Single task row. Status is communicated through the leading status mark plus
+ * row tint and text weight — no decorative side-stripe accent.
  */
 export const TaskItem = memo(function TaskItem({ task }: { task: TaskItemType }) {
   const isActive = task.status === "in_progress";
@@ -13,58 +13,53 @@ export const TaskItem = memo(function TaskItem({ task }: { task: TaskItemType })
 
   return (
     <div
-      className={`relative flex items-start gap-2.5 px-3 py-[7px] text-[11px] leading-[1.5] transition-colors duration-150 ${
+      className={`flex items-start gap-2.5 px-3 py-[7px] text-[11.5px] leading-[1.5] transition-colors duration-150 ${
         isActive
-          ? "bg-primary/[0.05]"
+          ? "bg-primary/[0.06]"
           : isDone
             ? "hover:bg-muted/[0.06]"
             : "hover:bg-muted/[0.08]"
       } ${
         isDone
-          ? "text-muted-foreground/40"
+          ? "text-muted-foreground/45"
           : isActive
             ? "text-foreground/95"
-            : "text-foreground/55"
+            : "text-foreground/60"
       }`}
     >
-      {/* Active left accent — a crisp vertical rule */}
-      {isActive && (
-        <div className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-primary rounded-r-full" />
-      )}
-
-      {/* Status icon column — fixed 14px wide */}
-      <div className="mt-[1px] shrink-0 flex h-[14px] w-[14px] items-center justify-center">
+      {/* Status mark — fixed 14px column */}
+      <div className="mt-[2px] shrink-0 flex h-[14px] w-[14px] items-center justify-center">
         {isDone && (
-          /* Completed: filled square badge with checkmark */
-          <div className="flex h-[13px] w-[13px] items-center justify-center rounded-[3px] bg-emerald-500/[0.15]">
-            <Check
-              size={8}
-              strokeWidth={2.5}
-              className="text-emerald-500/70"
-            />
-          </div>
+          <Check
+            size={11}
+            strokeWidth={2.25}
+            className="text-[var(--diff-add-strong)]"
+            aria-label="Completed"
+          />
         )}
 
         {isActive && (
-          /* Active: pulsing ring + solid core dot */
-          <div className="relative flex h-[14px] w-[14px] items-center justify-center">
-            <div className="absolute h-[10px] w-[10px] animate-ping rounded-full bg-primary/20" style={{ animationDuration: "1.8s" }} />
-            <div className="h-[6px] w-[6px] rounded-full bg-primary" />
-          </div>
+          /* Active: a quietly pulsing concentric mark */
+          <span className="relative inline-flex h-[12px] w-[12px] items-center justify-center" aria-label="In progress">
+            <span
+              className="absolute inset-0 rounded-full bg-primary/25 animate-ping"
+              style={{ animationDuration: "1.8s" }}
+            />
+            <span className="relative h-[6px] w-[6px] rounded-full bg-primary" />
+          </span>
         )}
 
         {isPending && (
-          /* Pending: hollow square — clearly "queued", not "absent" */
-          <div className="h-[10px] w-[10px] rounded-[2.5px] border border-muted-foreground/[0.22]" />
+          /* Pending: a quiet open ring */
+          <span
+            className="h-[10px] w-[10px] rounded-full border border-muted-foreground/30"
+            aria-label="Pending"
+          />
         )}
       </div>
 
       {/* Label */}
-      <span
-        className={`min-w-0 flex-1 ${
-          isActive ? "font-[500]" : isDone ? "font-[400]" : "font-[400]"
-        }`}
-      >
+      <span className={`min-w-0 flex-1 ${isActive ? "font-medium" : "font-normal"}`}>
         {isActive ? (task.activeForm ?? task.content) : task.content}
       </span>
     </div>

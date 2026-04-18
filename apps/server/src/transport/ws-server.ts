@@ -33,11 +33,15 @@ export function createWsServer(deps: RouterDeps & { authToken: string }): {
       const body = JSON.stringify({
         status: "ok",
         activeAgents: deps.agentService.activeCount(),
+        // Expose token so scanPortRange can recover it after a server restart
+        // without needing prior authentication. Safe because this server only
+        // binds to 127.0.0.1 (same trust boundary as the lock file).
+        authToken: deps.authToken,
       });
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token && safeTokenEqual(token, deps.authToken)) {
-        headers["Set-Cookie"] = buildAuthCookie(deps.authToken);
-      }
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Set-Cookie": buildAuthCookie(deps.authToken),
+      };
       res.writeHead(200, headers);
       res.end(body);
       return;

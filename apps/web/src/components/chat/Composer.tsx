@@ -13,13 +13,13 @@ import {
   Loader2,
   Check,
   ListTodo,
-  GitBranch,
-  X,
+  MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, findModelById, isMaxEffortModel, isXhighEffortModel, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, findModelById, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import type { ComposerMode } from "./ModeSelector";
@@ -49,6 +49,7 @@ import type { PrDetail } from "@/transport/types";
 import { QueuePopover } from "./QueuePopover";
 import { ContextTracker } from "./ContextTracker";
 import { CompactingBanner } from "./CompactingBanner";
+import { ComposerBranchBar } from "./ComposerBranchBar";
 import { useQueueStore } from "@/stores/queueStore";
 import {
   classifyFile,
@@ -60,6 +61,15 @@ import {
 import type { ReasoningLevel } from "@mcode/contracts";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useElementWidth } from "@/hooks/useElementWidth";
+
+/** ReasoningLevel values as a Set for O(1) membership checks in the Codex level filter. */
+const VALID_REASONING_LEVELS_SET = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
+
+/** Display label for a reasoning level value. */
+function reasoningLabel(level: string): string {
+  return level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+}
 
 interface ComposerProps {
   threadId?: string;
@@ -75,8 +85,27 @@ interface ComposerProps {
 
 type AccessMode = PermissionMode;
 
-/** Tasks toggle button shown in the status bar only when the thread has tasks. */
-function TasksToggle({ threadId }: { threadId?: string }) {
+/**
+ * Overflow popover that hosts secondary composer controls (interaction mode,
+ * permission mode, and the Tasks-panel toggle when applicable).
+ *
+ * Centralizing these behind a single trigger keeps the status bar compact on
+ * every viewport — previously each toggle was its own button and they wrapped
+ * onto a second row at narrow widths.
+ */
+function ComposerOptionsMenu({
+  threadId,
+  mode,
+  access,
+  onModeChange,
+  onAccessChange,
+}: {
+  threadId?: string;
+  mode: InteractionMode;
+  access: PermissionMode;
+  onModeChange: (next: InteractionMode) => void;
+  onAccessChange: (next: PermissionMode) => void;
+}) {
   const hasTasks = useTaskStore(
     (s) => !!(threadId && s.tasksByThread[threadId]?.length),
   );
@@ -84,38 +113,220 @@ function TasksToggle({ threadId }: { threadId?: string }) {
     (s) => !!(threadId && s.rightPanelByThread[threadId]?.visible),
   );
 
-  if (!hasTasks) return null;
-
-  const handleClick = () => {
+  const toggleTasksPanel = () => {
     if (!threadId) return;
-    useDiffStore.getState().showRightPanel(threadId);
-    useDiffStore.getState().setRightPanelTab(threadId, "tasks");
+    if (panelVisible) {
+      useDiffStore.getState().hideRightPanel(threadId);
+    } else {
+      useDiffStore.getState().showRightPanel(threadId);
+      useDiffStore.getState().setRightPanelTab(threadId, "tasks");
+    }
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
+    <Popover>
+      <PopoverTrigger
+        aria-label="Composer options"
+        title="Composer options"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground data-[popup-open]:bg-muted/40 data-[popup-open]:text-foreground"
+      >
+        <MoreHorizontal size={14} />
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={8} className="w-60 p-2">
+        {/* Mode */}
+        <div className="px-1.5 pt-1 pb-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+          Mode
+        </div>
+        <div className="mb-2 flex rounded-md bg-muted/40 p-0.5">
           <Button
             variant="ghost"
             size="xs"
-            onClick={handleClick}
+            onClick={() => onModeChange(INTERACTION_MODES.CHAT)}
+            aria-pressed={mode === INTERACTION_MODES.CHAT}
             className={cn(
-              "gap-1.5 transition-colors",
-              panelVisible
-                ? "text-primary hover:bg-muted/40"
-                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
+              mode === INTERACTION_MODES.CHAT
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
+                : "text-muted-foreground hover:text-foreground",
             )}
-            aria-label="Toggle tasks"
-            aria-pressed={panelVisible}
           >
-            <ListTodo size={14} />
-            <span className="text-sm">Tasks</span>
+            <MessageSquare size={12} />
+            Chat
           </Button>
-        }
-      />
-      <TooltipContent>Toggle task panel (Ctrl+T)</TooltipContent>
-    </Tooltip>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => onModeChange(INTERACTION_MODES.PLAN)}
+            aria-pressed={mode === INTERACTION_MODES.PLAN}
+            className={cn(
+              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
+              mode === INTERACTION_MODES.PLAN
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <FileEdit size={12} />
+            Plan
+          </Button>
+        </div>
+
+        {/* Permissions */}
+        <div className="px-1.5 pt-1 pb-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+          Permissions
+        </div>
+        <div className={cn("flex rounded-md bg-muted/40 p-0.5", hasTasks && "mb-2")}>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => onAccessChange(PERMISSION_MODES.FULL)}
+            aria-pressed={access === PERMISSION_MODES.FULL}
+            className={cn(
+              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
+              access === PERMISSION_MODES.FULL
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Unlock size={12} />
+            Full
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => onAccessChange(PERMISSION_MODES.SUPERVISED)}
+            aria-pressed={access === PERMISSION_MODES.SUPERVISED}
+            className={cn(
+              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
+              access === PERMISSION_MODES.SUPERVISED
+                ? "bg-background text-foreground shadow-sm hover:bg-background"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Lock size={12} />
+            Supervised
+          </Button>
+        </div>
+
+        {/* Tasks panel — only available when the thread has tasks. */}
+        {hasTasks && (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={toggleTasksPanel}
+            aria-pressed={panelVisible}
+            className="h-auto w-full justify-between rounded-md px-2 py-1.5 text-xs font-normal text-foreground hover:bg-muted/40"
+          >
+            <span className="flex items-center gap-2">
+              <ListTodo size={13} className={panelVisible ? "text-primary" : "text-muted-foreground"} />
+              Tasks panel
+            </span>
+            <span className={cn("text-[10px] font-medium uppercase tracking-[0.1em]", panelVisible ? "text-primary" : "text-muted-foreground/60")}>
+              {panelVisible ? "On" : "Off"}
+            </span>
+          </Button>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Inline rendering of the same controls — Mode (Chat/Plan), Permissions
+ * (Full/Supervised), and the Tasks-panel toggle. Used at md+ widths where the
+ * controls fit comfortably in the model bar; below md the parent renders
+ * `ComposerOptionsMenu` instead so they collapse behind a single trigger.
+ */
+function InlineComposerOptions({
+  threadId,
+  mode,
+  access,
+  onModeChange,
+  onAccessChange,
+}: {
+  threadId?: string;
+  mode: InteractionMode;
+  access: PermissionMode;
+  onModeChange: (next: InteractionMode) => void;
+  onAccessChange: (next: PermissionMode) => void;
+}) {
+  const hasTasks = useTaskStore(
+    (s) => !!(threadId && s.tasksByThread[threadId]?.length),
+  );
+  const panelVisible = useDiffStore(
+    (s) => !!(threadId && s.rightPanelByThread[threadId]?.visible),
+  );
+
+  const toggleTasksPanel = () => {
+    if (!threadId) return;
+    if (panelVisible) {
+      useDiffStore.getState().hideRightPanel(threadId);
+    } else {
+      useDiffStore.getState().showRightPanel(threadId);
+      useDiffStore.getState().setRightPanelTab(threadId, "tasks");
+    }
+  };
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => onModeChange(mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT)}
+              className="gap-1.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+            >
+              {mode === INTERACTION_MODES.CHAT ? <MessageSquare size={14} /> : <FileEdit size={14} />}
+              <span className="text-sm">{mode === INTERACTION_MODES.CHAT ? "Chat" : "Plan"}</span>
+            </Button>
+          }
+        />
+        <TooltipContent>{mode === INTERACTION_MODES.CHAT ? "Chat mode" : "Plan mode"}</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => onAccessChange(access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL)}
+              className="gap-1.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+            >
+              {access === PERMISSION_MODES.FULL ? <Unlock size={14} /> : <Lock size={14} />}
+              <span className="text-sm">{access === PERMISSION_MODES.FULL ? "Full access" : "Supervised"}</span>
+            </Button>
+          }
+        />
+        <TooltipContent>{access === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode"}</TooltipContent>
+      </Tooltip>
+
+      {hasTasks && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={toggleTasksPanel}
+                aria-pressed={panelVisible}
+                className={cn(
+                  "gap-1.5 transition-colors hover:bg-muted/40",
+                  panelVisible
+                    ? "text-primary hover:text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <ListTodo size={14} />
+                <span className="text-sm">Tasks</span>
+              </Button>
+            }
+          />
+          <TooltipContent>{panelVisible ? "Hide tasks panel" : "Show tasks panel"}</TooltipContent>
+        </Tooltip>
+      )}
+    </>
   );
 }
 
@@ -129,6 +340,25 @@ function TasksToggle({ threadId }: { threadId?: string }) {
  * - **Locked (existing thread):** read-only branch badge
  */
 export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit }: ComposerProps) {
+  // Mode/permissions/tasks toggles render inline when the composer's own
+  // container is wide enough; below the threshold they collapse behind a
+  // single overflow trigger so the send button never wraps to a new row.
+  // Container-based (not viewport-based) so the layout responds to the right
+  // panel opening, sidebar resizing, etc. — not just window resizes.
+  const composerContainerRef = useRef<HTMLDivElement>(null);
+  const composerWidth = useElementWidth(composerContainerRef);
+  // Threshold tuned so model + reasoning + Chat + Full access + Tasks +
+  // token-count badge + send button fit comfortably on one row with the
+  // standard gaps and breathing room. Below this the row collapses to a
+  // single "Composer options" trigger so the send button never gets clipped.
+  // Empirically the row needs roughly 720–740px of container width to render
+  // without crowding; 760 leaves a small safety margin for longer model names.
+  const COMPOSER_INLINE_OPTIONS_THRESHOLD = 760;
+  // Default to inline before the first measurement lands so the first frame
+  // doesn't briefly render the popover trigger and snap to inline buttons.
+  const showInlineComposerOptions =
+    composerWidth === 0 || composerWidth >= COMPOSER_INLINE_OPTIONS_THRESHOLD;
+
   const [input, setInput] = useState("");
   const [modelId, setModelId] = useState(getDefaultModelId());
   // Track provider explicitly: multiple providers share the same model IDs
@@ -1005,17 +1235,28 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const toast = useQueueStore((s) => s.toast);
 
-  /** Display label for a reasoning level value. */
-  const reasoningLabel = (level: string) =>
-    level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
-
   const reasoningLevels = useMemo<ReasoningLevel[]>(() => {
-    const codexLevels = getCodexReasoningLevels(modelId);
-    if (codexLevels) return codexLevels as unknown as ReasoningLevel[];
-    if (isXhighEffortModel(modelId)) return ["low", "medium", "high", "max", "xhigh"];
-    if (isMaxEffortModel(modelId)) return ["low", "medium", "high", "max"];
-    return ["low", "medium", "high"];
-  }, [modelId]);
+    // Gate on provider to prevent Copilot models sharing Codex IDs from taking Codex branch.
+    const codexLvls = provider === "codex" ? getCodexReasoningLevels(modelId) : null;
+    if (codexLvls) {
+      // Filter out Codex-only levels (e.g. "minimal") that have no ReasoningLevel equivalent.
+      return codexLvls.filter((l) => VALID_REASONING_LEVELS_SET.has(l)) as ReasoningLevel[];
+    }
+    if (!supportsEffortParameter(modelId)) return [];
+    return [
+      "low",
+      "medium",
+      "high",
+      ...(isXhighEffortModel(modelId) ? (["xhigh"] as const) : []),
+      ...(isMaxEffortModel(modelId)   ? (["max"]   as const) : []),
+    ];
+  }, [modelId, provider]);
+
+  // Close the picker when the user switches to a model with no effort tiers (e.g. Haiku).
+  // Without this the popover stays open and points at nothing.
+  useEffect(() => {
+    if (reasoningLevels.length === 0) setShowReasoningPicker(false);
+  }, [reasoningLevels.length]);
 
   return (
     <div className="relative px-8 py-4">
@@ -1034,6 +1275,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       {/* Main composer container - dark bg, rounded */}
       <div
+        ref={composerContainerRef}
         className={cn(
           "relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 shadow-lg shadow-black/20 focus-within:ring-2 focus-within:ring-primary/70",
           isDragOver && "ring-2 ring-primary"
@@ -1044,29 +1286,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         onDrop={handleDrop}
       >
         {/* Branch mode quote bar */}
-        {branchFromMessageId && (
-          <div className="relative flex items-start gap-2.5 rounded-tl-xl border-l-2 border-l-primary/50 bg-gradient-to-r from-primary/[0.04] to-transparent px-3 py-2.5 animate-fade-up-in">
-            {/* Gradient separator — starts warm at the accent, fades right */}
-            <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-primary/25 to-border/20" />
-            <GitBranch className="size-3.5 shrink-0 mt-0.5 text-primary/60" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-semibold text-primary/80 leading-none mb-1">Branching from message</p>
-              {branchFromMessageContent && (
-                <p className="text-xs text-muted-foreground/55 truncate italic">
-                  {branchFromMessageContent.slice(0, 120)}{branchFromMessageContent.length > 120 ? "…" : ""}
-                </p>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={onBranchModeExit}
-              className="shrink-0 rounded p-0.5 text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/40 transition-colors"
-              aria-label="Exit branch mode"
-            >
-              <X className="size-3.5" />
-            </button>
-          </div>
-        )}
+        <ComposerBranchBar
+          branchFromMessageId={branchFromMessageId}
+          branchFromMessageContent={branchFromMessageContent}
+          onBranchModeExit={onBranchModeExit}
+        />
 
         {/* PR URL detection card */}
         {detectedPr && !prDismissed && (
@@ -1124,8 +1348,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           </div>
         )}
 
-        {/* Controls row - inside the container */}
-        <div className="flex items-center gap-2.5 border-t border-border/20 px-3 py-1.5">
+        {/* Controls row - inside the container. The container-width hook above
+            collapses Mode/Permissions/Tasks into a popover before this row would
+            need to wrap, so the send button stays anchored on the right. */}
+        <div className="flex items-center gap-x-1.5 sm:gap-x-2.5 border-t border-border/20 px-3 py-1.5">
           {/* Model picker */}
           <ModelSelector
             selectedModelId={modelId}
@@ -1135,7 +1361,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             providerLocked={isProviderLocked}
           />
 
-          {/* Reasoning level */}
+          {/* Reasoning level — hidden for models that have no effort tiers (e.g. Haiku) */}
+          {reasoningLevels.length > 0 && (
           <div className="relative">
             <Tooltip>
               <TooltipTrigger
@@ -1180,69 +1407,83 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               </div>
             )}
           </div>
+          )}
 
-          {/* Chat / Plan toggle — replaced by CopilotAgentSelector when Copilot is active */}
+          {/*
+            Copilot exposes a per-agent selector inline (replaces Chat/Plan
+            toggle, since Copilot agents don't share that mode dimension).
+            All other providers use the responsive Mode/Permissions/Tasks
+            popover: inline at md+, collapsed behind a single overflow
+            trigger below the threshold so the send button never wraps.
+          */}
           {provider === "copilot" ? (
-            <CopilotAgentSelector
-              selected={copilotAgent}
-              workspaceId={workspaceId ?? ""}
-              disabled={isModelFullyLocked}
-              onChange={(agentName) => {
-                setCopilotAgent(agentName);
-                // Don't persist to parent thread when in branch mode — the
-                // selection only applies to the branch being created.
-                if (threadId && !branchFromMessageId) void setThreadSettings(threadId, { copilotAgent: agentName });
+            <>
+              <CopilotAgentSelector
+                selected={copilotAgent}
+                workspaceId={workspaceId ?? ""}
+                disabled={isModelFullyLocked}
+                onChange={(agentName) => {
+                  setCopilotAgent(agentName);
+                  // Don't persist to parent thread when in branch mode — the
+                  // selection only applies to the branch being created.
+                  if (threadId && !branchFromMessageId) void setThreadSettings(threadId, { copilotAgent: agentName });
+                }}
+              />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => {
+                        const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
+                        setAccess(next);
+                        agentSettingsTouchedRef.current = true;
+                        if (threadId) void setThreadSettings(threadId, { permissionMode: next });
+                      }}
+                      className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+                    >
+                      {access === PERMISSION_MODES.FULL ? <Unlock size={14} /> : <Lock size={14} />}
+                      <span className="text-sm">{access === PERMISSION_MODES.FULL ? "Full access" : "Supervised"}</span>
+                    </Button>
+                  }
+                />
+                <TooltipContent>{access === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode"}</TooltipContent>
+              </Tooltip>
+            </>
+          ) : showInlineComposerOptions ? (
+            <InlineComposerOptions
+              threadId={threadId}
+              mode={mode}
+              access={access}
+              onModeChange={(next) => {
+                setMode(next);
+                agentSettingsTouchedRef.current = true;
+                if (threadId) void setThreadSettings(threadId, { interactionMode: next });
+              }}
+              onAccessChange={(next) => {
+                setAccess(next);
+                agentSettingsTouchedRef.current = true;
+                if (threadId) void setThreadSettings(threadId, { permissionMode: next });
               }}
             />
           ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => {
-                      const next = mode === INTERACTION_MODES.CHAT ? INTERACTION_MODES.PLAN : INTERACTION_MODES.CHAT;
-                      setMode(next);
-                      agentSettingsTouchedRef.current = true;
-                      if (threadId) void setThreadSettings(threadId, { interactionMode: next });
-                    }}
-                    className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
-                  >
-                    {mode === INTERACTION_MODES.CHAT ? <MessageSquare size={14} /> : <FileEdit size={14} />}
-                    <span className="text-sm">{mode === INTERACTION_MODES.CHAT ? "Chat" : "Plan"}</span>
-                  </Button>
-                }
-              />
-              <TooltipContent>{mode === INTERACTION_MODES.CHAT ? "Chat mode" : "Plan mode"}</TooltipContent>
-            </Tooltip>
-          )}
-
-          {/* Full access / Supervised toggle */}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => {
-                    const next: AccessMode = access === PERMISSION_MODES.FULL ? PERMISSION_MODES.SUPERVISED : PERMISSION_MODES.FULL;
-                    setAccess(next);
-                    agentSettingsTouchedRef.current = true;
-                    if (threadId) void setThreadSettings(threadId, { permissionMode: next });
-                  }}
-                  className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
-                >
-                  {access === PERMISSION_MODES.FULL ? <Unlock size={14} /> : <Lock size={14} />}
-                  <span className="text-sm">{access === PERMISSION_MODES.FULL ? "Full access" : "Supervised"}</span>
-                </Button>
-              }
+            <ComposerOptionsMenu
+              threadId={threadId}
+              mode={mode}
+              access={access}
+              onModeChange={(next) => {
+                setMode(next);
+                agentSettingsTouchedRef.current = true;
+                if (threadId) void setThreadSettings(threadId, { interactionMode: next });
+              }}
+              onAccessChange={(next) => {
+                setAccess(next);
+                agentSettingsTouchedRef.current = true;
+                if (threadId) void setThreadSettings(threadId, { permissionMode: next });
+              }}
             />
-            <TooltipContent>{access === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode"}</TooltipContent>
-          </Tooltip>
-
-          {/* Tasks toggle - only visible when thread has tasks */}
-          <TasksToggle threadId={threadId} />
+          )}
 
           {/* Spacer */}
           <div className="flex-1" />

@@ -1,4 +1,4 @@
-@import "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap";
+@import "https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,100..900;1,100..900&display=swap";
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -6,49 +6,67 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.488 0.217 264);
+  /* Warm light theme — minimal chroma (0.005) at hue 75 to harmonize with amber primary */
+  /* --page sits a few percent below --background so floating panel surfaces read as
+     slightly elevated against the page chrome. Replaces inter-panel divider lines. */
+  --page: oklch(0.955 0.005 75);
+  --background: oklch(0.99 0.005 75);
+  --foreground: oklch(0.18 0.005 75);
+  --card: oklch(0.985 0.005 75);
+  --card-foreground: oklch(0.18 0.005 75);
+  --popover: oklch(0.99 0.005 75);
+  --popover-foreground: oklch(0.18 0.005 75);
+  --primary: oklch(0.52 0.17 75);
   --primary-foreground: oklch(0.984 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.961 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.961 0 0);
-  --accent-foreground: oklch(0.145 0 0);
+  --secondary: oklch(0.95 0.005 75);
+  --secondary-foreground: oklch(0.22 0.005 75);
+  --muted: oklch(0.955 0.005 75);
+  --muted-foreground: oklch(0.5 0.005 75);
+  --accent: oklch(0.95 0.005 75);
+  --accent-foreground: oklch(0.18 0.005 75);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.488 0.217 264);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --border: oklch(0.9 0.005 75);
+  --input: oklch(0.9 0.005 75);
+  --ring: oklch(0.52 0.17 75);
+  --chart-1: oklch(0.87 0.005 75);
+  --chart-2: oklch(0.556 0.005 75);
+  --chart-3: oklch(0.439 0.005 75);
+  --chart-4: oklch(0.371 0.005 75);
+  --chart-5: oklch(0.269 0.005 75);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.488 0.217 264);
+  --sidebar: oklch(0.945 0.008 75);
+  --sidebar-foreground: oklch(0.18 0.005 75);
+  --sidebar-primary: oklch(0.52 0.17 75);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.488 0.217 264);
+  --sidebar-accent: oklch(0.92 0.008 75);
+  --sidebar-accent-foreground: oklch(0.22 0.005 75);
+  --sidebar-border: oklch(0.88 0.008 75);
+  --sidebar-ring: oklch(0.52 0.17 75);
+
+  /* Diff palette — sage (additions) and clay (removals), hue-shifted to harmonize with warm amber */
+  --diff-add-bg: oklch(0.96 0.035 145);
+  --diff-add-bg-hover: oklch(0.93 0.055 145);
+  --diff-add-gutter: oklch(0.78 0.10 145);
+  --diff-add-text: oklch(0.40 0.12 145);
+  --diff-add-strong: oklch(0.48 0.14 145);
+  --diff-remove-bg: oklch(0.96 0.045 25);
+  --diff-remove-bg-hover: oklch(0.93 0.065 25);
+  --diff-remove-gutter: oklch(0.78 0.11 25);
+  --diff-remove-text: oklch(0.48 0.15 25);
+  --diff-remove-strong: oklch(0.55 0.17 25);
 }
 
 .dark {
   /* Matte blue-cool dark theme — minimal chroma (0.005) at hue 260 for subtle cool undertone */
+  /* --page is darker than --background so floating panels appear lifted off the chrome. */
+  --page: oklch(0.12 0.005 260);
   --background: oklch(0.16 0.005 260);
   --foreground: oklch(0.93 0 0);
   --card: oklch(0.19 0.005 260);
   --card-foreground: oklch(0.93 0 0);
   --popover: oklch(0.19 0.005 260);
   --popover-foreground: oklch(0.93 0 0);
-  --primary: oklch(0.62 0.19 264);
+  --primary: oklch(0.72 0.17 75);
   --primary-foreground: oklch(0.98 0 0);
   --secondary: oklch(0.24 0.005 260);
   --secondary-foreground: oklch(0.93 0 0);
@@ -73,11 +91,24 @@
   --sidebar-accent-foreground: oklch(0.93 0 0);
   --sidebar-border: oklch(0.28 0.005 260);
   --sidebar-ring: oklch(0.62 0.19 264);
+
+  /* Diff palette — sage and clay tinted for the cool dark surface */
+  --diff-add-bg: oklch(0.26 0.035 145);
+  --diff-add-bg-hover: oklch(0.32 0.055 145);
+  --diff-add-gutter: oklch(0.50 0.11 145);
+  --diff-add-text: oklch(0.86 0.09 145);
+  --diff-add-strong: oklch(0.78 0.13 145);
+  --diff-remove-bg: oklch(0.26 0.045 25);
+  --diff-remove-bg-hover: oklch(0.32 0.065 25);
+  --diff-remove-gutter: oklch(0.55 0.13 25);
+  --diff-remove-text: oklch(0.86 0.09 25);
+  --diff-remove-strong: oklch(0.78 0.13 25);
 }
 
 @theme inline {
-  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Public Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  --color-page: var(--page);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -119,11 +150,6 @@
 }
 
 
-@keyframes shimmer-text {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
 @keyframes fade-up-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -152,23 +178,17 @@
 
 
 .glow-primary {
-  box-shadow: -2px 0 8px -1px oklch(0.62 0.19 264 / 0.35);
+  box-shadow: -2px 0 8px -1px oklch(0.72 0.17 75 / 0.35);
 }
 
 .animate-shimmer-text {
-  background-image: linear-gradient(
-    90deg,
-    oklch(0.55 0.005 260) 0%,
-    oklch(0.75 0.15 264) 40%,
-    oklch(0.85 0.12 264) 50%,
-    oklch(0.75 0.15 264) 60%,
-    oklch(0.55 0.005 260) 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer-text 2.5s ease-in-out infinite;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--muted-foreground);
+  animation: text-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes text-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 @layer base {

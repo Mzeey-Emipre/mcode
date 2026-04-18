@@ -84,6 +84,8 @@ Key components:
 
 When working on frontend code, follow the component registry and rules in **[docs/guides/ui-components.md](docs/guides/ui-components.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.
 
+That guide's **Testing UI Changes** section lists the triggers that require a Playwright run (interactive components, responsive layout, accessibility semantics, theme tokens, `data-testid` changes, floating overlays, persisted first-paint state). Run `cd apps/web && bun run e2e` and report pass counts before claiming a UI change is done.
+
 ## Code Style
 
 Always add JSDoc/TSDoc docstrings to all exported functions, components, types, and interfaces. AI-powered code reviews depend on these for context. At minimum include a one-line summary of what the symbol does.

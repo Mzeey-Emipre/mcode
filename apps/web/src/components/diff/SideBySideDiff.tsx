@@ -18,7 +18,6 @@ interface SideBySideRow {
     lineNo: number | null;
     content: string;
     type: "remove" | "context" | "header" | "empty";
-    /** Index into the original ParsedDiffLine[] for token lookup. */
     diffIndex: number | null;
     hiddenLineCount?: number;
   };
@@ -84,17 +83,31 @@ function buildRows(lines: ParsedDiffLine[]): SideBySideRow[] {
 }
 
 const LEFT_BG: Record<string, string> = {
-  remove: "bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-950/50",
-  context: "hover:bg-muted/10",
-  header: "bg-muted/20",
-  empty: "bg-muted/5",
+  remove: "bg-[var(--diff-remove-bg)] hover:bg-[var(--diff-remove-bg-hover)]",
+  context: "hover:bg-muted/[0.06]",
+  header: "bg-muted/15",
+  empty: "bg-muted/[0.04]",
 };
 
 const RIGHT_BG: Record<string, string> = {
-  add: "bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50",
-  context: "hover:bg-muted/10",
-  header: "bg-muted/20",
-  empty: "bg-muted/5",
+  add: "bg-[var(--diff-add-bg)] hover:bg-[var(--diff-add-bg-hover)]",
+  context: "hover:bg-muted/[0.06]",
+  header: "bg-muted/15",
+  empty: "bg-muted/[0.04]",
+};
+
+const LEFT_GUTTER: Record<string, string> = {
+  remove: "bg-[var(--diff-remove-gutter)]",
+  context: "bg-transparent",
+  header: "bg-transparent",
+  empty: "bg-transparent",
+};
+
+const RIGHT_GUTTER: Record<string, string> = {
+  add: "bg-[var(--diff-add-gutter)]",
+  context: "bg-transparent",
+  header: "bg-transparent",
+  empty: "bg-transparent",
 };
 
 /** Side-by-side diff renderer with syntax highlighting and hunk separator bars. */
@@ -104,17 +117,12 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
   const lineWrap = useDiffStore((s) => s.lineWrap);
   const { getLineTokens } = useDiffHighlighter(lines, language, theme, language !== "text");
 
-  // Vertical scrolling is handled by the parent FileEntry wrapper (overflow-auto),
-  // so both sides naturally scroll vertically in sync. Each pane only needs
-  // independent horizontal overflow.
-
   return (
     <div className="flex select-text text-[12px] font-mono leading-5">
       {/* Left (removed) */}
-      <div className={`flex-1 border-r border-border/20 ${lineWrap ? "overflow-x-hidden" : "overflow-x-auto"}`}>
+      <div className={`flex-1 border-r border-border/15 ${lineWrap ? "overflow-x-hidden" : "overflow-x-auto"}`}>
         <div className={lineWrap ? "w-full" : "w-fit min-w-full"}>
         {rows.map((row, i) => {
-          // Hunk separator bar
           if (row.left.type === "header") {
             if (!row.left.content.startsWith("@@")) return null;
             if (!row.left.hiddenLineCount || row.left.hiddenLineCount <= 0) return null;
@@ -125,10 +133,11 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
 
           return (
             <div key={i} className={`flex items-stretch ${LEFT_BG[row.left.type]}`}>
-              <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/20">
+              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/45">
                 {row.left.lineNo ?? ""}
               </span>
-              <span className={`flex-1 px-1 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
+              <span className={`w-[2px] shrink-0 ${LEFT_GUTTER[row.left.type]}`} aria-hidden="true" />
+              <span className={`flex-1 pl-3 pr-2 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
                 {tokens ? (
                   tokens.map((token, j) => (
                     <span key={j} style={{ color: token.color }}>
@@ -139,9 +148,9 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
                   <span
                     className={
                       row.left.type === "remove"
-                        ? "text-red-900 dark:text-red-100/70"
+                        ? "text-[var(--diff-remove-text)]"
                         : row.left.type === "context"
-                          ? "text-foreground/60"
+                          ? "text-foreground/65"
                           : ""
                     }
                   >
@@ -159,7 +168,6 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
       <div className={`flex-1 ${lineWrap ? "overflow-x-hidden" : "overflow-x-auto"}`}>
         <div className={lineWrap ? "w-full" : "w-fit min-w-full"}>
         {rows.map((row, i) => {
-          // Hunk separator bar
           if (row.right.type === "header") {
             if (!row.right.content.startsWith("@@")) return null;
             if (!row.right.hiddenLineCount || row.right.hiddenLineCount <= 0) return null;
@@ -170,10 +178,11 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
 
           return (
             <div key={i} className={`flex items-stretch ${RIGHT_BG[row.right.type]}`}>
-              <span className="inline-flex w-9 shrink-0 select-none items-center justify-end border-r border-border/10 pr-2 text-[10px] text-muted-foreground/20">
+              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/45">
                 {row.right.lineNo ?? ""}
               </span>
-              <span className={`flex-1 px-1 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
+              <span className={`w-[2px] shrink-0 ${RIGHT_GUTTER[row.right.type]}`} aria-hidden="true" />
+              <span className={`flex-1 pl-3 pr-2 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
                 {tokens ? (
                   tokens.map((token, j) => (
                     <span key={j} style={{ color: token.color }}>
@@ -184,9 +193,9 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
                   <span
                     className={
                       row.right.type === "add"
-                        ? "text-emerald-900 dark:text-emerald-100/80"
+                        ? "text-[var(--diff-add-text)]"
                         : row.right.type === "context"
-                          ? "text-foreground/60"
+                          ? "text-foreground/65"
                           : ""
                     }
                   >

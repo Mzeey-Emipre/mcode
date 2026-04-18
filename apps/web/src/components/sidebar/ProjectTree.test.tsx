@@ -139,14 +139,13 @@ function setupStoreMocks({
   return state;
 }
 
-describe("ProjectTree double-click rename", () => {
+describe("ProjectTree thread interactions", () => {
   beforeEach(() => {
     // Pre-expand the workspace so the thread list is visible immediately.
     localStorage.setItem(
       "mcode-expanded-projects",
       JSON.stringify({ "ws-1": true })
     );
-    localStorage.setItem("mcode-expanded-thread-lists", JSON.stringify({}));
     vi.useFakeTimers();
   });
 
@@ -157,7 +156,7 @@ describe("ProjectTree double-click rename", () => {
     localStorage.clear();
   });
 
-  it("single click does not navigate immediately", () => {
+  it("single click navigates immediately with no delay", () => {
     const setActiveThread = vi.fn();
     setupStoreMocks({ setActiveThread });
 
@@ -166,30 +165,12 @@ describe("ProjectTree double-click rename", () => {
     const threadButton = screen.getByRole("button", { name: /My Thread/i });
     fireEvent.click(threadButton);
 
-    // Navigation must NOT fire before the 250 ms delay elapses.
-    expect(setActiveThread).not.toHaveBeenCalled();
-  });
-
-  it("single click navigates after 250ms delay", () => {
-    const setActiveThread = vi.fn();
-    setupStoreMocks({ setActiveThread });
-
-    render(<ProjectTree />);
-
-    const threadButton = screen.getByRole("button", { name: /My Thread/i });
-    fireEvent.click(threadButton);
-
-    expect(setActiveThread).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.advanceTimersByTime(250);
-    });
-
+    // Navigation must fire on the first click — no debounce.
     expect(setActiveThread).toHaveBeenCalledWith("thread-1");
     expect(setActiveThread).toHaveBeenCalledTimes(1);
   });
 
-  it("double click enters edit mode and does not navigate", () => {
+  it("double click enters edit mode after first-click navigation", () => {
     const setActiveThread = vi.fn();
     setupStoreMocks({ setActiveThread });
 
@@ -197,21 +178,36 @@ describe("ProjectTree double-click rename", () => {
 
     const threadButton = screen.getByRole("button", { name: /My Thread/i });
 
-    // First click.
+    // First click navigates immediately.
     fireEvent.click(threadButton);
-    expect(setActiveThread).not.toHaveBeenCalled();
+    expect(setActiveThread).toHaveBeenCalledTimes(1);
 
-    // Second click within 250ms window.
+    // Second click within the 250ms window enters rename mode.
     act(() => { vi.advanceTimersByTime(100); });
     fireEvent.click(threadButton);
 
-    // Advance past the full window to confirm no navigation fires.
-    act(() => { vi.advanceTimersByTime(300); });
-
-    expect(setActiveThread).not.toHaveBeenCalled();
+    // Navigation count stays at 1 — the second click must NOT trigger another navigate.
+    expect(setActiveThread).toHaveBeenCalledTimes(1);
 
     // Inline edit input must be visible.
     expect(screen.getByRole("textbox")).toBeInTheDocument();
+  });
+
+  it("two clicks beyond the double-click window navigate twice (no rename)", () => {
+    const setActiveThread = vi.fn();
+    setupStoreMocks({ setActiveThread });
+
+    render(<ProjectTree />);
+
+    const threadButton = screen.getByRole("button", { name: /My Thread/i });
+
+    fireEvent.click(threadButton);
+    act(() => { vi.advanceTimersByTime(400); });
+    fireEvent.click(threadButton);
+
+    expect(setActiveThread).toHaveBeenCalledTimes(2);
+    // No textbox — rename should not have been triggered.
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
   it("clicking while editing does not navigate or re-enter edit", () => {
@@ -223,26 +219,25 @@ describe("ProjectTree double-click rename", () => {
 
     const threadButton = screen.getByRole("button", { name: /My Thread/i });
 
-    // Double-click to enter edit mode.
+    // Double-click to enter edit mode (first click navigates, second triggers rename).
     fireEvent.click(threadButton);
     act(() => { vi.advanceTimersByTime(100); });
     fireEvent.click(threadButton);
-    act(() => { vi.advanceTimersByTime(300); });
 
     // Confirm we're editing.
     expect(screen.getByRole("textbox")).toBeInTheDocument();
+    expect(setActiveThread).toHaveBeenCalledTimes(1);
 
     // Click the outer row button again while editing.
     fireEvent.click(threadButton);
-    act(() => { vi.advanceTimersByTime(300); });
 
-    // Still no navigation.
-    expect(setActiveThread).not.toHaveBeenCalled();
+    // No additional navigation.
+    expect(setActiveThread).toHaveBeenCalledTimes(1);
     // Still one textbox (not duplicated).
     expect(screen.getAllByRole("textbox")).toHaveLength(1);
   });
 
-  it("pressing Enter navigates immediately without delay", () => {
+  it("pressing Enter on the thread row navigates immediately", () => {
     const setActiveThread = vi.fn();
     setupStoreMocks({ setActiveThread });
 
