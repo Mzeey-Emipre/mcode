@@ -74,9 +74,9 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
               className={cn(
                 "absolute right-1 top-1 flex items-center justify-center",
                 "h-5 w-5 rounded-full",
-                "bg-black/70 text-white/90",
+                "bg-foreground/75 text-background",
                 "opacity-0 transition-all duration-150",
-                "hover:bg-red-500 hover:text-white",
+                "hover:bg-destructive hover:text-white",
                 "group-hover:opacity-100",
                 "focus:opacity-100 focus:outline-none focus:ring-1 focus:ring-primary",
               )}

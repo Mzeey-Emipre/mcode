@@ -59,7 +59,7 @@ function pressure(usedPercent: number): "safe" | "warn" | "crit" {
 function barFill(cat: QuotaCategory): string {
   switch (pressure(1 - cat.remainingPercent)) {
     case "crit": return "bg-destructive";
-    case "warn": return "bg-amber-500";
+    case "warn": return "bg-primary";
     default: return "bg-emerald-500";
   }
 }
@@ -67,7 +67,7 @@ function barFill(cat: QuotaCategory): string {
 function contextFill(usedPercent: number): string {
   switch (pressure(usedPercent)) {
     case "crit": return "bg-destructive";
-    case "warn": return "bg-amber-500";
+    case "warn": return "bg-primary";
     default: return "bg-foreground/30";
   }
 }
@@ -75,7 +75,7 @@ function contextFill(usedPercent: number): string {
 function compactFill(cat: QuotaCategory): string {
   switch (pressure(1 - cat.remainingPercent)) {
     case "crit": return "bg-destructive";
-    case "warn": return "bg-amber-500";
+    case "warn": return "bg-primary";
     default: return "bg-foreground/25";
   }
 }
@@ -366,7 +366,7 @@ export function SidebarUsagePanel() {
                   </span>
                 )}
                 {serviceTier && serviceTier !== "standard" && (
-                  <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium capitalize text-amber-400">
+                  <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium capitalize text-primary">
                     {serviceTier}
                   </span>
                 )}
@@ -386,7 +386,7 @@ export function SidebarUsagePanel() {
                   ctxPressure === "crit"
                     ? "text-destructive"
                     : ctxPressure === "warn"
-                      ? "text-amber-400"
+                      ? "text-primary"
                       : "text-muted-foreground",
                 )}
               >

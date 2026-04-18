@@ -31,13 +31,13 @@ export function getNotificationDot(
     return { dotClass: "bg-amber-500", animate: true };
   }
   if (isActuallyRunning) {
-    return { dotClass: "bg-yellow-500", animate: true };
+    return { dotClass: "bg-primary", animate: true };
   }
   switch (thread.status) {
     case "completed":
-      return { dotClass: "bg-green-500", animate: false };
+      return { dotClass: "bg-[var(--diff-add-strong)]/85", animate: false };
     case "errored":
-      return { dotClass: "bg-destructive", animate: false };
+      return { dotClass: "bg-[var(--diff-remove-strong)]/90", animate: false };
     default:
       return null;
   }
@@ -67,8 +67,8 @@ export function getStatusDisplay(
   if (isActuallyRunning) {
     return {
       label: "",
-      color: "text-yellow-500",
-      dotClass: "bg-yellow-500 animate-pulse",
+      color: "text-primary/90",
+      dotClass: "bg-primary animate-pulse",
     };
   }
 
@@ -77,17 +77,17 @@ export function getStatusDisplay(
     case "errored":
       return {
         label: "Errored",
-        color: "text-destructive/70",
-        dotClass: "bg-destructive/70",
+        color: "text-[var(--diff-remove-strong)]/80",
+        dotClass: "bg-[var(--diff-remove-strong)]/85",
       };
     case "completed":
       return {
         label: "",
-        color: "text-green-500",
-        dotClass: "bg-green-500",
+        color: "text-[var(--diff-add-strong)]/80",
+        dotClass: "bg-[var(--diff-add-strong)]/80",
       };
     default:
       // No agent running, not completed, not errored = idle / ready for input
-      return { label: "", color: "text-muted-foreground", dotClass: "bg-muted-foreground/50" };
+      return { label: "", color: "text-muted-foreground", dotClass: "bg-muted-foreground/35" };
   }
 }

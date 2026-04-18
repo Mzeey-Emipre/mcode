@@ -75,8 +75,15 @@ export function setupSpellcheck(win: BrowserWindow): void {
 
   win.webContents.on("context-menu", handleContextMenu);
 
-  // Clean up the listener when the window closes to prevent leaks.
-  win.once("closed", () => {
-    win.webContents.removeListener("context-menu", handleContextMenu);
+  // Clean up the listener while webContents is still alive. We listen on
+  // `close` (fires before destruction) rather than `closed` (fires after) —
+  // touching `win.webContents` from a `closed` handler throws
+  // "Object has been destroyed" and crashes the main process on app exit.
+  // We also guard with isDestroyed() because some shutdown paths (e.g. the
+  // OS killing the renderer process) destroy webContents before `close` fires.
+  win.once("close", () => {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.removeListener("context-menu", handleContextMenu);
+    }
   });
 }

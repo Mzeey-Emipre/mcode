@@ -1,5 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ListChecks, Diff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -8,6 +8,8 @@ import { useDiffStore, PANEL_MIN_WIDTH, PANEL_DEFAULT_WIDTH, PANEL_WIDE_WIDTH, R
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TaskPanelHeader } from "@/components/tasks/TaskPanelHeader";
 import { DiffPanel } from "@/components/diff";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { cn } from "@/lib/utils";
 
 /** Right-side panel with tabs for Tasks and Changes. */
 export function RightPanel() {
@@ -30,6 +32,71 @@ export function RightPanel() {
     (s) => (activeThreadId ? s.tasksByThread[activeThreadId] : undefined),
   );
 
+  // Render the panel as a modal overlay anchored to the right edge with a
+  // backdrop covering the chat whenever side-by-side layout would leave the
+  // chat uncomfortably narrow. Two triggers:
+  //  1. Viewport below the md breakpoint — a second pane always feels cramped.
+  //  2. Panel width would leave less than CHAT_COMFORT_MIN for the chat after
+  //     accounting for the sidebar — i.e. the user dragged the panel wide
+  //     enough that it should pop out instead of squeezing the chat.
+  const isWide = useMediaQuery("(min-width: 768px)");
+
+  // Track viewport width so the pop-out threshold recomputes when the user
+  // resizes the window (not just when they drag the panel).
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === "undefined" ? 0 : window.innerWidth,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let rafId: number | null = null;
+    const onResize = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        setViewportWidth(window.innerWidth);
+      });
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  // Thresholds tuned for a readable chat column next to an expanded sidebar.
+  const CHAT_COMFORT_MIN = 520;
+  const SIDEBAR_BUFFER = 290;
+  const LAYOUT_GAPS = 24;
+  const wouldCrampChat =
+    panelWidth + CHAT_COMFORT_MIN + SIDEBAR_BUFFER + LAYOUT_GAPS > viewportWidth;
+  const isOverlay = !isWide || wouldCrampChat;
+
+  // Close on Escape when overlaid.
+  useEffect(() => {
+    if (!isOverlay || !panelVisible || !activeThreadId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") hideRightPanel(activeThreadId);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOverlay, panelVisible, activeThreadId, hideRightPanel]);
+
+  // Focus handoff for overlay mode. When the panel pops out as a modal we
+  // must move focus into it so keyboard users aren't stranded behind the
+  // backdrop, and restore focus to whatever opened it when it closes.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!isOverlay || !panelVisible) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    // Defer to next frame so the panel is in the DOM before focus moves.
+    const rafId = requestAnimationFrame(() => panelRef.current?.focus());
+    return () => {
+      cancelAnimationFrame(rafId);
+      previousFocusRef.current?.focus?.();
+    };
+  }, [isOverlay, panelVisible]);
+
   const draggingRef = useRef(false);
   const dragListenersRef = useRef<{ move: (e: globalThis.MouseEvent) => void; up: () => void } | null>(null);
   // Ref keeps the latest panelWidth readable inside the resize handler without
@@ -39,6 +106,8 @@ export function RightPanel() {
 
   // Re-clamp stored width when the panel becomes visible or the window is resized
   // so the panel never exceeds the available space after the user shrinks the browser.
+  // Runs in both inline and overlay modes: overlay renders at min(panelWidth, 90vw)
+  // visually, but the stored width still drives the cramp-detection threshold.
   // Re-registers when activeThreadId changes (each thread has its own stored width).
   // Throttled with rAF so rapid resize events only trigger one recalculation per frame.
   useEffect(() => {
@@ -105,12 +174,45 @@ export function RightPanel() {
 
   if (!panelVisible || !activeThreadId) return null;
 
+  // Overlay-mode width: cap to 90vw so the chat is still partially visible
+  // behind the backdrop and the panel doesn't dominate small screens.
+  const overlayWidth = isOverlay
+    ? `min(${panelWidth}px, 90vw)`
+    : undefined;
+
   return (
-    <div
-      style={{ width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: `calc(100vw - ${PANEL_MIN_WIDTH}px)` }}
-      className="relative flex flex-col border-l border-border bg-background/95"
-    >
-      {/* Drag handle (left edge) — double-click snaps between default and wide */}
+    <>
+      {/* Backdrop — only rendered in overlay mode. Click dismisses the panel. */}
+      {isOverlay && (
+        <div
+          role="presentation"
+          onClick={() => hideRightPanel(activeThreadId)}
+          className="fixed inset-0 z-40 bg-foreground/30 backdrop-blur-[2px] animate-fade-up-in"
+        />
+      )}
+      <div
+        ref={panelRef}
+        role={isOverlay ? "dialog" : undefined}
+        aria-modal={isOverlay ? true : undefined}
+        aria-label={isOverlay ? "Thread side panel" : undefined}
+        tabIndex={isOverlay ? -1 : undefined}
+        style={
+          isOverlay
+            // Drop minWidth entirely on overlay: on sub-300px viewports the
+            // 90vw cap would still be exceeded by a 300px minimum.
+            ? { width: overlayWidth }
+            : { width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: `calc(100vw - ${PANEL_MIN_WIDTH}px)` }
+        }
+        className={cn(
+          "relative flex flex-col bg-background focus:outline-none",
+          isOverlay
+            ? "fixed inset-y-0 right-0 z-50 shadow-sm animate-fade-up-in"
+            : "rounded-lg shadow-sm overflow-hidden",
+        )}
+      >
+      {/* Drag handle (left edge) — double-click snaps between default and wide.
+          Kept visible in overlay mode too, so the user can shrink the panel
+          below the crowding threshold and snap it back into the inline layout. */}
       <div
         role="separator"
         aria-orientation="vertical"
@@ -138,7 +240,7 @@ export function RightPanel() {
       />
 
       {/* Tab header */}
-      <div className="flex-none border-b border-border/60">
+      <div className="flex-none border-b border-border/40">
         <div className="flex h-11 items-center justify-between px-3">
           <div className="flex items-center gap-0.5">
             <button
@@ -186,6 +288,7 @@ export function RightPanel() {
         </>
       )}
       {activeTab === "changes" && <DiffPanel />}
-    </div>
+      </div>
+    </>
   );
 }

@@ -15,8 +15,8 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `agent.guardrails.maxBudgetUsd` | number | `0` | >= 0 | - | Stop the agent when session cost exceeds this USD amount. `0` disables. Claude only. |
 | `agent.guardrails.maxTurns` | integer | `0` | >= 0 | - | Stop the agent after this many turns. `0` disables. Claude only. |
 | `model.defaults.provider` | enum | `"claude"` | `"claude"` \| `"codex"` \| `"gemini"` \| `"copilot"` | - | Default AI provider |
-| `model.defaults.id` | string | `"claude-sonnet-4-6"` | - | - | Default model identifier |
-| `model.defaults.reasoning` | enum | `"high"` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | - | Default reasoning effort level. `"xhigh"` applies to Codex models only. `"max"` is only valid for Opus 4.6; it normalizes to `"high"` at runtime on all other Claude models |
+| `model.defaults.id` | string | `"claude-opus-4-7"` | - | - | Default model identifier for new installs. Existing users keep their stored value. |
+| `model.defaults.reasoning` | enum | `"high"` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | - | Default reasoning effort level. Tiers in ascending order: `low < medium < high < xhigh < max`. `"xhigh"` requires Opus 4.7 for Claude (also valid for Codex models). `"max"` requires Opus 4.7, Opus 4.6, or Sonnet 4.6; it normalizes to `"high"` at runtime on other Claude models. Haiku 4.5 ignores this setting entirely -- the effort parameter is not sent for that model. |
 | `model.defaults.fallbackId` | string | `"claude-sonnet-4-6"` | - | - | Fallback model when the primary is unavailable. Set to `""` to disable fallback. |
 | `terminal.scrollback` | integer | `250` | >= 0 | - | Number of scrollback lines to retain |
 | `notifications.enabled` | boolean | `true` | - | - | Whether desktop notifications are enabled |

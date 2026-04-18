@@ -1,18 +1,22 @@
-import { ChevronsUpDown } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 
 /** Props for HunkSeparator. */
 interface HunkSeparatorProps {
   hiddenLineCount: number;
 }
 
-/** Separator bar shown between diff hunks indicating how many unchanged lines are hidden. */
+/**
+ * Hunk separator: a thin horizontal rule with an inline label indicating how many
+ * unchanged lines are hidden between hunks. Typographic rather than iconographic.
+ */
 export function HunkSeparator({ hiddenLineCount }: HunkSeparatorProps) {
   return (
-    <div className="my-0.5 flex items-center justify-center gap-1.5 border-y border-border/10 bg-muted/10 px-2 py-1">
-      <ChevronsUpDown size={12} className="shrink-0 text-muted-foreground/25" />
-      <span className="text-[10px] text-muted-foreground/40">
+    <div className="flex select-none items-center gap-3 px-3 py-1.5 text-[10px] text-muted-foreground/45">
+      <Separator className="flex-1 bg-border/40" />
+      <span className="font-mono italic tabular-nums tracking-tight">
         {hiddenLineCount} unchanged line{hiddenLineCount !== 1 ? "s" : ""}
       </span>
+      <Separator className="flex-1 bg-border/40" />
     </div>
   );
 }
