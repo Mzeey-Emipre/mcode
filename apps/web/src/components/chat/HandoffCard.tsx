@@ -16,14 +16,13 @@ export const HandoffCard = memo(function HandoffCard({ content }: HandoffCardPro
   if (!metadata) return null;
 
   return (
-    <div className="my-3 overflow-hidden rounded-lg border-t border-r border-b border-border/50 bg-muted/20 shadow-sm">
-      {/* Accent strip + header */}
+    <div className="my-3 overflow-hidden rounded-lg border border-border/50 bg-muted/20 shadow-sm">
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
         aria-expanded={expanded}
         aria-controls={`handoff-${metadata.parentThreadId}`}
-        className="flex w-full items-center gap-2.5 border-l-2 border-l-primary/60 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/40"
+        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/40"
       >
         <GitBranch size={14} className="shrink-0 text-primary/70" />
         <span className="font-medium text-foreground/90">
@@ -37,7 +36,7 @@ export const HandoffCard = memo(function HandoffCard({ content }: HandoffCardPro
       {/* Expandable detail panel */}
       <div
         id={`handoff-${metadata.parentThreadId}`}
-        className={`border-l-2 border-l-primary/25 grid transition-[grid-template-rows] duration-200 ease-out ${expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+        className={`grid transition-[grid-template-rows] duration-200 ease-out ${expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
       >
         <div className="overflow-hidden">
           <div className="border-t border-border/30 px-3 py-2.5 text-xs space-y-2">

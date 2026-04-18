@@ -35,23 +35,24 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("getStatusDisplay", () => {
-  it("isActuallyRunning=true returns no label and pulsing yellow dot", () => {
+  it("isActuallyRunning=true returns no label and pulsing primary dot", () => {
     const result = getStatusDisplay(makeThread(), true);
     expect(result.label).toBe("");
-    expect(result.color).toContain("yellow");
+    expect(result.color).toContain("primary");
+    expect(result.dotClass).toContain("bg-primary");
     expect(result.dotClass).toContain("animate-pulse");
   });
 
-  it("errored status returns Errored with destructive color", () => {
+  it("errored status returns Errored with diff-remove-strong color", () => {
     const result = getStatusDisplay(makeThread({ status: "errored" }), false);
     expect(result.label).toBe("Errored");
-    expect(result.color).toContain("destructive");
+    expect(result.color).toContain("--diff-remove-strong");
   });
 
-  it("completed status returns no label with full green dot", () => {
+  it("completed status returns no label with diff-add-strong dot", () => {
     const result = getStatusDisplay(makeThread({ status: "completed" }), false);
     expect(result.label).toBe("");
-    expect(result.dotClass).toBe("bg-green-500");
+    expect(result.dotClass).toContain("--diff-add-strong");
   });
 
   it("default status returns empty label", () => {
@@ -72,24 +73,24 @@ describe("getStatusDisplay", () => {
 });
 
 describe("getNotificationDot", () => {
-  it("returns yellow with pulse for running thread", () => {
+  it("returns primary with pulse for running thread", () => {
     const result = getNotificationDot(makeThread(), true);
     expect(result).not.toBeNull();
-    expect(result!.dotClass).toContain("yellow");
+    expect(result!.dotClass).toContain("bg-primary");
     expect(result!.animate).toBe(true);
   });
 
-  it("returns green for completed thread", () => {
+  it("returns diff-add-strong for completed thread", () => {
     const result = getNotificationDot(makeThread({ status: "completed" }), false);
     expect(result).not.toBeNull();
-    expect(result!.dotClass).toContain("green");
+    expect(result!.dotClass).toContain("--diff-add-strong");
     expect(result!.animate).toBe(false);
   });
 
-  it("returns red for errored thread", () => {
+  it("returns diff-remove-strong for errored thread", () => {
     const result = getNotificationDot(makeThread({ status: "errored" }), false);
     expect(result).not.toBeNull();
-    expect(result!.dotClass).toContain("destructive");
+    expect(result!.dotClass).toContain("--diff-remove-strong");
     expect(result!.animate).toBe(false);
   });
 

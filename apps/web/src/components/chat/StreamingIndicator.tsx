@@ -41,7 +41,10 @@ export function StreamingIndicator({ startTime, activeToolCalls }: StreamingIndi
   return (
     <div className="flex flex-col gap-0.5 px-4 py-2">
       <div className="flex items-center gap-2">
-        <span className="animate-shimmer-text text-sm">{phaseLabel}</span>
+        <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <span className="size-1.5 shrink-0 rounded-full bg-primary animate-pulse" />
+          {phaseLabel}
+        </span>
         <span className="text-xs text-muted-foreground/50">({formatDuration(elapsed)})</span>
       </div>
     </div>

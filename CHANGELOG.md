@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.4.0...mcode-v0.5.0) (2026-04-17)
+
+
+### Features
+
+* markdown preview toggle for .md/.mdx diffs ([#289](https://github.com/Mzeey-Emipre/mcode/issues/289)) ([f8c4cda](https://github.com/Mzeey-Emipre/mcode/commit/f8c4cdaf0e8c2b880c779c1c634d450309af5909))
+* **ui:** floating panel layout, composer overflow popover, warm theme refresh ([#287](https://github.com/Mzeey-Emipre/mcode/issues/287)) ([184a4d1](https://github.com/Mzeey-Emipre/mcode/commit/184a4d181d5f0bab5202fc550fe64cff45be5beb))
+
+
+### Bug Fixes
+
+* Claude reasoning tier ordering, Sonnet max support, and Haiku picker hiding ([#288](https://github.com/Mzeey-Emipre/mcode/issues/288)) ([7ce7cc4](https://github.com/Mzeey-Emipre/mcode/commit/7ce7cc434649dfb4aa5eb8ee887c4d53a9a3f4c2))
+
 ## [0.4.0](https://github.com/Mzeey-Emipre/mcode/compare/mcode-v0.3.0...mcode-v0.4.0) (2026-04-17)
 
 

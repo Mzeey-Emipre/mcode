@@ -92,7 +92,7 @@ export const SettingsSchema = lazySchema(() =>
             /** Default AI provider. */
             provider: ProviderIdSchema.default("claude"),
             /** Default model identifier. */
-            id: z.string().default("claude-sonnet-4-6"),
+            id: z.string().default("claude-opus-4-7"),
             /** Default reasoning effort level. */
             reasoning: ReasoningLevelSchema.default("high"),
             /** Fallback model when the primary is unavailable. Empty string disables fallback. */

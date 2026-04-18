@@ -2,51 +2,67 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { GitBranch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useConnectionStore } from "@/stores/connectionStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
 import { HeaderActions } from "./HeaderActions";
 import { CliErrorBanner, isCliError } from "./CliErrorBanner";
+import { InterruptedSessionsBanner } from "./InterruptedSessionsBanner";
 import { ThreadTitleEditor } from "./ThreadTitleEditor";
 
-/** Prompt suggestions shown in the empty state. */
-const PROMPT_CHIPS = [
-  "Explain the current architecture",
-  "Find and fix bugs in this codebase",
-  "Write tests for the main module",
-  "Refactor for better readability",
+/** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
+const ENTRY_POINTS = [
+  {
+    label: "Start agent in new worktree",
+    description: "Isolated branch, no stash needed",
+    prompt: "Start a new worktree and run an agent to ",
+  },
+  {
+    label: "Run agent on this branch",
+    description: "Direct mode, commits to current branch",
+    prompt: "On the current branch, ",
+  },
+  {
+    label: "Orchestrate parallel tasks",
+    description: "Multiple agents, one goal",
+    prompt: "Spawn parallel agents to ",
+  },
+  {
+    label: "Review open PRs",
+    description: "Diff + summary for each",
+    prompt: "List and summarize open pull requests in this repo",
+  },
 ] as const;
 
 /** Props for {@link EmptyState}. */
 interface EmptyStateProps {
-  /** Called when the user clicks a prompt suggestion chip. */
+  /** Called when the user clicks an entry point — prefills the composer. */
   onPromptSelect: (text: string) => void;
 }
 
-/** Centered empty state with logo and clickable prompt suggestion chips. */
+/** Centered empty state selling Mcode's multi-agent, worktree-based value. */
 function EmptyState({ onPromptSelect }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center gap-6 px-8 text-center">
-      <div className="flex flex-col items-center gap-1.5">
-        <p className="text-base font-semibold tracking-tight text-foreground">Mcode</p>
-        <p className="text-sm text-muted-foreground">What would you like to work on?</p>
+    <div className="flex flex-col items-center justify-center gap-8 px-8 text-center">
+      <div className="flex flex-col items-center gap-3">
+        <span aria-hidden="true" className="font-mono text-[36px] leading-none text-muted-foreground/15">⊕</span>
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/55">no messages yet</p>
       </div>
-      <div className="flex flex-wrap justify-center gap-2">
-        {PROMPT_CHIPS.map((chip) => (
-          <Button
-            key={chip}
+      <div className="grid grid-cols-2 gap-2 w-full max-w-sm">
+        {ENTRY_POINTS.map((ep) => (
+          <button
+            key={ep.label}
             type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onPromptSelect(chip)}
-            className="rounded-full border-border/50 text-xs text-muted-foreground hover:border-border hover:bg-muted/30 hover:text-foreground"
+            onClick={() => onPromptSelect(ep.prompt)}
+            className="flex flex-col items-start gap-0.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2.5 text-left transition-colors hover:border-border/70 hover:bg-muted/40"
           >
-            {chip}
-          </Button>
+            <span className="text-xs font-medium text-foreground/80">{ep.label}</span>
+            <span className="text-[11px] text-muted-foreground/60">{ep.description}</span>
+          </button>
         ))}
       </div>
     </div>
@@ -81,6 +97,11 @@ export function ChatView() {
     activeThreadId ? s.errorByThread[activeThreadId] ?? null : null,
   );
   const [dismissedError, setDismissedError] = useState<string | null>(null);
+  const [interruptedThreadIds, setInterruptedThreadIds] = useState<string[]>([]);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  const connectionStatus = useConnectionStore((s) => s.status);
+  const sendMessage = useThreadStore((s) => s.sendMessage);
 
   const handleDismissCliError = useCallback(() => {
     setDismissedError(sessionError);
@@ -101,6 +122,65 @@ export function ChatView() {
   const handleOpenSettings = useCallback(() => {
     window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: { section: "model" } }));
   }, []);
+
+  // Reset the banner dismissal on each new disconnect so a second server restart
+  // in the same session can show the banner again.
+  useEffect(() => {
+    if (connectionStatus !== "connected") setBannerDismissed(false);
+  }, [connectionStatus]);
+
+  // Detect interrupted threads whenever the connection is re-established so the
+  // banner can offer to resume any sessions that were cut off by a server restart.
+  // Always update so the banner clears when threads recover on their own.
+  useEffect(() => {
+    if (connectionStatus === "connected" && !bannerDismissed) {
+      const interrupted = threads
+        .filter((t) => t.status === "interrupted")
+        .map((t) => t.id);
+      // Use a functional update and bail out when content is identical to
+      // avoid a new array reference (and re-render) on every streaming token.
+      setInterruptedThreadIds((prev) => {
+        if (prev.length === interrupted.length && prev.every((id, i) => id === interrupted[i])) return prev;
+        return interrupted;
+      });
+    }
+  }, [connectionStatus, threads, bannerDismissed]);
+
+  /** Sends a continuation message to each interrupted thread, then hides the banner. */
+  const handleResumeInterrupted = useCallback(
+    async (threadIds: string[]) => {
+      // Dismiss immediately so the effect does not repopulate the banner while
+      // resume messages are in flight and threads still read as "interrupted".
+      setBannerDismissed(true);
+      // Read threads from store at call time to avoid closing over a stale
+      // `threads` array, which would also make this callback unstable.
+      const currentThreads = useWorkspaceStore.getState().threads;
+      const failedIds: string[] = [];
+      for (const threadId of threadIds) {
+        try {
+          const thread = currentThreads.find((t) => t.id === threadId);
+          if (!thread) continue;
+          await sendMessage(
+            threadId,
+            "Continue where you left off. The server was restarted.",
+            thread.model ?? undefined,
+            thread.permission_mode ?? undefined,
+          );
+        } catch (err) {
+          console.error("Failed to resume thread", threadId, err);
+          failedIds.push(threadId);
+        }
+      }
+      if (failedIds.length > 0) {
+        // Keep banner visible for threads that failed to resume.
+        setInterruptedThreadIds(failedIds);
+        setBannerDismissed(false);
+      } else {
+        setInterruptedThreadIds([]);
+      }
+    },
+    [sendMessage],
+  );
 
   /** Activates inline branch mode on the composer for the given message. */
   const handleBranch = useCallback((messageId: string) => {
@@ -145,7 +225,7 @@ export function ChatView() {
     return (
       <div className="flex h-full flex-col bg-background">
         {/* Header */}
-        <div className="flex h-11 items-center justify-between border-b border-border px-4">
+        <div className="flex h-11 items-center justify-between border-b border-border/40 px-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">New thread</span>
             {activeWorkspaceId && (
@@ -228,6 +308,20 @@ export function ChatView() {
         </div>
         <HeaderActions thread={activeThread} />
       </div>
+
+      {/* Interrupted sessions banner — shown after server restart when threads were mid-task */}
+      {interruptedThreadIds.length > 0 && !bannerDismissed && (
+        <div className="px-4 pt-2">
+          <InterruptedSessionsBanner
+            threadIds={interruptedThreadIds}
+            onResume={handleResumeInterrupted}
+            onDismiss={() => {
+              setBannerDismissed(true);
+              setInterruptedThreadIds([]);
+            }}
+          />
+        </div>
+      )}
 
       {/* Messages, tool calls, and streaming - all in one scrollable area */}
       <div key={activeThread.id} className="animate-fade-up-in flex-1 min-h-0">

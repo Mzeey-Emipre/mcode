@@ -21,10 +21,10 @@ export function SettingsNav({ section, onSection }: SettingsNavProps) {
               type="button"
               onClick={() => onSection(item.id)}
               className={cn(
-                "relative flex w-full px-3 py-1.5 text-left text-sm font-medium transition-colors outline-none focus-visible:rounded focus-visible:ring-1 focus-visible:ring-ring/50",
+                "flex w-full rounded px-3 py-1.5 text-left text-sm font-medium transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
                 section === item.id
-                  ? "text-foreground before:absolute before:inset-y-[3px] before:left-0 before:w-0.5 before:rounded-full before:bg-primary"
-                  : "text-muted-foreground hover:text-foreground",
+                  ? "bg-primary/10 text-foreground font-semibold"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
               )}
             >
               {item.label}

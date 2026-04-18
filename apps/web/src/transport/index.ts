@@ -3,6 +3,7 @@ import { createWsTransport } from "./ws-transport";
 import { ipcPushClient } from "./ipc-push-client";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { scanPortRange, AUTH_TOKEN_STORAGE_KEY } from "./scan-port-range";
 import { useProviderModelsStore } from "@/stores/providerModelsStore";
 
 /** Re-exported transport and domain types for use across the web app. */
@@ -17,50 +18,6 @@ const DEFAULT_SERVER_URL = "ws://localhost:19400";
 const CONNECT_TIMEOUT_MS = 5000;
 
 let transport: (McodeTransport & { close(): void; waitForConnection(timeoutMs: number): Promise<void> }) | null = null;
-
-/**
- * Scan a port range to find the mcode server.
- * Probes /health with the stored auth token.
- */
-async function scanPortRange(
-  portMin: number,
-  portMax: number,
-  token: string,
-): Promise<string | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-
-  try {
-    // Race all probes. The first healthy response resolves the outer promise
-    // and aborts all remaining probes via the shared AbortController.
-    const port = await new Promise<number>((resolve, reject) => {
-      let remaining = portMax - portMin;
-      Array.from({ length: remaining }, (_, i) => {
-        const p = portMin + i;
-        fetch(`http://localhost:${p}/health`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          signal: controller.signal,
-        })
-          .then((r) => {
-            if (r.ok) {
-              controller.abort(); // cancel remaining probes
-              resolve(p);
-            } else {
-              if (--remaining === 0) reject(new Error("none found"));
-            }
-          })
-          .catch(() => {
-            if (--remaining === 0) reject(new Error("none found"));
-          });
-      });
-    });
-    return `ws://localhost:${port}?token=${token}`;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
 /**
  * Resolve the WebSocket server URL and IPC path.
@@ -101,7 +58,7 @@ export async function initTransport(): Promise<McodeTransport> {
     try {
       const parsedUrl = new URL(url, "http://localhost");
       const token = parsedUrl.searchParams.get("token");
-      if (token) localStorage.setItem("mcode-auth-token", token);
+      if (token) localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
     } catch { /* ignore parse errors */ }
 
     transport = createWsTransport(url, {
@@ -122,7 +79,7 @@ export async function initTransport(): Promise<McodeTransport> {
         }
         // In browser, scan the port range. Use the last-known token from
         // localStorage so the reconnect URL includes valid auth.
-        const savedToken = localStorage.getItem("mcode-auth-token") ?? "";
+        const savedToken = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) ?? "";
         const found = await scanPortRange(19400, 19800, savedToken);
         if (found) return found;
         throw new Error("Server not found");

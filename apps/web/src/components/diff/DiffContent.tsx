@@ -1,5 +1,4 @@
 import { useEffect, useMemo } from "react";
-import { GitCompareArrows } from "lucide-react";
 import { useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { parseDiffLines } from "@/lib/diff-parser";
@@ -70,9 +69,14 @@ export function DiffContent() {
 
   if (!selectedFile) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 border-t border-border/20">
-        <GitCompareArrows size={22} className="text-muted-foreground/15" strokeWidth={1.5} />
-        <p className="text-[11px] text-muted-foreground/25">Select a file to view changes</p>
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 border-t border-border/20">
+        {/* Registration mark — a typographic blank canvas */}
+        <span aria-hidden="true" className="font-mono text-[28px] leading-none text-muted-foreground/15">
+          ⊕
+        </span>
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
+          Select a file to view changes
+        </p>
       </div>
     );
   }
@@ -85,23 +89,23 @@ export function DiffContent() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden border-t border-border/20 min-h-0">
       {/* File path header */}
-      <div className="flex flex-none items-center gap-2 border-b border-border/15 bg-muted/5 px-3 py-1.5">
-        <div className="flex flex-1 min-w-0 items-center gap-0.5 font-mono text-[10px]">
+      <div className="flex flex-none items-center gap-2 border-b border-border/15 bg-muted/[0.04] px-3 py-2">
+        <div className="flex flex-1 min-w-0 items-baseline gap-0.5 font-mono text-[10.5px]">
           {dirParts.map((part, i) => (
-            <span key={i} className="flex shrink-0 items-center gap-0.5 text-muted-foreground/30">
+            <span key={i} className="flex shrink-0 items-baseline gap-0.5 text-muted-foreground/55">
               {part}
-              <span className="text-muted-foreground/20">/</span>
+              <span className="text-muted-foreground/30">/</span>
             </span>
           ))}
-          <span className="truncate font-medium text-foreground/65">{filename}</span>
+          <span className="truncate text-[11.5px] font-medium text-foreground/85">{filename}</span>
         </div>
         {!diffLoading && lines.length > 0 && (
-          <div className="flex shrink-0 items-center gap-1.5 font-mono text-[10px]">
+          <div className="flex shrink-0 items-center gap-2 font-mono text-[10px] tabular-nums">
             {stats.additions > 0 && (
-              <span className="text-emerald-400/70">+{stats.additions}</span>
+              <span className="text-[var(--diff-add-strong)]">+{stats.additions}</span>
             )}
             {stats.deletions > 0 && (
-              <span className="text-red-400/60">-{stats.deletions}</span>
+              <span className="text-[var(--diff-remove-strong)]">−{stats.deletions}</span>
             )}
           </div>
         )}
@@ -129,7 +133,9 @@ export function DiffContent() {
             )
           ) : (
             <div className="flex items-center justify-center py-10">
-              <p className="text-[11px] text-muted-foreground/25">No changes in this file</p>
+              <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-muted-foreground/40">
+                No changes in this file
+              </p>
             </div>
           )}
         </ScrollArea>
