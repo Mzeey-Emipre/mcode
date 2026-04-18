@@ -761,8 +761,14 @@ function VirtualizedThreadList({
                       <PrIcon size={12} className={prColor} />
                       {dot && (
                         <span
+                          aria-label={dot.shape === "ring" ? "Action required" : undefined}
                           className={cn(
-                            "absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background",
+                            "absolute rounded-full",
+                            // Ring variant sizes up slightly and drops the background ring so the
+                            // amber ring isn't confused with the 1px separator ring used on dots.
+                            dot.shape === "ring"
+                              ? "-top-1 -right-1 h-2 w-2"
+                              : "-top-0.5 -right-0.5 h-1.5 w-1.5 ring-1 ring-background",
                             dot.dotClass,
                             dot.animate && "animate-pulse",
                           )}
