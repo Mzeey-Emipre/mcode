@@ -264,8 +264,11 @@ describe("ProjectTree action-required indicator", () => {
   beforeEach(() => {
     threadStoreOverrides.permissionsByThread = undefined;
     const thread = makeThread({ id: "thread-pending", status: "active" });
-    (useWorkspaceStore as unknown as { mockImplementation: (fn: (selector: (s: unknown) => unknown) => unknown) => void }).mockImplementation(
-      (selector) => selector({
+    // WorkspaceState is not exported; cast through any so the fixture object
+    // satisfies the mock without importing the internal type.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(useWorkspaceStore).mockImplementation(
+      ((selector: (s: unknown) => unknown) => selector({
         workspaces: [{ id: "ws-1", name: "Test", path: "/test", provider_config: {}, created_at: "", updated_at: "" }],
         activeWorkspaceId: "ws-1",
         activeThreadId: null,
@@ -283,13 +286,39 @@ describe("ProjectTree action-required indicator", () => {
         worktrees: [],
         worktreesLoadedForWorkspace: null,
         error: null,
-      })
+      })) as any
     );
     // Pre-expand the workspace so its threads render.
     window.localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": true }));
   });
 
   afterEach(() => {
+    // Restore the default empty-state implementation so this override does not
+    // leak into other describes when test order shifts.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(useWorkspaceStore).mockImplementation(
+      ((selector: (s: unknown) => unknown) =>
+        selector({
+          workspaces: [],
+          activeWorkspaceId: null,
+          activeThreadId: null,
+          threads: [],
+          loadWorkspaces: vi.fn(),
+          loadThreads: vi.fn(),
+          setActiveWorkspace: vi.fn(),
+          setActiveThread: vi.fn(),
+          createWorkspace: vi.fn(),
+          deleteWorkspace: vi.fn(),
+          deleteThread: vi.fn(),
+          setPendingNewThread: vi.fn(),
+          updateThreadTitle: vi.fn(),
+          loadWorktrees: vi.fn(),
+          worktrees: [],
+          worktreesLoadedForWorkspace: null,
+          error: null,
+        })) as any
+    );
+    vi.clearAllMocks();
     window.localStorage.clear();
   });
 
