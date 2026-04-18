@@ -80,7 +80,6 @@ async function applyState(page: Page, state: VisualState): Promise<void> {
         const st = s.getState();
         return "activeThreadId" in st && "threads" in st && "workspaces" in st;
       });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const threadStore = stores.find(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (s: any) =>

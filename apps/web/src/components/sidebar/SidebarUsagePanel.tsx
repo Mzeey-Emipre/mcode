@@ -25,9 +25,11 @@ function abbrev(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) {
     const scaled = n / 1_000;
-    // Decide format from the post-division value so 9,999 rounds to "10k"
-    // alongside 10,000 instead of producing the awkward "10.0k → 10k" jump.
-    return scaled >= 10 ? `${Math.round(scaled)}k` : `${scaled.toFixed(1)}k`;
+    // Decide format from the rounded value so 9,999 (which rounds to 10)
+    // renders as "10k" alongside 10,000 instead of the awkward "10.0k to 10k"
+    // jump the unrounded scaled>=10 check would produce.
+    const rounded = Math.round(scaled);
+    return rounded >= 10 ? `${rounded}k` : `${scaled.toFixed(1)}k`;
   }
   return String(n);
 }
@@ -191,7 +193,6 @@ export function SidebarUsagePanel() {
   // Hydrate immediately — bars appear without waiting for a hover. Intentionally
   // omit fetchProviderUsage (stable Zustand action) and usageInfo (the guard)
   // from deps so thread switches don't re-trigger a fetch mid-request.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (activeThreadId && !usageInfo) {
       void fetchProviderUsage(activeThreadId, providerId);
