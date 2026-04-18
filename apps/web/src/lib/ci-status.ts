@@ -1,4 +1,4 @@
-import { CircleCheck, CircleX, Loader2, type LucideIcon } from "lucide-react";
+import { CircleCheck, CircleX, Loader2, MinusCircle, type LucideIcon } from "lucide-react";
 import type { ChecksStatus, CheckRun } from "@mcode/contracts";
 
 /**
@@ -68,7 +68,9 @@ export function getCiVisual(aggregate: ChecksStatus["aggregate"]): CiVisual {
       };
     case "no_checks":
       return {
-        icon: CircleCheck,
+        // MinusCircle (not CircleCheck) so a muted tick never reads as "passed" when
+        // no checks are configured — the shape itself signals absence rather than success.
+        icon: MinusCircle,
         color: "text-muted-foreground",
         borderColor: "border-border",
         surface: "bg-muted/30",

@@ -1,6 +1,13 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Github, ChevronDown, GitPullRequest } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { ChecksPopover } from "./ChecksPopover";
 import {
@@ -86,21 +93,11 @@ function ProgressPills({ checks }: { checks: ChecksStatus }) {
  * - Merged / closed PR → coloured primary + chevron with secondary actions
  */
 export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, checks, threadId, prTitle, prAuthor }: PrSplitButtonProps) {
-  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [checksOpen, setChecksOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Close dropdown on click outside
-  useEffect(() => {
-    if (!dropdownOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [dropdownOpen]);
+  // Chevron dropdown open state: kept so the chevron glyph can rotate in sync with
+  // the base-ui primitive's open state. The primitive itself owns focus trap,
+  // Escape, outside-click, and keyboard nav — we no longer roll those manually.
+  const [dropdownOpen, setDropdownOpen] = useState(false);
 
   // Register a global command to open the checks popover for the active thread.
   // Only the PrSplitButton currently mounted for the active thread has real checks
@@ -247,7 +244,7 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
   );
 
   return (
-    <div ref={containerRef} className="relative inline-flex">
+    <div className="relative inline-flex">
       <div className="inline-flex rounded">
         {usePopover ? (
           <ChecksPopover
@@ -266,47 +263,39 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
         )}
 
         {showChevron && (
-          <button
-            aria-label="Open PR menu"
-            className={cn(
-              "inline-flex items-center px-1.5 h-6 text-xs border-l border-border/20 rounded-r transition-colors",
-              mergedClosedAccent ?? "bg-muted/10 hover:bg-muted/20",
-            )}
-            onClick={() => setDropdownOpen((o) => !o)}
-          >
-            <ChevronDown
-              size={11}
-              className={cn("transition-transform duration-150", dropdownOpen && "rotate-180")}
-            />
-          </button>
+          <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+            <DropdownMenuTrigger
+              aria-label="Open PR menu"
+              className={cn(
+                "inline-flex items-center px-1.5 h-6 text-xs border-l border-border/20 rounded-r transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                mergedClosedAccent ?? "bg-muted/10 hover:bg-muted/20",
+              )}
+            >
+              <ChevronDown
+                size={11}
+                className={cn("transition-transform duration-150", dropdownOpen && "rotate-180")}
+              />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" sideOffset={4} className="min-w-[170px] text-xs">
+              <DropdownMenuItem
+                onClick={() => onOpenPr(pr.url)}
+                className="text-foreground/75 gap-2"
+              >
+                <Github size={11} className="opacity-75" />
+                View on GitHub
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => onCreatePr()}
+                className="text-foreground/75 gap-2"
+              >
+                <GitPullRequest size={11} className="opacity-75" />
+                Create new PR
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
-
-      {dropdownOpen && (
-        <div className="absolute top-full left-0 mt-1 z-50 min-w-[170px] rounded-md border border-border/50 bg-popover shadow-md py-1 animate-in fade-in-0 zoom-in-95">
-          <button
-            className="w-full text-left px-3 py-1.5 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 flex items-center gap-2 transition-colors"
-            onClick={() => {
-              onOpenPr(pr.url);
-              setDropdownOpen(false);
-            }}
-          >
-            <Github size={11} className="opacity-75 flex-shrink-0" />
-            View on GitHub ↗
-          </button>
-          <div className="my-1 border-t border-border/30" />
-          <button
-            className="w-full text-left px-3 py-1.5 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 flex items-center gap-2 transition-colors"
-            onClick={() => {
-              onCreatePr();
-              setDropdownOpen(false);
-            }}
-          >
-            <GitPullRequest size={11} className="opacity-75 flex-shrink-0" />
-            Create new PR
-          </button>
-        </div>
-      )}
     </div>
   );
 }

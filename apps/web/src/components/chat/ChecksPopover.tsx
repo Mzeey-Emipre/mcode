@@ -60,7 +60,9 @@ const LANE_META: Record<Lane, { label: string; icon: typeof CircleCheck; iconCla
     accent: "text-[var(--diff-add-strong)]/85",
   },
   other: {
-    label: "Skipped",
+    // "Other" rather than "Skipped" — this bucket also holds cancelled, neutral,
+    // action_required, and stale conclusions; calling them all skipped misleads triage.
+    label: "Other",
     icon: MinusCircle,
     iconClass: "text-muted-foreground/60",
     wash: "",
@@ -123,8 +125,10 @@ function aggregateHeadline(checks: ChecksStatus, elapsedLive: string | null): st
     case "passing":
       return b.total === 1 ? "1 check passed" : `All ${b.total} checks passed`;
     case "failing":
+      // Count only actually-passing runs as "green" — skipped/cancelled/neutral sit
+      // in b.other and must not be conflated with success.
       return b.failing === 1
-        ? `1 failing · ${b.total - b.failing} green`
+        ? `1 failing · ${b.passing} green`
         : `${b.failing} of ${b.total} failing`;
     case "pending":
       return elapsedLive
@@ -186,6 +190,19 @@ export function ChecksPopover({
       const parsed = new URL(prUrl);
       if (parsed.protocol === "https:" && parsed.hostname === "github.com") {
         window.desktopBridge?.openExternalUrl(prUrl);
+      }
+    } catch {
+      // Invalid URL - do nothing
+    }
+  }, [prUrl]);
+
+  // Deep-link into GitHub's PR checks tab so devs can jump straight to the run logs
+  // from the failing-lane header. Uses the same protocol/host guard as handleOpenGitHub.
+  const handleOpenChecksTab = useCallback(() => {
+    try {
+      const parsed = new URL(prUrl);
+      if (parsed.protocol === "https:" && parsed.hostname === "github.com") {
+        window.desktopBridge?.openExternalUrl(`${prUrl}/checks`);
       }
     } catch {
       // Invalid URL - do nothing
@@ -293,6 +310,7 @@ export function ChecksPopover({
               <section
                 key={lane}
                 className={cn(
+                  "group",
                   laneIdx > 0 && "border-t border-border/30",
                   meta.wash,
                 )}
@@ -312,10 +330,26 @@ export function ChecksPopover({
                   <span className="text-[10px] text-muted-foreground tabular-nums ml-1">
                     {runs.length}
                   </span>
+                  {/* Failing lane gets a jump-to-logs affordance. Keeps the header quiet
+                   * until hover, then reveals an external-link chip that deep-links to the
+                   * PR's checks tab where run logs live. */}
+                  {lane === "failing" && (
+                    <button
+                      type="button"
+                      onClick={handleOpenChecksTab}
+                      title="Open run logs on GitHub"
+                      className="ml-auto inline-flex items-center gap-1 text-[10px] text-[var(--diff-remove-strong)]/70 hover:text-[var(--diff-remove-strong)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity tracking-wider uppercase"
+                    >
+                      <span>view logs</span>
+                      <ExternalLink size={9} strokeWidth={CI_ICON_STROKE} />
+                    </button>
+                  )}
                 </header>
                 <ul className="pb-1.5">
-                  {runs.map((run) => (
-                    <RunRow key={run.name} run={run} />
+                  {runs.map((run, idx) => (
+                    // Composite key: matrix builds can produce duplicate `run.name`
+                    // across OS/Node legs, so the index disambiguates the React key.
+                    <RunRow key={`${run.name}-${idx}`} run={run} />
                   ))}
                 </ul>
               </section>
