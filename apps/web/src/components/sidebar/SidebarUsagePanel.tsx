@@ -43,6 +43,21 @@ function formatCost(usd: number | undefined | null): string | undefined {
   return `$${usd.toFixed(2)}`;
 }
 
+/**
+ * Render a millisecond duration in the tightest appropriate unit. Under 10s
+ * shows one decimal (`5.4s`); 10s–60s shows whole seconds; above a minute
+ * shows `Xm Ys`. Normalizes through a single total-seconds value so the
+ * 60_000ms boundary can't render as `1m 60s`.
+ */
+function formatDuration(ms: number): string {
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
 /** Countdown segment with a flag marking short-window urgency for styling. */
 interface TimeUntil {
   text: string;
@@ -215,8 +230,11 @@ export function SidebarUsagePanel() {
   // The Claude adapter already folds cache_read_input_tokens and
   // cache_creation_input_tokens into tokensIn, so tokensIn is the
   // correct denominator — adding cacheRead again would double-count.
+  // Clamp to 100 defensively: out-of-order events from other providers
+  // can temporarily report cacheRead above tokensIn, and "422% cache
+  // hit" is never a correct display.
   const cacheHitRate = cacheRead > 0 && tokensIn > 0
-    ? Math.round((cacheRead / tokensIn) * 100)
+    ? Math.min(100, Math.round((cacheRead / tokensIn) * 100))
     : undefined;
 
   // Earliest reset across limited categories drives the header countdown.
@@ -236,7 +254,7 @@ export function SidebarUsagePanel() {
 
   const costLabel = formatCost(sessionCost);
 
-  const show = (e: React.MouseEvent) => {
+  const show = (e: React.SyntheticEvent) => {
     e.stopPropagation();
     clearTimeout(closeTimer.current);
     setOpen(true);
@@ -253,9 +271,15 @@ export function SidebarUsagePanel() {
       <PopoverTrigger
         render={
           <div
-            className="w-full cursor-default py-0.5"
+            role="button"
+            tabIndex={0}
+            aria-label="Show usage details"
+            aria-expanded={open}
+            className="w-full cursor-default py-0.5 outline-none focus-visible:ring-1 focus-visible:ring-primary/40 focus-visible:ring-offset-0 rounded"
             onMouseEnter={show}
             onMouseLeave={hide}
+            onFocus={show}
+            onBlur={hide}
           />
         }
       >
@@ -268,7 +292,9 @@ export function SidebarUsagePanel() {
             <span className="shrink-0 font-mono text-[10px] tabular-nums text-foreground/45">
               {costLabel ??
                 (mostConstrained
-                  ? `${abbrev(mostConstrained.used)}/${abbrev(mostConstrained.total ?? 0)}`
+                  ? mostConstrained.total != null
+                    ? `${abbrev(mostConstrained.used)}/${abbrev(mostConstrained.total)}`
+                    : abbrev(mostConstrained.used)
                   : null)}
             </span>
           </div>
@@ -322,6 +348,8 @@ export function SidebarUsagePanel() {
         className="w-64 p-0 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-[0_12px_32px_-4px_rgba(0,0,0,0.6),0_2px_6px_rgba(0,0,0,0.3)]"
         onMouseEnter={show}
         onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
       >
         {/* Header */}
         <div className="flex items-start justify-between px-4 pt-3.5 pb-3">
@@ -379,11 +407,7 @@ export function SidebarUsagePanel() {
                 )}
                 {durationMs != null && (
                   <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
-                    {durationMs >= 60_000
-                      ? `${Math.floor(durationMs / 60_000)}m ${Math.round((durationMs % 60_000) / 1000)}s`
-                      : durationMs >= 10_000
-                        ? `${Math.round(durationMs / 1000)}s`
-                        : `${(durationMs / 1000).toFixed(1)}s`}
+                    {formatDuration(durationMs)}
                   </span>
                 )}
                 {serviceTier && serviceTier !== "standard" && (
