@@ -49,6 +49,7 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import { ClaudeProvider } from "../providers/claude/claude-provider";
+import { queryMethodStubs } from "./helpers/mock-sdk-query";
 
 describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
   it("emits Error event when the session's queue was already closed", async () => {
@@ -65,13 +66,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
         [Symbol.asyncIterator]() { return this; },
       };
       return Object.assign(gen, {
-        interrupt: vi.fn(), setPermissionMode: vi.fn(), setModel: vi.fn(),
-        setMaxThinkingTokens: vi.fn(), applyFlagSettings: vi.fn(),
-        initializationResult: vi.fn(), supportedCommands: vi.fn(),
-        supportedModels: vi.fn(), supportedAgents: vi.fn(),
-        mcpServerStatus: vi.fn(), accountInfo: vi.fn(), rewindFiles: vi.fn(),
-        reconnectMcpServer: vi.fn(), toggleMcpServer: vi.fn(),
-        setMcpServers: vi.fn(), streamInput: vi.fn(), stopTask: vi.fn(),
+        ...queryMethodStubs(),
         close: vi.fn(),
       });
     });

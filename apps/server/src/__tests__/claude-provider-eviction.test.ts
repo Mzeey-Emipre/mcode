@@ -8,6 +8,7 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import { ClaudeProvider } from "../providers/claude/claude-provider";
+import { queryMethodStubs } from "./helpers/mock-sdk-query";
 
 /** Mock SDK that yields a tool_use then pauses indefinitely (simulating a long-running tool). */
 function makeToolUseStream() {
@@ -39,13 +40,7 @@ function makeToolUseStream() {
       [Symbol.asyncIterator]() { return this; },
     };
     return Object.assign(gen, {
-      interrupt: vi.fn(), setPermissionMode: vi.fn(), setModel: vi.fn(),
-      setMaxThinkingTokens: vi.fn(), applyFlagSettings: vi.fn(),
-      initializationResult: vi.fn(), supportedCommands: vi.fn(),
-      supportedModels: vi.fn(), supportedAgents: vi.fn(),
-      mcpServerStatus: vi.fn(), accountInfo: vi.fn(), rewindFiles: vi.fn(),
-      reconnectMcpServer: vi.fn(), toggleMcpServer: vi.fn(),
-      setMcpServers: vi.fn(), streamInput: vi.fn(), stopTask: vi.fn(),
+      ...queryMethodStubs(),
       close: vi.fn(() => resolvePause?.()),
     });
   };
@@ -114,13 +109,7 @@ describe("ClaudeProvider idle eviction with pending tool_use (#291)", () => {
         [Symbol.asyncIterator]() { return this; },
       };
       return Object.assign(gen, {
-        interrupt: vi.fn(), setPermissionMode: vi.fn(), setModel: vi.fn(),
-        setMaxThinkingTokens: vi.fn(), applyFlagSettings: vi.fn(),
-        initializationResult: vi.fn(), supportedCommands: vi.fn(),
-        supportedModels: vi.fn(), supportedAgents: vi.fn(),
-        mcpServerStatus: vi.fn(), accountInfo: vi.fn(), rewindFiles: vi.fn(),
-        reconnectMcpServer: vi.fn(), toggleMcpServer: vi.fn(),
-        setMcpServers: vi.fn(), streamInput: vi.fn(), stopTask: vi.fn(),
+        ...queryMethodStubs(),
         close: vi.fn(() => resolveTool?.()),
       });
     });

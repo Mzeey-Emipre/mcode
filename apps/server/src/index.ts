@@ -463,23 +463,27 @@ async function shutdown(): Promise<void> {
     // Already closed or other non-fatal error
   }
 
-  // 12. Remove server lock file
+  // 12. Write clean-shutdown breadcrumb BEFORE removing the lock file. If the
+  // marker write fails, the lock file stays put so the next startup still
+  // detects an unclean exit (missing marker + present lock = warn).
   try {
-    unlinkSync(LOCK_FILE_PATH);
-  } catch {
-    // Lock file may already be gone
-  }
-
-  // 13. Write clean-shutdown breadcrumb. On next startup the presence of this
-  // file confirms the previous process exited via the graceful shutdown() path.
-  try {
-    writeFileSync(SHUTDOWN_MARKER_PATH, String(Date.now()), "utf-8");
+    writeFileSync(SHUTDOWN_MARKER_PATH, String(Date.now()), {
+      mode: 0o600,
+      encoding: "utf-8",
+    });
   } catch (err) {
     logger.warn("Could not write clean-shutdown marker", {
       markerPath: SHUTDOWN_MARKER_PATH,
       error: err instanceof Error ? err.message : String(err),
       code: (err as NodeJS.ErrnoException)?.code,
     });
+  }
+
+  // 13. Remove server lock file
+  try {
+    unlinkSync(LOCK_FILE_PATH);
+  } catch {
+    // Lock file may already be gone
   }
 
   logger.info("Shutdown complete");

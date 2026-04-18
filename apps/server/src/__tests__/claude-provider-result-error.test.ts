@@ -9,6 +9,7 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import { ClaudeProvider } from "../providers/claude/claude-provider";
+import { queryMethodStubs } from "./helpers/mock-sdk-query";
 import { AgentEventType } from "@mcode/contracts";
 
 /** Build a minimal mock Query that yields one non-result message (so sessionInitialized=true), then the requested result. */
@@ -31,13 +32,7 @@ function mockSdkStream(results: Array<Record<string, unknown>>) {
       [Symbol.asyncIterator]() { return this; },
     };
     return Object.assign(gen, {
-      interrupt: vi.fn(), setPermissionMode: vi.fn(), setModel: vi.fn(),
-      setMaxThinkingTokens: vi.fn(), applyFlagSettings: vi.fn(),
-      initializationResult: vi.fn(), supportedCommands: vi.fn(),
-      supportedModels: vi.fn(), supportedAgents: vi.fn(),
-      mcpServerStatus: vi.fn(), accountInfo: vi.fn(), rewindFiles: vi.fn(),
-      reconnectMcpServer: vi.fn(), toggleMcpServer: vi.fn(),
-      setMcpServers: vi.fn(), streamInput: vi.fn(), stopTask: vi.fn(),
+      ...queryMethodStubs(),
       close: vi.fn(),
     });
   };
