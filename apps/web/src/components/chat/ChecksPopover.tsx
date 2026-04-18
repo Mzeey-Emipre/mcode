@@ -41,23 +41,23 @@ const LANE_META: Record<Lane, { label: string; icon: typeof CircleCheck; iconCla
   failing: {
     label: "Failing",
     icon: CircleX,
-    iconClass: "text-rose-500",
-    wash: "bg-rose-500/[0.05]",
-    accent: "text-rose-500",
+    iconClass: "text-[var(--diff-remove-strong)]",
+    wash: "bg-[var(--diff-remove-strong)]/[0.05]",
+    accent: "text-[var(--diff-remove-strong)]",
   },
   running: {
     label: "Running",
     icon: Loader2,
-    iconClass: "text-amber-500",
+    iconClass: "text-primary",
     wash: "",
-    accent: "text-amber-500",
+    accent: "text-primary",
   },
   passing: {
     label: "Passing",
     icon: CircleCheck,
-    iconClass: "text-emerald-500",
+    iconClass: "text-[var(--diff-add-strong)]",
     wash: "",
-    accent: "text-emerald-500/85",
+    accent: "text-[var(--diff-add-strong)]/85",
   },
   other: {
     label: "Skipped",
@@ -276,7 +276,7 @@ export function ChecksPopover({
           {checks.aggregate === "pending" && breakdown.total > 0 && (
             <div className="mt-3 h-[3px] w-full rounded-full bg-muted/50 overflow-hidden">
               <div
-                className="h-full bg-amber-400/90 transition-[width] duration-500 ease-out"
+                className="h-full bg-primary/90 transition-[width] duration-500 ease-out"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
@@ -345,7 +345,7 @@ export function ChecksPopover({
                 onClick={handleRefresh}
                 disabled={refreshing}
                 title="Last refresh failed — click to retry"
-                className="inline-flex items-center gap-1 text-[10px] text-rose-400 hover:text-rose-300 transition-colors tabular-nums disabled:opacity-60"
+                className="inline-flex items-center gap-1 text-[10px] text-[var(--diff-remove-strong)] hover:text-[var(--diff-remove-strong)]/80 transition-colors tabular-nums disabled:opacity-60"
               >
                 <span>refresh failed</span>
                 <span className="underline underline-offset-2">retry</span>
@@ -390,9 +390,9 @@ function RunRow({ run }: { run: CheckRun }) {
       : null;
 
   const tailClass = isRunning
-    ? "text-amber-500/90"
+    ? "text-primary/90"
     : lane === "failing"
-      ? "text-rose-400/90"
+      ? "text-[var(--diff-remove-strong)]/90"
       : "text-muted-foreground/80";
 
   return (
@@ -405,7 +405,7 @@ function RunRow({ run }: { run: CheckRun }) {
       <span
         className={cn(
           "truncate flex-1",
-          lane === "failing" ? "text-rose-400 font-medium" : "text-foreground/80",
+          lane === "failing" ? "text-[var(--diff-remove-strong)] font-medium" : "text-foreground/80",
         )}
       >
         {run.name}

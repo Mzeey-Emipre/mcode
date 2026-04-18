@@ -60,9 +60,9 @@ function ProgressPills({ checks }: { checks: ChecksStatus }) {
           key={i}
           className={cn(
             "h-[5px] w-[5px] rounded-full transition-colors",
-            slot === "fail" && "bg-rose-500 shadow-[0_0_4px_rgba(244,63,94,0.55)]",
-            slot === "run" && "bg-amber-400 animate-pulse shadow-[0_0_4px_rgba(251,191,36,0.55)]",
-            slot === "pass" && "bg-emerald-500",
+            slot === "fail" && "bg-[var(--diff-remove-strong)]",
+            slot === "run" && "bg-primary motion-safe:animate-pulse",
+            slot === "pass" && "bg-[var(--diff-add-strong)]",
             slot === "other" && "bg-muted-foreground/40",
           )}
         />
@@ -152,13 +152,13 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
   const ciVisual = hasChecksData ? getCiVisual(aggregate!) : null;
 
   const mergedClosedAccent = state === "merged"
-    ? "text-[#a371f7] hover:text-[#bc8fff] bg-muted/10 hover:bg-muted/20"
+    ? "text-primary/70 hover:text-primary bg-muted/10 hover:bg-muted/20"
     : state === "closed"
-      ? "text-[#f85149] hover:text-[#ff6b63] bg-muted/10 hover:bg-muted/20"
+      ? "text-destructive/70 hover:text-destructive bg-muted/10 hover:bg-muted/20"
       : null;
 
   const openNoCiAccent = isOpen && !hasChecksData
-    ? "text-emerald-600 dark:text-emerald-400 bg-muted/10 hover:bg-muted/20"
+    ? "text-[var(--diff-add-strong)]/85 hover:text-[var(--diff-add-strong)] bg-muted/10 hover:bg-muted/20"
     : null;
 
   const chromeClass = ciVisual
@@ -200,7 +200,7 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
         "relative inline-flex items-center gap-1.5 px-2 h-6 rounded-l text-xs transition-colors border border-transparent",
         "font-medium tabular-nums",
         chromeClass,
-        aggregate === "pending" && "border-amber-500/25",
+        aggregate === "pending" && "border-primary/25",
         !showChevron && "rounded-r",
       )}
       title={titleAttr}
@@ -240,7 +240,7 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
           aria-hidden
           className="absolute inset-x-1 bottom-0 h-[1.5px] overflow-hidden rounded-full motion-reduce:hidden"
         >
-          <span className="block h-full w-1/3 bg-amber-400/80 animate-ci-slide" />
+          <span className="block h-full w-1/3 bg-primary/80 animate-ci-slide" />
         </span>
       )}
     </button>

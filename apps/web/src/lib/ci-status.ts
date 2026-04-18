@@ -37,33 +37,33 @@ export function getCiVisual(aggregate: ChecksStatus["aggregate"]): CiVisual {
     case "passing":
       return {
         icon: CircleCheck,
-        color: "text-emerald-600 dark:text-emerald-400",
-        borderColor: "border-emerald-500/30",
-        surface: "bg-emerald-500/10",
+        color: "text-[var(--diff-add-strong)]",
+        borderColor: "border-[var(--diff-add-strong)]/30",
+        surface: "bg-[var(--diff-add-strong)]/10",
         chromeClass:
-          "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/25",
-        hoverSurface: "hover:bg-emerald-500/15",
+          "text-[var(--diff-add-strong)] bg-[var(--diff-add-strong)]/10 border-[var(--diff-add-strong)]/25",
+        hoverSurface: "hover:bg-[var(--diff-add-strong)]/15",
         label: "Checks passing",
       };
     case "failing":
       return {
         icon: CircleX,
-        color: "text-rose-500",
-        borderColor: "border-rose-500/35",
-        surface: "bg-rose-500/10",
-        chromeClass: "text-rose-500 bg-rose-500/10 border-rose-500/25",
-        hoverSurface: "hover:bg-rose-500/15",
+        color: "text-[var(--diff-remove-strong)]",
+        borderColor: "border-[var(--diff-remove-strong)]/35",
+        surface: "bg-[var(--diff-remove-strong)]/10",
+        chromeClass:
+          "text-[var(--diff-remove-strong)] bg-[var(--diff-remove-strong)]/10 border-[var(--diff-remove-strong)]/25",
+        hoverSurface: "hover:bg-[var(--diff-remove-strong)]/15",
         label: "Checks failing",
       };
     case "pending":
       return {
         icon: Loader2,
-        color: "text-amber-600 dark:text-amber-400",
-        borderColor: "border-amber-500/35",
-        surface: "bg-amber-500/10",
-        chromeClass:
-          "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/25",
-        hoverSurface: "hover:bg-amber-500/15",
+        color: "text-primary",
+        borderColor: "border-primary/35",
+        surface: "bg-primary/10",
+        chromeClass: "text-primary bg-primary/10 border-primary/25",
+        hoverSurface: "hover:bg-primary/15",
         label: "Checks running",
       };
     case "no_checks":
