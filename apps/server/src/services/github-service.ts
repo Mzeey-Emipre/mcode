@@ -223,6 +223,7 @@ export class GithubService {
                 status,
                 conclusion,
                 durationMs,
+                startedAt: item.startedAt ?? null,
               };
             });
 

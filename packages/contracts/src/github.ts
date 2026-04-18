@@ -69,6 +69,9 @@ export const CheckRunSchema = lazySchema(() =>
       .enum(["success", "failure", "cancelled", "skipped", "timed_out", "neutral"])
       .nullable(),
     durationMs: z.number().nullable(),
+    /** ISO timestamp when the run started. Populated for running and completed runs alike;
+     *  used client-side to render live elapsed time for in-progress checks. */
+    startedAt: z.string().nullable(),
   }),
 );
 
