@@ -748,11 +748,16 @@ function VirtualizedThreadList({
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
                   const ciChecks = checksById[thread.id];
                   const ciDotClass = ciChecks ? getCiDotClass(ciChecks.aggregate) : null;
-                  const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
-                  // CI dot takes priority when present; fall back to agent notification dot
-                  const dot = ciDotClass
-                    ? { dotClass: ciDotClass, animate: ciChecks!.aggregate === "pending", shape: "solid" as const }
-                    : agentDot;
+                  const hasPendingPermission = pendingPermissionThreadIds.has(thread.id);
+                  const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id), hasPendingPermission);
+                  // Pending permission always wins — the user's attention is required,
+                  // and CI status is merely informational. Otherwise CI takes priority
+                  // when present; fall back to the agent notification dot.
+                  const dot = hasPendingPermission
+                    ? agentDot
+                    : ciDotClass
+                      ? { dotClass: ciDotClass, animate: ciChecks!.aggregate === "pending", shape: "solid" as const }
+                      : agentDot;
                   return (
                     <span
                       title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
