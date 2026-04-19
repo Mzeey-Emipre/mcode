@@ -121,7 +121,7 @@ describe("ClaudeProvider permission mode changes", () => {
       permissionMode: "full",
     });
 
-    // Two sdk subprocesses -- the mode change forced a tear-down + recreate.
+    // Two sdk subprocesses. The mode change forced a tear-down + recreate.
     expect(sdkCalls.length).toBe(2);
 
     // First call: supervised → SDK permissionMode "default", no bypass flag.
