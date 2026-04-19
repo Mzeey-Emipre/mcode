@@ -356,6 +356,25 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     if (existing) {
       existing.lastUsedAt = Date.now();
 
+      // Permission mode is baked in at session creation (canUseTool callback
+      // and allowDangerouslySkipPermissions flag are set once). If the caller
+      // requests a different mode, tear down the subprocess and recurse. The
+      // fresh spawn below will be configured with the new mode. The thread's
+      // conversation history lives in mcode's DB, not the SDK, so the user
+      // only pays one extra subprocess startup, not any loss of context.
+      if (existing.permissionMode !== permissionMode) {
+        logger.info("permissionMode changed, closing session for recreation", {
+          sessionId,
+          from: existing.permissionMode,
+          to: permissionMode,
+        });
+        existing.suppressEnded = true;
+        existing.closeQueue();
+        existing.query.close();
+        this.sessions.delete(sessionId);
+        return this.doSendMessage({ ...params, resume: false });
+      }
+
       if (existing.model !== resolvedModel) {
         logger.info("Model changed, calling setModel()", {
           sessionId,
