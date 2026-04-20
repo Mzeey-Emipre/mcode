@@ -278,7 +278,6 @@ describe("ProjectTree action-required indicator", () => {
   function installWorkspaceMock() {
     // WorkspaceState is not exported; cast through any so the fixture object
     // satisfies the mock without importing the internal type.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useWorkspaceStore).mockImplementation(
       ((selector: (s: unknown) => unknown) => selector({
         workspaces: [{ id: "ws-1", name: "Test", path: "/test", provider_config: {}, created_at: "", updated_at: "" }],
@@ -299,6 +298,7 @@ describe("ProjectTree action-required indicator", () => {
         worktrees: [],
         worktreesLoadedForWorkspace: null,
         error: null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       })) as any
     );
   }
@@ -316,7 +316,6 @@ describe("ProjectTree action-required indicator", () => {
   afterEach(() => {
     // Restore the default empty-state implementation so this override does not
     // leak into other describes when test order shifts.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useWorkspaceStore).mockImplementation(
       ((selector: (s: unknown) => unknown) =>
         selector({
@@ -337,6 +336,7 @@ describe("ProjectTree action-required indicator", () => {
           worktrees: [],
           worktreesLoadedForWorkspace: null,
           error: null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
         })) as any
     );
     vi.clearAllMocks();
