@@ -510,7 +510,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               };
               break;
             case "allow-session":
-              // Use the SDK-provided suggestions — they encode the correct
+              // Use the SDK-provided suggestions. They encode the correct
               // PermissionUpdate shape for the specific tool being allowed.
               result = {
                 behavior: "allow" as const,
