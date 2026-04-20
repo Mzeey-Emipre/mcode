@@ -36,10 +36,10 @@ interface SessionEntry {
   closeQueue: () => void;
   model: string;
   /**
-   * Permission mode the SDK subprocess is currently running with
-   * ("full" or "supervised"). Compared against incoming requests so we can
-   * live-switch via `query.setPermissionMode()` when it differs, without
-   * tearing down the subprocess.
+   * Permission mode the SDK subprocess was spawned with ("full" or "supervised").
+   * Compared against incoming requests; when it differs, the subprocess is torn
+   * down and a new one is spawned with the new mode because permissionMode is
+   * fixed at spawn in the Claude Agent SDK CLI.
    */
   permissionMode: string;
   lastUsedAt: number;
@@ -350,20 +350,25 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
         : toUserMessage(message, sessionId);
 
     if (existing) {
-      existing.lastUsedAt = Date.now();
-
-      // Live-switch permission mode on the running subprocess via the SDK's
-      // control-request IPC. This matches how the Claude CLI itself toggles
-      // modes: no teardown, no lost context, same session.
+      // Permission mode is fixed at SDK subprocess spawn. setPermissionMode()
+      // cannot enter bypassPermissions without the --dangerously-skip-permissions
+      // flag at spawn time (mutually exclusive with canUseTool), so we match
+      // the codex provider's teardown-and-respawn pattern here. The new session
+      // resumes the same conversation via the persisted sdkSessionIds entry.
       if (existing.permissionMode !== permissionMode) {
-        logger.info("permissionMode changed, calling setPermissionMode()", {
+        logger.info("permissionMode changed, recreating session", {
           sessionId,
           from: existing.permissionMode,
           to: permissionMode,
         });
-        await existing.query.setPermissionMode(sdkPermissionMode);
-        existing.permissionMode = permissionMode;
+        existing.suppressEnded = true;
+        existing.closeQueue();
+        existing.query.close();
+        this.sessions.delete(sessionId);
+        return this.doSendMessage(params);
       }
+
+      existing.lastUsedAt = Date.now();
 
       if (existing.model !== resolvedModel) {
         logger.info("Model changed, calling setModel()", {

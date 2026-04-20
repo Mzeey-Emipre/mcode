@@ -4,8 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 /**
  * Minimal SDK mock returning an async generator that yields one "result"
  * message per user message pushed to the prompt queue. The generator also
- * exposes `setModel`, `setPermissionMode`, and `close` so the provider's
- * existing-session logic can call them without blowing up.
+ * exposes `setModel`, `interrupt`, and `close` so the provider's existing-session
+ * logic (including teardown on permissionMode change) can call them without blowing up.
  */
 function makeFakeSdkQuery(
   pushCalls: Array<{ options: Record<string, unknown> }>,
@@ -50,21 +50,17 @@ function makeFakeSdkQuery(
 
     Object.assign(generator, {
       setModel: vi.fn(async () => {}),
-      setPermissionMode: vi.fn(async () => {}),
       interrupt: vi.fn(async () => {}),
       close: vi.fn(() => {}),
     });
-
-    createdQueries.push(generator as unknown as { setPermissionMode: ReturnType<typeof vi.fn> });
 
     return generator;
   };
 }
 
-const { sdkCalls, createdQueries, mockQuery } = vi.hoisted(() => {
+const { sdkCalls, mockQuery } = vi.hoisted(() => {
   const sdkCalls: Array<{ options: Record<string, unknown> }> = [];
-  const createdQueries: Array<{ setPermissionMode: ReturnType<typeof vi.fn> }> = [];
-  return { sdkCalls, createdQueries, mockQuery: vi.fn() };
+  return { sdkCalls, mockQuery: vi.fn() };
 });
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -83,7 +79,6 @@ describe("ClaudeProvider permission mode changes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sdkCalls.length = 0;
-    createdQueries.length = 0;
     mockQuery.mockImplementation(makeFakeSdkQuery(sdkCalls));
     provider = new ClaudeProvider();
   });
@@ -110,7 +105,7 @@ describe("ClaudeProvider permission mode changes", () => {
     expect(sdkCalls.length).toBe(1);
   });
 
-  it("calls setPermissionMode on the existing session when permissionMode changes", async () => {
+  it("tears down and respawns the session when permissionMode changes", async () => {
     await provider.sendMessage({
       sessionId: "mcode-thread-b",
       message: "first",
@@ -128,16 +123,15 @@ describe("ClaudeProvider permission mode changes", () => {
       permissionMode: "full",
     });
 
-    // Same subprocess is reused. The mode change does NOT force recreate.
-    expect(sdkCalls.length).toBe(1);
+    // The SDK subprocess is respawned because permissionMode is fixed at spawn.
+    expect(sdkCalls.length).toBe(2);
 
-    // The SDK's setPermissionMode is called once with the new SDK-mode string.
-    expect(createdQueries[0]!.setPermissionMode).toHaveBeenCalledTimes(1);
-    expect(createdQueries[0]!.setPermissionMode).toHaveBeenCalledWith("bypassPermissions");
-
-    // The one sdk subprocess was spawned in supervised mode and stayed that way
-    // at startup. The live mode switch is via setPermissionMode, not options.
+    // First spawn was in supervised (SDK "default") mode with no bypass flag.
     expect(sdkCalls[0]!.options.permissionMode).toBe("default");
     expect(sdkCalls[0]!.options.allowDangerouslySkipPermissions).toBeUndefined();
+
+    // Second spawn is in full (SDK "bypassPermissions") mode, still no CLI bypass flag.
+    expect(sdkCalls[1]!.options.permissionMode).toBe("bypassPermissions");
+    expect(sdkCalls[1]!.options.allowDangerouslySkipPermissions).toBeUndefined();
   });
 });
