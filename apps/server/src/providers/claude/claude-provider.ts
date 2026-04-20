@@ -36,10 +36,10 @@ interface SessionEntry {
   closeQueue: () => void;
   model: string;
   /**
-   * Permission mode the SDK subprocess was spawned with ("full" or "supervised").
-   * The SDK's canUseTool callback and allowDangerouslySkipPermissions flag are
-   * set at session creation and cannot be changed post-hoc, so if the caller
-   * requests a different mode the session must be torn down and recreated.
+   * Permission mode the SDK subprocess is currently running with
+   * ("full" or "supervised"). Compared against incoming requests so we can
+   * live-switch via `query.setPermissionMode()` when it differs, without
+   * tearing down the subprocess.
    */
   permissionMode: string;
   lastUsedAt: number;
@@ -352,23 +352,17 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     if (existing) {
       existing.lastUsedAt = Date.now();
 
-      // Permission mode is baked in at session creation (canUseTool callback
-      // and allowDangerouslySkipPermissions flag are set once). If the caller
-      // requests a different mode, tear down the subprocess and recurse. The
-      // fresh spawn below will be configured with the new mode. The thread's
-      // conversation history lives in mcode's DB, not the SDK, so the user
-      // only pays one extra subprocess startup, not any loss of context.
+      // Live-switch permission mode on the running subprocess via the SDK's
+      // control-request IPC. This matches how the Claude CLI itself toggles
+      // modes: no teardown, no lost context, same session.
       if (existing.permissionMode !== permissionMode) {
-        logger.info("permissionMode changed, closing session for recreation", {
+        logger.info("permissionMode changed, calling setPermissionMode()", {
           sessionId,
           from: existing.permissionMode,
           to: permissionMode,
         });
-        existing.suppressEnded = true;
-        existing.closeQueue();
-        existing.query.close();
-        this.sessions.delete(sessionId);
-        return this.doSendMessage({ ...params, resume: false });
+        await existing.query.setPermissionMode(sdkPermissionMode);
+        existing.permissionMode = permissionMode;
       }
 
       if (existing.model !== resolvedModel) {
