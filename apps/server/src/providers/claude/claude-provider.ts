@@ -488,6 +488,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
               title: options?.title,
             } satisfies PermissionRequest);
 
+            // Auto-cancel if the SDK aborts the tool call (e.g. timeout).
             if (options?.signal) {
               const onAbort = () => {
                 if (this.pendingPermissions.delete(requestId)) {
