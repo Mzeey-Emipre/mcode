@@ -564,6 +564,16 @@ async function dispatch(
       const workspace = deps.workspaceService.findById(params.workspaceId);
       if (!workspace) throw new Error(`Workspace ${params.workspaceId} not found`);
       await deps.gitService.push(workspace.path, params.branch);
+      // Fresh CI runs appear 3-15s after push. Schedule bumps so the UI surfaces
+      // "pending" without waiting a full passive poll cycle.
+      const threadIds = deps.ciWatcherService.findByWorkspaceBranch(
+        (id) => deps.threadRepo.findById(id),
+        params.workspaceId,
+        params.branch,
+      );
+      for (const id of threadIds) {
+        deps.ciWatcherService.scheduleBumpAfterPush(id);
+      }
       return { success: true };
     }
 
@@ -626,6 +636,8 @@ async function dispatch(
       // Replace any stale watcher (e.g. previous PR on this thread) before registering the new one.
       deps.ciWatcherService.unwatch(params.threadId);
       deps.ciWatcherService.watch(params.threadId, result.number, repoPath);
+      // PR creation implicitly pushes, so schedule the same post-push bump burst.
+      deps.ciWatcherService.scheduleBumpAfterPush(params.threadId);
 
       return result;
     }

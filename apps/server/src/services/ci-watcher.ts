@@ -16,13 +16,17 @@ type BroadcastFn = (channel: string, data: unknown) => void;
 // 10s for in-progress checks: responsive enough to catch completion within a PR review window.
 // Worst case: 5 active threads × 6 calls/min = 30 calls/min, well within GitHub's 5000/hr limit.
 const ACTIVE_INTERVAL_MS = 10_000;
-// 30s for terminal checks: catches re-triggered CI runs within half a minute.
-// Worst case: 5 passive threads × 2 calls/min = 10 calls/min, well within GitHub's 5000/hr limit.
-const PASSIVE_INTERVAL_MS = 30_000;
+// 15s for terminal checks: catches externally-triggered CI runs (push from terminal / another
+// machine) within the window where they'd be most noticeable to the user.
+// Worst case: 5 passive threads × 4 calls/min = 20 calls/min, well within GitHub's 5000/hr limit.
+const PASSIVE_INTERVAL_MS = 15_000;
+// When the user just pushed, GitHub Actions take a few seconds to register the new run.
+// Bump the cache on this curve so "pending" appears within ~3s of push completion.
+const POST_PUSH_BUMP_DELAYS_MS = [3_000, 8_000, 20_000];
 
 /**
  * Server-side CI check watcher with adaptive dual-interval polling.
- * Threads with in-progress checks poll at 10s; terminal checks poll at 30s.
+ * Threads with in-progress checks poll at 10s; terminal checks poll at 15s.
  * Broadcasts `thread.checksUpdated` only when state changes.
  */
 export class CiWatcherService {
@@ -116,6 +120,52 @@ export class CiWatcherService {
       this.startPassiveTimer();
       if (this.active.size === 0) this.stopActiveTimer();
     }
+  }
+
+  /**
+   * Force an immediate fetch + broadcast for a watched thread, bypassing the passive/active
+   * tick cadence. Used by push-completion paths so a fresh CI run surfaces within seconds
+   * of the push instead of waiting for the next passive tick.
+   */
+  async bump(threadId: string): Promise<void> {
+    const entry = this.active.get(threadId) ?? this.passive.get(threadId);
+    if (!entry) return;
+    try {
+      const checks = await this.githubService.getCheckRuns(entry.prNumber, entry.repoPath);
+      this.refresh(threadId, checks);
+    } catch (err) {
+      logger.debug("CiWatcher bump failed", { threadId, error: String(err) });
+    }
+  }
+
+  /**
+   * Schedule a burst of bumps on the GitHub Actions registration curve. After a push,
+   * runs appear 3-15s later depending on repo size and workflow triggers; this burst
+   * catches them without waiting up to a full passive tick.
+   */
+  scheduleBumpAfterPush(threadId: string): void {
+    const entry = this.active.get(threadId) ?? this.passive.get(threadId);
+    if (!entry) return;
+    for (const delay of POST_PUSH_BUMP_DELAYS_MS) {
+      setTimeout(() => { void this.bump(threadId); }, delay).unref?.();
+    }
+  }
+
+  /**
+   * Find all watched threads matching a workspace + branch pair. Used by the push handler
+   * to schedule bumps for any PRs tied to that branch (typically 0 or 1).
+   */
+  findByWorkspaceBranch(
+    threadLookup: (threadId: string) => { branch: string; workspace_id: string } | null,
+    workspaceId: string,
+    branch: string,
+  ): string[] {
+    const ids: string[] = [];
+    for (const id of [...this.active.keys(), ...this.passive.keys()]) {
+      const t = threadLookup(id);
+      if (t && t.workspace_id === workspaceId && t.branch === branch) ids.push(id);
+    }
+    return ids;
   }
 
   /**

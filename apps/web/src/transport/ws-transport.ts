@@ -24,6 +24,8 @@ import type { PermissionRequest } from "@mcode/contracts";
 const MIN_RECONNECT_MS = 1000;
 /** Maximum reconnect delay in milliseconds. */
 const MAX_RECONNECT_MS = 30_000;
+/** Number of immediate (delay=0) retries on auth failure before falling back to exponential backoff. */
+const MAX_IMMEDIATE_AUTH_RETRIES = 3;
 
 /** Timestamp of the last github.checkStatus fetch triggered on connect/reconnect. */
 let lastCheckStatusFetchAt = 0;
@@ -89,7 +91,7 @@ interface PendingCall {
 }
 
 /** Describes the current state of the WebSocket connection. */
-export type ConnectionStatus = "connecting" | "connected" | "reconnecting";
+export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "authFailed";
 
 /** Options for configuring `createWsTransport` behavior. */
 export interface WsTransportOptions {
@@ -119,6 +121,9 @@ export function createWsTransport(
   let closed = false;
   let reconnectDelay = MIN_RECONNECT_MS;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // Track consecutive auth failures so we apply backoff after 3 immediate
+  // retries, preventing a tight loop when the token is persistently wrong.
+  let consecutiveAuthFailures = 0;
 
   /** Resolves when the current WebSocket connection is open. */
   let ready: Promise<void>;
@@ -136,11 +141,9 @@ export function createWsTransport(
 
     ws.onopen = () => {
       reconnectDelay = MIN_RECONNECT_MS;
+      consecutiveAuthFailures = 0;
       resolveReady();
       options?.onStatusChange?.("connected");
-
-      // Auth token is conveyed via HttpOnly cookie (Set-Cookie on /health).
-      // No need to store it in localStorage - the cookie handles reconnection.
 
       // On connect/reconnect, refresh CI checks for all visible PR threads (best-effort).
       // Cooldown prevents subprocess storms during rapid reconnect loops.
@@ -219,11 +222,12 @@ export function createWsTransport(
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event: CloseEvent) => {
       rejectPending("WebSocket disconnected");
       if (!closed) {
-        options?.onStatusChange?.("reconnecting");
-        scheduleReconnect();
+        const isAuthFailure = event.code === 4001;
+        options?.onStatusChange?.(isAuthFailure ? "authFailed" : "reconnecting");
+        scheduleReconnect(isAuthFailure);
       }
     };
 
@@ -239,11 +243,24 @@ export function createWsTransport(
     pending = new Map();
   }
 
-  function scheduleReconnect() {
+  function scheduleReconnect(immediate = false) {
     if (reconnectTimer) return;
+
+    // Auth failures use immediate reconnect (delay=0) for the first
+    // MAX_IMMEDIATE_AUTH_RETRIES attempts, then fall back to normal backoff
+    // to avoid a tight loop when the token is persistently wrong.
+    const useImmediate = immediate && consecutiveAuthFailures < MAX_IMMEDIATE_AUTH_RETRIES;
+    // Cap the counter so it does not grow unboundedly past the threshold.
+    if (immediate && consecutiveAuthFailures < MAX_IMMEDIATE_AUTH_RETRIES) consecutiveAuthFailures++;
+    const delay = useImmediate ? 0 : reconnectDelay;
+
     reconnectTimer = setTimeout(async () => {
       reconnectTimer = null;
-      reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
+      // Increase backoff for connectivity failures and for auth failures that
+      // have exceeded the immediate-retry limit.
+      if (!useImmediate) {
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
+      }
       if (options?.discoverServerUrl) {
         try {
           const newUrl = await options.discoverServerUrl();
@@ -253,7 +270,7 @@ export function createWsTransport(
         }
       }
       connect();
-    }, reconnectDelay);
+    }, delay);
   }
 
   /** Send a JSON-RPC request and return the result. */

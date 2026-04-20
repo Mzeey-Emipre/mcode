@@ -25,6 +25,7 @@ vi.mock("@/stores/workspaceStore", () => ({
       loadWorktrees: vi.fn(),
       worktrees: [],
       worktreesLoadedForWorkspace: null,
+      checksById: {},
       error: null,
     })
   ),
@@ -137,6 +138,7 @@ function setupStoreMocks({
     loadWorktrees: vi.fn(),
     worktrees: [],
     worktreesLoadedForWorkspace: null,
+    checksById: {},
     error: null,
   };
 
@@ -268,7 +270,10 @@ describe("ProjectTree action-required indicator", () => {
   // Holder the tests mutate before calling installWorkspaceMock so they can
   // swap the rendered thread (e.g. attach a pr_number) and the CI check map.
   let currentThread: Thread;
-  let currentChecks: Record<string, { aggregate: string }>;
+  // Shape matches ChecksStatus just enough for CiChip's getBreakdown call,
+  // which reads checks.runs.length. Main now renders CI as a chip even when
+  // the test's focus is the action-required ring, so runs must be non-null.
+  let currentChecks: Record<string, { aggregate: string; runs: unknown[] }>;
 
   function installWorkspaceMock() {
     // WorkspaceState is not exported; cast through any so the fixture object
@@ -403,7 +408,14 @@ describe("ProjectTree action-required indicator", () => {
       pr_number: 42,
       pr_status: "open",
     });
-    currentChecks = { "thread-pending": { aggregate: "failing" } };
+    currentChecks = {
+      "thread-pending": {
+        aggregate: "failing",
+        runs: [
+          { name: "ci", status: "completed", conclusion: "failure" },
+        ],
+      },
+    };
     installWorkspaceMock();
     threadStoreOverrides.permissionsByThread = {
       "thread-pending": [{ settled: false }],

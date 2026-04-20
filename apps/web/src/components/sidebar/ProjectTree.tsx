@@ -20,7 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { getStatusDisplay, getNotificationDot } from "@/lib/thread-status";
-import { getCiDotClass } from "@/lib/ci-status";
+import { getBreakdown, getCiVisual, CI_ICON_STROKE } from "@/lib/ci-status";
+import type { ChecksStatus } from "@mcode/contracts";
 import type { Workspace, Thread } from "@/transport/types";
 
 // Persist expand/collapse in localStorage
@@ -612,6 +613,118 @@ interface VirtualizedThreadListProps {
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
 }
 
+/**
+ * Sidebar CI status chip — a compact icon+count capsule shown in the thread row.
+ *
+ * Kept deliberately distinct from the agent-activity dot on the PR icon:
+ * it's a shape (capsule), not a dot, and it carries a numeric count + icon
+ * so it reads as a labelled "CI widget" rather than a notification pip.
+ *
+ * Chrome + icon + strokeWidth all come from the shared `getCiVisual()` so the
+ * chip stays in lockstep with the chat-header button and the popover.
+ */
+function CiChip({ checks }: { checks: ChecksStatus }) {
+  const b = getBreakdown(checks);
+  if (checks.aggregate === "no_checks" || b.total === 0) return null;
+
+  const agg = checks.aggregate;
+  const { icon: Icon, chromeClass } = getCiVisual(agg);
+
+  // Text: "1" failing, "2/5" running, "7" passing. The icon carries state;
+  // the number carries scale — together they read unmistakably as CI.
+  const text =
+    agg === "failing"
+      ? String(b.failing || b.total)
+      : agg === "pending"
+        ? `${b.total - b.running}/${b.total}`
+        : String(b.total);
+
+  const label =
+    agg === "failing"
+      ? `${b.failing || b.total} failing`
+      : agg === "pending"
+        ? `${b.total - b.running} of ${b.total} checks done`
+        : `${b.total} checks passing`;
+
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      className={cn(
+        // h-4 (16px) sits on the 4pt scale; text-[10px] stays legible on HiDPI
+        // displays and OS text-scale settings above 100%.
+        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border",
+        "text-[10px] font-medium tabular-nums leading-none",
+        chromeClass,
+      )}
+    >
+      <Icon
+        size={9}
+        strokeWidth={CI_ICON_STROKE}
+        className={cn("shrink-0", agg === "pending" && "motion-safe:animate-spin")}
+      />
+      <span>{text}</span>
+    </span>
+  );
+}
+
+/**
+ * Workspace-row CI roll-up chip.
+ *
+ * Silent-on-healthy: renders nothing when all threads are green (or none have CI).
+ * Surfaces a single chip when any thread is failing or pending, so a collapsed
+ * project row still shouts when something needs attention but stays quiet when
+ * nothing does. Same chrome + glyphs as the per-thread `CiChip`, so the CI
+ * language stays consistent between zoom levels.
+ */
+function WorkspaceCiRollupChip({
+  threads,
+  checksById,
+}: {
+  threads: Thread[];
+  checksById: Record<string, ChecksStatus>;
+}) {
+  // Count threads by their CI aggregate — one per thread, regardless of how many
+  // individual checks each has. "Failing" dominates; then "pending"; otherwise silent.
+  let failingCount = 0;
+  let pendingCount = 0;
+  for (const t of threads) {
+    const checks = checksById[t.id];
+    if (!checks || checks.aggregate === "no_checks") continue;
+    if (checks.aggregate === "failing") failingCount += 1;
+    else if (checks.aggregate === "pending") pendingCount += 1;
+  }
+
+  const agg: ChecksStatus["aggregate"] | null =
+    failingCount > 0 ? "failing" : pendingCount > 0 ? "pending" : null;
+  if (!agg) return null;
+
+  const { icon: Icon, chromeClass } = getCiVisual(agg);
+  const count = agg === "failing" ? failingCount : pendingCount;
+  const noun = count === 1 ? "thread" : "threads";
+  const label =
+    agg === "failing" ? `${count} ${noun} failing` : `${count} ${noun} with checks running`;
+
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      className={cn(
+        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border",
+        "text-[10px] font-medium tabular-nums leading-none",
+        chromeClass,
+      )}
+    >
+      <Icon
+        size={9}
+        strokeWidth={CI_ICON_STROKE}
+        className={cn("shrink-0", agg === "pending" && "motion-safe:animate-spin")}
+      />
+      <span>{count}</span>
+    </span>
+  );
+}
+
 /** Renders a virtualized, scrollable list of threads for a single workspace. */
 function VirtualizedThreadList({
   threads,
@@ -746,36 +859,28 @@ function VirtualizedThreadList({
               >
                 {thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
-                  const ciChecks = checksById[thread.id];
-                  const ciDotClass = ciChecks ? getCiDotClass(ciChecks.aggregate) : null;
-                  const hasPendingPermission = pendingPermissionThreadIds.has(thread.id);
-                  const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id), hasPendingPermission);
-                  // Pending permission always wins — the user's attention is required,
-                  // and CI status is merely informational. Otherwise CI takes priority
-                  // when present; fall back to the agent notification dot.
-                  const dot = hasPendingPermission
-                    ? agentDot
-                    : ciDotClass
-                      ? { dotClass: ciDotClass, animate: ciChecks!.aggregate === "pending", shape: "solid" as const }
-                      : agentDot;
+                  const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
+                  // Only the agent signal lives on the PR icon — a top-right dot.
+                  // CI status is surfaced as a labelled chip in the row's end-section
+                  // so it cannot be confused with an agent-activity dot.
                   return (
                     <span
                       title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
                       className="relative shrink-0"
                     >
                       <PrIcon size={12} className={prColor} />
-                      {dot && (
+                      {agentDot && (
                         <span
-                          aria-label={dot.shape === "ring" ? "Action required" : undefined}
+                          aria-label={agentDot.shape === "ring" ? "Action required" : undefined}
                           className={cn(
                             "absolute rounded-full",
                             // Ring variant sizes up slightly and drops the background ring so the
                             // amber ring isn't confused with the 1px separator ring used on dots.
-                            dot.shape === "ring"
+                            agentDot.shape === "ring"
                               ? "-top-1 -right-1 h-2 w-2"
                               : "-top-0.5 -right-0.5 h-1.5 w-1.5 ring-1 ring-background",
-                            dot.dotClass,
-                            dot.animate && "animate-pulse",
+                            agentDot.dotClass,
+                            agentDot.animate && "motion-safe:animate-pulse",
                           )}
                         />
                       )}
@@ -824,6 +929,9 @@ function VirtualizedThreadList({
                     )}
                     {thread.title}
                   </span>
+                )}
+                {!isEditing && thread.pr_number != null && checksById[thread.id] && (
+                  <CiChip checks={checksById[thread.id]} />
                 )}
                 {!isEditing && (
                   <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/45">
@@ -894,6 +1002,7 @@ function ProjectNode({
   onDelete,
   onThreadContextMenu,
 }: ProjectNodeProps) {
+  const checksById = useWorkspaceStore(useShallow((s) => s.checksById));
   const parentDir = useMemo(() => parentDirName(workspace.path), [workspace.path]);
   const hasRunning = useMemo(
     () => threads.some((t) => runningThreadIds.has(t.id)),
@@ -902,6 +1011,7 @@ function ProjectNode({
   // Cap logic: show THREAD_LIST_CAP rows unless the user opted in, or the
   // active thread sits beyond the cap (force expand so the active row is
   // always visible without requiring the user to click Show more).
+  // Use the flattened tree order (same order VirtualizedThreadList renders) for cap decisions.
   const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
   const needsCap = treeItems.length > THREAD_LIST_CAP;
   const activeIndex = activeThreadId ? treeItems.findIndex((item) => item.thread.id === activeThreadId) : -1;
@@ -948,6 +1058,8 @@ function ProjectNode({
         )}
 
         <span className="flex-1" />
+
+        <WorkspaceCiRollupChip threads={threads} checksById={checksById} />
 
         {hasRunning && (
           <Tooltip>
