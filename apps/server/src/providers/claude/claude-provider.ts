@@ -1115,15 +1115,32 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       } catch (e: unknown) {
         const errorMessage =
           e instanceof Error ? e.message : String(e);
-        logger.error("SDK stream error", {
-          sessionId,
-          error: errorMessage,
-        });
-        this.emit("event", {
-          type: AgentEventType.Error,
-          threadId,
-          error: errorMessage,
-        } satisfies AgentEvent);
+        // Gate the Error event with the same "still the active stream" check
+        // as the Ended event below. When a session is intentionally torn down
+        // (mode change, setModel failure) the Claude CLI subprocess exits
+        // non-zero after its stdin is closed, which propagates here as a
+        // thrown exit error. That exit is expected, not a user-visible crash,
+        // because a fresh session has already taken over the sessionId.
+        const current = this.sessions.get(sessionId);
+        const superseded =
+          (current !== undefined && current.query !== q) ||
+          current?.suppressEnded === true;
+        if (superseded) {
+          logger.debug("SDK stream error suppressed (session superseded)", {
+            sessionId,
+            error: errorMessage,
+          });
+        } else {
+          logger.error("SDK stream error", {
+            sessionId,
+            error: errorMessage,
+          });
+          this.emit("event", {
+            type: AgentEventType.Error,
+            threadId,
+            error: errorMessage,
+          } satisfies AgentEvent);
+        }
       } finally {
         const current = this.sessions.get(sessionId);
         if (current?.query === q) {
