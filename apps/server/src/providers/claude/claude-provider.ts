@@ -35,6 +35,13 @@ interface SessionEntry {
   pushMessage: (msg: SDKUserMessage) => void;
   closeQueue: () => void;
   model: string;
+  /**
+   * Permission mode the SDK subprocess was spawned with ("full" or "supervised").
+   * Compared against incoming requests; when it differs, the subprocess is torn
+   * down and a new one is spawned with the new mode because permissionMode is
+   * fixed at spawn in the Claude Agent SDK CLI.
+   */
+  permissionMode: string;
   lastUsedAt: number;
   /** When true, the finally block in startStreamLoop should not emit an "ended" event. */
   suppressEnded?: boolean;
@@ -337,16 +344,30 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
     const resolvedCwd = cwd || process.cwd();
     const resolvedModel = model || "claude-sonnet-4-6";
 
-    if (isBypass) {
-      logger.warn("Using bypassPermissions for session", { sessionId });
-    }
-
     const prompt =
       attachments && attachments.length > 0
         ? await this.buildMultimodalMessage(message, attachments, sessionId)
         : toUserMessage(message, sessionId);
 
     if (existing) {
+      // Permission mode is fixed at SDK subprocess spawn. setPermissionMode()
+      // cannot enter bypassPermissions without the --dangerously-skip-permissions
+      // flag at spawn time (mutually exclusive with canUseTool), so we match
+      // the codex provider's teardown-and-respawn pattern here. The new session
+      // resumes the same conversation via the persisted sdkSessionIds entry.
+      if (existing.permissionMode !== permissionMode) {
+        logger.info("permissionMode changed, recreating session", {
+          sessionId,
+          from: existing.permissionMode,
+          to: permissionMode,
+        });
+        existing.suppressEnded = true;
+        existing.closeQueue();
+        existing.query.close();
+        this.sessions.delete(sessionId);
+        return this.doSendMessage(params);
+      }
+
       existing.lastUsedAt = Date.now();
 
       if (existing.model !== resolvedModel) {
@@ -442,92 +463,87 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       // get stuck.
       disallowedTools: ["EnterPlanMode", "ExitPlanMode"],
       permissionMode: sdkPermissionMode,
-      ...(isBypass && { allowDangerouslySkipPermissions: true }),
-      ...(isBypass
-        ? {}
-        : {
-            canUseTool: (async (
-              toolName: string,
-              input: Record<string, unknown>,
-              options: Parameters<CanUseTool>[2],
-            ) => {
-              try {
-                const requestId = crypto.randomUUID();
-                logger.debug("canUseTool called", { toolName, requestId, threadId: tid });
-                const decision = await new Promise<PermissionDecision>((resolve) => {
-                  this.pendingPermissions.set(requestId, {
-                    threadId: tid,
-                    toolName,
-                    input,
-                    title: options?.title,
-                    resolve,
-                  });
-                  this.emit("permission_request", {
-                    requestId,
-                    threadId: tid,
-                    toolName,
-                    input,
-                    title: options?.title,
-                  } satisfies PermissionRequest);
+      canUseTool: (async (
+        toolName: string,
+        input: Record<string, unknown>,
+        options: Parameters<CanUseTool>[2],
+      ) => {
+        try {
+          const requestId = crypto.randomUUID();
+          logger.debug("canUseTool called", { toolName, requestId, threadId: tid });
+          const decision = await new Promise<PermissionDecision>((resolve) => {
+            this.pendingPermissions.set(requestId, {
+              threadId: tid,
+              toolName,
+              input,
+              title: options?.title,
+              resolve,
+            });
+            this.emit("permission_request", {
+              requestId,
+              threadId: tid,
+              toolName,
+              input,
+              title: options?.title,
+            } satisfies PermissionRequest);
 
-                  // Auto-cancel if the SDK aborts the tool call (e.g. timeout).
-                  if (options?.signal) {
-                    const onAbort = () => {
-                      if (this.pendingPermissions.delete(requestId)) {
-                        resolve("cancelled");
-                        this.emit("permission_resolved", { requestId, decision: "cancelled" as const });
-                      }
-                    };
-                    options.signal.addEventListener("abort", onAbort, { once: true });
-                  }
-                });
-                logger.debug("canUseTool decision", { toolName, requestId, decision });
-                let result;
-                switch (decision) {
-                  case "allow":
-                    // updatedInput is required by the CLI's runtime Zod schema (not optional
-                    // despite the SDK TypeScript type). Pass the original input unchanged.
-                    result = {
-                      behavior: "allow" as const,
-                      updatedInput: input,
-                    };
-                    break;
-                  case "allow-session":
-                    // Use the SDK-provided suggestions — they encode the correct
-                    // PermissionUpdate shape for the specific tool being allowed.
-                    result = {
-                      behavior: "allow" as const,
-                      updatedInput: input,
-                      updatedPermissions: options?.suggestions,
-                    };
-                    break;
-                  case "deny":
-                  case "cancelled":
-                    result = {
-                      behavior: "deny" as const,
-                      message: decision === "cancelled"
-                        ? "Session stopped by user"
-                        : "User denied",
-                    };
-                    break;
-                  default:
-                    logger.error("canUseTool received unexpected decision", { toolName, requestId, decision });
-                    result = {
-                      behavior: "deny" as const,
-                      message: "Unexpected permission decision value",
-                    };
+            // Auto-cancel if the SDK aborts the tool call (e.g. timeout).
+            if (options?.signal) {
+              const onAbort = () => {
+                if (this.pendingPermissions.delete(requestId)) {
+                  resolve("cancelled");
+                  this.emit("permission_resolved", { requestId, decision: "cancelled" as const });
                 }
-                logger.debug("canUseTool returning", { toolName, requestId, behavior: result.behavior });
-                return result;
-              } catch (err) {
-                logger.error("canUseTool callback threw unexpectedly", { toolName, err });
-                return {
-                  behavior: "deny" as const,
-                  message: "Permission check encountered an internal error",
-                };
-              }
-            }) satisfies CanUseTool,
-          }),
+              };
+              options.signal.addEventListener("abort", onAbort, { once: true });
+            }
+          });
+          logger.debug("canUseTool decision", { toolName, requestId, decision });
+          let result;
+          switch (decision) {
+            case "allow":
+              // updatedInput is required by the CLI's runtime Zod schema (not optional
+              // despite the SDK TypeScript type). Pass the original input unchanged.
+              result = {
+                behavior: "allow" as const,
+                updatedInput: input,
+              };
+              break;
+            case "allow-session":
+              // Use the SDK-provided suggestions. They encode the correct
+              // PermissionUpdate shape for the specific tool being allowed.
+              result = {
+                behavior: "allow" as const,
+                updatedInput: input,
+                updatedPermissions: options?.suggestions,
+              };
+              break;
+            case "deny":
+            case "cancelled":
+              result = {
+                behavior: "deny" as const,
+                message: decision === "cancelled"
+                  ? "Session stopped by user"
+                  : "User denied",
+              };
+              break;
+            default:
+              logger.error("canUseTool received unexpected decision", { toolName, requestId, decision });
+              result = {
+                behavior: "deny" as const,
+                message: "Unexpected permission decision value",
+              };
+          }
+          logger.debug("canUseTool returning", { toolName, requestId, behavior: result.behavior });
+          return result;
+        } catch (err) {
+          logger.error("canUseTool callback threw unexpectedly", { toolName, err });
+          return {
+            behavior: "deny" as const,
+            message: "Permission check encountered an internal error",
+          };
+        }
+      }) satisfies CanUseTool,
       ...buildReasoningOptions(reasoningLevel, resolvedModel),
       ...(fallbackModel && { fallbackModel }),
       includePartialMessages: true,
@@ -575,6 +591,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       pushMessage: queue.push,
       closeQueue: queue.close,
       model: resolvedModel,
+      permissionMode,
       lastUsedAt: Date.now(),
       pendingToolUses: new Set<string>(),
     };
@@ -625,6 +642,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
           pushMessage: freshQueue.push,
           closeQueue: freshQueue.close,
           model: resolvedModel,
+          permissionMode,
           lastUsedAt: Date.now(),
           pendingToolUses: new Set<string>(),
         };
@@ -1087,15 +1105,32 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
       } catch (e: unknown) {
         const errorMessage =
           e instanceof Error ? e.message : String(e);
-        logger.error("SDK stream error", {
-          sessionId,
-          error: errorMessage,
-        });
-        this.emit("event", {
-          type: AgentEventType.Error,
-          threadId,
-          error: errorMessage,
-        } satisfies AgentEvent);
+        // Gate the Error event with the same "still the active stream" check
+        // as the Ended event below. When a session is intentionally torn down
+        // (mode change, setModel failure) the Claude CLI subprocess exits
+        // non-zero after its stdin is closed, which propagates here as a
+        // thrown exit error. That exit is expected, not a user-visible crash,
+        // because a fresh session has already taken over the sessionId.
+        const current = this.sessions.get(sessionId);
+        const superseded =
+          (current !== undefined && current.query !== q) ||
+          current?.suppressEnded === true;
+        if (superseded) {
+          logger.debug("SDK stream error suppressed (session superseded)", {
+            sessionId,
+            error: errorMessage,
+          });
+        } else {
+          logger.error("SDK stream error", {
+            sessionId,
+            error: errorMessage,
+          });
+          this.emit("event", {
+            type: AgentEventType.Error,
+            threadId,
+            error: errorMessage,
+          } satisfies AgentEvent);
+        }
       } finally {
         const current = this.sessions.get(sessionId);
         if (current?.query === q) {

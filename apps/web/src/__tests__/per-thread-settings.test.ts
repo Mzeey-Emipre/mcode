@@ -129,4 +129,64 @@ describe("per-thread settings", () => {
     expect(settings.reasoningLevel).toBe("high");
     expect(settings.permissionMode).toBe("supervised");
   });
+
+  it("setThreadSettings mirrors the patch into workspaceStore.threads", async () => {
+    const thread = createMockThread({
+      id: "thread-sync",
+      reasoning_level: null,
+      interaction_mode: "chat",
+      permission_mode: "supervised",
+    });
+    useWorkspaceStore.setState({ threads: [thread] });
+
+    await useThreadStore
+      .getState()
+      .setThreadSettings("thread-sync", { permissionMode: "full" });
+
+    const updated = useWorkspaceStore
+      .getState()
+      .threads.find((t) => t.id === "thread-sync");
+    expect(updated?.permission_mode).toBe("full");
+  });
+
+  it("setThreadSettings mirrors all provided fields, leaving others untouched", async () => {
+    const thread = createMockThread({
+      id: "thread-sync-2",
+      reasoning_level: "max",
+      interaction_mode: "chat",
+      permission_mode: "supervised",
+      copilot_agent: "code",
+    });
+    useWorkspaceStore.setState({ threads: [thread] });
+
+    await useThreadStore.getState().setThreadSettings("thread-sync-2", {
+      permissionMode: "full",
+      interactionMode: "plan",
+    });
+
+    const updated = useWorkspaceStore
+      .getState()
+      .threads.find((t) => t.id === "thread-sync-2");
+    expect(updated?.permission_mode).toBe("full");
+    expect(updated?.interaction_mode).toBe("plan");
+    expect(updated?.reasoning_level).toBe("max");
+    expect(updated?.copilot_agent).toBe("code");
+  });
+
+  it("setThreadSettings with copilotAgent: null clears the cached value", async () => {
+    const thread = createMockThread({
+      id: "thread-sync-3",
+      copilot_agent: "code",
+    });
+    useWorkspaceStore.setState({ threads: [thread] });
+
+    await useThreadStore
+      .getState()
+      .setThreadSettings("thread-sync-3", { copilotAgent: null });
+
+    const updated = useWorkspaceStore
+      .getState()
+      .threads.find((t) => t.id === "thread-sync-3");
+    expect(updated?.copilot_agent).toBeNull();
+  });
 });

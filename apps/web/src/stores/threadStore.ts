@@ -696,6 +696,25 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       },
     }));
 
+    // Also mirror the patch into workspaceStore.threads so the cached
+    // thread object stays in sync. Composer's no-draft hydration path
+    // reads from that cache directly (permission_mode, interaction_mode,
+    // reasoning_level, copilot_agent), so failing to sync here causes
+    // the UI to revert to stale DB values on thread re-entry.
+    useWorkspaceStore.setState((state) => ({
+      threads: state.threads.map((t) =>
+        t.id === threadId
+          ? {
+              ...t,
+              ...(patch.permissionMode !== undefined && { permission_mode: patch.permissionMode }),
+              ...(patch.interactionMode !== undefined && { interaction_mode: patch.interactionMode }),
+              ...(patch.reasoningLevel !== undefined && { reasoning_level: patch.reasoningLevel }),
+              ...("copilotAgent" in patch && { copilot_agent: patch.copilotAgent ?? null }),
+            }
+          : t,
+      ),
+    }));
+
     // copilotAgent: null clears the persisted agent; undefined means don't change.
     const transportPatch: {
       reasoningLevel?: ReturnType<typeof get>["settingsByThread"][string]["reasoningLevel"];
