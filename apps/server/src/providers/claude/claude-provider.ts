@@ -502,12 +502,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider {
           let result;
           switch (decision) {
             case "allow":
+              // updatedInput is required by the CLI's runtime Zod schema (not optional
+              // despite the SDK TypeScript type). Pass the original input unchanged.
               result = {
                 behavior: "allow" as const,
                 updatedInput: input,
               };
               break;
             case "allow-session":
+              // Use the SDK-provided suggestions — they encode the correct
+              // PermissionUpdate shape for the specific tool being allowed.
               result = {
                 behavior: "allow" as const,
                 updatedInput: input,
