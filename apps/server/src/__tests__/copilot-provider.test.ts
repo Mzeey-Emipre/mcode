@@ -88,6 +88,19 @@ vi.mock("../providers/copilot/copilot-cli-resolver.js", async (importOriginal) =
   };
 });
 
+/** Resets the CLI resolver mock to its default successful resolution. */
+function resetResolverMock(): void {
+  resolveCopilotCliMock.mockImplementation((ctx?: { configuredPath?: string }) =>
+    ctx?.configuredPath?.trim()
+      ? { source: "configured", entry: ctx.configuredPath.trim(), version: null }
+      : { source: "npm-global", entry: "/global/@github/copilot/index.js", version: "1.0.24" },
+  );
+}
+
+beforeEach(() => {
+  resetResolverMock();
+});
+
 import which from "which";
 import { CopilotProvider } from "../providers/copilot/copilot-provider.js";
 import { stubEnvService } from "./stub-env-service.js";
@@ -302,6 +315,32 @@ describe("CopilotProvider bootstrap", () => {
       const errorEvt = events.find((e) => e.type === "error");
       expect(errorEvt).toBeDefined();
       expect(errorEvt?.type === "error" && errorEvt.error).toContain("npm install -g @github/copilot");
+    });
+
+    it("returns an empty model list when the CLI cannot be resolved", async () => {
+      resolveCopilotCliMock.mockReturnValueOnce({
+        source: "not-found",
+        entry: null,
+        version: null,
+        message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
+      });
+
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      await expect(provider.listModels()).resolves.toEqual([]);
+    });
+
+    it("throws the resolver install message from complete() when the CLI cannot be resolved", async () => {
+      resolveCopilotCliMock.mockReturnValueOnce({
+        source: "not-found",
+        entry: null,
+        version: null,
+        message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
+      });
+
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      await expect(provider.complete("hello", "gpt-4o", "/tmp")).rejects.toThrow(
+        "npm install -g @github/copilot",
+      );
     });
   });
 });

@@ -23,6 +23,8 @@ import { discoverCopilotAgents, COPILOT_DEFAULT_AGENTS } from "./copilot-agent-d
 import {
   resolveCopilotCli,
   createNodeResolverIO,
+  formatCopilotNotFoundMessage,
+  formatCopilotUpgradeMessage,
   type CopilotCliResolution,
 } from "./copilot-cli-resolver.js";
 import { logger } from "@mcode/shared";
@@ -211,6 +213,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, Pro
    */
   async complete(prompt: string, model: string, cwd: string): Promise<string> {
     await this.refreshClient();
+    const notFoundMessage = this.cliNotFoundMessage();
+    if (notFoundMessage) throw new Error(notFoundMessage);
     const client = this.client;
     if (!client) {
       throw new Error("Copilot client not available");
@@ -329,6 +333,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, Pro
         await this.refreshClient();
         const freshClient = this.client as CopilotClient | null;
         if (!freshClient) {
+          if (this.lastResolution?.source === "not-found") return [];
           throw new Error("Copilot client not available after reconnect");
         }
         sdkModels = await freshClient.listModels();
@@ -358,7 +363,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, Pro
   async getUsage(): Promise<ProviderUsageInfo> {
     try {
       await this.refreshClient();
-      const result = await this.client!.rpc.account.getQuota();
+      if (this.lastResolution?.source === "not-found" || !this.client) {
+        return { providerId: "copilot", quotaCategories: [] };
+      }
+      const result = await this.client.rpc.account.getQuota();
       const categories = result?.quotaSnapshots
         ? normalizeQuotaSnapshots(result.quotaSnapshots)
         : [];
@@ -399,6 +407,16 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, Pro
       return;
     }
 
+    // Skip re-probing when settings are unchanged and the last resolution was
+    // not-found (resolver cache also avoids repeated spawnSync on its own).
+    if (
+      configuredCliPath === this.lastCliPath &&
+      this.client === null &&
+      this.lastResolution?.source === "not-found"
+    ) {
+      return;
+    }
+
     if (this.client) {
       await this.client.stop().catch((err) =>
         logger.warn("CopilotProvider: error stopping old client", { error: String(err) }),
@@ -410,11 +428,15 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, Pro
 
     const opts: {
       cliPath?: string;
+      cliArgs?: string[];
       githubToken?: string;
       env?: Record<string, string | undefined>;
     } = {};
 
     opts.env = { ...this.envService.getEnv() };
+    // Pin the CLI version the resolver selected; without this the launcher can
+    // delegate to a newer build in ~/.copilot/pkg that breaks the SDK contract.
+    opts.cliArgs = ["--no-auto-update"];
 
     // Ordered resolution: configured path > npm-global index.js > PATH/shim follow.
     const resolution = resolveCopilotCli(
@@ -487,22 +509,45 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, Pro
     // Electron fix: the SDK reads process.execPath to spawn the CLI .js file.
     // In Electron that returns electron.exe, causing the CLI to exit immediately.
     // Temporarily override process.execPath with the real node binary.
-    if (process.versions.electron && this.cachedNodePath) {
-      const origExecPath = process.execPath;
-      process.execPath = this.cachedNodePath;
-      try {
+    const needsElectronExecPathOverride =
+      process.versions.electron && resolution.source !== "configured" && this.cachedNodePath;
+    try {
+      if (needsElectronExecPathOverride) {
+        const origExecPath = process.execPath;
+        process.execPath = this.cachedNodePath!;
+        try {
+          await client.start();
+        } finally {
+          process.execPath = origExecPath;
+        }
+      } else {
         await client.start();
-      } finally {
-        process.execPath = origExecPath;
       }
-    } else {
-      await client.start();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("--headless") || msg.includes("unknown option")) {
+        this.lastResolution = {
+          source: "not-found",
+          entry: null,
+          version: null,
+          message: formatCopilotUpgradeMessage(resolution.version),
+        };
+        this.lastCliPath = configuredCliPath;
+        logger.warn("CopilotProvider: CLI too old for SDK", { message: this.lastResolution.message });
+        return;
+      }
+      throw err;
     }
     // Assign only after start() succeeds so a failed startup never leaves
     // a stale non-started client on the instance.
     this.client = client;
     this.lastCliPath = configuredCliPath;
     logger.info("CopilotProvider: client started", { state: client.getState() });
+  }
+
+  /** Returns the resolver install message when the CLI could not be resolved. */
+  private cliNotFoundMessage(): string | null {
+    return this.lastResolution?.source === "not-found" ? this.lastResolution.message : null;
   }
 
   /** Strip the "mcode-" session prefix to derive the threadId used in emitted AgentEvents. */
@@ -558,10 +603,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, Pro
       }
 
       if (msg.includes("Could not find @github/copilot")) {
-        const userMsg =
-          "GitHub Copilot package not found.\n\n" +
-          "Install it with: npm install -g @github/copilot\n\n" +
-          "Or set a custom path in Settings > Provider > Copilot CLI path.";
+        const userMsg = formatCopilotNotFoundMessage(
+          undefined,
+          createNodeResolverIO(this.envService.getEnv(), process.platform),
+        );
         this.emit("event", { type: "error", threadId, error: userMsg } satisfies AgentEvent);
         this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
         return;
