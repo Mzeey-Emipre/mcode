@@ -173,11 +173,20 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
   invalidate() {
     // Bumping loadEpoch fences any in-flight load() so its eventual set()
     // is dropped instead of rehydrating the store with pre-invalidation data.
+    //
+    // `isLoading: false` is required here: the fenced load resolves into the
+    // epoch-check branch in load() that skips its own `isLoading: false`
+    // assignment. Without resetting it here, the store would be left with
+    // skills=null and isLoading=true permanently, and the consumer hook's
+    // eager-prefetch effect (which early-returns when isLoading is true)
+    // would never dispatch the follow-up load. The slash-command popup
+    // would then show only built-in commands until the user clicks Refresh.
     const state = get();
     set({
       skills: null,
       cwd: undefined,
       providerId: undefined,
+      isLoading: false,
       error: null,
       inflight: null,
       inflightCwd: undefined,
