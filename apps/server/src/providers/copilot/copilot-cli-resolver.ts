@@ -55,8 +55,8 @@ interface Strategy {
   resolve(ctx: CopilotCliResolveContext, io: CopilotCliResolverIO): { entry: string; version: string | null } | null;
 }
 
-/** Shell metacharacters that must not appear in a CLI path passed to `shell: true`. */
-const SHELL_METACHAR_RE = /[;&|`$(){}!<>"'\s\n\r]/;
+/** Shell control characters that must not appear in a CLI path passed to `shell: true`. */
+const SHELL_METACHAR_RE = /[;&|`$<>\"'\n\r]/;
 
 /** TTL for cached resolution results (5 minutes). */
 const RESOLUTION_CACHE_TTL_MS = 5 * 60 * 1000;

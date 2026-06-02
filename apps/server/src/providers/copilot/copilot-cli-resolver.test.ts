@@ -97,6 +97,17 @@ describe("resolveCopilotCli", () => {
     }
   });
 
+  it("accepts configured paths with spaces and parentheses", () => {
+    const configured = "C:\\Program Files (x86)\\GitHub\\copilot\\index.js";
+    const io = fakeIO({
+      platform: "win32",
+      exec: { [`${configured} --version`]: "GitHub Copilot CLI 1.0.57." },
+      existsExtra: [configured],
+    });
+    const res = resolveCopilotCli({ configuredPath: configured }, io);
+    expect(res).toMatchObject({ source: "configured", entry: configured, version: "1.0.57" });
+  });
+
   it("falls through when the configured path is missing and npm-global resolves", () => {
     const pkgDir = join("/global", "@github", "copilot");
     const entry = join(pkgDir, "index.js");

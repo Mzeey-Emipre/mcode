@@ -407,16 +407,6 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, Pro
       return;
     }
 
-    // Skip re-probing when settings are unchanged and the last resolution was
-    // not-found (resolver cache also avoids repeated spawnSync on its own).
-    if (
-      configuredCliPath === this.lastCliPath &&
-      this.client === null &&
-      this.lastResolution?.source === "not-found"
-    ) {
-      return;
-    }
-
     if (this.client) {
       await this.client.stop().catch((err) =>
         logger.warn("CopilotProvider: error stopping old client", { error: String(err) }),
