@@ -53,6 +53,11 @@ export function SlashCommandPopup({
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ITEM_HEIGHT,
     overscan: 2,
+    // react-virtual defaults to flushSync(rerender) on sync measurement, which
+    // fires inside its commit-phase layout effect and triggers React's
+    // "flushSync called from inside a lifecycle method" warning. The popup list
+    // does not need a synchronous re-render, so opt out.
+    useFlushSync: false,
   });
 
   // Scroll selected item into view

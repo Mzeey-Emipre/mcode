@@ -562,6 +562,13 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     },
     getItemKey: (index) => items[index]?.key ?? String(index),
     overscan: OVERSCAN,
+    // Opt out of react-virtual's flushSync(rerender) on sync measurement. It
+    // fires inside the library's commit-phase layout effect and trips React's
+    // "flushSync called from inside a lifecycle method" warning. Scroll-tail
+    // compensation is unaffected: shouldAdjustScrollPositionOnItemSizeChange
+    // adjusts scrollOffset inside virtual-core before onChange, so only the
+    // React re-render is deferred from sync to React's normal batching.
+    useFlushSync: false,
   });
   virtualizerRef.current = virtualizer;
 
