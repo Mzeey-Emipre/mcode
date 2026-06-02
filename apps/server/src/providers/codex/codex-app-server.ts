@@ -263,28 +263,50 @@ export async function performInitialize(args: {
   throw enrichHandshakeError(lastErr, getLastStderr());
 }
 
+/** JSON-RPC / app-server codes that mean the stored thread or rollout is gone. */
+const RECOVERABLE_RESUME_ERROR_CODES = new Set([
+  "THREAD_NOT_FOUND",
+  "ROLL_OUT_NOT_FOUND",
+  "ROLLOUT_NOT_FOUND",
+]);
+
+/** Case-insensitive message phrases for stale thread/resume (not generic "not found"). */
+const RECOVERABLE_RESUME_ERROR_PHRASES = [
+  "no rollout found",
+  "rollout not found",
+  "thread not found",
+  "no such thread",
+  "unknown thread",
+  "thread does not exist",
+] as const;
+
+/**
+ * Returns true when `thread/resume` failed because the stored Codex thread or
+ * rollout is missing locally. The handshake should fall back to `thread/start`.
+ */
+export function isRecoverableCodexResumeError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null) {
+    const record = error as { code?: unknown; type?: unknown };
+    for (const key of ["code", "type"] as const) {
+      const raw = record[key];
+      if (typeof raw === "string" && RECOVERABLE_RESUME_ERROR_CODES.has(raw.toUpperCase())) {
+        return true;
+      }
+    }
+  }
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+    && typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : String(error);
+  const lower = message.toLowerCase();
+  return RECOVERABLE_RESUME_ERROR_PHRASES.some((phrase) => lower.includes(phrase));
+}
+
 /**
  * Appends the most recent classified stderr line to a handshake failure when
  * present, so auth/version/setup errors are legible instead of bare timeouts.
  */
-/**
- * Returns true when `thread/resume` failed because the stored Codex rollout is
- * missing locally (deleted sessions dir, different machine, expired file). The
- * handshake should fall back to `thread/start` instead of surfacing a hard error.
- */
-export function isRecoverableCodexResumeError(error: unknown): boolean {
-  const msg = String(error).toLowerCase();
-  return (
-    msg.includes("not found")
-    || msg.includes("missing")
-    || msg.includes("expired")
-    || msg.includes("no such thread")
-    || msg.includes("unknown thread")
-    || msg.includes("does not exist")
-    || msg.includes("no rollout found")
-  );
-}
-
 export function enrichHandshakeError(err: unknown, stderr: string | null): Error {
   const base = err instanceof Error ? err.message : String(err);
   if (!stderr || base.includes(stderr)) {
@@ -323,6 +345,8 @@ export class CodexAppServer extends EventEmitter {
   private rpc!: CodexRpcClient;
   private child!: ChildProcess;
   private killRequested = false;
+  /** Shared in-flight teardown so concurrent `kill()` callers await the same work. */
+  private teardownPromise: Promise<void> | null = null;
 
   /**
    * Most recent non-benign stderr line from the child. Surfaced into the
@@ -477,9 +501,18 @@ export class CodexAppServer extends EventEmitter {
    * platforms sends SIGTERM then SIGKILL after 3 seconds.
    */
   async kill(): Promise<void> {
-    if (this.killRequested) return;
+    if (this.teardownPromise) return this.teardownPromise;
     this.killRequested = true;
+    this.teardownPromise = this.performKill();
+    try {
+      await this.teardownPromise;
+    } finally {
+      this.teardownPromise = null;
+    }
+  }
 
+  /** Runs interrupt, RPC dispose, and process termination once per server instance. */
+  private async performKill(): Promise<void> {
     if (this.rpc) {
       try {
         await this.rpc.sendRequest("turn/interrupt", { threadId: this.threadId }, 3000);

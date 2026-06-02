@@ -89,4 +89,56 @@ describe("CodexProvider first turn on new session", () => {
 
     await ended;
   });
+
+  it("did not overwrite pendingTurnId when a superseding runTurn finished sendTurn first", async () => {
+    const supersedeThreadId = "supersede-turn-thread";
+    const supersedeSessionId = `mcode-${supersedeThreadId}`;
+
+    let resolveSend!: (id: string) => void;
+    const sendTurnDeferred = new Promise<string>((resolve) => {
+      resolveSend = resolve;
+    });
+    sendTurnMock.mockImplementationOnce(() => sendTurnDeferred);
+
+    const provider = new CodexProvider(
+      { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
+      { assign: vi.fn(), isWindowsJob: false } as never,
+      stubEnvService() as never,
+    );
+
+    void provider.sendTurn({
+      sessionId: supersedeSessionId,
+      threadId: supersedeThreadId,
+      message: "hey",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(sendTurnMock).toHaveBeenCalled();
+
+    const pool = (
+      provider as unknown as {
+        runtime: {
+          get: (id: string) => { runTurnSeq: number; pendingTurnId: string | null } | undefined;
+        };
+      }
+    ).runtime;
+    const entry = pool.get(supersedeSessionId);
+    expect(entry).toBeDefined();
+    const staleSeq = entry!.runTurnSeq;
+    entry!.runTurnSeq += 1;
+    entry!.pendingTurnId = "superseding-turn";
+
+    resolveSend("stale-turn-id");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(staleSeq).toBeLessThan(entry!.runTurnSeq);
+    expect(entry!.pendingTurnId).toBe("superseding-turn");
+  });
 });

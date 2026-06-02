@@ -567,7 +567,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
         void (async () => {
           try {
             const turnId = await server.sendTurn(input, turnOptions);
-            if (turnId) entry.pendingTurnId = turnId;
+            if (turnId && seq === entry.runTurnSeq) entry.pendingTurnId = turnId;
           } catch (err) {
             cleanup();
             reject(err);

@@ -218,9 +218,11 @@ export class CodexRpcClient extends EventEmitter {
       clearTimeout(entry.timer);
       this.pending.delete(id);
 
-      const error = msg["error"] as { message?: string } | undefined;
+      const error = msg["error"] as { message?: string; code?: number | string } | undefined;
       if (error) {
-        entry.reject(new Error(error.message ?? "RPC error"));
+        const err = new Error(error.message ?? "RPC error") as Error & { code?: number | string };
+        if (error.code !== undefined) err.code = error.code;
+        entry.reject(err);
       } else {
         entry.resolve(msg["result"]);
       }

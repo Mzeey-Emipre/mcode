@@ -47,6 +47,17 @@ describe("isRecoverableCodexResumeError", () => {
   it("treated thread not found as recoverable", () => {
     expect(isRecoverableCodexResumeError(new Error("thread not found"))).toBe(true);
   });
+
+  it("treated structured THREAD_NOT_FOUND code as recoverable", () => {
+    const err = new Error("resume failed") as Error & { code: string };
+    err.code = "THREAD_NOT_FOUND";
+    expect(isRecoverableCodexResumeError(err)).toBe(true);
+  });
+
+  it("did not treat unrelated auth errors as recoverable", () => {
+    expect(isRecoverableCodexResumeError(new Error("not authenticated"))).toBe(false);
+    expect(isRecoverableCodexResumeError(new Error("api key missing"))).toBe(false);
+  });
 });
 
 describe("performInitialize", () => {
@@ -225,6 +236,20 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     req.method === "initialize"
       ? { error: { message: "not authenticated" } }
       : { result: {} };
+
+  it("(d2) concurrent kill() calls awaited the same teardown", async () => {
+    harnessFakeServer(rejectInitialize);
+
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+
+    await expect(server.start()).rejects.toThrow();
+
+    mockExecFile.mockClear();
+    await Promise.all([server.kill(), server.kill()]);
+
+    expect(mockExecFile).toHaveBeenCalledTimes(1);
+    expect(server.isAlive).toBe(false);
+  }, 10_000);
 
   it("(d) kills the spawned child via taskkill on Windows so a failed start leaves no orphan", async () => {
     harnessFakeServer(rejectInitialize);
