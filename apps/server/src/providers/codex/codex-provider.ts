@@ -41,15 +41,20 @@ import {
   mapDecisionToCodexResponse,
   synthesizeCodexPermissionRequest,
 } from "./codex-permission-mapper.js";
-import type { TurnInputPart, CodexNotification } from "./codex-types.js";
+import type { TurnInputPart, CodexNotification, CodexTurnOptions, ReasoningEffort } from "./codex-types.js";
 
 /**
  * Maximum wall-clock idle between Codex app-server notifications while
  * waiting for `turn/completed`. The timer resets on every notification so
- * quiet stretches without RPC traffic still time out, but active streams and
- * tool output keep the turn alive.
+ * active streams and tool output keep the turn alive; only a fully silent
+ * stretch trips it. Set to 60s (matching Copilot's `COMPLETE_TIMEOUT_MS`) so a
+ * stalled upstream turn — where `turn/completed` never arrives and the session
+ * stays `isBusy`, exempt from idle eviction — surfaces a retryable error in
+ * seconds instead of leaving the UI stuck "thinking" for half an hour. The
+ * trade-off: a tool that runs silently (no output deltas) for longer than this
+ * window will also trip it.
  */
-const TURN_TIMEOUT_MS = 30 * 60 * 1000;
+const TURN_TIMEOUT_MS = 60 * 1000;
 
 /** Internal: a newer `sendMessage` aborted this turn wait (not user-facing). */
 class CodexTurnSupersededError extends Error {
@@ -125,10 +130,10 @@ function buildCodexInput(
 }
 
 /** Maps mcode ReasoningLevel to the codex app-server `effort` field value. */
-function toCodexEffort(level?: ReasoningLevel): string | undefined {
+function toCodexEffort(level?: ReasoningLevel): ReasoningEffort | undefined {
   if (!level) return undefined;
   if (level === "max" || level === "ultrathink") return "high";
-  return level;
+  return level as ReasoningEffort;
 }
 
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
@@ -164,7 +169,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
    */
   private pendingSpawnTurns = new Map<
     string,
-    { input: string | TurnInputPart[]; turnOptions: { model?: string; effort?: string; serviceTier?: string } }
+    { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions }
   >();
 
   constructor(
@@ -301,7 +306,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
     // the staged turn is still pending. Reset the mapper and run it here.
     if (reusable && this.pendingSpawnTurns.delete(sessionId)) {
       state.lastUsedAt = Date.now();
-      state.mapper.reset();
       void this.runTurn(sessionId, threadId, state.server, input, turnOptions);
       return;
     }
@@ -353,26 +357,17 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
       const n = notification as { method?: string; params?: Record<string, unknown> };
       if (n.method === "turn/started") {
         const turn = n.params?.turn as { id?: string } | undefined;
+        const flatTurnId =
+          typeof n.params?.turnId === "string" ? n.params.turnId : undefined;
+        const turnId = turn?.id ?? flatTurnId;
         const entry = this.runtime.get(sessionId);
-        if (entry && turn?.id) entry.pendingTurnId = turn.id;
+        if (entry && turnId) entry.pendingTurnId = turnId;
       }
       const events = mapper.mapNotification(notification as CodexNotification);
       traceCodexIngest(threadId, n.method, n.params, events);
       for (const event of events) {
         this.emit("event", event);
       }
-    });
-
-    // When the codex thread ID rotates mid-session (context compaction, etc.),
-    // update the in-memory map and persist the new ID so future app restarts
-    // resume the correct thread instead of a stale one.
-    server.on("threadIdChanged", (newThreadId: string) => {
-      this.sdkSessionIds.set(sessionId, newThreadId);
-      this.emit("event", {
-        type: AgentEventType.System,
-        threadId,
-        subtype: "sdk_session_id:" + newThreadId,
-      } satisfies AgentEvent);
     });
 
     server.on("fatal", (error: string) => {
@@ -393,6 +388,17 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
     // Propagates start failures to the runtime, which surfaces them to the
     // `acquire` caller in `sendTurn` (emits Error/Ended there).
     await server.start();
+
+    // Register after a successful handshake so a mid-handshake thread/started
+    // notification cannot persist a stale SDK thread id when init later fails.
+    server.on("threadIdChanged", (newThreadId: string) => {
+      this.sdkSessionIds.set(sessionId, newThreadId);
+      this.emit("event", {
+        type: AgentEventType.System,
+        threadId,
+        subtype: "sdk_session_id:" + newThreadId,
+      } satisfies AgentEvent);
+    });
 
     if (server.resumeFailed) {
       logger.warn("Codex session context lost; resume failed, started fresh thread", { sessionId });
@@ -429,10 +435,14 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
     // `runTurn`'s `this.runtime.get(sessionId)` sees it.
     const staged = this.pendingSpawnTurns.get(sessionId);
     if (staged && !this.pendingStops.has(sessionId)) {
+      const { input, turnOptions } = staged;
       this.pendingSpawnTurns.delete(sessionId);
-      queueMicrotask(() => {
-        if (this.runtime.get(sessionId) !== state) return;
-        void this.runTurn(sessionId, threadId, server, staged.input, staged.turnOptions);
+      // SessionRuntime inserts `state` into the pool only after `spawn` resolves.
+      // queueMicrotask runs before that continuation, so a pool identity check drops
+      // the first turn on every new session (UI: Thinking forever, turn/start never sent).
+      setImmediate(() => {
+        if (!this.runtime.get(sessionId)) return;
+        void this.runTurn(sessionId, threadId, server, input, turnOptions);
       });
     }
 
@@ -476,10 +486,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
     threadId: string,
     server: CodexAppServer,
     input: string | TurnInputPart[],
-    turnOptions?: { model?: string; effort?: string; serviceTier?: string },
+    turnOptions?: CodexTurnOptions,
   ): Promise<void> {
     const entry = this.runtime.get(sessionId);
     if (!entry) return;
+
+    entry.mapper.prepareForTurn();
 
     entry.abortPendingTurnWait?.();
     entry.abortPendingTurnWait = undefined;
@@ -527,7 +539,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
           if (n.method === "turn/completed") {
             const turn = n.params?.turn as { id?: string } | undefined;
             const tid = turn?.id;
-            if (!tid || !entry.pendingTurnId || tid !== entry.pendingTurnId) {
+            if (tid && entry.pendingTurnId && tid !== entry.pendingTurnId) {
               logger.debug("Codex turn/completed ignored (stale or unmatched)", {
                 tid,
                 pending: entry.pendingTurnId,
@@ -552,10 +564,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
         server.on("notification", onNotification);
         server.once("fatal", onFatal);
 
-        void server.sendTurn(input, turnOptions).catch((err) => {
-          cleanup();
-          reject(err);
-        });
+        void (async () => {
+          try {
+            const turnId = await server.sendTurn(input, turnOptions);
+            if (turnId && seq === entry.runTurnSeq) entry.pendingTurnId = turnId;
+          } catch (err) {
+            cleanup();
+            reject(err);
+          }
+        })();
       });
     } catch (e: unknown) {
       if (e instanceof CodexTurnSupersededError) return;

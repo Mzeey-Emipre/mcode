@@ -23,6 +23,7 @@ import {
   copyClaudeSdkCliNextTo,
 } from "../../../scripts/build-server-dev-bundle.mjs";
 import { killProcessTree } from "../../../scripts/kill-process-tree.mjs";
+import { ensureElectronBinary } from "../../../scripts/ensure-electron.mjs";
 import { makeCoalescedAsync } from "./coalesce-async.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -333,6 +334,7 @@ function spawnElectron() {
   });
 }
 
+ensureElectronBinary(projectRoot);
 spawnElectron();
 
 // -------------------------------------------------------------------------

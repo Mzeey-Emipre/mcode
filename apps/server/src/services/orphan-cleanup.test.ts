@@ -222,26 +222,31 @@ describe("killOrphanedServer", () => {
 
     const lockFilePath = writeTempLock(tmpDir, { pid: childPid });
 
-    // Use actual process.kill (no mock) to exercise the real kill path
+    // Use actual process.kill (no mock) to exercise the real kill path.
+    // Skip the slow tasklist probe on Windows; this test targets kill(), not
+    // image-name resolution.
     const deps: OrphanCleanupDeps = {
       lockFilePath,
       logger: { warn: vi.fn(), debug: vi.fn() },
       currentPid: process.pid,
       platform: process.platform,
+      getProcessName: () => (process.platform === "win32" ? "node.exe" : "node"),
     };
 
     killOrphanedServer(deps);
 
-    // Wait a moment for the OS to clean up
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify the child is dead: signal 0 should now throw
+    // Wait for the OS to reap the child (taskkill on Windows can take a few seconds).
+    const deadline = Date.now() + 10_000;
     let dead = false;
-    try {
-      process.kill(childPid, 0);
-    } catch {
-      dead = true;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(childPid, 0);
+      } catch {
+        dead = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(dead).toBe(true);
-  });
+  }, 15_000);
 });

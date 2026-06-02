@@ -10,6 +10,10 @@ import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
 import { resolveMainRoot, scriptRoot as root } from './utils.mjs';
+import {
+  isElectronBinaryInstalled,
+  resolveElectronPackageDir,
+} from './ensure-electron.mjs';
 
 const require = createRequire(import.meta.url);
 const mainRoot = resolveMainRoot();
@@ -77,7 +81,16 @@ check(
   'bun install'
 );
 
-// 6. Electron-ABI binding
+// 6. Electron binary (desktop dev)
+check(
+  'Electron binary installed',
+  () => {
+    if (!isElectronBinaryInstalled(resolveElectronPackageDir())) throw new Error();
+  },
+  'bun run install:electron'
+);
+
+// 7. Electron-ABI binding
 check(
   'Electron-ABI better-sqlite3 binding exists',
   () => {
@@ -86,10 +99,10 @@ check(
     const electronBinding = resolve(modulePath, 'build', 'Release', 'better_sqlite3.electron.node');
     if (!existsSync(electronBinding)) throw new Error();
   },
-  'node scripts/postinstall.mjs  (or: SKIP_ELECTRON_REBUILD=1 bun install)'
+  'bun run install:electron && node scripts/postinstall.mjs'
 );
 
-// 7. MCODE_DATA_DIR writable
+// 8. MCODE_DATA_DIR writable
 const dataDir = process.env.MCODE_DATA_DIR
   ?? join(homedir(), process.env.NODE_ENV === 'production' ? '.mcode' : '.mcode-dev');
 check(
@@ -101,7 +114,7 @@ check(
   `Start the server once (bun run dev:web) or create manually: mkdir -p ${dataDir}`
 );
 
-// 8. git hooks path
+// 9. git hooks path
 check(
   'git hooks path configured (.githooks)',
   () => {

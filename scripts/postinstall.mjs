@@ -228,6 +228,7 @@ if (!nodePrebuiltOk) {
     });
 
     const nodeExtractedBinary = resolve(nodeTmpDir, "build", "Release", "better_sqlite3.node");
+    mkdirSync(dirname(nativeBinary), { recursive: true });
     copyFileSync(nodeExtractedBinary, nativeBinary);
     console.log(`Node.js prebuild restored for ABI ${nodeABI}`);
   } finally {

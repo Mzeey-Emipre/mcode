@@ -54,6 +54,11 @@ jobs:
   test-server:
     name: Test Server
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      # Server tests run under Node/vitest; skip Electron binary download and
+      # better-sqlite3 Electron prebuild so bun install does not flake on 504s.
+      SKIP_ELECTRON_REBUILD: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

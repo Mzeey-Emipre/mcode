@@ -22,6 +22,9 @@ import type {
   ThreadResumeParams,
   ThreadResumeResult,
   TurnInputPart,
+  CodexTurnOptions,
+  TurnStartParams,
+  TurnStartResult,
   SandboxMode,
   AskForApproval,
 } from "./codex-types.js";
@@ -188,6 +191,131 @@ const FATAL_PATTERNS = [
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 /**
+ * Cold-start tolerance for the `initialize` handshake. The `codex app-server`
+ * can take 10s+ to answer `initialize` on a cold start (auth refresh, sandbox
+ * setup), so a single hard 10s budget produced spurious "Timed out waiting for
+ * initialize" failures on a first message. Adjusting cold-start tolerance is a
+ * one-line change here.
+ */
+const INITIALIZE_HANDSHAKE = {
+  /** Per-attempt timeout. Raised from 10s so a slow-but-healthy server connects. */
+  timeoutMs: 30_000,
+  /** Total attempts: one initial try plus one retry. */
+  attempts: 2,
+  /** Base backoff between attempts; multiplied by the attempt number. */
+  backoffMs: 500,
+} as const;
+
+/**
+ * Minimal RPC surface needed to run the `initialize` step. Lets the handshake
+ * be unit-tested against a fake client without spawning a real `codex` CLI.
+ */
+export interface InitializeCapableRpc {
+  sendRequest<TParams, TResult>(method: string, params: TParams, timeoutMs?: number): Promise<TResult>;
+}
+
+/**
+ * Runs the JSON-RPC `initialize` step with cold-start tolerance: a raised
+ * per-attempt timeout and one retry with linear backoff. If every attempt
+ * fails, the most recent non-benign stderr line (when present) is folded into
+ * the thrown error so the chat banner shows the real cause (e.g. "not
+ * authenticated", "unsupported version") rather than a bare timeout.
+ *
+ * Exported for unit testing; the live code wraps it with the real RPC client.
+ *
+ * @throws When all attempts fail. The message includes the classified stderr reason when one was seen.
+ */
+export async function performInitialize(args: {
+  rpc: InitializeCapableRpc;
+  timeoutMs: number;
+  attempts: number;
+  backoffMs: number;
+  getLastStderr: () => string | null;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<void> {
+  const { rpc, timeoutMs, attempts, backoffMs, getLastStderr } = args;
+  const sleep = args.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await rpc.sendRequest(
+        "initialize",
+        {
+          clientInfo: { name: "mcode", version: "1.0.0" },
+          capabilities: { experimentalApi: true },
+        },
+        timeoutMs,
+      );
+      // Surface cold-start recovery so the field can tell "slow but healthy"
+      // (succeeded on a later attempt) apart from "fast and healthy".
+      if (attempt > 1) {
+        logger.info("Codex initialize succeeded after retry", { attempt, attempts });
+      }
+      return;
+    } catch (err) {
+      lastErr = err;
+      logger.warn("Codex initialize attempt failed", { attempt, attempts, error: String(err) });
+      if (attempt < attempts) await sleep(backoffMs * attempt);
+    }
+  }
+
+  throw enrichHandshakeError(lastErr, getLastStderr());
+}
+
+/** JSON-RPC / app-server codes that mean the stored thread or rollout is gone. */
+const RECOVERABLE_RESUME_ERROR_CODES = new Set([
+  "THREAD_NOT_FOUND",
+  "ROLL_OUT_NOT_FOUND",
+  "ROLLOUT_NOT_FOUND",
+]);
+
+/** Case-insensitive message phrases for stale thread/resume (not generic "not found"). */
+const RECOVERABLE_RESUME_ERROR_PHRASES = [
+  "no rollout found",
+  "rollout not found",
+  "thread not found",
+  "no such thread",
+  "unknown thread",
+  "thread does not exist",
+] as const;
+
+/**
+ * Returns true when `thread/resume` failed because the stored Codex thread or
+ * rollout is missing locally. The handshake should fall back to `thread/start`.
+ */
+export function isRecoverableCodexResumeError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null) {
+    const record = error as { code?: unknown; type?: unknown };
+    for (const key of ["code", "type"] as const) {
+      const raw = record[key];
+      if (typeof raw === "string" && RECOVERABLE_RESUME_ERROR_CODES.has(raw.toUpperCase())) {
+        return true;
+      }
+    }
+  }
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+    && typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : String(error);
+  const lower = message.toLowerCase();
+  return RECOVERABLE_RESUME_ERROR_PHRASES.some((phrase) => lower.includes(phrase));
+}
+
+/**
+ * Appends the most recent classified stderr line to a handshake failure when
+ * present, so auth/version/setup errors are legible instead of bare timeouts.
+ */
+export function enrichHandshakeError(err: unknown, stderr: string | null): Error {
+  const base = err instanceof Error ? err.message : String(err);
+  if (!stderr || base.includes(stderr)) {
+    return err instanceof Error ? err : new Error(base);
+  }
+  return new Error(`${base} (codex app-server reported: ${stderr})`);
+}
+
+/**
  * Manages the lifecycle of a `codex app-server` child process.
  *
  * Emits:
@@ -217,6 +345,15 @@ export class CodexAppServer extends EventEmitter {
   private rpc!: CodexRpcClient;
   private child!: ChildProcess;
   private killRequested = false;
+  /** Shared in-flight teardown so concurrent `kill()` callers await the same work. */
+  private teardownPromise: Promise<void> | null = null;
+
+  /**
+   * Most recent non-benign stderr line from the child. Surfaced into the
+   * handshake failure error so a genuine setup problem (auth, version) is
+   * legible instead of appearing as a bare initialize timeout.
+   */
+  private lastStderr: string | null = null;
 
   private readonly options: CodexAppServerOptions;
 
@@ -352,7 +489,7 @@ export class CodexAppServer extends EventEmitter {
       await this.runHandshake();
     } catch (err) {
       await this.kill();
-      throw err;
+      throw enrichHandshakeError(err, this.lastStderr);
     }
   }
 
@@ -364,9 +501,18 @@ export class CodexAppServer extends EventEmitter {
    * platforms sends SIGTERM then SIGKILL after 3 seconds.
    */
   async kill(): Promise<void> {
-    if (this.killRequested) return;
+    if (this.teardownPromise) return this.teardownPromise;
     this.killRequested = true;
+    this.teardownPromise = this.performKill();
+    try {
+      await this.teardownPromise;
+    } finally {
+      this.teardownPromise = null;
+    }
+  }
 
+  /** Runs interrupt, RPC dispose, and process termination once per server instance. */
+  private async performKill(): Promise<void> {
     if (this.rpc) {
       try {
         await this.rpc.sendRequest("turn/interrupt", { threadId: this.threadId }, 3000);
@@ -409,16 +555,17 @@ export class CodexAppServer extends EventEmitter {
 
   /**
    * Sends a `turn/start` RPC to begin a new agent turn.
-   * Returns after the server acknowledgment - events stream via the `notification` event.
+   * Returns the turn id from the RPC result when present; events stream via `notification`.
    *
    * @param input - Plain text message or structured input parts (text + images).
    * @param turnOptions - Optional per-turn overrides (model, effort, serviceTier).
+   * @returns Codex turn id from the `turn/start` response, if the server returned one.
    * @throws When the RPC call fails or times out.
    */
   async sendTurn(
     input: string | TurnInputPart[],
-    turnOptions?: { model?: string; effort?: string; serviceTier?: string },
-  ): Promise<void> {
+    turnOptions?: CodexTurnOptions,
+  ): Promise<string | null> {
     if (!this.threadId) {
       throw new Error("sendTurn called before thread was established");
     }
@@ -431,13 +578,18 @@ export class CodexAppServer extends EventEmitter {
     // idle periods (auth refresh, sandbox setup) without surfacing a spurious
     // timeout to the user. Long-running turn work is governed separately by
     // TURN_TIMEOUT_MS in codex-provider.ts (resets on every notification).
-    await this.rpc.sendRequest("turn/start", {
+    const result = await this.rpc.sendRequest<TurnStartParams, TurnStartResult>("turn/start", {
       threadId: this.threadId,
       input: parts,
       ...(turnOptions?.model && { model: turnOptions.model }),
       ...(turnOptions?.effort && { effort: turnOptions.effort }),
       ...(turnOptions?.serviceTier && { serviceTier: turnOptions.serviceTier }),
     }, 60000);
+    const turnId = result?.turnId ?? result?.turn?.id ?? null;
+    if (turnId) {
+      logger.debug("Codex turn/start acknowledged", { threadId: this.threadId, turnId });
+    }
+    return turnId;
   }
 
   /**
@@ -473,6 +625,7 @@ export class CodexAppServer extends EventEmitter {
 
       for (const pattern of FATAL_PATTERNS) {
         if (line.includes(pattern)) {
+          this.lastStderr = line;
           const msg = `Codex app-server fatal stderr: ${line}`;
           logger.error(msg, { cliPath: this.cliPath });
           this.emit("fatal", msg);
@@ -483,8 +636,11 @@ export class CodexAppServer extends EventEmitter {
         }
       }
 
-      // Tool output, Rust tracing, and agent-generated content are often muxed
-      // onto stderr; warn-level logs were drowning useful signal in .mcode-dev.
+      // Record the most recent non-benign line so a handshake failure can name
+      // the real cause. Tool output, Rust tracing, and agent-generated content
+      // are often muxed onto stderr; warn-level logs were drowning useful signal
+      // in .mcode-dev, so the line itself stays at debug.
+      this.lastStderr = line;
       logger.debug("Codex stderr", { line });
     });
   }
@@ -510,15 +666,14 @@ export class CodexAppServer extends EventEmitter {
     const { workingDirectory, model, sandbox, approvalPolicy, resumeThreadId } =
       this.options;
 
-    // Step 1: initialize
-    await this.rpc.sendRequest(
-      "initialize",
-      {
-        clientInfo: { name: "mcode", version: "1.0.0" },
-        capabilities: { experimentalApi: true },
-      },
-      10000,
-    );
+    // Step 1: initialize (cold-start tolerant: raised budget + one retry)
+    await performInitialize({
+      rpc: this.rpc,
+      timeoutMs: INITIALIZE_HANDSHAKE.timeoutMs,
+      attempts: INITIALIZE_HANDSHAKE.attempts,
+      backoffMs: INITIALIZE_HANDSHAKE.backoffMs,
+      getLastStderr: () => this.lastStderr,
+    });
 
     // Step 2: initialized notification (no response expected)
     this.rpc.sendNotification("initialized", {});
@@ -555,14 +710,7 @@ export class CodexAppServer extends EventEmitter {
         logger.info("Codex thread resumed", { resumeThreadId, assignedThreadId: this.threadId });
       } catch (err) {
         const errorStr = String(err);
-        const msg = errorStr.toLowerCase();
-        const recoverable =
-          msg.includes("not found")
-          || msg.includes("missing")
-          || msg.includes("expired")
-          || msg.includes("no such thread")
-          || msg.includes("unknown thread")
-          || msg.includes("does not exist");
+        const recoverable = isRecoverableCodexResumeError(err);
         logger.warn("Codex thread/resume failed", { resumeThreadId, error: errorStr, recoverable });
         if (recoverable) {
           this._resumeFailed = true;
@@ -605,6 +753,7 @@ export class CodexAppServer extends EventEmitter {
       this.rpc.on("notification", captureStarted);
 
       let startResult: ThreadStartResult | null = null;
+      let startError: unknown;
       try {
         startResult = await this.rpc.sendRequest<ThreadStartParams, ThreadStartResult>(
           "thread/start",
@@ -612,24 +761,33 @@ export class CodexAppServer extends EventEmitter {
           15000,
         );
         logger.debug("Codex thread/start response", { result: startResult });
+      } catch (err) {
+        startError = err;
       } finally {
-        // Always clean up; the notification listener is removed after resolving.
         const cleanup = () => {
           clearTimeout(startedTimeout);
           this.rpc.off("notification", captureStarted);
         };
-        // Prefer the RPC response; if missing, wait for the notification.
-        // The codex app-server returns the threadId at result.thread.id,
-        // not result.threadId. Accept both shapes for forward compatibility.
-        const r = startResult as { threadId?: string; thread?: { id?: string } } | null;
-        const responseThreadId = r?.threadId ?? r?.thread?.id;
-        if (responseThreadId) {
-          this._threadId = responseThreadId;
+        if (startError) {
           cleanup();
         } else {
-          this._threadId = await threadStartedPromise;
-          cleanup();
+          // Prefer the RPC response; if missing, wait for the notification.
+          // The codex app-server returns the threadId at result.thread.id,
+          // not result.threadId. Accept both shapes for forward compatibility.
+          const r = startResult as { threadId?: string; thread?: { id?: string } } | null;
+          const responseThreadId = r?.threadId ?? r?.thread?.id;
+          if (responseThreadId) {
+            this._threadId = responseThreadId;
+            cleanup();
+          } else {
+            this._threadId = await threadStartedPromise;
+            cleanup();
+          }
         }
+      }
+
+      if (startError) {
+        throw startError;
       }
 
       if (!this._threadId) {
