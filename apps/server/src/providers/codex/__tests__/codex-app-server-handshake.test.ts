@@ -30,10 +30,24 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-import { CodexAppServer, performInitialize } from "../codex-app-server.js";
+import { CodexAppServer, performInitialize, isRecoverableCodexResumeError } from "../codex-app-server.js";
 import { logger } from "@mcode/shared";
 
 const noSleep = (): Promise<void> => Promise.resolve();
+
+describe("isRecoverableCodexResumeError", () => {
+  it("treated missing rollout as recoverable (falls back to thread/start)", () => {
+    expect(
+      isRecoverableCodexResumeError(
+        new Error("no rollout found for thread id 019e886c-5dda-7010-9497-6d776caa0cb0"),
+      ),
+    ).toBe(true);
+  });
+
+  it("treated thread not found as recoverable", () => {
+    expect(isRecoverableCodexResumeError(new Error("thread not found"))).toBe(true);
+  });
+});
 
 describe("performInitialize", () => {
   beforeEach(() => {

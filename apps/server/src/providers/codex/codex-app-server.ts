@@ -22,6 +22,9 @@ import type {
   ThreadResumeParams,
   ThreadResumeResult,
   TurnInputPart,
+  CodexTurnOptions,
+  TurnStartParams,
+  TurnStartResult,
   SandboxMode,
   AskForApproval,
 } from "./codex-types.js";
@@ -264,6 +267,24 @@ export async function performInitialize(args: {
  * Appends the most recent classified stderr line to a handshake failure when
  * present, so auth/version/setup errors are legible instead of bare timeouts.
  */
+/**
+ * Returns true when `thread/resume` failed because the stored Codex rollout is
+ * missing locally (deleted sessions dir, different machine, expired file). The
+ * handshake should fall back to `thread/start` instead of surfacing a hard error.
+ */
+export function isRecoverableCodexResumeError(error: unknown): boolean {
+  const msg = String(error).toLowerCase();
+  return (
+    msg.includes("not found")
+    || msg.includes("missing")
+    || msg.includes("expired")
+    || msg.includes("no such thread")
+    || msg.includes("unknown thread")
+    || msg.includes("does not exist")
+    || msg.includes("no rollout found")
+  );
+}
+
 export function enrichHandshakeError(err: unknown, stderr: string | null): Error {
   const base = err instanceof Error ? err.message : String(err);
   if (!stderr || base.includes(stderr)) {
@@ -501,16 +522,17 @@ export class CodexAppServer extends EventEmitter {
 
   /**
    * Sends a `turn/start` RPC to begin a new agent turn.
-   * Returns after the server acknowledgment - events stream via the `notification` event.
+   * Returns the turn id from the RPC result when present; events stream via `notification`.
    *
    * @param input - Plain text message or structured input parts (text + images).
    * @param turnOptions - Optional per-turn overrides (model, effort, serviceTier).
+   * @returns Codex turn id from the `turn/start` response, if the server returned one.
    * @throws When the RPC call fails or times out.
    */
   async sendTurn(
     input: string | TurnInputPart[],
-    turnOptions?: { model?: string; effort?: string; serviceTier?: string },
-  ): Promise<void> {
+    turnOptions?: CodexTurnOptions,
+  ): Promise<string | null> {
     if (!this.threadId) {
       throw new Error("sendTurn called before thread was established");
     }
@@ -523,13 +545,18 @@ export class CodexAppServer extends EventEmitter {
     // idle periods (auth refresh, sandbox setup) without surfacing a spurious
     // timeout to the user. Long-running turn work is governed separately by
     // TURN_TIMEOUT_MS in codex-provider.ts (resets on every notification).
-    await this.rpc.sendRequest("turn/start", {
+    const result = await this.rpc.sendRequest<TurnStartParams, TurnStartResult>("turn/start", {
       threadId: this.threadId,
       input: parts,
       ...(turnOptions?.model && { model: turnOptions.model }),
       ...(turnOptions?.effort && { effort: turnOptions.effort }),
       ...(turnOptions?.serviceTier && { serviceTier: turnOptions.serviceTier }),
     }, 60000);
+    const turnId = result?.turnId ?? result?.turn?.id ?? null;
+    if (turnId) {
+      logger.debug("Codex turn/start acknowledged", { threadId: this.threadId, turnId });
+    }
+    return turnId;
   }
 
   /**
@@ -650,14 +677,7 @@ export class CodexAppServer extends EventEmitter {
         logger.info("Codex thread resumed", { resumeThreadId, assignedThreadId: this.threadId });
       } catch (err) {
         const errorStr = String(err);
-        const msg = errorStr.toLowerCase();
-        const recoverable =
-          msg.includes("not found")
-          || msg.includes("missing")
-          || msg.includes("expired")
-          || msg.includes("no such thread")
-          || msg.includes("unknown thread")
-          || msg.includes("does not exist");
+        const recoverable = isRecoverableCodexResumeError(err);
         logger.warn("Codex thread/resume failed", { resumeThreadId, error: errorStr, recoverable });
         if (recoverable) {
           this._resumeFailed = true;

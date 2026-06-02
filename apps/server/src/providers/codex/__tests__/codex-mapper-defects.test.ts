@@ -64,6 +64,29 @@ describe("CodexEventMapper defect regressions", () => {
     expect(lateMsg).toEqual([]);
   });
 
+  it("prepareForTurn clears the turnEnded latch before turn/started", () => {
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { turn: { status: "completed" } },
+    });
+    const suppressed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/reasoning/textDelta",
+      params: { delta: "blocked", itemId: "rs0" },
+    });
+    expect(suppressed).toEqual([]);
+
+    mapper.prepareForTurn();
+    const fresh = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/reasoning/textDelta",
+      params: { delta: "visible", itemId: "rs1" },
+    });
+    expect(fresh.length).toBeGreaterThan(0);
+    expect(fresh[0]!.type).toBe(AgentEventType.TextDelta);
+  });
+
   it("resumes emitting events after the next turn/started", () => {
     mapper.mapNotification({
       jsonrpc: "2.0",

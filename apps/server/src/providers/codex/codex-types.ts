@@ -93,8 +93,16 @@ export interface TurnStartParams {
   serviceTier?: string | null;
 }
 
+/** Per-turn overrides passed from {@link CodexProvider} to {@link CodexAppServer.sendTurn}. */
+export type CodexTurnOptions = Pick<TurnStartParams, "model" | "effort" | "serviceTier">;
+
 /** Result returned by the `turn/start` RPC method. */
-export interface TurnStartResult { turnId: string }
+export interface TurnStartResult {
+  /** Top-level turn id (some versions). */
+  turnId?: string;
+  /** Nested turn object (canonical per OpenAI app-server docs). */
+  turn?: { id: string; [key: string]: unknown };
+}
 /** Parameters for the `turn/interrupt` RPC method. */
 export interface TurnInterruptParams { threadId: string }
 /** Result returned by the `turn/interrupt` RPC method. */

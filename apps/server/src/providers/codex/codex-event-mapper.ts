@@ -394,9 +394,17 @@ export class CodexEventMapper {
     this.hasFiredToolThisTurn = false;
     // Note: turnEnded is intentionally NOT cleared here. reset() is called
     // from inside turn/completed, and we want the latch to stay armed until
-    // the NEXT turn/started arrives. CodexProvider also calls reset() on
-    // session reuse before a new turn — that path is fine because the next
-    // turn/started will arrive almost immediately and clear the latch.
+    // the next turn opens. Use prepareForTurn() before a new outbound turn.
+  }
+
+  /**
+   * Clears per-turn buffers and re-opens event emission for the next turn.
+   * Call from CodexProvider before runTurn on a reused session so streaming
+   * tokens are not suppressed while waiting for turn/started.
+   */
+  prepareForTurn(): void {
+    this.reset();
+    this.turnEnded = false;
   }
 
   /**
