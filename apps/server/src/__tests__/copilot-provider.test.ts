@@ -63,6 +63,44 @@ vi.mock("@github/copilot-sdk", () => ({
   approveAll: vi.fn(),
 }));
 
+// Mock the CLI resolver so provider tests never shell out (npm/which/powershell).
+// Default: configured path resolves verbatim; otherwise a fixed npm-global entry.
+const { resolveCopilotCliMock } = vi.hoisted(() => ({
+  resolveCopilotCliMock: vi.fn((ctx?: { configuredPath?: string }) =>
+    ctx?.configuredPath?.trim()
+      ? { source: "configured", entry: ctx.configuredPath.trim(), version: null }
+      : { source: "npm-global", entry: "/global/@github/copilot/index.js", version: "1.0.24" },
+  ),
+}));
+
+vi.mock("../providers/copilot/copilot-cli-resolver.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../providers/copilot/copilot-cli-resolver.js")>();
+  return {
+    ...actual,
+    resolveCopilotCli: resolveCopilotCliMock,
+    createNodeResolverIO: vi.fn(() => ({
+      exists: () => false,
+      readFile: () => null,
+      exec: () => null,
+      platform: process.platform,
+    })),
+  };
+});
+
+/** Resets the CLI resolver mock to its default successful resolution. */
+function resetResolverMock(): void {
+  resolveCopilotCliMock.mockImplementation((ctx?: { configuredPath?: string }) =>
+    ctx?.configuredPath?.trim()
+      ? { source: "configured", entry: ctx.configuredPath.trim(), version: null }
+      : { source: "npm-global", entry: "/global/@github/copilot/index.js", version: "1.0.24" },
+  );
+}
+
+beforeEach(() => {
+  resetResolverMock();
+});
+
 import which from "which";
 import { CopilotProvider } from "../providers/copilot/copilot-provider.js";
 import { stubEnvService } from "./stub-env-service.js";
@@ -135,7 +173,19 @@ describe("CopilotProvider bootstrap", () => {
       // which should not be called when not in Electron
       expect(which).not.toHaveBeenCalled();
       const ctorCall = MockCopilotClient.mock.calls[0]?.[0] ?? {};
-      expect(ctorCall.cliPath).toBeUndefined();
+      expect(ctorCall.cliPath).toBe("/global/@github/copilot/index.js");
+    });
+
+    it("passes the resolver's index.js entry to the SDK as cliPath", async () => {
+      resolveCopilotCliMock.mockReturnValueOnce({
+        source: "npm-global",
+        entry: "/global/@github/copilot/index.js",
+        version: "1.0.24",
+      });
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      await provider.listModels();
+      const ctorCall = MockCopilotClient.mock.calls[0]?.[0];
+      expect(ctorCall?.cliPath).toBe("/global/@github/copilot/index.js");
     });
   });
 
@@ -237,6 +287,60 @@ describe("CopilotProvider bootstrap", () => {
       const errorEvt = events.find((e) => e.type === "error");
       expect(errorEvt).toBeDefined();
       expect(errorEvt?.type === "error" && errorEvt.error).toContain("npm install");
+    });
+
+    it("emits the resolver's not-found message when the CLI cannot be resolved", async () => {
+      resolveCopilotCliMock.mockReturnValueOnce({
+        source: "not-found",
+        entry: null,
+        version: null,
+        message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
+      });
+
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const events: AgentEvent[] = [];
+      provider.on("event", (e: AgentEvent) => events.push(e));
+
+      await provider.sendTurn({
+        sessionId: "mcode-test3",
+        threadId: "test3",
+        message: "hello",
+        cwd: "/tmp",
+        model: "gpt-4o",
+        interactionMode: "build",
+        providerOptions: {},
+        permissionMode: "auto",
+      });
+
+      const errorEvt = events.find((e) => e.type === "error");
+      expect(errorEvt).toBeDefined();
+      expect(errorEvt?.type === "error" && errorEvt.error).toContain("npm install -g @github/copilot");
+    });
+
+    it("returns an empty model list when the CLI cannot be resolved", async () => {
+      resolveCopilotCliMock.mockReturnValueOnce({
+        source: "not-found",
+        entry: null,
+        version: null,
+        message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
+      });
+
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      await expect(provider.listModels()).resolves.toEqual([]);
+    });
+
+    it("throws the resolver install message from complete() when the CLI cannot be resolved", async () => {
+      resolveCopilotCliMock.mockReturnValueOnce({
+        source: "not-found",
+        entry: null,
+        version: null,
+        message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
+      });
+
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      await expect(provider.complete("hello", "gpt-4o", "/tmp")).rejects.toThrow(
+        "npm install -g @github/copilot",
+      );
     });
   });
 });
