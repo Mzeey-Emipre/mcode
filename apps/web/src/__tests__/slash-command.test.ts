@@ -361,6 +361,33 @@ describe("provider-scoped commands", () => {
     const names = result.current.allCommands.map((c) => c.name);
     expect(names).toContain("compact");
   });
+
+  it("shows /goal only for the claude provider (gradual rollout)", async () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, providerId: "claude" })
+    );
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.allCommands.map((c) => c.name)).toContain("goal");
+  });
+
+  it("hides /goal for non-claude providers and when no provider is specified", async () => {
+    const ref = makeAnchor();
+    const { result: codex } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, providerId: "codex" })
+    );
+    await act(async () => { codex.current.onInputChange("/"); });
+    await act(async () => {});
+    expect(codex.current.allCommands.map((c) => c.name)).not.toContain("goal");
+
+    const { result: none } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+    await act(async () => { none.current.onInputChange("/"); });
+    await act(async () => {});
+    expect(none.current.allCommands.map((c) => c.name)).not.toContain("goal");
+  });
 });
 
 describe("popup state machine", () => {

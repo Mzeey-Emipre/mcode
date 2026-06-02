@@ -27,10 +27,49 @@ export type PopupState =
   | { kind: "empty" }
   | { kind: "error"; error: Error };
 
-const BUILTIN_COMMANDS: Command[] = [
-  { name: "m:plan", description: "Toggle plan mode", namespace: "mcode", action: "toggle-plan" },
-  { name: "compact", description: "Summarise conversation history to free up context window", namespace: "command" },
-  { name: "goal", description: "Set a goal the agent must satisfy before stopping (\"/goal clear\" to remove)", namespace: "command" },
+/**
+ * A built-in command plus the predicate that decides which providers see it.
+ * Built-ins are the only commands gated by provider on the client: scanned
+ * skills arrive already provider-scoped from the server (skill-service filters
+ * by each skill's `providers[]`). Declaring availability next to the command
+ * keeps the rule local instead of scattered across inline conditionals.
+ *
+ * Layer mapping (CONTEXT.md §App-side extensibility):
+ *   - Mcode-level command   → available to every provider
+ *   - Multi-provider command → available to an explicit set of providers
+ */
+interface BuiltinCommand extends Command {
+  /** Whether this built-in is offered for the given provider. */
+  isAvailable: (providerId: string | undefined) => boolean;
+}
+
+const BUILTIN_COMMANDS: BuiltinCommand[] = [
+  {
+    name: "m:plan",
+    description: "Toggle plan mode",
+    namespace: "mcode",
+    action: "toggle-plan",
+    // Multi-provider: every provider except Copilot, which has its own native
+    // plan mode plus repo-scoped sub-agents. TODO: once Copilot ACP exposes a
+    // native-plan/sub-agent capability, replace this hardcoded exclusion with a
+    // capability check so newly added providers opt in correctly.
+    isAvailable: (providerId) => providerId !== "copilot",
+  },
+  {
+    name: "compact",
+    description: "Summarise conversation history to free up context window",
+    namespace: "command",
+    // Mcode-level: app-level summarisation, offered for every provider.
+    isAvailable: () => true,
+  },
+  {
+    name: "goal",
+    description: "Set a goal the agent must satisfy before stopping (\"/goal clear\" to remove)",
+    namespace: "command",
+    // Multi-provider, gradual rollout: implemented in Claude's Stop hook today;
+    // Codex support planned. Grows by adding providers to this allow-list.
+    isAvailable: (providerId) => providerId === "claude",
+  },
 ];
 
 /** Regex: matches `/` at start of line or after whitespace, followed by non-space chars. */
@@ -119,13 +158,18 @@ export function useSlashCommand({
   // dep — if we filtered outside and put the resulting array in deps, every
   // render would produce a new reference and break memoization.
   const allCommands = useCallback(() => {
-    const builtins = BUILTIN_COMMANDS.filter((cmd) => {
-      // /m:plan is hidden for copilot (uses its own dynamic modes instead)
-      if (cmd.name === "m:plan" && providerId === "copilot") return false;
-      // /goal is implemented in the Claude provider's Stop hook; hide on others.
-      if (cmd.name === "goal" && providerId !== "claude") return false;
-      return true;
-    });
+    // Strip the predicate so the rendered list holds plain Command objects;
+    // availability has already been resolved here.
+    const builtins: Command[] = BUILTIN_COMMANDS.filter((cmd) =>
+      cmd.isAvailable(providerId),
+    ).map(
+      (cmd): Command => ({
+        name: cmd.name,
+        description: cmd.description,
+        namespace: cmd.namespace,
+        action: cmd.action,
+      }),
+    );
     const commands: Command[] = [
       ...builtins,
       ...((skills ?? []).map(toCommand)),
