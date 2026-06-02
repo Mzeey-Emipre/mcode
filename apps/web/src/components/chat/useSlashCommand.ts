@@ -12,6 +12,21 @@ export interface Command {
   action?: string;
 }
 
+/**
+ * Render state of the slash command popup, modelled as a discriminated union
+ * so the stale-while-revalidate priority (error → list → loading → empty) is an
+ * exhaustive switch the compiler checks rather than a comment plus nested
+ * ternary. `staleRevalidating` names the state behind the stuck-popup bug:
+ * cached items are shown while a fresh skill load is still in flight.
+ */
+export type PopupState =
+  | { kind: "closed" }
+  | { kind: "loading" }
+  | { kind: "ready"; items: Command[] }
+  | { kind: "staleRevalidating"; items: Command[] }
+  | { kind: "empty" }
+  | { kind: "error"; error: Error };
+
 const BUILTIN_COMMANDS: Command[] = [
   { name: "m:plan", description: "Toggle plan mode", namespace: "mcode", action: "toggle-plan" },
   { name: "compact", description: "Summarise conversation history to free up context window", namespace: "command" },
@@ -61,12 +76,17 @@ interface UseSlashCommandOptions {
 /** Return value of the useSlashCommand hook. */
 export interface UseSlashCommandReturn {
   isOpen: boolean;
-  isLoading: boolean;
+  /**
+   * Typed render state for the popup. The popup switches on `state.kind`; the
+   * priority that used to live in a comment now lives in this union. `items`
+   * and `selectedIndex` remain on the return for the Composer's index-based
+   * keyboard selection, which needs the flat list independent of render state.
+   */
+  state: PopupState;
   items: Command[];
   allCommands: Command[];
   selectedIndex: number;
   anchorRect: DOMRect | null;
-  error: Error | null;
   onInputChange: (value: string) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
   onSelect: (cmd: Command, replaceText: (v: string) => void) => void;
@@ -118,6 +138,24 @@ export function useSlashCommand({
     if (!f) return allCommands;
     return allCommands.filter((c) => c.name.toLowerCase().includes(f));
   })();
+
+  // Derive the typed popup state. Order encodes the stale-while-revalidate
+  // priority that previously lived in a comment in SlashCommandPopup:
+  //   error → list (ready / staleRevalidating) → loading → empty.
+  // The list branch splits on isLoading so a background refresh while cached
+  // items are shown is the explicit `staleRevalidating` state — the one that
+  // got stuck when invalidate() left isLoading=true.
+  const state: PopupState = !isOpen
+    ? { kind: "closed" }
+    : error
+      ? { kind: "error", error }
+      : filtered.length > 0
+        ? isLoading
+          ? { kind: "staleRevalidating", items: filtered }
+          : { kind: "ready", items: filtered }
+        : isLoading
+          ? { kind: "loading" }
+          : { kind: "empty" };
 
   // Eager prefetch: load skills as soon as cwd/providerId are known, NOT
   // when the popup opens. This ensures the cache is warm by the time the
@@ -220,12 +258,11 @@ export function useSlashCommand({
 
   return {
     isOpen,
-    isLoading,
+    state,
     items: filtered,
     allCommands,
     selectedIndex,
     anchorRect,
-    error,
     onInputChange,
     onKeyDown,
     onSelect,

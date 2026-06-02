@@ -62,12 +62,9 @@ const COMMANDS: Command[] = [
 function renderPopup(selectedIndex: number) {
   return render(
     <SlashCommandPopup
-      isOpen={true}
-      isLoading={false}
-      items={COMMANDS}
+      state={{ kind: "ready", items: COMMANDS }}
       selectedIndex={selectedIndex}
       anchorRect={makeAnchorRect()}
-      error={null}
       onSelect={() => {}}
       onDismiss={() => {}}
       onRetry={() => {}}

@@ -363,6 +363,62 @@ describe("provider-scoped commands", () => {
   });
 });
 
+describe("popup state machine", () => {
+  it("emits a 'ready' state carrying the full command list once skills load", async () => {
+    // Self-contained mock: earlier tests leave a mockReturnValue in place
+    // (vi.clearAllMocks does not reset return values), so set ours explicitly.
+    vi.mocked(getTransport).mockReturnValue({
+      listSkills: vi.fn().mockResolvedValue([{ name: "commit", description: "Create a git commit" }]),
+    } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.state.kind).toBe("ready");
+    if (result.current.state.kind === "ready") {
+      const names = result.current.state.items.map((i) => i.name);
+      expect(names).toContain("commit");
+    }
+  });
+
+  it("is 'closed' before any trigger", () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+    expect(result.current.state.kind).toBe("closed");
+  });
+
+  it("self-heals to 'ready' after a skills.changed push lands mid-load (no manual retry)", async () => {
+    // Reproduces the stuck-popup symptom at the hook seam: the popup opens,
+    // a skills.changed push invalidates the store while the first load is in
+    // flight, and the popup must return to the full list on its own. Before
+    // the invalidate() isLoading reset, the eager-prefetch effect dead-locked
+    // and the popup stayed on built-ins until the user clicked Refresh.
+    vi.mocked(getTransport).mockReturnValue({
+      listSkills: vi.fn().mockResolvedValue([{ name: "commit", description: "Create a git commit" }]),
+    } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+
+    await act(async () => { result.current.onInputChange("/"); });
+    // Fire the push concurrently with the in-flight load.
+    await act(async () => {
+      useSkillsStore.getState().invalidate();
+    });
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(result.current.state.kind).toBe("ready");
+    if (result.current.state.kind === "ready") {
+      const names = result.current.state.items.map((i) => i.name);
+      expect(names).toContain("commit");
+    }
+  });
+});
+
 describe("plugin namespace detection", () => {
   it("assigns 'plugin' namespace to skills with colon in name", async () => {
     const mockListSkills = vi.fn().mockResolvedValue([
