@@ -21,13 +21,20 @@ When a plan spans an epic and several features, wire the relationships natively.
 - **Epic body carries a `## Sequencing` ASCII graph** so the order is readable at a glance: `↓` for sequential, `←→ … - can parallel` for parallel-safe slices, `└──┬──┘` for join points. This mirrors the native links; it does not replace them.
 - **Do not put priority / estimate / type in the body** — those are project fields and labels. The body starts with `## Description` (or the skill's template) and the relationship sections.
 
-`gh` has no native command for sub-issues or dependencies, so use the API.
+`gh` has no native command for sub-issues or dependencies, so use the API. REST
+calls use the `{owner}/{repo}` placeholder, which `gh api` fills from the current
+clone. GraphQL has no such placeholder, so derive the owner and repo once and
+reuse them:
+
+```bash
+read -r OWNER REPO < <(gh repo view --json owner,name --jq '"\(.owner.login) \(.name)"')
+```
 
 **Get an issue's GraphQL node id:**
 
 ```bash
 gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){id}}}' \
-  -f o=Mzeey-Empire -f r=mcode -F n=<number> --jq '.data.repository.issue.id'
+  -f o="$OWNER" -f r="$REPO" -F n=<number> --jq '.data.repository.issue.id'
 ```
 
 **Link a sub-issue to its parent** (needs the `sub_issues` feature header):
@@ -41,12 +48,22 @@ gh api graphql -H "GraphQL-Features: sub_issues" \
 **Add a blocked-by dependency** (REST; uses the numeric `.id`, not the issue number):
 
 ```bash
-BLOCKER_ID=$(gh api repos/Mzeey-Empire/mcode/issues/<blocker-number> --jq '.id')
-gh api --method POST repos/Mzeey-Empire/mcode/issues/<blocked-number>/dependencies/blocked_by \
+BLOCKER_ID=$(gh api repos/{owner}/{repo}/issues/<blocker-number> --jq '.id')
+gh api --method POST repos/{owner}/{repo}/issues/<blocked-number>/dependencies/blocked_by \
   -F issue_id=$BLOCKER_ID
 ```
 
-Publish issues in dependency order (blockers first) so the real numbers exist before you reference them. Verify with the response fields `parent_issue_url` (sub-issue set) and `issue_dependencies_summary.blocked_by` (dependency set).
+Publish issues in dependency order (blockers first) so the real numbers exist before you reference them, then verify the links:
+
+```bash
+# Sub-issue set? -> prints the parent number
+gh api graphql -H "GraphQL-Features: sub_issues" \
+  -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){parentIssue{number}}}}' \
+  -f o="$OWNER" -f r="$REPO" -F n=<child-number> --jq '.data.repository.issue.parentIssue.number'
+
+# Dependency set? -> prints the blocked-by count
+gh api repos/{owner}/{repo}/issues/<blocked-number> --jq '.issue_dependencies_summary.blocked_by'
+```
 
 ## When a skill says "publish to the issue tracker"
 
