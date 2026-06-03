@@ -1,5 +1,5 @@
 import type { AttachmentMeta } from "./types";
-import type { BrowserPerfCounters, BrowserTabSet, McodeBrowserCapture } from "@mcode/contracts";
+import type { BrowserPerfCounters, BrowserTabSet, McodeBrowserCapture, PreviewPageStatus } from "@mcode/contracts";
 
 /** Discriminated union describing the auto-updater lifecycle state. */
 export type UpdateStatus =
@@ -103,11 +103,11 @@ interface PreviewBridge {
   capturePageContext(): Promise<PreviewContextReferenceResult>;
   /** Deletes workspace-relative preview spill files after the message was sent or the queue dropped them. */
   releaseBrowserCaptureSpills(paths: readonly string[]): Promise<void>;
-  onDidNavigate(callback: (payload: { url: string; title: string; favicon?: string | null }) => void): () => void;
-  /** Guest load lifecycle for shell chrome (BrowserView covers the surface div). */
-  onLoadingState(callback: (payload: { loading: boolean }) => void): () => void;
-  /** Subscribe to favicon updates from the guest webContents. */
-  onDidUpdateFavicon(callback: (payload: { favicon: string | null }) => void): () => void;
+  /**
+   * Single page-status channel for the active tab. The renderer holds one
+   * {@link PreviewPageStatus} and derives loading/title/favicon from it.
+   */
+  onPageStatus(callback: (status: PreviewPageStatus) => void): () => void;
   /** Cancel any in-progress capture operation (region or element-pick). */
   cancelCapture(): Promise<void>;
   /** Multi-tab control surface (Phase A of the in-app browser rewrite). */

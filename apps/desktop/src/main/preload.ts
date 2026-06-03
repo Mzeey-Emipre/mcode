@@ -199,24 +199,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     releaseBrowserCaptureSpills(paths: readonly string[]): Promise<void> {
       return ipcRenderer.invoke("preview:release-browser-capture-spill", [...paths]);
     },
-    onDidNavigate(callback: (payload: { url: string; title: string; favicon?: string | null }) => void) {
-      const listener = (_event: unknown, payload: { url: string; title: string; favicon?: string | null }) =>
-        callback(payload);
-      ipcRenderer.on("preview:did-navigate", listener);
-      return () => ipcRenderer.removeListener("preview:did-navigate", listener);
-    },
-    /** Subscribe to guest webContents loading spin (did-start / did-stop loading). */
-    onLoadingState(callback: (payload: { loading: boolean }) => void) {
-      const listener = (_event: unknown, payload: { loading: boolean }) => callback(payload);
-      ipcRenderer.on("preview:loading-state", listener);
-      return () => ipcRenderer.removeListener("preview:loading-state", listener);
-    },
-    /** Subscribe to favicon updates from the guest webContents. */
-    onDidUpdateFavicon(callback: (payload: { favicon: string | null }) => void) {
-      const listener = (_event: unknown, payload: { favicon: string | null }) =>
-        callback(payload);
-      ipcRenderer.on("preview:did-update-favicon", listener);
-      return () => ipcRenderer.removeListener("preview:did-update-favicon", listener);
+    /**
+     * Subscribe to the single page-status channel: the full PreviewPageStatus
+     * (url, title, favicon, phase, error?) emitted once per change for the
+     * active tab. Replaces the old loading-state / did-navigate /
+     * did-update-favicon trio.
+     */
+    onPageStatus(callback: (status: import("@mcode/contracts").PreviewPageStatus) => void) {
+      const listener = (_event: unknown, status: import("@mcode/contracts").PreviewPageStatus) =>
+        callback(status);
+      ipcRenderer.on("preview:page-status", listener);
+      return () => ipcRenderer.removeListener("preview:page-status", listener);
     },
     /** Cancel any in-progress capture operation (region or element-pick). */
     cancelCapture(): Promise<void> {
