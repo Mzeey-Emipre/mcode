@@ -362,7 +362,12 @@ describe("provider-scoped commands", () => {
     expect(names).toContain("compact");
   });
 
-  it("shows /goal only for the claude provider (gradual rollout)", async () => {
+  // /goal is a gradual rollout: shown only for providers that support it
+  // (currently just "claude"), hidden for every other provider and when none
+  // is selected. The cases are deliberately framed as supported/unsupported,
+  // not "claude vs the rest", so adding a provider to GOAL_PROVIDERS is the
+  // only change needed when the rollout widens.
+  it("shows /goal for a supported provider", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
       useSlashCommand({ anchorRef: ref, providerId: "claude" })
@@ -380,7 +385,7 @@ describe("provider-scoped commands", () => {
   // the other's value as a provider change and reloading forever (an infinite
   // render loop that OOMs the vitest worker). beforeEach resets the store, so
   // separate tests each get a single hook driving the store.
-  it("hides /goal for non-claude providers", async () => {
+  it("hides /goal for an unsupported provider", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
       useSlashCommand({ anchorRef: ref, providerId: "codex" })
@@ -390,7 +395,7 @@ describe("provider-scoped commands", () => {
     expect(result.current.allCommands.map((c) => c.name)).not.toContain("goal");
   });
 
-  it("hides /goal when no provider is specified", async () => {
+  it("hides /goal when no provider is selected", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
     await act(async () => { result.current.onInputChange("/"); });

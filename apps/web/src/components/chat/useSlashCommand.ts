@@ -43,6 +43,14 @@ interface BuiltinCommand extends Command {
   isAvailable: (providerId: string | undefined) => boolean;
 }
 
+/**
+ * Providers that support `/goal` today. It is a gradual rollout (implemented in
+ * Claude's Stop hook; Codex planned), so this is an allow-list that grows by
+ * adding entries — not a Claude special-case. `/goal` is hidden for any
+ * provider not in this set, including when no provider is selected.
+ */
+const GOAL_PROVIDERS = new Set<string>(["claude"]);
+
 const BUILTIN_COMMANDS: BuiltinCommand[] = [
   {
     name: "m:plan",
@@ -66,9 +74,9 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
     name: "goal",
     description: "Set a goal the agent must satisfy before stopping (\"/goal clear\" to remove)",
     namespace: "command",
-    // Multi-provider, gradual rollout: implemented in Claude's Stop hook today;
-    // Codex support planned. Grows by adding providers to this allow-list.
-    isAvailable: (providerId) => providerId === "claude",
+    // Multi-provider, gradual rollout: shown only for providers that support it
+    // (see GOAL_PROVIDERS), hidden for everything else including no selection.
+    isAvailable: (providerId) => providerId !== undefined && GOAL_PROVIDERS.has(providerId),
   },
 ];
 
