@@ -16,10 +16,9 @@ import {
   getActiveTab,
   sessions,
   clearIdle,
-  sendPreviewLoading,
+  applyPageStatus,
+  setPreviewLoading,
   isAllowedPreviewUrl,
-  syncActiveTabFromSession,
-  toBrowserTabSet,
 } from "./preview-session.js";
 import { removeEpPickHighlighter, abortOverlayCapture } from "./preview-overlay.js";
 import { pushPreviewConsoleLine } from "./preview-capture.js";
@@ -196,7 +195,7 @@ export function ensureTabView(
       const safe = await validateResumeUrl(navigationUrl);
       if (safe) {
         trustMainProcessFileNavigation(s, safe);
-        if (isActiveView()) sendPreviewLoading(win, true);
+        if (isActiveView()) setPreviewLoading(win, s, true);
         try {
           await view.webContents.loadURL(safe);
         } catch {
@@ -206,7 +205,7 @@ export function ensureTabView(
         tab.resumeUrl = null;
         if (isActiveView()) {
           s.resumePreviewUrl = null;
-          sendPreviewLoading(win, true);
+          setPreviewLoading(win, s, true);
         }
         try {
           await view.webContents.loadURL("about:blank");
@@ -231,42 +230,36 @@ export function ensureTabView(
       // Only the active view drives the shell omnibox + session mirror.
       if (isActiveView()) {
         s.resumePreviewUrl = persisted;
-        win.webContents.send("preview:did-navigate", {
-          url,
+        applyPageStatus(win, s, {
+          type: "navigated",
+          url: url.length > 0 ? url : null,
           title,
-          favicon: s.lastFavicons[0] ?? null,
         });
-        syncActiveTabFromSession(s);
-      }
-      // Tab list pushes are cheap; emit so the bar refreshes title/url
-      // for inactive tabs too.
-      if (s.lastPreviewThreadId) {
-        win.webContents.send(
-          "preview:tabs-updated",
-          toBrowserTabSet(s, s.lastPreviewThreadId),
-        );
       }
     })();
   };
 
+  // page-title-updated must NOT run validateResumeUrl (P1): a title change does
+  // not change the URL, so re-stat'ing the file path on every title event is
+  // pure waste. Patch only the title field.
+  const forwardTitle = () => {
+    if (win.isDestroyed() || view.webContents.isDestroyed()) return;
+    const title = view.webContents.getTitle();
+    tab.title = title && title.length > 0 ? title : tab.title;
+    if (isActiveView() && !win.isDestroyed()) {
+      applyPageStatus(win, s, { type: "title", title });
+    }
+  };
+
   view.webContents.on("did-navigate", forwardNav);
   view.webContents.on("did-navigate-in-page", forwardNav);
-  view.webContents.on("page-title-updated", forwardNav);
+  view.webContents.on("page-title-updated", forwardTitle);
   view.webContents.on("page-favicon-updated", (_e, urls: string[]) => {
     tab.faviconUrl = urls[0] ?? null;
     if (win.isDestroyed()) return;
     if (isActiveView()) {
       s.lastFavicons = urls;
-      win.webContents.send("preview:did-update-favicon", {
-        favicon: urls[0] ?? null,
-      });
-      syncActiveTabFromSession(s);
-    }
-    if (s.lastPreviewThreadId) {
-      win.webContents.send(
-        "preview:tabs-updated",
-        toBrowserTabSet(s, s.lastPreviewThreadId),
-      );
+      applyPageStatus(win, s, { type: "favicon", favicon: urls[0] ?? null });
     }
   });
   view.webContents.on("did-finish-load", () => {
@@ -278,14 +271,14 @@ export function ensureTabView(
   const forwardLoadingStart = () => {
     if (win.isDestroyed() || view.webContents.isDestroyed()) return;
     if (!isActiveView()) return;
+    // The load-start reducer case clears the favicon as part of entering loading.
     s.lastFavicons = [];
-    win.webContents.send("preview:did-update-favicon", { favicon: null });
-    sendPreviewLoading(win, true);
+    applyPageStatus(win, s, { type: "load-start" });
   };
   const forwardLoadingStop = () => {
     if (win.isDestroyed() || view.webContents.isDestroyed()) return;
     if (!isActiveView()) return;
-    sendPreviewLoading(win, false);
+    applyPageStatus(win, s, { type: "load-stop" });
   };
   view.webContents.on("did-start-loading", forwardLoadingStart);
   view.webContents.on("did-stop-loading", forwardLoadingStop);
@@ -330,7 +323,7 @@ export function ensureTabView(
     if (now - s.lastCrashRecoveryAt < CRASH_COOLDOWN_MS) {
       logger.warn("Preview: crash recovery skipped (cooldown active)");
       if (!win.isDestroyed()) {
-        sendPreviewLoading(win, false);
+        setPreviewLoading(win, s, false);
       }
       return;
     }
@@ -343,7 +336,7 @@ export function ensureTabView(
       s.view = fresh;
       if (s.lastBounds) fresh.setBounds(s.lastBounds);
       mountView(win, fresh);
-      sendPreviewLoading(win, true);
+      setPreviewLoading(win, s, true);
       trustMainProcessFileNavigation(s, url);
       void fresh.webContents.loadURL(url);
     }
@@ -446,7 +439,7 @@ export function hidePreview(win: BrowserWindow, s: PreviewSession): void {
     unmountView(win, s.view);
   }
   if (!win.isDestroyed()) {
-    sendPreviewLoading(win, false);
+    setPreviewLoading(win, s, false);
   }
 }
 

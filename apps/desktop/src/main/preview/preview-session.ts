@@ -5,7 +5,19 @@
 
 import { BrowserWindow, WebContentsView } from "electron";
 import { randomUUID } from "node:crypto";
-import type { AttachmentMeta, BrowserTabInfo, BrowserTabSet, McodeBrowserCaptureV2 } from "@mcode/contracts";
+import type {
+  AttachmentMeta,
+  BrowserTabInfo,
+  BrowserTabSet,
+  McodeBrowserCaptureV2,
+  PreviewPageStatus,
+} from "@mcode/contracts";
+import {
+  pageStatusReducer,
+  initialPageStatus,
+  type PageStatusEvent,
+} from "./page-status-reducer.js";
+import { bumpPerf } from "./preview-perf.js";
 
 /**
  * Result of a picture-reference capture; defined here so PreviewSession can reference
@@ -108,6 +120,8 @@ export interface PreviewSession {
    * threads' tabs carry only the resume URL/title/favicon needed to restore them.
    */
   tabsByThread: Map<string, ThreadTabSet>;
+  /** Single source of truth for the active tab's page chrome, emitted on `preview:page-status`. */
+  pageStatus: PreviewPageStatus;
 }
 
 /** Global map of window id -> preview session state. */
@@ -138,6 +152,7 @@ export function getSession(win: BrowserWindow): PreviewSession {
       lastCrashRecoveryAt: 0,
       trustedFileNavigationBudget: 0,
       tabsByThread: new Map(),
+      pageStatus: initialPageStatus(),
     };
     sessions.set(win.id, s);
   }
@@ -244,17 +259,52 @@ export function resetIdle(_win: BrowserWindow, s: PreviewSession): void {
 }
 
 /**
- * Tells the React shell to show or hide the loading affordance. The native
- * WebContentsView stacks above HTML, so the indicator lives in chrome above the
- * guest bounds rather than inside the surface div.
+ * Runs the page-status reducer for `event`, stores the result on the session,
+ * and emits the full {@link PreviewPageStatus} on `preview:page-status` when it
+ * changed. The single emit path that replaces the old loading/navigate/favicon
+ * channels.
  */
-export function sendPreviewLoading(win: BrowserWindow, loading: boolean): void {
+export function applyPageStatus(
+  win: BrowserWindow,
+  s: PreviewSession,
+  event: PageStatusEvent,
+): void {
+  const next = pageStatusReducer(s.pageStatus, event);
+  if (pageStatusEqual(s.pageStatus, next)) return;
+  s.pageStatus = next;
   if (win.isDestroyed()) return;
+  bumpPerf("stateEmitCalls");
   try {
-    win.webContents.send("preview:loading-state", { loading });
+    win.webContents.send("preview:page-status", next);
   } catch {
-    /* sender may be gone */
+    bumpPerf("stateEmitSkips");
   }
+}
+
+/**
+ * Convenience for the many call sites that only toggle the loading affordance.
+ * Routes through {@link applyPageStatus} so loading stays part of the single
+ * page-status channel.
+ */
+export function setPreviewLoading(
+  win: BrowserWindow,
+  s: PreviewSession,
+  loading: boolean,
+): void {
+  applyPageStatus(win, s, loading ? { type: "load-start" } : { type: "load-stop" });
+}
+
+/** Shallow equality so {@link applyPageStatus} emits at most once per real change. */
+function pageStatusEqual(a: PreviewPageStatus, b: PreviewPageStatus): boolean {
+  return (
+    a.url === b.url &&
+    a.title === b.title &&
+    a.favicon === b.favicon &&
+    a.phase === b.phase &&
+    a.error?.kind === b.error?.kind &&
+    a.error?.status === b.error?.status &&
+    a.error?.message === b.error?.message
+  );
 }
 
 /**
