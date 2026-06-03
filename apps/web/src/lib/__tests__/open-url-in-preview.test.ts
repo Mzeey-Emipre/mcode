@@ -220,6 +220,21 @@ describe("openGitHubUrl", () => {
     expect(mockOpenExternal).toHaveBeenCalledWith("https://github.com/org/repo/pull/1");
   });
 
+  it("falls back to window.open when desktopBridge is missing on plain click", () => {
+    delete (window as unknown as Record<string, unknown>).desktopBridge;
+    const mockOpen = vi.fn();
+    vi.stubGlobal("open", mockOpen);
+
+    openGitHubUrl("https://github.com/org/repo/pull/1", "thread-1");
+
+    expect(mockOpen).toHaveBeenCalledWith(
+      "https://github.com/org/repo/pull/1",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    vi.unstubAllGlobals();
+  });
+
   it("opens in preview on ctrl+click", async () => {
     const mockCreate = vi.mocked(window.desktopBridge!.preview!.tabs!.create);
     openGitHubUrl(

@@ -153,7 +153,11 @@ export function openGitHubUrl(
       openUrlInPreview({ url, threadId });
       return;
     }
-    window.desktopBridge?.openExternalUrl(url);
+    if (window.desktopBridge?.openExternalUrl) {
+      void window.desktopBridge.openExternalUrl(url);
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
   } catch {
     // Invalid URL - do nothing
   }
