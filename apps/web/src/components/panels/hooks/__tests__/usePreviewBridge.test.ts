@@ -59,9 +59,7 @@ function makeMockPreview() {
     reload: vi.fn().mockResolvedValue(undefined),
     openExternal: vi.fn().mockResolvedValue(undefined),
     getNavigationState: vi.fn().mockResolvedValue({ canGoBack: false, canGoForward: false }),
-    onDidNavigate: vi.fn().mockReturnValue(() => {}),
-    onLoadingState: vi.fn().mockReturnValue(() => {}),
-    onDidUpdateFavicon: vi.fn().mockReturnValue(() => {}),
+    onPageStatus: vi.fn().mockReturnValue(() => {}),
     cancelCapture: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -328,188 +326,93 @@ describe("usePreviewBridge", () => {
     });
   });
 
-  describe("onDidNavigate subscription", () => {
-    it("updates inputUrl and pageTitle when the navigate event fires", async () => {
+  describe("onPageStatus subscription", () => {
+    type StatusCb = (s: import("@mcode/contracts").PreviewPageStatus) => void;
+
+    function captureStatusCb(mockPreview: ReturnType<typeof makeMockPreview>) {
+      let cb: StatusCb | null = null;
+      mockPreview.onPageStatus.mockImplementation((fn: StatusCb) => {
+        cb = fn;
+        return () => {};
+      });
+      return () => cb;
+    }
+
+    it("derives inputUrl, pageTitle, faviconUrl, and previewLoading from status", async () => {
       const mockPreview = makeMockPreview();
-      let capturedCallback: ((p: { url: string; title?: string; favicon?: string }) => void) | null = null;
-
-      mockPreview.onDidNavigate.mockImplementation(
-        (cb: (p: { url: string; title?: string; favicon?: string }) => void) => {
-          capturedCallback = cb;
-          return () => {};
-        },
-      );
-
+      const getCb = captureStatusCb(mockPreview);
       window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
 
       const { result } = renderHook(() =>
-        usePreviewBridge({
-          threadId: "t-1",
-          workspaceId: "ws-1",
-          surfaceRef: makeSurfaceRef(),
-        }),
+        usePreviewBridge({ threadId: "t-1", workspaceId: "ws-1", surfaceRef: makeSurfaceRef() }),
       );
-
-      expect(capturedCallback).not.toBeNull();
+      expect(getCb()).not.toBeNull();
 
       await act(async () => {
-        capturedCallback!({ url: "https://example.com", title: "Example Page" });
+        getCb()!({
+          url: "https://example.com",
+          title: "Example Page",
+          favicon: "https://example.com/fav.ico",
+          phase: "loading",
+        });
       });
 
       expect(result.current.inputUrl).toBe("https://example.com");
       expect(result.current.pageTitle).toBe("Example Page");
+      expect(result.current.faviconUrl).toBe("https://example.com/fav.ico");
+      expect(result.current.previewLoading).toBe(true);
+
+      await act(async () => {
+        getCb()!({
+          url: "https://example.com",
+          title: "Example Page",
+          favicon: "https://example.com/fav.ico",
+          phase: "loaded",
+        });
+      });
+      expect(result.current.previewLoading).toBe(false);
     });
 
-    it("clears pageTitle and faviconUrl when the URL is a chrome-error:// URL", async () => {
+    it("clears title and favicon when the URL is a chrome-error:// URL", async () => {
       const mockPreview = makeMockPreview();
-      let capturedCallback: ((p: { url: string; title?: string; favicon?: string }) => void) | null = null;
-
-      // First set a valid navigate so title/favicon are set.
-      mockPreview.onDidNavigate.mockImplementation(
-        (cb: (p: { url: string; title?: string; favicon?: string }) => void) => {
-          capturedCallback = cb;
-          return () => {};
-        },
-      );
-
+      const getCb = captureStatusCb(mockPreview);
       window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
 
       const { result } = renderHook(() =>
-        usePreviewBridge({
-          threadId: "t-1",
-          workspaceId: "ws-1",
-          surfaceRef: makeSurfaceRef(),
-        }),
+        usePreviewBridge({ threadId: "t-1", workspaceId: "ws-1", surfaceRef: makeSurfaceRef() }),
       );
 
-      // Establish some state first.
       await act(async () => {
-        capturedCallback!({ url: "https://example.com", title: "Example", favicon: "https://example.com/fav.ico" });
+        getCb()!({
+          url: "https://example.com",
+          title: "Example",
+          favicon: "https://example.com/fav.ico",
+          phase: "loaded",
+        });
       });
-
       expect(result.current.pageTitle).toBe("Example");
 
-      // Now fire a chrome-error URL.
       await act(async () => {
-        capturedCallback!({ url: "chrome-error://chromewebdata", title: "Error" });
+        getCb()!({ url: "chrome-error://chromewebdata", title: "Error", favicon: null, phase: "error" });
       });
-
       expect(result.current.pageTitle).toBeNull();
       expect(result.current.faviconUrl).toBeNull();
     });
 
-    it("calls the cleanup function returned by onDidNavigate on unmount", async () => {
+    it("calls the cleanup function returned by onPageStatus on unmount", async () => {
       const cleanup = vi.fn();
       const mockPreview = makeMockPreview();
-      mockPreview.onDidNavigate.mockReturnValue(cleanup);
-
+      mockPreview.onPageStatus.mockReturnValue(cleanup);
       window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
 
       const { unmount } = renderHook(() =>
-        usePreviewBridge({
-          threadId: "t-1",
-          workspaceId: "ws-1",
-          surfaceRef: makeSurfaceRef(),
-        }),
+        usePreviewBridge({ threadId: "t-1", workspaceId: "ws-1", surfaceRef: makeSurfaceRef() }),
       );
 
       await act(async () => {
         unmount();
       });
-
       expect(cleanup).toHaveBeenCalled();
-    });
-  });
-
-  describe("onLoadingState subscription", () => {
-    it("updates previewLoading when the loading event fires", async () => {
-      const mockPreview = makeMockPreview();
-      let capturedCallback: ((p: { loading: boolean }) => void) | null = null;
-
-      mockPreview.onLoadingState.mockImplementation(
-        (cb: (p: { loading: boolean }) => void) => {
-          capturedCallback = cb;
-          return () => {};
-        },
-      );
-
-      window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
-
-      const { result } = renderHook(() =>
-        usePreviewBridge({
-          threadId: "t-1",
-          workspaceId: "ws-1",
-          surfaceRef: makeSurfaceRef(),
-        }),
-      );
-
-      expect(capturedCallback).not.toBeNull();
-
-      await act(async () => {
-        capturedCallback!({ loading: true });
-      });
-
-      expect(result.current.previewLoading).toBe(true);
-
-      await act(async () => {
-        capturedCallback!({ loading: false });
-      });
-
-      expect(result.current.previewLoading).toBe(false);
-    });
-
-    it("calls the cleanup from onLoadingState on unmount", async () => {
-      const cleanup = vi.fn();
-      const mockPreview = makeMockPreview();
-      mockPreview.onLoadingState.mockReturnValue(cleanup);
-
-      window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
-
-      const { unmount } = renderHook(() =>
-        usePreviewBridge({
-          threadId: "t-1",
-          workspaceId: "ws-1",
-          surfaceRef: makeSurfaceRef(),
-        }),
-      );
-
-      await act(async () => {
-        unmount();
-      });
-
-      expect(cleanup).toHaveBeenCalled();
-    });
-  });
-
-  describe("onDidUpdateFavicon subscription", () => {
-    it("updates faviconUrl when the favicon event fires", async () => {
-      const mockPreview = makeMockPreview();
-      let capturedCallback: ((p: { favicon: string }) => void) | null = null;
-
-      mockPreview.onDidUpdateFavicon.mockImplementation(
-        (cb: (p: { favicon: string }) => void) => {
-          capturedCallback = cb;
-          return () => {};
-        },
-      );
-
-      window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
-
-      const { result } = renderHook(() =>
-        usePreviewBridge({
-          threadId: "t-1",
-          workspaceId: "ws-1",
-          surfaceRef: makeSurfaceRef(),
-        }),
-      );
-
-      expect(capturedCallback).not.toBeNull();
-
-      await act(async () => {
-        capturedCallback!({ favicon: "https://example.com/favicon.ico" });
-      });
-
-      expect(result.current.faviconUrl).toBe("https://example.com/favicon.ico");
     });
   });
 

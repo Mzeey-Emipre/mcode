@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePreviewDockStore, MIN_DOCK_SIZE, MAX_DOCK_SIZE } from "@/stores/previewDockStore";
@@ -79,6 +79,23 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     onSuccess: onCaptureSuccess,
   });
   const tabs = usePreviewTabs(threadId);
+
+  // Page events flow through `preview:page-status`, not `preview:tabs-updated`
+  // (P2). Overlay the active tab's live chrome so its bar entry stays current
+  // without re-serializing the whole tab set on every navigation/favicon tick.
+  const displayTabSet = useMemo(() => {
+    const ts = tabs.tabSet;
+    if (!ts || !ts.activeTabId) return ts;
+    const status = bridge.pageStatus;
+    return {
+      ...ts,
+      tabs: ts.tabs.map((t) =>
+        t.id === ts.activeTabId
+          ? { ...t, title: status.title, url: status.url, faviconUrl: status.favicon }
+          : t,
+      ),
+    };
+  }, [tabs.tabSet, bridge.pageStatus]);
   // Each selector returns a stable primitive/function reference so Zustand
   // does not re-render on unrelated store mutations.
   const dock = usePreviewDockStore((s) => s.docks[threadId]) ?? {
@@ -261,7 +278,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <PreviewTabBar
-        tabSet={tabs.tabSet}
+        tabSet={displayTabSet}
         onNewTab={tabs.newTab}
         onActivate={tabs.activateTab}
         onClose={tabs.closeTab}

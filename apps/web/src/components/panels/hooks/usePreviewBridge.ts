@@ -5,6 +5,7 @@ import {
   useState,
   type RefObject,
 } from "react";
+import type { PreviewPageStatus } from "@mcode/contracts";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -49,6 +50,8 @@ export interface PreviewBridgeState {
   readonly previewLoading: boolean;
   readonly pageTitle: string | null;
   readonly faviconUrl: string | null;
+  /** Full active-tab page status; the tab bar overlays its active entry from this. */
+  readonly pageStatus: PreviewPageStatus;
   /** Persisted URL for the current thread (Zustand store). */
   readonly storedUrl: string;
   /** Push current bounds and visibility to the native BrowserView. */
@@ -76,9 +79,15 @@ export function usePreviewBridge({
   const [navError, setNavError] = useState<string | null>(null);
   const [canBack, setCanBack] = useState(false);
   const [canFwd, setCanFwd] = useState(false);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [pageTitle, setPageTitle] = useState<string | null>(null);
-  const [faviconUrl, setFaviconUrl] = useState<string | null>(null);
+  const [pageStatus, setPageStatus] = useState<PreviewPageStatus>(() => ({
+    url: null,
+    title: null,
+    favicon: null,
+    phase: "loaded",
+  }));
+  const previewLoading = pageStatus.phase === "loading";
+  const pageTitle = pageStatus.title;
+  const faviconUrl = pageStatus.favicon;
 
   const workspacePath = useWorkspaceStore(
     (s) => s.workspaces.find((w) => w.id === workspaceId)?.path ?? null,
@@ -95,8 +104,7 @@ export function usePreviewBridge({
 
   useEffect(() => {
     setInputUrl(storedUrl);
-    setPageTitle(null);
-    setFaviconUrl(null);
+    setPageStatus({ url: null, title: null, favicon: null, phase: "loaded" });
     setNavError(null);
   }, [threadId, storedUrl]);
 
@@ -156,44 +164,28 @@ export function usePreviewBridge({
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
-    if (!preview) return;
-    const unsub = preview.onDidNavigate((p) => {
-      if (
-        p.url &&
-        !p.url.startsWith("chrome-error://") &&
-        !p.url.startsWith("about:")
-      ) {
-        useDiffStore.getState().setPreviewUrlForThread(threadId, p.url);
-        setInputUrl(p.url);
-        setPageTitle(p.title ?? null);
-        setFaviconUrl(p.favicon ?? null);
+    if (!preview?.onPageStatus) return;
+    const unsub = preview.onPageStatus((status) => {
+      const url = status.url;
+      const isReal =
+        !!url && !url.startsWith("chrome-error://") && !url.startsWith("about:");
+      if (isReal) {
+        useDiffStore.getState().setPreviewUrlForThread(threadId, url);
+        setInputUrl(url);
+        setPageStatus(status);
       } else {
-        // Empty URL or about:blank => brand-new / blank tab. Clear the
-        // omnibox AND the per-thread URL store so the previous tab's URL
-        // does not bleed into a freshly-activated blank tab.
+        // Blank / about: / chrome-error => brand-new or failed surface. Clear
+        // the omnibox AND the per-thread URL store so a stale URL does not
+        // bleed in, and suppress title/favicon so the chrome reads
+        // "nothing loaded".
         useDiffStore.getState().setPreviewUrlForThread(threadId, "");
         setInputUrl("");
-        setPageTitle(null);
-        setFaviconUrl(null);
+        setPageStatus({ ...status, title: null, favicon: null });
       }
       void refreshNav();
     });
     return unsub;
   }, [threadId, refreshNav]);
-
-  useEffect(() => {
-    const preview = window.desktopBridge?.preview;
-    if (!preview?.onDidUpdateFavicon) return;
-    return preview.onDidUpdateFavicon((p) => {
-      setFaviconUrl(p.favicon);
-    });
-  }, []);
-
-  useEffect(() => {
-    const preview = window.desktopBridge?.preview;
-    if (!preview) return;
-    return preview.onLoadingState((p) => setPreviewLoading(p.loading));
-  }, []);
 
   // Hide the native WebContentsView while any modal/dialog overlay is open
   // in the renderer. Without this the native view paints above all HTML and
@@ -296,6 +288,7 @@ export function usePreviewBridge({
     previewLoading,
     pageTitle,
     faviconUrl,
+    pageStatus,
     storedUrl,
     pushSync,
     refreshNav,
