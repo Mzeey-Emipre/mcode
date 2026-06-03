@@ -403,6 +403,27 @@ export const SettingsSchema = lazySchema(() =>
       })
       .default({}),
 
+    /** In-app browser preview settings. */
+    preview: z
+      .object({
+        /**
+         * Memory-saver discard policy (ADR 0002). Thresholds are milliseconds.
+         * Background preview tabs are discarded (renderer freed) and reload on
+         * reopen; the active tab stays warm while the panel is visible.
+         */
+        memorySaver: z
+          .object({
+            /** Most-recently-used warm tabs kept when the panel is hidden. */
+            maxWarm: z.number().int().min(1).max(20).default(3),
+            /** Idle time before a background tab is discarded while the panel is visible (ms). */
+            bgIdleMs: z.number().int().min(30_000).max(3_600_000).default(300_000),
+            /** Idle time after the panel hides before the warm set is trimmed (ms). */
+            hiddenIdleMs: z.number().int().min(5_000).max(600_000).default(60_000),
+          })
+          .default({}),
+      })
+      .default({}),
+
     /** App auto-update settings. */
     updates: z
       .object({
@@ -593,6 +614,17 @@ export const PartialSettingsSchema = lazySchema(() =>
     performance: z
       .object({
         threadCacheSize: z.number().int().min(1).max(50).optional(),
+      })
+      .optional(),
+    preview: z
+      .object({
+        memorySaver: z
+          .object({
+            maxWarm: z.number().int().min(1).max(20).optional(),
+            bgIdleMs: z.number().int().min(30_000).max(3_600_000).optional(),
+            hiddenIdleMs: z.number().int().min(5_000).max(600_000).optional(),
+          })
+          .optional(),
       })
       .optional(),
     updates: z
