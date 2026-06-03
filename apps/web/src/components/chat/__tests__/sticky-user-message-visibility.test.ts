@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { shouldShowStickyUserMessage } from "../sticky-user-message-visibility";
+import {
+  shouldShowStickyUserMessage,
+  STICKY_HIDE_IN_VIEW_PX,
+  STICKY_SHOW_ABOVE_VIEWPORT_PX,
+} from "../sticky-user-message-visibility";
 
 describe("shouldShowStickyUserMessage", () => {
   it("returns false when the message is still visible in the viewport", () => {
@@ -33,10 +37,58 @@ describe("shouldShowStickyUserMessage", () => {
     container.getBoundingClientRect = () =>
       ({ top: 0, bottom: 400, left: 0, right: 300, width: 300, height: 400, x: 0, y: 0, toJSON: () => ({}) });
     message.getBoundingClientRect = () =>
-      ({ top: -40, bottom: -1, left: 0, right: 300, width: 300, height: 39, x: 0, y: -40, toJSON: () => ({}) });
+      ({
+        top: -48,
+        bottom: -(STICKY_SHOW_ABOVE_VIEWPORT_PX + 1),
+        left: 0,
+        right: 300,
+        width: 300,
+        height: 39,
+        x: 0,
+        y: -48,
+        toJSON: () => ({}),
+      });
 
     expect(
       shouldShowStickyUserMessage(container, "msg-1", 0, { getVirtualItems: () => [] }),
+    ).toBe(true);
+  });
+
+  it("returns false when the message is only partially clipped at the top", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientHeight", { value: 400 });
+    Object.defineProperty(container, "scrollTop", { value: 240, writable: true });
+
+    const message = document.createElement("div");
+    message.setAttribute("data-message-id", "msg-1");
+    container.appendChild(message);
+
+    container.getBoundingClientRect = () =>
+      ({ top: 0, bottom: 400, left: 0, right: 300, width: 300, height: 400, x: 0, y: 0, toJSON: () => ({}) });
+    message.getBoundingClientRect = () =>
+      ({ top: -10, bottom: 12, left: 0, right: 300, width: 300, height: 22, x: 0, y: -10, toJSON: () => ({}) });
+
+    expect(
+      shouldShowStickyUserMessage(container, "msg-1", 0, { getVirtualItems: () => [] }),
+    ).toBe(false);
+  });
+
+  it("keeps the sticky bar on through partial clip when already visible", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientHeight", { value: 400 });
+    Object.defineProperty(container, "scrollTop", { value: 240, writable: true });
+
+    const message = document.createElement("div");
+    message.setAttribute("data-message-id", "msg-1");
+    container.appendChild(message);
+
+    container.getBoundingClientRect = () =>
+      ({ top: 0, bottom: 400, left: 0, right: 300, width: 300, height: 400, x: 0, y: 0, toJSON: () => ({}) });
+    message.getBoundingClientRect = () =>
+      ({ top: -10, bottom: STICKY_HIDE_IN_VIEW_PX, left: 0, right: 300, width: 300, height: 22, x: 0, y: -10, toJSON: () => ({}) });
+
+    expect(
+      shouldShowStickyUserMessage(container, "msg-1", 0, { getVirtualItems: () => [] }, true),
     ).toBe(true);
   });
 

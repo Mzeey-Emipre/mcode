@@ -52,6 +52,8 @@ const WHEEL_UP_FOLLOW_PAUSE_MS = 750;
 const OVERSCAN = 8;
 const DEFAULT_ITEM_HEIGHT = 80;
 const PAGINATION_THRESHOLD = 200;
+/** Top inset on the scroll container when the sticky user bar is hidden (`pt-4`). */
+const MESSAGE_LIST_TOP_PADDING_PX = 16;
 /**
  * Initial-load reveal is gated on the inner list height stabilizing across frames.
  * TanStack Virtual measures rows asynchronously after mount, so `scrollHeight`
@@ -263,6 +265,8 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const prevScrollTopRef = useRef(0);
   /** Ref mirror of sticky-user-message visibility to avoid redundant setState on scroll. */
   const showStickyUserMessageRef = useRef(false);
+  /** Previous effective top padding; used to compensate scrollTop when padding changes. */
+  const prevStickyTopInsetRef = useRef(MESSAGE_LIST_TOP_PADDING_PX);
   const [showStickyUserMessage, setShowStickyUserMessage] = useState(false);
   /** Reserved top inset while the sticky user-message bar is visible. */
   const [stickyBarHeight, setStickyBarHeight] = useState(0);
@@ -343,6 +347,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       stickyTarget.id,
       stickyTarget.itemIndex,
       virtualizerInstance,
+      showStickyUserMessageRef.current,
     );
     if (shouldShowSticky !== showStickyUserMessageRef.current) {
       showStickyUserMessageRef.current = shouldShowSticky;
@@ -823,6 +828,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       showStickyUserMessageRef.current = false;
       setShowStickyUserMessage(false);
       setStickyBarHeight(0);
+      prevStickyTopInsetRef.current = MESSAGE_LIST_TOP_PADDING_PX;
     }
 
     if (loading) {
@@ -1067,6 +1073,22 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
         ? stickyBarHeight
         : STICKY_USER_MESSAGE_ESTIMATED_HEIGHT
       : 0;
+
+  const effectiveStickyTopInset =
+    stickyReservedTop > 0 ? stickyReservedTop : MESSAGE_LIST_TOP_PADDING_PX;
+
+  // When the sticky bar reserves more top padding, bump scrollTop so the transcript
+  // does not jump and re-trigger visibility at the clip boundary (padding feedback loop).
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el || !isPositioned) return;
+    const delta = effectiveStickyTopInset - prevStickyTopInsetRef.current;
+    if (delta !== 0) {
+      el.scrollTop = Math.max(0, el.scrollTop + delta);
+      prevScrollTopRef.current = el.scrollTop;
+    }
+    prevStickyTopInsetRef.current = effectiveStickyTopInset;
+  }, [effectiveStickyTopInset, isPositioned]);
 
   return (
     <div className="relative h-full" data-testid="message-list">
