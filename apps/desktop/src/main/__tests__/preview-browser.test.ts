@@ -235,17 +235,19 @@ describe("preview-browser", () => {
       expect(view.webContents.close).not.toHaveBeenCalled();
     });
 
-    it("sends loading-state false when hiding", async () => {
+    it("sends a non-loading page-status when hiding", async () => {
       const win = createWindow();
       await showPreview(win);
       win.webContents.send.mockClear();
 
       await hidePreview(win);
 
-      expect(win.webContents.send).toHaveBeenCalledWith(
-        "preview:loading-state",
-        { loading: false },
+      const statusCalls = win.webContents.send.mock.calls.filter(
+        ([channel]) => channel === "preview:page-status",
       );
+      expect(statusCalls.length).toBeGreaterThan(0);
+      const last = statusCalls[statusCalls.length - 1]![1] as { phase: string };
+      expect(last.phase).not.toBe("loading");
     });
   });
 
@@ -905,10 +907,10 @@ describe("preview-browser", () => {
       }
     });
 
-    it("activating a brand-new blank tab pushes did-navigate with empty URL", async () => {
-      // Regression: a blank new tab must emit a did-navigate event with url=''
-      // so the renderer clears its omnibox; otherwise the previous tab's URL
-      // bleeds visually into the new tab.
+    it("activating a brand-new blank tab pushes a page-status with null URL", async () => {
+      // Regression: a blank new tab must emit a page-status whose url is null so
+      // the renderer clears its omnibox; otherwise the previous tab's URL bleeds
+      // visually into the new tab.
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A", url: "https://prev.test" });
       const firstView = createdViews[0]!;
@@ -921,13 +923,12 @@ describe("preview-browser", () => {
       });
       expect(created.ok).toBe(true);
 
-      // Find the preview:did-navigate emission for the brand-new tab.
-      const navCalls = win.webContents.send.mock.calls.filter(
-        ([channel]) => channel === "preview:did-navigate",
+      const statusCalls = win.webContents.send.mock.calls.filter(
+        ([channel]) => channel === "preview:page-status",
       );
-      expect(navCalls.length).toBeGreaterThan(0);
-      const lastNav = navCalls[navCalls.length - 1]![1] as { url: string };
-      expect(lastNav.url).toBe("");
+      expect(statusCalls.length).toBeGreaterThan(0);
+      const last = statusCalls[statusCalls.length - 1]![1] as { url: string | null };
+      expect(last.url).toBeNull();
     });
 
     it("activating a brand-new tab uses its own fresh WebContentsView (no reload of old)", async () => {

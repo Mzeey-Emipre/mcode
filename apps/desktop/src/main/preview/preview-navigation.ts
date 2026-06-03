@@ -13,7 +13,8 @@ import {
   isAllowedHttpUrl,
   isAllowedPreviewUrl,
   resetIdle,
-  sendPreviewLoading,
+  applyPageStatus,
+  setPreviewLoading,
   syncActiveTabFromSession,
 } from "./preview-session.js";
 import { ensureView, hidePreview, mountView, unmountView } from "./preview-lifecycle.js";
@@ -139,7 +140,7 @@ export function registerNavigationHandlers(): void {
             switchedThread,
             threadId: tid,
           });
-          sendPreviewLoading(win, true);
+          setPreviewLoading(win, s, true);
           if (restoreTarget.startsWith("file:")) {
             trustMainProcessFileNavigation(s, restoreTarget);
           }
@@ -147,17 +148,20 @@ export function registerNavigationHandlers(): void {
           if (activeTab) activeTab.resumeUrl = restoreTarget;
           s.resumePreviewUrl = restoreTarget;
         } else if (switchedThread && activeTab) {
-          // Warm tab on the new thread: just mirror its state onto the session
-          // so the omnibox shows the right URL without a network round-trip.
+          // Warm tab on the new thread: mirror its state onto the session so the
+          // omnibox shows the right URL without a network round-trip.
           s.resumePreviewUrl = activeTab.resumeUrl;
           s.lastFavicons = activeTab.faviconUrl ? [activeTab.faviconUrl] : [];
-          if (!win.isDestroyed()) {
-            win.webContents.send("preview:did-navigate", {
-              url: wc.getURL(),
-              title: wc.getTitle(),
+          const liveUrl = wc.getURL();
+          applyPageStatus(win, s, {
+            type: "reset",
+            status: {
+              url: liveUrl.length > 0 ? liveUrl : activeTab.resumeUrl,
+              title: wc.getTitle() || activeTab.title,
               favicon: activeTab.faviconUrl ?? null,
-            });
-          }
+              phase: "loaded",
+            },
+          });
         }
       }
       resetIdle(win, s);
@@ -218,7 +222,7 @@ export function registerNavigationHandlers(): void {
       view.setBounds(s.lastBounds);
       mountView(win, view);
       logger.info("Preview: user navigated", { url: target });
-      sendPreviewLoading(win, true);
+      setPreviewLoading(win, s, true);
       trustMainProcessFileNavigation(s, target);
       void view.webContents.loadURL(target);
       s.resumePreviewUrl = target;
@@ -234,7 +238,7 @@ export function registerNavigationHandlers(): void {
     const s = getSession(win);
     if (!s.view || s.view.webContents.isDestroyed()) return false;
     if (s.view.webContents.canGoBack()) {
-      sendPreviewLoading(win, true);
+      setPreviewLoading(win, s, true);
       s.view.webContents.goBack();
       resetIdle(win, s);
       return true;
@@ -248,7 +252,7 @@ export function registerNavigationHandlers(): void {
     const s = getSession(win);
     if (!s.view || s.view.webContents.isDestroyed()) return false;
     if (s.view.webContents.canGoForward()) {
-      sendPreviewLoading(win, true);
+      setPreviewLoading(win, s, true);
       s.view.webContents.goForward();
       resetIdle(win, s);
       return true;
@@ -261,7 +265,7 @@ export function registerNavigationHandlers(): void {
     if (!win || win.isDestroyed()) return;
     const s = getSession(win);
     if (!s.view || s.view.webContents.isDestroyed()) return;
-    sendPreviewLoading(win, true);
+    setPreviewLoading(win, s, true);
     s.view.webContents.reload();
     resetIdle(win, s);
   });

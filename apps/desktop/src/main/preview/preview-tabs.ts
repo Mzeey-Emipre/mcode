@@ -28,7 +28,7 @@ import {
 } from "./preview-lifecycle.js";
 import {
   isAllowedPreviewUrl,
-  sendPreviewLoading,
+  applyPageStatus,
   type TabState,
 } from "./preview-session.js";
 import { trustMainProcessFileNavigation } from "./preview-local-file.js";
@@ -83,33 +83,35 @@ function activateTabView(
   if (s.lastBounds) view.setBounds(s.lastBounds);
   mountView(win, view);
 
+  let loadingKicked = false;
   if (isFirstMount && tab.resumeUrl && isAllowedPreviewUrl(tab.resumeUrl)) {
     // Brand-new view for a tab that already had a saved URL (e.g. thread
     // restore). Load it once; subsequent activates of the same tab skip this
     // entirely so the user keeps their scroll / form state.
-    sendPreviewLoading(win, true);
+    loadingKicked = true;
     if (tab.resumeUrl.startsWith("file:")) {
       trustMainProcessFileNavigation(s, tab.resumeUrl);
     }
     void view.webContents.loadURL(tab.resumeUrl);
   }
 
-  // Tell the renderer the newly-mounted tab's chrome state so the omnibox,
-  // title, and favicon update immediately on tab swap. Without this the
-  // user sees a stale URL/title until the next page event fires on the
-  // (warm) webContents - which may never happen for a long-lived page.
+  // Single page-status emit replaces the old loading-state + did-navigate +
+  // did-update-favicon trio. The phase reflects whether we just kicked off a
+  // load; without this the user sees a stale URL/title until the next page
+  // event fires on the (warm) webContents - which may never happen for a
+  // long-lived page.
   if (!win.isDestroyed()) {
     const wc = view.webContents;
     if (!wc.isDestroyed()) {
       const liveUrl = wc.getURL();
-      const liveTitle = wc.getTitle();
-      win.webContents.send("preview:did-navigate", {
-        url: liveUrl,
-        title: liveTitle,
-        favicon: tab.faviconUrl ?? null,
-      });
-      win.webContents.send("preview:did-update-favicon", {
-        favicon: tab.faviconUrl ?? null,
+      applyPageStatus(win, s, {
+        type: "reset",
+        status: {
+          url: loadingKicked ? tab.resumeUrl : (liveUrl.length > 0 ? liveUrl : null),
+          title: loadingKicked ? tab.title : (wc.getTitle() || null),
+          favicon: tab.faviconUrl ?? null,
+          phase: loadingKicked ? "loading" : "loaded",
+        },
       });
     }
   }
