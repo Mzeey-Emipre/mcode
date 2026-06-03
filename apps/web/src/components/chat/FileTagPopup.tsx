@@ -154,6 +154,11 @@ export function FileTagPopup({
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ITEM_HEIGHT,
     overscan: 4,
+    // Opt out of react-virtual's flushSync(rerender) on sync measurement; it
+    // fires inside the library's commit-phase layout effect and trips React's
+    // "flushSync called from inside a lifecycle method" warning. A popup list
+    // does not need a synchronous re-render.
+    useFlushSync: false,
   });
 
   // Keep a stable ref to the virtualizer so the scroll effect below doesn't

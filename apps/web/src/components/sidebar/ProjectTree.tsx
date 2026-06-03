@@ -1134,6 +1134,11 @@ function VirtualizedThreadList({
     estimateSize: () => 28,
     overscan: 5,
     scrollMargin,
+    // Opt out of react-virtual's flushSync(rerender) on sync measurement; it
+    // fires inside the library's commit-phase layout effect and trips React's
+    // "flushSync called from inside a lifecycle method" warning. The tree does
+    // not need a synchronous re-render.
+    useFlushSync: false,
   });
 
   return (

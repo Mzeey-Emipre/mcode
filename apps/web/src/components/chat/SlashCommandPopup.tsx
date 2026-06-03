@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { Terminal, Zap, Puzzle, Sparkles, RefreshCw } from "lucide-react";
 import { NAMESPACE_BADGE_STYLES } from "@/lib/slash-command-styles";
-import type { Command } from "./useSlashCommand";
+import type { Command, PopupState } from "./useSlashCommand";
 
 const ITEM_HEIGHT = 44; // px per row
 const VISIBLE_ITEMS = 8;
@@ -15,12 +15,10 @@ const FOOTER_HEIGHT = 28;
 
 /** Props for the {@link SlashCommandPopup} component. */
 interface SlashCommandPopupProps {
-  isOpen: boolean;
-  isLoading: boolean;
-  items: Command[];
+  /** Typed render state from {@link useSlashCommand}; the popup switches on `state.kind`. */
+  state: PopupState;
   selectedIndex: number;
   anchorRect: DOMRect | null;
-  error: Error | null;
   onSelect: (cmd: Command) => void;
   onDismiss: () => void;
   onRetry: () => void;
@@ -30,27 +28,36 @@ interface SlashCommandPopupProps {
  * Floating popup that lists slash command suggestions anchored to the
  * composer editor. Handles keyboard navigation via `selectedIndex`, virtualises
  * long lists past `VIRTUAL_THRESHOLD`, flips above/below the anchor based on
- * available viewport space, and dismisses on outside click. Render priority is
- * error → list → inline loader → empty state.
+ * available viewport space, and dismisses on outside click. The render priority
+ * (error → list → inline loader → empty) is encoded by the {@link PopupState}
+ * union rather than a comment, so this component is an exhaustive switch on
+ * `state.kind`.
  */
 export function SlashCommandPopup({
-  isOpen,
-  isLoading,
-  items,
+  state,
   selectedIndex,
   anchorRect,
-  error,
   onSelect,
   onDismiss,
   onRetry,
 }: SlashCommandPopupProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // The list-bearing states carry the items; all others render no list.
+  const items: Command[] =
+    state.kind === "ready" || state.kind === "staleRevalidating" ? state.items : [];
+  const isOpen = state.kind !== "closed";
+
   const virtualizer = useVirtualizer({
     count: items.length > VIRTUAL_THRESHOLD ? items.length : 0,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ITEM_HEIGHT,
     overscan: 2,
+    // react-virtual defaults to flushSync(rerender) on sync measurement, which
+    // fires inside its commit-phase layout effect and triggers React's
+    // "flushSync called from inside a lifecycle method" warning. The popup list
+    // does not need a synchronous re-render, so opt out.
+    useFlushSync: false,
   });
 
   // Scroll selected item into view
@@ -76,7 +83,7 @@ export function SlashCommandPopup({
     return () => document.removeEventListener("mousedown", handler);
   }, [isOpen, onDismiss]);
 
-  if (!isOpen || !anchorRect) return null;
+  if (state.kind === "closed" || !anchorRect) return null;
 
   // Cap the scrollable list at VISIBLE_ITEMS rows; shorter lists size to
   // their natural content so a popup with two items isn't truncated.
@@ -86,7 +93,7 @@ export function SlashCommandPopup({
   // decision. Only the list branch renders a footer (Refresh row); error,
   // inline-loading, and empty branches do not. Including FOOTER_HEIGHT in
   // those cases would cause unnecessary above-placement flips.
-  const willRenderList = !error && items.length > 0;
+  const willRenderList = state.kind === "ready" || state.kind === "staleRevalidating";
   const estimatedHeight =
     Math.min(items.length, VISIBLE_ITEMS) * ITEM_HEIGHT +
     (willRenderList ? FOOTER_HEIGHT : 0);
@@ -118,77 +125,84 @@ export function SlashCommandPopup({
       )}
     >
       {/*
-        Render priority (stale-while-revalidate):
-          1. error -> ErrorRow  (unchanged; surfaces transient failures even
-             when built-in commands are present, preserving the explicit
-             "loading failed" signal validated by the slash-command E2E)
-          2. items.length > 0 -> list  (built-ins are always available, so
-             this branch wins on cold start, workspace switches, and cache
-             invalidations; the loading skeleton is unreachable in normal use)
-          3. isLoading -> inline "Loading commands..."  (only hit when a
-             filter yields zero matches AND skills are still arriving;
-             replaces the 3-row skeleton with a single quiet row)
-          4. EmptyState  (no matches, not loading, no error)
+        Render priority (stale-while-revalidate) is encoded by PopupState:
+          - error             -> ErrorRow (surfaces transient failures even
+                                 when built-in commands are present)
+          - ready             -> list (settled, not revalidating)
+          - staleRevalidating -> list (cached items shown while a fresh load
+                                 is in flight; identical render, but a named
+                                 state so the stuck-popup case is testable)
+          - loading           -> inline "Loading commands..." (no cached items
+                                 yet, e.g. a filter excludes every built-in)
+          - empty             -> EmptyState (no matches, not loading, no error)
+        `closed` is handled by the early return above, so this switch over the
+        remaining kinds is exhaustive and compiler-checked.
       */}
-      {error ? (
-        <ErrorRow message={error.message} onRetry={onRetry} />
-      ) : items.length > 0 ? (
-        <>
-          <div
-            ref={scrollRef}
-            role="listbox"
-            aria-label="Slash commands"
-            aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
-            style={{ maxHeight: listMaxHeight, overflowY: "auto" }}
-          >
-            {useVirtual ? (
-              <div role="presentation" style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-                {virtualizer.getVirtualItems().map((vi) => (
-                  <div
-                    key={vi.key}
-                    role="presentation"
-                    style={{ position: "absolute", top: vi.start, width: "100%", height: vi.size }}
-                    data-index={vi.index}
-                  >
-                    <CommandRow
-                      cmd={items[vi.index]}
-                      selected={vi.index === selectedIndex}
-                      onSelect={onSelect}
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              items.map((cmd, i) => (
-                <div key={cmd.name} role="presentation" data-index={i}>
-                  <CommandRow
-                    cmd={cmd}
-                    selected={i === selectedIndex}
-                    onSelect={onSelect}
-                  />
+      {(() => {
+        switch (state.kind) {
+          case "error":
+            return <ErrorRow message={state.error.message} onRetry={onRetry} />;
+          case "ready":
+          case "staleRevalidating":
+            return (
+              <>
+                <div
+                  ref={scrollRef}
+                  role="listbox"
+                  aria-label="Slash commands"
+                  aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
+                  style={{ maxHeight: listMaxHeight, overflowY: "auto" }}
+                >
+                  {useVirtual ? (
+                    <div role="presentation" style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+                      {virtualizer.getVirtualItems().map((vi) => (
+                        <div
+                          key={vi.key}
+                          role="presentation"
+                          style={{ position: "absolute", top: vi.start, width: "100%", height: vi.size }}
+                          data-index={vi.index}
+                        >
+                          <CommandRow
+                            cmd={items[vi.index]}
+                            selected={vi.index === selectedIndex}
+                            onSelect={onSelect}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    items.map((cmd, i) => (
+                      <div key={cmd.name} role="presentation" data-index={i}>
+                        <CommandRow
+                          cmd={cmd}
+                          selected={i === selectedIndex}
+                          onSelect={onSelect}
+                        />
+                      </div>
+                    ))
+                  )}
                 </div>
-              ))
-            )}
-          </div>
-          <div className="flex items-center justify-end border-t border-border px-2 py-1">
-            <button
-              type="button"
-              aria-label="Refresh commands"
-              // onMouseDown preventDefault keeps editor focus on pointer use;
-              // onClick fires on both pointer and keyboard activation (Enter/Space).
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={onRetry}
-              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              <RefreshCw size={12} />
-            </button>
-          </div>
-        </>
-      ) : isLoading ? (
-        <LoadingInline />
-      ) : (
-        <EmptyState />
-      )}
+                <div className="flex items-center justify-end border-t border-border px-2 py-1">
+                  <button
+                    type="button"
+                    aria-label="Refresh commands"
+                    // onMouseDown preventDefault keeps editor focus on pointer use;
+                    // onClick fires on both pointer and keyboard activation (Enter/Space).
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={onRetry}
+                    className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                </div>
+              </>
+            );
+          case "loading":
+            return <LoadingInline />;
+          case "empty":
+            return <EmptyState />;
+        }
+      })()}
     </div>
   );
 }

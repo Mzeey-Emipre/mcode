@@ -2847,12 +2847,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       </div>{/* end max-width wrapper */}
 
       <SlashCommandPopup
-        isOpen={slashCommand.isOpen}
-        isLoading={slashCommand.isLoading}
-        items={slashCommand.items}
+        state={slashCommand.state}
         selectedIndex={slashCommand.selectedIndex}
         anchorRect={slashCommand.anchorRect}
-        error={slashCommand.error}
         onSelect={handleSlashSelect}
         onDismiss={slashCommand.onDismiss}
         onRetry={slashCommand.onRetry}

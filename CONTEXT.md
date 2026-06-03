@@ -431,6 +431,26 @@ lives in the composer's Lexical plugin (`SlashCommandPlugin`,
 slash commands under `.claude/commands/` etc. (which are for
 contributors).
 
+Slash commands sit in one of three availability layers:
+
+- **Provider-scoped command** — native to a single provider, discovered by
+  the server skill scan. Each `SkillInfo` carries the provider(s) that own
+  it in `providers[]`, and the server (`skill-service.ts`) filters the list
+  by the active provider before it reaches the client. The composer does
+  **not** re-filter these; they arrive already scoped.
+- **Multi-provider command** — offered to an explicit, growing set of
+  providers. `/goal` (Claude today, Codex planned) and `/m:plan` (every
+  provider except Copilot, which has its own native plan mode) are built-ins
+  in this layer. Their availability is declared per command in
+  `useSlashCommand` (`BuiltinCommand.isAvailable`), not scattered as inline
+  conditionals.
+- **Mcode-level command** — app-level, offered for every provider regardless
+  of which one is active (e.g. `/compact`).
+
+Built-ins are the only commands the client gates by provider; provider-scoped
+skills are gated server-side. An empty `providers[]` on a `SkillInfo` means
+*no* provider, not "all" — universal availability is the Mcode-level layer.
+
 ### Hook
 A user-configurable script that fires at a specific point in an agent's
 lifecycle within a thread. Two kinds today:

@@ -361,6 +361,103 @@ describe("provider-scoped commands", () => {
     const names = result.current.allCommands.map((c) => c.name);
     expect(names).toContain("compact");
   });
+
+  // /goal is a gradual rollout: shown only for providers that support it
+  // (currently just "claude"), hidden for every other provider and when none
+  // is selected. The cases are deliberately framed as supported/unsupported,
+  // not "claude vs the rest", so adding a provider to GOAL_PROVIDERS is the
+  // only change needed when the rollout widens.
+  it("shows /goal for a supported provider", async () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, providerId: "claude" })
+    );
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.allCommands.map((c) => c.name)).toContain("goal");
+  });
+
+  // Each provider case is its own test: useSlashCommand subscribes to the
+  // module-scoped skillsStore, so two hooks mounted at once with different
+  // providerIds would fight over the store's cached providerId, each treating
+  // the other's value as a provider change and reloading forever (an infinite
+  // render loop that OOMs the vitest worker). beforeEach resets the store, so
+  // separate tests each get a single hook driving the store.
+  it("hides /goal for an unsupported provider", async () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, providerId: "codex" })
+    );
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+    expect(result.current.allCommands.map((c) => c.name)).not.toContain("goal");
+  });
+
+  it("hides /goal when no provider is selected", async () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+    expect(result.current.allCommands.map((c) => c.name)).not.toContain("goal");
+  });
+});
+
+describe("popup state machine", () => {
+  it("emits a 'ready' state carrying the full command list once skills load", async () => {
+    // Self-contained mock: earlier tests leave a mockReturnValue in place
+    // (vi.clearAllMocks does not reset return values), so set ours explicitly.
+    vi.mocked(getTransport).mockReturnValue({
+      listSkills: vi.fn().mockResolvedValue([{ name: "commit", description: "Create a git commit" }]),
+    } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.state.kind).toBe("ready");
+    if (result.current.state.kind === "ready") {
+      const names = result.current.state.items.map((i) => i.name);
+      expect(names).toContain("commit");
+    }
+  });
+
+  it("is 'closed' before any trigger", () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+    expect(result.current.state.kind).toBe("closed");
+  });
+
+  it("self-heals to 'ready' after a skills.changed push lands mid-load (no manual retry)", async () => {
+    // Reproduces the stuck-popup symptom at the hook seam: the popup opens,
+    // a skills.changed push invalidates the store while the first load is in
+    // flight, and the popup must return to the full list on its own. Before
+    // the invalidate() isLoading reset, the eager-prefetch effect dead-locked
+    // and the popup stayed on built-ins until the user clicked Refresh.
+    vi.mocked(getTransport).mockReturnValue({
+      listSkills: vi.fn().mockResolvedValue([{ name: "commit", description: "Create a git commit" }]),
+    } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+
+    await act(async () => { result.current.onInputChange("/"); });
+    // Fire the push concurrently with the in-flight load.
+    await act(async () => {
+      useSkillsStore.getState().invalidate();
+    });
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(result.current.state.kind).toBe("ready");
+    if (result.current.state.kind === "ready") {
+      const names = result.current.state.items.map((i) => i.name);
+      expect(names).toContain("commit");
+    }
+  });
 });
 
 describe("plugin namespace detection", () => {

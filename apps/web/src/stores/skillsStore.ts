@@ -66,8 +66,19 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 // gets cleared when `reset()` or `invalidate()` is explicitly called.
 let lastFetchedAt = 0;
 
-/** Module-scoped Zustand store for skill caching with single-flight loading. */
-export const useSkillsStore = create<SkillsState>((set, get) => ({
+/**
+ * The store's "cleared" field values — every data/in-flight field reset to its
+ * empty state. `loadEpoch` (bumped, not reset) and `lastFetchedAt` (a module
+ * var) are handled separately.
+ *
+ * Both the initial state and the `invalidate()`/`reset()` actions spread this
+ * single object, so a newly added state field can never be cleared in one path
+ * but forgotten in another. That divergence is exactly what caused the
+ * stuck-popup bug: `invalidate()` once omitted `isLoading: false` while the
+ * initial state and `reset()` had it, leaving the flag stuck `true` after a
+ * push-during-load and dead-locking the consumer's eager-prefetch effect.
+ */
+const CLEARED_STATE = {
   skills: null,
   cwd: undefined,
   providerId: undefined,
@@ -76,6 +87,11 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
   inflight: null,
   inflightCwd: undefined,
   inflightProviderId: undefined,
+} as const satisfies Partial<SkillsState>;
+
+/** Module-scoped Zustand store for skill caching with single-flight loading. */
+export const useSkillsStore = create<SkillsState>((set, get) => ({
+  ...CLEARED_STATE,
   loadEpoch: 0,
 
   // Non-async so the return value IS the cached/in-flight promise directly,
@@ -171,35 +187,17 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
   },
 
   invalidate() {
-    // Bumping loadEpoch fences any in-flight load() so its eventual set()
-    // is dropped instead of rehydrating the store with pre-invalidation data.
-    const state = get();
-    set({
-      skills: null,
-      cwd: undefined,
-      providerId: undefined,
-      error: null,
-      inflight: null,
-      inflightCwd: undefined,
-      inflightProviderId: undefined,
-      loadEpoch: state.loadEpoch + 1,
-    });
+    // Bumping loadEpoch fences any in-flight load() so its eventual set() is
+    // dropped instead of rehydrating the store with pre-invalidation data.
+    // Spreading CLEARED_STATE guarantees isLoading is reset to false even when
+    // the fenced load skips its own reset — see CLEARED_STATE for why that
+    // matters (the stuck-popup bug).
+    set({ ...CLEARED_STATE, loadEpoch: get().loadEpoch + 1 });
     lastFetchedAt = 0;
   },
 
   reset() {
-    const state = get();
-    set({
-      skills: null,
-      cwd: undefined,
-      providerId: undefined,
-      isLoading: false,
-      error: null,
-      inflight: null,
-      inflightCwd: undefined,
-      inflightProviderId: undefined,
-      loadEpoch: state.loadEpoch + 1,
-    });
+    set({ ...CLEARED_STATE, loadEpoch: get().loadEpoch + 1 });
     lastFetchedAt = 0;
   },
 }));

@@ -77,6 +77,36 @@ describe("skillsStore", () => {
     // Store stays cleared: the late resolution was dropped.
     expect(useSkillsStore.getState().skills).toBeNull();
     expect(useSkillsStore.getState().cwd).toBeUndefined();
+    // Regression: the in-flight load's fenced resolve must not leave
+    // isLoading stuck at true. If it did, useSlashCommand's eager-prefetch
+    // effect would early-return forever (`if (isLoading) return`), and the
+    // popup would show only built-in commands until the user clicks Refresh.
+    expect(useSkillsStore.getState().isLoading).toBe(false);
+  });
+
+  it("recovers after invalidate-during-load race: next load repopulates skills", async () => {
+    // Drives the user-visible symptom end-to-end: cold-start race where
+    // `skills.changed` arrives during the very first prefetch. Without the
+    // isLoading reset in invalidate(), `useSlashCommand`'s eager-prefetch
+    // effect would never fire a follow-up load and the popup would stick.
+    let resolveFirst!: (v: typeof FAKE_SKILLS) => void;
+    listSkillsMock.mockImplementationOnce(
+      () => new Promise((res) => { resolveFirst = res; }),
+    );
+
+    const first = useSkillsStore.getState().load("/foo");
+    useSkillsStore.getState().invalidate();
+    resolveFirst(FAKE_SKILLS);
+    await first;
+
+    // The consumer hook's effect would early-return if isLoading is stuck.
+    expect(useSkillsStore.getState().isLoading).toBe(false);
+
+    // Subsequent load mirrors what the effect would dispatch once it sees
+    // !isLoading and skills === null. It must repopulate the store.
+    await useSkillsStore.getState().load("/foo");
+    expect(useSkillsStore.getState().skills).toEqual(FAKE_SKILLS);
+    expect(useSkillsStore.getState().isLoading).toBe(false);
   });
 
   it("tracks cwd on failure so the consumer can detect cwd changes", async () => {
