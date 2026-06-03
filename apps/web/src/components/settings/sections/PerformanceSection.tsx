@@ -78,7 +78,7 @@ export function PerformanceSection() {
             step={30_000}
             value={bgIdleMs}
             onCommit={(v) => void update({ preview: { memorySaver: { bgIdleMs: v } } })}
-            formatValue={(v) => `${Math.round(v / 60_000)} min`}
+            formatValue={(v) => `${(v / 60_000).toFixed(1).replace(/\.0$/, "")} min`}
           />
         </SettingRow>
         <SettingRow
