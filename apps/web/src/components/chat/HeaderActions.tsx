@@ -11,6 +11,7 @@ import { executeCommand } from "@/lib/command-registry";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Thread } from "@/transport";
+import { openGitHubUrl } from "@/lib/open-url-in-preview";
 
 /** Props for {@link HeaderActions}. */
 interface HeaderActionsProps {
@@ -137,16 +138,12 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     }
   }, [thread?.id]);
 
-  const handleOpenPr = useCallback((url: string) => {
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol === "https:" && parsed.hostname === "github.com") {
-        window.desktopBridge?.openExternalUrl(url);
-      }
-    } catch {
-      // Invalid URL, ignore
-    }
-  }, []);
+  const handleOpenPr = useCallback(
+    (url: string, event?: React.MouseEvent) => {
+      openGitHubUrl(url, thread.id, event);
+    },
+    [thread.id],
+  );
 
   return (
     <div className="flex items-center justify-between gap-0.5">

@@ -19,6 +19,7 @@ import {
 } from "@/lib/ci-status";
 import { registerCommand } from "@/lib/command-registry";
 import type { ChecksStatus } from "@mcode/contracts";
+import { isModifierClick } from "@/lib/open-url-in-preview";
 
 /** Props for {@link PrSplitButton}. */
 interface PrSplitButtonProps {
@@ -28,8 +29,8 @@ interface PrSplitButtonProps {
   hasCommitsAhead: boolean | null;
   /** Called when the user wants to open CreatePrDialog. */
   onCreatePr: () => void;
-  /** Called with the PR URL when the user wants to open it in the browser. */
-  onOpenPr: (url: string) => void;
+  /** Called with the PR URL when the user wants to open it in the browser or preview. */
+  onOpenPr: (url: string, event?: React.MouseEvent) => void;
   /** CI check status for this thread, if available. */
   checks?: ChecksStatus | null;
   /** Thread ID for manual refresh via ChecksPopover. */
@@ -190,6 +191,18 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
             ? "Pull request closed"
             : "Pull request open";
 
+  const handlePrimaryClick = (event: React.MouseEvent) => {
+    if (isModifierClick(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenPr(pr.url, event);
+      return;
+    }
+    if (!usePopover) {
+      onOpenPr(pr.url, event);
+    }
+  };
+
   const primaryButton = (
     <button
       type="button"
@@ -201,7 +214,7 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
         !showChevron && "rounded-r",
       )}
       title={titleAttr}
-      onClick={usePopover ? undefined : () => onOpenPr(pr.url)}
+      onClick={handlePrimaryClick}
     >
       <Github size={12} className="opacity-70 shrink-0" />
       <span className="text-foreground/85">{label}</span>
@@ -278,7 +291,7 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" sideOffset={4} className="min-w-[170px] text-xs">
               <DropdownMenuItem
-                onClick={() => onOpenPr(pr.url)}
+                onClick={(e) => onOpenPr(pr.url, e)}
                 className="text-foreground/75 gap-2"
               >
                 <Github size={11} className="opacity-75" />
