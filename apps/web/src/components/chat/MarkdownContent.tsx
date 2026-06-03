@@ -10,8 +10,12 @@ import {
 import { CodeBlock } from "./CodeBlock";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { resolveCodeBlockLanguage } from "@/lib/resolve-code-block-language";
-import { useDiffStore } from "@/stores/diffStore";
 import { isMac } from "@/lib/platform";
+import {
+  isModifierClick,
+  isPreviewableUrl,
+  openUrlInPreview,
+} from "@/lib/open-url-in-preview";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 /** Pass through workspace preview URLs; otherwise use react-markdown's default sanitizer. */
@@ -54,45 +58,26 @@ function hasPreview(): boolean {
   return !!window.desktopBridge?.preview;
 }
 
-/**
- * Looks up the on-disk path for the active workspace so the desktop preview
- * can resolve relative files and `mcode-workspace:` URLs.
- */
-function getWorkspacePathForPreview(): string | null {
+/** Active workspace path for resolving preview URLs. */
+function getActiveWorkspacePath(): string | null {
   const { activeWorkspaceId, workspaces } = useWorkspaceStore.getState();
   if (!activeWorkspaceId) return null;
   return workspaces.find((w) => w.id === activeWorkspaceId)?.path ?? null;
 }
 
 /**
- * Handles a click on a previewable URL. Ctrl/Cmd+click opens in the embedded
- * preview when available; a normal click opens in the system default browser.
+ * Handles a click on a previewable URL. Ctrl/Cmd+click opens in a new embedded
+ * preview tab when available; a normal click opens in the system default browser.
  */
 function handleLinkClick(e: React.MouseEvent | React.KeyboardEvent, url: string): void {
   e.preventDefault();
 
-  const workspacePath = getWorkspacePathForPreview();
-  const isModifierClick = e.ctrlKey || e.metaKey;
-  if (isModifierClick && hasPreview()) {
+  const workspacePath = getActiveWorkspacePath();
+
+  if (isModifierClick(e) && hasPreview()) {
     const threadId = useWorkspaceStore.getState().activeThreadId;
     if (threadId) {
-      const { showRightPanel, setRightPanelTab, setPreviewUrlForThread } =
-        useDiffStore.getState();
-      // Store the URL before opening the panel so that:
-      // 1. usePreviewBridge populates the omnibox immediately via storedUrl
-      // 2. pushSync sends it as resumeUrlHint, letting the main process load
-      //    the page once BrowserView bounds are established
-      setPreviewUrlForThread(threadId, url);
-      showRightPanel(threadId);
-      setRightPanelTab(threadId, "preview");
-      // Fire-and-forget navigate for the already-open-panel case (bounds
-      // already synced). For a freshly mounted panel the sync handler's
-      // resumeUrlHint path handles navigation after bounds arrive.
-      setTimeout(() => {
-        void window.desktopBridge?.preview
-          ?.navigate?.(url, workspacePath ?? undefined)
-          ?.catch(() => {});
-      }, 0);
+      openUrlInPreview({ url, threadId, workspacePath });
       return;
     }
   }
@@ -145,11 +130,7 @@ function makeStaticComponents(variant: "assistant" | "user", workspacePath: stri
       const linkClass = isUser
         ? "text-primary-foreground underline hover:opacity-80"
         : "text-primary underline hover:text-primary";
-      const isPreviewable =
-        !!safeHref &&
-        (safeHref.startsWith("http:") ||
-          safeHref.startsWith("https:") ||
-          isMcodeWorkspacePreviewUrl(safeHref));
+      const isPreviewable = !!safeHref && isPreviewableUrl(safeHref);
       const showHint = isPreviewable && hasPreview();
       const anchor = (
         <a

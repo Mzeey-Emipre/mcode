@@ -7,6 +7,7 @@ import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { getCiVisual, getBreakdown, getLeadRunningName, CI_ICON_STROKE } from "@/lib/ci-status";
 import type { ChecksStatus, CheckRun } from "@mcode/contracts";
+import { openGitHubUrl } from "@/lib/open-url-in-preview";
 
 /** Props for {@link ChecksPopover}. */
 interface ChecksPopoverProps {
@@ -185,29 +186,21 @@ export function ChecksPopover({
     }
   }, [threadId]);
 
-  const handleOpenGitHub = useCallback(() => {
-    try {
-      const parsed = new URL(prUrl);
-      if (parsed.protocol === "https:" && parsed.hostname === "github.com") {
-        window.desktopBridge?.openExternalUrl(prUrl);
-      }
-    } catch {
-      // Invalid URL - do nothing
-    }
-  }, [prUrl]);
+  const handleOpenGitHub = useCallback(
+    (event: React.MouseEvent) => {
+      openGitHubUrl(prUrl, threadId, event);
+    },
+    [prUrl, threadId],
+  );
 
   // Deep-link into GitHub's PR checks tab so devs can jump straight to the run logs
   // from the failing-lane header. Uses the same protocol/host guard as handleOpenGitHub.
-  const handleOpenChecksTab = useCallback(() => {
-    try {
-      const parsed = new URL(prUrl);
-      if (parsed.protocol === "https:" && parsed.hostname === "github.com") {
-        window.desktopBridge?.openExternalUrl(`${prUrl}/checks`);
-      }
-    } catch {
-      // Invalid URL - do nothing
-    }
-  }, [prUrl]);
+  const handleOpenChecksTab = useCallback(
+    (event: React.MouseEvent) => {
+      openGitHubUrl(`${prUrl}/checks`, threadId, event);
+    },
+    [prUrl, threadId],
+  );
 
   // Group runs by lane, ordered by priority.
   const laned = useMemo(() => {

@@ -98,22 +98,56 @@ describe("MarkdownContent link handling", () => {
 
 describe("MarkdownContent workspace preview navigation", () => {
   let mockNavigate: ReturnType<typeof vi.fn>;
+  let mockCreate: ReturnType<typeof vi.fn>;
+  let showRightPanel: ReturnType<typeof vi.fn>;
+  let setRightPanelTab: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     mockNavigate = vi.fn().mockResolvedValue({ ok: true });
+    mockCreate = vi.fn().mockResolvedValue({ ok: true, data: { tabId: "tab-2", tabs: {} } });
+    showRightPanel = vi.fn();
+    setRightPanelTab = vi.fn();
     const ws = createMockWorkspace({ id: "ws-prev", path: "/tmp/ws-preview-test" });
     useWorkspaceStore.setState({
       workspaces: [ws],
       activeWorkspaceId: ws.id,
       activeThreadId: "thread-prev",
     });
+    useDiffStore.setState({
+      showRightPanel,
+      setRightPanelTab,
+      setPreviewUrlForThread: vi.fn(),
+    } as Partial<ReturnType<typeof useDiffStore.getState>>);
     window.desktopBridge = {
       openExternalUrl: vi.fn(),
-      preview: { navigate: mockNavigate },
+      preview: {
+        navigate: mockNavigate,
+        tabs: {
+          create: mockCreate,
+          list: vi.fn().mockResolvedValue({
+            ok: true,
+            data: {
+              threadId: "thread-prev",
+              activeTabId: "tab-1",
+              tabs: [{
+                id: "tab-1",
+                threadId: "thread-prev",
+                title: "Example",
+                url: "https://example.com",
+                faviconUrl: null,
+                warm: true,
+                active: true,
+              }],
+            },
+          }),
+        },
+      },
     } as unknown as typeof window.desktopBridge;
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     delete (window as unknown as Record<string, unknown>).desktopBridge;
     useWorkspaceStore.setState({
       workspaces: [],
@@ -123,20 +157,21 @@ describe("MarkdownContent workspace preview navigation", () => {
     useDiffStore.setState({ previewUrlByThread: {} });
   });
 
-  it("passes workspace path when opening mcode-workspace link with ctrl+click", async () => {
+  it("creates a new preview tab and navigates on ctrl+click", async () => {
     const { container } = render(<MarkdownContent content="[doc](mcode-workspace:///sub/page.html)" />);
     const link = container.querySelector("a");
     expect(link).toBeTruthy();
-    expect(link).toHaveAttribute("href", "mcode-workspace:///sub/page.html");
     await act(async () => {
       fireEvent.click(link!, { ctrlKey: true });
+      await vi.runAllTimersAsync();
     });
-    await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith(
-        "mcode-workspace:///sub/page.html",
-        "/tmp/ws-preview-test",
-      );
-    });
+    expect(showRightPanel).toHaveBeenCalledWith("thread-prev");
+    expect(setRightPanelTab).toHaveBeenCalledWith("thread-prev", "preview");
+    expect(mockCreate).toHaveBeenCalledWith("thread-prev", true);
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "mcode-workspace:///sub/page.html",
+      "/tmp/ws-preview-test",
+    );
   });
 
   it("rewrites relative html link to mcode-workspace for navigation", async () => {
@@ -145,13 +180,13 @@ describe("MarkdownContent workspace preview navigation", () => {
     expect(link).toBeTruthy();
     await act(async () => {
       fireEvent.click(link!, { ctrlKey: true });
+      await vi.runAllTimersAsync();
     });
-    await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith(
-        "mcode-workspace:///sub/page.html",
-        "/tmp/ws-preview-test",
-      );
-    });
+    expect(mockCreate).toHaveBeenCalledWith("thread-prev", true);
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "mcode-workspace:///sub/page.html",
+      "/tmp/ws-preview-test",
+    );
   });
 
   it("opens mcode-workspace in the default browser on plain click", async () => {
@@ -189,26 +224,45 @@ describe("MarkdownContent workspace preview navigation", () => {
     expect(el).toBeTruthy();
     await act(async () => {
       fireEvent.click(el!, { ctrlKey: true });
+      await vi.runAllTimersAsync();
     });
-    await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith(
-        "mcode-workspace:///report.html",
-        "/tmp/ws-preview-test",
-      );
-    });
+    expect(mockCreate).toHaveBeenCalledWith("thread-prev", true);
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "mcode-workspace:///report.html",
+      "/tmp/ws-preview-test",
+    );
   });
 
   it("stores URL for preview sync when preview.navigate is missing on ctrl+click", async () => {
-    const mockOpenExternal = vi.fn();
-    const ws = createMockWorkspace({ id: "ws-fallback", path: "/tmp/ws-fallback" });
-    useWorkspaceStore.setState({
-      workspaces: [ws],
-      activeWorkspaceId: ws.id,
-      activeThreadId: "thread-fallback",
-    });
+    const setPreviewUrlForThread = vi.fn();
+    useDiffStore.setState({
+      showRightPanel,
+      setRightPanelTab,
+      setPreviewUrlForThread,
+    } as Partial<ReturnType<typeof useDiffStore.getState>>);
     window.desktopBridge = {
-      openExternalUrl: mockOpenExternal,
-      preview: {},
+      openExternalUrl: vi.fn(),
+      preview: {
+        tabs: {
+          create: mockCreate,
+          list: vi.fn().mockResolvedValue({
+            ok: true,
+            data: {
+              threadId: "thread-prev",
+              activeTabId: "tab-1",
+              tabs: [{
+                id: "tab-1",
+                threadId: "thread-prev",
+                title: null,
+                url: null,
+                faviconUrl: null,
+                warm: true,
+                active: true,
+              }],
+            },
+          }),
+        },
+      },
     } as unknown as typeof window.desktopBridge;
 
     const { container } = render(<MarkdownContent content="[doc](mcode-workspace:///page.html)" />);
@@ -216,42 +270,32 @@ describe("MarkdownContent workspace preview navigation", () => {
     expect(link).toBeTruthy();
     await act(async () => {
       fireEvent.click(link!, { ctrlKey: true });
+      await vi.runAllTimersAsync();
     });
-    // URL stored for the sync mechanism; no external fallback
-    expect(useDiffStore.getState().previewUrlByThread["thread-fallback"])
-      .toBe("mcode-workspace:///page.html");
-    expect(mockOpenExternal).not.toHaveBeenCalled();
-    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(setPreviewUrlForThread).toHaveBeenCalledWith(
+      "thread-prev",
+      "mcode-workspace:///page.html",
+    );
   });
 
-  it("silently catches navigate rejection on ctrl+click without external fallback", async () => {
-    const mockOpenExternal = vi.fn();
-    const nav = vi.fn().mockRejectedValue(new Error("nav failed"));
-    const ws = createMockWorkspace({ id: "ws-rej", path: "/tmp/ws-rej" });
-    useWorkspaceStore.setState({
-      workspaces: [ws],
-      activeWorkspaceId: ws.id,
-      activeThreadId: "thread-rej",
-    });
-    window.desktopBridge = {
-      openExternalUrl: mockOpenExternal,
-      preview: { navigate: nav },
-    } as unknown as typeof window.desktopBridge;
+  it("stores URL when navigate rejects on ctrl+click", async () => {
+    const setPreviewUrlForThread = vi.fn();
+    useDiffStore.setState({
+      showRightPanel,
+      setRightPanelTab,
+      setPreviewUrlForThread,
+    } as Partial<ReturnType<typeof useDiffStore.getState>>);
+    mockNavigate.mockRejectedValue(new Error("nav failed"));
 
     const { container } = render(<MarkdownContent content="[doc](https://example.com/x)" />);
     const link = container.querySelector("a");
     expect(link).toBeTruthy();
     await act(async () => {
       fireEvent.click(link!, { ctrlKey: true });
+      await vi.runAllTimersAsync();
     });
-    // URL stored for the sync mechanism
-    expect(useDiffStore.getState().previewUrlByThread["thread-rej"])
-      .toBe("https://example.com/x");
-    // Navigate was attempted but rejection is silently caught; no external fallback
-    await waitFor(() => {
-      expect(nav).toHaveBeenCalled();
-    });
-    expect(mockOpenExternal).not.toHaveBeenCalled();
+    expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-prev", "https://example.com/x");
+    expect(mockNavigate).toHaveBeenCalled();
   });
 });
 

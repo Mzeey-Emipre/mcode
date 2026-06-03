@@ -58,7 +58,10 @@ describe("PrSplitButton", () => {
     const onOpenPr = vi.fn();
     render(<PrSplitButton pr={openPr} hasCommitsAhead={true} onCreatePr={noop} onOpenPr={onOpenPr} />);
     fireEvent.click(screen.getByText("PR #42"));
-    expect(onOpenPr).toHaveBeenCalledWith("https://github.com/o/r/pull/42");
+    expect(onOpenPr).toHaveBeenCalledWith(
+      "https://github.com/o/r/pull/42",
+      expect.objectContaining({ type: "click" }),
+    );
   });
 
   // ── PR merged ──────────────────────────────────────────────────────────────
@@ -103,7 +106,10 @@ describe("PrSplitButton", () => {
     render(<PrSplitButton pr={mergedPr} hasCommitsAhead={true} onCreatePr={noop} onOpenPr={onOpenPr} />);
     fireEvent.click(screen.getByRole("button", { name: /open pr menu/i }));
     fireEvent.click(screen.getByText(/view on github/i));
-    expect(onOpenPr).toHaveBeenCalledWith("https://github.com/o/r/pull/42");
+    expect(onOpenPr).toHaveBeenCalledWith(
+      "https://github.com/o/r/pull/42",
+      expect.objectContaining({ type: "click" }),
+    );
   });
 
   // ── PR closed ──────────────────────────────────────────────────────────────
