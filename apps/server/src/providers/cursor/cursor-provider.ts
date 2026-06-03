@@ -533,6 +533,9 @@ export class CursorProvider
     });
 
     child.on("exit", () => {
+      const pooled = this.runtime.get(mcodeSessionId);
+      // After ACP respawn, the same sessionId maps to a new child; ignore stale exits.
+      if (pooled?.child !== child) return;
       this.cancelPendingForThread(mcodeSessionId);
       // The child died unexpectedly; ask the runtime to drop the pooled entry
       // (runs interrupt → close → hard kill of the already-dead PID, all no-ops
