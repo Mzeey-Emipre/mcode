@@ -98,59 +98,67 @@ export async function runDiscardSweep(
   config: DiscardConfig,
 ): Promise<void> {
   if (win.isDestroyed()) return;
-  const warm = collectWarmTabs(s);
-  setPerf("warmInactiveRuntimeCount", warm.length);
-  if (warm.length === 0) return;
+  if (s.discardSweepInProgress) return;
+  s.discardSweepInProgress = true;
+  try {
+    const warm = collectWarmTabs(s);
+    setPerf("warmInactiveRuntimeCount", warm.length);
+    if (warm.length === 0) return;
 
-  const ids = selectTabsToDiscard(
-    warm,
-    s.lastPreviewThreadId,
-    activeTabIdOf(s),
-    visible,
-    Date.now(),
-    config,
-  );
-  if (ids.length === 0) return;
+    const ids = selectTabsToDiscard(
+      warm,
+      s.lastPreviewThreadId,
+      activeTabIdOf(s),
+      visible,
+      Date.now(),
+      config,
+    );
+    if (ids.length === 0) return;
 
-  let activeThreadTouched = false;
-  for (const id of ids) {
-    const located = locateTab(s, id);
-    if (!located) continue;
-    const { set, tab } = located;
+    let activeThreadTouched = false;
+    for (const id of ids) {
+      const located = locateTab(s, id);
+      if (!located) continue;
+      const { set, tab } = located;
 
-    // Persist the validated current URL before disposing (ADR 0002).
-    if (tab.view && !tab.view.webContents.isDestroyed()) {
-      try {
-        const live = tab.view.webContents.getURL();
-        const safe = await validateResumeUrl(isAllowedPreviewUrl(live) ? live : null);
-        if (safe) tab.resumeUrl = safe;
-      } catch {
-        /* guest may be tearing down; keep the last known resumeUrl */
+      // Persist the validated current URL before disposing (ADR 0002).
+      if (tab.view && !tab.view.webContents.isDestroyed()) {
+        try {
+          const live = tab.view.webContents.getURL();
+          const safe = await validateResumeUrl(isAllowedPreviewUrl(live) ? live : null);
+          if (safe) tab.resumeUrl = safe;
+        } catch {
+          /* guest may be tearing down; keep the last known resumeUrl */
+        }
       }
+      if (win.isDestroyed()) return;
+
+      const wasActiveTab =
+        tab.threadId === s.lastPreviewThreadId && set.activeTabId === tab.id;
+
+      disposeTabView(win, s, tab);
+      bumpPerf("inactiveTabBudgetEvictions");
+
+      // The active tab can only be dropped when hidden; surface it through the
+      // single page-status channel so the reducer records phase: 'discarded'.
+      if (wasActiveTab) applyPageStatus(win, s, { type: "discard" });
+      if (tab.threadId === s.lastPreviewThreadId) activeThreadTouched = true;
     }
-    if (win.isDestroyed()) return;
 
-    const wasActiveTab =
-      tab.threadId === s.lastPreviewThreadId && set.activeTabId === tab.id;
-
-    disposeTabView(win, s, tab);
-    bumpPerf("inactiveTabBudgetEvictions");
-
-    // The active tab can only be dropped when hidden; surface it through the
-    // single page-status channel so the reducer records phase: 'discarded'.
-    if (wasActiveTab) applyPageStatus(win, s, { type: "discard" });
-    if (tab.threadId === s.lastPreviewThreadId) activeThreadTouched = true;
-  }
-
-  setPerf("warmInactiveRuntimeCount", collectWarmTabs(s).length);
-  if (activeThreadTouched && s.lastPreviewThreadId) {
-    emitTabsUpdated(win, s, s.lastPreviewThreadId);
+    setPerf("warmInactiveRuntimeCount", collectWarmTabs(s).length);
+    if (activeThreadTouched && s.lastPreviewThreadId) {
+      emitTabsUpdated(win, s, s.lastPreviewThreadId);
+    }
+  } finally {
+    s.discardSweepInProgress = false;
   }
 }
 
 /**
  * Panel became visible: cancel any pending hidden-discard (hysteresis) and
- * start the background-idle sweep if it is not already running.
+ * start the background-idle sweep if it is not already running. The sweep
+ * interval is fixed at start time, so a `bgIdleMs` settings change only takes
+ * effect after the panel is next hidden and reshown.
  */
 export function onPreviewVisible(win: BrowserWindow, s: PreviewSession): void {
   if (s.discardHiddenTimer) {
@@ -193,16 +201,4 @@ export function onPreviewHidden(win: BrowserWindow, s: PreviewSession): void {
   }, cfg.hiddenIdleMs);
   bumpPerf("inactiveTabSuspendScheduled");
   logger.info("Preview: hidden discard scheduled", { hiddenIdleMs: cfg.hiddenIdleMs });
-}
-
-/** Cancels both discard timers. Called on window park/dispose. */
-export function clearDiscardTimers(s: PreviewSession): void {
-  if (s.discardSweepTimer) {
-    clearInterval(s.discardSweepTimer);
-    s.discardSweepTimer = null;
-  }
-  if (s.discardHiddenTimer) {
-    clearTimeout(s.discardHiddenTimer);
-    s.discardHiddenTimer = null;
-  }
 }

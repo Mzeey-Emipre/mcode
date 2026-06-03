@@ -65,6 +65,8 @@ export interface PreviewSession {
   discardSweepTimer: NodeJS.Timeout | null;
   /** One-shot timer scheduled when the panel hides; trims the warm set unless cancelled (hysteresis). */
   discardHiddenTimer: NodeJS.Timeout | null;
+  /** True while a discard sweep is mid-flight; prevents overlapping async sweeps. */
+  discardSweepInProgress: boolean;
   /** Last shell-reported bounds so navigate can attach the view before the next sync tick. */
   lastBounds: Bounds | null;
   /**
@@ -144,6 +146,7 @@ export function getSession(win: BrowserWindow): PreviewSession {
       idleTimer: null,
       discardSweepTimer: null,
       discardHiddenTimer: null,
+      discardSweepInProgress: false,
       lastBounds: null,
       resumePreviewUrl: null,
       scrollbarCssKey: null,
@@ -250,6 +253,18 @@ export function syncActiveTabFromSession(s: PreviewSession): void {
   if (s.view && !s.view.webContents.isDestroyed()) {
     const t = s.view.webContents.getTitle();
     tab.title = t && t.length > 0 ? t : tab.title;
+  }
+}
+
+/** Cancels both memory-saver discard timers (sweep interval + hidden one-shot). */
+export function clearDiscardTimers(s: PreviewSession): void {
+  if (s.discardSweepTimer) {
+    clearInterval(s.discardSweepTimer);
+    s.discardSweepTimer = null;
+  }
+  if (s.discardHiddenTimer) {
+    clearTimeout(s.discardHiddenTimer);
+    s.discardHiddenTimer = null;
   }
 }
 
