@@ -29,6 +29,9 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `worktree.naming.aiConfirmation` | boolean | `true` | - | - | Prompt before using AI-generated branch names |
 | `performance.threadCacheSize` | integer | `10` | 1-25 | - | Number of threads to keep in memory for instant switching. Lower values reduce memory use; values ≤ 3 mean most thread switches reload from the server. Takes effect immediately. |
 | `server.memory.heapMb` | integer | `512` | 64-8192 | `MCODE_SERVER_HEAP_MB` | V8 max old space for the server process (MB) |
+| `preview.memorySaver.maxWarm` | integer | `3` | 1-20 | - | Most-recently-used background preview tabs kept warm while the panel is hidden. Others are discarded (renderer freed) and reload on reopen. |
+| `preview.memorySaver.bgIdleMs` | integer | `300000` | 30000-3600000 | - | Idle time (ms) before a background preview tab is discarded while the panel is visible. |
+| `preview.memorySaver.hiddenIdleMs` | integer | `60000` | 5000-600000 | - | Idle time (ms) after the preview panel hides before the warm set is trimmed to `maxWarm`. A reshow within the window cancels the trim. |
 | `provider.cli.codex` | string | `""` | - | - | Path to the Codex CLI binary. When empty, mcode looks for `codex` on the system PATH. |
 | `provider.cli.claude` | string | `""` | - | - | Path to the Claude Code CLI binary. When empty, mcode looks for `claude` on the system PATH. |
 | `provider.cursor.alwaysSendFullInstructions` | boolean | `false` | - | - | When true, Cursor ACP sends full stitched workspace guidance and the skill catalogue on every turn instead of sticky shortening (largest prompts). |
