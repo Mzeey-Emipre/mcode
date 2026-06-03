@@ -150,6 +150,18 @@ export type {
 } from "./models/browser-tab.js";
 
 export {
+  PreviewPagePhaseSchema,
+  PreviewPageErrorSchema,
+  PreviewPageStatusSchema,
+  PREVIEW_PAGE_STATUS_STRING_MAX,
+} from "./models/preview-page-status.js";
+export type {
+  PreviewPagePhase,
+  PreviewPageError,
+  PreviewPageStatus,
+} from "./models/preview-page-status.js";
+
+export {
   BROWSER_USE_FRAME_HEADER_BYTES,
   BROWSER_USE_MAX_MESSAGE_BYTES,
   BROWSER_USE_METHODS,
