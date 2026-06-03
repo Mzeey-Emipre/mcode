@@ -374,19 +374,28 @@ describe("provider-scoped commands", () => {
     expect(result.current.allCommands.map((c) => c.name)).toContain("goal");
   });
 
-  it("hides /goal for non-claude providers and when no provider is specified", async () => {
+  // Each provider case is its own test: useSlashCommand subscribes to the
+  // module-scoped skillsStore, so two hooks mounted at once with different
+  // providerIds would fight over the store's cached providerId, each treating
+  // the other's value as a provider change and reloading forever (an infinite
+  // render loop that OOMs the vitest worker). beforeEach resets the store, so
+  // separate tests each get a single hook driving the store.
+  it("hides /goal for non-claude providers", async () => {
     const ref = makeAnchor();
-    const { result: codex } = renderHook(() =>
+    const { result } = renderHook(() =>
       useSlashCommand({ anchorRef: ref, providerId: "codex" })
     );
-    await act(async () => { codex.current.onInputChange("/"); });
+    await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {});
-    expect(codex.current.allCommands.map((c) => c.name)).not.toContain("goal");
+    expect(result.current.allCommands.map((c) => c.name)).not.toContain("goal");
+  });
 
-    const { result: none } = renderHook(() => useSlashCommand({ anchorRef: ref }));
-    await act(async () => { none.current.onInputChange("/"); });
+  it("hides /goal when no provider is specified", async () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+    await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {});
-    expect(none.current.allCommands.map((c) => c.name)).not.toContain("goal");
+    expect(result.current.allCommands.map((c) => c.name)).not.toContain("goal");
   });
 });
 
