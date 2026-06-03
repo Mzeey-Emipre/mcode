@@ -28,6 +28,7 @@ import {
   trustMainProcessFileNavigation,
 } from "./preview-local-file.js";
 import { isMcodeWorkspacePreviewUrl } from "@mcode/contracts";
+import { onPreviewHidden, onPreviewVisible } from "./preview-discard-scheduler.js";
 
 /**
  * True when `input` looks like a bare host (e.g. `example.com`, `sub.x.io/path`,
@@ -79,6 +80,7 @@ export function registerNavigationHandlers(): void {
       bumpPerf("setPanelBoundsCalls");
       if (!payload.visible || !b || b.width < 4 || b.height < 4) {
         hidePreview(win, s);
+        onPreviewHidden(win, s);
         return;
       }
 
@@ -165,6 +167,7 @@ export function registerNavigationHandlers(): void {
         }
       }
       resetIdle(win, s);
+      onPreviewVisible(win, s);
     },
   );
 

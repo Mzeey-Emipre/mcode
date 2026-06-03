@@ -453,6 +453,9 @@ export function hidePreview(win: BrowserWindow, s: PreviewSession): void {
 export function parkPreview(win: BrowserWindow, s: PreviewSession): void {
   logger.info("Preview: view parked (destroyed)", { url: s.resumePreviewUrl });
   hidePreview(win, s);
+  // Inline to avoid a lifecycle <-> scheduler import cycle.
+  if (s.discardSweepTimer) { clearInterval(s.discardSweepTimer); s.discardSweepTimer = null; }
+  if (s.discardHiddenTimer) { clearTimeout(s.discardHiddenTimer); s.discardHiddenTimer = null; }
   // Save the active tab's URL before disposing so a later restore can reload.
   if (s.view && !s.view.webContents.isDestroyed()) {
     try {

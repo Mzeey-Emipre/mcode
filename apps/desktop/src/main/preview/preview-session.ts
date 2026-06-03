@@ -61,6 +61,10 @@ export interface ThreadTabSet {
 export interface PreviewSession {
   view: WebContentsView | null;
   idleTimer: NodeJS.Timeout | null;
+  /** Recurring sweep timer that evicts idle background tabs while the panel is visible. */
+  discardSweepTimer: NodeJS.Timeout | null;
+  /** One-shot timer scheduled when the panel hides; trims the warm set unless cancelled (hysteresis). */
+  discardHiddenTimer: NodeJS.Timeout | null;
   /** Last shell-reported bounds so navigate can attach the view before the next sync tick. */
   lastBounds: Bounds | null;
   /**
@@ -138,6 +142,8 @@ export function getSession(win: BrowserWindow): PreviewSession {
     s = {
       view: null,
       idleTimer: null,
+      discardSweepTimer: null,
+      discardHiddenTimer: null,
       lastBounds: null,
       resumePreviewUrl: null,
       scrollbarCssKey: null,
@@ -280,6 +286,22 @@ export function applyPageStatus(
   bumpPerf("stateEmitCalls");
   try {
     win.webContents.send("preview:page-status", next);
+  } catch {
+    bumpPerf("stateEmitSkips");
+  }
+}
+
+/**
+ * Sends the active-thread tab set to the renderer on `preview:tabs-updated`.
+ * Used by the discard scheduler so the tab bar reflects freshly-discarded
+ * (cold) tabs. Mirrors the emit in preview-tabs.ts but rebuilds from session
+ * state rather than a pre-synced set.
+ */
+export function emitTabsUpdated(win: BrowserWindow, s: PreviewSession, threadId: string): void {
+  if (win.isDestroyed()) return;
+  bumpPerf("stateEmitCalls");
+  try {
+    win.webContents.send("preview:tabs-updated", toBrowserTabSet(s, threadId));
   } catch {
     bumpPerf("stateEmitSkips");
   }
