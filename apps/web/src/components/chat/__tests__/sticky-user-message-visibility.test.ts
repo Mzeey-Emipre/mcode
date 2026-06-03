@@ -103,4 +103,61 @@ describe("shouldShowStickyUserMessage", () => {
       }),
     ).toBe(true);
   });
+
+  describe("virtualizer fallback hysteresis (no DOM node)", () => {
+    const scrollTop = 240;
+
+    function containerWithoutDom(): HTMLDivElement {
+      const container = document.createElement("div");
+      Object.defineProperty(container, "clientHeight", { value: 400 });
+      Object.defineProperty(container, "scrollTop", { value: scrollTop, writable: true });
+      return container;
+    }
+
+    /** Virtual row for item 0 whose bottom edge sits `bottomPx` below the viewport top. */
+    function virtualizerAtMessageBottom(bottomPx: number): {
+      getVirtualItems: () => ReadonlyArray<{ index: number; start: number; size: number }>;
+    } {
+      const rowEnd = scrollTop + bottomPx;
+      return {
+        getVirtualItems: () => [{ index: 0, start: rowEnd - 52, size: 52 }],
+      };
+    }
+
+    it("returns false when the virtual row is only partially clipped at the top", () => {
+      const container = containerWithoutDom();
+      const virtualizer = virtualizerAtMessageBottom(12);
+
+      expect(
+        shouldShowStickyUserMessage(container, "msg-1", 0, virtualizer, false),
+      ).toBe(false);
+    });
+
+    it("returns true when the virtual row bottom is at the hide-in-view boundary and sticky is already on", () => {
+      const container = containerWithoutDom();
+      const virtualizer = virtualizerAtMessageBottom(STICKY_HIDE_IN_VIEW_PX);
+
+      expect(
+        shouldShowStickyUserMessage(container, "msg-1", 0, virtualizer, true),
+      ).toBe(true);
+    });
+
+    it("returns false when the virtual row bottom is just past the hide-in-view boundary", () => {
+      const container = containerWithoutDom();
+      const virtualizer = virtualizerAtMessageBottom(STICKY_HIDE_IN_VIEW_PX + 1);
+
+      expect(
+        shouldShowStickyUserMessage(container, "msg-1", 0, virtualizer, true),
+      ).toBe(false);
+    });
+
+    it("returns true when the virtual row is fully above the show threshold", () => {
+      const container = containerWithoutDom();
+      const virtualizer = virtualizerAtMessageBottom(-(STICKY_SHOW_ABOVE_VIEWPORT_PX + 1));
+
+      expect(
+        shouldShowStickyUserMessage(container, "msg-1", 0, virtualizer, false),
+      ).toBe(true);
+    });
+  });
 });
