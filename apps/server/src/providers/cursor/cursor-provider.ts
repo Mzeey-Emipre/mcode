@@ -77,8 +77,10 @@ import {
 import { resolveCursorStickyInstructionBlob } from "./cursor-acp-sticky-instructions.js";
 import { buildCursorAskQuestionExtResponse } from "./cursor-acp-ask-question.js";
 import {
-  looksLikeUpstreamStreamCancel,
+  buildCursorAcpContinueAfterDisconnectPrompt,
+  looksLikeAcpConnectionClosed,
   isLikelyTransientCursorPromptFailure,
+  shouldSuppressCursorPromptError,
 } from "./cursor-acp-transient-retry.js";
 import {
   shouldEmitCursorSessionTrace,
@@ -531,6 +533,9 @@ export class CursorProvider
     });
 
     child.on("exit", () => {
+      const pooled = this.runtime.get(mcodeSessionId);
+      // After ACP respawn, the same sessionId maps to a new child; ignore stale exits.
+      if (pooled?.child !== child) return;
       this.cancelPendingForThread(mcodeSessionId);
       // The child died unexpectedly; ask the runtime to drop the pooled entry
       // (runs interrupt → close → hard kill of the already-dead PID, all no-ops
@@ -843,6 +848,51 @@ export class CursorProvider
     }
   }
 
+  /** Respawns `cursor-agent acp` after an unexpected disconnect and preserves turn pacing state. */
+  private async respawnCursorSessionAfterAcpClose(
+    dead: CursorAcpSessionEntry,
+  ): Promise<CursorAcpSessionEntry> {
+    const sessionId = dead.mcodeSessionId;
+    this.logAcpChildDisconnect(dead, "ACP connection closed");
+    await this.runtime.stop(sessionId);
+    const fresh = await this.runtime.acquire({
+      sessionId,
+      threadId: dead.threadId,
+      cwd: dead.cwd,
+      permissionMode: dead.permissionMode,
+      resumeFrom: this.sdkSessionIds.get(sessionId),
+    });
+    fresh.stickyHeavyInstructionsSent = dead.stickyHeavyInstructionsSent;
+    fresh.cursorPromptOrdinal = dead.cursorPromptOrdinal;
+    fresh.lastUsedAt = Date.now();
+    logger.info("Cursor ACP subprocess respawned after disconnect", {
+      threadId: fresh.threadId,
+      acpSessionId: this.sdkSessionIds.get(sessionId),
+      childPid: fresh.child.pid,
+    });
+    return fresh;
+  }
+
+  /** Logs child exit metadata when the ACP stdio stream closes mid-turn. */
+  private logAcpChildDisconnect(entry: CursorAcpSessionEntry, error: string): void {
+    const cursorCfg = this.settingsService.get().provider.cursor;
+    const stderrTail =
+      cursorCfg.verboseFailureLogs && entry.stderrTailLines.length > 0
+        ? entry.stderrTailLines.slice(-16)
+        : undefined;
+    logger.warn("Cursor ACP connection closed mid-turn", {
+      threadId: entry.threadId,
+      acpSessionId: entry.acpSessionId,
+      promptOrdinal: entry.cursorPromptOrdinal,
+      childPid: entry.child.pid,
+      childExitCode: entry.child.exitCode,
+      childSignalCode: entry.child.signalCode,
+      verboseFailureLogs: cursorCfg.verboseFailureLogs,
+      stderrTail,
+      error,
+    });
+  }
+
   private async runTurn(
     entry: CursorAcpSessionEntry,
     opts: {
@@ -854,58 +904,79 @@ export class CursorProvider
   ): Promise<void> {
     const { message, model, resume, attachments } = opts;
     const cursorCfg = this.settingsService.get().provider.cursor;
+    let currentEntry = entry;
+    let promptMessage = message;
+    let promptAttachments = attachments;
+    const originalUserMessage = message;
+    const originalAttachments = attachments;
+    let isContinueRetry = false;
+    let instructionMarkdown: string | undefined;
+    let instructionMarkdownReady = false;
     try {
-      await this.openLogicalSession(entry, resume);
-      await this.applyModel(entry, model);
-
-      entry.stderrTailLines.length = 0;
-
-      entry.cursorPromptOrdinal += 1;
+      currentEntry.cursorPromptOrdinal += 1;
       if (
         !cursorCfg.alwaysSendFullInstructions &&
         cursorCfg.fullPreambleEveryNTurns > 0 &&
-        entry.cursorPromptOrdinal % cursorCfg.fullPreambleEveryNTurns === 0
+        currentEntry.cursorPromptOrdinal % cursorCfg.fullPreambleEveryNTurns === 0
       ) {
-        entry.stickyHeavyInstructionsSent = false;
+        currentEntry.stickyHeavyInstructionsSent = false;
       }
-
-      const guidance = buildCursorAgentGuidanceMarkdown(entry.cwd);
-      const skillsBlock = formatCursorSkillsAndCommandsForPrompt(
-        this.skillService.list(entry.cwd, "cursor"),
-      );
-      const instructionParts = [guidance, skillsBlock].filter(
-        (s): s is string => typeof s === "string" && s.length > 0,
-      );
-      const combined =
-        instructionParts.length > 0 ? instructionParts.join("\n\n---\n\n") : undefined;
-
-      let instructionMarkdown: string | undefined;
-
-      if (cursorCfg.alwaysSendFullInstructions) {
-        instructionMarkdown = combined ?? readCursorUserInstructions();
-      } else {
-        const { instructionMarkdown: blob, markHeavyCommitted } = resolveCursorStickyInstructionBlob({
-          combinedGuidanceAndSkillsMarkdown: combined,
-          readFallbackAgents: readCursorUserInstructions,
-          stickyHeavyCommitted: entry.stickyHeavyInstructionsSent,
-        });
-        instructionMarkdown = blob;
-        if (markHeavyCommitted) {
-          entry.stickyHeavyInstructionsSent = true;
-        }
-      }
-
-      const blocks = buildCursorAcpPromptBlocks(message, attachments, instructionMarkdown);
 
       const maxAttempts = cursorCfg.retryTransientFailuresOnce ? 2 : 1;
       let promptResponse: Awaited<ReturnType<ClientSideConnection["prompt"]>>;
       let attempt = 0;
       for (;;) {
+        await this.openLogicalSession(currentEntry, resume);
+        await this.applyModel(currentEntry, model);
+        currentEntry.stderrTailLines.length = 0;
+
+        let blocks;
+        if (isContinueRetry) {
+          blocks = buildCursorAcpPromptBlocks(
+            promptMessage,
+            promptAttachments,
+            undefined,
+          );
+        } else {
+          if (!instructionMarkdownReady) {
+            const guidance = buildCursorAgentGuidanceMarkdown(currentEntry.cwd);
+            const skillsBlock = formatCursorSkillsAndCommandsForPrompt(
+              this.skillService.list(currentEntry.cwd, "cursor"),
+            );
+            const instructionParts = [guidance, skillsBlock].filter(
+              (s): s is string => typeof s === "string" && s.length > 0,
+            );
+            const combined =
+              instructionParts.length > 0 ? instructionParts.join("\n\n---\n\n") : undefined;
+
+            if (cursorCfg.alwaysSendFullInstructions) {
+              instructionMarkdown = combined ?? readCursorUserInstructions();
+            } else {
+              const { instructionMarkdown: blob, markHeavyCommitted } =
+                resolveCursorStickyInstructionBlob({
+                  combinedGuidanceAndSkillsMarkdown: combined,
+                  readFallbackAgents: readCursorUserInstructions,
+                  stickyHeavyCommitted: currentEntry.stickyHeavyInstructionsSent,
+                });
+              instructionMarkdown = blob;
+              if (markHeavyCommitted) {
+                currentEntry.stickyHeavyInstructionsSent = true;
+              }
+            }
+            instructionMarkdownReady = true;
+          }
+          blocks = buildCursorAcpPromptBlocks(
+            promptMessage,
+            promptAttachments,
+            instructionMarkdown,
+          );
+        }
+
         try {
           attempt += 1;
-          entry.activeTurnState = createCursorAcpTurnState();
-          promptResponse = await entry.connection.prompt({
-            sessionId: entry.acpSessionId,
+          currentEntry.activeTurnState = createCursorAcpTurnState();
+          promptResponse = await currentEntry.connection.prompt({
+            sessionId: currentEntry.acpSessionId,
             prompt: blocks,
           });
           break;
@@ -913,7 +984,7 @@ export class CursorProvider
           const raw = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);
           // Do not retry after explicit Stop; cancel-like errors are expected and a
           // second prompt would fight the user's abort.
-          if (entry.pendingUserStopAbort) {
+          if (currentEntry.pendingUserStopAbort) {
             throw attemptErr;
           }
           if (
@@ -923,19 +994,26 @@ export class CursorProvider
           ) {
             throw attemptErr;
           }
+          if (looksLikeAcpConnectionClosed(raw)) {
+            currentEntry = await this.respawnCursorSessionAfterAcpClose(currentEntry);
+            promptMessage = buildCursorAcpContinueAfterDisconnectPrompt(originalUserMessage);
+            promptAttachments = originalAttachments;
+            isContinueRetry = true;
+            continue;
+          }
           logger.warn("Cursor ACP prompt retry after transient CLI failure", {
-            threadId: entry.threadId,
+            threadId: currentEntry.threadId,
             attempt,
             error: raw,
           });
         }
       }
 
-      const text = resolveCursorAssistantMessageContent(entry.activeTurnState.accumulator);
+      const text = resolveCursorAssistantMessageContent(currentEntry.activeTurnState.accumulator);
       if (text.length > 0) {
         this.emit("event", {
           type: AgentEventType.Message,
-          threadId: entry.threadId,
+          threadId: currentEntry.threadId,
           content: text,
           tokens: null,
         } satisfies AgentEvent);
@@ -944,7 +1022,7 @@ export class CursorProvider
       const usage = promptResponse.usage;
       this.emit("event", {
         type: AgentEventType.TurnComplete,
-        threadId: entry.threadId,
+        threadId: currentEntry.threadId,
         reason: promptResponse.stopReason,
         costUsd: null,
         tokensIn: usage?.inputTokens ?? 0,
@@ -952,52 +1030,56 @@ export class CursorProvider
         providerId: "cursor",
       } satisfies AgentEvent);
 
-      this.emit("event", { type: AgentEventType.Ended, threadId: entry.threadId } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId: currentEntry.threadId } satisfies AgentEvent);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const userStoppedStream =
-        entry.pendingUserStopAbort && looksLikeUpstreamStreamCancel(errMsg);
+      const userStoppedStream = shouldSuppressCursorPromptError(errMsg, {
+        pendingUserStopAbort: currentEntry.pendingUserStopAbort,
+      });
       const stderrTail =
-        cursorCfg.verboseFailureLogs && entry.stderrTailLines.length > 0
-          ? entry.stderrTailLines.slice(-16)
+        cursorCfg.verboseFailureLogs && currentEntry.stderrTailLines.length > 0
+          ? currentEntry.stderrTailLines.slice(-16)
           : undefined;
       if (!userStoppedStream) {
         logger.error("Cursor ACP prompt failed", {
-          threadId: entry.threadId,
-          stickyHeavyCommitted: entry.stickyHeavyInstructionsSent,
-          promptOrdinal: entry.cursorPromptOrdinal,
-          acpSessionId: entry.acpSessionId,
+          threadId: currentEntry.threadId,
+          stickyHeavyCommitted: currentEntry.stickyHeavyInstructionsSent,
+          promptOrdinal: currentEntry.cursorPromptOrdinal,
+          acpSessionId: currentEntry.acpSessionId,
           verboseFailureLogs: cursorCfg.verboseFailureLogs,
+          childPid: currentEntry.child.pid,
+          childExitCode: currentEntry.child.exitCode,
+          childSignalCode: currentEntry.child.signalCode,
           stderrTail,
           error: errMsg,
         });
         this.emit("event", {
           type: AgentEventType.Error,
-          threadId: entry.threadId,
+          threadId: currentEntry.threadId,
           error: errMsg,
         } satisfies AgentEvent);
       } else {
-        logger.info("Cursor prompt ended after Stop (stream cancel)", {
-          threadId: entry.threadId,
+        logger.info("Cursor prompt ended after Stop (expected disconnect)", {
+          threadId: currentEntry.threadId,
           errorSample: errMsg.slice(0, 200),
         });
         const interrupted =
-          entry.activeTurnState?.accumulator !== undefined
-            ? resolveCursorAssistantMessageContent(entry.activeTurnState.accumulator).trim()
+          currentEntry.activeTurnState?.accumulator !== undefined
+            ? resolveCursorAssistantMessageContent(currentEntry.activeTurnState.accumulator).trim()
             : "";
         if (interrupted.length > 0) {
           this.emit("event", {
             type: AgentEventType.Message,
-            threadId: entry.threadId,
+            threadId: currentEntry.threadId,
             content: interrupted,
             tokens: null,
           } satisfies AgentEvent);
         }
       }
-      this.emit("event", { type: AgentEventType.Ended, threadId: entry.threadId } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId: currentEntry.threadId } satisfies AgentEvent);
     } finally {
-      entry.activeTurnState = null;
-      entry.pendingUserStopAbort = false;
+      currentEntry.activeTurnState = null;
+      currentEntry.pendingUserStopAbort = false;
     }
   }
 
