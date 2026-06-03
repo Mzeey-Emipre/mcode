@@ -105,18 +105,23 @@ async function injectPreviewBridge(page: Page): Promise<void> {
       capturePageContext: () =>
         Promise.resolve({ ok: false, error: "no-preview" } as const),
       releaseBrowserCaptureSpills: noop,
-      // Fire onDidNavigate synchronously on subscribe with a fake URL so the
+      // Fire onPageStatus synchronously on subscribe with a fake URL so the
       // panel's hasLoadedPage state flips to true. The capture / design
       // buttons are now gated on hasLoadedPage to avoid no-op clicks on an
       // empty preview, which would otherwise leave the click-based tests
       // (Design aria-pressed, Exit pill, dock rows) firing against disabled
       // buttons.
-      onDidNavigate: (cb: (p: { url: string; title: string; favicon?: string | null }) => void) => {
-        cb({ url: "https://example.com", title: "Example", favicon: null });
+      onPageStatus: (
+        cb: (s: {
+          url: string | null;
+          title: string | null;
+          favicon: string | null;
+          phase: "loading" | "loaded" | "error" | "discarded";
+        }) => void,
+      ) => {
+        cb({ url: "https://example.com", title: "Example", favicon: null, phase: "loaded" });
         return () => undefined;
       },
-      onLoadingState: unsub,
-      onDidUpdateFavicon: unsub,
       cancelCapture: () => {
         if (pickResolver) {
           const resolver = pickResolver;

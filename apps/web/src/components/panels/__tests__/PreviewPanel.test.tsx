@@ -85,9 +85,7 @@ describe("PreviewPanel — full panel state", () => {
         getNavigationState: vi
           .fn()
           .mockResolvedValue({ canGoBack: false, canGoForward: false }),
-        onDidNavigate: vi.fn().mockReturnValue(() => {}),
-        onDidUpdateFavicon: vi.fn().mockReturnValue(() => {}),
-        onLoadingState: vi.fn().mockReturnValue(() => {}),
+        onPageStatus: vi.fn().mockReturnValue(() => {}),
         cancelCapture: vi.fn().mockResolvedValue(undefined),
       },
     };

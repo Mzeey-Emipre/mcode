@@ -29,7 +29,7 @@ vi.mock("@/stores/workspaceStore", () => ({
   ),
 }));
 
-// Make useDiffStore.getState() available for the onDidNavigate handler.
+// Make useDiffStore.getState() available for the onPageStatus handler.
 import { useDiffStore } from "@/stores/diffStore";
 (useDiffStore as unknown as { getState: () => unknown }).getState = () => ({
   setPreviewUrlForThread: mockSetPreviewUrlForThread,
