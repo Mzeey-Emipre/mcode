@@ -141,6 +141,7 @@ vi.mock("node:fs/promises", async () => {
 
 import { BrowserWindow } from "electron";
 import { registerPreviewBrowserHandlers, disposePreviewForWindow } from "../preview/index.js";
+import { sessions } from "../preview/preview-session.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -961,6 +962,65 @@ describe("preview-browser", () => {
         tabId: "",
       });
       expect(r2.ok).toBe(false);
+    });
+  });
+
+  describe("memory-saver hysteresis (#454 guard)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("cancels the scheduled hidden discard when the panel reappears within the window", async () => {
+      const win = createWindow();
+
+      // Create 3 warm tabs on separate threads at T=0 so they are old enough
+      // (> hiddenIdleMs = 60s) to be eligible for discard during the hidden sweep.
+      // Each thread switch keeps the previous thread's WebContentsView warm (alive)
+      // but unmounts it, so collectWarmTabs sees 4 live views total.
+      await showPreview(win, { threadId: "hys-t1" });
+      await showPreview(win, { threadId: "hys-t2" });
+      await showPreview(win, { threadId: "hys-t3" });
+
+      // Advance time past hiddenIdleMs so the 3 idle tabs become overflow-eligible.
+      await vi.advanceTimersByTimeAsync(65_000);
+
+      // Bring in a 4th thread (MRU; its lastActiveAt = now = T+65s). This thread
+      // is what will be "active" at hide time.
+      await showPreview(win, { threadId: "hys-t4" });
+      expect(createdViews.length).toBeGreaterThanOrEqual(4);
+
+      // Hide -> schedules a hidden discard timer (default hiddenIdleMs = 60s).
+      // With 4 warm tabs and maxWarm=3, the oldest (one of t1/t2/t3) sits in the
+      // overflow slot and would be discarded when the timer fires.
+      await hidePreview(win, { threadId: "hys-t4" });
+
+      // The synchronous timer handle must be set immediately after hiding; this is
+      // the only state we can inspect deterministically (the discard callback is a
+      // floating Promise and cannot be reliably awaited in a fake-timer environment).
+      const s = sessions.get(win.id)!;
+      expect(s.discardHiddenTimer).not.toBeNull();
+
+      // Re-show before the timer elapses -> onPreviewVisible cancels discardHiddenTimer.
+      await showPreview(win, { threadId: "hys-t4" });
+
+      // Primary discriminating assertion: hysteresis guard set the handle to null
+      // synchronously. Without the re-show call this would still be non-null and
+      // the timer would fire after hiddenIdleMs, discarding the overflow tab.
+      expect(s.discardHiddenTimer).toBeNull();
+
+      // Advance well past hiddenIdleMs; the cancelled timer must not fire.
+      await vi.advanceTimersByTimeAsync(120_000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      for (const v of createdViews) {
+        expect(v.webContents.close).not.toHaveBeenCalled();
+      }
     });
   });
 
