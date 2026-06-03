@@ -110,6 +110,7 @@ export function registerWebviewAdoptHandlers(): void {
           resumeUrl: wc.getURL() || null,
           title: wc.getTitle() || null,
           faviconUrl: null,
+          lastActiveAt: Date.now(),
         };
         set.tabs.push(tab);
       }

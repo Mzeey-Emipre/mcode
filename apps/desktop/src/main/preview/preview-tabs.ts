@@ -68,6 +68,7 @@ function activateTabView(
   s: PreviewSession,
   tab: TabState,
 ): void {
+  tab.lastActiveAt = Date.now();
   // Unmount whatever's currently mounted for this session (the prior active
   // tab's view). Keep its webContents alive so switching back is instant.
   if (s.view && s.view !== tab.view) {
@@ -165,6 +166,7 @@ export function registerTabHandlers(): void {
         resumeUrl: null,
         title: null,
         faviconUrl: null,
+        lastActiveAt: Date.now(),
       });
 
       if (activate && tid === s.lastPreviewThreadId) {
@@ -256,6 +258,7 @@ export function registerTabHandlers(): void {
           resumeUrl: null,
           title: null,
           faviconUrl: null,
+          lastActiveAt: Date.now(),
         };
         set.tabs.push(fallback);
         set.activeTabId = fallbackId;

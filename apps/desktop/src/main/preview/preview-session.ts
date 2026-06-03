@@ -43,6 +43,8 @@ export interface TabState {
   resumeUrl: string | null;
   title: string | null;
   faviconUrl: string | null;
+  /** Epoch ms when this tab was last activated. Drives memory-saver LRU ordering (ADR 0002). */
+  lastActiveAt: number;
 }
 
 /** Per-thread tab set: an ordered list plus the id of the mounted tab. */
@@ -176,6 +178,7 @@ export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadT
       resumeUrl: isActiveThread ? s.resumePreviewUrl : null,
       title: null,
       faviconUrl: isActiveThread ? (s.lastFavicons[0] ?? null) : null,
+      lastActiveAt: Date.now(),
     };
     set = { threadId, tabs: [firstTab], activeTabId: tabId };
     s.tabsByThread.set(threadId, set);
@@ -198,6 +201,7 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
       resumeUrl: null,
       title: null,
       faviconUrl: null,
+      lastActiveAt: Date.now(),
     };
     set.tabs.push(tab);
     set.activeTabId = id;
