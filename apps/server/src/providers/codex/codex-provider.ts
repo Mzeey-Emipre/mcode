@@ -49,10 +49,11 @@ import type { TurnInputPart, CodexNotification, CodexTurnOptions, ReasoningEffor
  * active streams and tool output keep the turn alive; only a fully silent
  * stretch trips it. Set to 60s (matching Copilot's `COMPLETE_TIMEOUT_MS`) so a
  * stalled upstream turn — where `turn/completed` never arrives and the session
- * stays `isBusy`, exempt from idle eviction — surfaces a retryable error in
- * seconds instead of leaving the UI stuck "thinking" for half an hour. The
- * trade-off: a tool that runs silently (no output deltas) for longer than this
- * window will also trip it.
+ * stays `isBusy`, exempt from idle eviction — unblocks the UI in seconds instead
+ * of leaving it stuck "thinking" for half an hour. The trade-off: a tool that
+ * runs silently (no output deltas) for longer than this window will also trip
+ * it; that case is logged and suppressed from the chat UI (see
+ * {@link CodexTurnIdleTimeoutError}).
  */
 const TURN_TIMEOUT_MS = 60 * 1000;
 
@@ -61,6 +62,16 @@ class CodexTurnSupersededError extends Error {
   constructor() {
     super("Codex turn superseded");
     this.name = "CodexTurnSupersededError";
+  }
+}
+
+/** Internal: idle notification watchdog fired; ends the turn without a user error. */
+class CodexTurnIdleTimeoutError extends Error {
+  constructor() {
+    super(
+      `Codex turn timed out after ${TURN_TIMEOUT_MS / 1000}s with no app-server notifications`,
+    );
+    this.name = "CodexTurnIdleTimeoutError";
   }
 }
 
@@ -523,7 +534,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
           clearTimeout(activityTimer);
           activityTimer = setTimeout(() => {
             cleanup();
-            reject(new Error(`Codex turn timed out after ${TURN_TIMEOUT_MS / 1000}s with no app-server notifications`));
+            reject(new CodexTurnIdleTimeoutError());
           }, TURN_TIMEOUT_MS);
         };
 
@@ -576,6 +587,13 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
       });
     } catch (e: unknown) {
       if (e instanceof CodexTurnSupersededError) return;
+      if (e instanceof CodexTurnIdleTimeoutError) {
+        logger.debug("Codex turn idle timeout (suppressed from UI)", {
+          sessionId,
+          timeoutMs: TURN_TIMEOUT_MS,
+        });
+        return;
+      }
       if (!serverDied && seq === entry.runTurnSeq) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         logger.error("Codex turn failed", { sessionId, error: errorMessage });
