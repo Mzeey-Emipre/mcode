@@ -1309,8 +1309,16 @@ export class CursorProvider
       );
     }
 
+    // Dispose exactly once: an abort during loadSession/prompt and the finally
+    // block both reach for teardown, so the first caller owns it and the other
+    // awaits the same promise rather than racing a second kill.
+    let disposal: Promise<void> | null = null;
+    const disposeOnce = (): Promise<void> => {
+      if (!disposal) disposal = Promise.resolve(transport.dispose());
+      return disposal;
+    };
     const onAbort = (): void => {
-      void transport.dispose();
+      void disposeOnce();
     };
     abortSignal?.addEventListener("abort", onAbort, { once: true });
     try {
@@ -1334,7 +1342,7 @@ export class CursorProvider
       return text;
     } finally {
       abortSignal?.removeEventListener("abort", onAbort);
-      await transport.dispose();
+      await disposeOnce();
     }
   }
 
