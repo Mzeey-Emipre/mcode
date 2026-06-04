@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-04T00:00:00.000Z",
+  "title": "Design System: Mcode",
+  "extensions": {
+    "colorMeta": {
+      "amber-primary": {
+        "role": "primary",
+        "displayName": "Filament Amber",
+        "canonical": "oklch(0.72 0.17 75)",
+        "tonalRamp": [
+          "oklch(0.20 0.06 75)",
+          "oklch(0.30 0.09 75)",
+          "oklch(0.40 0.12 75)",
+          "oklch(0.52 0.17 75)",
+          "oklch(0.62 0.17 75)",
+          "oklch(0.72 0.17 75)",
+          "oklch(0.82 0.12 75)",
+          "oklch(0.92 0.06 75)"
+        ]
+      },
+      "patina-sage": {
+        "role": "tertiary",
+        "displayName": "Patina Sage",
+        "canonical": "oklch(0.78 0.13 145)",
+        "tonalRamp": [
+          "oklch(0.26 0.035 145)",
+          "oklch(0.36 0.07 145)",
+          "oklch(0.48 0.14 145)",
+          "oklch(0.58 0.14 145)",
+          "oklch(0.68 0.13 145)",
+          "oklch(0.78 0.13 145)",
+          "oklch(0.86 0.09 145)",
+          "oklch(0.94 0.04 145)"
+        ]
+      },
+      "oxide-clay": {
+        "role": "tertiary",
+        "displayName": "Oxide Clay",
+        "canonical": "oklch(0.78 0.13 25)",
+        "tonalRamp": [
+          "oklch(0.26 0.045 25)",
+          "oklch(0.38 0.09 25)",
+          "oklch(0.48 0.15 25)",
+          "oklch(0.58 0.16 25)",
+          "oklch(0.68 0.15 25)",
+          "oklch(0.78 0.13 25)",
+          "oklch(0.86 0.09 25)",
+          "oklch(0.94 0.04 25)"
+        ]
+      },
+      "slate-bg": {
+        "role": "neutral",
+        "displayName": "Cool Slate",
+        "canonical": "oklch(0.16 0.005 260)",
+        "tonalRamp": [
+          "oklch(0.12 0.005 260)",
+          "oklch(0.16 0.005 260)",
+          "oklch(0.19 0.005 260)",
+          "oklch(0.22 0.005 260)",
+          "oklch(0.24 0.005 260)",
+          "oklch(0.28 0.005 260)",
+          "oklch(0.65 0.005 260)",
+          "oklch(0.93 0 0)"
+        ]
+      },
+      "warm-neutral": {
+        "role": "neutral",
+        "displayName": "Warm Off-White",
+        "canonical": "oklch(0.99 0.005 75)",
+        "tonalRamp": [
+          "oklch(0.18 0.005 75)",
+          "oklch(0.50 0.005 75)",
+          "oklch(0.90 0.005 75)",
+          "oklch(0.945 0.008 75)",
+          "oklch(0.955 0.005 75)",
+          "oklch(0.985 0.005 75)",
+          "oklch(0.99 0.005 75)",
+          "oklch(0.995 0.003 75)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "Panel and dialog titles. The largest type in the app (~1rem); no hero scale above it." },
+      "body": { "displayName": "Body", "purpose": "Agent prose and the Whisper narrative timeline, Public Sans 14px, capped at 65-75ch." },
+      "heading": { "displayName": "Heading / Eyebrow", "purpose": "Mono small-caps section headings inside panels, used sparingly as structure." },
+      "label": { "displayName": "Label", "purpose": "Mono small-caps status labels and empty-state captions." },
+      "mono": { "displayName": "Mono Data", "purpose": "Machine facts: SHAs, counts, timestamps, durations. Always tabular-nums for numerals." }
+    },
+    "shadows": [
+      { "name": "focus-ring", "value": "0 0 0 3px oklch(0.62 0.19 264 / 0.2)", "purpose": "Cool-ring focus affordance on inputs and buttons." },
+      { "name": "focus-ring-offset", "value": "0 0 0 2px var(--background), 0 0 0 4px var(--ring)", "purpose": "Keyboard focus on dense adjacent controls where a flat ring would bleed into the neighbor." },
+      { "name": "amber-edge-glow", "value": "-2px 0 8px -1px oklch(0.72 0.17 75 / 0.35)", "purpose": "Single deliberate amber edge cue at a panel boundary. Not a card style." }
+    ],
+    "motion": [
+      { "name": "ease-out-quart", "value": "cubic-bezier(0.25, 1, 0.5, 1)", "purpose": "Primary UI easing: wizard reveals, tile and nav entrances, question transitions." },
+      { "name": "ease-out-quint", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Narrative timeline rows: thought, delta, and row-in settles." },
+      { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Material-standard easing for infinite/looping states (loading shimmer, pulse)." }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single primary action. Filament Amber fill, used once per surface.",
+      "html": "<button class=\"ds-btn-primary\">Run agent</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; height: 2rem; padding: 0 0.625rem; font-family: 'Public Sans', ui-sans-serif, system-ui, sans-serif; font-size: 0.875rem; font-weight: 500; color: oklch(0.98 0 0); background: oklch(0.72 0.17 75); border: 1px solid transparent; border-radius: 0.625rem; cursor: pointer; transition: background 0.15s, transform 0.1s; } .ds-btn-primary:hover { background: oklch(0.72 0.17 75 / 0.8); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: none; border-color: oklch(0.62 0.19 264); box-shadow: 0 0 0 3px oklch(0.62 0.19 264 / 0.5); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "The toolbar default. Most buttons are ghost, not primary.",
+      "html": "<button class=\"ds-btn-ghost\">Fork thread</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; height: 2rem; padding: 0 0.625rem; font-family: 'Public Sans', ui-sans-serif, system-ui, sans-serif; font-size: 0.875rem; font-weight: 500; color: oklch(0.93 0 0); background: transparent; border: 1px solid transparent; border-radius: 0.625rem; cursor: pointer; transition: background 0.15s, transform 0.1s; } .ds-btn-ghost:hover { background: oklch(0.22 0.005 260); } .ds-btn-ghost:active { transform: translateY(1px); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 3px oklch(0.62 0.19 264 / 0.5); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Slate-accent well, no heavy stroke; tone separates it from the panel.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Filter threads\" />",
+      "css": ".ds-input { height: 2rem; padding: 0 0.625rem; font-family: 'Public Sans', ui-sans-serif, system-ui, sans-serif; font-size: 0.875rem; color: oklch(0.93 0 0); background: oklch(0.24 0.005 260); border: 1px solid oklch(0.28 0.005 260); border-radius: 0.625rem; transition: border-color 0.15s, box-shadow 0.15s; } .ds-input::placeholder { color: oklch(0.65 0.005 260); } .ds-input:focus-visible { outline: none; border-color: oklch(0.62 0.19 264); box-shadow: 0 0 0 3px oklch(0.62 0.19 264 / 0.2); }"
+    },
+    {
+      "name": "Status Dot",
+      "kind": "custom",
+      "refersTo": "status-dot",
+      "description": "The smallest, most important component. Color is the entire status message; running pulses amber.",
+      "html": "<span class=\"ds-dot ds-dot--running\" aria-label=\"Running\"></span>",
+      "css": ".ds-dot { display: inline-block; width: 6px; height: 6px; border-radius: 9999px; } .ds-dot--running { background: oklch(0.72 0.17 75); animation: ds-dot-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; } .ds-dot--idle { background: oklch(0.78 0.13 145); } .ds-dot--errored { background: oklch(0.78 0.13 25); } @keyframes ds-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } } @media (prefers-reduced-motion: reduce) { .ds-dot--running { animation: none; } }"
+    },
+    {
+      "name": "Sidebar Thread Row",
+      "kind": "nav",
+      "refersTo": "sidebar-thread-row",
+      "description": "The row the user scans first. Selection is a full row-fill, never a side-stripe. Indentation alone carries depth.",
+      "html": "<div class=\"ds-thread-row ds-thread-row--selected\"><span class=\"ds-dot ds-dot--running\"></span><span class=\"ds-thread-label\">feat/memory-saver-tabs</span><span class=\"ds-thread-meta\">3</span></div>",
+      "css": ".ds-thread-row { display: flex; align-items: center; gap: 0.5rem; height: 1.75rem; padding: 0 0.5rem; border-radius: 0.5rem; color: oklch(0.93 0 0); cursor: pointer; transition: background 0.12s; } .ds-thread-row:hover { background: oklch(0.22 0.005 260); } .ds-thread-row--selected { background: oklch(0.24 0.005 260); } .ds-thread-label { flex: 1; min-width: 0; font-family: 'Public Sans', ui-sans-serif, system-ui, sans-serif; font-size: 0.8125rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-thread-meta { font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace; font-size: 0.6875rem; font-variant-numeric: tabular-nums; color: oklch(0.65 0.005 260); }"
+    },
+    {
+      "name": "Floating Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Lifted off the background by tone, not shadow. No resting drop shadow, no border by default.",
+      "html": "<section class=\"ds-panel\"><h3 class=\"ds-panel-title\">DIFF</h3><p class=\"ds-panel-body\">12 files changed</p></section>",
+      "css": ".ds-panel { padding: 0.75rem; background: oklch(0.19 0.005 260); border-radius: 0.875rem; color: oklch(0.93 0 0); } .ds-panel-title { margin: 0 0 0.5rem; font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: oklch(0.65 0.005 260); } .ds-panel-body { margin: 0; font-family: 'Public Sans', ui-sans-serif, system-ui, sans-serif; font-size: 0.875rem; line-height: 1.55; }"
+    },
+    {
+      "name": "Empty State",
+      "kind": "custom",
+      "refersTo": "empty-state",
+      "description": "A single glyph over a small-caps mono caption. No illustration, no hand-holding CTA.",
+      "html": "<div class=\"ds-empty\"><span class=\"ds-empty-glyph\">\u25cc</span><span class=\"ds-empty-caption\">No threads</span></div>",
+      "css": ".ds-empty { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 2rem; } .ds-empty-glyph { font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace; font-size: 28px; color: oklch(0.93 0 0 / 0.15); } .ds-empty-caption { font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace; font-size: 0.65rem; letter-spacing: 0.18em; text-transform: uppercase; color: oklch(0.93 0 0 / 0.4); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Workbench",
+    "overview": "Mcode is the surface a developer keeps open all evening on a second monitor while five agents run in parallel. It is not a destination; it is an instrument panel that sits next to the editor, the terminal, and the browser, built for the glance rather than the read. The register is editorial and typeset, closer to a code editor or terminal than a SaaS dashboard; density is a feature. Color is rationed: a warm amber primary on a matte cool-slate canvas, with sage for additions and clay for removals. Dark is the default canvas because the product is used in the evening; a warm light counterpart exists for daytime.",
+    "keyCharacteristics": [
+      "Glance-first: status communicated by tinted dots and small monochrome glyphs, never paragraphs.",
+      "Dark-primary, warm-amber accent on cool-slate surfaces; light theme is the warm-neutral counterpart.",
+      "Tonal lift instead of divider lines: panels float a few percent off the page.",
+      "Monospace carries machine facts (SHAs, counts, timestamps, status labels); Public Sans carries human prose.",
+      "Keyboard-first: shortcuts are first-class, not hidden.",
+      "Information-dense by intent: tight, tabular, no decorative padding."
+    ],
+    "rules": [
+      { "name": "The One Lamp Rule", "body": "Filament Amber is the only brand color. It appears on a small fraction of any screen (the active row, the primary action, the live dot). Its rarity is what makes a glance land.", "section": "colors" },
+      { "name": "The Semantic-Only Sage/Clay Rule", "body": "Sage and clay are never decoration. They mean addition/good and removal/error.", "section": "colors" },
+      { "name": "The Tinted-Neutral Rule", "body": "Neutrals are never pure gray. Dark surfaces carry 0.005 chroma toward cool hue 260; light surfaces 0.005 toward warm hue 75.", "section": "colors" },
+      { "name": "The Mono-Is-Machine Rule", "body": "Monospace marks machine-authored facts only. Counts and timestamps additionally take tabular-nums.", "section": "typography" },
+      { "name": "The No-Hero Rule", "body": "This is an app, not a landing page. Type tops out near 1rem; hierarchy comes from weight and mono/sans contrast, not size.", "section": "typography" },
+      { "name": "The Tonal-Lift Rule", "body": "Separation between surfaces is a step on the lightness ramp, not a line. A divider line is a failure of the tonal system.", "section": "elevation" },
+      { "name": "The Shadow-Is-State Rule", "body": "Surfaces are flat at rest. A shadow appears only on focus or as a one-off boundary cue.", "section": "elevation" },
+      { "name": "The One Next-Step Rule", "body": "Each state elevates exactly one primary next action, in amber. Everything else stays a quiet ghost. Never two competing primaries.", "section": "components" },
+      { "name": "The Curated-Not-Clever Rule", "body": "The next step is a fixed function of state, the same every time. It does not learn, reorder, or guess. Predictability is the feature.", "section": "components" }
+    ],
+    "dos": [
+      "Do ration Filament Amber. One accent, small footprint, reserved for the active row, the primary action, and live indicators.",
+      "Do carry separation with tonal lift; step a surface along the lightness ramp before adding a line.",
+      "Do set SHAs, counts, timestamps, and status labels in mono, with tabular-nums for any numerals.",
+      "Do use full row-fill (bg-accent) for selection, and indentation alone for tree depth.",
+      "Do write technical copy: 'Errored', 'Idle', 'Empty'.",
+      "Do give every animation a prefers-reduced-motion alternative, and reuse the existing wizard-* and narrative-* curves.",
+      "Do keep type capped near 1rem; build hierarchy from weight and mono/sans contrast.",
+      "Do elevate exactly one next-step per state in amber, bound to the Tab accept key, and auto-advance only single-outcome transitions."
+    ],
+    "donts": [
+      "Don't use border-left or border-right greater than 1px as a colored accent stripe on rows, cards, callouts, or alerts.",
+      "Don't add nested guide rails for tree indentation. Indentation alone.",
+      "Don't use gradient text (background-clip: text over a gradient). Solid colors only.",
+      "Don't use glassmorphism, decorative glow borders, or resting drop shadows on cards.",
+      "Don't introduce a second brand accent, or use green/red for anything other than added-or-good / removed-or-errored.",
+      "Don't soften copy into consumer language, add emoji decoration, or use colorful status chips where a tinted dot suffices.",
+      "Don't use raw Tailwind state colors (bg-yellow-500, bg-green-500). Use the tokenized diff/status colors.",
+      "Don't pad with marketing whitespace or build a hero-metric layout.",
+      "Don't show two competing primary next-steps, auto-advance a transition with a real choice, or let the next-step suggestion learn or reorder itself."
+    ]
+  }
+}
