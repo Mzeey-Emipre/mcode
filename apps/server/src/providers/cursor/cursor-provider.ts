@@ -32,7 +32,8 @@ import { MessageRepo } from "../../repositories/message-repo.js";
 import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
-import { MutatingForker } from "../../services/handoff/session-forker.js";
+import { CleanForker } from "../../services/handoff/session-forker.js";
+import { killProcessTree } from "../../services/process-kill.js";
 import {
   AgentEventType,
   CURSOR_STATIC_MODEL_FALLBACK,
@@ -92,6 +93,40 @@ import { extractCursorCreatePlanMarkdown } from "./cursor-create-plan.js";
 
 const CURSOR_STDERR_TAIL_MAX = 48;
 
+/**
+ * Wrap a message as a transient (ETIMEDOUT) error. `classifyProviderError` maps
+ * ETIMEDOUT to the "transient" bucket, so the handoff pipeline falls cleanly to
+ * the deterministic path (D) instead of treating a missing/unresumable session
+ * as a permanent failure.
+ */
+function transientHandoffError(message: string): Error & { code: string } {
+  const err = new Error(message) as Error & { code: string };
+  err.code = "ETIMEDOUT";
+  return err;
+}
+
+/**
+ * Minimal transport surface the clean side-channel needs from a throwaway ACP
+ * connection: reconstruct the parent session, run one prompt, then dispose. The
+ * assistant text is read off the local accumulator, so neither return value is
+ * inspected here.
+ */
+interface CursorSideChannelTransport {
+  loadSession(args: { cwd: string; mcpServers: never[]; sessionId: string }): Promise<unknown>;
+  prompt(args: { sessionId: string; prompt: { type: "text"; text: string }[] }): Promise<unknown>;
+  dispose(): Promise<void> | void;
+}
+
+/**
+ * Factory that opens a throwaway ACP transport wired to a non-emitting client.
+ * Defaulted to the real `cursor-agent acp` spawn and overridable in tests so the
+ * clean-fork invariants can be asserted without a live subprocess.
+ */
+type CursorSideChannelConnector = (args: {
+  cwd: string;
+  client: Client;
+}) => Promise<CursorSideChannelTransport>;
+
 function cursorCliProbeBinaries(settings: Settings): string[] {
   const configured = settings.provider.cli.cursor?.trim();
   return configured ? [configured] : [getCatalogEntry("cursor").cliBinary, "agent"];
@@ -147,10 +182,18 @@ export class CursorProvider
 {
   readonly id: ProviderId = "cursor";
   readonly supportsCompletion = false;
-  readonly sessionForkOnResume = "mutating" as const;
+  readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 4_000;
-  /** Path A forker; calls this provider's runHiddenTurn on the parent session. */
-  readonly forker: SessionForker = new MutatingForker(this);
+  /** Path B forker; calls this provider's runSideChannelQuery on a forked copy of the parent session. */
+  readonly forker: SessionForker = new CleanForker(this);
+
+  /**
+   * Opens the throwaway ACP transport for {@link runSideChannelQuery}. Defaults
+   * to the real subprocess spawn; tests override it to assert the clean-fork
+   * invariants without launching `cursor-agent`.
+   */
+  private sideChannelConnector: CursorSideChannelConnector = (args) =>
+    this.createSideChannelTransport(args);
 
   /** Owns the session pool, idle eviction (with busy guard), and JobObject/kill. */
   private readonly runtime: SessionRuntime<CursorSessionState>;
@@ -543,6 +586,17 @@ export class CursorProvider
       void this.runtime.stop(mcodeSessionId);
     });
 
+    await this.acpHandshake(connection, threadId);
+
+    return entry as CursorAcpSessionEntry;
+  }
+
+  /**
+   * Runs the ACP `initialize` handshake and a best-effort `authenticate` on a
+   * fresh connection. Shared by the pooled session spawn and the throwaway
+   * side-channel transport.
+   */
+  private async acpHandshake(connection: ClientSideConnection, threadId: string): Promise<void> {
     const initResult = await connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
       clientInfo: { name: "mcode", title: "Mcode", version: "0.0.1" },
@@ -562,8 +616,6 @@ export class CursorProvider
         });
       });
     }
-
-    return entry as CursorAcpSessionEntry;
   }
 
   private buildAcpClient(entry: CursorAcpSessionEntry): Client {
@@ -1183,5 +1235,177 @@ export class CursorProvider
     } finally {
       entry.activeTurnState = null;
     }
+  }
+
+  /**
+   * Clean side-channel handoff query (path B). Reconstructs the parent thread's
+   * persisted Cursor session into a throwaway ACP connection, runs the summary
+   * prompt against that fork, and returns the assistant text. It writes nothing
+   * to the parent thread's `messages` table and emits no provider events, so the
+   * canonical session is left exactly as it was. The throwaway subprocess is
+   * killed before returning.
+   *
+   * Because loading the same session id into a second connection branches the
+   * conversation rather than advancing the canonical server-side session, the
+   * parent is never mutated — this is the primitive that retires the path-A
+   * hidden-turn dance ({@link runHiddenTurn}).
+   *
+   * Falls back to a transient (path-D) error when there is no persisted session
+   * to reconstruct, the load fails, or the fork produces no text — the pipeline
+   * then builds a deterministic handoff instead of mutating the parent.
+   * `conversationHistory` (the sessionless B-prime body Claude uses) is not
+   * consumed here: the slice's contract is a clean reconstruction of the
+   * persisted session, so a missing/unresumable session degrades to path D.
+   */
+  async runSideChannelQuery(args: {
+    parentThreadId: string;
+    parentSdkSessionId: string;
+    prompt: string;
+    abortSignal?: AbortSignal;
+    conversationHistory?: string;
+    cwd: string;
+  }): Promise<string> {
+    const { parentThreadId, parentSdkSessionId, prompt, abortSignal, cwd } = args;
+    void args.conversationHistory; // sessionless B-prime fallback is out of scope for this slice.
+
+    if (!parentSdkSessionId) {
+      throw transientHandoffError(
+        `No persisted Cursor session for parent thread ${parentThreadId}; cannot run clean side-channel query`,
+      );
+    }
+    if (abortSignal?.aborted) {
+      throw transientHandoffError("Cursor side-channel query aborted before start");
+    }
+
+    // Populated from session updates only; never emitted, so the parent thread
+    // gains no rows and the UI timeline sees nothing.
+    const turnState = createCursorAcpTurnState();
+    const todoSnapshot = createCursorTodoSnapshot();
+    const sideChannelThreadId = `sidechannel-${randomUUID()}`;
+
+    const client: Client = {
+      // A summary query needs no tools, and a throwaway side-channel must never
+      // mutate the user's workspace; deny every permission request.
+      requestPermission: async () => ({ outcome: { outcome: "cancelled" } }),
+      sessionUpdate: async (params: SessionNotification) => {
+        if (params.sessionId !== parentSdkSessionId) return;
+        // Map for the accumulator side effect; discard the events (no emission).
+        mapCursorAcpSessionNotification(params, sideChannelThreadId, turnState, todoSnapshot);
+      },
+      readTextFile: async (r) => ({ content: this.safeReadWorkspaceFile(cwd, r.path) }),
+      writeTextFile: async () => {
+        throw new Error("Cursor side-channel is read-only");
+      },
+      extMethod: async () => ({}),
+      extNotification: async () => {},
+    };
+
+    let transport: CursorSideChannelTransport;
+    try {
+      transport = await this.sideChannelConnector({ cwd, client });
+    } catch (err) {
+      throw transientHandoffError(
+        `Failed to open Cursor side-channel connection: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    const onAbort = (): void => {
+      void transport.dispose();
+    };
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      try {
+        await transport.loadSession({ cwd, mcpServers: [], sessionId: parentSdkSessionId });
+      } catch (err) {
+        throw transientHandoffError(
+          `Cursor side-channel could not reconstruct parent session ${parentSdkSessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      await transport.prompt({
+        sessionId: parentSdkSessionId,
+        prompt: [{ type: "text", text: prompt }],
+      });
+
+      const text = resolveCursorAssistantMessageContent(turnState.accumulator).trim();
+      if (!text) {
+        throw transientHandoffError("Cursor side-channel query returned empty output");
+      }
+      return text;
+    } finally {
+      abortSignal?.removeEventListener("abort", onAbort);
+      await transport.dispose();
+    }
+  }
+
+  /**
+   * Default {@link sideChannelConnector}: spawns a fresh `cursor-agent acp`
+   * subprocess, runs the ACP handshake, and returns a transport that wraps the
+   * connection plus a process-tree kill on dispose. The subprocess is never
+   * registered with the session pool, so it cannot disturb the parent thread's
+   * pooled session.
+   */
+  private async createSideChannelTransport(args: {
+    cwd: string;
+    client: Client;
+  }): Promise<CursorSideChannelTransport> {
+    const { cwd, client } = args;
+    const settings = this.settingsService.get();
+    const cliCandidates = cursorCliProbeBinaries(settings);
+
+    let child: ChildProcess | null = null;
+    let lastErr: unknown = null;
+    for (const cliPath of cliCandidates) {
+      try {
+        const candidate = spawn(cliPath, buildCursorAcpArgs({ permissionMode: "default" }), {
+          stdio: ["pipe", "pipe", "pipe"],
+          cwd,
+          shell: process.platform === "win32",
+          env: this.envService.getEnv(),
+        });
+        if (!candidate.stdin || !candidate.stdout) {
+          throw new Error("Failed to spawn cursor-agent: stdio pipes unavailable");
+        }
+        child = candidate;
+        break;
+      } catch (e) {
+        lastErr = e;
+        const m = e instanceof Error ? e.message : String(e);
+        if (/Failed to spawn cursor-agent/i.test(m)) continue;
+        break;
+      }
+    }
+    if (!child?.stdin || !child.stdout) {
+      throw lastErr instanceof Error
+        ? lastErr
+        : new Error(String(lastErr ?? "Failed to spawn cursor-agent (side-channel)"));
+    }
+
+    // Read the pipes off `child` directly: the guard above narrows
+    // `child.stdin`/`child.stdout` on that exact reference, a narrowing that
+    // would not survive being aliased through another binding.
+    const out = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
+    const inp = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
+    const spawned = child;
+    const stream = ndJsonStream(out, inp);
+    const connection = new ClientSideConnection(() => client, stream);
+    await this.acpHandshake(connection, "cursor-side-channel");
+
+    return {
+      loadSession: (a) => connection.loadSession(a),
+      prompt: (a) => connection.prompt(a),
+      dispose: async () => {
+        try {
+          if (spawned.pid != null) await killProcessTree(spawned.pid);
+        } catch {
+          /* best-effort: the subprocess may already be gone */
+        }
+        try {
+          spawned.kill();
+        } catch {
+          /* best-effort: the subprocess may already be gone */
+        }
+      },
+    };
   }
 }
