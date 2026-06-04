@@ -229,10 +229,12 @@ export function usePreviewBridge({
   }, [suppressionCount]);
 
   // Re-sync the native view on every error<->non-error transition: hide it when
-  // an error panel takes over, re-show it when a retry clears the error.
+  // an error panel takes over, re-show it when a retry clears the error. Defer to
+  // suppression: a load completing while a dialog/overlay is open must not reshow
+  // the BrowserView above it, so respect suppressionCount instead of forcing true.
   useEffect(() => {
-    void pushSyncRef.current(true);
-  }, [pageStatus.phase]);
+    void pushSyncRef.current(suppressionCount === 0);
+  }, [pageStatus.phase, suppressionCount]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
