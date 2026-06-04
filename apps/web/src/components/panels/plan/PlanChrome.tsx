@@ -61,45 +61,53 @@ export function PlanChrome({
             </Button>
           }
         />
-        <PopoverContent align="start" className="w-72 p-1">
-          <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground/60">
+        <PopoverContent align="start" className="w-72 p-0">
+          <div className="px-3 pt-3 pb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground/45">
             Revision history
           </div>
-          {[...allVersions].reverse().map((p) => {
-            const isLatest = p.version === maxVersion;
-            const isActive = p.version === plan.version;
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => setActiveVersion(threadId, isLatest ? null : p.version)}
-                className={cn(
-                  "flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/50",
-                  isActive && "bg-accent/40",
-                )}
-              >
-                <span className="flex items-center gap-2">
-                  <span className={cn("font-mono text-[11px]", isActive ? "text-primary" : "text-foreground")}>
-                    v{p.version}
-                  </span>
-                  <span className="font-mono text-[10px] text-muted-foreground/70">
-                    {formatRelative(p.createdAt)}
-                  </span>
-                  <span
-                    className={cn(
-                      "ml-auto rounded-full px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-[0.1em]",
-                      isLatest ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+          <div className="flex flex-col gap-0.5 px-1.5 pb-1.5">
+            {[...allVersions].reverse().map((p) => {
+              const isLatest = p.version === maxVersion;
+              const isActive = p.version === plan.version;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setActiveVersion(threadId, isLatest ? null : p.version)}
+                  className={cn(
+                    "flex w-full flex-col gap-1 rounded-md px-2.5 py-2.5 text-left transition-colors hover:bg-accent/50",
+                    isActive && "bg-accent/40",
+                  )}
+                >
+                  <span className="flex items-center gap-2.5">
+                    <span
+                      className={cn(
+                        "font-mono text-[11px] tabular-nums",
+                        isActive ? "text-primary" : "text-foreground",
+                      )}
+                    >
+                      v{p.version}
+                    </span>
+                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground/70">
+                      {formatRelative(p.createdAt)}
+                    </span>
+                    {isLatest ? (
+                      <span className="ml-auto rounded-full bg-primary/12 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-[0.16em] text-primary">
+                        latest
+                      </span>
+                    ) : (
+                      <span className="ml-auto font-mono text-[8px] uppercase tracking-[0.16em] text-muted-foreground/45">
+                        {p.status}
+                      </span>
                     )}
-                  >
-                    {isLatest ? "latest" : p.status}
                   </span>
-                </span>
-                {p.changeSummary && (
-                  <span className="text-[11px] leading-snug text-muted-foreground">{p.changeSummary}</span>
-                )}
-              </button>
-            );
-          })}
+                  {p.changeSummary && (
+                    <span className="text-[11px] leading-relaxed text-muted-foreground/80">{p.changeSummary}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </PopoverContent>
       </Popover>
 
@@ -148,7 +156,7 @@ export function PlanChrome({
                 variant="default"
                 size="xs"
                 onClick={onImplement}
-                className="animate-plan-implement-glow font-mono text-[10px] uppercase tracking-[0.16em]"
+                className="font-mono text-[10px] uppercase tracking-[0.16em]"
               >
                 Implement
               </Button>

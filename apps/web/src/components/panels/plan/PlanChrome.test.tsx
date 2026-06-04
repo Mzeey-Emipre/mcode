@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 describe("PlanChrome Implement button", () => {
-  it("always renders Implement as a glowing primary action", () => {
+  it("always renders Implement as the solid primary action", () => {
     render(
       <PlanChrome
         plan={plan}
@@ -36,7 +36,9 @@ describe("PlanChrome Implement button", () => {
     );
     const implement = screen.getByRole("button", { name: /implement/i });
     expect(implement).toBeInTheDocument();
-    expect(implement.className).toContain("animate-plan-implement-glow");
+    // Solid amber primary fill carries the emphasis; no pulsing glow.
+    expect(implement.className).toContain("bg-primary");
+    expect(implement.className).not.toContain("animate-plan-implement-glow");
   });
 
   it("lists every revision with its change summary and selects an older one", async () => {
