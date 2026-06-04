@@ -197,6 +197,14 @@ The smallest and most important component. A 6px dot whose tokenized color is th
 ### Empty States (signature)
 A single large glyph (28px `font-mono`, `text-muted-foreground/15`: ◌, ⊘, ⊕, ⌂) over a small-caps mono caption (10.5px, `tracking-[0.18em]`, `text-muted-foreground/40`). No illustrations, no "Nothing here yet!" hand-holding, no primary CTA. The glyph and the technical caption are the whole empty state.
 
+### Next-Step Slot (signature)
+The interface expression of the "Anticipate the next step" product principle. A thin slot at the seam between the narrative and the composer, in the same place in every thread. When the thread reaches a state with a likely next move, the slot shows it: a single Filament Amber primary action (`View diff`, `Re-run`, `Switch to Build`) with any other valid moves beside it as quiet ghost buttons. When there is no next move, the slot collapses to nothing — no empty chrome. The primary is bound to a consistent accept key (Tab) so the gesture is the same everywhere. Safe, single-outcome transitions (add project → new chat) do not render here; they auto-advance, landing the user on the next surface with one quiet cue (the breadcrumb lights briefly), per Quiet-over-loud.
+
+### Named Rules
+**The One Next-Step Rule.** Each state elevates exactly one primary next action, in amber. Everything else stays a quiet ghost. Never two competing primaries; the rarity of the amber is what makes the suggestion legible at a glance.
+
+**The Curated-Not-Clever Rule.** The next step is a fixed function of state, the same every time. It does not learn, reorder, or guess. Predictability is the feature; a suggestion the user has to second-guess is worse than none.
+
 ## 6. Do's and Don'ts
 
 ### Do:
@@ -207,6 +215,7 @@ A single large glyph (28px `font-mono`, `text-muted-foreground/15`: ◌, ⊘, �
 - **Do** write technical copy: "Errored", "Idle", "Empty". Match PRODUCT.md's voice.
 - **Do** give every animation a `prefers-reduced-motion` alternative, and reuse the existing `wizard-*` and `narrative-*` curves (`cubic-bezier(0.25, 1, 0.5, 1)` and `cubic-bezier(0.22, 1, 0.36, 1)`) rather than inventing new ones.
 - **Do** keep type capped near 1rem; build hierarchy from weight and mono/sans contrast.
+- **Do** elevate exactly one next-step per state in amber, bound to the Tab accept key, and auto-advance only single-outcome transitions.
 
 ### Don't:
 - **Don't** use `border-left` or `border-right` greater than 1px as a colored accent stripe on rows, cards, callouts, or alerts. Selection is a row-fill.
@@ -217,3 +226,4 @@ A single large glyph (28px `font-mono`, `text-muted-foreground/15`: ◌, ⊘, �
 - **Don't** soften copy into consumer language ("Oops, something went wrong"), add emoji decoration, or use colorful status chips where a tinted dot suffices.
 - **Don't** use raw Tailwind state colors (`bg-yellow-500`, `bg-green-500`). Use the tokenized diff/status colors.
 - **Don't** pad with marketing whitespace or build a hero-metric layout. This is a dense instrument, not a landing page.
+- **Don't** show two competing primary next-steps, auto-advance a transition that has a real choice, or let the next-step suggestion learn or reorder itself. Curated and singular, or nothing.

@@ -76,6 +76,10 @@ Every action has a keystroke. F2 renames in place, Cmd+1..9 switches threads, Cm
 
 The interface rewards inactivity. When nothing is happening, the app looks calm. When something is happening, exactly one element changes — a dot pulses, a row enters, a number ticks. Nothing else moves. Decoration that competes with the data is hostile.
 
+### 6. Anticipate the next step.
+
+At every node of the loop, the app surfaces the one move the user is most likely to make next. When the outcome is unambiguous it just happens (add a project, land in a new chat on it); when there is a real choice it offers a single primary action and keeps the rest quiet (a finished turn offers View diff; an errored one offers Re-run). The suggestions are curated, not learned, so the same state always proposes the same move and the user comes to trust it. The goal is not cleverness. It is that the user rarely has to stop and ask "what now?"
+
 ## 6. The Surfaces
 
 A user with Mcode open sees, in priority order:

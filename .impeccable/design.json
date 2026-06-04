@@ -175,7 +175,9 @@
       { "name": "The Mono-Is-Machine Rule", "body": "Monospace marks machine-authored facts only. Counts and timestamps additionally take tabular-nums.", "section": "typography" },
       { "name": "The No-Hero Rule", "body": "This is an app, not a landing page. Type tops out near 1rem; hierarchy comes from weight and mono/sans contrast, not size.", "section": "typography" },
       { "name": "The Tonal-Lift Rule", "body": "Separation between surfaces is a step on the lightness ramp, not a line. A divider line is a failure of the tonal system.", "section": "elevation" },
-      { "name": "The Shadow-Is-State Rule", "body": "Surfaces are flat at rest. A shadow appears only on focus or as a one-off boundary cue.", "section": "elevation" }
+      { "name": "The Shadow-Is-State Rule", "body": "Surfaces are flat at rest. A shadow appears only on focus or as a one-off boundary cue.", "section": "elevation" },
+      { "name": "The One Next-Step Rule", "body": "Each state elevates exactly one primary next action, in amber. Everything else stays a quiet ghost. Never two competing primaries.", "section": "components" },
+      { "name": "The Curated-Not-Clever Rule", "body": "The next step is a fixed function of state, the same every time. It does not learn, reorder, or guess. Predictability is the feature.", "section": "components" }
     ],
     "dos": [
       "Do ration Filament Amber. One accent, small footprint, reserved for the active row, the primary action, and live indicators.",
@@ -184,7 +186,8 @@
       "Do use full row-fill (bg-accent) for selection, and indentation alone for tree depth.",
       "Do write technical copy: 'Errored', 'Idle', 'Empty'.",
       "Do give every animation a prefers-reduced-motion alternative, and reuse the existing wizard-* and narrative-* curves.",
-      "Do keep type capped near 1rem; build hierarchy from weight and mono/sans contrast."
+      "Do keep type capped near 1rem; build hierarchy from weight and mono/sans contrast.",
+      "Do elevate exactly one next-step per state in amber, bound to the Tab accept key, and auto-advance only single-outcome transitions."
     ],
     "donts": [
       "Don't use border-left or border-right greater than 1px as a colored accent stripe on rows, cards, callouts, or alerts.",
@@ -194,7 +197,8 @@
       "Don't introduce a second brand accent, or use green/red for anything other than added-or-good / removed-or-errored.",
       "Don't soften copy into consumer language, add emoji decoration, or use colorful status chips where a tinted dot suffices.",
       "Don't use raw Tailwind state colors (bg-yellow-500, bg-green-500). Use the tokenized diff/status colors.",
-      "Don't pad with marketing whitespace or build a hero-metric layout."
+      "Don't pad with marketing whitespace or build a hero-metric layout.",
+      "Don't show two competing primary next-steps, auto-advance a transition with a real choice, or let the next-step suggestion learn or reorder itself."
     ]
   }
 }
