@@ -53,13 +53,20 @@ export function PreviewErrorPanel({
   // HTTP failures lead with the status; network/file failures with the
   // Chromium net-error code. The dev audience uses this to triage.
   const diagnostic = error.status ? String(error.status) : (error.code ?? null);
+  // Join only the present parts so the line never trails a dangling separator
+  // when one side is absent (a crash has no status/code; a provisional failure
+  // never committed a URL).
+  const diagnosticLine = [diagnostic, url].filter(Boolean).join(" \u00b7 ");
   return (
     <div
       data-testid="preview-error-panel"
       role="alert"
-      className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center"
+      className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center motion-safe:animate-in motion-safe:fade-in"
     >
-      <Icon className="size-8 text-muted-foreground/40" aria-hidden />
+      {/* Clay-tinted per the system's errored-state color (matches the sidebar
+          thread dot and the omnibox navError line) so the failure registers at
+          a glance, kept muted to stay quiet rather than a loud alert chip. */}
+      <Icon className="size-8 text-destructive/70" aria-hidden />
       <div className="space-y-1">
         <p
           data-testid="preview-error-headline"
@@ -67,10 +74,9 @@ export function PreviewErrorPanel({
         >
           {error.message}
         </p>
-        {url || diagnostic ? (
+        {diagnosticLine ? (
           <p className="max-w-md truncate font-mono text-[11px] text-muted-foreground">
-            {diagnostic ? `${diagnostic} \u00b7 ` : ""}
-            {url}
+            {diagnosticLine}
           </p>
         ) : null}
       </div>
