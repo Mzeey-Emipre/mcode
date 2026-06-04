@@ -8,6 +8,20 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled item type: ${(value as { type: string }).type}`);
 }
 
+/**
+ * A plan-questions assistant message is a COMPLETED "ask the user" turn whose
+ * bubble renders as the collapsed AnsweredSummary. Answering it creates no user
+ * message, so it can be the trailing stable item while the NEXT turn generates
+ * the plan. It is never the live turn's own response, so the in-flight narrative
+ * must append AFTER it (preserving chronological order: questions answered → new
+ * turn's actions → response) rather than being split in ABOVE it. Plan-output
+ * bubbles are intentionally excluded — their own turn's narrative belongs above
+ * the PlanCard answer.
+ */
+function isPlanQuestionsMessage(content: string): boolean {
+  return content.includes("```plan-questions");
+}
+
 /** Estimated collapsed height (px) for a streaming card virtual item. */
 export const STREAMING_CARD_COLLAPSED_HEIGHT = 56;
 
@@ -313,7 +327,11 @@ export function buildVirtualItems(
   }
 
   const lastItem = stableItems[lastAssistantIdx];
-  if (lastItem?.type === "message" && lastItem.message.role === "assistant") {
+  if (
+    lastItem?.type === "message" &&
+    lastItem.message.role === "assistant" &&
+    !isPlanQuestionsMessage(lastItem.message.content)
+  ) {
     // narrative-flow, streaming-response, and narrative-indicator all go
     // BEFORE the last assistant message bubble so the user reads
     // top-to-bottom: actions → response → progress meta. streaming-response
