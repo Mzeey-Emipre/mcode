@@ -1,13 +1,19 @@
 import type { PlanRecord } from "@mcode/contracts";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePlanStore } from "@/stores/planStore";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { formatRelative } from "@/lib/format-relative";
 
 interface PlanChromeProps {
   plan: PlanRecord;
@@ -32,68 +38,70 @@ export function PlanChrome({
 }: PlanChromeProps) {
   const setActiveVersion = usePlanStore((s) => s.setActiveVersion);
   const maxVersion = allVersions.length > 0 ? allVersions[allVersions.length - 1].version : 1;
-  const canPrev = plan.version > 1;
-  const canNext = plan.version < maxVersion;
   const hasFeedback = commentCount > 0;
 
   return (
     <div className="flex min-w-0 flex-shrink-0 items-center gap-2 border-b border-border bg-background px-3 py-2">
-      {/* Version nav */}
-      <div
-        className="flex shrink-0 items-center gap-0.5 rounded-md border border-border/60 bg-muted/20 px-0.5 py-0.5"
-        aria-label={`Plan version ${plan.version} of ${maxVersion}`}
-      >
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
+      {/* Revision history */}
+      <Popover>
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              className="shrink-0 gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em]"
+              aria-label={`Revision history: v${plan.version} of ${maxVersion}`}
+            >
+              v{plan.version}
+              <span className="tracking-normal text-muted-foreground/70 normal-case">
+                {formatRelative(plan.createdAt)}
+              </span>
+              <ChevronDown size={12} aria-hidden />
+            </Button>
+          }
+        />
+        <PopoverContent align="start" className="w-72 p-1">
+          <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground/60">
+            Revision history
+          </div>
+          {[...allVersions].reverse().map((p) => {
+            const isLatest = p.version === maxVersion;
+            const isActive = p.version === plan.version;
+            return (
+              <button
+                key={p.id}
                 type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="shrink-0"
-                disabled={!canPrev}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setActiveVersion(threadId, plan.version - 1)}
-                aria-label="Previous version"
+                onClick={() => setActiveVersion(threadId, isLatest ? null : p.version)}
+                className={cn(
+                  "flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/50",
+                  isActive && "bg-accent/40",
+                )}
               >
-                <ChevronLeft size={14} aria-hidden />
-              </Button>
-            }
-          />
-          <TooltipContent side="bottom" sideOffset={6} className="text-xs">
-            {canPrev ? "Previous version" : "On first version"}
-          </TooltipContent>
-        </Tooltip>
-
-        <span
-          className="min-w-[2.25rem] px-1 text-center font-mono text-[10px] tabular-nums uppercase tracking-[0.16em] text-primary"
-          aria-hidden
-        >
-          v{plan.version}
-        </span>
-
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="shrink-0"
-                disabled={!canNext}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setActiveVersion(threadId, plan.version + 1)}
-                aria-label="Next version"
-              >
-                <ChevronRight size={14} aria-hidden />
-              </Button>
-            }
-          />
-          <TooltipContent side="bottom" sideOffset={6} className="text-xs">
-            {canNext ? "Next version" : "On latest version"}
-          </TooltipContent>
-        </Tooltip>
-      </div>
+                <span className="flex items-center gap-2">
+                  <span className={cn("font-mono text-[11px]", isActive ? "text-primary" : "text-foreground")}>
+                    v{p.version}
+                  </span>
+                  <span className="font-mono text-[10px] text-muted-foreground/70">
+                    {formatRelative(p.createdAt)}
+                  </span>
+                  <span
+                    className={cn(
+                      "ml-auto rounded-full px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-[0.1em]",
+                      isLatest ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {isLatest ? "latest" : p.status}
+                  </span>
+                </span>
+                {p.changeSummary && (
+                  <span className="text-[11px] leading-snug text-muted-foreground">{p.changeSummary}</span>
+                )}
+              </button>
+            );
+          })}
+        </PopoverContent>
+      </Popover>
 
       {plan.changeSummary && (
         <span
