@@ -12,7 +12,6 @@ import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { resizeRecordCache } from "@/lib/thread-hydrator/record-cache";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useTerminalStore } from "@/stores/terminalStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewDockStore } from "@/stores/previewDockStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
@@ -21,7 +20,6 @@ import { initShortcuts } from "@/lib/shortcuts";
 import { registerCommand } from "@/lib/command-registry";
 import { setContext } from "@/lib/context-tracker";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
-import { getTransport } from "@/transport";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ToastContainer } from "@/components/Toast";
@@ -44,13 +42,6 @@ const LazyCommandPalette = lazy(async () => {
   const m = await import("@/components/palette/CommandPalette");
   return { default: m.CommandPalette };
 });
-
-/**
- * Tracks threads for which a PTY creation RPC is already in flight.
- * Prevents duplicate terminals when Ctrl+J is pressed rapidly or when
- * the toggle fires twice before the first creation resolves.
- */
-const terminalCreationInFlight = new Set<string>();
 
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
@@ -198,7 +189,6 @@ export function App() {
           const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
             useDiffStore.getState();
           const panel = getRightPanel(tid);
-          const isOpening = !panel.visible || panel.activeTab !== "terminal";
           if (!panel.visible) {
             showRightPanel(tid);
             setRightPanelTab(tid, "terminal");
@@ -207,39 +197,8 @@ export function App() {
           } else {
             hideRightPanel(tid);
           }
-          // Auto-create a terminal when opening the tab with none.
-          if (isOpening && !terminalCreationInFlight.has(tid)) {
-            const termStore = useTerminalStore.getState();
-            const terminals = termStore.terminals[tid];
-            if (!terminals || terminals.length === 0) {
-              terminalCreationInFlight.add(tid);
-              try {
-                const transport = getTransport();
-                transport
-                  .terminalCreate(tid)
-                  .then(({ ptyId, shell }) => {
-                    terminalCreationInFlight.delete(tid);
-                    const rightPanel = useDiffStore.getState().getRightPanel(tid);
-                    // Panel was closed while creation was in flight — dispose the orphaned PTY.
-                    if (!rightPanel.visible || rightPanel.activeTab !== "terminal") {
-                      transport.terminalKill(ptyId).catch(() => {});
-                      return;
-                    }
-                    const currentTerminals = useTerminalStore.getState().terminals[tid];
-                    if (!currentTerminals || currentTerminals.length === 0) {
-                      useTerminalStore.getState().addTerminal(tid, ptyId, shell);
-                    } else {
-                      transport.terminalKill(ptyId).catch(() => {});
-                    }
-                  })
-                  .catch(() => {
-                    terminalCreationInFlight.delete(tid);
-                  });
-              } catch {
-                terminalCreationInFlight.delete(tid);
-              }
-            }
-          }
+          // Terminal creation on open is handled by RightPanel's
+          // ensureTerminalForThread effect (fires for every open path).
         },
       }),
       registerCommand({

@@ -240,6 +240,24 @@
   }
 }
 
+/* Changes-tab freshness ring: a short amber pulse that fires when new changed
+ * files land while the user is on another tab, then settles to the steady
+ * amber count. Two iterations so it registers without nagging. */
+@keyframes changes-fresh-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary), transparent 45%); }
+  70% { box-shadow: 0 0 0 6px color-mix(in oklch, var(--primary), transparent 100%); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.changes-fresh-ring {
+  animation: changes-fresh-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) 2;
+  border-radius: var(--radius-sm);
+}
+@media (prefers-reduced-motion: reduce) {
+  .changes-fresh-ring {
+    animation: none;
+  }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
  * Plan-question wizard motion system.
  *
