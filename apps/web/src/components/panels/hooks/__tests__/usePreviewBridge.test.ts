@@ -260,6 +260,24 @@ describe("usePreviewBridge", () => {
     expect(mockPreview.openExternal).toHaveBeenCalledOnce();
   });
 
+  describe("error recovery actions", () => {
+    it("onRetry reloads the failed page and clears any nav error", async () => {
+      const mockPreview = makeMockPreview();
+      window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+      const { result } = renderHook(() =>
+        usePreviewBridge({ threadId: "t-1", workspaceId: "ws-1", surfaceRef: makeSurfaceRef() }),
+      );
+
+      await act(async () => {
+        await result.current.onRetry();
+      });
+
+      expect(mockPreview.reload).toHaveBeenCalledOnce();
+      expect(result.current.navError).toBeNull();
+    });
+  });
+
   describe("onNavigate", () => {
     it("calls preview.navigate with the given URL", async () => {
       const mockPreview = makeMockPreview();

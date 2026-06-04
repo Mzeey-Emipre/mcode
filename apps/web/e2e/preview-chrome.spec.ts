@@ -159,6 +159,56 @@ async function injectPreviewBridge(page: Page): Promise<void> {
 }
 
 /**
+ * Layer an error page-status over the base bridge: after {@link injectPreviewBridge}
+ * sets `window.desktopBridge.preview`, override the methods the error panel
+ * touches so onPageStatus emits `phase: "error"`, navigation history is
+ * configurable, and Retry / Open in browser are observable via window counters.
+ */
+async function injectErrorBridge(
+  page: Page,
+  opts: { url: string | null; canGoBack: boolean },
+): Promise<void> {
+  await page.addInitScript((o) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const preview = w.desktopBridge.preview;
+    w.__mcodePreview = { reload: 0, openExternal: 0 };
+    preview.onPageStatus = (
+      cb: (s: {
+        url: string | null;
+        title: string | null;
+        favicon: string | null;
+        phase: "loading" | "loaded" | "error" | "discarded";
+        error?: { kind: string; status?: number; code?: string; message: string };
+      }) => void,
+    ) => {
+      cb({
+        url: o.url,
+        title: null,
+        favicon: null,
+        phase: "error",
+        error: {
+          kind: "network",
+          code: "ERR_NAME_NOT_RESOLVED",
+          message: "Can't reach this site",
+        },
+      });
+      return () => undefined;
+    };
+    preview.getNavigationState = () =>
+      Promise.resolve({ canGoBack: o.canGoBack, canGoForward: false });
+    preview.reload = () => {
+      w.__mcodePreview.reload += 1;
+      return Promise.resolve();
+    };
+    preview.openExternal = () => {
+      w.__mcodePreview.openExternal += 1;
+      return Promise.resolve();
+    };
+  }, opts);
+}
+
+/**
  * Open the app at a thread so the right panel can be revealed for preview tests.
  * Returns once the thread view is rendered and ready for shortcut input.
  */
@@ -317,5 +367,68 @@ test.describe("PreviewPanel — chrome with mocked bridge", () => {
     // Flip the dock to the right; splitter should re-orient.
     await page.getByLabel("Dock to right").click();
     await expect(splitter).toHaveAttribute("aria-orientation", "vertical");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — preview error states (W1)
+// ---------------------------------------------------------------------------
+
+test.describe("PreviewPanel — error states", () => {
+  test("surfaces a failed load with copy and the distilled recovery actions", async ({ page }) => {
+    await injectPreviewBridge(page);
+    await injectErrorBridge(page, { url: "https://nope.test", canGoBack: true });
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+
+    const panel = page.getByTestId("preview-error-panel");
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId("preview-error-headline")).toHaveText(
+      "Can't reach this site",
+    );
+    // Distilled to the essentials: Retry (primary) + Go back (history exists).
+    await expect(panel.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Go back" })).toBeVisible();
+    // Redundant-with-chrome actions were removed: the omnibox is the URL editor
+    // and the toolbar owns Open-in-system-browser.
+    await expect(panel.getByRole("button", { name: "Edit URL" })).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "Open in browser" })).toHaveCount(0);
+    // Diagnostic code is shown for the developer audience.
+    await expect(panel.getByText(/ERR_NAME_NOT_RESOLVED/)).toBeVisible();
+  });
+
+  test("Retry reloads the failed page", async ({ page }) => {
+    await injectPreviewBridge(page);
+    await injectErrorBridge(page, { url: "https://nope.test", canGoBack: true });
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+
+    await page.getByTestId("preview-error-retry").click();
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __mcodePreview: { reload: number } }).__mcodePreview.reload))
+      .toBeGreaterThan(0);
+  });
+
+  test("Go back is hidden when the guest has no history", async ({ page }) => {
+    await injectPreviewBridge(page);
+    await injectErrorBridge(page, { url: "https://nope.test", canGoBack: false });
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+
+    const panel = page.getByTestId("preview-error-panel");
+    await expect(panel.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Go back" })).toHaveCount(0);
+  });
+
+  test("renders the panel for a file failure with Retry only (no history)", async ({ page }) => {
+    await injectPreviewBridge(page);
+    await injectErrorBridge(page, { url: "file:///gone.html", canGoBack: false });
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+
+    const panel = page.getByTestId("preview-error-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Go back" })).toHaveCount(0);
   });
 });

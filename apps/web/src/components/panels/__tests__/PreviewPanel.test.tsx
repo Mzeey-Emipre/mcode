@@ -19,6 +19,7 @@ vi.mock("../hooks/usePreviewBridge", () => ({
     previewLoading: false,
     pageTitle: null,
     faviconUrl: null,
+    pageStatus: { url: null, title: null, favicon: null, phase: "loaded" },
     storedUrl: "",
     pushSync: vi.fn(),
     refreshNav: vi.fn(),
@@ -27,7 +28,22 @@ vi.mock("../hooks/usePreviewBridge", () => ({
     onReload: vi.fn(),
     onOpenExternal: vi.fn(),
     onNavigate: vi.fn(),
+    onRetry: vi.fn(),
   }),
+}));
+
+// usePreviewTabs is controllable per-test so we can exercise the tab bar's
+// active-tab overlay. Defaults to no tab set (bar renders nothing).
+const tabsState = vi.hoisted(() => ({
+  current: {
+    tabSet: null as unknown,
+    newTab: () => {},
+    activateTab: () => {},
+    closeTab: () => {},
+  },
+}));
+vi.mock("../hooks/usePreviewTabs", () => ({
+  usePreviewTabs: () => tabsState.current,
 }));
 
 vi.mock("../hooks/usePreviewCapture", () => ({
@@ -73,6 +89,15 @@ describe("PreviewPanel — unavailable state", () => {
 
 describe("PreviewPanel — full panel state", () => {
   beforeEach(() => {
+    // The tab bar's useHorizontalScrollEdges observes layout; jsdom lacks it.
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = {
       preview: {
@@ -92,6 +117,7 @@ describe("PreviewPanel — full panel state", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
   });
@@ -125,5 +151,37 @@ describe("PreviewPanel — full panel state", () => {
       ),
     ).not.toThrow();
     expect(screen.getByTestId("preview-panel")).toBeInTheDocument();
+  });
+
+  it("keeps the active tab's title when the live page-status is blank", () => {
+    // Simulates the post-reset window: pageStatus is all-null (see the mocked
+    // usePreviewBridge above) while the warm tab still carries its real title.
+    // The overlay must fall back to the tab's own title, not read "New tab".
+    tabsState.current = {
+      ...tabsState.current,
+      tabSet: {
+        threadId: "thread-1",
+        activeTabId: "tab-1",
+        tabs: [
+          {
+            id: "tab-1",
+            threadId: "thread-1",
+            title: "Google",
+            url: "https://www.google.com/search?q=google",
+            faviconUrl: null,
+            warm: true,
+            active: true,
+          },
+        ],
+      },
+    };
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const tab = screen.getByTestId("preview-tab");
+    expect(tab).toHaveTextContent("Google");
+    expect(tab).not.toHaveTextContent("New tab");
+
+    tabsState.current = { ...tabsState.current, tabSet: null };
   });
 });

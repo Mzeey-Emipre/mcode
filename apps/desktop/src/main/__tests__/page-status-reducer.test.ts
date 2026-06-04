@@ -41,6 +41,17 @@ describe("pageStatusReducer", () => {
     expect(errored.error).toEqual(ERR);
   });
 
+  it("load-error adopts the failed URL when carried, so the panel can show it", () => {
+    const loading = pageStatusReducer(initialPageStatus(), { type: "load-start" });
+    const errored = pageStatusReducer(loading, {
+      type: "load-error",
+      error: { kind: "network", message: "Can't reach this site" },
+      url: "https://nope.test",
+    });
+    expect(errored.phase).toBe("error");
+    expect(errored.url).toBe("https://nope.test");
+  });
+
   it("error -> loading on retry (load-start)", () => {
     const errored = { url: "https://x.test", title: null, favicon: null, phase: "error" as const, error: ERR };
     const retry = pageStatusReducer(errored, { type: "load-start" });

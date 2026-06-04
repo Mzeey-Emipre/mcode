@@ -11,6 +11,7 @@ export const PREVIEW_PAGE_STATUS_STRING_MAX = {
   title: 240,
   favicon: 4096,
   message: 500,
+  code: 120,
 } as const;
 
 /** Load phase of the active preview tab. */
@@ -28,6 +29,12 @@ export const PreviewPageErrorSchema = lazySchema(() =>
   z.object({
     kind: z.enum(["http", "network", "file-not-found", "crash"]),
     status: z.number().int().optional(),
+    /**
+     * Diagnostic code shown to the (developer) audience in the error panel:
+     * the Chromium net-error name for network/file failures
+     * (e.g. `ERR_NAME_NOT_RESOLVED`). HTTP failures use {@link status} instead.
+     */
+    code: z.string().max(PREVIEW_PAGE_STATUS_STRING_MAX.code).optional(),
     message: z.string().max(PREVIEW_PAGE_STATUS_STRING_MAX.message),
   }),
 );
