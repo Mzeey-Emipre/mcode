@@ -79,16 +79,31 @@ export function ScopeSplitPane({ threadId, parentTasks }: ScopeSplitPaneProps) {
     setTaskPct(35);
   }, []);
 
-  const onKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const step = 5;
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setTaskPct((p) => Math.min(90, p + step));
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setTaskPct((p) => Math.max(10, p - step));
-    }
+  // Keyboard resize must respect the same pixel min-heights as mouse drag;
+  // a fixed 10..90% clamp can push either section below its minimum on short
+  // containers. Falls back to the percentage clamp before first layout.
+  const clampTaskPct = useCallback((nextPct: number) => {
+    const containerH = containerRef.current?.getBoundingClientRect().height;
+    if (!containerH) return Math.max(10, Math.min(90, nextPct));
+    const minPct = Math.max(0, (TASKS_MIN_H / containerH) * 100);
+    const maxPct = Math.min(100, ((containerH - PLAN_MIN_H) / containerH) * 100);
+    if (maxPct <= minPct) return minPct;
+    return Math.max(minPct, Math.min(maxPct, nextPct));
   }, []);
+
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const step = 5;
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setTaskPct((p) => clampTaskPct(p + step));
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setTaskPct((p) => clampTaskPct(p - step));
+      }
+    },
+    [clampTaskPct],
+  );
 
   // No plan: the docket (or its empty state) fills the pane. The header only
   // shows when there are tasks so the empty state reads as a single centered
