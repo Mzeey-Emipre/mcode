@@ -4,6 +4,10 @@
 
 ---
 
+## Register
+
+product
+
 ## 1. What Mcode Is
 
 Mcode is a desktop app for running coding agents — many at a time, across many projects, against many branches. You point it at a folder, pick a provider (Claude, Codex, Copilot, Cursor, OpenCode), and you get a workspace where each conversation is a thread, each thread can have its own git worktree, and every tool call the agent makes is visible in real time.
@@ -125,7 +129,7 @@ In flight as of May 2026:
 | `CONTEXT.md` | Domain glossary. If you don't know what a "worktree" or "narration segment" means here, read this first. |
 | `ARCHITECTURE.md` | IPC flow, data model, directory layout. |
 | `docs/guides/ui-design-spec.md` | Designer-facing spec. How Mcode should look and feel. |
-| `.impeccable.md` | Condensed design context for LLMs doing UI work. Mirrors the spec but optimized for code-generating agents. |
+| `DESIGN.md` | The visual design system (tokens, palette, typography, components) in Stitch format. What a UI change reads before touching pixels. |
 | `docs/specs/` | Formal product specs for individual features (markdown rendering, usage tracking, context window, sort order). |
 
 ## 10. The Product Test
@@ -135,3 +139,41 @@ Before shipping a feature, hold it against three questions:
 1. **Does it earn its pixels?** If it adds chrome without making the glance faster or the loop tighter, cut it.
 2. **Does it sound like Mcode in copy?** "Errored", "Idle", "Empty" — not "Oops, something went wrong." Marketing voice in the diff is a bug.
 3. **Would a senior developer at 11pm thank you for this, or scroll past it?** That's the audience. That's the test.
+
+---
+
+*The sections below are the strategic design inputs that the impeccable design commands read (`critique`, `polish`, `craft`, and the rest). The visual translation of this strategy lives in `DESIGN.md`.*
+
+## Brand Personality
+
+**Three words: editorial, quiet, instrument-grade.**
+
+The register is editorial and typeset, closer to a well-made code editor or a terminal than a CRM or a SaaS dashboard. The voice is technical and never consumer-softened: "Errored", "Idle", "Empty", not "Oops, something went wrong." No emoji, no hand-holding. The interface is calm at rest; when something happens, exactly one element moves (a dot pulses, a row enters, a number ticks) and nothing else.
+
+The emotional goal: a senior developer at 11pm feels in control and unhurried, reading an instrument, not being marketed to.
+
+### References
+
+Named anchors for the feel, each with the specific quality it contributes and where Mcode deliberately diverges. A reference is a scalpel, not a template: borrow the one quality, not the whole look.
+
+- **Codex desktop app** - the current high-water mark for agent-run UX. Calm presentation of what an agent is doing, restraint over chrome, technical clarity without consumer softening. Borrow the legibility of a run in flight and the refusal to decorate. Diverge where the job differs: Codex centers a single task and a single stream; Mcode's surface must hold many runs at once and optimize for the cross-thread glance, not one conversation.
+- **Zed** - the reference for speed and optimization. Performance is treated as a design property, not a backend afterthought: instant response, no jank, density without lag. This anchors Mcode's performance targets (sub-2s startup, under 150MB idle, 60fps narrative timeline). Borrow the discipline. Diverge in register: Zed is a file-centric editor with editor chrome; Mcode sits beside the editor as an orchestration surface, not a replacement for it.
+- **T3 Code** ([pingdotgg/t3code](https://github.com/pingdotgg/t3code)) - Mcode's closest peer, a minimal GUI for coding agents (Codex, Claude, OpenCode). Borrow its multi-provider control patterns and, above all, its optimisation discipline: a Vite build, oxlint, a fast-launching desktop shell. Diverge on the wedge: T3 Code centers a single agent view; Mcode exists for parallel orchestration across many worktrees read at a glance, so the sidebar-of-runs and the worktree-as-object stay ours.
+- **Synara** ([Emanuele-web04/synara](https://github.com/Emanuele-web04/synara)) - a T3 Code fork that adds broader provider coverage (Gemini, Kilo Code) and a neat multi-tab UI for threads, views, and an embedded browser. Borrow the multi-tab thread/view/browser layout and the breadth of providers. It shares T3 Code's architecture DNA, so treat the two as one design lineage. Diverge the same way: a tab strip is a per-window convenience; Mcode's organizing object is the thread on the sidebar with its status dot, not a tab.
+
+## Anti-references
+
+What Mcode must not look or feel like. If a design wants to convert a visitor, it is wrong.
+
+- **SaaS dashboards and admin panels:** colorful stat chips, the hero-metric template (big number, small label, supporting stats), "your week in Mcode" summaries.
+- **The AI-tool aesthetic:** dark mode with neon or cyan accents, purple-to-blue gradients, glassmorphism, gradient text.
+- **Consumer chat apps:** speech bubbles, emoji reactions, "typing..." theatrics, soft rounded everything.
+- **Marketing-page tropes inside the product:** oversized hero type, tracked-uppercase eyebrows above every section, identical repeating card grids, decorative resting drop shadows, colored side-stripe borders.
+- **Consumer error voice:** "Oops, something went wrong." We state what happened, in technical register.
+
+## Accessibility & Inclusion
+
+- **Target WCAG 2.1 AA** on product surfaces. Body text holds at least 4.5:1 against its surface; large or bold text at least 3:1. Muted text must still clear 4.5:1 — do not lighten it "for elegance."
+- **Reduced motion is mandatory.** Every animation in `index.css` ships a `prefers-reduced-motion: reduce` alternative, and new motion must too.
+- **Never encode state in color alone.** Status dots pair hue with position and label context; diff additions and removals carry gutters and text weight, not just sage or clay, so red/green color-blind users can still read them.
+- **Keyboard-first is an accessibility property,** not only a power-user one. Every action has a keystroke and a visible focus ring (cool-ring, 3px).
