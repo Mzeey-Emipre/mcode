@@ -409,6 +409,58 @@ within their own provider's context window. Distinct from a fork handoff,
 though the orchestrator does consult `last_compact_summary` when building a
 deterministic path-D handoff.
 
+## In-app browser preview
+
+### Preview
+The embedded in-app browser panel that renders a web URL or a local file
+alongside a thread. Distinct from opening the page in the user's external
+browser. The preview is **thread-scoped**: each thread keeps its own set of
+tabs.
+
+### Preview tab
+One navigable page within the preview, belonging to a thread. A thread can
+hold several tabs; exactly one is the active tab at a time.
+
+### Active tab
+The preview tab currently shown to the user. The other tabs in the thread
+are background tabs.
+
+### Panel visibility
+Whether the preview panel is currently in view. When the user collapses or
+navigates away from the preview, the panel is **hidden** even though its
+tabs still exist. Visibility is distinct from which tab is active: the active
+tab of a hidden panel is not on screen.
+
+### Warm tab
+A preview tab that holds a live page in memory and is instant to view.
+Background warm tabs keep their page intact (scroll position, form input)
+but are throttled while not in view.
+
+### Cold tab (discarded tab)
+A preview tab reduced to placeholder information - its title, URL, and
+favicon - with its in-memory page released to reclaim memory. Reopening a
+cold tab reloads the page from scratch, so scroll position and form input do
+not survive. This is the same idea modern browsers call a *discarded* or
+*sleeping* tab; Mcode uses **cold** / **discarded**, never "disabled".
+
+### Tab discard
+Demoting a warm tab to cold to save memory. The inverse - showing a cold tab
+again - is **re-warming**, which reloads the page. The active tab is never
+discarded while the panel is visible; once the panel is hidden it may be
+discarded like any other tab.
+
+### Preview page state
+The status of a preview tab's page from the user's point of view:
+**loading**, **loaded**, **error**, or **discarded**. Exactly one applies at
+a time.
+
+### Preview error state
+The page state shown when a tab fails to display a live page: the site is
+unreachable (network or TLS failure), the server returned an HTTP error
+(404, 500, and similar), the local file is missing, or the page crashed. The
+user is offered recovery actions (retry, edit the address, go back, open
+externally) rather than a raw browser error page.
+
 ## App-side extensibility
 
 Three end-user-facing extensibility surfaces inside the running Mcode app.
