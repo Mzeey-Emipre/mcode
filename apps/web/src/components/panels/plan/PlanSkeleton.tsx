@@ -8,7 +8,7 @@ interface PlanSkeletonProps {
  */
 export function PlanSkeleton({ title }: PlanSkeletonProps) {
   return (
-    <div className="h-full overflow-hidden bg-background">
+    <div data-testid="plan-skeleton" className="h-full overflow-hidden bg-background">
       <div className="h-0.5 overflow-hidden bg-accent">
         <div className="h-full w-[30%] animate-[plan-slide_1.6s_cubic-bezier(0.4,0,0.2,1)_infinite] rounded-sm bg-primary/60" />
       </div>

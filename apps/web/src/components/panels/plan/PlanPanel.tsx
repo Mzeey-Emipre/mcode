@@ -22,6 +22,7 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
   const plans = usePlanStore((s) => s.plansByThread[threadId] ?? EMPTY_PLANS);
   const activeVersion = usePlanStore((s) => s.activeVersionByThread[threadId] ?? null);
   const isGenerating = usePlanStore((s) => s.generatingThreads.has(threadId));
+  const setActiveVersion = usePlanStore((s) => s.setActiveVersion);
 
   const [comments, setComments] = useState<PlanComment[]>([]);
   const planScrollRef = useRef<HTMLDivElement>(null);
@@ -35,6 +36,9 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
     }
     return [...plans].reverse().find((p) => p.status !== "superseded") ?? plans[plans.length - 1];
   }, [plans, activeVersion]);
+
+  const latestVersion = plans.length > 0 ? plans[plans.length - 1].version : 1;
+  const viewingOld = activeVersion !== null && activePlan !== null && activePlan.version !== latestVersion;
 
   // Reset before paint so version switches never flash a stale scroll position.
   useLayoutEffect(() => {
@@ -141,6 +145,24 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
 
   return (
     <div className="flex min-h-0 flex-1 basis-0 flex-col overflow-hidden">
+      {viewingOld && activePlan && (
+        <div className="flex min-w-0 flex-shrink-0 items-center gap-2 border-b border-border bg-primary/5 px-3 py-1.5 font-mono text-[10px] tracking-[0.14em] text-muted-foreground">
+          <span className="min-w-0 truncate">
+            Viewing v{activePlan.version} of {latestVersion} · read-only
+          </span>
+          <span className="min-w-0 flex-1" aria-hidden />
+          <Button
+            type="button"
+            variant="link"
+            size="xs"
+            onClick={() => setActiveVersion(threadId, null)}
+            className="h-auto shrink-0 p-0 font-mono text-[10px] tracking-[0.14em]"
+          >
+            Back to latest
+          </Button>
+        </div>
+      )}
+
       <PlanChrome
         plan={activePlan}
         allVersions={plans}

@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from "react";
+import type { PlanRecord } from "@mcode/contracts";
 import type { TaskItem } from "@/stores/taskStore";
+import { usePlanStore } from "@/stores/planStore";
 import { PlanPanel } from "./plan";
 import { TaskPanelHeader } from "@/components/tasks/TaskPanelHeader";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
@@ -13,16 +15,24 @@ interface ScopeSplitPaneProps {
 const TASKS_MIN_H = 80;
 /** Minimum height for the plan section in pixels. */
 const PLAN_MIN_H = 120;
+/** Stable empty array so the planStore selector keeps a stable reference. */
+const EMPTY_PLANS: readonly PlanRecord[] = [];
 
 /**
- * Vertical split pane for the Scope tab: plan document on top, tasks
- * on the bottom, with a draggable divider between them.
- *
- * The split ratio is stored as a percentage of the container height
- * allocated to the task section (bottom). Dragging the handle adjusts
- * this ratio. Both sections scroll independently.
+ * Adaptive vertical dock for the Scope tab. The layout reflows so the top is
+ * never left empty:
+ *  - plan + tasks: resizable split (plan top, tasks bottom, draggable divider).
+ *  - plan, no tasks: the plan fills the pane (no divider).
+ *  - no plan (incl. empty): the tasks docket — or its empty state — fills the
+ *    pane (no plan region, no divider).
+ * "Generating" counts as having a plan so the skeleton owns the top.
  */
 export function ScopeSplitPane({ threadId, parentTasks }: ScopeSplitPaneProps) {
+  const plans = usePlanStore((s) => s.plansByThread[threadId] ?? EMPTY_PLANS);
+  const isGenerating = usePlanStore((s) => s.generatingThreads.has(threadId));
+  const hasPlan = plans.length > 0 || isGenerating;
+  const hasTasks = parentTasks.length > 0;
+
   const containerRef = useRef<HTMLDivElement>(null);
   const [taskPct, setTaskPct] = useState(35);
   const draggingRef = useRef(false);
@@ -42,7 +52,6 @@ export function ScopeSplitPane({ threadId, parentTasks }: ScopeSplitPaneProps) {
       const onMove = (ev: MouseEvent) => {
         if (!draggingRef.current) return;
         const deltaY = ev.clientY - startY;
-        // Dragging up = more tasks, dragging down = less tasks
         const newTaskH = Math.max(
           TASKS_MIN_H,
           Math.min(containerH - PLAN_MIN_H, startTaskH - deltaY),
@@ -66,34 +75,66 @@ export function ScopeSplitPane({ threadId, parentTasks }: ScopeSplitPaneProps) {
     [taskPct],
   );
 
-  // Double-click resets to default split
   const onDoubleClick = useCallback(() => {
     setTaskPct(35);
   }, []);
 
-  // Keyboard accessibility for the drag handle
+  // Keyboard resize must respect the same pixel min-heights as mouse drag;
+  // a fixed 10..90% clamp can push either section below its minimum on short
+  // containers. Falls back to the percentage clamp before first layout.
+  const clampTaskPct = useCallback((nextPct: number) => {
+    const containerH = containerRef.current?.getBoundingClientRect().height;
+    if (!containerH) return Math.max(10, Math.min(90, nextPct));
+    const minPct = Math.max(0, (TASKS_MIN_H / containerH) * 100);
+    const maxPct = Math.min(100, ((containerH - PLAN_MIN_H) / containerH) * 100);
+    if (maxPct <= minPct) return minPct;
+    return Math.max(minPct, Math.min(maxPct, nextPct));
+  }, []);
+
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const step = 5;
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setTaskPct((p) => Math.min(90, p + step));
+        setTaskPct((p) => clampTaskPct(p + step));
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
-        setTaskPct((p) => Math.max(10, p - step));
+        setTaskPct((p) => clampTaskPct(p - step));
       }
     },
-    [],
+    [clampTaskPct],
   );
 
+  // No plan: the docket (or its empty state) fills the pane. The header only
+  // shows when there are tasks so the empty state reads as a single centered
+  // glyph rather than "0 tasks" chrome over a void.
+  if (!hasPlan) {
+    return (
+      <div className="flex flex-1 flex-col min-h-0">
+        {hasTasks && <TaskPanelHeader tasks={parentTasks} />}
+        <TaskPanel />
+      </div>
+    );
+  }
+
+  // Plan but no tasks: the plan fills the pane, no divider.
+  if (!hasTasks) {
+    return (
+      <div className="flex flex-1 flex-col min-h-0">
+        <div className="flex min-h-0 flex-1 basis-0 flex-col overflow-hidden">
+          <PlanPanel threadId={threadId} />
+        </div>
+      </div>
+    );
+  }
+
+  // Plan + tasks: the resizable split.
   return (
     <div ref={containerRef} className="flex flex-1 flex-col min-h-0">
-      {/* Plan section: flex-1 with basis-0 so content height never expands the split pane. */}
       <div className="flex min-h-0 flex-1 basis-0 flex-col overflow-hidden">
         <PlanPanel threadId={threadId} />
       </div>
 
-      {/* Drag handle */}
       <div
         role="separator"
         aria-orientation="horizontal"
@@ -107,7 +148,6 @@ export function ScopeSplitPane({ threadId, parentTasks }: ScopeSplitPaneProps) {
         <div className="h-[2px] w-8 rounded-full bg-muted-foreground/20 transition-colors group-hover:bg-muted-foreground/40" />
       </div>
 
-      {/* Task section: sized by taskPct */}
       <div
         className="flex flex-col flex-shrink-0 overflow-hidden"
         style={{ height: `${taskPct}%`, minHeight: TASKS_MIN_H }}

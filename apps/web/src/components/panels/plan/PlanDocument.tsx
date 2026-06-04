@@ -80,6 +80,9 @@ export function PlanDocument({
       } else {
         onCommentDiscard(title);
       }
+      // Clicking away stashes the draft and collapses the editor, so the
+      // heading reads as annotated (dot) without a lingering open textarea.
+      setActiveHeading(null);
     },
     [onCommentChange, onCommentDiscard],
   );

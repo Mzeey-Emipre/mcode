@@ -362,6 +362,58 @@ describe("buildVirtualItems (combined)", () => {
     expect(narrativeItem.isAgentRunning).toBe(true);
   });
 
+  it("keeps a trailing answered plan-questions bubble ABOVE the live generation turn", () => {
+    // Regression: answering plan questions creates no user message, so the
+    // trailing stable item is the plan-questions assistant bubble (rendered as
+    // the collapsed AnsweredSummary). That is a COMPLETED prior turn — the next
+    // turn generates the plan. The in-flight narrative must append AFTER the
+    // answered-questions bubble, preserving chronological order (questions
+    // answered → new turn's actions → response), not split in ABOVE it.
+    const messages = [
+      makeMessage({ id: "u1", sequence: 1, role: "user", content: "build X" }),
+      makeMessage({
+        id: "a1",
+        sequence: 2,
+        role: "assistant",
+        content: "```plan-questions\n[]\n```",
+      }),
+    ];
+    // A completed top-level tool lets the live plan-output text stream through
+    // computeLiveStreamingText, mirroring the real generation turn.
+    const toolCalls = [makeToolCall({ id: "tc-1", isComplete: true })];
+    const result = buildAll(messages, toolCalls, "## Plan\n\n1. do it", true, 1000);
+
+    const a1Idx = result.findIndex((i) => i.type === "message" && i.key === "a1");
+    const narrativeIdx = result.findIndex((i) => i.type === "narrative-flow");
+    const streamingIdx = result.findIndex((i) => i.type === "streaming-response");
+
+    expect(a1Idx).toBeGreaterThanOrEqual(0);
+    expect(narrativeIdx).toBeGreaterThan(a1Idx);
+    expect(streamingIdx).toBeGreaterThan(a1Idx);
+  });
+
+  it("still splits before a trailing plan-output (PlanCard) message so its narrative sits above it", () => {
+    // A persisted plan-output bubble renders as the PlanCard answer. Its own
+    // turn's narrative legitimately belongs ABOVE it, so the split must still
+    // apply here — only plan-questions bubbles are excluded.
+    const messages = [
+      makeMessage({ id: "u1", sequence: 1, role: "user", content: "build X" }),
+      makeMessage({
+        id: "a1",
+        sequence: 2,
+        role: "assistant",
+        content: "```plan-output\n{}\n```",
+      }),
+    ];
+    const toolCalls = [makeToolCall({ id: "tc-1" })];
+    const result = buildAll(messages, toolCalls, undefined, false, undefined);
+
+    const a1Idx = result.findIndex((i) => i.type === "message" && i.key === "a1");
+    const narrativeIdx = result.findIndex((i) => i.type === "narrative-flow");
+    expect(narrativeIdx).toBeGreaterThanOrEqual(0);
+    expect(narrativeIdx).toBeLessThan(a1Idx);
+  });
+
   it("narrative-flow is present when live tool calls exist", () => {
     const messages = [
       makeMessage({ id: "msg-1", sequence: 1, role: "assistant", content: "done" }),

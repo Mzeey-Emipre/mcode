@@ -250,7 +250,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
       aria-label="Plan questions"
       data-direction={slideDirection}
       className={cn(
-        "mx-3 mb-1.5",
+        "mx-auto mb-1.5 w-full max-w-4xl",
         "rounded-xl border border-border bg-card",
         "px-5 pt-4 pb-3",
         "animate-wizard-float-rise",
