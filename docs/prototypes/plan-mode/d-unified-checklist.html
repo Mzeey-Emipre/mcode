@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>D · Unified Checklist · Plan mode</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: oklch(0.155 0.008 75);
+    --panel: oklch(0.19 0.008 75);
+    --surface: oklch(0.225 0.008 75);
+    --surface-2: oklch(0.255 0.008 75);
+    --border: oklch(0.32 0.008 75);
+    --border-subtle: oklch(0.26 0.008 75);
+    --text: oklch(0.94 0.005 75);
+    --text-muted: oklch(0.62 0.008 75);
+    --text-faint: oklch(0.42 0.008 75);
+    --accent: oklch(0.80 0.13 75);
+    --accent-dim: oklch(0.50 0.08 75);
+    --accent-ink: oklch(0.18 0.04 75);
+    --add-strong: oklch(0.64 0.13 145);
+    --mark: oklch(0.80 0.13 75 / 0.16);
+    --mark-edge: oklch(0.80 0.13 75 / 0.55);
+    --sans: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+    --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: oklch(0.12 0.006 75);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px; line-height: 1.5;
+    height: 100vh; display: flex; align-items: stretch; justify-content: flex-end;
+  }
+
+  /* ---- state harness (prototype-only dev toolbar) ---- */
+  .ghost-left {
+    flex: 1; min-width: 0; position: relative;
+    background: radial-gradient(120% 80% at 20% 0%, oklch(0.17 0.01 75) 0%, oklch(0.12 0.006 75) 60%);
+    padding: 26px 30px;
+  }
+  .harness { max-width: 360px; }
+  .harness .h-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--text-faint); margin-bottom: 12px;
+  }
+  .harness .h-sub { font-size: 12.5px; color: var(--text-faint); line-height: 1.55; margin: 14px 0 0; max-width: 42ch; }
+  .states { display: flex; flex-direction: column; gap: 6px; }
+  .state-btn {
+    text-align: left; font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em;
+    color: var(--text-muted); background: oklch(0.16 0.008 75); border: 1px solid var(--border-subtle);
+    border-radius: 7px; padding: 9px 12px; cursor: pointer; display: flex; align-items: center; gap: 9px;
+    transition: background 140ms, color 140ms, border-color 140ms;
+  }
+  .state-btn:hover { border-color: var(--border); color: var(--text); }
+  .state-btn[aria-pressed="true"] { background: var(--surface-2); color: var(--text); border-color: var(--mark-edge); }
+  .state-btn .k { color: var(--text-faint); width: 14px; }
+  .state-btn[aria-pressed="true"] .k { color: var(--accent); }
+  @media (max-width: 880px) { .ghost-left { display: none; } }
+
+  /* ---- right panel frame ---- */
+  .panel {
+    width: min(620px, 100%); height: 100%; background: var(--bg);
+    border-left: 1px solid var(--border-subtle); display: flex; flex-direction: column; position: relative;
+  }
+  @media (max-width: 880px) { .panel { width: 100%; } }
+
+  .tabbar { display: flex; align-items: center; gap: 2px; padding: 9px 10px; height: 46px; flex-shrink: 0; }
+  .tab {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text-faint); background: none; border: 1px solid transparent; border-radius: 7px;
+    padding: 6px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+  }
+  .tab[aria-selected="true"] { color: var(--text); background: var(--surface); border-color: var(--border); }
+  .tab .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pulse 1.8s ease-in-out infinite; }
+  .tabbar .close { margin-left: auto; color: var(--text-faint); background: none; border: none; cursor: pointer; font-size: 15px; padding: 6px; }
+
+  /* ---- plan header (present only when a checklist/plan exists) ---- */
+  .plan-head { display: flex; align-items: center; gap: 12px; padding: 11px 18px 12px;
+    border-top: 1px solid var(--border-subtle); background: linear-gradient(180deg, var(--panel), var(--bg)); flex-shrink: 0; }
+  .plan-title { min-width: 0; }
+  .plan-title .kicker { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--accent); display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .plan-title h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .segmented { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 3px; gap: 2px; margin-left: auto; }
+  .seg { font-family: var(--mono); font-size: 11px; color: var(--text-muted); background: none; border: none; cursor: pointer;
+    padding: 5px 9px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px; transition: background 160ms, color 160ms; }
+  .seg[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+  .seg .impl-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--add-strong); }
+
+  /* ---- progress meter + glowing implement (the action zone) ---- */
+  .action-zone { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+  .progress { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+  .progress .pmeter { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--text-muted); }
+  .progress .pmeter b { color: var(--accent); font-weight: 500; }
+  .progress .ptrack { width: 78px; height: 4px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .progress .pfill { height: 100%; width: 0%; background: var(--add-strong); border-radius: 3px; transition: width 240ms cubic-bezier(0.2,0.7,0.2,1); }
+
+  .implement { font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; font-weight: 500; color: var(--accent-ink);
+    background: var(--accent); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 15px; cursor: pointer; white-space: nowrap;
+    position: relative; animation: glow 2.6s ease-in-out infinite; transition: transform 140ms cubic-bezier(0.2,0.7,0.2,1); }
+  .implement:hover { transform: translateY(-1px); }
+  .implement.feedback { color: var(--accent); background: transparent; border-color: var(--mark-edge); animation: none; }
+  @keyframes glow {
+    0%,100% { box-shadow: 0 0 0 0 oklch(0.80 0.13 75 / 0), 0 0 14px 0 oklch(0.80 0.13 75 / 0.25); }
+    50%     { box-shadow: 0 0 0 4px oklch(0.80 0.13 75 / 0.10), 0 0 22px 2px oklch(0.80 0.13 75 / 0.40); }
+  }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 oklch(0.80 0.13 75 / 0.5); } 50% { box-shadow: 0 0 0 4px oklch(0.80 0.13 75 / 0); } }
+
+  /* ---- body: one scrolling unified checklist ---- */
+  .body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  .checklist-region { min-height: 0; overflow-y: auto; overflow-x: hidden; flex: 1 1 auto;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .checklist-region::-webkit-scrollbar { width: 9px; }
+  .checklist-region::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 8px; border: 2px solid var(--bg); }
+
+  .checklist-inner { padding: 18px 22px 28px; }
+
+  .version-blurb { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 11px; color: var(--text-faint);
+    margin-bottom: 18px; padding-bottom: 13px; border-bottom: 1px solid var(--border-subtle); }
+  .version-blurb b { color: var(--text-muted); font-weight: 500; }
+
+  /* group heading, derived from a doc[] section. No side stripes; fill + type only. */
+  .group { margin-top: 22px; }
+  .group:first-of-type { margin-top: 0; }
+  .group-head { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent);
+    margin: 0 0 8px; font-weight: 500; display: flex; align-items: baseline; gap: 8px; }
+  .group-head .g-count { font-size: 9.5px; letter-spacing: 0.1em; color: var(--text-faint); }
+
+  /* a single checkable step (the plan IS the item) */
+  .step { border-radius: 8px; background: var(--surface); border: 1px solid var(--border-subtle); margin-bottom: 7px; overflow: hidden;
+    transition: border-color 140ms, background 140ms; }
+  .step.open { border-color: var(--border); background: var(--surface-2); }
+  .step.done { background: oklch(0.20 0.012 145); }
+  .step-row { display: flex; align-items: flex-start; gap: 11px; padding: 10px 12px; cursor: pointer; }
+  .step-row .box { flex-shrink: 0; width: 15px; height: 15px; margin-top: 1px; border: 1.5px solid var(--border); border-radius: 4px; background: var(--bg); cursor: pointer; position: relative; transition: border-color 140ms, background 140ms; }
+  .step.done .box { background: var(--add-strong); border-color: var(--add-strong); }
+  .step.done .box::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--accent-ink); border-width: 0 1.6px 1.6px 0; transform: rotate(45deg); }
+  .step-main { flex: 1; min-width: 0; }
+  .step-main .s-title { font-size: 13.5px; color: var(--text); }
+  .step.done .s-title { color: var(--text-faint); text-decoration: line-through; text-decoration-color: var(--border); }
+  .step-main .s-path { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); margin-top: 2px; }
+  .chev { flex-shrink: 0; color: var(--text-faint); font-size: 11px; margin-top: 2px; transition: transform 200ms cubic-bezier(0.2,0.7,0.2,1); user-select: none; }
+  .step.open .chev { transform: rotate(90deg); color: var(--accent); }
+
+  /* expandable detail drawer, prose where highlight→comment lives */
+  .step-detail { display: none; }
+  .step.open .step-detail { display: block; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 0; transition: grid-template-columns 280ms cubic-bezier(0.2,0.7,0.2,1); }
+  .detail-grid.has-comments { grid-template-columns: 1fr 188px; }
+  .detail-prose { padding: 2px 12px 13px 38px; max-width: 64ch; user-select: text; }
+  .detail-prose p { margin: 0 0 9px; color: var(--text-muted); line-height: 1.6; font-size: 13px; }
+  .detail-prose p:last-child { margin-bottom: 0; }
+  .detail-prose p strong { color: var(--text); font-weight: 500; }
+  .detail-prose code { font-family: var(--mono); font-size: 12px; background: var(--bg); padding: 1px 6px; border-radius: 3px; color: var(--text); }
+  mark.hl { background: var(--mark); border-radius: 2px; box-shadow: inset 0 -1.5px 0 var(--mark-edge); padding: 0 1px; cursor: pointer; }
+  mark.hl.active { background: oklch(0.80 0.13 75 / 0.28); }
+
+  .detail-margin { position: relative; padding: 4px 10px 10px 0; }
+  .comment { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px 10px; margin-bottom: 10px; animation: cardin 280ms cubic-bezier(0.2,0.7,0.2,1); }
+  @keyframes cardin { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+  .comment .quote { font-size: 11px; color: var(--text-faint); line-height: 1.4; margin-bottom: 7px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .comment .quote::before { content: "\201C"; color: var(--accent-dim); } .comment .quote::after { content: "\201D"; color: var(--accent-dim); }
+  .comment textarea { width: 100%; resize: none; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 6px; color: var(--text); font-family: var(--sans); font-size: 12.5px; line-height: 1.45; padding: 6px 8px; min-height: 42px; }
+  .comment textarea:focus { outline: none; border-color: var(--mark-edge); }
+  .comment .crow { display: flex; justify-content: flex-end; margin-top: 6px; }
+  .comment .del { font-family: var(--mono); font-size: 10px; color: var(--text-faint); background: none; border: none; cursor: pointer; }
+
+  /* plan-only: prose sections WITHOUT checkboxes + a make-actionable toggle */
+  .makeable-bar { display: none; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 18px;
+    background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 9px; }
+  body.plan-only .makeable-bar { display: flex; }
+  .makeable-bar .m-text { font-size: 12.5px; color: var(--text-muted); }
+  .makeable-bar .m-btn { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--accent); background: transparent; border: 1px solid var(--mark-edge); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  .prose-only h2 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); margin: 22px 0 8px; font-weight: 500; }
+  .prose-only h2:first-of-type { margin-top: 0; }
+  .prose-only p { margin: 0 0 11px; color: var(--text-muted); line-height: 1.62; }
+  .prose-only p strong { color: var(--text); font-weight: 500; }
+  .prose-only .lead { color: var(--text); font-size: 15px; }
+  .prose-only code { font-family: var(--mono); font-size: 12.5px; background: var(--surface); padding: 1px 6px; border-radius: 3px; color: var(--text); }
+
+  /* empty / generating big states */
+  .empty-state { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 40px; }
+  body.empty .empty-state { display: flex; }
+  .empty-state .glyph { font-family: var(--mono); font-size: 30px; color: oklch(0.94 0.005 75 / 0.13); }
+  .empty-state .cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: oklch(0.62 0.008 75 / 0.45); }
+  .empty-state .hint { font-size: 12.5px; color: var(--text-faint); max-width: 34ch; line-height: 1.5; }
+
+  .gen { display: none; padding: 20px 22px; }
+  body.generating .gen { display: block; }
+  .gen .gen-tag { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); display: flex; align-items: center; gap: 8px; margin-bottom: 18px; }
+  .gen .gen-tag .spin { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--accent); border-right-color: transparent; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* skeleton step rows, match the real step shape */
+  .gen-step { display: flex; align-items: center; gap: 11px; padding: 11px 12px; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 8px; margin-bottom: 7px; }
+  .gen-step .gbox { flex-shrink: 0; width: 15px; height: 15px; border-radius: 4px; background: var(--surface-2); }
+  .gen-step .glines { flex: 1; }
+  .gen-grouptag { height: 9px; width: 30%; border-radius: 4px; margin: 16px 0 9px; background: linear-gradient(90deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+  .gen-grouptag:first-child { margin-top: 0; }
+  .sk { height: 11px; border-radius: 4px; background: linear-gradient(90deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; margin-bottom: 7px; }
+  .sk:last-child { margin-bottom: 0; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  /* per-state visibility toggles */
+  body.empty .plan-head, body.generating .plan-head { display: none; }
+  body.empty .checklist-region, body.generating .checklist-inner { display: none; }
+  /* todos-only: bare checklist, no plan narrative, no version control, no implement */
+  body.todos-only .segmented, body.todos-only .action-zone { display: none; }
+  body.todos-only .version-blurb, body.todos-only .makeable-bar { display: none; }
+  body.todos-only .group-head { display: none; }
+  body.todos-only #kicker { display: none; }
+  /* plan-only: hide live checklist groups + progress, show prose + makeable bar */
+  body.plan-only .progress { visibility: hidden; }
+
+  .footer { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 9px 18px; border-top: 1px solid var(--border-subtle);
+    font-family: var(--mono); font-size: 11px; color: var(--text-faint); letter-spacing: 0.04em; background: var(--panel); }
+
+  .chip { position: fixed; z-index: 40; font-family: var(--mono); font-size: 11px; color: var(--accent-ink); background: var(--accent);
+    border: none; border-radius: 7px; padding: 6px 10px; cursor: pointer; display: none; align-items: center; gap: 6px;
+    box-shadow: 0 6px 20px oklch(0 0 0 / 0.45); transform: translate(-50%, -120%); }
+  .chip.show { display: inline-flex; }
+
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body class="both">
+  <!-- prototype state harness -->
+  <div class="ghost-left" aria-hidden="false">
+    <div class="harness">
+      <div class="h-label">Architecture D · Unified Checklist</div>
+      <div class="states" id="states">
+        <button class="state-btn" data-s="both" aria-pressed="true"><span class="k">1</span> Plan + todos</button>
+        <button class="state-btn" data-s="todos-only" aria-pressed="false"><span class="k">2</span> Todos only · no plan</button>
+        <button class="state-btn" data-s="plan-only" aria-pressed="false"><span class="k">3</span> Plan only · no todos</button>
+        <button class="state-btn" data-s="empty" aria-pressed="false"><span class="k">4</span> Empty</button>
+        <button class="state-btn" data-s="generating" aria-pressed="false"><span class="k">5</span> Generating</button>
+      </div>
+      <p class="h-sub">There is no separate docket. The plan <b>is</b> the to-do list: each step is one checkable item whose prose expands inline. Checking items off <b>is</b> implementing, so "todos without a plan" is just the same checklist stripped of narrative.</p>
+    </div>
+  </div>
+
+  <section class="panel" aria-label="Right panel">
+    <div class="tabbar" role="tablist">
+      <button class="tab" role="tab" aria-selected="true"><span class="dot"></span> Scope</button>
+      <button class="tab" role="tab" aria-selected="false">Changes</button>
+      <button class="tab" role="tab" aria-selected="false">Preview</button>
+      <button class="tab" role="tab" aria-selected="false">Terminal</button>
+      <button class="close" aria-label="Close">×</button>
+    </div>
+
+    <div class="plan-head">
+      <div class="plan-title">
+        <div class="kicker" id="kicker"><span class="dot" style="position:relative"></span> Checklist ready · 3 versions</div>
+        <h1 id="goalTitle">Persist sidebar thread ordering</h1>
+      </div>
+      <div class="segmented" role="group" aria-label="Plan version">
+        <button class="seg" data-v="a" aria-pressed="false">v.a</button>
+        <button class="seg" data-v="b" aria-pressed="true"><span class="impl-dot"></span>v.b</button>
+        <button class="seg" data-v="c" aria-pressed="false">v.c</button>
+      </div>
+      <div class="action-zone">
+        <div class="progress">
+          <div class="pmeter"><b id="pDone">0</b> / <span id="pTotal">0</span> done</div>
+          <div class="ptrack"><div class="pfill" id="pFill"></div></div>
+        </div>
+        <button class="implement" id="implement">Implement v.b →</button>
+      </div>
+    </div>
+
+    <div class="body" id="bodyRegion">
+      <div class="checklist-region" id="checklistRegion">
+        <div class="checklist-inner" id="checklistInner"></div>
+      </div>
+
+      <div class="gen" id="gen">
+        <div class="gen-tag"><span class="spin"></span> Drafting checklist…</div>
+        <div class="gen-grouptag"></div>
+        <div class="gen-step"><span class="gbox"></span><span class="glines"><div class="sk" style="width:62%"></div><div class="sk" style="width:40%"></div></span></div>
+        <div class="gen-step"><span class="gbox"></span><span class="glines"><div class="sk" style="width:74%"></div><div class="sk" style="width:46%"></div></span></div>
+        <div class="gen-grouptag"></div>
+        <div class="gen-step"><span class="gbox"></span><span class="glines"><div class="sk" style="width:55%"></div><div class="sk" style="width:38%"></div></span></div>
+        <div class="gen-step"><span class="gbox"></span><span class="glines"><div class="sk" style="width:68%"></div><div class="sk" style="width:44%"></div></span></div>
+      </div>
+
+      <div class="empty-state">
+        <div class="glyph">⌂</div>
+        <div class="cap">Nothing on the docket</div>
+        <div class="hint">Switch to Plan mode in the composer to draft a checklist, or add tasks manually.</div>
+      </div>
+    </div>
+
+    <div class="footer" id="footer"></div>
+  </section>
+
+  <button class="chip" id="chip">＋ Comment</button>
+
+<script>
+const PLAN = {
+  goal: "Persist sidebar thread ordering",
+  query: "Let me drag threads in the sidebar to reorder them, and have the order stick across restarts.",
+  implementing: "b",
+  versions: {
+    a: { label: "v.a", name: "Server round-trip", blurb: "Persist on every drop. Simplest path, one extra round-trip per move.",
+      doc: [["lead","On every drop, write the new absolute order to the database and re-fetch the thread list. No optimistic state, the server is the single source of truth."],["h2","Data model"],["p","Add an integer <code>order</code> column to <code>threads</code>, dense per project. A drop renumbers the affected slice."],["h2","Server"],["p","<strong>reorderThreads(projectId, orderedIds[])</strong> rewrites the full ordering in one transaction."],["h2","Sidebar"],["p","Drag handles dispatch the new id array on drop; the list re-renders from the server response."]],
+      docket: [["migration: add dense <code>order</code> to threads","packages/db/migrations/00xx_thread_order.sql"],["RPC: reorderThreads(orderedIds[])","apps/server/src/rpc/threads.ts"],["sidebar: drag handlers + re-fetch on drop","apps/web/src/components/sidebar/ThreadTree.tsx"],["tests: order persists across reload","apps/web/e2e/thread-reorder.spec.ts"]] },
+    b: { label: "v.b", name: "Optimistic + debounced", blurb: "Reorder instantly in the store, batch-persist after a short idle. Best perceived speed.",
+      doc: [["lead","Move the thread in the Zustand store the instant the drop fires, then debounce-flush the new ordering to the server. The UI never waits on the network."],["h2","Data model"],["p","Add a <code>order REAL</code> column to <code>threads</code>. A drop sets the moved row's order to the <strong>midpoint</strong> of its new neighbours, so siblings are never renumbered."],["h2","Server"],["p","<strong>reorderThreads(threadId, beforeId, afterId)</strong> computes the midpoint and writes one row. Idempotent and tiny."],["h2","Store"],["p","<strong>moveThread()</strong> mutates local order optimistically; a 300 ms debounced flush persists the batch. On failure the store rolls back to the last confirmed order."],["h2","Sidebar"],["p","Drag handles + drop indicator, <code>prefers-reduced-motion</code> aware. The row follows the cursor and lands immediately, no snap-back."]],
+      docket: [["migration: add <code>order REAL</code> to threads","packages/db/migrations/00xx_thread_order.sql"],["RPC: reorderThreads(threadId, beforeId, afterId)","apps/server/src/rpc/threads.ts"],["store: optimistic moveThread + 300ms flush","apps/web/src/stores/threadStore.ts"],["sidebar: DnD handlers + drop indicator","apps/web/src/components/sidebar/ThreadTree.tsx"],["tests: optimistic move + rollback on failure","apps/web/e2e/thread-reorder.spec.ts"]] },
+    c: { label: "v.c", name: "Fractional indices", blurb: "Fractional keys mean reorders never renumber siblings and windows never collide.",
+      doc: [["lead","Each thread owns a fractional <code>rank</code> string (LexoRank-style). Inserting between two rows mints a key strictly between them, so no sibling ever moves and two windows can reorder at once without conflict."],["h2","Data model"],["p","Add a <code>rank TEXT</code> column with a unique index per project."],["h2","Server"],["p","<strong>reorderThreads(threadId, beforeRank, afterRank)</strong> returns the minted key. A periodic <strong>rebalance</strong> job re-spaces keys when they grow long."],["h2","Store"],["p","The store sorts by <code>rank</code>. A drop mints the new key locally and persists it."],["h2","Sidebar"],["p","Same drag affordance as v.b. The win is invisible: no flicker when another window reorders the same list."]],
+      docket: [["migration: add <code>rank TEXT</code> + backfill","packages/db/migrations/00xx_thread_rank.sql"],["lib: fractional rank mint + compare","packages/shared/src/rank.ts"],["RPC: reorderThreads(beforeRank, afterRank)","apps/server/src/rpc/threads.ts"],["job: periodic rank rebalance","apps/server/src/jobs/rebalance.ts"],["tests: concurrent-window reorder, no flicker","apps/web/e2e/thread-reorder.spec.ts"]] },
+  },
+  // a standalone docket for the "todos only, no plan" state (manually-added / leftover tasks)
+  looseTodos: [
+    ["triage: sidebar drag jitter on Windows","apps/web/src/components/sidebar/ThreadTree.tsx"],
+    ["chore: bump @dnd-kit to 6.2","package.json"],
+    ["spike: measure reorder flush latency","docs/notes/reorder-latency.md"],
+  ],
+};
+
+/*
+ * In D, the docket and the doc are one object. The doc[] sections (h2 headings + lead)
+ * give the checklist its group structure; the docket[] items become the checkable steps.
+ * We zip them: each step is paired with a prose paragraph drawn from the matching doc[] body.
+ */
+let state = "both";
+let current = PLAN.implementing;
+let comments = [];        // active comments live inside the currently-open step's margin
+let cid = 0;
+let activeMargin = null;  // the .detail-margin element comments render into
+
+const body = document.body;
+const checklistInner = document.getElementById("checklistInner");
+const implementBtn = document.getElementById("implement");
+const footer = document.getElementById("footer");
+const chip = document.getElementById("chip");
+const pDone = document.getElementById("pDone");
+const pTotal = document.getElementById("pTotal");
+const pFill = document.getElementById("pFill");
+
+/**
+ * Builds the step model for a version: pairs each docket[] item with a prose
+ * paragraph and groups them under the version's doc[] section headings.
+ * Returns [{ heading, lead, steps: [{title, path, prose}] }].
+ */
+function buildGroups(v) {
+  const d = PLAN.versions[v];
+  // Walk doc[]: a "lead" or "h2" opens a group; following "p" rows are that group's prose pool.
+  const sections = [];
+  let cur = null;
+  for (const [t, txt] of d.doc) {
+    if (t === "lead") { cur = { heading: "Overview", prose: [txt] }; sections.push(cur); }
+    else if (t === "h2") { cur = { heading: txt, prose: [] }; sections.push(cur); }
+    else if (t === "p" && cur) cur.prose.push(txt);
+  }
+  // Distribute docket items across sections, skipping the lead/overview (it's framing, not a step home).
+  const stepSections = sections.filter((s) => s.heading !== "Overview");
+  const groups = stepSections.map((s) => ({ heading: s.heading, steps: [] }));
+  d.docket.forEach((item, i) => {
+    const gi = Math.min(i, groups.length - 1);
+    const sec = stepSections[gi];
+    groups[gi].steps.push({ title: item[0], path: item[1], prose: sec.prose[0] || sections[0].prose[0] });
+  });
+  return { lead: sections[0] ? sections[0].prose[0] : "", blurb: `${d.label} · ${d.name}`, blurbText: d.blurb, groups: groups.filter((g) => g.steps.length) };
+}
+
+/** Renders the full unified checklist for state "both". */
+function renderChecklist(v) {
+  const model = buildGroups(v);
+  let html = `<div class="version-blurb"><b>${model.blurb}</b><span>${model.blurbText}</span></div>`;
+  let idx = 0;
+  for (const g of model.groups) {
+    html += `<div class="group"><div class="group-head">${g.heading} <span class="g-count">${g.steps.length} step${g.steps.length>1?"s":""}</span></div>`;
+    for (const s of g.steps) {
+      const id = idx++;
+      html += `
+        <div class="step" data-step="${id}">
+          <div class="step-row">
+            <span class="box" role="checkbox" aria-checked="false" tabindex="0"></span>
+            <span class="step-main"><span class="s-title">${s.title}</span><span class="s-path">${s.path}</span></span>
+            <span class="chev" aria-hidden="true">›</span>
+          </div>
+          <div class="step-detail">
+            <div class="detail-grid">
+              <div class="detail-prose"><p>${s.prose}</p></div>
+              <div class="detail-margin"></div>
+            </div>
+          </div>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+  checklistInner.innerHTML = html;
+  wireSteps();
+  updateProgress();
+}
+
+/** Renders the bare task list (todos-only): same step component, no prose/groups/checkbox detail. */
+function renderBareList() {
+  let html = "";
+  PLAN.looseTodos.forEach((item, id) => {
+    html += `
+      <div class="step" data-step="${id}">
+        <div class="step-row">
+          <span class="box" role="checkbox" aria-checked="false" tabindex="0"></span>
+          <span class="step-main"><span class="s-title">${item[0]}</span><span class="s-path">${item[1]}</span></span>
+        </div>
+      </div>`;
+  });
+  checklistInner.innerHTML = html;
+  wireSteps();
+  updateProgress();
+}
+
+/** Renders the plan as prose without checkboxes, plus a "Make actionable" toggle. */
+function renderProseOnly(v) {
+  const d = PLAN.versions[v];
+  let html = `<div class="version-blurb"><b>${d.label} · ${d.name}</b><span>${d.blurb}</span></div>`;
+  html += `<div class="makeable-bar"><span class="m-text">Plan drafted. It has no checkable steps yet, convert each section into checklist items.</span><button class="m-btn" id="makeBtn">Make actionable →</button></div>`;
+  html += `<div class="prose-only">`;
+  for (const [t, txt] of d.doc) html += t === "h2" ? `<h2>${txt}</h2>` : t === "lead" ? `<p class="lead">${txt}</p>` : `<p>${txt}</p>`;
+  html += `</div>`;
+  checklistInner.innerHTML = html;
+  const mb = document.getElementById("makeBtn");
+  if (mb) mb.addEventListener("click", () => { state = "both"; render(); });
+  updateProgress();
+}
+
+/** Wires checkbox toggle, row-expand, and keyboard for every rendered step. */
+function wireSteps() {
+  checklistInner.querySelectorAll(".step").forEach((step) => {
+    const box = step.querySelector(".box");
+    const row = step.querySelector(".step-row");
+    const detail = step.querySelector(".step-detail");
+
+    const toggleDone = (e) => {
+      if (e) e.stopPropagation();
+      step.classList.toggle("done");
+      box.setAttribute("aria-checked", step.classList.contains("done"));
+      updateProgress();
+    };
+    box.addEventListener("click", toggleDone);
+    box.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggleDone(e); } });
+
+    if (detail) {
+      row.addEventListener("click", (e) => {
+        if (e.target === box) return;
+        const wasOpen = step.classList.contains("open");
+        // single-open accordion so comment state has one clear home
+        checklistInner.querySelectorAll(".step.open").forEach((s) => { if (s !== step) { s.classList.remove("open"); } });
+        step.classList.toggle("open", !wasOpen);
+        if (!wasOpen) { activeMargin = step.querySelector(".detail-margin"); clearComments(); renderComments(); updateImplement(); }
+        else { activeMargin = null; clearComments(); renderComments(); updateImplement(); }
+      });
+    }
+  });
+}
+
+/** Updates the progress meter + bar fill from current done count. */
+function updateProgress() {
+  const all = checklistInner.querySelectorAll(".step").length;
+  const done = checklistInner.querySelectorAll(".step.done").length;
+  pDone.textContent = done;
+  pTotal.textContent = all;
+  pFill.style.width = all ? `${(done / all) * 100}%` : "0%";
+}
+
+function setVersion(v) {
+  current = v;
+  document.querySelectorAll(".seg").forEach((s) => s.setAttribute("aria-pressed", s.dataset.v === v));
+  activeMargin = null; clearComments();
+  if (state === "both") renderChecklist(v);
+  else if (state === "plan-only") renderProseOnly(v);
+  renderComments(); updateImplement();
+}
+
+function render() {
+  body.className = state;
+  document.querySelectorAll(".state-btn").forEach((b) => b.setAttribute("aria-pressed", b.dataset.s === state));
+  activeMargin = null; clearComments();
+  const goalTitle = document.getElementById("goalTitle");
+  goalTitle.textContent = state === "todos-only" ? "Open tasks" : "Persist sidebar thread ordering";
+  if (state === "both") { renderChecklist(current); footer.textContent = "Implementing v.b · Optimistic + debounced"; }
+  else if (state === "plan-only") { renderProseOnly(current); footer.textContent = "Plan drafted · not yet a checklist"; }
+  else if (state === "todos-only") { renderBareList(); footer.textContent = "3 open tasks · no plan in this thread"; }
+  else if (state === "empty") { checklistInner.innerHTML = ""; footer.textContent = "No plan, no tasks"; }
+  else if (state === "generating") { checklistInner.innerHTML = ""; footer.textContent = "Drafting checklist…"; }
+  renderComments(); updateImplement();
+}
+
+/* comment engine, operates inside the currently-open step's detail prose */
+function planSelection() {
+  if (!activeMargin) return null;
+  const prose = activeMargin.parentElement.querySelector(".detail-prose");
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!prose || !prose.contains(range.commonAncestorContainer)) return null;
+  const text = sel.toString().replace(/\s+/g, " ").trim();
+  if (text.length < 2) return null;
+  return { range, text, rect: range.getBoundingClientRect() };
+}
+checklistInner.addEventListener("mouseup", () => setTimeout(() => { const s = planSelection(); if (!s) { hideChip(); return; } showChip(s.rect); }, 0));
+document.addEventListener("mousedown", (e) => { if (e.target !== chip) hideChip(); });
+function showChip(r) { chip.style.left = `${r.left + r.width / 2}px`; chip.style.top = `${r.top}px`; chip.classList.add("show"); }
+function hideChip() { chip.classList.remove("show"); }
+chip.addEventListener("mousedown", (e) => e.preventDefault());
+chip.addEventListener("click", () => { const s = planSelection(); if (!s) return; addComment(s.range, s.text); hideChip(); window.getSelection().removeAllRanges(); });
+function addComment(range, text) {
+  const id = ++cid; const mark = document.createElement("mark"); mark.className = "hl"; mark.dataset.cid = id;
+  try { range.surroundContents(mark); } catch { const b = range.startContainer.parentElement.closest("p,.lead") || (activeMargin && activeMargin.parentElement.querySelector(".detail-prose")); if (b) b.classList.add("hl"); }
+  comments.push({ id, quote: text, markEl: mark }); renderComments(); updateImplement();
+  requestAnimationFrame(() => { const ta = activeMargin && activeMargin.querySelector(`[data-cid="${id}"] textarea`); if (ta) ta.focus(); });
+}
+function renderComments() {
+  if (!activeMargin) return;
+  const grid = activeMargin.closest(".detail-grid");
+  if (grid) grid.classList.toggle("has-comments", comments.length > 0);
+  activeMargin.innerHTML = comments.map((c) => `<div class="comment" data-cid="${c.id}"><div class="quote">${c.quote}</div><textarea placeholder="What should change here?" rows="2"></textarea><div class="crow"><button class="del" data-cid="${c.id}">remove</button></div></div>`).join("");
+  activeMargin.querySelectorAll(".del").forEach((b) => b.addEventListener("click", () => removeComment(Number(b.dataset.cid))));
+  activeMargin.querySelectorAll(".comment").forEach((card) => { const id = Number(card.dataset.cid);
+    card.addEventListener("mouseenter", () => { const c = comments.find((x) => x.id === id); if (c && c.markEl) c.markEl.classList.add("active"); });
+    card.addEventListener("mouseleave", () => { const c = comments.find((x) => x.id === id); if (c && c.markEl) c.markEl.classList.remove("active"); }); });
+}
+function removeComment(id) {
+  const c = comments.find((x) => x.id === id);
+  if (c && c.markEl && c.markEl.parentNode) { const p = c.markEl.parentNode; while (c.markEl.firstChild) p.insertBefore(c.markEl.firstChild, c.markEl); p.removeChild(c.markEl); p.normalize(); }
+  comments = comments.filter((x) => x.id !== id); renderComments(); updateImplement();
+}
+function clearComments() { comments = []; cid = 0; }
+function updateImplement() {
+  if (comments.length > 0) { implementBtn.classList.add("feedback"); implementBtn.textContent = `Send ${comments.length} comment${comments.length > 1 ? "s" : ""} →`; }
+  else { implementBtn.classList.remove("feedback"); implementBtn.textContent = `Implement ${PLAN.versions[current].label} →`; }
+}
+
+document.querySelectorAll(".state-btn").forEach((b) => b.addEventListener("click", () => { state = b.dataset.s; render(); }));
+document.querySelectorAll(".seg").forEach((s) => s.addEventListener("click", () => setVersion(s.dataset.v)));
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => { document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", "false")); t.setAttribute("aria-selected", "true"); }));
+window.addEventListener("keydown", (e) => { const map = { "1": "both", "2": "todos-only", "3": "plan-only", "4": "empty", "5": "generating" }; if (map[e.key]) { state = map[e.key]; render(); } });
+
+render();
+</script>
+</body>
+</html>
