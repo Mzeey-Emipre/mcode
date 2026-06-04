@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { isMac } from "@/lib/platform";
+
+const SAVE_HINT = isMac ? "⌘↵ to save" : "Ctrl+↵ to save";
 
 interface PlanAnnotationProps {
   sectionTitle: string;
   initialValue: string;
-  /** Called on blur to stash the draft without closing the editor. */
+  /** Called on blur (click away) to stash the draft and close the editor. */
   onCommit: (value: string) => void;
   /** Called when the user explicitly saves and closes the note. */
   onSave: (value: string) => void;
@@ -14,7 +17,8 @@ interface PlanAnnotationProps {
 /**
  * Inline annotation textarea below a plan heading. Manages its own
  * text state to avoid re-rendering the parent markdown on every
- * keystroke. Blur stashes a draft; Save note commits and closes.
+ * keystroke. Blur (click away) stashes the draft and closes; Save note
+ * commits and closes explicitly.
  */
 export function PlanAnnotation({
   sectionTitle,
@@ -56,7 +60,14 @@ export function PlanAnnotation({
   };
 
   return (
-    <div className="my-2 overflow-hidden rounded-md border border-border bg-card animate-wizard-float-rise">
+    <div className="my-2.5 overflow-hidden rounded-lg bg-card shadow-lg shadow-black/25 ring-1 ring-border/60 transition-shadow duration-200 focus-within:ring-primary/35 animate-wizard-float-rise">
+      <div className="flex items-center gap-2 px-3.5 pt-3 pb-2">
+        <span className="size-1.5 shrink-0 rounded-full bg-primary/70" aria-hidden />
+        <span className="min-w-0 truncate font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground/55">
+          Note <span className="text-muted-foreground/30">·</span>{" "}
+          <span className="text-muted-foreground/75 normal-case tracking-normal">{sectionTitle}</span>
+        </span>
+      </div>
       <label htmlFor={fieldId} className="sr-only">
         Note for section {sectionTitle}
       </label>
@@ -69,13 +80,13 @@ export function PlanAnnotation({
         onKeyDown={handleKeyDown}
         placeholder="What should change in this section?"
         rows={2}
-        className="block min-h-[3.5rem] w-full resize-y border-none bg-transparent px-3 py-2.5 text-[13px] leading-[1.65] text-foreground outline-none placeholder:text-muted-foreground/55"
+        className="block min-h-[4rem] w-full resize-y border-none bg-transparent px-3.5 pb-3 text-[13px] leading-[1.7] text-foreground outline-none placeholder:text-muted-foreground/45"
       />
-      <div className="flex items-center justify-between gap-2 border-t border-border/50 px-2 py-1.5">
-        <p className="min-w-0 font-mono text-[9px] leading-snug tracking-[0.14em] text-muted-foreground/65">
-          Click away to stash, or save to close
+      <div className="flex items-center justify-between gap-2 bg-muted/25 px-3.5 py-2.5">
+        <p className="min-w-0 font-mono text-[9px] leading-snug tracking-[0.14em] text-muted-foreground/55">
+          Click away to stash <span className="text-muted-foreground/30">·</span> {SAVE_HINT}
         </p>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1.5">
           <Button
             type="button"
             variant="ghost"
@@ -85,19 +96,19 @@ export function PlanAnnotation({
               e.preventDefault();
             }}
             onClick={onDiscard}
-            className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground"
+            className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground/70 hover:text-foreground"
           >
             Discard
           </Button>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="xs"
             onMouseDown={(e) => {
               e.preventDefault();
             }}
             onClick={handleSave}
-            className="font-mono text-[10px] uppercase tracking-[0.16em]"
+            className="bg-primary/15 font-mono text-[10px] uppercase tracking-[0.16em] text-primary hover:bg-primary/25 hover:text-primary"
           >
             Save note
           </Button>
