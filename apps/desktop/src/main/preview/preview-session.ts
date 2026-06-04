@@ -303,6 +303,7 @@ function pageStatusEqual(a: PreviewPageStatus, b: PreviewPageStatus): boolean {
     a.phase === b.phase &&
     a.error?.kind === b.error?.kind &&
     a.error?.status === b.error?.status &&
+    a.error?.code === b.error?.code &&
     a.error?.message === b.error?.message
   );
 }

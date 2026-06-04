@@ -19,8 +19,13 @@ export type PageStatusEvent =
   | { type: "favicon"; favicon: string | null }
   /** did-stop-loading / did-finish-load: settle to loaded (unless already error). */
   | { type: "load-stop" }
-  /** Classified failure (W1): enter error and clear the loading affordance. */
-  | { type: "load-error"; error: PreviewPageError }
+  /**
+   * Classified failure (W1): enter error and clear the loading affordance.
+   * `url` carries the failed address (from did-fail-load's validatedURL) so the
+   * error panel can show it and offer "Open in browser" / "Edit URL" even when
+   * the navigation never committed a URL.
+   */
+  | { type: "load-error"; error: PreviewPageError; url?: string | null }
   /** Memory-saver eviction (W3): enter discarded, keep cold chrome. */
   | { type: "discard" }
   /** Tab/thread switch: replace the whole status with the activated tab's chrome. */
@@ -61,7 +66,13 @@ export function pageStatusReducer(
     case "load-stop":
       return prev.phase === "error" ? prev : { ...prev, phase: "loaded" };
     case "load-error":
-      return { ...prev, phase: "error", favicon: null, error: event.error };
+      return {
+        ...prev,
+        url: event.url !== undefined ? event.url : prev.url,
+        phase: "error",
+        favicon: null,
+        error: event.error,
+      };
     case "discard":
       return { ...prev, phase: "discarded" };
     case "reset":

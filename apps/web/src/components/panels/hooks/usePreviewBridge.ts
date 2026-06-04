@@ -64,6 +64,8 @@ export interface PreviewBridgeState {
   readonly onOpenExternal: () => Promise<void>;
   /** Navigate the preview to the given URL or file path. */
   readonly onNavigate: (url: string) => void;
+  /** Recover from an error state by reloading the failed page. */
+  readonly onRetry: () => Promise<void>;
 }
 
 /**
@@ -88,6 +90,13 @@ export function usePreviewBridge({
   const previewLoading = pageStatus.phase === "loading";
   const pageTitle = pageStatus.title;
   const faviconUrl = pageStatus.favicon;
+
+  // Approach A seam: while the page is in an error phase we hide the native
+  // WebContentsView (which paints above all HTML) so the in-chrome HTML error
+  // panel is visible. pushSync reads this ref to force visible:false; the
+  // phase-change effect below re-syncs on every transition into/out of error.
+  const phaseRef = useRef(pageStatus.phase);
+  phaseRef.current = pageStatus.phase;
 
   const workspacePath = useWorkspaceStore(
     (s) => s.workspaces.find((w) => w.id === workspaceId)?.path ?? null,
@@ -130,7 +139,9 @@ export function usePreviewBridge({
       if (!preview) return;
       const el = surfaceRef.current;
       const hint = storedUrlRef.current.trim() || null;
-      if (!visible || !el) {
+      // Keep the native view hidden while an error panel owns the surface.
+      const effectiveVisible = visible && phaseRef.current !== "error";
+      if (!effectiveVisible || !el) {
         await preview.sync({
           visible: false,
           bounds: null,
@@ -169,6 +180,23 @@ export function usePreviewBridge({
       const url = status.url;
       const isReal =
         !!url && !url.startsWith("chrome-error://") && !url.startsWith("about:");
+      if (status.phase === "error") {
+        // Surface the error without persisting the failed URL into the
+        // per-thread store: writing it would change storedUrl and retrigger the
+        // [threadId, storedUrl] reset effect below, clobbering this error back
+        // to a blank "loaded" status before the panel ever renders. The omnibox
+        // still shows a real failed address (for Edit URL); a chrome-error/about
+        // surface reads as "nothing loaded" so its title/favicon are dropped.
+        if (isReal) {
+          setInputUrl(url);
+          setPageStatus(status);
+        } else {
+          setInputUrl("");
+          setPageStatus({ ...status, title: null, favicon: null });
+        }
+        void refreshNav();
+        return;
+      }
       if (isReal) {
         useDiffStore.getState().setPreviewUrlForThread(threadId, url);
         setInputUrl(url);
@@ -199,6 +227,14 @@ export function usePreviewBridge({
       void pushSyncRef.current(true);
     }
   }, [suppressionCount]);
+
+  // Re-sync the native view on every error<->non-error transition: hide it when
+  // an error panel takes over, re-show it when a retry clears the error. Defer to
+  // suppression: a load completing while a dialog/overlay is open must not reshow
+  // the BrowserView above it, so respect suppressionCount instead of forcing true.
+  useEffect(() => {
+    void pushSyncRef.current(suppressionCount === 0);
+  }, [pageStatus.phase, suppressionCount]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
@@ -263,6 +299,11 @@ export function usePreviewBridge({
     await preview.openExternal();
   }, []);
 
+  const onRetry = useCallback(async () => {
+    setNavError(null);
+    await onReload();
+  }, [onReload]);
+
   const onNavigate = useCallback(
     (url: string) => {
       const preview = window.desktopBridge?.preview;
@@ -297,5 +338,6 @@ export function usePreviewBridge({
     onReload,
     onOpenExternal,
     onNavigate,
+    onRetry,
   };
 }

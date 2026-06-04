@@ -23,6 +23,7 @@ import {
 import { removeEpPickHighlighter, abortOverlayCapture } from "./preview-overlay.js";
 import { pushPreviewConsoleLine } from "./preview-capture.js";
 import { validateResumeUrl, trustMainProcessFileNavigation } from "./preview-local-file.js";
+import { classifyLoadResult, crashError } from "./classify-load-result.js";
 
 /**
  * Injected into every guest document so preview scrollbars match the app shell on Windows
@@ -77,6 +78,8 @@ export function detachViewListeners(view: WebContentsView): void {
   view.webContents.removeAllListeners("page-title-updated");
   view.webContents.removeAllListeners("page-favicon-updated");
   view.webContents.removeAllListeners("did-finish-load");
+  view.webContents.removeAllListeners("did-fail-load");
+  view.webContents.removeAllListeners("did-fail-provisional-load");
   view.webContents.removeAllListeners("did-start-loading");
   view.webContents.removeAllListeners("did-stop-loading");
   view.webContents.removeAllListeners("console-message");
@@ -216,9 +219,14 @@ export function ensureTabView(
     })();
   });
 
-  const forwardNav = () => {
+  const forwardNav = (httpStatus = 0) => {
     if (win.isDestroyed() || view.webContents.isDestroyed()) return;
     const url = view.webContents.getURL();
+    // Chromium commits its internal error document at a chrome-error:// URL when
+    // a provisional load fails. Adopting that as the navigated URL would clobber
+    // the error we just classified (the `navigated` reducer case clears error),
+    // so leave the page-status untouched and let load-error own the surface.
+    if (url.startsWith("chrome-error:")) return;
     void (async () => {
       if (win.isDestroyed() || view.webContents.isDestroyed()) return;
       const persisted = await validateResumeUrl(isAllowedPreviewUrl(url) ? url : null);
@@ -235,6 +243,12 @@ export function ensureTabView(
           url: url.length > 0 ? url : null,
           title,
         });
+        // A committed response with a 4xx/5xx status is a main-frame HTTP error.
+        // Classify after navigated so the error rides on the real URL/title.
+        const result = classifyLoadResult(true, 0, "", httpStatus, url);
+        if (result !== "ok") {
+          applyPageStatus(win, s, { type: "load-error", error: result });
+        }
       }
     })();
   };
@@ -251,8 +265,12 @@ export function ensureTabView(
     }
   };
 
-  view.webContents.on("did-navigate", forwardNav);
-  view.webContents.on("did-navigate-in-page", forwardNav);
+  // did-navigate carries the committed main-frame HTTP status as its third arg;
+  // did-navigate-in-page (hash/pushState) has no response, so it stays at 0.
+  view.webContents.on("did-navigate", (_e, _url, httpResponseCode: number) => {
+    forwardNav(typeof httpResponseCode === "number" ? httpResponseCode : 0);
+  });
+  view.webContents.on("did-navigate-in-page", () => forwardNav());
   view.webContents.on("page-title-updated", forwardTitle);
   view.webContents.on("page-favicon-updated", (_e, urls: string[]) => {
     tab.faviconUrl = urls[0] ?? null;
@@ -267,6 +285,34 @@ export function ensureTabView(
       void injectPreviewScrollbarStyles(s);
     }
   });
+
+  // Network / file / DNS failures. Main-frame only so a failing sub-resource
+  // iframe never blanks the whole preview; ERR_ABORTED (-3) from a redirect or
+  // user cancel is swallowed inside classifyLoadResult.
+  const forwardLoadError = (
+    errorCode: number,
+    errorDescription: string,
+    validatedURL: string,
+    isMainFrame: boolean,
+  ) => {
+    if (win.isDestroyed() || view.webContents.isDestroyed()) return;
+    if (!isActiveView()) return;
+    const result = classifyLoadResult(isMainFrame, errorCode, errorDescription, 0, validatedURL);
+    if (result === "ok") return;
+    // Carry the failed address so the panel can show it and offer Open in
+    // browser / Edit URL; only adopt real preview URLs (never chrome-error).
+    const failedUrl = isAllowedPreviewUrl(validatedURL) ? validatedURL : undefined;
+    applyPageStatus(win, s, { type: "load-error", error: result, url: failedUrl });
+  };
+  view.webContents.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    forwardLoadError(errorCode, errorDescription, validatedURL, isMainFrame);
+  });
+  view.webContents.on(
+    "did-fail-provisional-load",
+    (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      forwardLoadError(errorCode, errorDescription, validatedURL, isMainFrame);
+    },
+  );
 
   const forwardLoadingStart = () => {
     if (win.isDestroyed() || view.webContents.isDestroyed()) return;
@@ -323,7 +369,9 @@ export function ensureTabView(
     if (now - s.lastCrashRecoveryAt < CRASH_COOLDOWN_MS) {
       logger.warn("Preview: crash recovery skipped (cooldown active)");
       if (!win.isDestroyed()) {
-        setPreviewLoading(win, s, false);
+        // No auto-recovery this cycle: surface the crash so the user sees a
+        // "This page crashed" panel with Retry instead of a blank surface.
+        applyPageStatus(win, s, { type: "load-error", error: crashError() });
       }
       return;
     }

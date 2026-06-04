@@ -6,6 +6,7 @@ import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
 import { SmartOmnibox } from "./SmartOmnibox";
 import { PreviewToolbar } from "./PreviewToolbar";
+import { PreviewErrorPanel } from "./PreviewErrorPanel";
 import { PREVIEW_TABPANEL_ID, PreviewTabBar } from "./PreviewTabBar";
 import { PreviewPerfHud } from "./PreviewPerfHud";
 import { PreviewDevDock } from "./PreviewDevDock";
@@ -91,7 +92,17 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       ...ts,
       tabs: ts.tabs.map((t) =>
         t.id === ts.activeTabId
-          ? { ...t, title: status.title, url: status.url, faviconUrl: status.favicon }
+          ? {
+              // Fall back to the tab's own chrome when the live page-status
+              // field is null. The per-thread reset blanks pageStatus on a
+              // thread/url change without the warm guest re-emitting its title,
+              // so overlaying null here would clobber the active tab's real
+              // title and the bar would read "New tab" over a loaded page.
+              ...t,
+              title: status.title ?? t.title,
+              url: status.url ?? t.url,
+              faviconUrl: status.favicon ?? t.faviconUrl,
+            }
           : t,
       ),
     };
@@ -271,6 +282,8 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   }
 
   const hasLoadedPage = bridge.storedUrl.trim().length > 0;
+  const pageError =
+    bridge.pageStatus.phase === "error" ? bridge.pageStatus.error : undefined;
 
   return (
     <div
@@ -391,7 +404,19 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               <span>{CAPTURE_KIND_LABEL[lastCapture]}</span>
             </div>
           ) : null}
-          {!hasLoadedPage && !bridge.previewLoading ? (
+          {pageError ? (
+            // Approach A: the native view is hidden (bridge syncs visible:false
+            // while phase === "error"), so this HTML panel owns the surface and
+            // names the failure with recovery actions.
+            <PreviewErrorPanel
+              error={pageError}
+              url={bridge.pageStatus.url}
+              canBack={bridge.canBack}
+              onRetry={() => void bridge.onRetry()}
+              onGoBack={() => void bridge.onGoBack()}
+            />
+          ) : null}
+          {!hasLoadedPage && !bridge.previewLoading && !pageError ? (
             // Empty state teaches what becomes available once a URL loads.
             // hasLoadedPage gates every capture/design action; without this hint
             // a first-timer lands on a bare Globe and never discovers the picker,

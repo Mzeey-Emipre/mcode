@@ -264,9 +264,25 @@ export function registerNavigationHandlers(): void {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return;
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) return;
+    if (s.view && !s.view.webContents.isDestroyed()) {
+      setPreviewLoading(win, s, true);
+      s.view.webContents.reload();
+      resetIdle(win, s);
+      return;
+    }
+    // The view was torn down (e.g. a renderer crash surfaced as an error panel,
+    // and the crash-cooldown skipped auto-recovery). Retry must re-create the
+    // view rather than no-op. A fresh tab can crash before it ever navigated, so
+    // resumePreviewUrl may be null; fall back to a blank guest so Retry still
+    // remounts a working surface instead of leaving the error panel stuck.
+    if (!s.lastBounds) return;
+    const url = s.resumePreviewUrl ?? "about:blank";
+    const view = ensureView(win, s);
+    view.setBounds(s.lastBounds);
+    mountView(win, view);
     setPreviewLoading(win, s, true);
-    s.view.webContents.reload();
+    trustMainProcessFileNavigation(s, url);
+    void view.webContents.loadURL(url);
     resetIdle(win, s);
   });
 
