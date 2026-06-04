@@ -359,13 +359,28 @@
   .animate-wizard-question-back,
   .animate-wizard-legend,
   .animate-wizard-accept-flash,
-  .animate-wizard-marker-echo {
+  .animate-wizard-marker-echo,
+  .animate-plan-implement-glow {
     animation: none;
   }
 }
 
 .glow-primary {
   box-shadow: -2px 0 8px -1px oklch(0.72 0.17 75 / 0.35);
+}
+
+/* Implement is the primary plan action; a slow amber glow keeps it findable
+   without shouting. Disabled under reduced-motion below. */
+@keyframes plan-implement-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 oklch(0.72 0.17 75 / 0), 0 0 12px 0 oklch(0.72 0.17 75 / 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 3px oklch(0.72 0.17 75 / 0.10), 0 0 20px 2px oklch(0.72 0.17 75 / 0.38);
+  }
+}
+.animate-plan-implement-glow {
+  animation: plan-implement-glow 2.6s ease-in-out infinite;
 }
 
 .animate-shimmer-text {

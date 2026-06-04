@@ -137,10 +137,10 @@ export function PlanChrome({
             render={
               <Button
                 type="button"
-                variant="ghost"
+                variant="default"
                 size="xs"
                 onClick={onImplement}
-                className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary hover:text-primary"
+                className="animate-plan-implement-glow font-mono text-[10px] uppercase tracking-[0.16em]"
               >
                 Implement
               </Button>
