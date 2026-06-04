@@ -272,9 +272,11 @@ export function registerNavigationHandlers(): void {
     }
     // The view was torn down (e.g. a renderer crash surfaced as an error panel,
     // and the crash-cooldown skipped auto-recovery). Retry must re-create the
-    // view and reload the last URL rather than no-op.
-    const url = s.resumePreviewUrl;
-    if (!url || !s.lastBounds) return;
+    // view rather than no-op. A fresh tab can crash before it ever navigated, so
+    // resumePreviewUrl may be null; fall back to a blank guest so Retry still
+    // remounts a working surface instead of leaving the error panel stuck.
+    if (!s.lastBounds) return;
+    const url = s.resumePreviewUrl ?? "about:blank";
     const view = ensureView(win, s);
     view.setBounds(s.lastBounds);
     mountView(win, view);
