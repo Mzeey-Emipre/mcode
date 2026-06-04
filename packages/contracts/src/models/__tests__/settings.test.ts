@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getDefaultSettings, PartialSettingsSchema } from "../settings.js";
+import { getDefaultSettings, PartialSettingsSchema, SettingsSchema } from "../settings.js";
 
 describe("settings.provider.enabled", () => {
   it("defaults claude/codex/copilot to true and others to false", () => {
@@ -15,6 +15,27 @@ describe("settings.provider.enabled", () => {
       provider: { enabled: { codex: false } },
     });
     expect(parsed.provider?.enabled?.codex).toBe(false);
+  });
+});
+
+describe("preview.memorySaver", () => {
+  it("applies ADR 0002 defaults", () => {
+    const s = SettingsSchema().parse({});
+    expect(s.preview.memorySaver.maxWarm).toBe(3);
+    expect(s.preview.memorySaver.bgIdleMs).toBe(300_000);
+    expect(s.preview.memorySaver.hiddenIdleMs).toBe(60_000);
+  });
+
+  it("accepts a partial override without backfilling siblings", () => {
+    const p = PartialSettingsSchema().parse({
+      preview: { memorySaver: { maxWarm: 5 } },
+    });
+    expect(p.preview?.memorySaver?.maxWarm).toBe(5);
+    expect(p.preview?.memorySaver?.bgIdleMs).toBeUndefined();
+  });
+
+  it("rejects out-of-range maxWarm", () => {
+    expect(SettingsSchema().safeParse({ preview: { memorySaver: { maxWarm: 0 } } }).success).toBe(false);
   });
 });
 

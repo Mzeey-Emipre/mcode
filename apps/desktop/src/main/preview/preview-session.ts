@@ -43,6 +43,8 @@ export interface TabState {
   resumeUrl: string | null;
   title: string | null;
   faviconUrl: string | null;
+  /** Epoch ms when this tab was last activated. Drives memory-saver LRU ordering (ADR 0002). */
+  lastActiveAt: number;
 }
 
 /** Per-thread tab set: an ordered list plus the id of the mounted tab. */
@@ -59,6 +61,12 @@ export interface ThreadTabSet {
 export interface PreviewSession {
   view: WebContentsView | null;
   idleTimer: NodeJS.Timeout | null;
+  /** Recurring sweep timer that evicts idle background tabs while the panel is visible. */
+  discardSweepTimer: NodeJS.Timeout | null;
+  /** One-shot timer scheduled when the panel hides; trims the warm set unless cancelled (hysteresis). */
+  discardHiddenTimer: NodeJS.Timeout | null;
+  /** True while a discard sweep is mid-flight; prevents overlapping async sweeps. */
+  discardSweepInProgress: boolean;
   /** Last shell-reported bounds so navigate can attach the view before the next sync tick. */
   lastBounds: Bounds | null;
   /**
@@ -136,6 +144,9 @@ export function getSession(win: BrowserWindow): PreviewSession {
     s = {
       view: null,
       idleTimer: null,
+      discardSweepTimer: null,
+      discardHiddenTimer: null,
+      discardSweepInProgress: false,
       lastBounds: null,
       resumePreviewUrl: null,
       scrollbarCssKey: null,
@@ -176,6 +187,7 @@ export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadT
       resumeUrl: isActiveThread ? s.resumePreviewUrl : null,
       title: null,
       faviconUrl: isActiveThread ? (s.lastFavicons[0] ?? null) : null,
+      lastActiveAt: Date.now(),
     };
     set = { threadId, tabs: [firstTab], activeTabId: tabId };
     s.tabsByThread.set(threadId, set);
@@ -198,6 +210,7 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
       resumeUrl: null,
       title: null,
       faviconUrl: null,
+      lastActiveAt: Date.now(),
     };
     set.tabs.push(tab);
     set.activeTabId = id;
@@ -243,6 +256,18 @@ export function syncActiveTabFromSession(s: PreviewSession): void {
   }
 }
 
+/** Cancels both memory-saver discard timers (sweep interval + hidden one-shot). */
+export function clearDiscardTimers(s: PreviewSession): void {
+  if (s.discardSweepTimer) {
+    clearInterval(s.discardSweepTimer);
+    s.discardSweepTimer = null;
+  }
+  if (s.discardHiddenTimer) {
+    clearTimeout(s.discardHiddenTimer);
+    s.discardHiddenTimer = null;
+  }
+}
+
 /**
  * Cancels the idle teardown timer on the given session.
  */
@@ -276,6 +301,22 @@ export function applyPageStatus(
   bumpPerf("stateEmitCalls");
   try {
     win.webContents.send("preview:page-status", next);
+  } catch {
+    bumpPerf("stateEmitSkips");
+  }
+}
+
+/**
+ * Sends the active-thread tab set to the renderer on `preview:tabs-updated`.
+ * Used by the discard scheduler so the tab bar reflects freshly-discarded
+ * (cold) tabs. Mirrors the emit in preview-tabs.ts but rebuilds from session
+ * state rather than a pre-synced set.
+ */
+export function emitTabsUpdated(win: BrowserWindow, s: PreviewSession, threadId: string): void {
+  if (win.isDestroyed()) return;
+  bumpPerf("stateEmitCalls");
+  try {
+    win.webContents.send("preview:tabs-updated", toBrowserTabSet(s, threadId));
   } catch {
     bumpPerf("stateEmitSkips");
   }

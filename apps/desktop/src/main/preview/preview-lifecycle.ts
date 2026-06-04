@@ -16,6 +16,7 @@ import {
   getActiveTab,
   sessions,
   clearIdle,
+  clearDiscardTimers,
   applyPageStatus,
   setPreviewLoading,
   isAllowedPreviewUrl,
@@ -420,6 +421,7 @@ export function ensureView(win: BrowserWindow, s: PreviewSession): WebContentsVi
     resumeUrl: null,
     title: null,
     faviconUrl: null,
+    lastActiveAt: Date.now(),
   };
   const view = ensureTabView(win, s, synthetic);
   s.view = view;
@@ -500,6 +502,7 @@ export function hidePreview(win: BrowserWindow, s: PreviewSession): void {
 export function parkPreview(win: BrowserWindow, s: PreviewSession): void {
   logger.info("Preview: view parked (destroyed)", { url: s.resumePreviewUrl });
   hidePreview(win, s);
+  clearDiscardTimers(s);
   // Save the active tab's URL before disposing so a later restore can reload.
   if (s.view && !s.view.webContents.isDestroyed()) {
     try {

@@ -518,3 +518,11 @@ lifecycle within a thread. Two kinds today:
 
 Distinct from the dev-tooling stop hook under `AGENTS.md` (the harness
 verification gate for contributors).
+
+## In-app browser preview
+
+### Discarded tab (memory saver)
+A background preview tab whose renderer has been killed to reclaim memory,
+keeping only a cold placeholder (title, URL, favicon). Reopening reloads the
+page; scroll position and form state are not preserved. Governed by
+`preview.memorySaver.*` settings and ADR 0002.
