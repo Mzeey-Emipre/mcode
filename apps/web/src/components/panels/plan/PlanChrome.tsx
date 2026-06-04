@@ -70,12 +70,15 @@ export function PlanChrome({
               const isLatest = p.version === maxVersion;
               const isActive = p.version === plan.version;
               return (
-                <button
+                <Button
                   key={p.id}
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setActiveVersion(threadId, isLatest ? null : p.version)}
+                  aria-current={isActive ? "true" : undefined}
                   className={cn(
-                    "flex w-full flex-col gap-1 rounded-md px-2.5 py-2.5 text-left transition-colors hover:bg-accent/50",
+                    "h-auto w-full flex-col items-stretch gap-1 whitespace-normal rounded-md px-2.5 py-2.5 text-left font-normal transition-colors hover:bg-accent/50",
                     isActive && "bg-accent/40",
                   )}
                 >
@@ -104,7 +107,7 @@ export function PlanChrome({
                   {p.changeSummary && (
                     <span className="text-[11px] leading-relaxed text-muted-foreground/80">{p.changeSummary}</span>
                   )}
-                </button>
+                </Button>
               );
             })}
           </div>

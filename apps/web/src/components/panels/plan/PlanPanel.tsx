@@ -151,13 +151,15 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
             Viewing v{activePlan.version} of {latestVersion} · read-only
           </span>
           <span className="min-w-0 flex-1" aria-hidden />
-          <button
+          <Button
             type="button"
+            variant="link"
+            size="xs"
             onClick={() => setActiveVersion(threadId, null)}
-            className="shrink-0 text-primary hover:underline"
+            className="h-auto shrink-0 p-0 font-mono text-[10px] tracking-[0.14em]"
           >
             Back to latest
-          </button>
+          </Button>
         </div>
       )}
 
