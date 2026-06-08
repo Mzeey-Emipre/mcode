@@ -153,6 +153,48 @@ ORDER BY m.sequence ASC`,
     });
   });
 
+  describe("createAssistantIdempotent", () => {
+    it("inserts the assistant row with the supplied deterministic id", () => {
+      const msg = repo.createAssistantIdempotent({
+        id: "det-1",
+        threadId: "thread-1",
+        content: "answer",
+        sequence: 2,
+        model: "claude-sonnet-4-6",
+      });
+
+      expect(msg.id).toBe("det-1");
+      expect(msg.role).toBe("assistant");
+      const found = repo.findByIdInThread("thread-1", "det-1");
+      expect(found?.content).toBe("answer");
+      expect(found?.model).toBe("claude-sonnet-4-6");
+    });
+
+    it("is a no-op on a second write for the same id (insert-or-ignore)", () => {
+      repo.createAssistantIdempotent({
+        id: "det-1",
+        threadId: "thread-1",
+        content: "first",
+        sequence: 2,
+        model: null,
+      });
+      repo.createAssistantIdempotent({
+        id: "det-1",
+        threadId: "thread-1",
+        content: "second",
+        sequence: 3,
+        model: null,
+      });
+
+      const { messages } = repo.listByThread("thread-1", 10);
+      const assistantRows = messages.filter((m) => m.role === "assistant");
+      expect(assistantRows).toHaveLength(1);
+      // The original row wins; the ignored write does not overwrite it.
+      expect(assistantRows[0].content).toBe("first");
+      expect(assistantRows[0].sequence).toBe(2);
+    });
+  });
+
   describe("findByIdInThread", () => {
     it("returns the message matching the given id and thread", () => {
       repo.create("thread-1", "user", "first", 1);

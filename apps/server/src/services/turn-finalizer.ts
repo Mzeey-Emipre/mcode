@@ -17,6 +17,7 @@
  * the delegation methods below and reads it back through
  * {@link getLastPersistedMessageId}.
  */
+import { createHash } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
@@ -33,6 +34,22 @@ import type { TurnOutcome } from "./turn-outcome";
 interface TurnRef {
   ref: string;
   cwd: string;
+}
+
+/**
+ * Derive the deterministic id for a turn's synthesized assistant message from
+ * the turn's anchor — the id of the message immediately preceding the assistant
+ * turn (normally the user message the assistant responds to), or a positional
+ * `seq:N` fallback when the thread has no prior message. Re-running the flush
+ * for the same turn collapses onto this id, so the
+ * {@link MessageRepo.createAssistantIdempotent} write is a no-op rather than a
+ * duplicate row — matching the `INSERT OR IGNORE` identity the narrative tables
+ * already key on.
+ */
+export function deriveTurnAssistantMessageId(threadId: string, anchorId: string): string {
+  return createHash("sha256")
+    .update(`${threadId}\u0000${anchorId}\u0000assistant`)
+    .digest("hex");
 }
 
 /** Owns the single fixed end-of-turn order shared by the completion, error, and cancellation paths. */
@@ -205,16 +222,16 @@ export class TurnFinalizer {
     try {
       const thread = this.threadRepo.findById(threadId);
       const modelForMessage = thread?.model ?? null;
-      const msg = this.messageRepo.create(
+      // Anchor the deterministic id on the preceding user message so a replayed
+      // flush for the same turn lands on the same row (insert-or-ignore no-op).
+      const anchorId = last ? last.id : `seq:${nextSeq}`;
+      const msg = this.messageRepo.createAssistantIdempotent({
+        id: deriveTurnAssistantMessageId(threadId, anchorId),
         threadId,
-        "assistant",
-        text,
-        nextSeq,
-        undefined,
-        undefined,
-        undefined,
-        modelForMessage,
-      );
+        content: text,
+        sequence: nextSeq,
+        model: modelForMessage,
+      });
       this.streamingAssistantTextByThread.delete(threadId);
       broadcast("agent.event", {
         type: AgentEventType.Message,

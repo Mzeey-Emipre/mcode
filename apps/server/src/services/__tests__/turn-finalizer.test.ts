@@ -7,7 +7,7 @@ import { ToolCallRecordRepo } from "../../repositories/tool-call-record-repo";
 import { ThoughtSegmentRepo } from "../../repositories/thought-segment-repo";
 import { HookExecutionRepo } from "../../repositories/hook-execution-repo";
 import { NarrativeStore } from "../narrative-store";
-import { TurnFinalizer } from "../turn-finalizer";
+import { TurnFinalizer, deriveTurnAssistantMessageId } from "../turn-finalizer";
 import type { ThreadRepo } from "../../repositories/thread-repo";
 import type { SnapshotService } from "../snapshot-service";
 import type { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo";
@@ -175,6 +175,44 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
     const tools = toolRepo.listByMessage(assistant!.id);
     expect(tools).toHaveLength(1);
     expect(tools[0].status).toBe("cancelled");
+  });
+
+  it("synthesizes the interrupted assistant row under a deterministic per-turn id", async () => {
+    // The flushed row's identity must derive from the turn's anchor (the
+    // preceding user message), not a fresh random id — so a replayed flush
+    // collapses onto the same row.
+    insertMessage(db, "u1", "user", "go", 1);
+    narrativeStore.beginTurn(THREAD);
+    narrativeStore.resetTurnCounters(THREAD);
+    finalizer.appendStreamingText(THREAD, "partial answer before stop");
+
+    await finalizer.finalize(THREAD, "cancelled");
+
+    const { messages } = new MessageRepo(db).listByThread(THREAD, 10);
+    const assistant = messages.find((m) => m.role === "assistant");
+    expect(assistant?.id).toBe(deriveTurnAssistantMessageId(THREAD, "u1"));
+  });
+
+  it("produces exactly one assistant row when finalize runs twice for one turn", async () => {
+    // Reconnect replay: the streamed deltas are re-accumulated and finalize is
+    // called a second time. Here the second flush is short-circuited by the
+    // existing "last row is already assistant" guard, so it never reaches the
+    // insert — this asserts the end-to-end "twice → one row" outcome. The
+    // deterministic-id + INSERT OR IGNORE collapse that backs this up at the DB
+    // layer is covered directly in message-repo.test.ts.
+    insertMessage(db, "u1", "user", "go", 1);
+    narrativeStore.beginTurn(THREAD);
+    narrativeStore.resetTurnCounters(THREAD);
+    finalizer.appendStreamingText(THREAD, "partial answer before stop");
+
+    await finalizer.finalize(THREAD, "cancelled");
+    // A replay re-buffers the same streamed text before the second finalize.
+    finalizer.appendStreamingText(THREAD, "partial answer before stop");
+    await finalizer.finalize(THREAD, "cancelled");
+
+    const { messages } = new MessageRepo(db).listByThread(THREAD, 10);
+    const assistantRows = messages.filter((m) => m.role === "assistant");
+    expect(assistantRows).toHaveLength(1);
   });
 
   it("is a no-op when a finalize is already in flight (re-entrancy guard)", async () => {
