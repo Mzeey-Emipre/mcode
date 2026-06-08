@@ -402,6 +402,21 @@ export class NarrativeStore {
   }
 
   /**
+   * True when the current turn has buffered at least one narrative contributor —
+   * a tool call, a narration segment (open or closed), or a hook (open or
+   * closed). Feeds the {@link TurnFinalizer.hasRecordableActivity} predicate so
+   * a turn with narrative but no assistant body still earns a persisted row.
+   */
+  hasBufferedNarrative(threadId: string): boolean {
+    if ((this.turnToolCalls.get(threadId)?.length ?? 0) > 0) return true;
+    if (this.turnOpenThought.get(threadId)) return true;
+    if ((this.turnThoughts.get(threadId)?.length ?? 0) > 0) return true;
+    if ((this.turnOpenHooks.get(threadId)?.size ?? 0) > 0) return true;
+    if ((this.turnHooks.get(threadId)?.length ?? 0) > 0) return true;
+    return false;
+  }
+
+  /**
    * Record an in-flight hook execution (HookStarted). The caller supplies the
    * already-allocated sort order (the late-hook path in AgentService allocates
    * it before deciding routing). Returns the generated row id.

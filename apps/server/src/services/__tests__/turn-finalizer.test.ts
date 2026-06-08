@@ -142,9 +142,11 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
     expect(toolRepo.listByMessage("m2")[0].status).toBe("cancelled");
   });
 
-  it("discards the buffered turn when no assistant row exists (precondition)", async () => {
-    // Only a user message — a pre-turn failure. Persisting would target the
-    // wrong (user) row, so the turn is discarded instead.
+  it("materializes an assistant row for a buffered tool call when no Message event fired", async () => {
+    // A turn that buffered a tool call but never emitted a provider Message
+    // (interrupted before the final body). hasRecordableActivity holds on the
+    // tool call, so finalize synthesizes the assistant row the tool attaches to
+    // rather than discarding the turn.
     insertMessage(db, "u1", "user", "do the thing", 1);
     narrativeStore.beginTurn(THREAD);
     narrativeStore.resetTurnCounters(THREAD);
@@ -152,8 +154,65 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
 
     await finalizer.finalize(THREAD, "errored");
 
-    expect(toolRepo.listByMessage("u1")).toHaveLength(0);
+    const { messages } = new MessageRepo(db).listByThread(THREAD, 10);
+    const assistant = messages.find((m) => m.role === "assistant");
+    expect(assistant).toBeDefined();
+    const tools = toolRepo.listByMessage(assistant!.id);
+    expect(tools).toHaveLength(1);
+    expect(tools[0].status).toBe("failed");
+  });
+
+  it("leaves no assistant row and broadcasts nothing for a fully empty turn", async () => {
+    // The genuine pre-turn / no-output case: no tool, body, narration, or hook.
+    // hasRecordableActivity is false, so finalize writes nothing.
+    insertMessage(db, "u1", "user", "do the thing", 1);
+    narrativeStore.beginTurn(THREAD);
+    narrativeStore.resetTurnCounters(THREAD);
+
+    await finalizer.finalize(THREAD, "errored");
+
+    const { messages } = new MessageRepo(db).listByThread(THREAD, 10);
+    expect(messages.some((m) => m.role === "assistant")).toBe(false);
     expect(broadcast).not.toHaveBeenCalledWith("turn.persisted", expect.anything());
+  });
+
+  it("clears the last-persisted message id on an empty turn so a late hook can't attach to the prior turn", async () => {
+    // Turn 1 produces a body and records a persisted id late hooks attach to.
+    insertMessage(db, "u1", "user", "go", 1);
+    narrativeStore.beginTurn(THREAD);
+    narrativeStore.resetTurnCounters(THREAD);
+    finalizer.bufferAssistantBody(THREAD, "the answer", "claude-sonnet-4-6");
+    await finalizer.finalize(THREAD, "completed");
+    expect(finalizer.getLastPersistedMessageId(THREAD)).toBeDefined();
+
+    // Turn 2 is fully empty. Its finalize must drop turn 1's id so a late hook
+    // for turn 2 is discarded rather than mis-attached to turn 1's message.
+    narrativeStore.beginTurn(THREAD);
+    narrativeStore.resetTurnCounters(THREAD);
+    await finalizer.finalize(THREAD, "completed");
+
+    expect(finalizer.getLastPersistedMessageId(THREAD)).toBeUndefined();
+  });
+
+  it("materializes the buffered provider body into exactly one assistant row", async () => {
+    // The normal completed path: the provider body is buffered (not written on
+    // the Message event), then materialized once at finalize.
+    insertMessage(db, "u1", "user", "go", 1);
+    narrativeStore.beginTurn(THREAD);
+    narrativeStore.resetTurnCounters(THREAD);
+    const expectedId = finalizer.bufferAssistantBody(THREAD, "the final answer", "claude-sonnet-4-6");
+
+    await finalizer.finalize(THREAD, "completed");
+
+    const { messages } = new MessageRepo(db).listByThread(THREAD, 10);
+    const assistantRows = messages.filter((m) => m.role === "assistant");
+    expect(assistantRows).toHaveLength(1);
+    expect(assistantRows[0].id).toBe(expectedId);
+    expect(assistantRows[0].content).toBe("the final answer");
+    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      threadId: THREAD,
+      messageId: expectedId,
+    }));
   });
 
   it("flushes interrupted streaming text into a new assistant row that tool calls attach to", async () => {
@@ -230,6 +289,89 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
 });
 
 /**
+ * TurnSubstance predicate: hasRecordableActivity decides whether a turn is
+ * worth a persisted assistant row. Each contributor is exercised in isolation
+ * over the real-DB harness so the buffers are seeded the same way a live turn
+ * seeds them.
+ */
+describe("TurnFinalizer.hasRecordableActivity — TurnSubstance predicate", () => {
+  let db: Database.Database;
+  let narrativeStore: NarrativeStore;
+  let finalizer: TurnFinalizer;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db = openMemoryDatabase();
+    seedThread(db);
+    const messageRepo = new MessageRepo(db);
+    narrativeStore = new NarrativeStore(
+      messageRepo,
+      new ToolCallRecordRepo(db),
+      new ThoughtSegmentRepo(db),
+      new HookExecutionRepo(db),
+    );
+    const threadRepo = {
+      findById: vi.fn(() => ({ id: THREAD, model: "claude-sonnet-4-6" })),
+    } as unknown as ThreadRepo;
+    const snapshotService = {
+      captureRef: vi.fn(),
+      getFilesChanged: vi.fn(),
+    } as unknown as SnapshotService;
+    const turnSnapshotRepo = { create: vi.fn() } as unknown as TurnSnapshotRepo;
+    finalizer = new TurnFinalizer(
+      messageRepo,
+      threadRepo,
+      narrativeStore,
+      snapshotService,
+      turnSnapshotRepo,
+      db,
+    );
+    narrativeStore.beginTurn(THREAD);
+    narrativeStore.resetTurnCounters(THREAD);
+  });
+
+  it("is true when only a tool call is buffered", () => {
+    narrativeStore.bufferToolCall(THREAD, { toolCallId: "tc-1", toolName: "Read", toolInput: {} });
+
+    expect(finalizer.hasRecordableActivity(THREAD)).toBe(true);
+  });
+
+  it("is true when only a non-empty assistant body is buffered", () => {
+    finalizer.bufferAssistantBody(THREAD, "here is the answer", "claude-sonnet-4-6");
+
+    expect(finalizer.hasRecordableActivity(THREAD)).toBe(true);
+  });
+
+  it("is true when only a narration segment is buffered", () => {
+    narrativeStore.openOrExtendThought(THREAD, "let me think about this");
+
+    expect(finalizer.hasRecordableActivity(THREAD)).toBe(true);
+  });
+
+  it("is true when only a hook is buffered", () => {
+    narrativeStore.openHook(THREAD, {
+      hookName: "PreToolUse",
+      toolName: "Bash",
+      phase: "pre",
+      payload: "{}",
+      sortOrder: 0,
+    });
+
+    expect(finalizer.hasRecordableActivity(THREAD)).toBe(true);
+  });
+
+  it("is false for a fully empty turn (no tool, body, narration, or hook)", () => {
+    expect(finalizer.hasRecordableActivity(THREAD)).toBe(false);
+  });
+
+  it("treats a whitespace-only assistant body as no body", () => {
+    finalizer.bufferAssistantBody(THREAD, "   \n  ", null);
+
+    expect(finalizer.hasRecordableActivity(THREAD)).toBe(false);
+  });
+});
+
+/**
  * Snapshot-write seam, retargeted from the former AgentService.persistTurn
  * tests onto the public finalize interface. Uses spies on db / snapshotService
  * / turnSnapshotRepo to assert the git turn_snapshot write and the
@@ -247,6 +389,7 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
     const threadRepo = { findById: vi.fn(() => ({ model: null })) } as unknown as ThreadRepo;
     const narrativeStore = {
       getBufferedToolCalls: vi.fn(() => []),
+      hasBufferedNarrative: vi.fn(() => true),
       persistNarrative: vi.fn(() => ({ toolCallCount: 0 })),
       clearTurn: vi.fn(),
     } as unknown as NarrativeStore;
