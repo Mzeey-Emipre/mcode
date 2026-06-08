@@ -1,11 +1,26 @@
 # Cursor SDK Migration Handoff
 
-> **Status: DEFERRED (2026-05-23)**
+> **Status: DEFERRED (2026-05-23). Scope reduced 2026-06-08.**
 >
-> Investigation completed 2026-05-23. The migration is on hold until one of the
-> two un-defer triggers below fires. The existing `cursor-agent acp` subprocess
-> plus path A handoff implementation keep working as-is; nothing in the
-> running system needs to change.
+> Investigation completed 2026-05-23. The migration is on hold until the
+> un-defer trigger below fires.
+>
+> **Update (2026-06-08): path A is gone.** Cursor's handoff no longer uses the
+> hidden-turn workaround. `sessionForkOnResume` is now `"clean"` and the
+> provider runs `runSideChannelQuery` by reconstructing the parent's persisted
+> session into a throwaway ACP connection (loading a session id into a second
+> connection branches the conversation rather than advancing the canonical
+> session, so the parent is never mutated). The `MutatingForker`, `runHiddenTurn`,
+> `runRawPrompt`, the settle-wait poll, the disregard turn, and the `"mutating"`
+> capability have all been retired. The `LadderStep` union is now `"B" | "D"`.
+> Everything below that frames this migration as a way to *remove path A* is
+> therefore already done; treat that framing as historical.
+>
+> **What still remains** is the original swap itself: the provider still spawns
+> the long-lived `cursor-agent acp` subprocess. Migrating that to `@cursor/sdk`
+> remains deferred and is now a self-contained cleanup (remove subprocess
+> plumbing) with no handoff-pipeline impact, since the pipeline already treats
+> Cursor as a clean-fork provider.
 >
 > **Why deferred:** `@cursor/sdk` v1.0.13 requires an API key, either passed as
 > `apiKey` per call or read from `process.env.CURSOR_API_KEY` (see
@@ -15,17 +30,9 @@
 > to set API keys directly, and reverse-engineering the CLI's token store is
 > too fragile to commit to.
 >
-> **Un-defer triggers (either resolves the blocker):**
+> **Un-defer trigger:**
 >
-> 1. **Cursor fixes the ACP `session/load` bug.** If this lands first, the
->    migration is no longer needed. Flip `sessionForkOnResume` in
->    `apps/server/src/providers/cursor/cursor-provider.ts:131` from
->    `"mutating"` to `"clean"`, delete `runHiddenTurn` plus the path A
->    branch in `handoff-pipeline.ts`, ship. No SDK swap required. Track:
->    https://forum.cursor.com/t/acp-no-conversation-history-is-restored-when-loading-an-existing-session/158388
->    (still open as of 2026-05-17; cursor-cli `2026.05.16-0338208` still
->    affected).
-> 2. **`@cursor/sdk` gains CLI-auth support.** If a future SDK release can
+> 1. **`@cursor/sdk` gains CLI-auth support.** If a future SDK release can
 >    read the local `cursor login` token (no `CURSOR_API_KEY` env, no
 >    settings entry), the migration described below becomes viable. Track
 >    the SDK changelog and: https://forum.cursor.com/t/cursor-sdk-cloud-agents-api-updates/159284
@@ -33,18 +40,12 @@
 > **Recheck on or after 2026-08-23.** To recheck:
 >
 > ```sh
-> # 1. ACP session/load bug fixed?
-> #    Read the forum thread above for new replies, then compare the
-> #    installed cursor-cli version against the version mentioned in the
-> #    latest reply.
-> cursor-agent --version
->
-> # 2. @cursor/sdk gained CLI-auth support?
+> # @cursor/sdk gained CLI-auth support?
 > npm view @cursor/sdk version   # anything newer than 1.0.13?
 > npm view @cursor/sdk readme    # look for CLI-auth / cursor-login mentions
 > ```
 >
-> If neither trigger has fired, bump this recheck date by another 3 months
+> If the trigger has not fired, bump this recheck date by another 3 months
 > and leave the rest of the doc alone.
 
 A persistent handoff doc for whoever picks up the Cursor provider migration
