@@ -44,6 +44,7 @@ import type {
   AttachmentMeta,
   AgentEvent,
   IAgentProvider,
+  ISessionEvictable,
   TurnRequest,
   PermissionDecision,
   PermissionRequest,
@@ -178,7 +179,7 @@ type CursorSessionState = CursorAcpSessionEntry;
 @injectable()
 export class CursorProvider
   extends EventEmitter
-  implements IAgentProvider, ProtocolAdapter<CursorSessionState>
+  implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CursorSessionState>
 {
   readonly id: ProviderId = "cursor";
   readonly supportsCompletion = false;
@@ -341,6 +342,19 @@ export class CursorProvider
       this.pendingStops.add(sessionId);
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
     }
+  }
+
+  /**
+   * Force-discard the pooled session so the next sendTurn spawns fresh. Unlike
+   * {@link stopSession} — which keeps a warm ACP session pooled and only issues
+   * a graceful cancel — this tears the runtime down (interrupt → close → hard
+   * kill), so a stale ACP connection is replaced rather than reused on retry.
+   */
+  discardSession(sessionId: string): void {
+    if (this.runtime.get(sessionId) === undefined) return;
+    void this.runtime.stop(sessionId).catch((err: unknown) => {
+      logger.warn("Cursor discardSession failed", { sessionId, error: String(err) });
+    });
   }
 
 

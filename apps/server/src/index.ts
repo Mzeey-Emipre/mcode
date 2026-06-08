@@ -373,7 +373,25 @@ for (const provider of providerRegistry.resolveAll()) {
       }
     }
 
+    // Hide failed-attempt teardown (`Ended`, `TurnComplete`) so the UI's running
+    // state survives the retry window instead of flashing blank before the fresh
+    // attempt streams (see AgentService.endedSuppressionThreads).
+    if (
+      (event.type === AgentEventType.Ended &&
+        agentService.shouldSuppressTurnEnded(event.threadId)) ||
+      (event.type === AgentEventType.TurnComplete &&
+        agentService.shouldSuppressTurnComplete(event.threadId))
+    ) {
+      return;
+    }
+
     if (event.type === AgentEventType.Error) {
+      // Hide a transient failure that AgentService is about to retry, so the user
+      // never sees the swallowed flake. The gate only suppresses transient
+      // signatures inside an active retry window; fatal errors still broadcast.
+      if (agentService.shouldSuppressTransientTurnError(event.threadId, event.error ?? "")) {
+        return;
+      }
       const threadMeta = threadRepo.findById(event.threadId);
       const providerForThread =
         typeof threadMeta?.provider === "string" && threadMeta.provider.length > 0

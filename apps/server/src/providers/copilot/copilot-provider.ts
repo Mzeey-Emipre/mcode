@@ -36,6 +36,7 @@ import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/ses
 import { DeterministicForker } from "../../services/handoff/session-forker.js";
 import type {
   IAgentProvider,
+  ISessionEvictable,
   SessionForker,
   TurnRequest,
   ProviderId,
@@ -157,7 +158,7 @@ interface CopilotSessionState {
 
 /** GitHub Copilot SDK adapter implementing IAgentProvider with callback-based event mapping. */
 @injectable()
-export class CopilotProvider extends EventEmitter implements IAgentProvider, ProtocolAdapter<CopilotSessionState> {
+export class CopilotProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CopilotSessionState> {
   readonly id: ProviderId = "copilot";
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "unsupported" as const;
@@ -1142,6 +1143,18 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, Pro
       this.pendingSpawnTurns.delete(sessionId);
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
     }
+  }
+
+  /**
+   * Force-discard the pooled session so the next sendTurn spawns fresh. Pure
+   * pool eviction via the runtime's `stop` (interrupt → close → hard kill),
+   * leaving goals and pending permissions intact for the retry turn.
+   */
+  discardSession(sessionId: string): void {
+    if (this.runtime.get(sessionId) === undefined) return;
+    void this.runtime.stop(sessionId).catch((err: unknown) =>
+      logger.warn("CopilotProvider: discardSession failed", { sessionId, error: String(err) }),
+    );
   }
 
   /** Tear down all sessions, stop the client, and release resources. */

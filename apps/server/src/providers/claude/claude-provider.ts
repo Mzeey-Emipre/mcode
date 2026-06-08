@@ -14,6 +14,7 @@ import { AgentEventType, isVirtualBrowserContextAttachment } from "@mcode/contra
 import type {
   IAgentProvider,
   IGoalCapable,
+  ISessionEvictable,
   TurnRequest,
   ProviderId,
   ReasoningLevel,
@@ -294,7 +295,7 @@ interface PendingSpawnTurn {
 
 /** Claude Agent SDK adapter implementing IAgentProvider with prompt queue pattern. */
 @injectable()
-export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ProtocolAdapter<ClaudeSessionState> {
+export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ProtocolAdapter<ClaudeSessionState> {
   readonly id: ProviderId = "claude";
   /** Claude supports one-shot text completion via sdkQuery with maxTurns: 1. */
   readonly supportsCompletion = true;
@@ -331,6 +332,19 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
    * torn down immediately so the agent never starts.
    */
   private pendingStops = new Set<string>();
+  /**
+   * SDK query handles whose stream teardown must not emit `Ended`. Populated
+   * when a live session is intentionally superseded (spawn-param mismatch,
+   * setModel failure) before `runtime.stop` deletes the pool entry — the
+   * stream loop's finally block can then outlive the session map lookup.
+   */
+  private readonly suppressEndedQueries = new Set<Query>();
+  /**
+   * Threads whose next `SessionStart` hook should be hidden. Set when a
+   * context-window or permission-mode change forces an internal session
+   * recreation so the handoff stays invisible in the narrative timeline.
+   */
+  private readonly suppressSessionStartHooks = new Set<string>();
   /** Threads currently in plan-answer mode. ExitPlanMode is only captured for these. */
   private planAnswerThreads = new Set<string>();
   /** Pending permission requests awaiting user decision, keyed by requestId. */
@@ -880,6 +894,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       });
       // Suppress the teardown's Ended emit; the fresh session takes over the id.
       existing.suppressEnded = true;
+      this.suppressEndedQueries.add(existing.query);
+      this.suppressSessionStartHooks.add(tid);
       await this.runtime.stop(sessionId);
     }
 
@@ -911,6 +927,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           // teardown Ended and fall through to the fresh-spawn path with a
           // resume:false stage so the new subprocess starts a clean session.
           existing.suppressEnded = true;
+          this.suppressEndedQueries.add(existing.query);
+          this.suppressSessionStartHooks.add(tid);
           await this.runtime.stop(sessionId);
           return this.doSendMessage({ ...params, resume: false });
         }
@@ -1838,10 +1856,17 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   errorStatus: (anyMsg.error_status as number | undefined) ?? undefined,
                 } satisfies AgentEvent);
               } else if ((anyMsg.subtype as string) === "hook_started") {
+                const hookName = (anyMsg.hook_name as string) || "unknown";
+                if (
+                  hookName.startsWith("SessionStart") &&
+                  this.suppressSessionStartHooks.has(threadId)
+                ) {
+                  break;
+                }
                 this.emit("event", {
                   type: AgentEventType.HookStarted,
                   threadId,
-                  hookName: (anyMsg.hook_name as string) || "unknown",
+                  hookName,
                   hookType: anyMsg.tool_name ? "permission" : "stop",
                   ...(anyMsg.tool_name ? { toolName: anyMsg.tool_name as string } : {}),
                 } satisfies AgentEvent);
@@ -1853,10 +1878,18 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   output: (anyMsg.output as string) || "",
                 } satisfies AgentEvent);
               } else if ((anyMsg.subtype as string) === "hook_response") {
+                const hookName = (anyMsg.hook_name as string) || "unknown";
+                if (
+                  hookName.startsWith("SessionStart") &&
+                  this.suppressSessionStartHooks.has(threadId)
+                ) {
+                  this.suppressSessionStartHooks.delete(threadId);
+                  break;
+                }
                 this.emit("event", {
                   type: AgentEventType.HookCompleted,
                   threadId,
-                  hookName: (anyMsg.hook_name as string) || "unknown",
+                  hookName,
                   exitCode: (anyMsg.exit_code as number) ?? 1,
                   durationMs: (anyMsg.duration_ms as number) ?? 0,
                   didBlock: (anyMsg.did_block as boolean) ?? false,
@@ -2094,16 +2127,30 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         }
       } finally {
         this.recentStderr.delete(sessionId);
+        const wasSuppressedQuery = this.suppressEndedQueries.has(q);
+        this.suppressEndedQueries.delete(q);
         const current = this.runtime.get(sessionId);
+        const superseded = current !== undefined && current.query !== q;
         if (current?.query === q) {
           // The SDK subprocess has exited; drop the dead session from the pool.
           // `runtime.stop` also best-effort taskkills the (already-gone) PIDs,
           // which is harmless. Fire-and-forget: the stream loop is unwinding.
           void this.runtime.stop(sessionId);
+          // Clear any stale SessionStart suppression: if the recreated session
+          // had a SessionStart hook it already self-cleared on hook_response; if
+          // it had none, the flag would otherwise outlive this pooled session and
+          // suppress a legitimately-configured SessionStart on the next resume.
+          this.suppressSessionStartHooks.delete(threadId);
         }
         logger.info("Session stream ended", { sessionId });
         this.emit(`_streamDone:${sessionId}`);
-        if (!suppressEnded && !current?.suppressEnded && (!current || current.query === q)) {
+        if (
+          !suppressEnded &&
+          !wasSuppressedQuery &&
+          !superseded &&
+          !current?.suppressEnded &&
+          (!current || current.query === q)
+        ) {
           this.emit("event", {
             type: AgentEventType.Ended,
             threadId,
@@ -2235,6 +2282,19 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       // error, client disconnect, etc.) so the set doesn't leak.
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
     }
+  }
+
+  /**
+   * Force-discard the pooled session so the next sendTurn spawns fresh. Pure
+   * pool eviction via the runtime's `stop` (interrupt → close → hard kill); it
+   * deliberately leaves goals and pending permissions intact, since the caller
+   * retries the same turn on a new session.
+   */
+  discardSession(sessionId: string): void {
+    if (this.runtime.get(sessionId) === undefined) return;
+    void this.runtime.stop(sessionId).catch((err: unknown) => {
+      logger.warn("Claude discardSession failed", { sessionId, error: String(err) });
+    });
   }
 
   /**

@@ -21,6 +21,7 @@ import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/ses
 import { DeterministicForker } from "../../services/handoff/session-forker.js";
 import type {
   IAgentProvider,
+  ISessionEvictable,
   SessionForker,
   TurnRequest,
   ProviderId,
@@ -149,7 +150,7 @@ function toCodexEffort(level?: ReasoningLevel): ReasoningEffort | undefined {
 
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
 @injectable()
-export class CodexProvider extends EventEmitter implements IAgentProvider, ProtocolAdapter<CodexSessionState> {
+export class CodexProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CodexSessionState> {
   readonly id: ProviderId = "codex";
   /** Codex CLI is an agentic tool with no one-shot text completion mode. */
   readonly supportsCompletion = false;
@@ -731,6 +732,18 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, Proto
       this.pendingSpawnTurns.delete(sessionId);
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
     }
+  }
+
+  /**
+   * Force-discard the pooled session so the next sendTurn spawns fresh. Pure
+   * pool eviction via the runtime's `stop` (interrupt → close → hard kill),
+   * leaving goals and pending permissions intact for the retry turn.
+   */
+  discardSession(sessionId: string): void {
+    if (this.runtime.get(sessionId) === undefined) return;
+    void this.runtime.stop(sessionId).catch((err: unknown) => {
+      logger.warn("Codex discardSession failed", { sessionId, error: String(err) });
+    });
   }
 
   /** Tears down all sessions, drains pending permissions, and stops the eviction timer. */
