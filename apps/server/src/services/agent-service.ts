@@ -1191,30 +1191,24 @@ export class AgentService {
 
         if (event.type === AgentEventType.Message) {
           try {
-            const { messages: existing } = this.messageRepo.listByThread(event.threadId, 1);
-            const nextSeq =
-              existing.length > 0
-                ? existing[existing.length - 1].sequence + 1
-                : 1;
             // Record the thread's active model on the message so the UI can
             // display which provider/model produced the response, even if the
             // user later switches model mid-conversation.
             const thread = this.threadRepo.findById(event.threadId);
             const modelForMessage = thread?.model ?? null;
-            const msg = this.messageRepo.create(
+            // Buffer the body behind the finalize seam instead of writing it
+            // eagerly. TurnFinalizer.finalize materializes the row only when the
+            // TurnSubstance predicate holds, so a turn that produced no tool call,
+            // body, narration, or hook leaves no assistant row (#578).
+            const messageId = this.turnFinalizer.bufferAssistantBody(
               event.threadId,
-              "assistant",
               event.content,
-              nextSeq,
-              undefined,
-              undefined,
-              undefined,
               modelForMessage,
             );
-            // Carry the persisted message ID so the broadcast schema passes it
+            // Carry the deterministic message ID so the broadcast schema passes it
             // through to the client. The client uses it for stable message identity
             // (branching, dedup across Electron's dual MessagePort+WebSocket channels).
-            event.messageId = msg.id;
+            event.messageId = messageId;
             // Carry the model too so the client's locally-built Message can
             // show the model name in the footer immediately — without it the
             // footer renders without the model until a thread refresh re-fetches
@@ -1234,10 +1228,17 @@ export class AgentService {
 
           // Persist any pending plan-output extracted from streamed text deltas.
           // Guarded on event.messageId so it only runs when the assistant message
-          // was successfully persisted above.
+          // was successfully buffered above.
           const pendingPlan = this.pendingPlanOutputs.get(event.threadId);
           const pendingExitPlan = this.pendingExitPlanMarkdown.get(event.threadId);
           const hadOutputParser = this.planOutputParsers.has(event.threadId);
+          // plans.message_id is a NOT NULL FK to messages.id, so the assistant
+          // row must exist before persistPlanRecord runs. The body is otherwise
+          // buffered until TurnFinalizer.finalize; materialize it eagerly here so
+          // the FK target is present (materializeAssistantRow is idempotent).
+          if ((pendingPlan || pendingExitPlan || hadOutputParser) && event.messageId) {
+            this.turnFinalizer.materializeAssistantRow(event.threadId);
+          }
           if (pendingPlan && event.messageId) {
             this.pendingPlanOutputs.delete(event.threadId);
             this.planOutputParsers.delete(event.threadId);
