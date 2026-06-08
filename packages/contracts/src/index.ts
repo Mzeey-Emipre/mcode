@@ -293,6 +293,7 @@ export type {
   SessionForkBehavior,
   IAgentProvider,
   ICompletionCapable,
+  IGoalCapable,
   IProviderRegistry,
   TurnRequest,
   ProviderOptionsByProvider,
@@ -309,7 +310,7 @@ export {
   ModelPolicyStateSchema,
 } from "./providers/models.js";
 export type { ProviderModelInfo } from "./providers/models.js";
-export { isCompletionCapable } from "./providers/interfaces.js";
+export { isCompletionCapable, isGoalCapable } from "./providers/interfaces.js";
 
 export type {
   SessionForker,

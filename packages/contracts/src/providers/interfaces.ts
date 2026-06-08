@@ -172,6 +172,35 @@ export function isCompletionCapable(provider: IAgentProvider): provider is IComp
   return provider.supportsCompletion === true && typeof (provider as ICompletionCapable).complete === "function";
 }
 
+/**
+ * Narrowed view of an agent provider that supports session goals. A goal
+ * installs a Stop-hook gate that blocks the provider from ending its turn
+ * until the goal is cleared. Use `isGoalCapable()` to narrow an
+ * `IAgentProvider` to this type before calling the goal methods.
+ */
+export interface IGoalCapable extends IAgentProvider {
+  /** Install a goal condition on a session. */
+  setGoal(sessionId: string, condition: string): void;
+  /** Remove the active goal so the next Stop event is allowed through. */
+  clearGoal(sessionId: string): void;
+  /** Return the active goal condition for a session, or undefined. */
+  getGoal(sessionId: string): string | undefined;
+}
+
+/**
+ * Type guard: returns true when the provider implements session goals.
+ * Narrows `IAgentProvider` to `IGoalCapable` so the goal methods are callable
+ * without casting. Replaces the former runtime cast + triple `typeof` guard.
+ */
+export function isGoalCapable(provider: IAgentProvider): provider is IGoalCapable {
+  const candidate = provider as Partial<IGoalCapable>;
+  return (
+    typeof candidate.setGoal === "function" &&
+    typeof candidate.clearGoal === "function" &&
+    typeof candidate.getGoal === "function"
+  );
+}
+
 /** Registry that resolves provider instances by ID. */
 export interface IProviderRegistry {
   /** Get a single provider by ID. Throws if not registered. */
