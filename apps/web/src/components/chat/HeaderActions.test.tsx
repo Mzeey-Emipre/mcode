@@ -68,7 +68,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     workspace_id: "ws-1",
     title: "Test Thread",
     status: "active",
-    mode: "direct",
+    mode: "worktree",
     worktree_path: null,
     branch: "feat/my-feature",
     worktree_managed: false,
@@ -139,7 +139,7 @@ describe("HeaderActions - Create PR button", () => {
     mockUseHasCommitsAhead.mockReturnValue(null);
   });
 
-  it("shows Create PR button on a feature branch", () => {
+  it("shows Create PR button on a worktree thread", () => {
     mockUseHasCommitsAhead.mockReturnValue(true);
     render(<HeaderActions thread={makeThread()} />);
     const btn = screen.getByRole("button", { name: /create pr/i });
@@ -168,9 +168,12 @@ describe("HeaderActions - Create PR button", () => {
     expect(btn).not.toBeDisabled();
   });
 
-  it("does not show Create PR button on main branch", () => {
+  it("shows Create PR button on a worktree thread regardless of branch name", () => {
+    // The gate is mode-based, not branch-based: a worktree thread that happens
+    // to sit on a branch named "main" is still PR-able.
+    mockUseHasCommitsAhead.mockReturnValue(true);
     render(<HeaderActions thread={makeThread({ branch: "main" })} />);
-    expect(screen.queryByRole("button", { name: /create pr/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create pr/i })).toBeInTheDocument();
   });
 
   it("does not show Create PR button when PR already exists", () => {
@@ -192,5 +195,44 @@ describe("HeaderActions - Create PR button", () => {
     render(<HeaderActions thread={makeThread()} />);
     const btn = screen.getByRole("button", { name: /create pr/i });
     expect(btn).not.toHaveAttribute("title");
+  });
+});
+
+describe("HeaderActions - PR-ability gating by mode", () => {
+  beforeEach(() => {
+    const state = defaultWorkspaceState();
+    mockWorkspaceSelector.mockImplementation(
+      (selector: (s: unknown) => unknown) => selector(state),
+    );
+    mockUseBranchPr.mockReturnValue(null);
+    mockUseHasCommitsAhead.mockReturnValue(true);
+  });
+
+  it("does not show the Create PR button for a direct-mode thread", () => {
+    render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
+    expect(screen.queryByRole("button", { name: /create pr/i })).not.toBeInTheDocument();
+  });
+
+  it("does not mount the create-PR dialog for a direct-mode thread", () => {
+    render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
+    expect(screen.queryByTestId("create-pr-dialog")).not.toBeInTheDocument();
+  });
+
+  it("mounts the create-PR dialog for a worktree thread", () => {
+    render(<HeaderActions thread={makeThread({ mode: "worktree" })} />);
+    expect(screen.getByTestId("create-pr-dialog")).toBeInTheDocument();
+  });
+
+  it("skips PR polling for a direct-mode thread", () => {
+    render(<HeaderActions thread={makeThread({ mode: "direct", branch: "feat/x" })} />);
+    // Non-PR-able threads must not poll GitHub: both hooks receive null inputs.
+    expect(mockUseBranchPr).toHaveBeenCalledWith(null, expect.anything());
+    expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("", null, undefined);
+  });
+
+  it("polls GitHub for a worktree thread", () => {
+    render(<HeaderActions thread={makeThread({ mode: "worktree", branch: "feat/x" })} />);
+    expect(mockUseBranchPr).toHaveBeenCalledWith("feat/x", expect.anything());
+    expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("ws-1", "feat/x", "thread-1");
   });
 });
