@@ -12,7 +12,7 @@
  */
 
 import { autoUpdater } from "electron-updater";
-import { app, BrowserWindow, dialog, Notification } from "electron";
+import { app, BrowserWindow, Notification } from "electron";
 import type { Event } from "electron";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -58,14 +58,47 @@ const TRANSIENT_NETWORK_TOKENS: readonly string[] = [
 ];
 
 /**
- * True for connectivity-class failures that should be logged but not surfaced
- * to the user as an update error. See `TRANSIENT_NETWORK_TOKENS` for the
- * concrete set and the rationale.
+ * HTTP status codes that mean "the release host is briefly unavailable", not
+ * "this update is broken". GitHub returns 502/503/504 when its edge is
+ * overloaded and 429 when we poll too eagerly; 408 is a server-side read
+ * timeout. All resolve on the next periodic check, so they should stay quiet
+ * exactly like the connectivity tokens above. 4xx codes that indicate a real
+ * problem (401 auth, 403 forbidden, 404 missing asset) are deliberately
+ * excluded — those need to surface.
+ */
+const TRANSIENT_HTTP_STATUS: ReadonlySet<number> = new Set([408, 429, 500, 502, 503, 504]);
+
+/**
+ * Human-readable gateway phrases electron-updater includes in the error body
+ * when the HTTP layer doesn't expose a numeric `statusCode`. Matched against
+ * the message so a "504 Gateway Time-out" HTML response is recognized even
+ * when it arrives as plain text. Kept narrow so "404" can't sneak in.
+ */
+const TRANSIENT_HTTP_PHRASES: readonly string[] = [
+  "Gateway Time-out",
+  "Gateway Timeout",
+  "Bad Gateway",
+  "Service Unavailable",
+  "Too Many Requests",
+];
+
+/**
+ * True for connectivity-class and transient-server failures that should be
+ * logged but not surfaced to the user as an update error. Covers Chromium/POSIX
+ * network tokens (`TRANSIENT_NETWORK_TOKENS`) and transient HTTP gateway
+ * statuses (`TRANSIENT_HTTP_STATUS` / `TRANSIENT_HTTP_PHRASES`).
  */
 export function isTransientNetworkError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err ?? "");
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
   if (typeof code === "string" && TRANSIENT_NETWORK_TOKENS.includes(code)) {
+    return true;
+  }
+  const statusCode = (err as { statusCode?: number } | undefined)?.statusCode;
+  if (typeof statusCode === "number" && TRANSIENT_HTTP_STATUS.has(statusCode)) {
+    return true;
+  }
+  if (TRANSIENT_HTTP_PHRASES.some((phrase) => message.includes(phrase))) {
     return true;
   }
   return TRANSIENT_NETWORK_TOKENS.some((token) => message.includes(token));
@@ -291,8 +324,6 @@ let lastStatus: UpdateStatus = { state: "idle" };
 let initialized = false;
 let checkIntervalId: NodeJS.Timeout | null = null;
 let initialCheckTimeoutId: NodeJS.Timeout | null = null;
-/** Guards against promptRestart being invoked twice concurrently (notification click + direct call). */
-let isPrompting = false;
 
 /** Hook called before quitAndInstall to allow cleanup (e.g., stopping the server). */
 let beforeInstallHook: (() => Promise<void>) | null = null;
@@ -484,7 +515,7 @@ export function initAutoUpdater(): void {
     });
   });
 
-  autoUpdater.on("update-downloaded", async (info) => {
+  autoUpdater.on("update-downloaded", (info) => {
     const releaseNotes = stringifyReleaseNotes(info.releaseNotes);
     broadcastStatus({
       state: "downloaded",
@@ -492,28 +523,17 @@ export function initAutoUpdater(): void {
       releaseNotes,
     });
 
-    // Fire a native OS notification so the user is aware even if Mcode
-    // is in the background. Falls back to the in-app banner via IPC.
+    // Fire a passive OS notification so the user is aware even when Mcode is
+    // backgrounded. Clicking it focuses the window, where the in-app update
+    // indicator offers the restart affordance. We deliberately do NOT open a
+    // native restart dialog — the restart choice lives in the app chrome.
     if (Notification.isSupported()) {
       const notification = new Notification({
         title: "Mcode update ready",
         body: `Version ${info.version} has been downloaded. Restart to install.`,
       });
-      notification.on("click", () => {
-        if (!isPrompting) void promptRestart(info.version);
-      });
+      notification.on("click", () => focusMainWindow());
       notification.show();
-    }
-
-    // Also keep the existing modal as a hard prompt so users who only
-    // see the chrome get a clear restart affordance.
-    if (!isPrompting) {
-      isPrompting = true;
-      try {
-        await promptRestart(info.version);
-      } finally {
-        isPrompting = false;
-      }
     }
   });
 
@@ -522,7 +542,7 @@ export function initAutoUpdater(): void {
     if (isTransientNetworkError(err)) {
       // Connectivity blips (DNS failure, captive portal, offline-at-launch)
       // resolve themselves on the next periodic check. Log for diagnostics but
-      // do not flip the renderer to an error banner — see UpdateBanner.tsx.
+      // do not flip the renderer to an error toast — see UpdateIndicator.tsx.
       console.warn("[auto-updater] Transient network failure, will retry:", message);
       broadcastStatus({ state: "idle" });
       return;
@@ -562,22 +582,13 @@ export function cleanupAutoUpdater(): void {
   autoUpdater.removeAllListeners();
 }
 
-/** Prompt the user to restart and install a downloaded update. */
-async function promptRestart(version: string): Promise<void> {
+/** Bring the main window to the foreground (restoring it if minimized). */
+function focusMainWindow(): void {
   const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
   if (!win || win.isDestroyed()) return;
-
-  const { response } = await dialog.showMessageBox(win, {
-    type: "info",
-    title: "Update Ready",
-    message: `Version ${version} has been downloaded. Restart to apply.`,
-    buttons: ["Restart Now", "Later"],
-    defaultId: 0,
-  });
-
-  if (response === 0 && app.isPackaged) {
-    await quitAndInstallSafely();
-  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 }
 
 /**
