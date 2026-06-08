@@ -41,6 +41,7 @@ import { AttachmentService } from "./attachment-service";
 import { SnapshotService } from "./snapshot-service";
 import { MemoryPressureService } from "./memory-pressure-service";
 import { broadcast } from "../transport/push";
+import { GoalCommand } from "../commands/goal-command";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
@@ -309,114 +310,37 @@ export class AgentService {
       throw new Error(`Workspace not found: ${thread.workspace_id}`);
     }
 
-    // `/goal` chat-command interception. Three forms are recognised:
+    // `/goal` app-native command. The capability is probed through
+    // {@link GoalCapableProvider}: any provider that implements it gets `/goal`
+    // for free, and a provider without it passes the command through as plain
+    // text so the model still sees what the user typed.
     //
-    //   `/goal <condition>` — install a Stop hook for the condition AND
-    //                         immediately invoke the agent with the condition
-    //                         as its directive. The hook blocks the agent from
-    //                         ending its turn until the condition is satisfied.
-    //   `/goal clear`       — remove the active goal. No agent invocation.
-    //   `/goal` / `/goal show` — show the active goal. No agent invocation.
+    //   `/goal <condition>` — rewrite (SET): the wire payload becomes a
+    //                         directive and the goal is installed just before
+    //                         dispatch (see deferred install below).
+    //   `/goal clear`       — handled: remove the active goal, no dispatch.
+    //   `/goal` / `/goal show` — handled: show the active goal, no dispatch.
     //
-    // Only the Claude provider implements goals; on other providers the
-    // command is left as plain text so the model sees it.
-    //
-    // For SET form, we fall through to the normal sendMessage path with
-    // `content` rewritten to a directive prompt and `messageDisplayContent`
-    // pinned to the original `/goal …` text so the transcript shows what
-    // the user actually typed. For SHOW/CLEAR we short-circuit: persist the
-    // user message + a synthetic confirmation pill, then emit Ended so the
-    // composer can clear its optimistic "thinking" state.
-    // Deferred goal install for the SET form. Populated below and consumed
-    // immediately before `provider.sendMessage` runs, so a send failure
-    // can't leave a stale goal in the provider map. The catch block on the
-    // send also clears it as a belt-and-suspenders guard for failure paths
-    // between install and successful dispatch.
+    // Deferred goal install for the SET form: populated here and consumed
+    // immediately before `sendTurn` runs, so a send failure can't leave a
+    // stale goal in the provider map. The catch block on the send also clears
+    // it as a belt-and-suspenders guard for failures between install and
+    // successful dispatch.
     let pendingGoalInstall: string | null = null;
-
-    const goalMatch = effectiveProvider === "claude"
-      ? /^\s*\/goal\b\s*(.*)$/s.exec(content)
-      : null;
-    if (goalMatch) {
-      const arg = goalMatch[1].trim();
-      const lower = arg.toLowerCase();
-      const sessionName = `mcode-${threadId}`;
-      // Goal commands require the Claude provider to implement the goal
-      // API. Fail-fast if it doesn't — silently no-oping with `?.()` made
-      // the SET form *appear* to install a goal while leaving the Stop
-      // hook ungated, so the agent would just end its turn normally.
-      const rawProvider = this.providerRegistry.resolve("claude") as unknown as {
-        setGoal?: (sid: string, c: string) => void;
-        clearGoal?: (sid: string) => void;
-        getGoal?: (sid: string) => string | undefined;
-      };
-      if (
-        typeof rawProvider.setGoal !== "function" ||
-        typeof rawProvider.clearGoal !== "function" ||
-        typeof rawProvider.getGoal !== "function"
-      ) {
-        throw new Error("Claude provider does not implement /goal API");
-      }
-      const claudeProvider = rawProvider as {
-        setGoal: (sid: string, c: string) => void;
-        clearGoal: (sid: string) => void;
-        getGoal: (sid: string) => string | undefined;
-      };
-
-      const isControl = arg === "" || lower === "show" || lower === "clear" || lower === "reset";
-
-      if (isControl) {
-        let replyText: string;
-        if (arg === "" || lower === "show") {
-          const current = claudeProvider.getGoal(sessionName);
-          replyText = current
-            ? `Active goal: "${current}". The agent will not stop until this condition is met. Use \`/goal clear\` to remove it.`
-            : `No active goal. Use \`/goal <condition>\` to set one.`;
-        } else {
-          claudeProvider.clearGoal(sessionName);
-          replyText = `Goal cleared. The agent may now end its turn normally.`;
-        }
-
-        const { messages: existing } = this.messageRepo.listByThread(threadId, 1);
-        const baseSeq = existing.length > 0 ? existing[existing.length - 1].sequence : 0;
-        let userMsgId: string;
-        let assistantMsgId: string;
-        this.db.transaction(() => {
-          const u = this.messageRepo.create(threadId, "user", content, baseSeq + 1);
-          const a = this.messageRepo.create(threadId, "assistant", replyText, baseSeq + 2);
-          userMsgId = u.id;
-          assistantMsgId = a.id;
-        })();
-
-        broadcast("agent.event", {
-          type: AgentEventType.Message,
-          threadId,
-          content: replyText,
-          tokens: null,
-          messageId: assistantMsgId!,
-        } satisfies AgentEvent);
-        // Composer optimistically marks the thread as running on send and
-        // waits for Ended to clear it. Since no provider call ran, emit one
-        // here so the indicator clears.
-        broadcast("agent.event", {
-          type: AgentEventType.Ended,
-          threadId,
-        } satisfies AgentEvent);
-        logger.info("Handled /goal control command", { threadId, arg, userMsgId: userMsgId! });
-        return;
-      }
-
-      // SET form. Stash the install for after preflight/persistence and
-      // rewrite the wire payload so the agent starts working on the
-      // condition immediately. The actual setGoal() call is deferred to
-      // right before provider.sendMessage to avoid leaving a stale goal
-      // in the provider map if any of the intervening steps throw.
-      pendingGoalInstall = arg;
+    const goalCommand = new GoalCommand(
+      this.providerRegistry.resolve(effectiveProvider),
+      { messageRepo: this.messageRepo, db: this.db },
+      broadcast,
+    );
+    const goalOutcome = goalCommand.handle(threadId, content);
+    if (goalOutcome.kind === "handled") {
+      logger.info("Handled /goal control command", { threadId });
+      return;
+    }
+    if (goalOutcome.kind === "rewrite") {
+      pendingGoalInstall = goalOutcome.pendingGoal;
       messageDisplayContent = content;
-      content =
-        `A goal has been set for this session: "${arg}". Treat this exactly ` +
-        `as your directive — start working toward it now. The session will not ` +
-        `stop until the goal is satisfied.`;
+      content = goalOutcome.content;
     }
 
     const cwd = this.gitService.resolveWorkingDir(
@@ -629,15 +553,12 @@ export class AgentService {
     const providerMessage = providerWireOverride ?? wirePayload;
 
     // Install the deferred /goal hook gate now, as late as possible before
-    // dispatch. If sendMessage throws synchronously or rejects, the catch
-    // block below tears the goal back out so failures don't leave a hidden
-    // gate active. Only runs for Claude SET form (pendingGoalInstall is
-    // only populated in that branch above).
+    // dispatch. If sendTurn throws synchronously or rejects, the catch block
+    // below tears the goal back out so failures don't leave a hidden gate
+    // active. Only runs for the SET form (pendingGoalInstall is only populated
+    // when the goal command returned a rewrite).
     if (pendingGoalInstall !== null) {
-      const claudeProvider = this.providerRegistry.resolve("claude") as unknown as {
-        setGoal: (sid: string, c: string) => void;
-      };
-      claudeProvider.setGoal(`mcode-${threadId}`, pendingGoalInstall);
+      goalCommand.installGoal(threadId, pendingGoalInstall);
       logger.info("Goal installed; dispatching directive to provider", {
         threadId,
         goal: pendingGoalInstall,
@@ -689,10 +610,7 @@ export class AgentService {
       // Only runs when we got past the deferred install above.
       if (pendingGoalInstall !== null) {
         try {
-          const claudeProvider = this.providerRegistry.resolve("claude") as unknown as {
-            clearGoal: (sid: string) => void;
-          };
-          claudeProvider.clearGoal(`mcode-${threadId}`);
+          goalCommand.rollbackGoal(threadId);
         } catch (clearErr) {
           logger.warn("Failed to clear goal after failed send", {
             threadId,
