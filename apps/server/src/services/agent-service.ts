@@ -42,6 +42,7 @@ import { SnapshotService } from "./snapshot-service";
 import { MemoryPressureService } from "./memory-pressure-service";
 import { broadcast } from "../transport/push";
 import { GoalCommand } from "../commands/goal-command";
+import { CommandRouter } from "../commands/command-router";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
@@ -108,6 +109,13 @@ export class AgentService {
    */
   private readonly turnFinalizer: TurnFinalizer;
   /**
+   * Owns the mcode-native command namespace (`/goal`, ...). Dispatches each
+   * send through registered `McodeCommand`s before the message reaches the
+   * provider, so the app-interpreted / provider-passed boundary is named in
+   * one place rather than branched inline.
+   */
+  private readonly commandRouter: CommandRouter;
+  /**
    * Threads whose `TurnComplete` event has already been processed but whose
    * finalize may still be in-flight or have already finished.
    * Set when `TurnComplete` is handled; cleared on `TurnStarted` so the
@@ -168,6 +176,9 @@ export class AgentService {
       this.turnSnapshotRepo,
       this.db,
     );
+    this.commandRouter = new CommandRouter([
+      new GoalCommand({ messageRepo: this.messageRepo, db: this.db }, broadcast),
+    ]);
   }
 
   /**
@@ -253,37 +264,36 @@ export class AgentService {
       throw new Error(`Workspace not found: ${thread.workspace_id}`);
     }
 
-    // `/goal` app-native command. The capability is probed through
-    // {@link GoalCapableProvider}: any provider that implements it gets `/goal`
-    // for free, and a provider without it passes the command through as plain
-    // text so the model still sees what the user typed.
+    // Route the message through the mcode-native command namespace before it
+    // reaches the provider. The router probes each command's required
+    // capability and passes through when the resolved provider lacks it, so the
+    // model still sees the raw text on providers without the capability.
     //
-    //   `/goal <condition>` — rewrite (SET): the wire payload becomes a
-    //                         directive and the goal is installed just before
-    //                         dispatch (see deferred install below).
-    //   `/goal clear`       — handled: remove the active goal, no dispatch.
-    //   `/goal` / `/goal show` — handled: show the active goal, no dispatch.
+    //   handled     — a control form was fully serviced; short-circuit the send.
+    //   rewrite     — the wire payload was rewritten (e.g. `/goal <condition>`);
+    //                 fall through and run the lifecycle closures around the
+    //                 send (onDispatch just before, onRollback on failure).
+    //   passthrough — forward the original content to the model unchanged.
     //
-    // Deferred goal install for the SET form: populated here and consumed
-    // immediately before `sendTurn` runs, so a send failure can't leave a
-    // stale goal in the provider map. The catch block on the send also clears
-    // it as a belt-and-suspenders guard for failures between install and
-    // successful dispatch.
-    let pendingGoalInstall: string | null = null;
-    const goalCommand = new GoalCommand(
-      this.providerRegistry.resolve(effectiveProvider),
-      { messageRepo: this.messageRepo, db: this.db },
-      broadcast,
-    );
-    const goalOutcome = goalCommand.handle(threadId, content);
-    if (goalOutcome.kind === "handled") {
-      logger.info("Handled /goal control command", { threadId });
+    // onDispatch is deferred to immediately before `sendTurn` so a send failure
+    // can't leave a stale side effect (e.g. a goal gate) on the provider; the
+    // catch block runs onRollback as a belt-and-suspenders guard.
+    let pendingDispatch: (() => void) | null = null;
+    let pendingRollback: (() => void) | null = null;
+    const commandOutcome = this.commandRouter.route({
+      threadId,
+      content,
+      provider: this.providerRegistry.resolve(effectiveProvider),
+    });
+    if (commandOutcome.kind === "handled") {
+      logger.info("Handled mcode-native command", { threadId });
       return;
     }
-    if (goalOutcome.kind === "rewrite") {
-      pendingGoalInstall = goalOutcome.pendingGoal;
+    if (commandOutcome.kind === "rewrite") {
+      pendingDispatch = commandOutcome.onDispatch ?? null;
+      pendingRollback = commandOutcome.onRollback ?? null;
       messageDisplayContent = content;
-      content = goalOutcome.content;
+      content = commandOutcome.content;
     }
 
     const cwd = this.gitService.resolveWorkingDir(
@@ -495,16 +505,14 @@ export class AgentService {
 
     const providerMessage = providerWireOverride ?? wirePayload;
 
-    // Install the deferred /goal hook gate now, as late as possible before
-    // dispatch. If sendTurn throws synchronously or rejects, the catch block
-    // below tears the goal back out so failures don't leave a hidden gate
-    // active. Only runs for the SET form (pendingGoalInstall is only populated
-    // when the goal command returned a rewrite).
-    if (pendingGoalInstall !== null) {
-      goalCommand.installGoal(threadId, pendingGoalInstall);
-      logger.info("Goal installed; dispatching directive to provider", {
+    // Run the command's deferred dispatch side effect now, as late as possible
+    // before dispatch. If sendTurn throws synchronously or rejects, the catch
+    // block below runs the rollback so failures don't leave a hidden side
+    // effect active. Only set for a rewrite outcome that supplied onDispatch.
+    if (pendingDispatch !== null) {
+      pendingDispatch();
+      logger.info("Command side effect installed; dispatching to provider", {
         threadId,
-        goal: pendingGoalInstall,
       });
     }
 
@@ -548,14 +556,14 @@ export class AgentService {
       if (this.activeSessionIds.size === 0) {
         this.memoryPressureService.markIdle();
       }
-      // Roll the just-installed goal back so a failed send doesn't leave a
-      // hidden Stop-hook gate active on the next (possibly unrelated) turn.
-      // Only runs when we got past the deferred install above.
-      if (pendingGoalInstall !== null) {
+      // Roll the just-installed command side effect back so a failed send
+      // doesn't leave a hidden gate (e.g. a Stop-hook goal) active on the next
+      // (possibly unrelated) turn. Only runs when we got past onDispatch above.
+      if (pendingRollback !== null) {
         try {
-          goalCommand.rollbackGoal(threadId);
+          pendingRollback();
         } catch (clearErr) {
-          logger.warn("Failed to clear goal after failed send", {
+          logger.warn("Failed to roll back command side effect after failed send", {
             threadId,
             error: clearErr instanceof Error ? clearErr.message : String(clearErr),
           });
