@@ -1,21 +1,19 @@
 /**
  * Per-Provider session forkers for the chat fork handoff pipeline.
  *
- * Replaces the B/A/D dispatch that lived inline in
+ * Replaces the B/D dispatch that lived inline in
  * {@link HandoffPipelineService.orchestrate}. Each provider owns a `forker`
  * (see {@link IAgentProvider.forker}) that knows how to produce a handoff
  * artifact for that provider's session-fork semantics:
  *
- * - {@link CleanForker} (Claude, path B + B-prime): runs a side-channel query
- *   against a forked copy of the parent session.
- * - {@link MutatingForker} (Cursor, path A): runs a hidden turn on the parent's
- *   mutable session.
+ * - {@link CleanForker} (Claude + Cursor, path B + B-prime): runs a
+ *   side-channel query against a forked copy of the parent session.
  * - {@link DeterministicForker} (path D): stateless replay-based builder, also
  *   the pipeline's cross-forker fallback when a provider fork fails.
  *
- * The forkers call the providers' concrete `runSideChannelQuery` /
- * `runHiddenTurn` methods directly. Those methods are intentionally off the
- * {@link IAgentProvider} interface now — only the forkers reach them.
+ * The forkers call the providers' concrete `runSideChannelQuery` method
+ * directly. That method is intentionally off the {@link IAgentProvider}
+ * interface now — only the forkers reach it.
  */
 
 import type { ForkRequest, HandoffArtifact, HandoffMeta, SessionForker } from "@mcode/contracts";
@@ -40,26 +38,14 @@ interface CleanForkCapable {
 }
 
 /**
- * Structural shape of the Cursor provider's concrete `runHiddenTurn`.
- */
-interface MutatingForkCapable {
-  runHiddenTurn(args: {
-    parentThreadId: string;
-    prompt: string;
-    abortSignal?: AbortSignal;
-  }): Promise<string>;
-  readonly id: string;
-}
-
-/**
- * Build a provider-generated artifact (path B or A) with the given ladder step.
+ * Build a provider-generated artifact (path B) with the given ladder step.
  * Mode is decided by the pipeline (budget-driven) and stamped here; the
  * forkers do not own mode selection.
  */
 function buildProviderArtifact(
   req: ForkRequest,
   markdownBody: string,
-  step: "B" | "A",
+  step: "B",
 ): HandoffArtifact {
   const parent = req.parentThread;
   const meta: HandoffMeta = {
@@ -83,7 +69,7 @@ function buildProviderArtifact(
 }
 
 /**
- * Path B (+ B-prime) forker for clean-resume providers (Claude). Runs a
+ * Path B (+ B-prime) forker for clean-resume providers (Claude, Cursor). Runs a
  * one-shot side-channel query against a forked copy of the parent session. If
  * `parentSdkSessionId` is missing the provider's own sessionless B-prime
  * fallback (driven by `conversationHistory`) still produces a path-B result.
@@ -102,25 +88,6 @@ export class CleanForker implements SessionForker {
       cwd: req.cwd,
     });
     return buildProviderArtifact(req, text, "B");
-  }
-}
-
-/**
- * Path A forker for mutating-resume providers (Cursor). Runs a hidden turn on
- * the parent thread's mutable session. The pipeline serializes concurrent
- * calls per parent thread because each hidden turn mutates session state.
- */
-export class MutatingForker implements SessionForker {
-  constructor(private readonly provider: MutatingForkCapable) {}
-
-  /** Produce a path-A handoff via the provider's hidden turn. */
-  async fork(req: ForkRequest): Promise<HandoffArtifact> {
-    const text = await this.provider.runHiddenTurn({
-      parentThreadId: req.parentThreadId,
-      prompt: req.prompt,
-      abortSignal: req.abortSignal,
-    });
-    return buildProviderArtifact(req, text, "A");
   }
 }
 

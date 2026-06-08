@@ -44,7 +44,7 @@ describe("Cursor clean side-channel fork", () => {
     const envStub = { getEnv: () => ({}) } as unknown as EnvService;
     const jobStub = {} as unknown as JobObject;
 
-    provider = new CursorProvider(settingsStub, skillStub, envStub, jobStub, messageRepo);
+    provider = new CursorProvider(settingsStub, skillStub, envStub, jobStub);
 
     // Replace the real `cursor-agent acp` spawn with a fake transport that
     // streams a summary chunk back through the client (no subprocess, no

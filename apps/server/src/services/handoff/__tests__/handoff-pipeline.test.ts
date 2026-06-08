@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import type { IProviderRegistry } from "@mcode/contracts";
 import { HandoffPipelineService } from "../handoff-pipeline.js";
-import { CleanForker, MutatingForker, DeterministicForker } from "../session-forker.js";
+import { CleanForker, DeterministicForker } from "../session-forker.js";
 
 /**
  * Wrap a partial Claude-like mock (with runSideChannelQuery) in a real
@@ -10,11 +10,6 @@ import { CleanForker, MutatingForker, DeterministicForker } from "../session-for
  */
 function withCleanForker<T extends { runSideChannelQuery: (...a: any[]) => any }>(p: T) {
   return { ...p, forker: new CleanForker(p as any) };
-}
-
-/** Wrap a Cursor-like mock (with runHiddenTurn) in a real MutatingForker. */
-function withMutatingForker<T extends { runHiddenTurn: (...a: any[]) => any }>(p: T) {
-  return { ...p, forker: new MutatingForker(p as any) };
 }
 
 /** Attach a DeterministicForker to a provider with no fork capability. */
@@ -88,22 +83,19 @@ describe("HandoffPipelineService.orchestrate", () => {
     expect(r.meta.providerErrorOnGenerate).toBe("quota");
   });
 
-  it("mutating-resume provider uses path A; mode is always full after off-band delivery", async () => {
+  it("clean-resume provider keeps mode full after off-band delivery", async () => {
     const deps = mkDeps();
-    deps.providerRegistry.resolve = vi.fn(() => withMutatingForker({
-      sessionForkOnResume: "mutating",
+    deps.providerRegistry.resolve = vi.fn(() => withCleanForker({
+      sessionForkOnResume: "clean",
       // A small child cap no longer downgrades the doc: off-band delivery
       // (PRD #538) retired the minimal mode and the per-turn char budget.
       maxInputCharactersPerTurn: 4_000,
-      id: "cursor",
-      runHiddenTurn: vi.fn(async () => "# Handoff\n\n## Goal\nX"),
+      id: "claude",
+      runSideChannelQuery: vi.fn(async () => "# Handoff\n\n## Goal\nX"),
     }));
     const svc = HandoffPipelineService.forTesting(deps);
-    const r = await svc.orchestrate({
-      ...BASE_REQ,
-      childProviderId: "cursor",
-    });
-    expect(r.meta.ladderStep).toBe("A");
+    const r = await svc.orchestrate(BASE_REQ);
+    expect(r.meta.ladderStep).toBe("B");
     expect(r.meta.mode).toBe("full");
   });
 
@@ -124,7 +116,7 @@ describe("HandoffPipelineService.orchestrate", () => {
   });
 
   // 17.1: missing sdk_session_id falls through to D for path B (session needed
-  // for resume), path A is unaffected (no session required for hidden turns).
+  // for resume).
   it("falls to D when parent has no sdkSessionId and provider is clean-resume", async () => {
     const deps = mkDeps();
     // Override parent to have no session id
@@ -183,41 +175,5 @@ describe("HandoffPipelineService.orchestrate", () => {
     } finally {
       globalThis.AbortController = OriginalAbortController;
     }
-  });
-
-  // 17.3: concurrent path A forks on the same parent thread are serialized
-  it("serializes concurrent path-A forks on the same parent thread", { timeout: 10_000 }, async () => {
-    const order: number[] = [];
-    let resolveFirst!: () => void;
-    const firstStarted = new Promise<void>((res) => { resolveFirst = res; });
-
-    const deps = mkDeps();
-    let callCount = 0;
-    deps.providerRegistry.resolve = vi.fn(() => withMutatingForker({
-      sessionForkOnResume: "mutating",
-      maxInputCharactersPerTurn: 180_000,
-      id: "cursor",
-      runHiddenTurn: vi.fn(async () => {
-        const idx = ++callCount;
-        order.push(idx);
-        if (idx === 1) {
-          resolveFirst();
-          // First call holds the lock briefly so the second must queue.
-          await new Promise<void>((res) => setTimeout(res, 50));
-        }
-        return "# Handoff\n\n## Goal\nX";
-      }),
-    }));
-
-    const svc = HandoffPipelineService.forTesting(deps);
-    const p1 = svc.orchestrate(BASE_REQ);
-    await firstStarted;
-    const p2 = svc.orchestrate(BASE_REQ);
-
-    const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1.meta.ladderStep).toBe("A");
-    expect(r2.meta.ladderStep).toBe("A");
-    // The second hidden turn must start only after the first completes.
-    expect(order).toEqual([1, 2]);
   });
 });

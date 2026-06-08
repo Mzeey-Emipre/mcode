@@ -122,7 +122,7 @@ export const WS_CHANNELS = {
   "thread.handoff": z.object({
     threadId: z.string(),
     status: z.enum(["generating", "ready", "fallback", "error"]),
-    ladderStep: z.enum(["B", "A", "D"]).optional(),
+    ladderStep: z.enum(["B", "D"]).optional(),
     providerErrorOnGenerate: z
       .enum(["quota", "auth", "context-overflow", "transient", "fatal"])
       .nullable()

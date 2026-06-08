@@ -23,7 +23,7 @@ The provider used for short, one-shot, non-conversational completions that
 the app issues on the user's behalf (currently: drafting PR titles/bodies
 and summarising a diff). Set globally in user settings; may differ from the
 default provider. Handoff generation is **not** a utility-provider use case;
-handoffs route through the originating thread's own provider via the B/A/D
+handoffs route through the originating thread's own provider via the B/D
 pipeline.
 
 ### Session runtime
@@ -335,31 +335,20 @@ user-configurable Hook.
 
 ### Handoff pipeline
 The orchestration layer that produces a handoff for a given fork. Routes
-through one of three paths (B / A / D) based on the parent provider's
-capability and live availability.
+through one of two paths (B / D) based on the parent provider's capability
+and live availability.
 
 ### Side-channel
 A provider call made out-of-band from the user-visible conversation, used to
-generate a handoff. Does not appear in the parent thread's UI. Distinct from
-a "hidden turn". Side-channels typically use a separate SDK process.
+generate a handoff. Does not appear in the parent thread's UI. Side-channels
+typically use a separate SDK process.
 
-### Hidden turn
-A message persisted with `is_internal: 1` so it doesn't render in the UI but
-is still present in the provider's session state. Used in path A to inject
-the handoff request into the parent's session without polluting the user's
-view of the conversation.
-
-### Disregard turn
-A second hidden turn following a hidden handoff request, instructing the
-model to ignore the previous request and continue normally. Specific to
-path A's session-mutation cleanup.
-
-## The B/A/D ladder
+## The B/D ladder
 
 ### Path B (clean side-channel)
 Resumes the parent provider's session in a forked SDK process to generate
 the handoff. The original session is untouched. Used when the provider
-declares `sessionForkOnResume: "clean"` (Claude).
+declares `sessionForkOnResume: "clean"` (Claude, Cursor).
 
 ### Path B-prime (sessionless side-channel)
 Variant of path B that runs without `resume:` when the parent's session
@@ -367,28 +356,15 @@ isn't available (e.g. after a server restart). Provides the conversation
 history as text in the prompt instead. Same artifact ladder step ("B") from
 the caller's perspective.
 
-### Path A (mutating resume)
-Injects hidden turns directly into the parent thread's session. Used when
-the provider declares `sessionForkOnResume: "mutating"` (Cursor today).
-Cleaned up with a disregard turn.
-
-> **Retirement pending.** Path A (the `MutatingForker`) is queued for removal
-> once Cursor's `loadSession` is verified to carry parent context across
-> stop/resume without the hidden-turn-then-disregard dance. The verification
-> (launch Cursor, send a Turn, stop, resume, send a follow-up, confirm context
-> carried) has not been run, so `MutatingForker` and the `"mutating"` value are
-> retained as the safe default. If it passes, Cursor moves to `CleanForker` (or
-> `DeterministicForker`) and the ladder reduces to B and D.
-
 ### Path D (deterministic)
 Local builder that produces the handoff from message rows without invoking
 any provider. Used as the universal fallback. Lowest fidelity but always
 available.
 
 ### Ladder step
-A label on a produced handoff artifact (`"B" | "A" | "D"`) identifying which
-path generated it. Stored in `handoff.json` for diagnostics and the
-fallback banner copy.
+A label on a produced handoff artifact (`"B" | "D"`) identifying which path
+generated it. Stored in `handoff.json` for diagnostics and the fallback
+banner copy.
 
 ## Handoff delivery
 
@@ -413,14 +389,14 @@ for Handoff purposes after this change.
 ## Provider capabilities
 
 ### Session fork behavior
-Declared per provider as `"clean" | "mutating" | "unsupported"`. **Metadata
-only** since each Provider now carries a `forker: SessionForker` that the
-pipeline dispatches through (`provider.forker.fork(req)`); this label is used
-for `handoff.json` provenance and the fallback banner copy, and historically
+Declared per provider as `"clean" | "unsupported"`. **Metadata only** since
+each Provider now carries a `forker: SessionForker` that the pipeline
+dispatches through (`provider.forker.fork(req)`); this label is used for
+`handoff.json` provenance and the fallback banner copy, and historically
 mapped to ladder paths as:
 
-- **clean**: `resume:` spawns a fork without mutating the original (Claude)
-- **mutating**: `resume:` mutates the session forward (Cursor today)
+- **clean**: `resume:` spawns a fork without mutating the original (Claude,
+  Cursor)
 - **unsupported**: provider can't fork sessions; pipeline goes directly to
   path D (Codex, Copilot today)
 
@@ -443,9 +419,8 @@ under `Slash command`).
 
 ### Internal message
 A message persisted with `is_internal: 1`. Excluded from the user-visible
-timeline and from queries by default. Used for hidden turns and for the
-synthetic system message anchoring a handoff at sequence 1 in a child
-thread.
+timeline and from queries by default. Used for the synthetic system message
+anchoring a handoff at sequence 1 in a child thread.
 
 ### Provenance metadata
 The `handoff.json` sidecar accompanying every `handoff.md`. Records which

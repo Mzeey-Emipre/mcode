@@ -16,7 +16,7 @@ import type { ThoughtSegment } from "@/components/chat/narrative/types";
  */
 export interface HandoffMeta {
   status: "generating" | "ready" | "fallback" | "error";
-  ladderStep?: "B" | "A" | "D";
+  ladderStep?: "B" | "D";
   providerErrorOnGenerate?: "quota" | "auth" | "context-overflow" | "transient" | "fatal" | null;
 }
 

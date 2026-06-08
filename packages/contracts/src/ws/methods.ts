@@ -717,7 +717,7 @@ export const WS_METHODS = lazySchema(() => ({
         childThreadId: z.string(),
         generatedBy: z.enum(["provider", "deterministic"]),
         provider: z.string().nullable(),
-        ladderStep: z.enum(["B", "A", "D"]),
+        ladderStep: z.enum(["B", "D"]),
         mode: z.enum(["full", "minimal"]),
         generatedAt: z.string(),
         characterCount: z.number(),
@@ -727,7 +727,7 @@ export const WS_METHODS = lazySchema(() => ({
           .nullable(),
         regenerationHistory: z.array(z.object({
           at: z.string(),
-          ladderStep: z.enum(["B", "A", "D"]),
+          ladderStep: z.enum(["B", "D"]),
           reason: z.enum(["quota", "auth", "context-overflow", "transient", "fatal", "clean", "user-requested"]),
         })),
         attachments: z.array(z.object({

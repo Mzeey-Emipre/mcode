@@ -1,7 +1,7 @@
 /**
  * Session-fork contract for the chat fork handoff pipeline.
  *
- * The B/A/D ladder is no longer dispatched inline in the handoff pipeline.
+ * The B/D ladder is no longer dispatched inline in the handoff pipeline.
  * Instead every {@link IAgentProvider} exposes a `forker` whose `fork(req)`
  * produces a {@link HandoffArtifact}. This module is the canonical home for
  * the artifact shape and the forker contract so the provider interface (which
@@ -13,8 +13,8 @@
 
 import type { Message, Thread, ToolCallRecord, ThoughtSegmentRecord } from "../index.js";
 
-/** Which step of the B->A->D ladder produced the handoff. */
-export type LadderStep = "B" | "A" | "D";
+/** Which step of the B->D ladder produced the handoff. */
+export type LadderStep = "B" | "D";
 
 /**
  * Handoff doc mode. Retained as a constant `"full"` for provenance/frontmatter
@@ -27,7 +27,7 @@ export type HandoffMode = "full";
 /** Whether the parent message at the fork point was authored by the user or assistant. */
 export type ForkAnchorRole = "user" | "assistant";
 
-/** Classified provider error returned during path-B/A attempts. */
+/** Classified provider error returned during path-B attempts. */
 export type ProviderErrorClass =
   | "quota"             // 429, rate-limit, billing-exhausted
   | "auth"              // 401, expired credentials
@@ -133,8 +133,8 @@ export interface ForkRequest {
 
 /**
  * A provider-specific strategy that turns a {@link ForkRequest} into a
- * {@link HandoffArtifact}. Implemented server-side by CleanForker (path B),
- * MutatingForker (path A), and DeterministicForker (path D).
+ * {@link HandoffArtifact}. Implemented server-side by CleanForker (path B)
+ * and DeterministicForker (path D).
  */
 export interface SessionForker {
   fork(req: ForkRequest): Promise<HandoffArtifact>;

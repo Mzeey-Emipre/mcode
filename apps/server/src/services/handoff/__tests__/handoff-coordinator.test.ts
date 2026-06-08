@@ -124,17 +124,6 @@ describe("HandoffCoordinator.deliverHandoff", () => {
     expect(providerWireOverride).toContain("continue the work please");
   });
 
-  it("path A: a mutating-provider artifact still broadcasts ready and delivers off-band", async () => {
-    const deps = mkDeps();
-    deps.handoffPipeline.orchestrate = vi.fn(async () => mkArtifact("A"));
-    const coordinator = HandoffCoordinator.forTesting(deps);
-
-    const { providerWireOverride } = await coordinator.deliverHandoff(mkInput());
-
-    expect(lastHandoffStatus()).toMatchObject({ status: "ready", ladderStep: "A" });
-    expect(providerWireOverride).toContain("mcode-handoff-t_child-");
-  });
-
   it("path D (pipeline-produced): broadcasts fallback with ladderStep D but still uses off-band delivery", async () => {
     const deps = mkDeps();
     deps.handoffPipeline.orchestrate = vi.fn(async () => mkArtifact("D", "quota"));
