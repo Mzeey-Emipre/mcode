@@ -7,8 +7,6 @@
 
 import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
-import { writeFile } from "fs/promises";
-import { tmpdir } from "os";
 import { isAbsolute } from "path";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
@@ -42,6 +40,7 @@ import { AttachmentService } from "./attachment-service";
 import { SnapshotService } from "./snapshot-service";
 import { MemoryPressureService } from "./memory-pressure-service";
 import { broadcast } from "../transport/push";
+import { GoalCommand } from "../commands/goal-command";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
@@ -55,16 +54,8 @@ import {
 import { PlanQuestionParser } from "./plan-question-parser.js";
 import { PlanOutputParser } from "./plan-output-parser.js";
 import { PlanRepo } from "../repositories/plan-repo";
-import { buildHandoffContent, buildConversationReplay, replayBudgetChars, resolveForkSnapshot } from "./handoff-builder.js";
-import { HandoffPipelineService } from "./handoff/handoff-pipeline.js";
-import { HandoffStorage } from "./handoff/handoff-storage.js";
+import { HandoffCoordinator } from "./handoff/handoff-coordinator.js";
 import { ScopedPreGrantService } from "./scoped-pre-grant.js";
-import type { AttachmentSource } from "./handoff/handoff-storage.js";
-import type { HandoffArtifact } from "./handoff/handoff-types.js";
-import { classifyProviderError } from "./handoff/error-classifier.js";
-import { getMcodeDir } from "@mcode/shared";
-import { join } from "path";
-import { storedAttachmentSuffix } from "@mcode/contracts";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 
 /**
@@ -89,55 +80,6 @@ function truncateTitle(content: string): string {
   const lastSpace = truncated.lastIndexOf(" ");
   const cutPoint = lastSpace > 0 ? lastSpace : 50;
   return truncated.slice(0, cutPoint) + "...";
-}
-
-/** Array.findLastIndex polyfill for ES2022 targets that lack it. */
-function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
-  for (let i = arr.length - 1; i >= 0; i--) {
-    if (predicate(arr[i])) return i;
-  }
-  return -1;
-}
-
-/**
- * Derive a short (<=2-3 sentence) graceful-degradation summary from the full
- * handoff markdown. Uses the first non-heading, non-empty paragraph so the
- * child still has minimal orientation even if it never reads the temp file
- * (e.g. the file is swept, or the Read is denied). Capped so the inline prompt
- * stays small by construction.
- */
-function deriveHandoffSummary(markdown: string): string {
-  const SUMMARY_CAP = 280;
-  const firstParagraph = markdown
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .find((block) => block.length > 0 && !block.startsWith("#") && !block.startsWith("---"));
-  const summary = (firstParagraph ?? "").replace(/\s+/g, " ").trim();
-  if (!summary) {
-    return "A handoff document describing the parent thread's context is available at the path above; read it before continuing.";
-  }
-  return summary.length > SUMMARY_CAP ? `${summary.slice(0, SUMMARY_CAP).trimEnd()}...` : summary;
-}
-
-/**
- * Build the small inline first-Turn prompt for off-band handoff delivery: a
- * pointer line to the full doc on disk, a short graceful-degradation summary,
- * then the child's first user message. The child is pre-granted a one-shot
- * Read of the pointed-to file (see ScopedPreGrantService) so it can pull the
- * full context without prompting. Kept small by construction so it fits any
- * provider's per-turn input window.
- */
-function buildOffBandHandoffPrompt(tempPath: string, markdown: string, userMessage: string): string {
-  return [
-    "You are continuing work handed off from a previous thread.",
-    `The full handoff document is on this machine at: ${tempPath}`,
-    "Read that file first with the Read tool to load the complete context (you are pre-authorized to read it once without prompting). Summary if the file is unavailable:",
-    deriveHandoffSummary(markdown),
-    "",
-    "---",
-    "",
-    userMessage,
-  ].join("\n");
 }
 
 /** Orchestrates agent sessions, message sending, and event forwarding. */
@@ -216,10 +158,8 @@ export class AgentService {
     @inject(PlanQuestionAnswersRepo)
     private readonly planQuestionAnswersRepo: PlanQuestionAnswersRepo,
     @inject(PlanRepo) private readonly planRepo: PlanRepo,
-    @inject(HandoffPipelineService)
-    private readonly handoffPipeline: HandoffPipelineService,
-    @inject(HandoffStorage)
-    private readonly handoffStorage: HandoffStorage,
+    @inject(HandoffCoordinator)
+    private readonly handoffCoordinator: HandoffCoordinator,
     @inject(ScopedPreGrantService)
     private readonly scopedPreGrant: ScopedPreGrantService,
     @inject(NarrativeStore)
@@ -311,114 +251,37 @@ export class AgentService {
       throw new Error(`Workspace not found: ${thread.workspace_id}`);
     }
 
-    // `/goal` chat-command interception. Three forms are recognised:
+    // `/goal` app-native command. The capability is probed through
+    // {@link GoalCapableProvider}: any provider that implements it gets `/goal`
+    // for free, and a provider without it passes the command through as plain
+    // text so the model still sees what the user typed.
     //
-    //   `/goal <condition>` — install a Stop hook for the condition AND
-    //                         immediately invoke the agent with the condition
-    //                         as its directive. The hook blocks the agent from
-    //                         ending its turn until the condition is satisfied.
-    //   `/goal clear`       — remove the active goal. No agent invocation.
-    //   `/goal` / `/goal show` — show the active goal. No agent invocation.
+    //   `/goal <condition>` — rewrite (SET): the wire payload becomes a
+    //                         directive and the goal is installed just before
+    //                         dispatch (see deferred install below).
+    //   `/goal clear`       — handled: remove the active goal, no dispatch.
+    //   `/goal` / `/goal show` — handled: show the active goal, no dispatch.
     //
-    // Only the Claude provider implements goals; on other providers the
-    // command is left as plain text so the model sees it.
-    //
-    // For SET form, we fall through to the normal sendMessage path with
-    // `content` rewritten to a directive prompt and `messageDisplayContent`
-    // pinned to the original `/goal …` text so the transcript shows what
-    // the user actually typed. For SHOW/CLEAR we short-circuit: persist the
-    // user message + a synthetic confirmation pill, then emit Ended so the
-    // composer can clear its optimistic "thinking" state.
-    // Deferred goal install for the SET form. Populated below and consumed
-    // immediately before `provider.sendMessage` runs, so a send failure
-    // can't leave a stale goal in the provider map. The catch block on the
-    // send also clears it as a belt-and-suspenders guard for failure paths
-    // between install and successful dispatch.
+    // Deferred goal install for the SET form: populated here and consumed
+    // immediately before `sendTurn` runs, so a send failure can't leave a
+    // stale goal in the provider map. The catch block on the send also clears
+    // it as a belt-and-suspenders guard for failures between install and
+    // successful dispatch.
     let pendingGoalInstall: string | null = null;
-
-    const goalMatch = effectiveProvider === "claude"
-      ? /^\s*\/goal\b\s*(.*)$/s.exec(content)
-      : null;
-    if (goalMatch) {
-      const arg = goalMatch[1].trim();
-      const lower = arg.toLowerCase();
-      const sessionName = `mcode-${threadId}`;
-      // Goal commands require the Claude provider to implement the goal
-      // API. Fail-fast if it doesn't — silently no-oping with `?.()` made
-      // the SET form *appear* to install a goal while leaving the Stop
-      // hook ungated, so the agent would just end its turn normally.
-      const rawProvider = this.providerRegistry.resolve("claude") as unknown as {
-        setGoal?: (sid: string, c: string) => void;
-        clearGoal?: (sid: string) => void;
-        getGoal?: (sid: string) => string | undefined;
-      };
-      if (
-        typeof rawProvider.setGoal !== "function" ||
-        typeof rawProvider.clearGoal !== "function" ||
-        typeof rawProvider.getGoal !== "function"
-      ) {
-        throw new Error("Claude provider does not implement /goal API");
-      }
-      const claudeProvider = rawProvider as {
-        setGoal: (sid: string, c: string) => void;
-        clearGoal: (sid: string) => void;
-        getGoal: (sid: string) => string | undefined;
-      };
-
-      const isControl = arg === "" || lower === "show" || lower === "clear" || lower === "reset";
-
-      if (isControl) {
-        let replyText: string;
-        if (arg === "" || lower === "show") {
-          const current = claudeProvider.getGoal(sessionName);
-          replyText = current
-            ? `Active goal: "${current}". The agent will not stop until this condition is met. Use \`/goal clear\` to remove it.`
-            : `No active goal. Use \`/goal <condition>\` to set one.`;
-        } else {
-          claudeProvider.clearGoal(sessionName);
-          replyText = `Goal cleared. The agent may now end its turn normally.`;
-        }
-
-        const { messages: existing } = this.messageRepo.listByThread(threadId, 1);
-        const baseSeq = existing.length > 0 ? existing[existing.length - 1].sequence : 0;
-        let userMsgId: string;
-        let assistantMsgId: string;
-        this.db.transaction(() => {
-          const u = this.messageRepo.create(threadId, "user", content, baseSeq + 1);
-          const a = this.messageRepo.create(threadId, "assistant", replyText, baseSeq + 2);
-          userMsgId = u.id;
-          assistantMsgId = a.id;
-        })();
-
-        broadcast("agent.event", {
-          type: AgentEventType.Message,
-          threadId,
-          content: replyText,
-          tokens: null,
-          messageId: assistantMsgId!,
-        } satisfies AgentEvent);
-        // Composer optimistically marks the thread as running on send and
-        // waits for Ended to clear it. Since no provider call ran, emit one
-        // here so the indicator clears.
-        broadcast("agent.event", {
-          type: AgentEventType.Ended,
-          threadId,
-        } satisfies AgentEvent);
-        logger.info("Handled /goal control command", { threadId, arg, userMsgId: userMsgId! });
-        return;
-      }
-
-      // SET form. Stash the install for after preflight/persistence and
-      // rewrite the wire payload so the agent starts working on the
-      // condition immediately. The actual setGoal() call is deferred to
-      // right before provider.sendMessage to avoid leaving a stale goal
-      // in the provider map if any of the intervening steps throw.
-      pendingGoalInstall = arg;
+    const goalCommand = new GoalCommand(
+      this.providerRegistry.resolve(effectiveProvider),
+      { messageRepo: this.messageRepo, db: this.db },
+      broadcast,
+    );
+    const goalOutcome = goalCommand.handle(threadId, content);
+    if (goalOutcome.kind === "handled") {
+      logger.info("Handled /goal control command", { threadId });
+      return;
+    }
+    if (goalOutcome.kind === "rewrite") {
+      pendingGoalInstall = goalOutcome.pendingGoal;
       messageDisplayContent = content;
-      content =
-        `A goal has been set for this session: "${arg}". Treat this exactly ` +
-        `as your directive — start working toward it now. The session will not ` +
-        `stop until the goal is satisfied.`;
+      content = goalOutcome.content;
     }
 
     const cwd = this.gitService.resolveWorkingDir(
@@ -631,15 +494,12 @@ export class AgentService {
     const providerMessage = providerWireOverride ?? wirePayload;
 
     // Install the deferred /goal hook gate now, as late as possible before
-    // dispatch. If sendMessage throws synchronously or rejects, the catch
-    // block below tears the goal back out so failures don't leave a hidden
-    // gate active. Only runs for Claude SET form (pendingGoalInstall is
-    // only populated in that branch above).
+    // dispatch. If sendTurn throws synchronously or rejects, the catch block
+    // below tears the goal back out so failures don't leave a hidden gate
+    // active. Only runs for the SET form (pendingGoalInstall is only populated
+    // when the goal command returned a rewrite).
     if (pendingGoalInstall !== null) {
-      const claudeProvider = this.providerRegistry.resolve("claude") as unknown as {
-        setGoal: (sid: string, c: string) => void;
-      };
-      claudeProvider.setGoal(`mcode-${threadId}`, pendingGoalInstall);
+      goalCommand.installGoal(threadId, pendingGoalInstall);
       logger.info("Goal installed; dispatching directive to provider", {
         threadId,
         goal: pendingGoalInstall,
@@ -691,10 +551,7 @@ export class AgentService {
       // Only runs when we got past the deferred install above.
       if (pendingGoalInstall !== null) {
         try {
-          const claudeProvider = this.providerRegistry.resolve("claude") as unknown as {
-            clearGoal: (sid: string) => void;
-          };
-          claudeProvider.clearGoal(`mcode-${threadId}`);
+          goalCommand.rollbackGoal(threadId);
         } catch (clearErr) {
           logger.warn("Failed to clear goal after failed send", {
             threadId,
@@ -1105,230 +962,18 @@ export class AgentService {
         : thread.codex_fast_mode,
     };
 
-    // Derive the fork anchor role for the pipeline.
-    const forkAnchorRole = forkMessage.role === "user" ? "user" : "assistant";
-
-    // Orchestrate the handoff pipeline (B->A->D ladder). On failure, fall back to the
-    // legacy inline replay so the fork always succeeds.
-    let providerWireOverride: string;
-
-    // Signal to clients that the handoff is in progress so the UI can show a spinner
-    // before the artifact lands.
-    broadcast("thread.handoff", { threadId: thread.id, status: "generating" });
-
-    try {
-      const artifact = await this.handoffPipeline.orchestrate({
-        parentThreadId,
-        forkedFromMessageId: resolvedForkMessageId,
-        forkAnchorRole,
-        childThreadId: thread.id,
-        childProviderId: provider,
-        userFollowUpMessage: content,
-      });
-
-      // Copy attachments from parent messages within the fork range into the child thread's dir.
-      // StoredAttachment has no path field; files live at {mcodeDir}/attachments/{threadId}/{id}{ext}.
-      const parentAttachmentsDir = join(getMcodeDir(), "attachments", parentThreadId);
-      const attachmentSources: AttachmentSource[] = [];
-      for (const msg of forkedMessages) {
-        if (!msg.attachments) continue;
-        for (const att of msg.attachments) {
-          const ext = storedAttachmentSuffix(att.mimeType);
-          const absolutePath = join(parentAttachmentsDir, `${att.id}${ext}`);
-          if (!existsSync(absolutePath)) {
-            logger.warn("createBranchedThread: parent attachment not found on disk, skipping", {
-              attachmentId: att.id,
-              parentThreadId,
-              absolutePath,
-            });
-            continue;
-          }
-          attachmentSources.push({
-            id: att.id,
-            absolutePath,
-            originalName: att.name,
-            mime: att.mimeType,
-            parentMessageId: msg.id,
-          });
-        }
-      }
-
-      if (attachmentSources.length > 0) {
-        artifact.meta.attachments = await this.handoffStorage.copyAttachments(thread.id, attachmentSources);
-      }
-
-      // Guard against the child thread being hard-deleted between orchestration
-      // start and artifact write (e.g. rapid user delete during a slow path B).
-      const childCheck = this.threadRepo.findById(thread.id);
-      if (!childCheck || childCheck.deleted_at) {
-        logger.info("Child thread vanished mid-handoff; dropping artifact", { childThreadId: thread.id });
-        throw new Error("Child thread deleted before handoff artifact could be written");
-      }
-
-      await this.handoffStorage.write(thread.id, artifact);
-
-      broadcast("thread.handoff", {
-        threadId: thread.id,
-        status: artifact.meta.ladderStep === "D" ? "fallback" : "ready",
-        ladderStep: artifact.meta.ladderStep,
-        providerErrorOnGenerate: artifact.meta.providerErrorOnGenerate,
-      });
-
-      // Store an internal-only system message at seq 1 as a DB anchor for the
-      // handoff. We keep the FULL markdown here (not the pointer): it is not
-      // budget-bound, and a complete anchor lets reload reconstruct the doc even
-      // if the OS temp file has been swept. isInternal=true keeps it off the UI
-      // render path.
-      this.messageRepo.create(
-        thread.id, "system", artifact.markdown, 1,
-        undefined, undefined, undefined, undefined, /* isInternal */ true,
-      );
-
-      // Off-band delivery (PRD #538): write the FULL handoff doc to a stable OS
-      // temp path and shrink the child's inline first-Turn prompt to a small
-      // pointer + graceful-degradation summary + the user's message. Issue a
-      // ScopedPreGrant so the child can Read that one file on its first Turn
-      // without prompting, regardless of permissionMode.
-      const handoffTempPath = join(
-        tmpdir(),
-        `mcode-handoff-${thread.id}-${Date.now()}.md`,
-      );
-      try {
-        await writeFile(handoffTempPath, artifact.markdown, "utf8");
-        this.scopedPreGrant.issue({
-          threadId: thread.id,
-          toolName: "Read",
-          path: handoffTempPath,
-        });
-        providerWireOverride = buildOffBandHandoffPrompt(handoffTempPath, artifact.markdown, content);
-      } catch (writeErr) {
-        // If the temp write fails we cannot pre-grant a Read, so fall back to
-        // inlining the full doc (legacy behaviour) — the fork still succeeds.
-        logger.warn("Off-band handoff write failed; inlining full doc", {
-          threadId: thread.id,
-          handoffTempPath,
-          error: writeErr instanceof Error ? writeErr.message : String(writeErr),
-        });
-        providerWireOverride = `${artifact.markdown}\n\n---\n\n${content}`;
-      }
-    } catch (pipelineErr) {
-      // Re-check child thread existence before writing any fallback artifacts.
-      // The thread may have been hard-deleted between pipeline start and failure
-      // (e.g. rapid user delete during a slow path B), in which case proceeding
-      // would produce FK errors, stale files, or a misleading fallback event.
-      const childRecheck = this.threadRepo.findById(thread.id);
-      if (!childRecheck || childRecheck.deleted_at) {
-        logger.info("Child thread vanished mid-handoff; aborting fallback", {
-          childThreadId: thread.id,
-        });
-        throw pipelineErr;
-      }
-
-      // Classify the error so we know how to label the artifact and log usefully.
-      const errClass = classifyProviderError(pipelineErr);
-      logger.warn("createBranchedThread: handoff pipeline failed, falling back to legacy replay", {
-        threadId: thread.id,
-        parentThreadId,
-        errClass,
-        error: pipelineErr instanceof Error ? pipelineErr.message : String(pipelineErr),
-        stack: pipelineErr instanceof Error ? pipelineErr.stack : undefined,
-      });
-
-      // Notify clients that the handoff fell back to the deterministic legacy replay.
-      // The pipeline itself threw, so treat as the classified error (or fatal if clean).
-      broadcast("thread.handoff", {
-        threadId: thread.id,
-        status: "fallback",
-        ladderStep: "D" as const,
-        providerErrorOnGenerate: errClass === "clean" ? ("fatal" as const) : errClass,
-      });
-
-      // Legacy fallback: build handoff content + conversation replay inline.
-      const lastAssistantMsg = [...forkedMessages].reverse().find((m) => m.role === "assistant");
-      const lastAssistantText = lastAssistantMsg?.content ?? null;
-      const allSnapshots = this.turnSnapshotRepo.listByThread(parentThreadId);
-      const forkedMessageIds = new Set(forkedMessages.map((m) => m.id));
-      const forkSnapshot = resolveForkSnapshot(allSnapshots, forkedMessageIds);
-      const recentFilesChanged: string[] = forkSnapshot?.files_changed ?? [];
-      const sourceHead = forkSnapshot?.ref_after ?? null;
-      const rawTasks = this.taskRepo.get(parentThreadId);
-      const openTasks = (rawTasks ?? []).map((t) => ({ content: t.content, status: t.status }));
-      const handoffContent = buildHandoffContent({
-        parentThread,
-        forkMessageId: resolvedForkMessageId,
-        lastAssistantText,
-        recentFilesChanged,
-        openTasks,
-        sourceHead,
-      });
-
-      // isInternal=true keeps this off the UI render path, consistent with the
-      // pipeline path's system message (written below after replay is built).
-      // NOTE: we write this placeholder now; the legacy replay is stored via
-      // providerWireOverride, not as a second system message.
-      this.messageRepo.create(
-        thread.id, "system", handoffContent, 1,
-        undefined, undefined, undefined, undefined, /* isInternal */ true,
-      );
-
-      const budget = replayBudgetChars(model);
-      let compactSummary: string | null = null;
-      if (parentThread.last_compact_summary) {
-        const lastForkCompactionIdx = findLastIndex(
-          forkedMessages,
-          (m) => m.role === "system" && m.content === "Context compacted",
-        );
-        if (lastForkCompactionIdx !== -1) {
-          const { messages: postForkWindow } = this.messageRepo.listByThread(parentThreadId, 100);
-          const postForkCompaction = postForkWindow.some(
-            (m) =>
-              m.role === "system" &&
-              m.content === "Context compacted" &&
-              m.sequence > forkMessage.sequence,
-          );
-          if (!postForkCompaction) {
-            compactSummary = parentThread.last_compact_summary;
-          }
-        }
-      }
-      const replay = buildConversationReplay(forkedMessages, budget, compactSummary);
-      const replayHeader = `You are continuing work from a previous thread titled "${parentThread.title}". Here is the conversation history up to the fork point:\n\n`;
-      providerWireOverride = replay ? `${replayHeader}${replay}\n\n---\n\n${content}` : content;
-
-      // Persist a HandoffArtifact so "View doc" has something to read.
-      // The markdown is the full replay that will be sent to the provider.
-      const legacyMarkdown = (replay ? `${replayHeader}${replay}` : handoffContent).trim();
-      const legacyArtifact: HandoffArtifact = {
-        markdown: legacyMarkdown,
-        meta: {
-          schemaVersion: 1,
-          parentThreadId,
-          forkedFromMessageId: resolvedForkMessageId,
-          forkAnchorRole,
-          childThreadId: thread.id,
-          generatedBy: "deterministic",
-          provider: parentThread.provider,
-          ladderStep: "D",
-          mode: "full",
-          generatedAt: new Date().toISOString(),
-          characterCount: legacyMarkdown.length,
-          parentSdkSessionId: parentThread.sdk_session_id ?? null,
-          providerErrorOnGenerate: errClass === "clean" ? "fatal" : errClass,
-          regenerationHistory: [],
-          attachments: [],
-        },
-      };
-      try {
-        await this.handoffStorage.write(thread.id, legacyArtifact);
-      } catch (storageErr) {
-        // Non-fatal: the fork still succeeds via providerWireOverride; View doc
-        // will show "not available" rather than blocking the user.
-        logger.warn("Failed to persist legacy handoff artifact (View doc will be unavailable)", {
-          threadId: thread.id,
-          storageError: storageErr instanceof Error ? storageErr.message : String(storageErr),
-        });
-      }
-    }
+    // Delegate handoff path selection (B/A/D) and the legacy-replay fallback to
+    // the coordinator. It owns artifact persistence, the seq-1 anchor, off-band
+    // delivery, and returns the provider-only first-turn payload.
+    const { providerWireOverride } = await this.handoffCoordinator.deliverHandoff({
+      parentThread,
+      childThreadId: thread.id,
+      childProvider: provider,
+      forkMessage,
+      forkedMessages,
+      userMessage: content,
+      model,
+    });
 
     // In plan mode, wrap so the provider receives buildPlanPrompt(handoff + userPrompt).
     // The DB still stores the clean user prompt at seq 2 (written by sendMessage).

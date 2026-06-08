@@ -13,6 +13,7 @@ import { logger } from "@mcode/shared";
 import { AgentEventType, isVirtualBrowserContextAttachment } from "@mcode/contracts";
 import type {
   IAgentProvider,
+  IGoalCapable,
   TurnRequest,
   ProviderId,
   ReasoningLevel,
@@ -293,7 +294,7 @@ interface PendingSpawnTurn {
 
 /** Claude Agent SDK adapter implementing IAgentProvider with prompt queue pattern. */
 @injectable()
-export class ClaudeProvider extends EventEmitter implements IAgentProvider, ProtocolAdapter<ClaudeSessionState> {
+export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ProtocolAdapter<ClaudeSessionState> {
   readonly id: ProviderId = "claude";
   /** Claude supports one-shot text completion via sdkQuery with maxTurns: 1. */
   readonly supportsCompletion = true;
