@@ -2,20 +2,19 @@ import { useCallback } from "react";
 import { X, AlertCircle, Info } from "lucide-react";
 import { useToastStore, type Toast as ToastData } from "@/stores/toastStore";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
-/** Icon and accent color per toast level. */
+/** Icon, text accent, and chip tint per toast level. */
 const LEVEL_CONFIG = {
   error: {
     icon: AlertCircle,
     accent: "text-destructive",
-    ring: "ring-destructive/25",
-    bg: "bg-destructive/8",
+    chip: "bg-destructive/10",
   },
   info: {
     icon: Info,
     accent: "text-primary",
-    ring: "ring-primary/20",
-    bg: "bg-primary/8",
+    chip: "bg-primary/10",
   },
 } as const;
 
@@ -30,18 +29,27 @@ function ToastItem({ toast }: { toast: ToastData }) {
   return (
     <div
       role={toast.level === "info" ? "status" : "alert"}
-      className={[
+      className={cn(
         "group pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg px-3 py-2.5",
-        "bg-popover/95 shadow-lg shadow-black/20 ring-1 backdrop-blur-md",
-        config.ring,
+        // --popover equals --background in the light theme, so a neutral fill
+        // gives no separation on its own. A 1px border plus elevation defines
+        // the card; the level color lives in the icon chip, not a colored ring
+        // (which previously read as a red box outline against the page).
+        "border border-border bg-popover shadow-lg shadow-black/25",
         // entrance animation - toasts rise from below the stack, matching
         // the bottom-right anchor on the container.
         "animate-in fade-in-0 slide-in-from-bottom-2 duration-200",
-      ].join(" ")}
+      )}
     >
-      {/* Accent icon */}
-      <div className={`mt-0.5 shrink-0 ${config.accent}`}>
-        <Icon size={16} strokeWidth={2.25} />
+      {/* Level icon in a quiet tinted chip so the accent stays localized. */}
+      <div
+        className={cn(
+          "mt-px grid size-7 shrink-0 place-items-center rounded-md",
+          config.chip,
+          config.accent,
+        )}
+      >
+        <Icon size={15} strokeWidth={2.25} />
       </div>
 
       {/* Content */}
