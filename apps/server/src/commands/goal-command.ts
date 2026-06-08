@@ -102,8 +102,14 @@ export class GoalCommand implements McodeCommand {
 
   /**
    * Persist the user message and a synthetic confirmation pill in one
-   * transaction, then broadcast the pill and an Ended event. Ended clears the
-   * composer's optimistic running state since no provider call ran.
+   * transaction, then broadcast the pill as a Message event.
+   *
+   * No Ended event is emitted: a control command never starts a provider turn,
+   * so it must not touch turn running-state. Emitting Ended here would clear the
+   * client's running-state for a real turn already in flight (the composer keys
+   * `isAgentRunning` on it), which breaks message-queue coordination (#583). The
+   * client mirror skips the optimistic running-state for control commands, so
+   * there is nothing for an Ended to clear in the idle case either.
    */
   private persistControlReply(threadId: string, userText: string, replyText: string): void {
     const { messages: existing } = this.deps.messageRepo.listByThread(threadId, 1);
@@ -121,10 +127,6 @@ export class GoalCommand implements McodeCommand {
       content: replyText,
       tokens: null,
       messageId: assistantMsgId,
-    } satisfies AgentEvent);
-    this.broadcast("agent.event", {
-      type: AgentEventType.Ended,
-      threadId,
     } satisfies AgentEvent);
   }
 }

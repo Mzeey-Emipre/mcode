@@ -159,6 +159,55 @@ test.describe("/goal control commands bypass the composer queue", () => {
     expect(await readQueueLength(page, THREAD.id)).toBe(0);
   });
 
+  test("a normal message still enqueues after a `/goal clear` is sent mid-turn", async ({
+    page,
+  }) => {
+    // AC2 (#583): issuing a control command mid-turn must not disturb queue
+    // coordination. After `/goal clear` bypasses the queue, the thread is still
+    // running, so the next normal message must enqueue (not slip out directly
+    // and collide with the live turn).
+    const sentMessages: string[] = [];
+    await mockWebSocketServer(page, {
+      "workspace.enrich": { items: [] },
+      "settings.get": MOCK_SETTINGS,
+      "provider.listModels": () => [
+        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", group: "Claude" },
+      ],
+      "agent.send": (params?: unknown) => {
+        const p = params as { content?: string } | undefined;
+        if (typeof p?.content === "string") sentMessages.push(p.content);
+        return { ok: true };
+      },
+    });
+    await interceptZustandStores(page);
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await page.waitForFunction(
+      () =>
+        (window as unknown as { __mcodeHydrationComplete?: boolean })
+          .__mcodeHydrationComplete === true,
+    );
+    await setupChat(page, true);
+    await page.waitForSelector('[contenteditable="true"]', { timeout: 30_000 });
+
+    const editor = page.locator('[contenteditable="true"]').first();
+    await editor.click();
+    await editor.fill("/goal clear");
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => sentMessages, { timeout: 5_000 }).toContain(
+      "/goal clear",
+    );
+
+    await editor.click();
+    await page.keyboard.type("now ship the feature");
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => readQueueLength(page, THREAD.id), { timeout: 5_000 })
+      .toBe(1);
+    expect(sentMessages).not.toContain("now ship the feature");
+  });
+
   test("non-control messages still enqueue while the agent is running", async ({
     page,
   }) => {

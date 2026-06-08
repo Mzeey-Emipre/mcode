@@ -204,7 +204,7 @@ describe("AgentService.sendMessage — /goal command", () => {
     expect(providerStub.clearGoal).toHaveBeenCalledWith(`mcode-${thread.id}`);
   });
 
-  it("/goal clear short-circuits — clears the goal, does NOT invoke the provider, emits Ended", async () => {
+  it("/goal clear short-circuits — clears the goal, does NOT invoke the provider, broadcasts a Message pill without Ended", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
 
     await svc.sendMessage(
@@ -225,13 +225,21 @@ describe("AgentService.sendMessage — /goal command", () => {
     const assistantMsg = messages.find((m) => m.role === "assistant");
     expect(assistantMsg?.content).toMatch(/Goal cleared/);
 
-    // The composer relies on Ended to clear its optimistic running state —
-    // without this broadcast the UI hangs on "thinking" forever.
-    const endedEvents = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+    // The confirmation renders via a Message event. No Ended (#583): a control
+    // command never starts a turn, so emitting Ended would clear the running
+    // state of a real turn in flight and break queue coordination. The client
+    // mirrors this by never marking the thread running for control commands.
+    const calls = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const messageEvents = calls.filter(
+      ([channel, payload]) =>
+        channel === "agent.event" && (payload as { type?: string }).type === AgentEventType.Message,
+    );
+    const endedEvents = calls.filter(
       ([channel, payload]) =>
         channel === "agent.event" && (payload as { type?: string }).type === AgentEventType.Ended,
     );
-    expect(endedEvents.length).toBeGreaterThanOrEqual(1);
+    expect(messageEvents.length).toBeGreaterThanOrEqual(1);
+    expect(endedEvents.length).toBe(0);
   });
 
   it("/goal (no args) reports active goal without invoking the provider", async () => {

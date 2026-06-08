@@ -156,10 +156,12 @@ describe("GoalCommand", () => {
         "ship the feature",
       );
 
-      // The composer clears its optimistic running state on Ended.
+      // The reply renders via the Message event. No synthetic Ended: control
+      // commands never start a turn, so emitting Ended would clear the running
+      // state of a real turn in flight (issue #583).
       const events = broadcastEvents();
       expect(events.some((e) => e.type === AgentEventType.Message)).toBe(true);
-      expect(events.some((e) => e.type === AgentEventType.Ended)).toBe(true);
+      expect(events.some((e) => e.type === AgentEventType.Ended)).toBe(false);
     });
 
     it("reports no active goal when none is set", () => {
@@ -178,7 +180,7 @@ describe("GoalCommand", () => {
   });
 
   describe("CLEAR form", () => {
-    it("clears the goal, persists a confirmation pill, and emits Ended", () => {
+    it("clears the goal and persists a confirmation pill without emitting Ended", () => {
       const provider = fakeGoalCapableProvider();
       const cmd = build();
 
@@ -192,8 +194,11 @@ describe("GoalCommand", () => {
         /Goal cleared/,
       );
 
+      // The reply renders via Message; no Ended (issue #583) so a real turn in
+      // flight keeps its running-state.
       const events = broadcastEvents();
-      expect(events.some((e) => e.type === AgentEventType.Ended)).toBe(true);
+      expect(events.some((e) => e.type === AgentEventType.Message)).toBe(true);
+      expect(events.some((e) => e.type === AgentEventType.Ended)).toBe(false);
     });
   });
 });
