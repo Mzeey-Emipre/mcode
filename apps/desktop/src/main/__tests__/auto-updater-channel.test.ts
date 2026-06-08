@@ -174,7 +174,7 @@ describe("isCrossChannelDowngrade", () => {
 describe("isTransientNetworkError", () => {
   it("classifies Chromium net::ERR_NAME_NOT_RESOLVED as transient", () => {
     // Regression: this was surfaced as a scary red "Update failed" banner
-    // when the app launched before WiFi reconnected. See UpdateBanner.tsx.
+    // when the app launched before WiFi reconnected. See UpdateIndicator.tsx.
     expect(isTransientNetworkError(new Error("net::ERR_NAME_NOT_RESOLVED"))).toBe(true);
   });
 
@@ -198,11 +198,39 @@ describe("isTransientNetworkError", () => {
     expect(isTransientNetworkError(etimeout)).toBe(true);
   });
 
+  it("classifies transient HTTP gateway statusCodes as transient", () => {
+    // Regression: a GitHub 504 on the releases feed surfaced as a scary
+    // "Update failed" banner. Gateway/overload statuses self-heal on retry.
+    for (const statusCode of [408, 429, 500, 502, 503, 504]) {
+      const err = Object.assign(new Error("request failed"), { statusCode });
+      expect(isTransientNetworkError(err)).toBe(true);
+    }
+  });
+
+  it("classifies gateway phrases in the error body as transient", () => {
+    // electron-updater folds the HTML response body into the message; the
+    // bare "504 Gateway Time-out" page must be recognized without a statusCode.
+    expect(
+      isTransientNetworkError(
+        new Error('504 "method: GET url: .../releases.atom\\n\\n<h1>504 Gateway Time-out</h1>"'),
+      ),
+    ).toBe(true);
+    expect(isTransientNetworkError(new Error("503 Service Unavailable"))).toBe(true);
+    expect(isTransientNetworkError(new Error("502 Bad Gateway"))).toBe(true);
+  });
+
   it("does not classify real update failures as transient", () => {
     expect(isTransientNetworkError(new Error("HttpError: 404"))).toBe(false);
     expect(isTransientNetworkError(new Error("signature verification failed"))).toBe(false);
     expect(isTransientNetworkError(new Error("Cannot find latest.yml"))).toBe(false);
     expect(isTransientNetworkError(new Error("Cannot parse update info"))).toBe(false);
+    // Real 4xx auth/missing-asset statusCodes must surface, not be swallowed.
+    expect(
+      isTransientNetworkError(Object.assign(new Error("forbidden"), { statusCode: 403 })),
+    ).toBe(false);
+    expect(
+      isTransientNetworkError(Object.assign(new Error("not found"), { statusCode: 404 })),
+    ).toBe(false);
   });
 
   it("handles non-Error inputs without throwing", () => {

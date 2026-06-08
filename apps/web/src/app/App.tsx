@@ -2,8 +2,9 @@ import { useEffect, useState, lazy, Suspense } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatView } from "@/components/chat/ChatView";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
-import { UpdateBanner } from "@/components/UpdateBanner";
 import { useUpdateStore } from "@/stores/updateStore";
+import { useToastStore } from "@/stores/toastStore";
+import { friendlyUpdateError } from "@/lib/update-error-message";
 import type { UpdateStatus } from "@/transport/desktop-bridge";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { ProjectSelectorLanding } from "@/components/projects/ProjectSelectorLanding";
@@ -83,6 +84,13 @@ export function App() {
     });
 
     const listener = bridge.onUpdateStatus((status) => {
+      // Errors are rare and recoverable (a genuine update failure, not a
+      // transient gateway blip — those are filtered in the main process). A
+      // non-blocking toast states what happened without a persistent red bar.
+      if (status.state === "error") {
+        const friendly = friendlyUpdateError(status.message);
+        useToastStore.getState().show("error", friendly.title, friendly.body);
+      }
       useUpdateStore.getState().setStatus(status);
     });
     return () => bridge.offUpdateStatus(listener);
@@ -363,7 +371,6 @@ export function App() {
           appears lifted off the chrome — no inter-panel divider lines required. */}
       <div className="flex h-screen flex-col overflow-hidden bg-page text-foreground">
         <ConnectionBanner />
-        <UpdateBanner />
         <div className="flex flex-1 gap-1.5 overflow-hidden p-1.5">
           {/* Settings view force-expands the sidebar so the settings nav is reachable.
               When the sidebar is hidden, the chat panel claims the full width and the
