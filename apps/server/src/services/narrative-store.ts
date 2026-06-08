@@ -50,6 +50,7 @@ import {
   HookExecutionRepo,
   type CreateHookExecutionInput,
 } from "../repositories/hook-execution-repo";
+import type { TurnOutcome } from "./turn-outcome";
 
 /** Default number of recent messages hydrated when no range is supplied. */
 const DEFAULT_LOAD_LIMIT = 200;
@@ -456,16 +457,18 @@ export class NarrativeStore {
     threadId: string,
     messageId: string,
     messageContent: string,
-    isError: boolean,
+    outcome: TurnOutcome,
   ): PersistNarrativeResult {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
 
     for (const tc of buffer) {
       if (tc.status === "running") {
-        // Tools still running when the turn ends were interrupted, not failed.
-        // A tool that actually errored already has status "failed" from
+        // A tool still running when the turn ends inherits the turn outcome:
+        // a crash marks it "failed", a user stop marks it "cancelled". A tool
+        // that returned its own error already has status "failed" from
         // updateBufferedToolCallOutput.
-        tc.status = isError ? "cancelled" : "completed";
+        tc.status =
+          outcome === "errored" ? "failed" : outcome === "cancelled" ? "cancelled" : "completed";
       }
       tc.messageId = messageId;
 
