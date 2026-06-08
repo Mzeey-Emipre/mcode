@@ -8,6 +8,7 @@ import { useHasCommitsAhead } from "@/hooks/useHasCommitsAhead";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { executeCommand } from "@/lib/command-registry";
+import { isPrable } from "@/lib/is-prable";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Thread } from "@/transport";
@@ -32,10 +33,12 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   // Determine the path to open: worktree path if available, otherwise workspace root
   const dirPath = thread.worktree_path ?? workspace?.path ?? null;
 
-  // Only poll for PRs on feature branches (not main/master)
+  // PR affordances only apply to PR-able (worktree) threads. A direct-mode
+  // thread runs against the main checkout and can never have a PR through this
+  // app, so we render no PR UI and skip all GitHub polling for it.
   const cwd = workspace?.path ?? null;
-  const shouldPollPr = thread.branch !== "main" && thread.branch !== "master";
-  const polledPr = useBranchPr(shouldPollPr ? thread.branch : null, cwd);
+  const prable = isPrable(thread);
+  const polledPr = useBranchPr(prable ? thread.branch : null, cwd);
 
   // polledPr is the live source of truth for state (OPEN / MERGED / CLOSED).
   // The store-backed entry fills the window right after creation, before the first
@@ -62,9 +65,9 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
 
   // Check if the branch has commits ahead of main (disable Create PR when it doesn't)
   const hasCommitsAhead = useHasCommitsAhead(
-    shouldPollPr ? thread.workspace_id : "",
-    shouldPollPr ? thread.branch : null,
-    shouldPollPr ? thread.id : undefined,
+    prable ? thread.workspace_id : "",
+    prable ? thread.branch : null,
+    prable ? thread.id : undefined,
   );
 
   // Sync polled PR state back to the workspace store so the project tree
@@ -149,7 +152,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     <div className="flex items-center justify-between gap-0.5">
       {dirPath && (
         <div className="flex items-center gap-0.5 bg-muted/20 rounded-md px-1 py-0.5">
-          {shouldPollPr && (
+          {prable && (
             <PrSplitButton
               pr={pr}
               hasCommitsAhead={hasCommitsAhead}
@@ -240,7 +243,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
         </TooltipContent>
       </Tooltip>
 
-      {shouldPollPr && (
+      {prable && (
         <CreatePrDialog
           open={createPrOpen}
           onOpenChange={setCreatePrOpen}

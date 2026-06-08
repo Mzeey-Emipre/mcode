@@ -32,6 +32,7 @@ import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { schedulePrefetch, cancelPrefetch } from "@/lib/thread-hydrator/prefetch-scheduler";
 import { getStatusDisplay, getNotificationDot } from "@/lib/thread-status";
+import { isPrable } from "@/lib/is-prable";
 import { getBreakdown, getCiVisual, CI_ICON_STROKE } from "@/lib/ci-status";
 import type { ChecksStatus } from "@mcode/contracts";
 import type { Workspace, Thread } from "@/transport/types";
@@ -1150,6 +1151,10 @@ function VirtualizedThreadList({
         const { thread, depth } = treeItems[virtualItem.index];
         const status = getStatusDisplay(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
         const isEditing = inlineEdit?.threadId === thread.id;
+        // Only PR-able (worktree) threads surface PR affordances. A direct-mode
+        // thread shows its branch/agent status, never a PR icon, even if a PR
+        // number happens to be attached.
+        const prable = isPrable(thread);
         // Worktree thread whose directory no longer exists on disk.
         // Only check threads from the workspace whose worktrees are loaded — comparing
         // against a different workspace's worktree list would produce false positives.
@@ -1220,7 +1225,7 @@ function VirtualizedThreadList({
                     scaffoldDim,
                   )}
                 >
-                {thread.pr_number != null ? (() => {
+                {prable && thread.pr_number != null ? (() => {
                   const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
                   const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
                   // Only the agent signal lives on the PR icon — a top-right dot.
@@ -1308,7 +1313,7 @@ function VirtualizedThreadList({
                   </Tooltip>
                 )}
                 </div>
-                {!isEditing && thread.pr_number != null && checksById[thread.id] && (
+                {!isEditing && prable && thread.pr_number != null && checksById[thread.id] && (
                   <CiChip checks={checksById[thread.id]} />
                 )}
                 {!isEditing && (
@@ -1318,7 +1323,7 @@ function VirtualizedThreadList({
                       scaffoldDim,
                     )}
                   >
-                    {thread.pr_number != null && (
+                    {prable && thread.pr_number != null && (
                       <span className="mr-1 opacity-80">#{thread.pr_number}</span>
                     )}
                     {relativeTime(thread.updated_at)}

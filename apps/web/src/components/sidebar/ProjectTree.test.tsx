@@ -427,6 +427,7 @@ describe("ProjectTree action-required indicator", () => {
     currentThread = makeThread({
       id: "thread-pending",
       status: "active",
+      mode: "worktree",
       pr_number: 42,
       pr_status: "open",
     });
@@ -447,6 +448,7 @@ describe("ProjectTree action-required indicator", () => {
     currentThread = makeThread({
       id: "thread-pending",
       status: "active",
+      mode: "worktree",
       pr_number: 42,
       pr_status: "open",
     });
@@ -473,6 +475,7 @@ describe("ProjectTree action-required indicator", () => {
     currentThread = {
       ...makeThread({
         id: "thread-pending",
+        mode: "worktree",
         pr_number: 42,
         pr_status: "open",
       }),
@@ -503,5 +506,78 @@ describe("ProjectTree action-required indicator", () => {
 
     const chip = screen.getByLabelText("0 of 1 checks done");
     expect(chip.className).not.toContain("opacity-[0.72]");
+  });
+});
+
+describe("ProjectTree PR-ability gating by mode", () => {
+  function renderWithThread(
+    thread: Thread,
+    checks: Record<string, { aggregate: string; runs: unknown[] }> = {},
+  ) {
+    vi.mocked(useWorkspaceStore).mockImplementation(
+      ((selector: (s: unknown) => unknown) =>
+        selector({
+          workspaces: [WORKSPACE],
+          activeWorkspaceId: "ws-1",
+          activeThreadId: null,
+          threads: [thread],
+          checksById: checks,
+          loadWorkspaces: vi.fn(),
+          loadThreads: vi.fn(),
+          setActiveWorkspace: vi.fn(),
+          setActiveThread: vi.fn(),
+          createWorkspace: vi.fn(),
+          deleteWorkspace: vi.fn(),
+          deleteThread: vi.fn(),
+          setPendingNewThread: vi.fn(),
+          updateThreadTitle: vi.fn(),
+          loadWorktrees: vi.fn(),
+          worktrees: [],
+          worktreesLoadedForWorkspace: null,
+          error: null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        })) as any,
+    );
+    return render(<ProjectTree />);
+  }
+
+  beforeEach(() => {
+    threadStoreOverrides.permissionsByThread = undefined;
+    threadStoreOverrides.runningThreadIds = undefined;
+    window.localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": true }));
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+  });
+
+  it("renders no PR icon for a direct-mode thread even when a pr_number is attached", () => {
+    renderWithThread(makeThread({ mode: "direct", pr_number: 42, pr_status: "open" }));
+    expect(screen.queryByTitle(/PR #42/)).toBeNull();
+  });
+
+  it("renders the PR icon and number badge for a worktree thread with a pr_number", () => {
+    renderWithThread(makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }));
+    expect(screen.getByTitle(/PR #42/)).toBeInTheDocument();
+    expect(screen.getByText("#42")).toBeInTheDocument();
+  });
+
+  it("renders the merged PR visual for a worktree thread", () => {
+    renderWithThread(makeThread({ mode: "worktree", pr_number: 42, pr_status: "merged" }));
+    expect(screen.getByTitle(/PR #42 \u2013 merged/)).toBeInTheDocument();
+  });
+
+  it("hides the CI chip for a direct-mode thread even when checks are present", () => {
+    renderWithThread(
+      makeThread({ mode: "direct", pr_number: 42, pr_status: "open" }),
+      {
+        "thread-1": {
+          aggregate: "pending",
+          runs: [{ name: "build", status: "in_progress", conclusion: null }],
+        },
+      },
+    );
+    expect(screen.queryByLabelText(/checks done/i)).toBeNull();
   });
 });

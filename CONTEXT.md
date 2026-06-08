@@ -75,6 +75,18 @@ Worktrees are persistent and removed manually. When a user deletes a
 thread, an option to delete its worktree is offered alongside; the
 worktree can also be kept and reused for future threads.
 
+### PR-able thread
+A thread the app can open a pull request from. A thread is PR-able only
+when it runs in an isolated worktree; direct-mode threads are never
+PR-able, because they run against the workspace's main checkout and there
+is nothing to open a pull request from. This single notion gates every PR
+affordance: the thread-row PR icon, the chat header's Create PR button,
+and the background PR and commits-ahead polling. A non-PR-able thread
+shows its branch/agent status instead of a PR glyph, offers no Create PR
+button, and is never polled against GitHub, even if a PR number happens to
+be attached to it. A user who wants a pull request from local work creates
+a worktree.
+
 ## Composer
 
 ### Composer mode
