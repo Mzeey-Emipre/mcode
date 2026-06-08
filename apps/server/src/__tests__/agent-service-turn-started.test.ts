@@ -13,11 +13,13 @@ import { openMemoryDatabase } from "../store/database";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { MessageRepo } from "../repositories/message-repo";
+import { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo";
 import { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import { TaskRepo } from "../repositories/task-repo";
 import { AgentService } from "../services/agent-service";
 import { NarrativeStore } from "../services/narrative-store";
+import { PlanQuestionService } from "../services/plan-question-service";
 import type { GitService } from "../services/git-service";
 import type { AttachmentService } from "../services/attachment-service";
 import type { SnapshotService } from "../services/snapshot-service";
@@ -147,6 +149,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../repositories/hook-execution-repo.js").HookExecutionRepo,
       ),
+      new PlanQuestionService(messageRepo, new PlanQuestionAnswersRepo(db)),
     );
   });
 

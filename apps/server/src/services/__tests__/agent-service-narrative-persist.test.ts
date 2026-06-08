@@ -5,6 +5,7 @@ import { AgentEventType } from "@mcode/contracts";
 import type { Thread, IProviderRegistry, Message } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { NarrativeStore } from "../narrative-store.js";
+import { PlanQuestionService } from "../plan-question-service.js";
 import type { ThreadRepo } from "../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../repositories/message-repo.js";
@@ -176,6 +177,7 @@ function build(): Built {
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       narrativeStore,
+      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
   );
   service.init();
   // Prime per-thread state without running sendMessage's full path. The buffers

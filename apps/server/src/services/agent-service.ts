@@ -30,6 +30,7 @@ import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { MessageRepo } from "../repositories/message-repo";
 import { HookExecutionRepo, type CreateHookExecutionInput } from "../repositories/hook-execution-repo";
 import { NarrativeStore } from "./narrative-store.js";
+import { PlanQuestionService } from "./plan-question-service.js";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type Database from "better-sqlite3";
 import { TaskRepo } from "../repositories/task-repo";
@@ -53,7 +54,6 @@ import {
 import { PlanQuestionParser } from "./plan-question-parser.js";
 import { PlanOutputParser } from "./plan-output-parser.js";
 import { PlanRepo } from "../repositories/plan-repo";
-import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 import { HandoffCoordinator } from "./handoff/handoff-coordinator.js";
 import { ScopedPreGrantService } from "./scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
@@ -164,6 +164,8 @@ export class AgentService {
     private readonly scopedPreGrant: ScopedPreGrantService,
     @inject(NarrativeStore)
     private readonly narrativeStore: NarrativeStore,
+    @inject(PlanQuestionService)
+    private readonly planQuestionService: PlanQuestionService,
   ) {}
 
   /**
@@ -357,7 +359,7 @@ export class AgentService {
 
     if (planAction === "revise") {
       this.armPlanGenerationTurn(threadId);
-      wirePayload = `${wirePayload}\n\n${this.buildPlanOutputInstructions()}`;
+      wirePayload = `${wirePayload}\n\n${this.planQuestionService.buildPlanOutputInstructions()}`;
     }
     // The retired setPlanQuestionMode toggle is gone: Cursor derives plan-question
     // suppression from each Turn's interactionMode at sendTurn. An "implement"
@@ -604,37 +606,19 @@ export class AgentService {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
 
-    // Look up question text and option titles from message history so the
-    // follow-up message is human-readable rather than using opaque IDs.
-    const questionContext = this.buildQuestionContext(threadId);
-
-    const lines: string[] = [`${PLAN_ANSWER_MESSAGE_PREFIX}\n`];
-    for (const a of answers) {
-      const qCtx = questionContext.get(a.questionId);
-      const label = qCtx?.question ?? a.questionId;
-      if (a.freeText) {
-        lines.push(`- **${label}**: ${a.freeText}`);
-      } else if (a.selectedOptionId) {
-        const optionTitle = qCtx?.options.find((o) => o.id === a.selectedOptionId)?.title ?? a.selectedOptionId;
-        lines.push(`- **${label}**: ${optionTitle}`);
-      } else {
-        lines.push(`- **${label}**: (skipped)`);
-      }
-    }
-    lines.push(this.buildPlanOutputInstructions());
-
-    // Locate the assistant message carrying the plan-questions fence so the
-    // marker is keyed on it (not just on the thread). Survives restarts and
-    // mid-turn errors — see docs/plans/2026-04-30-plan-question-answers-marker.md.
-    const markPlanAnswerForMessageId =
-      this.findLatestPlanQuestionsMessageId(threadId) ?? undefined;
+    // The service builds the human-readable answer payload and keys the marker
+    // on the assistant message carrying the fence (see
+    // docs/plans/2026-04-30-plan-question-answers-marker.md). The facade still
+    // arms plan-generation and performs the send.
+    const { content, markPlanAnswerForMessageId } =
+      this.planQuestionService.buildAnswerPayload(threadId, answers);
 
     this.armPlanGenerationTurn(threadId);
 
     // interactionMode intentionally omitted — no question wrapping for the answer turn
     await this.sendMessage(
       threadId,
-      lines.join("\n"),
+      content,
       permissionMode,
       thread.model ?? "claude-sonnet-4-6",
       [],
@@ -652,22 +636,6 @@ export class AgentService {
   }
 
   /**
-   * Walk message history newest-first and return the id of the most recent
-   * assistant message containing a `plan-questions` fence, or null when no
-   * such message exists in the thread.
-   */
-  private findLatestPlanQuestionsMessageId(threadId: string): string | null {
-    const PLAN_QUESTIONS_RE = /```plan-questions\n([\s\S]*?)```/;
-    const { messages } = this.messageRepo.listByThread(threadId, 50);
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg.role !== "assistant") continue;
-      if (PLAN_QUESTIONS_RE.test(msg.content)) return msg.id;
-    }
-    return null;
-  }
-
-  /**
    * Durably mark the latest plan-questions batch for the thread as
    * settled without sending any answers to the model. Used by the
    * wizard's `cancel` action so the batch does NOT re-surface on
@@ -678,9 +646,8 @@ export class AgentService {
    * message history).
    */
   dismissPlanQuestions(threadId: string): void {
-    const assistantMessageId = this.findLatestPlanQuestionsMessageId(threadId);
+    const assistantMessageId = this.planQuestionService.dismiss(threadId);
     if (!assistantMessageId) return;
-    this.planQuestionAnswersRepo.markAnswered(assistantMessageId, threadId);
     // Use `plan.dismissed` rather than `plan.answered` so other tabs settle
     // the batch (hide the wizard, add to the answered set) without firing
     // the "submission echo" animation reserved for actual answers.
@@ -1730,33 +1697,6 @@ export class AgentService {
     }
   }
 
-  /** Instructions appended when the model should emit a structured plan-output block. */
-  private buildPlanOutputInstructions(): string {
-    return `
-Now generate the full implementation plan based on these decisions.
-
-Write the plan as normal markdown in your response so the user can read it in the chat.
-
-Additionally, emit the plan in a structured format inside a fenced block so it can be displayed in the Plan tab. The block must contain valid JSON matching this schema:
-
-\`\`\`plan-output
-{
-  "title": "Short plan title",
-  "changeSummary": "One-line summary of what changed (omit for first version)",
-  "sections": [
-    {
-      "id": "unique-section-id",
-      "title": "Section Heading",
-      "level": 1,
-      "content": "Full markdown content of this section."
-    }
-  ]
-}
-\`\`\`
-
-The fenced block can appear anywhere in your response. The sections should mirror the headings in your markdown plan. Level 1 = top-level heading, level 2 = subheading, level 3 = sub-subheading.`;
-  }
-
   /** Wrap a user message with the plan-mode question-generation prompt. */
   private buildPlanPrompt(userMessage: string): string {
     return `[PLAN MODE] You are in planning mode. Your only job right now is to identify 2-5 key architectural decisions that need user input, based solely on the user's message below.
@@ -2041,45 +1981,6 @@ ${userMessage}`;
     // turn's sort counter.
     this.narrativeStore.clearTurn(threadId);
     this.persistingThreads.delete(threadId);
-  }
-
-  /**
-   * Parse the most recent plan-questions block from message history to build
-   * a lookup map of question ID → { question text, options }.
-   * Used to produce human-readable answer summaries instead of opaque IDs.
-   */
-  private buildQuestionContext(
-    threadId: string,
-  ): Map<string, { question: string; options: Array<{ id: string; title: string }> }> {
-    const PLAN_QUESTIONS_RE = /```plan-questions\n([\s\S]*?)```/;
-    const map = new Map<string, { question: string; options: Array<{ id: string; title: string }> }>();
-
-    // Fetch recent messages — 50 is more than enough to find the question block
-    const { messages } = this.messageRepo.listByThread(threadId, 50);
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg.role !== "assistant") continue;
-      const match = PLAN_QUESTIONS_RE.exec(msg.content);
-      if (!match) continue;
-      try {
-        const raw = JSON.parse(match[1]);
-        if (!Array.isArray(raw)) break;
-        for (const q of raw) {
-          if (q && typeof q.id === "string" && typeof q.question === "string") {
-            const options = Array.isArray(q.options)
-              ? q.options
-                  .filter((o: unknown) => o && typeof (o as Record<string, unknown>).id === "string")
-                  .map((o: Record<string, unknown>) => ({ id: String(o.id), title: String(o.title ?? o.id) }))
-              : [];
-            map.set(q.id, { question: q.question, options });
-          }
-        }
-      } catch {
-        // Ignore — opaque IDs will be used as fallback
-      }
-      break;
-    }
-    return map;
   }
 
   /** Stop all active agent sessions (for graceful shutdown). */
