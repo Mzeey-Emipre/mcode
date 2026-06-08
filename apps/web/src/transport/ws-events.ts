@@ -506,7 +506,7 @@ export function startPushListeners(): void {
       const payload = data as {
         threadId: string;
         status: "generating" | "ready" | "fallback" | "error";
-        ladderStep?: "B" | "A" | "D";
+        ladderStep?: "B" | "D";
         providerErrorOnGenerate?: "quota" | "auth" | "context-overflow" | "transient" | "fatal" | null;
       };
       if (!payload.threadId || !payload.status) return;

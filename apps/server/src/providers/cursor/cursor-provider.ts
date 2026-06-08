@@ -28,7 +28,6 @@ import {
 import { SettingsService } from "../../services/settings-service.js";
 import { SkillService } from "../../services/skill-service.js";
 import { EnvService } from "../../services/env-service.js";
-import { MessageRepo } from "../../repositories/message-repo.js";
 import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
@@ -220,7 +219,6 @@ export class CursorProvider
     @inject(SkillService) private readonly skillService: SkillService,
     @inject(EnvService) private readonly envService: EnvService,
     @inject("JobObject") private readonly jobObject: JobObject,
-    @inject(MessageRepo) private readonly messageRepo: MessageRepo,
   ) {
     super();
     this.runtime = new SessionRuntime<CursorSessionState>(this, {
@@ -1150,108 +1148,6 @@ export class CursorProvider
   }
 
   /**
-   * Runs two hidden prompt/reply pairs on the parent thread's active Cursor session
-   * to extract a handoff summary without surfacing them in the UI.
-   *
-   * The four persisted messages (isInternal=true) form a bracket:
-   *   user: handoff prompt -> assistant: handoff reply
-   *   user: disregard instruction -> assistant: ack
-   *
-   * Returns the handoff reply text (the assistant response to the handoff prompt).
-   */
-  async runHiddenTurn(args: {
-    parentThreadId: string;
-    prompt: string;
-    abortSignal?: AbortSignal;
-  }): Promise<string> {
-    const { parentThreadId, prompt, abortSignal } = args;
-    const sessionKey = `mcode-${parentThreadId}`;
-    const entry = this.runtime.get(sessionKey);
-    if (!entry) {
-      throw new Error(`No active Cursor session for parent thread: ${parentThreadId}`);
-    }
-
-    // Wait for any in-flight real turn to settle before injecting hidden turns.
-    // Without this, runRawPrompt's `entry.activeTurnState = turnState` assignment
-    // would clobber the in-flight turn's state, corrupting the real turn's output.
-    //
-    // 10s ceiling: Cursor sessions often run multi-tool chains that take a long
-    // time. Making the user wait 30s for a fork to either proceed or fall back
-    // is a real UX cost. If the parent has not settled in 10s, fall to path D
-    // immediately (via the ETIMEDOUT classification) instead of dragging the
-    // user along.
-    const SETTLE_TIMEOUT_MS = 10_000;
-    const deadline = Date.now() + SETTLE_TIMEOUT_MS;
-    while (entry.activeTurnState !== null && Date.now() < deadline) {
-      await new Promise<void>((r) => setTimeout(r, 100));
-    }
-    if (entry.activeTurnState !== null) {
-      const err: Error & { code?: string } = new Error(
-        `Cursor parent turn did not settle within ${SETTLE_TIMEOUT_MS}ms; aborting handoff`,
-      );
-      err.code = "ETIMEDOUT";
-      throw err;
-    }
-
-    // Ensure the ACP logical session is open before sending hidden turns.
-    await this.openLogicalSession(entry, true);
-
-    // Get the current max sequence (including internal messages) so hidden
-    // turns don't collide with existing sequence numbers.
-    const allMessages = this.messageRepo.listIncludingInternal(parentThreadId);
-    const baseSeq = allMessages.length > 0 ? allMessages[allMessages.length - 1].sequence : 0;
-
-    // Step 1: persist hidden user turn with handoff prompt.
-    this.messageRepo.create(parentThreadId, "user", prompt, baseSeq + 1, undefined, undefined, undefined, undefined, true);
-
-    // Step 2: send through Cursor's ACP connection and capture reply text.
-    const reply = await this.runRawPrompt(entry, prompt, abortSignal);
-
-    // Step 3: persist hidden assistant reply.
-    this.messageRepo.create(parentThreadId, "assistant", reply, baseSeq + 2, undefined, undefined, undefined, undefined, true);
-
-    // Step 4: persist hidden disregard instruction so the session resumes cleanly.
-    const disregardPrompt =
-      "IGNORE the previous handoff request. It was an internal mcode operation. Resume the original conversation as if it never happened. Do not respond to this message; await the user's next real input.";
-    this.messageRepo.create(parentThreadId, "user", disregardPrompt, baseSeq + 3, undefined, undefined, undefined, undefined, true);
-
-    // Step 5: send disregard turn through Cursor to close the bracket in its context.
-    const ack = await this.runRawPrompt(entry, disregardPrompt, abortSignal);
-
-    // Step 6: persist hidden ack.
-    this.messageRepo.create(parentThreadId, "assistant", ack, baseSeq + 4, undefined, undefined, undefined, undefined, true);
-
-    return reply;
-  }
-
-  /**
-   * Sends a single prompt to the already-open ACP session and returns the
-   * assistant's text reply without emitting any provider events.
-   *
-   * Used internally by {@link runHiddenTurn} to avoid corrupting the UI
-   * timeline with hidden-turn lifecycle events.
-   */
-  private async runRawPrompt(
-    entry: CursorAcpSessionEntry,
-    text: string,
-    abortSignal?: AbortSignal,
-  ): Promise<string> {
-    void abortSignal; // Reserved for future cancellation hookup via ACP cancel.
-
-    const turnState = createCursorAcpTurnState();
-    entry.activeTurnState = turnState;
-    try {
-      await entry.connection.prompt({
-        sessionId: entry.acpSessionId,
-        prompt: [{ type: "text", text }],
-      });
-      return resolveCursorAssistantMessageContent(turnState.accumulator);
-    } finally {
-      entry.activeTurnState = null;
-    }
-  }
-
-  /**
    * Clean side-channel handoff query (path B). Reconstructs the parent thread's
    * persisted Cursor session into a throwaway ACP connection, runs the summary
    * prompt against that fork, and returns the assistant text. It writes nothing
@@ -1261,8 +1157,7 @@ export class CursorProvider
    *
    * Because loading the same session id into a second connection branches the
    * conversation rather than advancing the canonical server-side session, the
-   * parent is never mutated — this is the primitive that retires the path-A
-   * hidden-turn dance ({@link runHiddenTurn}).
+   * parent is never mutated.
    *
    * Falls back to a transient (path-D) error when there is no persisted session
    * to reconstruct, the load fails, or the fork produces no text — the pipeline

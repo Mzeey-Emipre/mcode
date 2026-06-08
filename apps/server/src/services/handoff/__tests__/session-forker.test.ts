@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ForkRequest } from "@mcode/contracts";
 import type { Thread, Message } from "@mcode/contracts";
-import { CleanForker, DeterministicForker, MutatingForker } from "../session-forker.js";
+import { CleanForker, DeterministicForker } from "../session-forker.js";
 
 const parent = {
   id: "t_parent",
@@ -83,17 +83,5 @@ describe("CleanForker", () => {
     await forker.fork(baseReq({ parentSdkSessionId: null }));
     const args = runSideChannelQuery.mock.calls[0][0];
     expect(args.parentSdkSessionId).toBe("");
-  });
-});
-
-describe("MutatingForker", () => {
-  it("delegates to runHiddenTurn and wraps a path-A artifact", async () => {
-    const runHiddenTurn = vi.fn(async () => "# Handoff\n\n## Goal\nX");
-    const forker = new MutatingForker({ id: "cursor", runHiddenTurn });
-    const artifact = await forker.fork(baseReq());
-
-    expect(runHiddenTurn).toHaveBeenCalledOnce();
-    expect(artifact.meta.ladderStep).toBe("A");
-    expect(artifact.meta.generatedBy).toBe("provider");
   });
 });

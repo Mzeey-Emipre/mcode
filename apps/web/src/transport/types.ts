@@ -429,7 +429,7 @@ export interface McodeTransport {
       childThreadId: string;
       generatedBy: "provider" | "deterministic";
       provider: string | null;
-      ladderStep: "B" | "A" | "D";
+      ladderStep: "B" | "D";
       mode: "full" | "minimal";
       generatedAt: string;
       characterCount: number;
@@ -437,7 +437,7 @@ export interface McodeTransport {
       providerErrorOnGenerate: "quota" | "auth" | "context-overflow" | "transient" | "fatal" | "clean" | null;
       regenerationHistory: Array<{
         at: string;
-        ladderStep: "B" | "A" | "D";
+        ladderStep: "B" | "D";
         reason: "quota" | "auth" | "context-overflow" | "transient" | "fatal" | "clean" | "user-requested";
       }>;
       attachments: Array<{

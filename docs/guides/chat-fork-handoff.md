@@ -6,19 +6,17 @@ How chat forking works in mcode and how to extend it.
 
 Clicking the fork icon on a message in a parent thread creates a child thread. The child receives a "handoff document" that summarises the parent conversation up to the fork point, giving the child's first turn full context without replaying every message token-by-token.
 
-The document is produced either by the parent's provider (when the provider supports a side-channel or hidden-turn query) or by a deterministic builder (when it does not). Either way the artifact is the same shape: a Markdown file with YAML frontmatter plus a JSON sidecar.
+The document is produced either by the parent's provider (when the provider supports a side-channel query) or by a deterministic builder (when it does not). Either way the artifact is the same shape: a Markdown file with YAML frontmatter plus a JSON sidecar.
 
 The pipeline lives in `apps/server/src/services/handoff/`.
 
-## The B/A/D ladder
+## The B/D ladder
 
-Three paths are tried in order. The result of the first path that succeeds becomes the handoff artifact.
+Two paths are tried in order. The result of the first path that succeeds becomes the handoff artifact.
 
-**Path B -- clean-fork providers (e.g. Claude).** The pipeline calls `runSideChannelQuery` on the parent provider. This issues a new query against the provider's existing session without mutating it, so the parent thread's conversation state is unchanged. Path B requires a live `sdk_session_id` on the parent thread because the side-channel must resume the correct provider conversation.
+**Path B -- clean-fork providers (e.g. Claude, Cursor).** The pipeline calls `runSideChannelQuery` on the parent provider. This issues a new query against a forked copy of the provider's existing session without mutating it, so the parent thread's conversation state is unchanged. Path B requires a live `sdk_session_id` on the parent thread because the side-channel must resume the correct provider conversation.
 
-**Path A -- mutating-resume providers (e.g. Cursor).** The pipeline calls `runHiddenTurn` on the parent provider. This injects an ephemeral turn into the parent's mutable session. Because the hidden turn modifies session state, concurrent path A forks on the same parent thread are serialized via a per-thread mutex. Path A does not require `sdk_session_id`; providers that defer session creation until the first real turn still produce useful output (they have no prior context but generate a valid handoff structure).
-
-**Path D -- deterministic fallback.** Always available. Builds the handoff by walking the message list up to the fork point and rendering a structured Markdown summary. No provider call is made. Path D fires when the parent provider does not support forking at all (`sessionForkOnResume === "unsupported"`), when the parent has no `sdk_session_id` and the provider is clean-resume, or when path B or A throws an error that error-classification routes as quota, auth, context-overflow, or fatal (errors for which retrying the next ladder step would hit the same wall).
+**Path D -- deterministic fallback.** Always available. Builds the handoff by walking the message list up to the fork point and rendering a structured Markdown summary. No provider call is made. Path D fires when the parent provider does not support forking at all (`sessionForkOnResume === "unsupported"`), when the parent has no `sdk_session_id` and the provider is clean-resume, or when path B throws an error that error-classification routes as quota, auth, context-overflow, or fatal (errors for which retrying would hit the same wall).
 
 Transient errors (network blips, 5xx, AbortController timeout at 60s) also route to path D so forks always succeed.
 
@@ -26,11 +24,11 @@ Transient errors (network blips, 5xx, AbortController timeout at 60s) also route
 
 Two fields on the provider interface control which path fires. Both are declared in `packages/contracts/src/providers/interfaces.ts`.
 
-`sessionForkOnResume: "clean" | "mutating" | "unsupported"` -- declares whether the provider supports side-channel queries (`"clean"`), hidden turns (`"mutating"`), or neither (`"unsupported"`). Omitting this field or returning `null` is treated as `"unsupported"`.
+`sessionForkOnResume: "clean" | "unsupported"` -- declares whether the provider supports side-channel queries (`"clean"`) or not (`"unsupported"`). Omitting this field or returning `null` is treated as `"unsupported"`.
 
-`maxInputCharactersPerTurn: number` -- the provider's per-turn input character cap. The pipeline uses this to pick the handoff mode (see below) and to guard against oversized provider output.
+`maxInputCharactersPerTurn: number` -- the provider's per-turn input character cap. The pipeline uses this to guard against oversized provider output.
 
-Implement `runSideChannelQuery` on path-B providers and `runHiddenTurn` on path-A providers. Both receive an `AbortSignal` that fires after 60 seconds.
+Implement `runSideChannelQuery` on path-B providers. It receives an `AbortSignal` that fires after 60 seconds.
 
 ## Storage layout
 
@@ -62,7 +60,6 @@ The mode is recorded in `HandoffMeta.mode` (`"full"` or `"minimal"`) and in the 
 The pipeline includes several guards to avoid blocking or corrupting the fork flow:
 
 - **60-second timeout.** An `AbortController` wraps every provider call. If the controller fires, the pipeline catches the abort and falls to path D with `reason: "transient"`.
-- **Per-thread mutex on path A.** Concurrent hidden turns on the same parent thread are serialized via `pathALocks` in `HandoffPipelineService` to prevent interleaved session mutation.
 - **25 MB attachment size cap.** `HandoffStorage.copyAttachments` skips any attachment larger than 25 MB and records a sentinel `sha256: "<skipped>"` in the manifest.
 - **Budget truncation at section boundaries.** When a provider returns more than 115% of the computed character budget, `applyBudgetGuard` truncates at the nearest H2 heading boundary and appends a notice so the child agent knows the doc was cut.
 - **Abandoned-child cleanup.** Before writing the artifact, `AgentService` re-fetches the child thread. If it has been hard-deleted between orchestration start and the write, the artifact is dropped and the fork fails cleanly rather than writing orphaned files.
@@ -73,14 +70,12 @@ The pipeline includes several guards to avoid blocking or corrupting the fork fl
 
 ## Adding a new provider
 
-1. Decide which path the provider supports based on its session model. Providers with stateless or read-only session replay use `"clean"`. Providers that resume by appending to a mutable history use `"mutating"`. Providers with no session concept use `"unsupported"`.
+1. Decide which path the provider supports based on its session model. Providers that can fork a session (resuming a session id into a throwaway connection branches the conversation rather than mutating it) use `"clean"`. Providers with no forkable session concept use `"unsupported"`.
 
 2. Set `sessionForkOnResume` to the chosen value and `maxInputCharactersPerTurn` to the provider's documented limit (or a conservative estimate like `16_000` if unknown).
 
 3. If `"clean"`: implement `runSideChannelQuery({ parentThreadId, parentSdkSessionId, prompt, abortSignal })`. The method must return a Markdown string. It must respect `abortSignal` and throw (or let the signal reject the underlying fetch) when it fires.
 
-4. If `"mutating"`: implement `runHiddenTurn({ parentThreadId, prompt, abortSignal })`. Same contract as above.
+4. Run `(cd apps/server && npx vitest run src/services/handoff)` to verify the existing tests still pass with the new provider registered.
 
-5. Run `(cd apps/server && npx vitest run src/services/handoff)` to verify the existing tests still pass with the new provider registered.
-
-6. Add a test case in `apps/server/src/services/handoff/__tests__/handoff-pipeline.test.ts` covering the happy path and at least one failure mode for the new provider.
+5. Add a test case in `apps/server/src/services/handoff/__tests__/handoff-pipeline.test.ts` covering the happy path and at least one failure mode for the new provider.

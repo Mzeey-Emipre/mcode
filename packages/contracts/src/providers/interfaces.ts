@@ -14,7 +14,7 @@ import type { SessionForker } from "./session-forker.js";
 export type ProviderId = "claude" | "codex" | "gemini" | "copilot" | "cursor" | "opencode";
 
 /** How a provider's `resume` mechanism behaves when used to fork a session. */
-export type SessionForkBehavior = "clean" | "mutating" | "unsupported";
+export type SessionForkBehavior = "clean" | "unsupported";
 
 /**
  * Per-Provider knobs that ride on a {@link TurnRequest}, keyed by {@link ProviderId}.
@@ -86,7 +86,6 @@ export interface IAgentProvider {
    * Now metadata only (provenance + UI banner) — it no longer drives handoff
    * dispatch. The handoff pipeline delegates to {@link forker} instead:
    * - "clean": resuming creates a forked session; the original session is unaffected.
-   * - "mutating": resuming mutates the original session's forward history.
    * - "unsupported": resuming is not supported or not yet verified.
    */
   readonly sessionForkOnResume: SessionForkBehavior;
@@ -95,10 +94,9 @@ export interface IAgentProvider {
    * The session-fork strategy for this provider's handoff generation. The
    * handoff pipeline calls `provider.forker.fork(req)` instead of branching on
    * {@link sessionForkOnResume}. Clean-resume providers use CleanForker (path
-   * B), mutating providers use MutatingForker (path A), and providers that
-   * cannot fork a session use DeterministicForker (path D). The forkers reach
-   * the providers' concrete side-channel / hidden-turn methods directly; those
-   * methods are intentionally not on this interface.
+   * B) and providers that cannot fork a session use DeterministicForker (path
+   * D). The forkers reach the providers' concrete side-channel methods
+   * directly; those methods are intentionally not on this interface.
    */
   readonly forker: SessionForker;
 

@@ -3,10 +3,9 @@
  * {@link SessionForker}.
  *
  * The pipeline builds a {@link ForkRequest} and calls `provider.forker.fork(req)`.
- * Each provider owns the strategy: CleanForker (Claude, path B), MutatingForker
- * (Cursor, path A), or DeterministicForker (Codex/Copilot, path D). The
- * `sessionForkOnResume` field is now metadata only (provenance + the path-A
- * mutex decision), not the dispatch key.
+ * Each provider owns the strategy: CleanForker (Claude/Cursor, path B) or
+ * DeterministicForker (Codex/Copilot, path D). The `sessionForkOnResume` field
+ * is now metadata only (provenance), not the dispatch key.
  *
  * On a classified non-retryable provider error (quota/auth/context-overflow/
  * fatal) or a timeout, the pipeline falls back to a shared DeterministicForker
@@ -95,7 +94,7 @@ interface IThoughtSegmentRepo {
 const RECENT_ASSISTANT_MESSAGES_FOR_D = 5;
 
 /**
- * Timeout for side-channel and hidden-turn provider calls, in milliseconds.
+ * Timeout for side-channel provider calls, in milliseconds.
  * Handoff generation includes a cold SDK subprocess start plus model inference;
  * 60s was too tight after server restarts on Windows.
  */
@@ -111,12 +110,6 @@ const REPLAY_BUDGET_CHARS = 100_000;
 
 @injectable()
 export class HandoffPipelineService {
-  /**
-   * Per-thread mutex for path A. Hidden turns must not interleave on the same
-   * parent thread because each turn mutates the provider session state.
-   */
-  private readonly pathALocks = new Map<string, Promise<void>>();
-
   /**
    * Cross-forker fallback. The pipeline delegates to a provider's own forker
    * first; on a classified non-retryable error or timeout it falls back to this
@@ -160,13 +153,12 @@ export class HandoffPipelineService {
     };
     // Initialize instance fields that aren't set via the constructor (Object.create
     // bypasses field initializers).
-    (svc as any).pathALocks = new Map<string, Promise<void>>();
     (svc as any).deterministicForker = new DeterministicForker();
     return svc;
   }
 
   /**
-   * Orchestrates B->A->D. Returns a HandoffArtifact. The caller is responsible
+   * Orchestrates B->D. Returns a HandoffArtifact. The caller is responsible
    * for persisting it via HandoffStorage.write() so the orchestrator stays
    * free of disk I/O and is fully testable in isolation.
    */
@@ -233,15 +225,11 @@ export class HandoffPipelineService {
     // clean-resume provider with no session id to resume go straight to the
     // deterministic forker. The DeterministicForker is also the cross-forker
     // fallback below.
-    const canProviderFork =
-      !!parentProvider &&
-      ((capability === "clean" && !!parentSdkSession) || capability === "mutating");
+    const canProviderFork = !!parentProvider && capability === "clean" && !!parentSdkSession;
     if (!canProviderFork) {
       return this.deterministicForker.fork({ ...forkReq, forkReason: null });
     }
 
-    // Path A (mutating) must be serialized per parent thread because each
-    // hidden turn mutates provider session state. Path B (clean) does not.
     const runFork = async (): Promise<HandoffArtifact> => {
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), PROVIDER_CALL_TIMEOUT_MS);
@@ -267,9 +255,6 @@ export class HandoffPipelineService {
       }
     };
 
-    if (capability === "mutating") {
-      return this.withPathALock(req.parentThreadId, runFork);
-    }
     return runFork();
   }
 
@@ -338,26 +323,6 @@ export class HandoffPipelineService {
       return this.providerRegistry.resolve(providerId as ProviderId);
     } catch {
       return null;
-    }
-  }
-
-  /**
-   * Serializes path A calls on the same parent thread. Concurrent fork
-   * requests mutate the provider session state, so each hidden turn must
-   * complete before the next begins.
-   */
-  private async withPathALock<T>(threadId: string, fn: () => Promise<T>): Promise<T> {
-    while (this.pathALocks.has(threadId)) {
-      await this.pathALocks.get(threadId);
-    }
-    let release!: () => void;
-    const p = new Promise<void>((res) => { release = res; });
-    this.pathALocks.set(threadId, p);
-    try {
-      return await fn();
-    } finally {
-      this.pathALocks.delete(threadId);
-      release();
     }
   }
 }
