@@ -250,7 +250,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       store.resetTurnCounters(THREAD);
       store.bufferToolCall(THREAD, toolUse("tc-1", "Read"));
 
-      const result = store.persistNarrative(THREAD, "m1", "final body", false);
+      const result = store.persistNarrative(THREAD, "m1", "final body", "completed");
       expect(result.toolCallCount).toBe(1);
       // Buffers are NOT cleared by persistNarrative.
       expect(store.getBufferedToolCalls(THREAD)).toHaveLength(1);
@@ -269,7 +269,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       // end_turn-style boundary → final response → drop, never persisted.
       store.dropOpenThought(THREAD);
 
-      store.persistNarrative(THREAD, "m1", "Tool-free final answer", false);
+      store.persistNarrative(THREAD, "m1", "Tool-free final answer", "completed");
       expect(new ThoughtSegmentRepo(db).listByMessage("m1")).toHaveLength(0);
     });
 
@@ -282,7 +282,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       store.closeOpenThought(THREAD);
       store.bufferToolCall(THREAD, toolUse("tc-read", "Read"));
 
-      store.persistNarrative(THREAD, "m1", "", false);
+      store.persistNarrative(THREAD, "m1", "", "completed");
       const thoughts = new ThoughtSegmentRepo(db).listByMessage("m1");
       expect(thoughts).toHaveLength(1);
       expect(thoughts[0].text).toBe("Let me check that file.");
@@ -296,7 +296,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       store.resetTurnCounters(THREAD);
       store.openOrExtendThought(THREAD, body);
       // No boundary fired (older/reconnect path) → suffix-match must catch it.
-      store.persistNarrative(THREAD, "m1", body, false);
+      store.persistNarrative(THREAD, "m1", body, "completed");
 
       const thoughts = new ThoughtSegmentRepo(db).listByMessage("m1");
       expect(thoughts).toHaveLength(1);
@@ -319,7 +319,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       store.bufferToolCall(THREAD, toolUse("tc-1", "Read"));
       store.openOrExtendThought(THREAD, "Now respond.");
 
-      store.persistNarrative(THREAD, "m1", "", false);
+      store.persistNarrative(THREAD, "m1", "", "completed");
       const thoughts = new ThoughtSegmentRepo(db).listByMessage("m1");
       const tools = new ToolCallRecordRepo(db).listByMessage("m1");
       expect(thoughts.map((t) => [t.text, t.sort_order])).toEqual([
@@ -340,7 +340,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       store.bufferToolCall(THREAD, toolUse("r3", "Read"));
       store.bufferToolCall(THREAD, toolUse("ag", "Agent"));
 
-      const { toolCallCount } = store.persistNarrative(THREAD, "m1", "", false);
+      const { toolCallCount } = store.persistNarrative(THREAD, "m1", "", "completed");
       expect(toolCallCount).toBe(4);
 
       const tools = new ToolCallRecordRepo(db).listByMessage("m1");

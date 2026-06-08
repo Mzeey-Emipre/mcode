@@ -32,6 +32,7 @@ import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { MessageRepo } from "../repositories/message-repo";
 import { HookExecutionRepo, type CreateHookExecutionInput } from "../repositories/hook-execution-repo";
 import { NarrativeStore } from "./narrative-store.js";
+import { TurnFinalizer } from "./turn-finalizer.js";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type Database from "better-sqlite3";
 import { TaskRepo } from "../repositories/task-repo";
@@ -156,31 +157,23 @@ export class AgentService {
    * sort counter) and their enrichment + classification + persistence logic
    * live in {@link NarrativeStore}. AgentService delegates the write seam to it.
    */
-  /** Per-thread ref_before captured at sendMessage time. */
-  private turnRefBefore = new Map<string, { ref: string; cwd: string }>();
-  /** Threads currently running persistTurn to prevent concurrent calls. */
-  private persistingThreads = new Set<string>();
   /**
-   * Message ID of the last persisted assistant turn per thread.
-   * Populated inside `persistTurn` after the message row is resolved.
-   * Used to attach late hooks (Stop/SessionEnd) that arrive after `persistTurn`
-   * has already cleared the in-turn buffers.
+   * Owns the end-of-turn seam: re-entrancy guard, interrupted-text flush,
+   * precondition check, narrative persistence, git snapshot, `turn.persisted`
+   * broadcast, and per-turn clear. AgentService feeds it the pre-turn git ref
+   * and streaming assistant text during the turn, then calls
+   * {@link TurnFinalizer.finalize} from each turn-end path.
    */
-  private lastPersistedMessageIdByThread = new Map<string, string>();
+  private readonly turnFinalizer: TurnFinalizer;
   /**
    * Threads whose `TurnComplete` event has already been processed but whose
-   * `persistTurn` may still be in-flight or have already finished.
+   * finalize may still be in-flight or have already finished.
    * Set when `TurnComplete` is handled; cleared on `TurnStarted` so the
    * per-thread flag resets between turns.
    * Hooks that arrive while this flag is set are treated as post-turn (Stop /
    * SessionEnd / PreCompact) and flushed directly via `flushLateHook`.
    */
   private turnCompleteSeenByThread = new Set<string>();
-  /**
-   * Accumulates `textDelta` chunks per thread so we can persist partial assistant
-   * output when the user stops before the provider emits a final `message` event.
-   */
-  private streamingAssistantTextByThread = new Map<string, string>();
   /** Per-thread streaming parsers active while the model is generating questions in plan mode. */
   private planParsers = new Map<string, PlanQuestionParser>();
   /** Per-thread streaming parsers for extracting structured plan-output blocks. */
@@ -224,7 +217,16 @@ export class AgentService {
     private readonly scopedPreGrant: ScopedPreGrantService,
     @inject(NarrativeStore)
     private readonly narrativeStore: NarrativeStore,
-  ) {}
+  ) {
+    this.turnFinalizer = new TurnFinalizer(
+      this.messageRepo,
+      this.threadRepo,
+      this.narrativeStore,
+      this.snapshotService,
+      this.turnSnapshotRepo,
+      this.db,
+    );
+  }
 
   /**
    * Send a user message to the Claude agent for a given thread.
@@ -451,7 +453,7 @@ export class AgentService {
     // answered marker in a single transaction. If the marker insert fails
     // (e.g. FK rejects an unknown messageId) the user message is rolled
     // back too, keeping marker durability == answer durability.
-    this.streamingAssistantTextByThread.delete(threadId);
+    this.turnFinalizer.resetStreamingText(threadId);
 
     this.db.transaction(() => {
       this.messageRepo.create(
@@ -530,7 +532,7 @@ export class AgentService {
     // Capture git snapshot ref_before for this turn
     try {
       const refBefore = await this.snapshotService.captureRef(cwd);
-      this.turnRefBefore.set(threadId, { ref: refBefore, cwd });
+      this.turnFinalizer.recordTurnRef(threadId, refBefore, cwd);
     } catch (err) {
       logger.warn("Failed to capture ref_before", {
         threadId,
@@ -1415,11 +1417,10 @@ export class AgentService {
     } catch {
       // Provider may not be available
     }
-    // Persist partial assistant text before tool rows attach so `messageId` targets the assistant row.
-    this.flushInterruptedAssistantMessage(threadId);
-    // Persist buffered tool calls before clearing state so the
-    // client receives a turn.persisted event with the correct count.
-    await this.persistTurn(threadId, true);
+    // A user stop ends the turn. The finalizer flushes partial assistant text,
+    // persists buffered tool calls (running ones inherit "cancelled"), captures
+    // the snapshot, broadcasts turn.persisted, and clears per-turn state.
+    await this.turnFinalizer.finalize(threadId, "cancelled");
     this.threadRepo.updateStatus(threadId, "paused");
     broadcast("thread.status", { threadId, status: "paused" });
     if (this.activeSessionIds.has(threadId)) {
@@ -1428,7 +1429,6 @@ export class AgentService {
         this.memoryPressureService.markIdle();
       }
     }
-    // clearTurnState already called inside persistTurn
   }
 
   /**
@@ -1531,8 +1531,7 @@ export class AgentService {
         // cannot submit answers against a still-active session, which would
         // risk overlapping sends on the same thread.
         if (event.type === AgentEventType.TextDelta) {
-          const prev = this.streamingAssistantTextByThread.get(event.threadId) ?? "";
-          this.streamingAssistantTextByThread.set(event.threadId, prev + event.delta);
+          this.turnFinalizer.appendStreamingText(event.threadId, event.delta);
           // Final-response deltas are the assistant's user-facing reply — they will
           // be stored as the message body when the Message event arrives. Do not
           // open a ThoughtSegment for them: that would cause the text to appear
@@ -1601,7 +1600,7 @@ export class AgentService {
             // footer renders without the model until a thread refresh re-fetches
             // the persisted row from the DB.
             event.model = modelForMessage;
-            this.streamingAssistantTextByThread.delete(event.threadId);
+            this.turnFinalizer.resetStreamingText(event.threadId);
           } catch (err) {
             logger.error("Failed to persist assistant message", {
               threadId: event.threadId,
@@ -1784,9 +1783,9 @@ export class AgentService {
             this.activeSessionIds.add(event.threadId);
             this.memoryPressureService.markActive();
           }
-          // Reset per-turn state that must survive past clearTurnState so late
+          // Reset per-turn state that must survive past turn finalize so late
           // hooks can attach to the previous turn. Re-seeding them here rather
-          // than in clearTurnState ensures a fresh counter for each new turn
+          // than in the finalizer's clear ensures a fresh counter for each new turn
           // while late hooks from the prior turn can still increment the old one.
           this.narrativeStore.resetTurnCounters(event.threadId);
           this.turnCompleteSeenByThread.delete(event.threadId);
@@ -1798,8 +1797,8 @@ export class AgentService {
           // flushLateHook instead of the normal mid-turn buffer.
           this.turnCompleteSeenByThread.add(event.threadId);
 
-          this.persistTurn(event.threadId).catch((err) => {
-            logger.error("persistTurn failed on turnComplete", {
+          this.turnFinalizer.finalize(event.threadId, "completed").catch((err) => {
+            logger.error("finalize failed on turnComplete", {
               threadId: event.threadId,
               error: err instanceof Error ? err.message : String(err),
             });
@@ -1841,22 +1840,15 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.Error) {
-          // Only persist the turn when an assistant message was actually created.
-          // For pre-turn failures (e.g. CLI not found) the last message is the
-          // user message; calling persistTurn would broadcast turn.persisted with
-          // the wrong message ID. In that case, just clear the turn state.
-          const { messages: turnMsgs } = this.messageRepo.listByThread(event.threadId, 1);
-          const lastMsg = turnMsgs[turnMsgs.length - 1];
-          if (lastMsg?.role === "assistant") {
-            this.persistTurn(event.threadId, true).catch((err) => {
-              logger.error("persistTurn failed on error event", {
-                threadId: event.threadId,
-                error: err instanceof Error ? err.message : String(err),
-              });
+          // The finalizer discards the buffered turn when no assistant row
+          // exists (e.g. a pre-turn CLI-not-found failure) rather than
+          // broadcasting turn.persisted against the wrong (user) message id.
+          this.turnFinalizer.finalize(event.threadId, "errored").catch((err) => {
+            logger.error("finalize failed on error event", {
+              threadId: event.threadId,
+              error: err instanceof Error ? err.message : String(err),
             });
-          } else {
-            this.clearTurnState(event.threadId);
-          }
+          });
           // Turn-scoped cleanup of any one-shot handoff Read grant when the
           // first Turn errors out before completing normally.
           this.scopedPreGrant.clear(event.threadId);
@@ -2211,65 +2203,21 @@ ${userMessage}`;
   }
 
   /**
-   * Writes accumulated streaming assistant text to SQLite when a turn ends without
-   * a provider-issued `message` row (for example user stop before Claude's `result`).
-   * Broadcasts `agent.event` so clients align in-memory transcripts with the DB.
-   */
-  private flushInterruptedAssistantMessage(threadId: string): void {
-    const raw = this.streamingAssistantTextByThread.get(threadId);
-    const text = raw?.trim();
-    if (!text) {
-      this.streamingAssistantTextByThread.delete(threadId);
-      return;
-    }
-
-    const { messages } = this.messageRepo.listByThread(threadId, 1);
-    const last = messages.length > 0 ? messages[messages.length - 1] : null;
-    if (last?.role === "assistant") {
-      this.streamingAssistantTextByThread.delete(threadId);
-      return;
-    }
-
-    const nextSeq = last ? last.sequence + 1 : 1;
-    try {
-      const thread = this.threadRepo.findById(threadId);
-      const modelForMessage = thread?.model ?? null;
-      const msg = this.messageRepo.create(
-        threadId, "assistant", text, nextSeq,
-        undefined, undefined, undefined, modelForMessage,
-      );
-      this.streamingAssistantTextByThread.delete(threadId);
-      broadcast("agent.event", {
-        type: AgentEventType.Message,
-        threadId,
-        content: text,
-        tokens: null,
-        messageId: msg.id,
-      } satisfies AgentEvent);
-    } catch (err) {
-      logger.error("Failed to persist interrupted assistant message", {
-        threadId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  /**
    * Persist a single late hook (Stop / SessionEnd / PreCompact) that arrived
-   * after `persistTurn` has already run and cleared the in-turn buffers.
+   * after the turn was finalized and the in-turn buffers were cleared.
    * Writes the row directly to SQLite and broadcasts a `HookCompleted` event
    * with `persistedMessageId` set so the client can route it into the correct
    * persisted narrative cache entry rather than the volatile hook list.
    *
-   * If `lastPersistedMessageIdByThread` is empty (e.g. the turn never produced
-   * an assistant message), the hook is silently discarded — there is no row to
-   * attach it to.
+   * If the finalizer recorded no persisted message id (e.g. the turn never
+   * produced an assistant message), the hook is silently discarded — there is
+   * no row to attach it to.
    */
   private flushLateHook(
     threadId: string,
     hook: Omit<CreateHookExecutionInput, "messageId">,
   ): void {
-    const messageId = this.lastPersistedMessageIdByThread.get(threadId);
+    const messageId = this.turnFinalizer.getLastPersistedMessageId(threadId);
     if (!messageId) {
       logger.warn("flushLateHook: no persisted message id for thread; discarding late hook", {
         threadId,
@@ -2301,101 +2249,6 @@ ${userMessage}`;
       // Stable DB row id so the client can dedupe redelivered broadcasts.
       persistedHookId: hook.id,
     } satisfies AgentEvent);
-  }
-
-  /**
-   * Persist the turn: the narrative rows (tool calls, thoughts, hooks) are
-   * persisted by {@link NarrativeStore.persistNarrative}; AgentService retains
-   * the turn-level concerns — the git turn_snapshot, the files_changed flag,
-   * and the `turn.persisted` broadcast — then clears the per-turn state.
-   */
-  private async persistTurn(threadId: string, isError = false): Promise<void> {
-    if (this.persistingThreads.has(threadId)) return;
-    this.persistingThreads.add(threadId);
-    try {
-      const bufferedCount = this.narrativeStore.getBufferedToolCalls(threadId).length;
-
-      const { messages } = this.messageRepo.listByThread(threadId, 1);
-      if (messages.length === 0) {
-        if (bufferedCount > 0) {
-          logger.warn("Discarding buffered tool calls: no messages found", {
-            threadId,
-            toolCallCount: bufferedCount,
-          });
-        }
-        this.clearTurnState(threadId);
-        return;
-      }
-      const lastMessage = messages[messages.length - 1];
-      const messageId = lastMessage.id;
-      // Record the message ID so late hooks (Stop/SessionEnd) arriving after
-      // this point can attach to the correct persisted row.
-      this.lastPersistedMessageIdByThread.set(threadId, messageId);
-
-      const { toolCallCount } = this.narrativeStore.persistNarrative(
-        threadId,
-        messageId,
-        lastMessage.content ?? "",
-        isError,
-      );
-
-      let filesChanged: string[] = [];
-      const refData = this.turnRefBefore.get(threadId);
-      if (refData) {
-        try {
-          const refAfter = await this.snapshotService.captureRef(refData.cwd);
-          if (refAfter !== refData.ref) {
-            filesChanged = await this.snapshotService.getFilesChanged(refData.cwd, refData.ref, refAfter);
-
-            const writeTurn = this.db.transaction((files: string[]) => {
-              this.turnSnapshotRepo.create({
-                messageId,
-                threadId,
-                refBefore: refData.ref,
-                refAfter,
-                filesChanged: files,
-                worktreePath: null,
-              });
-              if (files.length > 0) {
-                this.db
-                  .prepare(
-                    "UPDATE threads SET has_file_changes = 1 WHERE id = ? AND has_file_changes = 0",
-                  )
-                  .run(threadId);
-              }
-            });
-            writeTurn(filesChanged);
-          }
-        } catch (err) {
-          logger.warn("Failed to capture turn snapshot", {
-            threadId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
-      broadcast("turn.persisted", {
-        threadId,
-        messageId,
-        toolCallCount,
-        filesChanged,
-      });
-
-      this.clearTurnState(threadId);
-    } finally {
-      this.persistingThreads.delete(threadId);
-    }
-  }
-
-  /** Clear per-turn buffering state. */
-  private clearTurnState(threadId: string): void {
-    this.turnRefBefore.delete(threadId);
-    // The narrative buffers live in NarrativeStore. Its sort counter and
-    // agentCallStack are reset in the TurnStarted handler (not here) so late
-    // hooks that arrive after clearTurnState can still increment the completed
-    // turn's sort counter.
-    this.narrativeStore.clearTurn(threadId);
-    this.persistingThreads.delete(threadId);
   }
 
   /**
