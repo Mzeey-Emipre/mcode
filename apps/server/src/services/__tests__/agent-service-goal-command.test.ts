@@ -13,6 +13,7 @@ import { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo.js";
 import { TaskRepo } from "../../repositories/task-repo.js";
 import { AgentService } from "../agent-service.js";
 import { NarrativeStore } from "../narrative-store.js";
+import { PlanQuestionService } from "../plan-question-service.js";
 import { ProviderAvailabilityService } from "../provider-availability-service.js";
 import type { GitService } from "../git-service.js";
 import type { AttachmentService } from "../attachment-service.js";
@@ -62,8 +63,19 @@ function buildService(db: Database.Database) {
     clearGoal: vi.fn<(sid: string) => void>(),
     getGoal: vi.fn<(sid: string) => string | undefined>(() => undefined),
   });
+  // A provider lacking the goal capability (no setGoal/clearGoal/getGoal).
+  // `/goal` must pass through to this provider as plain text.
+  const nonGoalStub = Object.assign(new EventEmitter(), {
+    id: "codex" as const,
+    supportsCompletion: true,
+    sessionForkOnResume: "unsupported" as const,
+    maxInputCharactersPerTurn: 16_000,
+    sendTurn: vi.fn<(params: { message: string; [k: string]: unknown }) => Promise<void>>(
+      () => Promise.resolve(),
+    ),
+  });
   const providerRegistry = {
-    resolve: vi.fn(() => providerStub),
+    resolve: vi.fn((id: string) => (id === "claude" ? providerStub : nonGoalStub)),
     resolveAll: vi.fn(() => []),
     shutdown: vi.fn(),
   } as unknown as IProviderRegistry;
@@ -113,13 +125,13 @@ function buildService(db: Database.Database) {
     availability,
     planQuestionAnswersRepo,
       { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
-      { orchestrate: vi.fn() } as any,
-      { write: vi.fn(), copyAttachments: vi.fn(() => []), deleteThreadFiles: vi.fn() } as any,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       container.resolve(NarrativeStore),
+      container.resolve(PlanQuestionService),
   );
 
-  return { svc, threadRepo, workspaceRepo, messageRepo, providerStub };
+  return { svc, threadRepo, workspaceRepo, messageRepo, providerStub, nonGoalStub };
 }
 
 describe("AgentService.sendMessage — /goal command", () => {
@@ -219,8 +231,8 @@ describe("AgentService.sendMessage — /goal command", () => {
     expect(assistantMsg?.content).toContain("ship the feature");
   });
 
-  it("non-Claude providers do not trigger the /goal intercept", async () => {
-    const { svc, providerStub } = buildService(db);
+  it("providers without the goal capability pass /goal through as plain text", async () => {
+    const { svc, providerStub, nonGoalStub } = buildService(db);
 
     await svc.sendMessage(
       thread.id,
@@ -229,13 +241,14 @@ describe("AgentService.sendMessage — /goal command", () => {
       "claude-sonnet-4-6",
       [],
       undefined,
-      // Force a different provider so the intercept regex stays inactive.
+      // A non-goal-capable provider so the capability probe returns passthrough.
       "codex",
     );
 
-    // Provider was still called with the raw text (no rewrite, no goal install).
+    // No goal install on the capable provider, and the non-capable provider
+    // received the raw text (no rewrite).
     expect(providerStub.setGoal).not.toHaveBeenCalled();
-    expect(providerStub.sendTurn).toHaveBeenCalledTimes(1);
-    expect(providerStub.sendTurn.mock.calls[0][0].message).toBe("/goal something");
+    expect(nonGoalStub.sendTurn).toHaveBeenCalledTimes(1);
+    expect(nonGoalStub.sendTurn.mock.calls[0][0].message).toBe("/goal something");
   });
 });

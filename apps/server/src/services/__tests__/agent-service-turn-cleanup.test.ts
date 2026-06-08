@@ -5,6 +5,7 @@ import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent, Thread, IProviderRegistry } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { NarrativeStore } from "../narrative-store.js";
+import { PlanQuestionService } from "../plan-question-service.js";
 import type { ThreadRepo } from "../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../repositories/message-repo.js";
@@ -193,8 +194,7 @@ function buildService(): {
     availability,
     planQuestionAnswersRepo,
       { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
-      { orchestrate: vi.fn() } as any,
-      { write: vi.fn(), copyAttachments: vi.fn(() => []), deleteThreadFiles: vi.fn() } as any,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(
         messageRepo,
@@ -202,6 +202,7 @@ function buildService(): {
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
       ),
+      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
   );
 
   return { service, providerEmitter, memoryPressureService: memoryPressureService as MemoryPressureService & { markActive: ReturnType<typeof vi.fn>; markIdle: ReturnType<typeof vi.fn> } };

@@ -12,6 +12,7 @@ import { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo.js";
 import { TaskRepo } from "../../repositories/task-repo.js";
 import { AgentService } from "../agent-service.js";
 import { NarrativeStore } from "../narrative-store.js";
+import { PlanQuestionService } from "../plan-question-service.js";
 import { ProviderAvailabilityService } from "../provider-availability-service.js";
 import type { GitService } from "../git-service.js";
 import type { AttachmentService } from "../attachment-service.js";
@@ -111,10 +112,10 @@ function buildService(db: Database.Database) {
     availability,
     planQuestionAnswersRepo,
       { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
-      { orchestrate: vi.fn() } as any,
-      { write: vi.fn(), copyAttachments: vi.fn(() => []), deleteThreadFiles: vi.fn() } as any,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       container.resolve(NarrativeStore),
+      container.resolve(PlanQuestionService),
   );
 
   return { svc, threadRepo, workspaceRepo, messageRepo, planQuestionAnswersRepo };

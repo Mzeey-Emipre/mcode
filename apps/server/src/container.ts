@@ -34,6 +34,7 @@ import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
 import { AgentService } from "./services/agent-service";
 import { NarrativeStore } from "./services/narrative-store";
+import { PlanQuestionService } from "./services/plan-question-service";
 import { GitService } from "./services/git-service";
 import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
@@ -43,6 +44,7 @@ import { TerminalService } from "./services/terminal-service";
 import { AttachmentService } from "./services/attachment-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage.js";
 import { HandoffPipelineService } from "./services/handoff/handoff-pipeline.js";
+import { HandoffCoordinator } from "./services/handoff/handoff-coordinator.js";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { GitWatcherService } from "./services/git-watcher-service";
@@ -277,6 +279,14 @@ export function setupContainer(mcodeDir: string): typeof container {
     useFactory: (c) => c.resolve(NarrativeStore),
   });
   container.register(
+    PlanQuestionService,
+    { useClass: PlanQuestionService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("PlanQuestionService", {
+    useFactory: (c) => c.resolve(PlanQuestionService),
+  });
+  container.register(
     AgentService,
     { useClass: AgentService },
     { lifecycle: Lifecycle.Singleton },
@@ -319,6 +329,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     HandoffPipelineService,
     { useClass: HandoffPipelineService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    HandoffCoordinator,
+    { useClass: HandoffCoordinator },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
