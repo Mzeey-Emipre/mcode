@@ -34,6 +34,7 @@ import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
 import { AgentService } from "./services/agent-service";
 import { NarrativeStore } from "./services/narrative-store";
+import { PlanQuestionService } from "./services/plan-question-service";
 import { GitService } from "./services/git-service";
 import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
@@ -275,6 +276,14 @@ export function setupContainer(mcodeDir: string): typeof container {
   );
   container.register("NarrativeStore", {
     useFactory: (c) => c.resolve(NarrativeStore),
+  });
+  container.register(
+    PlanQuestionService,
+    { useClass: PlanQuestionService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("PlanQuestionService", {
+    useFactory: (c) => c.resolve(PlanQuestionService),
   });
   container.register(
     AgentService,

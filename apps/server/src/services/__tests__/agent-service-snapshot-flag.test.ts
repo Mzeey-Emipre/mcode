@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Thread, IProviderRegistry } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { NarrativeStore } from "../narrative-store.js";
+import { PlanQuestionService } from "../plan-question-service.js";
 import type { ThreadRepo } from "../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../repositories/message-repo.js";
@@ -187,6 +188,7 @@ function buildService(opts: BuildServiceOptions = {}): {
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
       ),
+      { buildAnswerPayload: vi.fn(), findLatestPlanQuestionsMessageId: vi.fn(() => null), dismiss: vi.fn(() => null), buildPlanOutputInstructions: vi.fn(() => "") } as unknown as PlanQuestionService,
   );
 
   return { svc, turnSnapshotRepo, snapshotService, db, runSpy };
