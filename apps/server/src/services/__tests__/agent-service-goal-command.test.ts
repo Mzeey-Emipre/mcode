@@ -179,6 +179,31 @@ describe("AgentService.sendMessage — /goal command", () => {
     expect(userMsg?.content).toBe("/goal analyse this branch");
   });
 
+  it("rolls the installed goal back when the send fails so no Stop-hook gate lingers", async () => {
+    const { svc, providerStub } = buildService(db);
+    providerStub.sendTurn.mockRejectedValueOnce(new Error("provider boom"));
+
+    // sendMessage swallows the send failure (emits an error event, marks the
+    // thread errored) rather than rejecting, so this resolves normally.
+    await svc.sendMessage(
+      thread.id,
+      "/goal analyse this branch",
+      "default",
+      "claude-sonnet-4-6",
+      [],
+      undefined,
+      "claude",
+    );
+
+    // onDispatch installed the goal just before the failing send...
+    expect(providerStub.setGoal).toHaveBeenCalledWith(
+      `mcode-${thread.id}`,
+      "analyse this branch",
+    );
+    // ...and the catch ran onRollback so the gate does not leak into the next turn.
+    expect(providerStub.clearGoal).toHaveBeenCalledWith(`mcode-${thread.id}`);
+  });
+
   it("/goal clear short-circuits — clears the goal, does NOT invoke the provider, emits Ended", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
 
