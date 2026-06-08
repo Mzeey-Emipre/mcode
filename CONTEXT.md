@@ -263,6 +263,42 @@ a child thread and for the "Context compacted" marker placed after
 compaction runs. Messages are what `forked_from_message_id` points to and
 what hidden messages exclude themselves from in user-visible queries.
 
+### Turn outcome
+How a turn ended, as one of three mutually-exclusive states:
+**completed** (the agent finished its work normally), **errored** (the turn
+failed — a crash, a provider error, a spawn race), or **cancelled** (the
+user stopped the turn). The outcome is what the end-of-turn decision keys
+off: a cancelled turn and an errored turn record different tool-call
+statuses, so a running tool call can tell whether it was stopped by the user
+or killed by a failure.
+
+> **Codebase mismatch (distinction pending).** The turn-end paths today
+> carry a bare `isError` boolean, which collapses *errored* and *cancelled*
+> into one state. The three-way outcome replaces it so the two are no longer
+> conflated.
+
+### Empty turn (recordable activity)
+A turn that produced nothing worth keeping: no tool call, no assistant body,
+no narration segment, and no hook. **Recordable activity** is the named
+predicate for the inverse — a turn has recordable activity when any one of
+those contributors is present. A turn with no recordable activity should
+leave no assistant row, so the thread is not cluttered with hollow entries.
+
+> **Behaviour pending.** Today a turn that produces nothing recordable can
+> still write a hollow assistant row, because the row is committed on a
+> separate event before anything decides the turn was empty.
+
+### Transient failure (auto-retry)
+A turn failure that a second attempt would plausibly clear — a stale pooled
+session, a subprocess spawn race, a brief network blip — as distinct from a
+fatal failure that will recur. A transient failure is eligible for one
+automatic retry against a fresh session, gated by an attempt cap so a
+misclassified fatal error cannot cause a retry storm. Which signatures count
+as transient is a small explicit allowlist, not a heuristic.
+
+> **Behaviour pending.** Today every turn failure is treated as terminal and
+> costs a manual re-send, transient or not.
+
 ## Handoff
 
 ### Handoff
@@ -380,6 +416,16 @@ mapped to ladder paths as:
 The maximum input characters a provider accepts per turn. Declared as
 `maxInputCharactersPerTurn`. Decorative for Handoff purposes since Handoff
 delivery went off-band (see `Handoff delivery`); retained as Provider metadata.
+
+### Goal support
+The ability to set, show, and clear a standing **goal** — a condition the
+agent keeps in view across turns — exposed to the user through `/goal`. Goal
+support is a **capability a provider has**, not a provider it is: a provider
+either implements the goal capability or it does not. On a provider that
+lacks it, `/goal` passes through to the model as plain text so the model
+still sees what the user typed. Claude implements it today; Codex is the
+planned next implementer (matching the `/goal` Multi-provider command entry
+under `Slash command`).
 
 ## Internal / hidden state
 
