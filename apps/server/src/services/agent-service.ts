@@ -42,6 +42,7 @@ import { SnapshotService } from "./snapshot-service";
 import { MemoryPressureService } from "./memory-pressure-service";
 import { broadcast } from "../transport/push";
 import { GoalCommand } from "../commands/goal-command";
+import { CommandRouter } from "../commands/command-router";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
@@ -154,9 +155,22 @@ export class AgentService {
       resolvedProvider: import("@mcode/contracts").IAgentProvider;
       effectiveProvider: ProviderId;
       turnRequest: TurnRequest;
-      pendingGoalInstall: string | null;
+      /**
+       * The command side-effect rollback closure (`commandOutcome.onRollback`)
+       * captured for this turn. Run only when the retry budget is exhausted so
+       * a failed send doesn't leave a hidden gate (e.g. a Stop-hook goal) active
+       * on the next turn; a transient retry keeps the side effect installed.
+       */
+      pendingRollback: (() => void) | null;
     }
   >();
+  /**
+   * Owns the mcode-native command namespace (`/goal`, ...). Dispatches each
+   * send through registered `McodeCommand`s before the message reaches the
+   * provider, so the app-interpreted / provider-passed boundary is named in
+   * one place rather than branched inline.
+   */
+  private readonly commandRouter: CommandRouter;
   /**
    * Threads whose `TurnComplete` event has already been processed but whose
    * finalize may still be in-flight or have already finished.
@@ -218,6 +232,9 @@ export class AgentService {
       this.turnSnapshotRepo,
       this.db,
     );
+    this.commandRouter = new CommandRouter([
+      new GoalCommand({ messageRepo: this.messageRepo, db: this.db }, broadcast),
+    ]);
   }
 
   /**
@@ -303,37 +320,36 @@ export class AgentService {
       throw new Error(`Workspace not found: ${thread.workspace_id}`);
     }
 
-    // `/goal` app-native command. The capability is probed through
-    // {@link GoalCapableProvider}: any provider that implements it gets `/goal`
-    // for free, and a provider without it passes the command through as plain
-    // text so the model still sees what the user typed.
+    // Route the message through the mcode-native command namespace before it
+    // reaches the provider. The router probes each command's required
+    // capability and passes through when the resolved provider lacks it, so the
+    // model still sees the raw text on providers without the capability.
     //
-    //   `/goal <condition>` — rewrite (SET): the wire payload becomes a
-    //                         directive and the goal is installed just before
-    //                         dispatch (see deferred install below).
-    //   `/goal clear`       — handled: remove the active goal, no dispatch.
-    //   `/goal` / `/goal show` — handled: show the active goal, no dispatch.
+    //   handled     — a control form was fully serviced; short-circuit the send.
+    //   rewrite     — the wire payload was rewritten (e.g. `/goal <condition>`);
+    //                 fall through and run the lifecycle closures around the
+    //                 send (onDispatch just before, onRollback on failure).
+    //   passthrough — forward the original content to the model unchanged.
     //
-    // Deferred goal install for the SET form: populated here and consumed
-    // immediately before `sendTurn` runs, so a send failure can't leave a
-    // stale goal in the provider map. The catch block on the send also clears
-    // it as a belt-and-suspenders guard for failures between install and
-    // successful dispatch.
-    let pendingGoalInstall: string | null = null;
-    const goalCommand = new GoalCommand(
-      this.providerRegistry.resolve(effectiveProvider),
-      { messageRepo: this.messageRepo, db: this.db },
-      broadcast,
-    );
-    const goalOutcome = goalCommand.handle(threadId, content);
-    if (goalOutcome.kind === "handled") {
-      logger.info("Handled /goal control command", { threadId });
+    // onDispatch is deferred to immediately before `sendTurn` so a send failure
+    // can't leave a stale side effect (e.g. a goal gate) on the provider; the
+    // catch block runs onRollback as a belt-and-suspenders guard.
+    let pendingDispatch: (() => void) | null = null;
+    let pendingRollback: (() => void) | null = null;
+    const commandOutcome = this.commandRouter.route({
+      threadId,
+      content,
+      provider: this.providerRegistry.resolve(effectiveProvider),
+    });
+    if (commandOutcome.kind === "handled") {
+      logger.info("Handled mcode-native command", { threadId });
       return;
     }
-    if (goalOutcome.kind === "rewrite") {
-      pendingGoalInstall = goalOutcome.pendingGoal;
+    if (commandOutcome.kind === "rewrite") {
+      pendingDispatch = commandOutcome.onDispatch ?? null;
+      pendingRollback = commandOutcome.onRollback ?? null;
       messageDisplayContent = content;
-      content = goalOutcome.content;
+      content = commandOutcome.content;
     }
 
     const cwd = this.gitService.resolveWorkingDir(
@@ -545,16 +561,14 @@ export class AgentService {
 
     const providerMessage = providerWireOverride ?? wirePayload;
 
-    // Install the deferred /goal hook gate now, as late as possible before
-    // dispatch. If sendTurn throws synchronously or rejects, the catch block
-    // below tears the goal back out so failures don't leave a hidden gate
-    // active. Only runs for the SET form (pendingGoalInstall is only populated
-    // when the goal command returned a rewrite).
-    if (pendingGoalInstall !== null) {
-      goalCommand.installGoal(threadId, pendingGoalInstall);
-      logger.info("Goal installed; dispatching directive to provider", {
+    // Run the command's deferred dispatch side effect now, as late as possible
+    // before dispatch. If sendTurn throws synchronously or rejects, the catch
+    // block below runs the rollback so failures don't leave a hidden side
+    // effect active. Only set for a rewrite outcome that supplied onDispatch.
+    if (pendingDispatch !== null) {
+      pendingDispatch();
+      logger.info("Command side effect installed; dispatching to provider", {
         threadId,
-        goal: pendingGoalInstall,
       });
     }
 
@@ -606,7 +620,7 @@ export class AgentService {
       resolvedProvider,
       effectiveProvider,
       turnRequest: baseTurnRequest,
-      pendingGoalInstall,
+      pendingRollback,
     });
     for (;;) {
       const dispatch = this.turnRetryDispatchByThread.get(threadId);
@@ -1327,22 +1341,21 @@ export class AgentService {
   private async giveUpTransientTurnRetry(threadId: string, err: unknown): Promise<void> {
     const dispatch = this.turnRetryDispatchByThread.get(threadId);
     const effectiveProvider = dispatch?.effectiveProvider ?? "claude";
-    const pendingGoalInstall = dispatch?.pendingGoalInstall ?? null;
+    const pendingRollback = dispatch?.pendingRollback ?? null;
 
     this.disarmTurnRetryWindow(threadId);
     this.activeSessionIds.delete(threadId);
     if (this.activeSessionIds.size === 0) {
       this.memoryPressureService.markIdle();
     }
-    if (pendingGoalInstall !== null) {
+    // Roll the just-installed command side effect back so a failed send doesn't
+    // leave a hidden gate (e.g. a Stop-hook goal) active on the next turn. Runs
+    // only here, after the retry budget is spent; transient retries keep it.
+    if (pendingRollback !== null) {
       try {
-        new GoalCommand(
-          this.providerRegistry.resolve(effectiveProvider),
-          { messageRepo: this.messageRepo, db: this.db },
-          broadcast,
-        ).rollbackGoal(threadId);
+        pendingRollback();
       } catch (clearErr) {
-        logger.warn("Failed to clear goal after failed send", {
+        logger.warn("Failed to roll back command side effect after failed send", {
           threadId,
           error: clearErr instanceof Error ? clearErr.message : String(clearErr),
         });
@@ -1431,30 +1444,24 @@ export class AgentService {
 
         if (event.type === AgentEventType.Message) {
           try {
-            const { messages: existing } = this.messageRepo.listByThread(event.threadId, 1);
-            const nextSeq =
-              existing.length > 0
-                ? existing[existing.length - 1].sequence + 1
-                : 1;
             // Record the thread's active model on the message so the UI can
             // display which provider/model produced the response, even if the
             // user later switches model mid-conversation.
             const thread = this.threadRepo.findById(event.threadId);
             const modelForMessage = thread?.model ?? null;
-            const msg = this.messageRepo.create(
+            // Buffer the body behind the finalize seam instead of writing it
+            // eagerly. TurnFinalizer.finalize materializes the row only when the
+            // TurnSubstance predicate holds, so a turn that produced no tool call,
+            // body, narration, or hook leaves no assistant row (#578).
+            const messageId = this.turnFinalizer.bufferAssistantBody(
               event.threadId,
-              "assistant",
               event.content,
-              nextSeq,
-              undefined,
-              undefined,
-              undefined,
               modelForMessage,
             );
-            // Carry the persisted message ID so the broadcast schema passes it
+            // Carry the deterministic message ID so the broadcast schema passes it
             // through to the client. The client uses it for stable message identity
             // (branching, dedup across Electron's dual MessagePort+WebSocket channels).
-            event.messageId = msg.id;
+            event.messageId = messageId;
             // Carry the model too so the client's locally-built Message can
             // show the model name in the footer immediately — without it the
             // footer renders without the model until a thread refresh re-fetches
@@ -1474,10 +1481,17 @@ export class AgentService {
 
           // Persist any pending plan-output extracted from streamed text deltas.
           // Guarded on event.messageId so it only runs when the assistant message
-          // was successfully persisted above.
+          // was successfully buffered above.
           const pendingPlan = this.pendingPlanOutputs.get(event.threadId);
           const pendingExitPlan = this.pendingExitPlanMarkdown.get(event.threadId);
           const hadOutputParser = this.planOutputParsers.has(event.threadId);
+          // plans.message_id is a NOT NULL FK to messages.id, so the assistant
+          // row must exist before persistPlanRecord runs. The body is otherwise
+          // buffered until TurnFinalizer.finalize; materialize it eagerly here so
+          // the FK target is present (materializeAssistantRow is idempotent).
+          if ((pendingPlan || pendingExitPlan || hadOutputParser) && event.messageId) {
+            this.turnFinalizer.materializeAssistantRow(event.threadId);
+          }
           if (pendingPlan && event.messageId) {
             this.pendingPlanOutputs.delete(event.threadId);
             this.planOutputParsers.delete(event.threadId);

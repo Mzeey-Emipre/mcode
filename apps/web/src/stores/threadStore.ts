@@ -22,6 +22,7 @@ import {
 import { shallowEqualBy } from "@/lib/shallowEqualBy";
 import { forgetScrollTop } from "@/components/chat/scrollPositionMemory";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
+import { isGoalControlCommand } from "@/lib/goal-command";
 import {
   createThreadHydrator,
   registerThreadHydrator,
@@ -618,6 +619,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyToMessageId, quotedText, planAction) => {
     evictCachedRecord(threadId);
 
+    // A `/goal` control form (show/clear/reset/bare) never starts a provider
+    // turn - the server services it synchronously and returns. It must not
+    // touch turn running-state: marking an idle thread running would strand it
+    // (no Ended clears it, by design - see goal-command.ts), and on send
+    // failure the rollback below must not clear the running-state of a real
+    // turn the control command was issued against mid-flight (#583).
+    const isControlCommand = isGoalControlCommand(content);
+
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
     const userMessage: Message = {
@@ -682,7 +691,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           apiRetry: undefined,
           error: null,
         }),
-        runningThreadIds: new Set([...state.runningThreadIds, threadId]),
+        runningThreadIds: isControlCommand
+          ? state.runningThreadIds
+          : new Set([...state.runningThreadIds, threadId]),
       };
     });
 
@@ -711,8 +722,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         usePlanStore.getState().setGenerating(threadId, false);
       }
       set((state) => {
+        // Control commands never added the thread to running-state, so leave it
+        // untouched on rollback - a real turn in flight may own it (#583).
         const next = new Set(state.runningThreadIds);
-        next.delete(threadId);
+        if (!isControlCommand) next.delete(threadId);
         return {
           records: patchThreadRecord(state.records, threadId, {
             error: String(e),

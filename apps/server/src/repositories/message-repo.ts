@@ -145,6 +145,57 @@ export class MessageRepo {
   }
 
   /**
+   * Insert an assistant message under a caller-supplied deterministic `id`,
+   * skipping the write when a row with that id already exists.
+   *
+   * This mirrors the `INSERT OR IGNORE` pattern the narrative tables use
+   * (see {@link ToolCallRecordRepo}). Because the turn's assistant message has a
+   * deterministic per-turn identity, a replayed write — a re-run finalize, a
+   * retry, or a reconnect replay — collapses onto the same id and is a no-op
+   * rather than a duplicate row. The first write wins; a later ignored write
+   * does not overwrite its content. The returned record reflects the supplied
+   * values (the caller already holds the deterministic id, so re-reading the
+   * stored row is unnecessary). Note: on an ignored write the returned
+   * `content`, `sequence`, and `timestamp` reflect this call's arguments, not
+   * the row already in the database — re-read from the DB if you need the
+   * authoritative stored values.
+   */
+  createAssistantIdempotent(input: {
+    id: string;
+    threadId: string;
+    content: string;
+    sequence: number;
+    model?: string | null;
+  }): Message {
+    const now = new Date().toISOString();
+    const modelValue = input.model ?? null;
+
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, model, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, 0)",
+      )
+      .run(input.id, input.threadId, input.content, now, input.sequence, modelValue);
+
+    return {
+      id: input.id,
+      thread_id: input.threadId,
+      role: "assistant",
+      content: input.content,
+      tool_calls: null,
+      files_changed: null,
+      cost_usd: null,
+      tokens_used: null,
+      timestamp: now,
+      sequence: input.sequence,
+      attachments: null,
+      reply_to_message_id: null,
+      quoted_text: null,
+      model: modelValue,
+      is_internal: false,
+    };
+  }
+
+  /**
    * Return the last N messages for a thread in ascending sequence order.
    *
    * Uses a sub-select pattern: grab the last N rows by descending sequence,

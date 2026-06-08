@@ -17,6 +17,7 @@
  * the delegation methods below and reads it back through
  * {@link getLastPersistedMessageId}.
  */
+import { createHash } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
@@ -35,6 +36,28 @@ interface TurnRef {
   cwd: string;
 }
 
+/** Provider assistant body buffered during a turn, materialized at finalize. */
+interface BufferedBody {
+  content: string;
+  model: string | null;
+}
+
+/**
+ * Derive the deterministic id for a turn's synthesized assistant message from
+ * the turn's anchor — the id of the message immediately preceding the assistant
+ * turn (normally the user message the assistant responds to), or a positional
+ * `seq:N` fallback when the thread has no prior message. Re-running the flush
+ * for the same turn collapses onto this id, so the
+ * {@link MessageRepo.createAssistantIdempotent} write is a no-op rather than a
+ * duplicate row — matching the `INSERT OR IGNORE` identity the narrative tables
+ * already key on.
+ */
+export function deriveTurnAssistantMessageId(threadId: string, anchorId: string): string {
+  return createHash("sha256")
+    .update(`${threadId}\u0000${anchorId}\u0000assistant`)
+    .digest("hex");
+}
+
 /** Owns the single fixed end-of-turn order shared by the completion, error, and cancellation paths. */
 export class TurnFinalizer {
   /** Pre-turn git ref per thread, captured at send time, consumed by the snapshot. */
@@ -45,6 +68,10 @@ export class TurnFinalizer {
   private readonly lastPersistedMessageIdByThread = new Map<string, string>();
   /** Streaming assistant text accumulated from textDelta events, per thread. */
   private readonly streamingAssistantTextByThread = new Map<string, string>();
+  /** Buffered provider assistant body awaiting materialization at finalize, per thread. */
+  private readonly bufferedBodyByThread = new Map<string, BufferedBody>();
+  /** Threads whose assistant row was already materialized this turn (e.g. eagerly for a plan FK). */
+  private readonly materializedThreads = new Set<string>();
 
   constructor(
     private readonly messageRepo: MessageRepo,
@@ -66,6 +93,20 @@ export class TurnFinalizer {
     this.streamingAssistantTextByThread.delete(threadId);
   }
 
+  /**
+   * Buffer the provider's assistant body for the current turn instead of
+   * writing the row immediately. The row is materialized at {@link finalize}
+   * (or eagerly via {@link materializeAssistantRow} when a plan record needs
+   * the foreign-key target) only when {@link hasRecordableActivity} holds, so an
+   * empty turn leaves no hollow row. Returns the deterministic id the row will
+   * take, so callers can carry it on the broadcast and plan-output paths before
+   * the row exists.
+   */
+  bufferAssistantBody(threadId: string, content: string, model: string | null): string {
+    this.bufferedBodyByThread.set(threadId, { content, model });
+    return deriveTurnAssistantMessageId(threadId, this.turnAnchorId(threadId));
+  }
+
   /** Record the pre-turn git ref so the turn's file changes can be diffed at finalize. */
   recordTurnRef(threadId: string, ref: string, cwd: string): void {
     this.turnRefBefore.set(threadId, { ref, cwd });
@@ -77,39 +118,76 @@ export class TurnFinalizer {
   }
 
   /**
+   * TurnSubstance predicate: is this turn worth a persisted assistant row?
+   * True when any single contributor is present — a buffered tool call, a
+   * non-empty assistant body, a narration segment, or a hook. A fully empty
+   * turn returns false so {@link finalize} leaves no hollow assistant row.
+   */
+  hasRecordableActivity(threadId: string): boolean {
+    // An already-materialized row (e.g. eagerly written for a plan FK target)
+    // is itself recordable activity even after its buffered body was consumed.
+    if (this.materializedThreads.has(threadId)) return true;
+    if (this.hasBufferedBody(threadId)) return true;
+    return this.narrativeStore.hasBufferedNarrative(threadId);
+  }
+
+  /** True when a non-empty assistant body is buffered (provider body or streaming text). */
+  private hasBufferedBody(threadId: string): boolean {
+    const body = this.bufferedBodyByThread.get(threadId)?.content.trim();
+    if (body) return true;
+    const streamed = this.streamingAssistantTextByThread.get(threadId)?.trim();
+    return Boolean(streamed);
+  }
+
+  /**
+   * Resolve the anchor id the turn's synthesized assistant row keys on — the id
+   * of the message immediately preceding the assistant turn (normally the user
+   * message), or a positional `seq:N` fallback for an empty thread. Stable
+   * across buffer time and finalize because no message is inserted between them
+   * until the row itself materializes.
+   */
+  private turnAnchorId(threadId: string): string {
+    const { messages } = this.messageRepo.listByThread(threadId, 1);
+    const last = messages.length > 0 ? messages[messages.length - 1] : null;
+    return last ? last.id : `seq:1`;
+  }
+
+  /**
    * End the turn for `threadId` with the given {@link TurnOutcome}. Runs the
    * fixed finalize order and is a no-op if a finalize is already in flight for
-   * the thread (so retry/reconnect replay is safe to lean on). When no assistant
-   * row exists for the turn the buffered narrative is discarded rather than
-   * persisted against the wrong (user) message id.
+   * the thread (so retry/reconnect replay is safe to lean on).
+   *
+   * The assistant row is materialized here, not on the provider `Message` event:
+   * a turn with no recordable activity ({@link hasRecordableActivity} false)
+   * writes no row and broadcasts nothing, so an empty turn leaves the thread
+   * uncluttered. Otherwise the buffered body (or interrupted streaming text) is
+   * written behind {@link materializeAssistantRow} and the narrative persists
+   * against it.
    */
   async finalize(threadId: string, outcome: TurnOutcome): Promise<void> {
     if (this.persistingThreads.has(threadId)) return;
     this.persistingThreads.add(threadId);
     try {
-      // Flush partial assistant text first so any tool rows attach to the
-      // assistant message rather than the preceding user row.
-      this.flushInterruptedAssistantMessage(threadId);
-
-      const bufferedCount = this.narrativeStore.getBufferedToolCalls(threadId).length;
-      const { messages } = this.messageRepo.listByThread(threadId, 1);
-      const lastMessage = messages[messages.length - 1];
-
-      // Persist only against an assistant row. A turn that never produced one
-      // (e.g. a pre-turn CLI-not-found error, or a stop before any output)
-      // would otherwise broadcast turn.persisted with the wrong message id.
-      if (!lastMessage || lastMessage.role !== "assistant") {
-        if (bufferedCount > 0) {
-          logger.warn("Discarded buffered tool calls: no assistant message for turn", {
-            threadId,
-            toolCallCount: bufferedCount,
-          });
-        }
+      // TurnSubstance guard: nothing worth keeping → leave no assistant row.
+      if (!this.hasRecordableActivity(threadId)) {
+        // This turn persisted no row, so a late hook for it must be discarded
+        // rather than mis-attached to the previous turn's still-cached id.
+        this.lastPersistedMessageIdByThread.delete(threadId);
         this.clearTurn(threadId);
         return;
       }
 
-      const messageId = lastMessage.id;
+      const materialized = this.materializeAssistantRow(threadId);
+      if (!materialized) {
+        // The row write failed; discard rather than persist narrative against
+        // the wrong (preceding) message id. Drop the prior id for the same
+        // reason as the empty-turn branch: a late hook has no row to attach to.
+        this.lastPersistedMessageIdByThread.delete(threadId);
+        this.clearTurn(threadId);
+        return;
+      }
+
+      const messageId = materialized.id;
       // Record the message id so late hooks (Stop/SessionEnd) arriving after
       // this point can attach to the correct persisted row.
       this.lastPersistedMessageIdByThread.set(threadId, messageId);
@@ -117,7 +195,7 @@ export class TurnFinalizer {
       const { toolCallCount } = this.narrativeStore.persistNarrative(
         threadId,
         messageId,
-        lastMessage.content ?? "",
+        materialized.content,
         outcome,
       );
 
@@ -180,54 +258,68 @@ export class TurnFinalizer {
   }
 
   /**
-   * Write accumulated streaming assistant text to SQLite when a turn ends
-   * without a provider-issued `message` row (for example a user stop before
-   * the provider's result). Broadcasts `agent.event` so clients align their
-   * in-memory transcripts with the DB. A no-op when text is empty or an
-   * assistant row already exists.
+   * Materialize the turn's assistant row and return its id and stored body.
+   *
+   * The single writer for the turn's assistant message. Reuses an existing
+   * assistant row when one is already last (e.g. a plan turn that eagerly
+   * materialized for its foreign-key target). Otherwise writes the buffered
+   * provider body, or — when the turn was interrupted before the provider
+   * emitted a `Message` — the accumulated streaming text. The deterministic
+   * per-turn id makes a replayed write an `INSERT OR IGNORE` no-op.
+   *
+   * For the interrupted streaming-text path it also broadcasts `agent.event` so
+   * clients align their in-memory transcript with the new DB row; the provider
+   * body path needs no broadcast because the `Message` event already carried
+   * this id to the client. Returns null only when the write throws.
    */
-  private flushInterruptedAssistantMessage(threadId: string): void {
-    const raw = this.streamingAssistantTextByThread.get(threadId);
-    const text = raw?.trim();
-    if (!text) {
-      this.streamingAssistantTextByThread.delete(threadId);
-      return;
-    }
-
+  materializeAssistantRow(threadId: string): { id: string; content: string } | null {
     const { messages } = this.messageRepo.listByThread(threadId, 1);
     const last = messages.length > 0 ? messages[messages.length - 1] : null;
     if (last?.role === "assistant") {
       this.streamingAssistantTextByThread.delete(threadId);
-      return;
+      this.bufferedBodyByThread.delete(threadId);
+      this.materializedThreads.add(threadId);
+      return { id: last.id, content: last.content ?? "" };
     }
 
+    const buffered = this.bufferedBodyByThread.get(threadId);
+    const streamed = this.streamingAssistantTextByThread.get(threadId)?.trim();
+    // Provider body wins (may be empty for a tools-only turn); fall back to the
+    // interrupted streaming text. The streaming-text path is the only one that
+    // broadcasts, since no provider Message event reached the client.
+    const fromProvider = buffered != null;
+    const content = fromProvider ? buffered.content : (streamed ?? "");
+    const model = fromProvider ? buffered.model : (this.threadRepo.findById(threadId)?.model ?? null);
+
     const nextSeq = last ? last.sequence + 1 : 1;
+    const anchorId = last ? last.id : `seq:${nextSeq}`;
     try {
-      const thread = this.threadRepo.findById(threadId);
-      const modelForMessage = thread?.model ?? null;
-      const msg = this.messageRepo.create(
+      const msg = this.messageRepo.createAssistantIdempotent({
+        id: deriveTurnAssistantMessageId(threadId, anchorId),
         threadId,
-        "assistant",
-        text,
-        nextSeq,
-        undefined,
-        undefined,
-        undefined,
-        modelForMessage,
-      );
+        content,
+        sequence: nextSeq,
+        model,
+      });
       this.streamingAssistantTextByThread.delete(threadId);
-      broadcast("agent.event", {
-        type: AgentEventType.Message,
-        threadId,
-        content: text,
-        tokens: null,
-        messageId: msg.id,
-      } satisfies AgentEvent);
+      this.bufferedBodyByThread.delete(threadId);
+      this.materializedThreads.add(threadId);
+      if (!fromProvider && content) {
+        broadcast("agent.event", {
+          type: AgentEventType.Message,
+          threadId,
+          content,
+          tokens: null,
+          messageId: msg.id,
+        } satisfies AgentEvent);
+      }
+      return { id: msg.id, content };
     } catch (err) {
-      logger.error("Failed to persist interrupted assistant message", {
+      logger.error("Failed to materialize assistant message", {
         threadId,
         error: err instanceof Error ? err.message : String(err),
       });
+      return null;
     }
   }
 
@@ -238,6 +330,9 @@ export class TurnFinalizer {
    */
   private clearTurn(threadId: string): void {
     this.turnRefBefore.delete(threadId);
+    this.streamingAssistantTextByThread.delete(threadId);
+    this.bufferedBodyByThread.delete(threadId);
+    this.materializedThreads.delete(threadId);
     this.narrativeStore.clearTurn(threadId);
     this.persistingThreads.delete(threadId);
   }

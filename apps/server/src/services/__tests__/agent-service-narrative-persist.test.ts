@@ -290,7 +290,11 @@ describe("AgentService narrative persistence", () => {
   it("persists late hooks (arriving after persistTurn) attached to the last message id", async () => {
     const { providerEmitter, hookBulk } = build();
 
-    // Emit TurnComplete first to simulate the SDK result arriving before hooks.
+    // The turn must have substance so TurnFinalizer materializes an assistant
+    // row to attach the late hook to (#578: empty turns leave no row). A streamed
+    // body satisfies the TurnSubstance predicate.
+    providerEmitter.emit("event", { type: AgentEventType.TextDelta, threadId: THREAD_ID, delta: "Done." });
+    // Emit TurnComplete to simulate the SDK result arriving before hooks.
     providerEmitter.emit("event", {
       type: AgentEventType.TurnComplete,
       threadId: THREAD_ID,
@@ -330,6 +334,42 @@ describe("AgentService narrative persistence", () => {
     expect(lateHooks[0].messageId).toBe(MSG_ID);
     expect(lateHooks[0].phase).toBe("stop");
     expect(lateHooks[0].durationMs).toBe(42);
+  });
+
+  it("discards a late hook when the turn produced no recordable activity (no row to attach)", async () => {
+    const { providerEmitter, hookBulk } = build();
+
+    // A fully empty turn: no body, tool call, narration, or hook before finalize.
+    // The TurnSubstance predicate is false, so no assistant row is materialized
+    // (#578) and the finalizer records no last-persisted message id.
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      tokensIn: 0,
+      tokensOut: 0,
+      contextWindow: 0,
+    });
+
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    // A late Stop hook now arrives but has nothing to attach to, so it is dropped.
+    providerEmitter.emit("event", {
+      type: AgentEventType.HookStarted,
+      threadId: THREAD_ID,
+      hookName: "Stop",
+      hookType: "stop",
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.HookCompleted,
+      threadId: THREAD_ID,
+      hookName: "Stop",
+      exitCode: 0,
+      durationMs: 42,
+      didBlock: false,
+    });
+
+    expect(hookBulk).not.toHaveBeenCalled();
   });
 
   it("marks a non-final thought as isFinalResponse when its text equals the assistant message body", async () => {

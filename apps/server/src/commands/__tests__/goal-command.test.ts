@@ -7,6 +7,7 @@ import { EventEmitter } from "events";
 import { openMemoryDatabase } from "../../store/database.js";
 import { MessageRepo } from "../../repositories/message-repo.js";
 import { GoalCommand } from "../goal-command.js";
+import type { CommandContext } from "../command-router.js";
 
 /** Seed a workspace + thread so message foreign keys are satisfied. */
 function seedThread(db: Database.Database): string {
@@ -54,26 +55,46 @@ describe("GoalCommand", () => {
     broadcast = vi.fn();
   });
 
-  function build(provider: IAgentProvider) {
+  function build() {
     return new GoalCommand(
-      provider,
       { messageRepo, db },
       broadcast as unknown as (channel: "agent.event", data: AgentEvent) => void,
     );
   }
 
+  /** Build a routing context for the given content and provider. */
+  function ctx(content: string, provider: IAgentProvider): CommandContext {
+    return { threadId, content, provider };
+  }
+
+  describe("matching and capability", () => {
+    it("matches /goal content and ignores other content", () => {
+      const cmd = build();
+      expect(cmd.matches("/goal ship it")).toBe(true);
+      expect(cmd.matches("/goal")).toBe(true);
+      expect(cmd.matches("just a normal message")).toBe(false);
+    });
+
+    it("requires the goal capability on the resolved provider", () => {
+      const cmd = build();
+      expect(cmd.requiredCapability(fakeGoalCapableProvider())).toBe(true);
+      expect(cmd.requiredCapability(fakeNonGoalProvider())).toBe(false);
+    });
+  });
+
   describe("passthrough", () => {
     it("returns passthrough for content that is not a /goal command", () => {
-      const cmd = build(fakeGoalCapableProvider());
-      expect(cmd.handle(threadId, "just a normal message").kind).toBe("passthrough");
+      const cmd = build();
+      expect(cmd.handle(ctx("just a normal message", fakeGoalCapableProvider())).kind).toBe(
+        "passthrough",
+      );
       expect(broadcast).not.toHaveBeenCalled();
     });
 
     it("returns passthrough when the provider lacks the goal capability", () => {
-      const provider = fakeNonGoalProvider();
-      const cmd = build(provider);
+      const cmd = build();
 
-      const outcome = cmd.handle(threadId, "/goal ship the feature");
+      const outcome = cmd.handle(ctx("/goal ship the feature", fakeNonGoalProvider()));
 
       expect(outcome.kind).toBe("passthrough");
       // Nothing persisted or broadcast — the model sees the raw text.
@@ -84,46 +105,29 @@ describe("GoalCommand", () => {
   });
 
   describe("SET form", () => {
-    it("rewrites the content into a directive and surfaces the pending goal", () => {
-      const cmd = build(fakeGoalCapableProvider());
+    it("rewrites the content into a directive and defers the goal install", () => {
+      const provider = fakeGoalCapableProvider();
+      const cmd = build();
 
-      const outcome = cmd.handle(threadId, "/goal analyse this branch");
+      const outcome = cmd.handle(ctx("/goal analyse this branch", provider));
 
       expect(outcome.kind).toBe("rewrite");
       if (outcome.kind !== "rewrite") throw new Error("expected rewrite");
-      expect(outcome.pendingGoal).toBe("analyse this branch");
       // The wire payload becomes a directive that names the condition.
       expect(outcome.content).toContain("analyse this branch");
       expect(outcome.content.toLowerCase()).toContain("directive");
-      // SET does not persist or broadcast on its own — the caller owns the send.
+      // SET does not persist, broadcast, or install on its own — the caller owns
+      // the send and runs the deferred lifecycle closures around it.
       expect(broadcast).not.toHaveBeenCalled();
-    });
-  });
+      expect(provider.setGoal).not.toHaveBeenCalled();
 
-  describe("install / rollback", () => {
-    it("installGoal sets the goal on the provider keyed by the thread session", () => {
-      const provider = fakeGoalCapableProvider();
-      const cmd = build(provider);
+      // onDispatch installs the goal keyed by the thread session.
+      outcome.onDispatch?.();
+      expect(provider.setGoal).toHaveBeenCalledWith(`mcode-${threadId}`, "analyse this branch");
 
-      cmd.installGoal(threadId, "ship the feature");
-
-      expect(provider.setGoal).toHaveBeenCalledWith(`mcode-${threadId}`, "ship the feature");
-    });
-
-    it("rollbackGoal clears the goal on the provider", () => {
-      const provider = fakeGoalCapableProvider();
-      const cmd = build(provider);
-
-      cmd.rollbackGoal(threadId);
-
+      // onRollback tears it back out after a failed send.
+      outcome.onRollback?.();
       expect(provider.clearGoal).toHaveBeenCalledWith(`mcode-${threadId}`);
-    });
-
-    it("install / rollback are no-ops on a non-capable provider", () => {
-      const cmd = build(fakeNonGoalProvider());
-      // Must not throw when the provider lacks the capability.
-      expect(() => cmd.installGoal(threadId, "x")).not.toThrow();
-      expect(() => cmd.rollbackGoal(threadId)).not.toThrow();
     });
   });
 
@@ -138,9 +142,9 @@ describe("GoalCommand", () => {
     it("reports the active goal and short-circuits the send", () => {
       const provider = fakeGoalCapableProvider();
       provider.getGoal.mockReturnValueOnce("ship the feature");
-      const cmd = build(provider);
+      const cmd = build();
 
-      const outcome = cmd.handle(threadId, "/goal");
+      const outcome = cmd.handle(ctx("/goal", provider));
 
       expect(outcome.kind).toBe("handled");
       expect(provider.setGoal).not.toHaveBeenCalled();
@@ -152,18 +156,20 @@ describe("GoalCommand", () => {
         "ship the feature",
       );
 
-      // The composer clears its optimistic running state on Ended.
+      // The reply renders via the Message event. No synthetic Ended: control
+      // commands never start a turn, so emitting Ended would clear the running
+      // state of a real turn in flight (issue #583).
       const events = broadcastEvents();
       expect(events.some((e) => e.type === AgentEventType.Message)).toBe(true);
-      expect(events.some((e) => e.type === AgentEventType.Ended)).toBe(true);
+      expect(events.some((e) => e.type === AgentEventType.Ended)).toBe(false);
     });
 
     it("reports no active goal when none is set", () => {
       const provider = fakeGoalCapableProvider();
       provider.getGoal.mockReturnValueOnce(undefined);
-      const cmd = build(provider);
+      const cmd = build();
 
-      const outcome = cmd.handle(threadId, "/goal show");
+      const outcome = cmd.handle(ctx("/goal show", provider));
 
       expect(outcome.kind).toBe("handled");
       const { messages } = messageRepo.listByThread(threadId, 100);
@@ -174,11 +180,11 @@ describe("GoalCommand", () => {
   });
 
   describe("CLEAR form", () => {
-    it("clears the goal, persists a confirmation pill, and emits Ended", () => {
+    it("clears the goal and persists a confirmation pill without emitting Ended", () => {
       const provider = fakeGoalCapableProvider();
-      const cmd = build(provider);
+      const cmd = build();
 
-      const outcome = cmd.handle(threadId, "/goal clear");
+      const outcome = cmd.handle(ctx("/goal clear", provider));
 
       expect(outcome.kind).toBe("handled");
       expect(provider.clearGoal).toHaveBeenCalledWith(`mcode-${threadId}`);
@@ -188,8 +194,11 @@ describe("GoalCommand", () => {
         /Goal cleared/,
       );
 
+      // The reply renders via Message; no Ended (issue #583) so a real turn in
+      // flight keeps its running-state.
       const events = broadcastEvents();
-      expect(events.some((e) => e.type === AgentEventType.Ended)).toBe(true);
+      expect(events.some((e) => e.type === AgentEventType.Message)).toBe(true);
+      expect(events.some((e) => e.type === AgentEventType.Ended)).toBe(false);
     });
   });
 });

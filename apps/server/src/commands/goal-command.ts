@@ -1,12 +1,12 @@
 import type Database from "better-sqlite3";
 import {
   type IAgentProvider,
-  type IGoalCapable,
   type AgentEvent,
   AgentEventType,
   isGoalCapable,
 } from "@mcode/contracts";
 import type { MessageRepo } from "../repositories/message-repo.js";
+import type { CommandContext, CommandOutcome, McodeCommand } from "./command-router.js";
 
 /** Broadcast function shape used to push agent events to connected clients. */
 type BroadcastFn = (channel: "agent.event", data: AgentEvent) => void;
@@ -17,72 +17,49 @@ interface GoalCommandDeps {
   readonly db: Database.Database;
 }
 
-/**
- * Result of routing a message through {@link GoalCommand.handle}:
- * - `passthrough` — not a goal command (or the provider lacks the capability);
- *   the caller forwards the original content to the model unchanged.
- * - `handled` — a control form (show/clear) was fully serviced and persisted;
- *   the caller should short-circuit the send.
- * - `rewrite` — a SET form; the caller persists `content` as the wire payload
- *   while keeping the original text for the transcript, then installs the goal.
- */
-export type GoalCommandOutcome =
-  | { readonly kind: "passthrough" }
-  | { readonly kind: "handled" }
-  | { readonly kind: "rewrite"; readonly content: string; readonly pendingGoal: string };
-
 /** Matches `/goal`, optionally followed by an argument, across newlines. */
 const GOAL_COMMAND = /^\s*\/goal\b\s*(.*)$/s;
 
 /**
- * Owns the `/goal` app-native command. Constructed per send with the resolved
- * provider, the repositories, and the broadcast function; it holds no turn
- * state. Any provider that implements {@link IGoalCapable} gets `/goal` for
- * free; on a provider without it, every `/goal` is a passthrough so the model
- * still sees what the user typed.
+ * The `/goal` app-native command. Holds only server-lifetime deps; the resolved
+ * provider arrives per send via {@link CommandContext}. Any provider that
+ * implements the goal capability gets `/goal` for free, which the router gates
+ * through {@link requiredCapability}; on a provider without it the router passes
+ * the command through so the model still sees what the user typed.
  */
-export class GoalCommand {
-  /** The capable view of the provider, or null when it lacks goal support. */
-  private readonly capable: IGoalCapable | null;
-
+export class GoalCommand implements McodeCommand {
   constructor(
-    provider: IAgentProvider,
     private readonly deps: GoalCommandDeps,
     private readonly broadcast: BroadcastFn,
-  ) {
-    this.capable = isGoalCapable(provider) ? provider : null;
-  }
+  ) {}
 
   /** The session id the goal hook keys on, derived from the thread id. */
   private sessionName(threadId: string): string {
     return `mcode-${threadId}`;
   }
 
-  /**
-   * Install the goal gate on the provider. Called by the send orchestrator as
-   * late as possible before dispatch so a failed preflight leaves no stale
-   * goal. A no-op when the provider lacks the capability.
-   */
-  installGoal(threadId: string, condition: string): void {
-    this.capable?.setGoal(this.sessionName(threadId), condition);
+  /** Whether the content is a `/goal` invocation. */
+  matches(content: string): boolean {
+    return GOAL_COMMAND.test(content);
+  }
+
+  /** `/goal` is only meaningful on a provider that supports goal gating. */
+  requiredCapability(provider: IAgentProvider): boolean {
+    return isGoalCapable(provider);
   }
 
   /**
-   * Tear the goal back out after a failed send so a hidden Stop-hook gate does
-   * not linger into the next turn. A no-op when the provider lacks the
-   * capability.
+   * Route a `/goal` message. Returns {@link CommandOutcome} describing how the
+   * caller should proceed. The SET form rewrites the wire payload and defers the
+   * actual goal install to the returned {@link CommandOutcome.onDispatch} so a
+   * send failure can't leave a stale goal in the provider; `onRollback` tears it
+   * back out.
    */
-  rollbackGoal(threadId: string): void {
-    this.capable?.clearGoal(this.sessionName(threadId));
-  }
-
-  /**
-   * Route a message. Returns {@link GoalCommandOutcome} describing how the
-   * caller should proceed.
-   */
-  handle(threadId: string, content: string): GoalCommandOutcome {
+  handle(ctx: CommandContext): CommandOutcome {
+    const { threadId, content } = ctx;
     const match = GOAL_COMMAND.exec(content);
-    if (!match || !this.capable) {
+    const capable = isGoalCapable(ctx.provider) ? ctx.provider : null;
+    if (!match || !capable) {
       return { kind: "passthrough" };
     }
 
@@ -94,12 +71,12 @@ export class GoalCommand {
     if (isControl) {
       let replyText: string;
       if (arg === "" || lower === "show") {
-        const current = this.capable.getGoal(this.sessionName(threadId));
+        const current = capable.getGoal(this.sessionName(threadId));
         replyText = current
           ? `Active goal: "${current}". The agent will not stop until this condition is met. Use \`/goal clear\` to remove it.`
           : `No active goal. Use \`/goal <condition>\` to set one.`;
       } else {
-        this.capable.clearGoal(this.sessionName(threadId));
+        capable.clearGoal(this.sessionName(threadId));
         replyText = `Goal cleared. The agent may now end its turn normally.`;
       }
       this.persistControlReply(threadId, content, replyText);
@@ -108,22 +85,31 @@ export class GoalCommand {
 
     // SET form: rewrite the wire payload so the agent starts working on the
     // condition immediately, while the caller pins the original text for the
-    // transcript. The actual setGoal() install is deferred to the caller (via
-    // installGoal) so a send failure can't leave a stale goal in the provider.
+    // transcript. The setGoal() install is deferred to onDispatch (run by the
+    // caller just before sendTurn) so a send failure can't leave a stale goal;
+    // onRollback clears it if the send fails.
+    const session = this.sessionName(threadId);
     return {
       kind: "rewrite",
-      pendingGoal: arg,
       content:
         `A goal has been set for this session: "${arg}". Treat this exactly ` +
         `as your directive — start working toward it now. The session will not ` +
         `stop until the goal is satisfied.`,
+      onDispatch: () => capable.setGoal(session, arg),
+      onRollback: () => capable.clearGoal(session),
     };
   }
 
   /**
    * Persist the user message and a synthetic confirmation pill in one
-   * transaction, then broadcast the pill and an Ended event. Ended clears the
-   * composer's optimistic running state since no provider call ran.
+   * transaction, then broadcast the pill as a Message event.
+   *
+   * No Ended event is emitted: a control command never starts a provider turn,
+   * so it must not touch turn running-state. Emitting Ended here would clear the
+   * client's running-state for a real turn already in flight (the composer keys
+   * `isAgentRunning` on it), which breaks message-queue coordination (#583). The
+   * client mirror skips the optimistic running-state for control commands, so
+   * there is nothing for an Ended to clear in the idle case either.
    */
   private persistControlReply(threadId: string, userText: string, replyText: string): void {
     const { messages: existing } = this.deps.messageRepo.listByThread(threadId, 1);
@@ -141,10 +127,6 @@ export class GoalCommand {
       content: replyText,
       tokens: null,
       messageId: assistantMsgId,
-    } satisfies AgentEvent);
-    this.broadcast("agent.event", {
-      type: AgentEventType.Ended,
-      threadId,
     } satisfies AgentEvent);
   }
 }
