@@ -201,6 +201,33 @@ export function isGoalCapable(provider: IAgentProvider): provider is IGoalCapabl
   );
 }
 
+/**
+ * Narrowed view of an agent provider that can force-discard a pooled session.
+ * Providers pool a warm CLI session keyed by `sessionId`; `stopSession` is a
+ * graceful cancel that may intentionally keep that session warm. `discardSession`
+ * is the harder guarantee: it evicts the pooled session so the next `sendTurn`
+ * spawns a genuinely fresh subprocess. Use `isSessionEvictable()` to narrow an
+ * `IAgentProvider` before calling it.
+ */
+export interface ISessionEvictable extends IAgentProvider {
+  /**
+   * Force-discard the pooled session for `sessionId` so the next `sendTurn`
+   * spawns fresh. Unlike {@link IAgentProvider.stopSession}, this does not
+   * cancel pending permissions, drop goals, or emit an `ended` event — the turn
+   * is expected to continue on a new session (e.g. a transient-failure retry).
+   */
+  discardSession(sessionId: string): void;
+}
+
+/**
+ * Type guard: returns true when the provider can force-discard a pooled session.
+ * Narrows `IAgentProvider` to `ISessionEvictable` so `discardSession` is
+ * callable without casting.
+ */
+export function isSessionEvictable(provider: IAgentProvider): provider is ISessionEvictable {
+  return typeof (provider as Partial<ISessionEvictable>).discardSession === "function";
+}
+
 /** Registry that resolves provider instances by ID. */
 export interface IProviderRegistry {
   /** Get a single provider by ID. Throws if not registered. */

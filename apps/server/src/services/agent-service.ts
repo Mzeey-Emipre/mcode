@@ -9,7 +9,7 @@ import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
 import { isAbsolute } from "path";
 import { logger } from "@mcode/shared";
-import { AgentEventType } from "@mcode/contracts";
+import { AgentEventType, isSessionEvictable } from "@mcode/contracts";
 import type {
   Thread,
   AttachmentMeta,
@@ -58,6 +58,7 @@ import { PlanRepo } from "../repositories/plan-repo";
 import { HandoffCoordinator } from "./handoff/handoff-coordinator.js";
 import { ScopedPreGrantService } from "./scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
+import { TurnErrorPolicy } from "./turn-error-policy.js";
 
 /**
  * Escape special XML characters in a string to prevent injection into
@@ -107,6 +108,55 @@ export class AgentService {
    * {@link TurnFinalizer.finalize} from each turn-end path.
    */
   private readonly turnFinalizer: TurnFinalizer;
+  /**
+   * Classifies a failed send as transient or fatal and caps the automatic
+   * retry, so a brief flake doesn't cost the user a manual re-send while a
+   * misclassified fatal error can't loop.
+   */
+  private readonly turnErrorPolicy = new TurnErrorPolicy();
+  /**
+   * Threads with a transient-failure retry in flight. While a thread is armed,
+   * a transient `Error` event from the failed attempt is hidden from the UI (the
+   * broadcast in the composition root and the errored-finalize here both consult
+   * {@link shouldSuppressTransientTurnError}). The retry's fresh attempt then
+   * surfaces normally, so the user never sees the swallowed flake. Disarmed on
+   * success or just before the final-failure emit, so a give-up still shows.
+   */
+  private readonly retryingThreads = new Set<string>();
+  /**
+   * Threads whose failed-attempt teardown events (`Ended`, `TurnComplete`) must
+   * be swallowed during a transient retry. Without this the failed attempt would
+   * tear down the UI's running state (spinner off, partial stream committed)
+   * before the retry streams, producing a visible gap. Armed when a transient
+   * `Error` is suppressed and again at the start of each retry catch (before
+   * `discardSession`, which can emit a trailing `Ended` without a preceding
+   * `Error`). Consulted by {@link shouldSuppressTurnEnded} and
+   * {@link shouldSuppressTurnComplete}; cleared only after pooled-session
+   * eviction drains (or immediately when no session existed), on success, or on
+   * give-up so the retry's own terminal events still reach the UI.
+   */
+  private readonly endedSuppressionThreads = new Set<string>();
+  /**
+   * Per-thread dispatch state for transient retries. Fire-and-forget providers
+   * (Claude) can return from `sendTurn` before the stream ends, so the retry
+   * window must stay armed until `TurnComplete` and stream failures must be
+   * able to re-dispatch from the `Error` handler rather than only from the
+   * `sendTurn` catch.
+   */
+  private readonly turnRetryDispatchByThread = new Map<
+    string,
+    {
+      attempt: number;
+      retryInFlight: boolean;
+      /** False once the in-flight `sendTurn` promise has settled (success or throw). */
+      sendTurnInFlight: boolean;
+      sessionName: string;
+      resolvedProvider: import("@mcode/contracts").IAgentProvider;
+      effectiveProvider: ProviderId;
+      turnRequest: TurnRequest;
+      pendingGoalInstall: string | null;
+    }
+  >();
   /**
    * Threads whose `TurnComplete` event has already been processed but whose
    * finalize may still be in-flight or have already finished.
@@ -521,74 +571,70 @@ export class AgentService {
             ? { agent: effectiveCopilotAgent }
             : {};
 
-    try {
-      await resolvedProvider.sendTurn({
-        sessionId: sessionName,
-        threadId,
-        message: providerMessage,
-        cwd,
-        model: resolvedModel,
-        fallbackModel,
-        permissionMode,
-        interactionMode: effectiveInteractionMode ?? "build",
-        attachments: persisted.length > 0 ? persisted : undefined,
-        reasoningLevel,
-        ...(effectiveBudget > 0 && { maxBudgetUsd: effectiveBudget }),
-        ...(effectiveTurns > 0 && { maxTurns: effectiveTurns }),
-        resumeFrom,
-        providerOptions,
-      } as TurnRequest);
-      logger.info("Message sent via provider", {
-        threadId,
-        session: sessionName,
-        model: resolvedModel,
-      });
-    } catch (err) {
-      this.activeSessionIds.delete(threadId);
-      if (this.activeSessionIds.size === 0) {
-        this.memoryPressureService.markIdle();
-      }
-      // Roll the just-installed goal back so a failed send doesn't leave a
-      // hidden Stop-hook gate active on the next (possibly unrelated) turn.
-      // Only runs when we got past the deferred install above.
-      if (pendingGoalInstall !== null) {
-        try {
-          goalCommand.rollbackGoal(threadId);
-        } catch (clearErr) {
-          logger.warn("Failed to clear goal after failed send", {
-            threadId,
-            error: clearErr instanceof Error ? clearErr.message : String(clearErr),
-          });
-        }
-      }
-      const rawMessage = err instanceof Error ? err.message : String(err);
-      // Normalize spawn ENOENT into a user-friendly CLI-not-found message that
-      // the frontend CliErrorBanner can detect and display with setup instructions.
-      const errorMessage = this.normalizeProviderError(rawMessage, effectiveProvider);
-      logger.error("Provider send failed", { threadId, error: rawMessage });
-
-      // Emit an error event through the provider so the frontend receives it
-      // via the normal agent.event push pipeline and can display the CLI error banner.
-      // Cast to EventEmitter since all providers extend it, but IAgentProvider only exposes on().
+    // Auto-retry loop for transient send failures. A known-transient signature
+    // (stale pooled session, spawn race, brief network blip) retries once
+    // against a fresh session so a flake doesn't cost the user a manual re-send;
+    // the policy's attempt cap stops a misclassified fatal error from looping.
+    let attemptResumeFrom = resumeFrom;
+    // Arm the retry-suppression window for the whole loop so a transient `Error`
+    // the provider emits mid-attempt (before its rejection reaches the catch
+    // below) is hidden from the UI. The classification gate in
+    // `shouldSuppressTransientTurnError` keeps fatal errors visible; both exits
+    // (success and give-up) disarm before returning.
+    this.retryingThreads.add(threadId);
+    const baseTurnRequest = {
+      sessionId: sessionName,
+      threadId,
+      message: providerMessage,
+      cwd,
+      model: resolvedModel,
+      fallbackModel,
+      permissionMode,
+      interactionMode: effectiveInteractionMode ?? "build",
+      attachments: persisted.length > 0 ? persisted : undefined,
+      reasoningLevel,
+      ...(effectiveBudget > 0 && { maxBudgetUsd: effectiveBudget }),
+      ...(effectiveTurns > 0 && { maxTurns: effectiveTurns }),
+      resumeFrom: attemptResumeFrom,
+      providerOptions,
+    } as TurnRequest;
+    this.turnRetryDispatchByThread.set(threadId, {
+      attempt: 1,
+      retryInFlight: false,
+      sendTurnInFlight: false,
+      sessionName,
+      resolvedProvider,
+      effectiveProvider,
+      turnRequest: baseTurnRequest,
+      pendingGoalInstall,
+    });
+    for (;;) {
+      const dispatch = this.turnRetryDispatchByThread.get(threadId);
+      if (!dispatch) return;
+      dispatch.turnRequest = {
+        ...dispatch.turnRequest,
+        resumeFrom: attemptResumeFrom,
+      };
+      dispatch.sendTurnInFlight = true;
       try {
-        const resolvedProvider = this.providerRegistry.resolve(effectiveProvider) as unknown as import("events").EventEmitter;
-        resolvedProvider.emit("event", {
-          type: "error",
+        await resolvedProvider.sendTurn(dispatch.turnRequest);
+        dispatch.sendTurnInFlight = false;
+        logger.info("Message sent via provider", {
           threadId,
-          error: errorMessage,
-        } satisfies AgentEvent);
-        resolvedProvider.emit("event", {
-          type: "ended",
-          threadId,
-        } satisfies AgentEvent);
-      } catch (emitErr) {
-        logger.warn("Failed to emit error event to provider", {
-          threadId,
-          error: emitErr instanceof Error ? emitErr.message : String(emitErr),
+          session: sessionName,
+          model: resolvedModel,
         });
+        // Fire-and-forget providers return before the stream ends. Keep the retry
+        // window armed until TurnComplete so mid-stream transient errors stay
+        // suppressed and can re-dispatch via the Error handler.
+        return;
+      } catch (err) {
+        dispatch.sendTurnInFlight = false;
+        const retried = await this.runTransientTurnRetry(threadId, err);
+        if (retried) return;
+        await this.giveUpTransientTurnRetry(threadId, err);
+        return;
       }
-
-      this.threadRepo.updateStatus(threadId, "errored");
     }
   }
 
@@ -1029,6 +1075,11 @@ export class AgentService {
     } catch {
       // Provider may not be available
     }
+    // Tear down any armed transient-retry window so a scheduled stream retry
+    // can't re-dispatch after the user stopped, and the suppression flags don't
+    // outlive the turn (they would otherwise swallow the next turn's terminal
+    // events). The stop's own finalize below clears the UI running state.
+    this.disarmTurnRetryWindow(threadId);
     // A user stop ends the turn. The finalizer flushes partial assistant text,
     // persists buffered tool calls (running ones inherit "cancelled"), captures
     // the snapshot, broadcasts turn.persisted, and clears per-turn state.
@@ -1123,6 +1174,203 @@ export class AgentService {
     if (this.activeSessionIds.size === 0) {
       this.memoryPressureService.markIdle();
     }
+  }
+
+  /**
+   * Whether a provider-emitted `Error` for `threadId` should be hidden from the
+   * UI because a transient-failure retry is in flight. True only when the thread
+   * is armed (mid retry loop) AND the error itself classifies as transient, so a
+   * fatal error always reaches the user even during the retry window. Consulted
+   * by the composition root before broadcasting and by the errored-finalize path.
+   */
+  shouldSuppressTransientTurnError(threadId: string, errorMessage: string): boolean {
+    return this.retryingThreads.has(threadId) && this.turnErrorPolicy.classify(errorMessage) === "transient";
+  }
+
+  /**
+   * Whether a provider-emitted `Ended` for `threadId` should be swallowed because
+   * it trails a just-suppressed transient `Error` from a failed attempt. Keeps
+   * the failed attempt's teardown (spinner off, partial-stream commit) from
+   * flashing before the retry re-arms the running state. The flag is one retry
+   * window wide: cleared before each re-dispatch and on the loop's final exit, so
+   * the retry's own (or the give-up's) `Ended` still reaches the UI. Consulted by
+   * the composition root before broadcasting and by the `Ended` cleanup path.
+   *
+   * Only the transient-retry flags gate this. A bare `Ended` with no in-flight
+   * retry means the stream genuinely ended and must reach the cleanup path, or
+   * the thread leaks in the running state. Internal session recreation
+   * (context-window / permission-mode handoff) suppresses the superseded
+   * session's `Ended` at the provider layer (`suppressEndedQueries`), so it never
+   * needs a broad gate here.
+   */
+  shouldSuppressTurnEnded(threadId: string): boolean {
+    if (this.endedSuppressionThreads.has(threadId)) return true;
+    // Swallow `Ended` emitted while a re-dispatch is mid-flight (e.g. the pooled
+    // session's eviction `Ended` during a transient retry).
+    const dispatch = this.turnRetryDispatchByThread.get(threadId);
+    return dispatch?.retryInFlight === true;
+  }
+
+  /**
+   * Whether a provider-emitted `TurnComplete` for `threadId` should be swallowed
+   * because it belongs to a failed attempt that is being retried. Mirrors
+   * {@link shouldSuppressTurnEnded}: both gate the same retry-window teardown.
+   */
+  shouldSuppressTurnComplete(threadId: string): boolean {
+    return this.endedSuppressionThreads.has(threadId);
+  }
+
+  /**
+   * Clears the transient-retry window once the turn has finished or given up.
+   */
+  private disarmTurnRetryWindow(threadId: string): void {
+    this.retryingThreads.delete(threadId);
+    this.endedSuppressionThreads.delete(threadId);
+    this.turnRetryDispatchByThread.delete(threadId);
+  }
+
+  /**
+   * Evicts a pooled provider session and waits for its subprocess to unwind so
+   * any trailing `Ended` from teardown is emitted while suppression is still armed.
+   */
+  private async evictPooledSessionForRetry(
+    provider: import("@mcode/contracts").IAgentProvider,
+    sessionName: string,
+  ): Promise<void> {
+    if (!isSessionEvictable(provider)) return;
+    provider.discardSession(sessionName);
+    const withWait = provider as import("@mcode/contracts").IAgentProvider & {
+      waitForSessionExit?: (sessionId: string, timeoutMs?: number) => Promise<void>;
+    };
+    if (typeof withWait.waitForSessionExit === "function") {
+      await withWait.waitForSessionExit(sessionName, 5000);
+    }
+  }
+
+  /**
+   * Re-dispatches a turn against a fresh session after a transient failure.
+   * Returns true when a retry `sendTurn` was issued and the outer loop should continue.
+   */
+  private async runTransientTurnRetry(threadId: string, triggerErr: unknown): Promise<boolean> {
+    const dispatch = this.turnRetryDispatchByThread.get(threadId);
+    if (!dispatch || dispatch.retryInFlight) return false;
+    if (!this.turnErrorPolicy.shouldRetry(triggerErr, dispatch.attempt)) return false;
+
+    dispatch.retryInFlight = true;
+    this.endedSuppressionThreads.add(threadId);
+    try {
+      try {
+        await this.evictPooledSessionForRetry(dispatch.resolvedProvider, dispatch.sessionName);
+      } catch (evictErr) {
+        logger.warn("Failed to discard pooled session before retry", {
+          threadId,
+          error: evictErr instanceof Error ? evictErr.message : String(evictErr),
+        });
+      }
+      try {
+        this.threadRepo.clearSdkSessionId(threadId);
+      } catch (clearErr) {
+        logger.warn("Failed to clear sdk_session_id before retry", {
+          threadId,
+          error: clearErr instanceof Error ? clearErr.message : String(clearErr),
+        });
+      }
+      logger.warn("Transient send failed; retried against a fresh session", {
+        threadId,
+        attempt: dispatch.attempt,
+        error: triggerErr instanceof Error ? triggerErr.message : String(triggerErr),
+      });
+      dispatch.attempt += 1;
+      dispatch.turnRequest = { ...dispatch.turnRequest, resumeFrom: undefined };
+      this.endedSuppressionThreads.delete(threadId);
+      dispatch.sendTurnInFlight = true;
+      try {
+        await dispatch.resolvedProvider.sendTurn(dispatch.turnRequest);
+        dispatch.sendTurnInFlight = false;
+        return true;
+      } catch (sendErr) {
+        dispatch.sendTurnInFlight = false;
+        if (this.turnErrorPolicy.shouldRetry(sendErr, dispatch.attempt)) {
+          return this.runTransientTurnRetry(threadId, sendErr);
+        }
+        return false;
+      }
+    } finally {
+      dispatch.retryInFlight = false;
+    }
+  }
+
+  /**
+   * Schedules a stream-time transient retry from the `Error` event handler.
+   * Fire-and-forget providers can emit `Error` after `sendTurn` already resolved.
+   */
+  private scheduleTransientStreamRetry(threadId: string, errorMessage: string): void {
+    const dispatch = this.turnRetryDispatchByThread.get(threadId);
+    if (!dispatch || dispatch.retryInFlight) return;
+    void (async () => {
+      if (this.turnErrorPolicy.shouldRetry(errorMessage, dispatch.attempt)) {
+        const retried = await this.runTransientTurnRetry(threadId, errorMessage);
+        if (retried) return;
+      }
+      await this.giveUpTransientTurnRetry(threadId, errorMessage);
+    })().catch((err) => {
+      logger.error("Transient stream retry failed", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
+  /**
+   * Surfaces a terminal failure after the retry cap is exhausted.
+   */
+  private async giveUpTransientTurnRetry(threadId: string, err: unknown): Promise<void> {
+    const dispatch = this.turnRetryDispatchByThread.get(threadId);
+    const effectiveProvider = dispatch?.effectiveProvider ?? "claude";
+    const pendingGoalInstall = dispatch?.pendingGoalInstall ?? null;
+
+    this.disarmTurnRetryWindow(threadId);
+    this.activeSessionIds.delete(threadId);
+    if (this.activeSessionIds.size === 0) {
+      this.memoryPressureService.markIdle();
+    }
+    if (pendingGoalInstall !== null) {
+      try {
+        new GoalCommand(
+          this.providerRegistry.resolve(effectiveProvider),
+          { messageRepo: this.messageRepo, db: this.db },
+          broadcast,
+        ).rollbackGoal(threadId);
+      } catch (clearErr) {
+        logger.warn("Failed to clear goal after failed send", {
+          threadId,
+          error: clearErr instanceof Error ? clearErr.message : String(clearErr),
+        });
+      }
+    }
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    const errorMessage = this.normalizeProviderError(rawMessage, effectiveProvider);
+    logger.error("Provider send failed", { threadId, error: rawMessage });
+
+    try {
+      const resolvedProvider = this.providerRegistry.resolve(effectiveProvider) as unknown as import("events").EventEmitter;
+      resolvedProvider.emit("event", {
+        type: "error",
+        threadId,
+        error: errorMessage,
+      } satisfies AgentEvent);
+      resolvedProvider.emit("event", {
+        type: "ended",
+        threadId,
+      } satisfies AgentEvent);
+    } catch (emitErr) {
+      logger.warn("Failed to emit error event to provider", {
+        threadId,
+        error: emitErr instanceof Error ? emitErr.message : String(emitErr),
+      });
+    }
+
+    this.threadRepo.updateStatus(threadId, "errored");
   }
 
   /**
@@ -1404,6 +1652,11 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.TurnComplete) {
+          // Swallow a failed attempt's `TurnComplete` during a retry so the UI
+          // running state survives until the fresh attempt streams.
+          if (this.shouldSuppressTurnComplete(event.threadId)) {
+            return;
+          }
           // Mark that the turn result has been seen so any hooks that arrive
           // after this point (Stop / SessionEnd / PreCompact) are routed through
           // flushLateHook instead of the normal mid-turn buffer.
@@ -1423,6 +1676,7 @@ export class AgentService {
           // automatically.
           if (!this.compactionInProgressByThread.has(event.threadId)) {
             this.trackSessionEnded(event.threadId);
+            this.disarmTurnRetryWindow(event.threadId);
           }
 
           // Persist context usage so the tracker shows immediately on thread reload.
@@ -1452,9 +1706,27 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.Error) {
+          // Hide a transient failure that is about to be retried: skip the
+          // errored finalize so the failed attempt does not persist a partial
+          // turn or clear per-turn state mid-retry. The fresh attempt owns the
+          // turn's real outcome. Fatal errors are not suppressed (see the gate).
+          if (this.shouldSuppressTransientTurnError(event.threadId, event.error ?? "")) {
+            // Also swallow the `Ended` that trails this error so the failed
+            // attempt's teardown never reaches the UI mid-retry. The retry loop
+            // clears the flag before re-dispatch and on its final exit.
+            this.endedSuppressionThreads.add(event.threadId);
+            const streamDispatch = this.turnRetryDispatchByThread.get(event.threadId);
+            // Only re-dispatch from the stream when sendTurn already settled.
+            // Rejections are retried from the sendTurn catch to avoid double retry.
+            if (streamDispatch && !streamDispatch.sendTurnInFlight) {
+              this.scheduleTransientStreamRetry(event.threadId, event.error ?? "");
+            }
+            return;
+          }
           // The finalizer discards the buffered turn when no assistant row
           // exists (e.g. a pre-turn CLI-not-found failure) rather than
           // broadcasting turn.persisted against the wrong (user) message id.
+          this.disarmTurnRetryWindow(event.threadId);
           this.turnFinalizer.finalize(event.threadId, "errored").catch((err) => {
             logger.error("finalize failed on error event", {
               threadId: event.threadId,
@@ -1546,6 +1818,12 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.Ended) {
+          // Swallow the failed attempt's trailing `Ended` during a retry so the
+          // UI's running state survives until the fresh attempt streams. Skip the
+          // teardown/cleanup below; the retry (or give-up) owns the real `Ended`.
+          if (this.shouldSuppressTurnEnded(event.threadId)) {
+            return;
+          }
           this.trackSessionEnded(event.threadId);
           // Turn-scoped cleanup of any one-shot handoff Read grant. No-op on
           // later turns since the grant is already gone (consumed or cleared).
