@@ -5,6 +5,7 @@ import { WorktreeSection } from "./sections/WorktreeSection";
 import { AppearanceSection } from "./sections/AppearanceSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
 import { TerminalSection } from "./sections/TerminalSection";
+import { ExternalAppsSection } from "./sections/ExternalAppsSection";
 import { PerformanceSection } from "./sections/PerformanceSection";
 import { KeyboardShortcutsSection } from "./sections/KeyboardShortcutsSection";
 import { AboutSection } from "./sections/AboutSection";
@@ -17,6 +18,7 @@ export type SettingsSection =
   | "appearance"
   | "notifications"
   | "terminal"
+  | "externalApps"
   | "keyboard"
   | "performance"
   | "about";
@@ -44,6 +46,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: "keyboard", label: "Keyboard Shortcuts" },
       { id: "notifications", label: "Notifications" },
       { id: "terminal", label: "Terminal" },
+      { id: "externalApps", label: "External Apps" },
     ],
   },
   {
@@ -63,6 +66,7 @@ export const SECTION_MAP: Record<SettingsSection, ComponentType> = {
   appearance: AppearanceSection,
   notifications: NotificationsSection,
   terminal: TerminalSection,
+  externalApps: ExternalAppsSection,
   keyboard: KeyboardShortcutsSection,
   performance: PerformanceSection,
   about: AboutSection,

@@ -33,6 +33,10 @@ interface SettingsProviderPickerProps {
   options: SettingsProviderPickOption[];
   /** Popover alignment relative to the trigger. */
   align?: "start" | "center" | "end";
+  /** Placeholder for the search input. Defaults to a provider-oriented label. */
+  searchPlaceholder?: string;
+  /** Accessible name for the search input. Defaults to a provider-oriented label. */
+  searchAriaLabel?: string;
   /** Optional test id on the trigger button. */
   "data-testid"?: string;
 }
@@ -58,6 +62,8 @@ export function SettingsProviderPicker({
   onChange,
   options,
   align = "end",
+  searchPlaceholder = "Search providers…",
+  searchAriaLabel = "Search providers",
   "data-testid": testId,
 }: SettingsProviderPickerProps) {
   const [open, setOpen] = useState(false);
@@ -108,10 +114,10 @@ export function SettingsProviderPicker({
       >
         <Command shouldFilter={false} className="min-h-0 flex-1 rounded-lg border-0">
           <CommandInput
-            placeholder="Search providers…"
+            placeholder={searchPlaceholder}
             value={query}
             onValueChange={setQuery}
-            aria-label="Search providers"
+            aria-label={searchAriaLabel}
           />
           <CommandList className="max-h-none min-h-0 flex-1 overflow-y-auto">
             <CommandEmpty>No matches.</CommandEmpty>
