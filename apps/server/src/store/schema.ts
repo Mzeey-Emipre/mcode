@@ -71,6 +71,8 @@ export const threads = sqliteTable(
      * `settings.provider.codex.fastMode`.
      */
     codexFastMode: integer("codex_fast_mode"),
+    /** Thread-scoped default open-in app id (ADR-0005 tier 1); null = no override. */
+    defaultOpenInApp: text("default_open_in_app"),
     hasFileChanges: integer("has_file_changes").notNull().default(0),
   },
   (table) => [

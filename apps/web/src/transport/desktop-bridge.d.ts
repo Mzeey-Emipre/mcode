@@ -220,6 +220,12 @@ interface DesktopBridge {
   openInEditor(editor: string, path: string, line?: number): Promise<void>;
   /** Open the OS file explorer at the given directory. */
   openInExplorer(dirPath: string): Promise<void>;
+  /**
+   * Open a path in the given registry app, dispatched to the right adapter by
+   * the main process. `appId` is any id from `listOpenInApps()`; `line` is
+   * honored only by editor apps with a file target.
+   */
+  openIn(appId: string, path: string, line?: number): Promise<void>;
   /** Open a URL in the default browser. */
   openExternalUrl(url: string, workspacePath?: string | null): Promise<void>;
   /** List openable apps (metadata + detection status) from the main-process registry. */

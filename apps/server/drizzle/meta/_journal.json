@@ -85,6 +85,13 @@
       "when": 1779638400000,
       "tag": "0010_clever_skin",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1781017051127,
+      "tag": "0011_robust_redwing",
+      "breakpoints": true
     }
   ]
 }

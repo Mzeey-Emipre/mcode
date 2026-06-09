@@ -27,6 +27,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openInExplorer: (path: string): Promise<void> =>
     ipcRenderer.invoke("open-in-explorer", path),
 
+  /**
+   * Open a path in the given registry app. The main process dispatches the
+   * launch to the matching adapter; `line` is honored only by editor apps with
+   * a file target.
+   */
+  openIn: (appId: string, path: string, line?: number): Promise<void> =>
+    ipcRenderer.invoke("open-in", appId, path, line),
+
   /** Open a URL in the default browser (https, http, mailto, or resolved mcode-workspace file targets). */
   openExternalUrl: (url: string, workspacePath?: string | null): Promise<void> =>
     ipcRenderer.invoke("open-external-url", url, workspacePath ?? null),

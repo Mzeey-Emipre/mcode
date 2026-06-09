@@ -49,6 +49,12 @@ export const ThreadSchema = lazySchema(() =>
   codex_fast_mode: z.boolean().nullable(),
   /** Selected Copilot sub-agent name. Null means provider default (interactive). */
   copilot_agent: z.string().nullable(),
+  /**
+   * Thread-scoped default open-in app id (registry id, e.g. "code"). Tier 1 of
+   * the three-tier resolution in ADR-0005. Null means no override, so the app
+   * falls back to the global default then auto-resolution.
+   */
+  default_open_in_app: z.string().nullable(),
   /** ID of the parent thread this was branched from. Null for root threads. */
   parent_thread_id: z.string().nullable(),
   /** ID of the message in the parent thread that marks the fork point. */
