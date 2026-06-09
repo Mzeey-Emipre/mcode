@@ -113,24 +113,39 @@ export class TerminalService {
   }
 
   /**
-   * Spawn a new PTY session tied to the given thread.
-   * Resolves the working directory from the thread's workspace and worktree path.
+   * Spawn a new PTY session tied to the given scope.
+   *
+   * The scope id is normally a thread id, in which case the working directory
+   * follows the thread's worktree (worktree mode) or the workspace root. When no
+   * thread is active yet — the new-thread composer view — the scope id is a
+   * workspace id and the shell opens at the workspace root (the local checkout),
+   * never a worktree, because no worktree exists until the thread is created.
+   *
+   * @param scopeId - A thread id, or a workspace id for the threadless shell.
    * @returns The unique PTY session ID.
    */
-  create(threadId: string): { ptyId: string; shell: string } {
-    const thread = this.threadRepo.findById(threadId);
-    if (!thread) throw new Error(`Thread not found: ${threadId}`);
+  create(scopeId: string): { ptyId: string; shell: string } {
+    const thread = this.threadRepo.findById(scopeId);
 
-    const workspace = this.workspaceRepo.findById(thread.workspace_id);
-    if (!workspace) {
-      throw new Error(`Workspace not found: ${thread.workspace_id}`);
+    let cwd: string;
+    if (thread) {
+      const workspace = this.workspaceRepo.findById(thread.workspace_id);
+      if (!workspace) {
+        throw new Error(`Workspace not found: ${thread.workspace_id}`);
+      }
+      cwd = this.gitService.resolveWorkingDir(
+        workspace.path,
+        thread.mode,
+        thread.worktree_path,
+      );
+    } else {
+      // Threadless shell: the scope is a workspace, so anchor at its local root.
+      const workspace = this.workspaceRepo.findById(scopeId);
+      if (!workspace) {
+        throw new Error(`Thread or workspace not found: ${scopeId}`);
+      }
+      cwd = workspace.path;
     }
-
-    const cwd = this.gitService.resolveWorkingDir(
-      workspace.path,
-      thread.mode,
-      thread.worktree_path,
-    );
 
     if (
       !isAbsolute(cwd) ||
@@ -140,19 +155,19 @@ export class TerminalService {
       throw new Error(`Invalid working directory: ${cwd}`);
     }
 
-    const threadPtys = this.threadIndex.get(threadId);
+    const threadPtys = this.threadIndex.get(scopeId);
     const count = threadPtys?.size ?? 0;
 
     if (count >= MAX_PTYS_PER_THREAD) {
       throw new Error(
-        `Maximum PTY limit (${MAX_PTYS_PER_THREAD}) reached for thread ${threadId}`,
+        `Maximum PTY limit (${MAX_PTYS_PER_THREAD}) reached for scope ${scopeId}`,
       );
     }
 
     const id = uuid();
     const shell = defaultShell();
 
-    logger.info("Spawning PTY", { id, threadId, shell, cwd });
+    logger.info("Spawning PTY", { id, scopeId, shell, cwd });
 
     const pty = getSpawn()(shell, [], {
       name: TERM_NAME,
@@ -208,7 +223,7 @@ export class TerminalService {
 
     const session: PtySession = {
       id,
-      threadId,
+      threadId: scopeId,
       pty,
       dataDisposable,
       exitDisposable,
@@ -219,7 +234,7 @@ export class TerminalService {
     updatedSet.add(id);
     this.threadIndex = new Map([
       ...this.threadIndex,
-      [threadId, updatedSet],
+      [scopeId, updatedSet],
     ]);
 
     return { ptyId: id, shell: shellBasename(shell) };

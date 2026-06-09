@@ -311,10 +311,19 @@ export function startPushListeners(): void {
           // refresh and let CumulativeView surface a refresh affordance so
           // their scroll position isn't yanked. Otherwise refetch silently
           // so re-entry shows the latest data.
-          const panel = snap.rightPanelByThread[payload.threadId];
+          const wsState = useWorkspaceStore.getState();
+          const workspaceId = wsState.threads.find(
+            (t) => t.id === payload.threadId,
+          )?.workspace_id;
+          const panel = workspaceId
+            ? snap.rightPanelByWorkspace[workspaceId]
+            : undefined;
+          // Open/closed is per-thread; width and tab are workspace-global. Only
+          // defer when this thread is on screen with its panel open on Changes.
           const isViewingAllChanges =
-            panel?.visible === true &&
-            panel.activeTab === "changes" &&
+            wsState.activeThreadId === payload.threadId &&
+            snap.rightPanelVisibleByThread[payload.threadId] === true &&
+            panel?.activeTab === "changes" &&
             snap.viewMode === "all";
 
           if (isViewingAllChanges) {

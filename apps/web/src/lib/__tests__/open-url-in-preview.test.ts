@@ -8,7 +8,7 @@ import {
 } from "../open-url-in-preview";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { createMockWorkspace } from "@/__tests__/mocks/transport";
+import { createMockWorkspace, createMockThread } from "@/__tests__/mocks/transport";
 
 describe("isModifierClick", () => {
   it("returns true for ctrl+click", () => {
@@ -97,6 +97,7 @@ describe("openUrlInPreview", () => {
       workspaces: [ws],
       activeWorkspaceId: ws.id,
       activeThreadId: "thread-1",
+      threads: [createMockThread({ id: "thread-1", workspace_id: ws.id })],
     });
 
     window.desktopBridge = {
@@ -121,8 +122,8 @@ describe("openUrlInPreview", () => {
     openUrlInPreview({ url: "https://example.com/pr/1", threadId: "thread-1" });
     await vi.runAllTimersAsync();
 
-    expect(showRightPanel).toHaveBeenCalledWith("thread-1");
-    expect(setRightPanelTab).toHaveBeenCalledWith("thread-1", "preview");
+    expect(showRightPanel).toHaveBeenCalledWith("ws-1", "thread-1");
+    expect(setRightPanelTab).toHaveBeenCalledWith("ws-1", "preview");
     expect(mockCreate).toHaveBeenCalledWith("thread-1", true);
     expect(mockNavigate).toHaveBeenCalledWith("https://example.com/pr/1", "/tmp/workspace");
     expect(setPreviewUrlForThread).not.toHaveBeenCalled();

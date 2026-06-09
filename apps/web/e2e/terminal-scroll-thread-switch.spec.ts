@@ -79,9 +79,10 @@ async function setActiveThread(
 /** Opens the right-panel terminal tab via store (avoids duplicate Toggle terminal buttons). */
 async function openTerminalTab(
   page: import("@playwright/test").Page,
+  workspaceId: string,
   threadId: string,
 ): Promise<void> {
-  await page.evaluate((tid) => {
+  await page.evaluate(({ wid, tid }) => {
     const stores: unknown[] = (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
     const diffStore = stores.find((s: unknown) => {
       const st = (s as { getState: () => Record<string, unknown> }).getState();
@@ -89,12 +90,13 @@ async function openTerminalTab(
     });
     if (!diffStore) return;
     const api = (diffStore as { getState: () => {
-      showRightPanel: (id: string) => void;
+      showRightPanel: (id: string, threadId?: string) => void;
       setRightPanelTab: (id: string, tab: string) => void;
     } }).getState();
-    api.showRightPanel(tid);
-    api.setRightPanelTab(tid, "terminal");
-  }, threadId);
+    // Open/closed is per-thread; the active tab stays workspace-global.
+    api.showRightPanel(wid, tid);
+    api.setRightPanelTab(wid, "terminal");
+  }, { wid: workspaceId, tid: threadId });
 }
 
 /** Ensures a thread has a terminal instance in the store (mounts pooled xterm). */
@@ -183,7 +185,7 @@ async function seedThreadsAndOpenTerminal(
     },
     { workspace: WORKSPACE, threads: [THREAD_A, THREAD_B], activeId: activeThreadId },
   );
-  await openTerminalTab(page, activeThreadId);
+  await openTerminalTab(page, WS_ID, activeThreadId);
   await ensureThreadTerminal(page, activeThreadId, ptyId);
 }
 
@@ -276,7 +278,7 @@ test.describe("Terminal scroll on workspace thread switch", () => {
     await setActiveThread(page, "thread-b");
     await page.waitForTimeout(600);
     await setActiveThread(page, "thread-a");
-    await openTerminalTab(page, "thread-a");
+    await openTerminalTab(page, WS_ID, "thread-a");
 
     await page.waitForFunction(
       ({ id, expected }) => {
@@ -324,7 +326,7 @@ test.describe("Terminal scroll on workspace thread switch", () => {
 
     await ensureThreadTerminal(page, "thread-b", "pty-thread-b", "powershell");
     await setActiveThread(page, "thread-b");
-    await openTerminalTab(page, "thread-b");
+    await openTerminalTab(page, WS_ID, "thread-b");
     await page.waitForTimeout(400);
 
     const ptyB = await getActivePtyId(page, "thread-b");
@@ -347,7 +349,7 @@ test.describe("Terminal scroll on workspace thread switch", () => {
     );
 
     await setActiveThread(page, "thread-a");
-    await openTerminalTab(page, "thread-a");
+    await openTerminalTab(page, WS_ID, "thread-a");
     await page.waitForTimeout(400);
 
     await expect(page.locator(".xterm").first()).toBeVisible({ timeout: 15_000 });
@@ -403,7 +405,7 @@ test.describe("Terminal scroll on workspace thread switch", () => {
       { workspace: WORKSPACE, threads: [THREAD_A, THREAD_B] },
     );
 
-    await openTerminalTab(page, "thread-a");
+    await openTerminalTab(page, WS_ID, "thread-a");
 
     await page.waitForFunction(
       () =>
