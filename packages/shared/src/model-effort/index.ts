@@ -35,6 +35,7 @@ const XHIGH_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-8", "claude-op
 
 /** Claude model IDs that support the "max" effort tier. */
 const MAX_EFFORT_MODEL_IDS: readonly string[] = [
+  "claude-fable-5",
   "claude-opus-4-8",
   "claude-opus-4-7",
   "claude-opus-4-6",
@@ -52,6 +53,7 @@ const ULTRATHINK_MODEL_IDS: readonly string[] = MAX_EFFORT_MODEL_IDS;
  * The same Opus 4.8/4.7/4.6 + Sonnet 4.6 cohort that supports the max effort tier.
  */
 const ONE_M_CONTEXT_MODEL_IDS: readonly string[] = [
+  "claude-fable-5",
   "claude-opus-4-8",
   "claude-opus-4-7",
   "claude-opus-4-6",
@@ -143,7 +145,7 @@ export function isXhighEffortModel(modelId: string): boolean {
 /**
  * Returns true when the model supports the "max" effort tier.
  *
- * Applies to the opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6 families.
+ * Applies to the fable-5, opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6 families.
  */
 export function isMaxEffortModel(modelId: string): boolean {
   return MAX_EFFORT_MODEL_IDS.includes(normalizeModelId(modelId));
@@ -152,7 +154,7 @@ export function isMaxEffortModel(modelId: string): boolean {
 /**
  * Returns true when the model supports the "ultrathink" virtual tier.
  *
- * Applies to the opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6 families.
+ * Applies to the fable-5, opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6 families.
  * Ultrathink resolves to "max" effort at the SDK boundary and additionally
  * prepends "Ultrathink:\n" to the user prompt.
  */
@@ -162,7 +164,7 @@ export function supportsUltrathink(modelId: string): boolean {
 
 /**
  * Returns true when the model supports the extended 1,000,000-token context
- * window. Applies to opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6.
+ * window. Applies to fable-5, opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6.
  *
  * The window is opted into by appending `[1m]` to the model slug at send
  * time; the Claude Agent SDK handles the beta header internally.

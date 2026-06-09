@@ -12,6 +12,7 @@ import {
 import {
   MODEL_PROVIDERS,
   findModelById,
+  isModelAvailable,
   type ModelProvider,
 } from "@/lib/model-registry";
 import { getTransport } from "@/transport";
@@ -347,6 +348,38 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
     const ctxLabel = formatContextWindow(m.contextWindow);
     const starred = isFavorite(providerId, m.id);
     const selected = isSelected(m.id);
+    const available = isModelAvailable(m);
+    if (!available) {
+      const endDate = new Date(`${m.availableUntil}T00:00:00`).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+      return (
+        <div key={m.id} className="flex w-full items-center gap-0.5 rounded px-1">
+          <span className="h-7 w-7 shrink-0" aria-hidden />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  disabled
+                  data-testid={`model-row-gated-${m.id}`}
+                  aria-label={`${m.label}, no longer available`}
+                  className="flex min-w-0 flex-1 cursor-not-allowed items-center gap-2 rounded px-2 py-1.5 text-xs text-muted-foreground/60"
+                >
+                  <span className="flex-1 truncate text-left">{m.label}</span>
+                  <span className="text-[10px] tabular-nums shrink-0">Ended {endDate}</span>
+                </button>
+              }
+            />
+            <TooltipContent side="right">
+              Subscription access to {m.label} ended on {endDate}.
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      );
+    }
     return (
       <div key={m.id} className="flex w-full items-center gap-0.5 rounded px-1">
         <Button
@@ -387,6 +420,11 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
           {m.multiplier != null && (
             <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
               {m.multiplier}x
+            </span>
+          )}
+          {m.availableUntil && (
+            <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
+              Until {new Date(`${m.availableUntil}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
             </span>
           )}
           {selected && (

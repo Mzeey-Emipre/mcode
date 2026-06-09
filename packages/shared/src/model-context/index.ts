@@ -10,6 +10,7 @@ import type { ContextWindowMode } from "@mcode/contracts";
  * (verified 2026-04-22).
  */
 export const MODEL_CONTEXT_WINDOWS_DEFAULT: Readonly<Record<string, number>> = {
+  "claude-fable-5": 200_000,
   "claude-opus-4-8": 200_000,
   "claude-opus-4-7": 200_000,
   "claude-opus-4-6": 200_000,
@@ -24,6 +25,7 @@ export const MODEL_CONTEXT_WINDOWS_DEFAULT: Readonly<Record<string, number>> = {
  * their default window.
  */
 export const MODEL_CONTEXT_WINDOWS_EXTENDED: Readonly<Record<string, number>> = {
+  "claude-fable-5": 1_000_000,
   "claude-opus-4-8": 1_000_000,
   "claude-opus-4-7": 1_000_000,
   "claude-opus-4-6": 1_000_000,

@@ -9,6 +9,7 @@ import {
   getDefaultModelId,
   getDefaultReasoningLevel,
   isMaxEffortModel,
+  isModelAvailable,
   isXhighEffortModel,
   normalizeReasoningLevelForModel,
   resolveThreadModelId,
@@ -34,11 +35,25 @@ describe("pickProviderModelsForSettings", () => {
 });
 
 describe("ModelRegistry", () => {
-  it("MODEL_PROVIDERS contains Claude with 5 models", () => {
+  it("MODEL_PROVIDERS contains Claude with 6 models", () => {
     const claude = MODEL_PROVIDERS.find((p) => p.id === "claude");
     expect(claude).toBeTruthy();
-    expect(claude?.models).toHaveLength(5);
+    expect(claude?.models).toHaveLength(6);
     expect(claude?.comingSoon).toBe(false);
+  });
+
+  it("findModelById returns Fable 5 with an availability end date", () => {
+    const model = findModelById("claude-fable-5");
+    expect(model?.label).toBe("Claude Fable 5");
+    expect(model?.providerId).toBe("claude");
+    expect(model?.availableUntil).toBe("2026-06-22");
+  });
+
+  it("isModelAvailable honors availableUntil inclusively", () => {
+    const m = { id: "x", label: "X", providerId: "claude", availableUntil: "2026-06-22" };
+    expect(isModelAvailable(m, new Date("2026-06-22T12:00:00Z"))).toBe(true);
+    expect(isModelAvailable(m, new Date("2026-06-23T00:00:00Z"))).toBe(false);
+    expect(isModelAvailable({ id: "y", label: "Y", providerId: "claude" })).toBe(true);
   });
 
   it("findModelById returns Opus 4.8", () => {
@@ -72,9 +87,10 @@ describe("ModelRegistry", () => {
     expect(findProviderForModel("nonexistent")).toBeUndefined();
   });
 
-  it("getDefaultModel returns Claude Opus 4.8", () => {
+  it("getDefaultModel returns the first available Claude model", () => {
     const model = getDefaultModel();
-    expect(model.id).toBe("claude-opus-4-8");
+    expect(model.providerId).toBe("claude");
+    expect(isModelAvailable(model)).toBe(true);
   });
 });
 
