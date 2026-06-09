@@ -1,0 +1,1 @@
+ALTER TABLE `threads` ADD `default_open_in_app` text;

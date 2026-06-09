@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState } from "react";
 import { Terminal, Diff, Globe } from "lucide-react";
-import { OpenInEditorMenu } from "./OpenInEditorMenu";
+import { OpenInAppButton } from "./OpenInAppButton";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { PrSplitButton } from "./PrSplitButton";
 import { useBranchPr } from "@/hooks/useBranchPr";
@@ -150,23 +150,25 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
 
   return (
     <div className="flex items-center justify-between gap-0.5">
-      {dirPath && (
-        <div className="flex items-center gap-0.5 bg-muted/20 rounded-md px-1 py-0.5">
-          {prable && (
-            <PrSplitButton
-              pr={pr}
-              hasCommitsAhead={hasCommitsAhead}
-              onCreatePr={() => setCreatePrOpen(true)}
-              onOpenPr={handleOpenPr}
-              checks={checks}
-              threadId={thread.id}
-              prTitle={openPrDetail?.title}
-              prAuthor={openPrDetail?.author}
-            />
-          )}
-          <OpenInEditorMenu dirPath={dirPath} />
-        </div>
-      )}
+      <div className="flex items-center gap-0.5 bg-muted/20 rounded-md px-1 py-0.5">
+        {prable && dirPath && (
+          <PrSplitButton
+            pr={pr}
+            hasCommitsAhead={hasCommitsAhead}
+            onCreatePr={() => setCreatePrOpen(true)}
+            onOpenPr={handleOpenPr}
+            checks={checks}
+            threadId={thread.id}
+            prTitle={openPrDetail?.title}
+            prAuthor={openPrDetail?.author}
+          />
+        )}
+        <OpenInAppButton
+          dirPath={dirPath}
+          threadId={thread.id}
+          threadOverride={thread.default_open_in_app ?? null}
+        />
+      </div>
 
       {/* Terminal toggle */}
       <Tooltip>

@@ -69,3 +69,28 @@ describe("settings.provider.cursor", () => {
     expect(parsed.provider?.cursor?.idleSessionTtlMinutes).toBe(60);
   });
 });
+
+describe("settings.externalApps.defaultEditor", () => {
+  it("defaults to an empty string (unset)", () => {
+    const s = getDefaultSettings();
+    expect(s.externalApps.defaultEditor).toBe("");
+  });
+
+  it("parses a valid app id", () => {
+    const s = SettingsSchema().parse({ externalApps: { defaultEditor: "code" } });
+    expect(s.externalApps.defaultEditor).toBe("code");
+  });
+
+  it("rejects a non-string default editor", () => {
+    expect(
+      SettingsSchema().safeParse({ externalApps: { defaultEditor: 42 } }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a PartialSettings override without backfilling siblings", () => {
+    const p = PartialSettingsSchema().parse({
+      externalApps: { defaultEditor: "cursor" },
+    });
+    expect(p.externalApps?.defaultEditor).toBe("cursor");
+  });
+});

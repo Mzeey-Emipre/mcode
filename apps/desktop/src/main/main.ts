@@ -28,7 +28,7 @@ import { getExtension as bundledGetExtension, isMcodeWorkspacePreviewUrl } from 
 /** Use snapshot-provided module when available (V8 snapshot skips re-init). */
 const getExtension = globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 
-import { openInRegistry, FILE_EXPLORER_ID } from "./open-in/index.js";
+import { openInRegistry } from "./open-in/index.js";
 import { ServerManager } from "./server-manager.js";
 import { startIpcRelay } from "./ipc-relay.js";
 import {
@@ -240,55 +240,22 @@ function registerIpcHandlers(): void {
     return openInRegistry.list();
   });
 
-  // Open a file or directory in the given editor. Optional `line` jumps the
-  // editor's cursor to that line on open (file targets only — passing a line
-  // with a directory target is harmless, editors ignore it). The editor
-  // allowlist is the registry: only registered editor-kind apps are accepted.
+  // Unified open-in seam: dispatch a path to the registry adapter for `appId`.
+  // The registry rejects unknown ids, so no separate allowlist is needed — the
+  // same handler opens an editor or reveals a path in the file manager. `line`
+  // is honored only by editor adapters with a file target (directories ignore it).
   ipcMain.handle(
-    "open-in-editor",
-    async (
-      _event,
-      editor: string,
-      targetPath: string,
-      line?: number,
-    ) => {
+    "open-in",
+    async (_event, appId: string, targetPath: string, line?: number) => {
       if (!isAbsolute(targetPath)) {
-        throw new Error("Editor path must be absolute");
+        throw new Error("Open-in path must be absolute");
       }
       if (!existsSync(targetPath)) {
         throw new Error(`Path does not exist: ${targetPath}`);
       }
-      if (openInRegistry.kindOf(editor) !== "editor") {
-        throw new Error(`Unknown editor: ${editor}`);
-      }
-      await openInRegistry.launch(editor, { path: targetPath, line });
+      await openInRegistry.launch(appId, { path: targetPath, line });
     },
   );
-
-  // Open in file explorer (dispatched through the registry's file-manager adapter).
-  ipcMain.handle("open-in-explorer", (_event, dirPath: string) => {
-    if (!isAbsolute(dirPath)) {
-      throw new Error("Explorer path must be absolute");
-    }
-    if (!existsSync(dirPath)) {
-      throw new Error(`Path does not exist: ${dirPath}`);
-    }
-    return openInRegistry.launch(FILE_EXPLORER_ID, { path: dirPath });
-  });
-
-  // Open a directory in any registered app by id (editor, git GUI, file
-  // manager). The registry is the allowlist: launch() rejects unknown ids. This
-  // is the kind-agnostic seam the menu uses for non-editor apps such as the git
-  // GUI, which has no dedicated handler.
-  ipcMain.handle("open-in-app", async (_event, appId: string, dirPath: string) => {
-    if (!isAbsolute(dirPath)) {
-      throw new Error("Open-in path must be absolute");
-    }
-    if (!existsSync(dirPath)) {
-      throw new Error(`Path does not exist: ${dirPath}`);
-    }
-    await openInRegistry.launch(appId, { path: dirPath });
-  });
 
   // Open external URL (https, http, mailto), or workspace-relative preview targets in the default browser.
   ipcMain.handle(

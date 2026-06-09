@@ -15,28 +15,21 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   showOpenDialog: (opts: Record<string, unknown>): Promise<string | null> =>
     ipcRenderer.invoke("show-open-dialog", opts),
 
-  /**
-   * Open a path in the specified editor. If `line` is provided, the editor
-   * jumps to that line (file targets only — for directory targets the line
-   * is silently ignored).
-   */
-  openInEditor: (editor: string, path: string, line?: number): Promise<void> =>
-    ipcRenderer.invoke("open-in-editor", editor, path, line),
-
-  /** Open a directory in the system file explorer. */
-  openInExplorer: (path: string): Promise<void> =>
-    ipcRenderer.invoke("open-in-explorer", path),
-
-  /** Open a directory in any registered open-in app by id (editor, git GUI, file manager). */
-  openIn: (appId: string, path: string): Promise<void> =>
-    ipcRenderer.invoke("open-in-app", appId, path),
-
   /** Open a URL in the default browser (https, http, mailto, or resolved mcode-workspace file targets). */
   openExternalUrl: (url: string, workspacePath?: string | null): Promise<void> =>
     ipcRenderer.invoke("open-external-url", url, workspacePath ?? null),
 
   /** List openable apps (metadata + detection status) from the main-process registry. */
   listOpenInApps: (): Promise<unknown> => ipcRenderer.invoke("list-open-in-apps"),
+
+  /**
+   * Open a path in the given registry app. The main-process registry dispatches
+   * to the matching adapter, so a single call opens an editor or reveals a path
+   * in the file manager. `line` jumps an editor to that line for file targets;
+   * other apps ignore it.
+   */
+  openIn: (appId: string, path: string, line?: number): Promise<void> =>
+    ipcRenderer.invoke("open-in", appId, path, line),
 
   /** Read an image from the clipboard and save it as a temp JPEG. */
   readClipboardImage: (): Promise<unknown> =>

@@ -44,8 +44,8 @@ vi.mock("@/stores/diffStore", () => {
   return { useDiffStore: store };
 });
 
-vi.mock("./OpenInEditorMenu", () => ({
-  OpenInEditorMenu: () => <div data-testid="open-in-editor" />,
+vi.mock("./OpenInAppButton", () => ({
+  OpenInAppButton: () => <div data-testid="open-in-app" />,
 }));
 
 vi.mock("./CreatePrDialog", () => ({
@@ -90,6 +90,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     thinking: null,
     codex_fast_mode: null,
     copilot_agent: null,
+    default_open_in_app: null,
     parent_thread_id: null,
     forked_from_message_id: null,
     last_compact_summary: null,

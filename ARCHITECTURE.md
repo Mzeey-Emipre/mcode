@@ -542,10 +542,9 @@ The preload script exposes `window.desktopBridge` for operations that require na
 |--------|---------|
 | `getServerUrl()` | Get the WebSocket URL with auth token |
 | `showOpenDialog(options)` | Native folder picker dialog |
-| `openInEditor(editor, path)` | Launch VS Code, Cursor, or Zed |
-| `openInExplorer(path)` | Open in system file explorer |
 | `openExternalUrl(url)` | Open URL in default browser (https only) |
 | `listOpenInApps()` | List openable apps (editors, file manager) with detection status |
+| `openIn({ appId, target })` | Open a target in the app with `appId`; the registry dispatches to the matching adapter (editor launch or file-manager reveal) |
 | `readClipboardImage()` | Read image from clipboard, save as temp JPEG |
 | `getLogPath()` | Get the log directory path |
 | `getRecentLogs(lines)` | Read recent log lines |

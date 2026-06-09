@@ -54,21 +54,6 @@ describe("OpenInRegistry", () => {
     });
   });
 
-  describe("kindOf", () => {
-    it("returns the kind for a registered app and undefined otherwise", () => {
-      const registry = new OpenInRegistry([
-        fakeAdapter({ id: "code", kind: "editor" }),
-        fakeAdapter({ id: "github-desktop", kind: "gitGui" }),
-        fakeAdapter({ id: "explorer", kind: "fileManager" }),
-      ]);
-
-      expect(registry.kindOf("code")).toBe("editor");
-      expect(registry.kindOf("github-desktop")).toBe("gitGui");
-      expect(registry.kindOf("explorer")).toBe("fileManager");
-      expect(registry.kindOf("unknown")).toBeUndefined();
-    });
-  });
-
   describe("launch", () => {
     it("dispatches to the matching adapter with the target", async () => {
       const code = fakeAdapter({ id: "code" });

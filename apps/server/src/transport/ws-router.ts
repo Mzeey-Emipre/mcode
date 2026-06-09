@@ -307,6 +307,7 @@ async function dispatch(
         context_window_mode: params.contextWindow,
         thinking: params.thinking,
         codex_fast_mode: params.codexFastMode,
+        default_open_in_app: params.defaultOpenInApp,
       });
     case "thread.markViewed":
       deps.threadService.markViewed(params.threadId);

@@ -39,8 +39,8 @@ interface FileEditorPickerProps {
 /**
  * DropdownMenu picker for opening a single file in any installed editor at
  * a specific line, with a Reveal in file manager fallback. Mirrors the
- * existing OpenInEditorMenu pattern from the chat header but scoped to a
- * file (with optional goto-line) instead of the workspace directory.
+ * OpenInAppButton pattern from the chat header but scoped to a file (with
+ * optional goto-line) instead of the workspace directory.
  *
  * When no editors are detected, the menu collapses to just the Reveal item
  * — the file manager fallback is always available.
@@ -54,6 +54,7 @@ export function FileEditorPicker({
 }: FileEditorPickerProps) {
   const apps = useOpenInApps();
   const editors = apps.filter((app) => app.kind === "editor" && app.detected);
+  const fileManager = apps.find((app) => app.kind === "fileManager");
   const entries: EditorMeta[] = editors.map((app) => ({
     id: app.id,
     label: app.label,
@@ -63,7 +64,7 @@ export function FileEditorPicker({
   const handleOpenEditor = (editorId: string) => {
     const label = editors.find((app) => app.id === editorId)?.label ?? editorId;
     getTransport()
-      .openInEditor(editorId, filePath, line)
+      .openIn(editorId, filePath, line)
       .catch((err: unknown) =>
         useToastStore
           .getState()
@@ -76,8 +77,9 @@ export function FileEditorPicker({
   };
 
   const handleReveal = () => {
+    if (!fileManager) return;
     getTransport()
-      .openInExplorer(dirPath)
+      .openIn(fileManager.id, dirPath)
       .catch((err: unknown) =>
         useToastStore
           .getState()

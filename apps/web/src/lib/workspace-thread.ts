@@ -117,6 +117,7 @@ export function buildPlaceholderWorkspaceThread(params: {
     parent_thread_id: params.parentThreadId ?? null,
     forked_from_message_id: params.forkedFromMessageId ?? null,
     last_compact_summary: null,
+    default_open_in_app: null,
     clientPreparing: true,
     clientError: null,
     clientQueuedMessage: params.queuedMessage,

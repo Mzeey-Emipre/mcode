@@ -122,4 +122,3 @@ export type {
   OpenInAppKind,
   OpenInAppMeta,
 } from "./types.js";
-export { FILE_EXPLORER_ID } from "./file-explorer-adapter.js";
