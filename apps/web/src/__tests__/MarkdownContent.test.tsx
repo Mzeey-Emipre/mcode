@@ -4,7 +4,7 @@ import { MarkdownContent } from "../components/chat/MarkdownContent";
 import { CodeBlock } from "../components/chat/CodeBlock";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useDiffStore } from "../stores/diffStore";
-import { createMockWorkspace } from "./mocks/transport";
+import { createMockWorkspace, createMockThread } from "./mocks/transport";
 
 // Mock CodeBlock to avoid shiki/worker dependencies
 vi.mock("../components/chat/MermaidBlock", () => ({
@@ -113,6 +113,7 @@ describe("MarkdownContent workspace preview navigation", () => {
       workspaces: [ws],
       activeWorkspaceId: ws.id,
       activeThreadId: "thread-prev",
+      threads: [createMockThread({ id: "thread-prev", workspace_id: ws.id })],
     });
     useDiffStore.setState({
       showRightPanel,
@@ -165,8 +166,8 @@ describe("MarkdownContent workspace preview navigation", () => {
       fireEvent.click(link!, { ctrlKey: true });
       await vi.runAllTimersAsync();
     });
-    expect(showRightPanel).toHaveBeenCalledWith("thread-prev");
-    expect(setRightPanelTab).toHaveBeenCalledWith("thread-prev", "preview");
+    expect(showRightPanel).toHaveBeenCalledWith("ws-prev", "thread-prev");
+    expect(setRightPanelTab).toHaveBeenCalledWith("ws-prev", "preview");
     expect(mockCreate).toHaveBeenCalledWith("thread-prev", true);
     expect(mockNavigate).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",

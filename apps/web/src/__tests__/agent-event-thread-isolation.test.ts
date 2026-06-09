@@ -179,7 +179,7 @@ describe("Agent event thread isolation", () => {
       await Promise.resolve();
 
       const { useDiffStore } = await import("@/stores/diffStore");
-      expect(useDiffStore.getState().rightPanelByThread[THREAD_A]?.visible).toBeFalsy();
+      expect(useDiffStore.getState().getRightPanelVisible("ws-1", THREAD_A)).toBeFalsy();
     });
 
     it("does not auto-open task panel on TodoWrite", async () => {
@@ -197,7 +197,7 @@ describe("Agent event thread isolation", () => {
       await Promise.resolve();
 
       const { useDiffStore } = await import("@/stores/diffStore");
-      expect(useDiffStore.getState().rightPanelByThread[THREAD_A]?.visible).toBeFalsy();
+      expect(useDiffStore.getState().getRightPanelVisible("ws-1", THREAD_A)).toBeFalsy();
     });
   });
 

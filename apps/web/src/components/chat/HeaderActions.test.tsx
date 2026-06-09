@@ -31,13 +31,14 @@ vi.mock("@/stores/diffStore", () => {
   const getRightPanel = vi.fn().mockReturnValue({ visible: false, width: 380, activeTab: "tasks" });
   const actions = {
     getRightPanel,
+    getRightPanelVisible: vi.fn().mockReturnValue(false),
     showRightPanel: vi.fn(),
     hideRightPanel: vi.fn(),
     setRightPanelTab: vi.fn(),
   };
   const store = Object.assign(
     vi.fn((selector: (s: unknown) => unknown) =>
-      selector({ rightPanelByThread: {}, ...actions }),
+      selector({ rightPanelByWorkspace: {}, ...actions }),
     ),
     { getState: vi.fn().mockReturnValue(actions) },
   );

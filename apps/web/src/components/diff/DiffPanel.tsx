@@ -15,6 +15,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
  */
 export function DiffPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const viewMode = useDiffStore((s) => s.viewMode);
   const snapshots = useDiffStore((s) =>
     activeThreadId ? s.snapshotsByThread[activeThreadId] : undefined,
@@ -26,7 +27,11 @@ export function DiffPanel() {
     activeThreadId ? (s.snapshotsPendingByThread[activeThreadId] ?? false) : false,
   );
   const panelState = useDiffStore((s) =>
-    activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined,
+    activeWorkspaceId ? s.rightPanelByWorkspace[activeWorkspaceId] : undefined,
+  );
+  // Open/closed is per-thread; the active tab is workspace-global.
+  const panelVisible = useDiffStore((s) =>
+    activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId) : false,
   );
   const setSnapshots = useDiffStore((s) => s.setSnapshots);
   const setSnapshotsLoading = useDiffStore((s) => s.setSnapshotsLoading);
@@ -60,8 +65,8 @@ export function DiffPanel() {
   useEffect(() => {
     if (!activeThreadId || !snapshotsPending) return;
     const isViewingAllChanges =
-      panelState?.visible === true &&
-      panelState.activeTab === "changes" &&
+      panelVisible &&
+      panelState?.activeTab === "changes" &&
       viewMode === "all";
     if (isViewingAllChanges) return;
 
@@ -75,7 +80,7 @@ export function DiffPanel() {
     return () => {
       cancelled = true;
     };
-  }, [activeThreadId, snapshotsPending, panelState, viewMode, setSnapshots]);
+  }, [activeThreadId, snapshotsPending, panelVisible, panelState, viewMode, setSnapshots]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden min-h-0">

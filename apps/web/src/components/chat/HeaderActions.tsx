@@ -91,55 +91,64 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   }, [pr, thread.id]);
 
   const terminalVisible = useDiffStore((s) => {
-    if (!thread?.id) return false;
-    const panel = s.rightPanelByThread[thread.id];
-    return (panel?.visible ?? false) && (panel?.activeTab ?? "tasks") === "terminal";
+    if (!thread?.workspace_id) return false;
+    const panel = s.rightPanelByWorkspace[thread.workspace_id];
+    return (
+      s.getRightPanelVisible(thread.workspace_id, thread.id) &&
+      (panel?.activeTab ?? "tasks") === "terminal"
+    );
   });
   const toggleTerminal = useCallback(() => {
     executeCommand("terminal.toggle");
   }, []);
 
   const diffActive = useDiffStore((s) => {
-    if (!thread?.id) return false;
-    const panel = s.rightPanelByThread[thread.id];
-    return (panel?.visible ?? false) && (panel?.activeTab ?? "tasks") === "changes";
+    if (!thread?.workspace_id) return false;
+    const panel = s.rightPanelByWorkspace[thread.workspace_id];
+    return (
+      s.getRightPanelVisible(thread.workspace_id, thread.id) &&
+      (panel?.activeTab ?? "tasks") === "changes"
+    );
   });
 
   const previewActive = useDiffStore((s) => {
-    if (!thread?.id) return false;
-    const panel = s.rightPanelByThread[thread.id];
-    return (panel?.visible ?? false) && (panel?.activeTab ?? "tasks") === "preview";
+    if (!thread?.workspace_id) return false;
+    const panel = s.rightPanelByWorkspace[thread.workspace_id];
+    return (
+      s.getRightPanelVisible(thread.workspace_id, thread.id) &&
+      (panel?.activeTab ?? "tasks") === "preview"
+    );
   });
 
   const togglePreview = useCallback(() => {
-    if (!thread?.id) return;
-    const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
+    if (!thread?.workspace_id) return;
+    const { getRightPanel, getRightPanelVisible, showRightPanel, setRightPanelTab, hideRightPanel } =
       useDiffStore.getState();
-    const panel = getRightPanel(thread.id);
-    if (!panel.visible) {
-      showRightPanel(thread.id);
-      setRightPanelTab(thread.id, "preview");
+    const panel = getRightPanel(thread.workspace_id);
+    if (!getRightPanelVisible(thread.workspace_id, thread.id)) {
+      showRightPanel(thread.workspace_id, thread.id);
+      setRightPanelTab(thread.workspace_id, "preview");
     } else if (panel.activeTab !== "preview") {
-      setRightPanelTab(thread.id, "preview");
+      setRightPanelTab(thread.workspace_id, "preview");
     } else {
-      hideRightPanel(thread.id);
+      hideRightPanel(thread.workspace_id, thread.id);
     }
-  }, [thread?.id]);
+  }, [thread?.workspace_id, thread?.id]);
 
   const toggleDiff = useCallback(() => {
-    if (!thread?.id) return;
-    const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
+    if (!thread?.workspace_id) return;
+    const { getRightPanel, getRightPanelVisible, showRightPanel, setRightPanelTab, hideRightPanel } =
       useDiffStore.getState();
-    const panel = getRightPanel(thread.id);
-    if (!panel.visible) {
-      showRightPanel(thread.id);
-      setRightPanelTab(thread.id, "changes");
+    const panel = getRightPanel(thread.workspace_id);
+    if (!getRightPanelVisible(thread.workspace_id, thread.id)) {
+      showRightPanel(thread.workspace_id, thread.id);
+      setRightPanelTab(thread.workspace_id, "changes");
     } else if (panel.activeTab !== "changes") {
-      setRightPanelTab(thread.id, "changes");
+      setRightPanelTab(thread.workspace_id, "changes");
     } else {
-      hideRightPanel(thread.id);
+      hideRightPanel(thread.workspace_id, thread.id);
     }
-  }, [thread?.id]);
+  }, [thread?.workspace_id, thread?.id]);
 
   const handleOpenPr = useCallback(
     (url: string, event?: React.MouseEvent) => {

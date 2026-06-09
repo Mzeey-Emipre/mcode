@@ -94,12 +94,13 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
 
   /** Open the diff panel focused on the Changes tab, scrolled to this turn's snapshot. */
   const handleViewAllDiffs = useCallback(async () => {
-    const threadId = useWorkspaceStore.getState().activeThreadId;
-    if (!threadId) return;
+    const { activeThreadId: threadId, activeWorkspaceId: workspaceId } =
+      useWorkspaceStore.getState();
+    if (!threadId || !workspaceId) return;
 
     const store = useDiffStore.getState();
-    store.showRightPanel(threadId);
-    store.setRightPanelTab(threadId, "changes");
+    store.showRightPanel(workspaceId, threadId);
+    store.setRightPanelTab(workspaceId, "changes");
     store.setViewMode("by-turn");
 
     // Ensure snapshots are loaded so the panel can display this turn

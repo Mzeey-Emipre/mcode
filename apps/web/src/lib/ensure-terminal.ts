@@ -1,16 +1,35 @@
 import { useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { getTransport } from "@/transport";
 
 /**
- * Threads with an in-flight terminal creation. Shared module-level guard so
+ * Scopes with an in-flight terminal creation. Shared module-level guard so
  * concurrent triggers (tab click, the mod+j keybinding, React strict-mode
- * double-invoked effects) spawn at most one terminal per thread.
+ * double-invoked effects) spawn at most one terminal per scope.
  */
 const creationInFlight = new Set<string>();
 
 /**
- * Spawns a terminal for the thread when it has none, so opening the Terminal
+ * Resolve the workspace that owns a terminal scope. The scope is a thread id
+ * when a thread is active, or a workspace id for the threadless new-thread
+ * shell, so look the scope up as a thread first and fall back to a workspace.
+ */
+function resolveScopeWorkspace(scopeId: string): {
+  workspaceId: string | undefined;
+  isThread: boolean;
+} {
+  const ws = useWorkspaceStore.getState();
+  const thread = ws.threads.find((t) => t.id === scopeId);
+  if (thread) return { workspaceId: thread.workspace_id, isThread: true };
+  if (ws.workspaces.some((w) => w.id === scopeId)) {
+    return { workspaceId: scopeId, isThread: false };
+  }
+  return { workspaceId: undefined, isThread: false };
+}
+
+/**
+ * Spawns a terminal for the scope when it has none, so opening the Terminal
  * tab lands the user in a ready shell instead of an empty pane (the "anticipate
  * the next step" product principle).
  *
@@ -19,38 +38,46 @@ const creationInFlight = new Set<string>();
  * (the user closed the panel or switched tabs mid-creation), the orphaned PTY
  * is killed rather than added to the store.
  *
- * @param threadId - The thread to ensure a terminal for.
+ * @param scopeId - A thread id, or a workspace id for the threadless shell.
  */
-export function ensureTerminalForThread(threadId: string): void {
-  if (creationInFlight.has(threadId)) return;
-  const existing = useTerminalStore.getState().terminals[threadId];
+export function ensureTerminalForScope(scopeId: string): void {
+  if (creationInFlight.has(scopeId)) return;
+  const existing = useTerminalStore.getState().terminals[scopeId];
   if (existing && existing.length > 0) return;
 
-  creationInFlight.add(threadId);
+  creationInFlight.add(scopeId);
   try {
     const transport = getTransport();
     transport
-      .terminalCreate(threadId)
+      .terminalCreate(scopeId)
       .then(({ ptyId, shell }) => {
-        creationInFlight.delete(threadId);
-        const panel = useDiffStore.getState().getRightPanel(threadId);
+        creationInFlight.delete(scopeId);
+        // Width/tab are workspace-global; open/closed is per-thread (or the
+        // workspace threadless shell). Resolve the owning workspace to read
+        // panel state, passing the thread id only when the scope is a thread.
+        const { workspaceId, isThread } = resolveScopeWorkspace(scopeId);
+        const diff = useDiffStore.getState();
+        const panel = workspaceId ? diff.getRightPanel(workspaceId) : undefined;
+        const panelVisible = workspaceId
+          ? diff.getRightPanelVisible(workspaceId, isThread ? scopeId : undefined)
+          : false;
         // Panel closed or tab switched while creation was in flight — dispose
         // the orphaned PTY instead of adding a terminal nobody asked to see.
-        if (!panel.visible || panel.activeTab !== "terminal") {
+        if (!panel || !panelVisible || panel.activeTab !== "terminal") {
           transport.terminalKill(ptyId).catch(() => {});
           return;
         }
-        const current = useTerminalStore.getState().terminals[threadId];
+        const current = useTerminalStore.getState().terminals[scopeId];
         if (!current || current.length === 0) {
-          useTerminalStore.getState().addTerminal(threadId, ptyId, shell);
+          useTerminalStore.getState().addTerminal(scopeId, ptyId, shell);
         } else {
           transport.terminalKill(ptyId).catch(() => {});
         }
       })
       .catch(() => {
-        creationInFlight.delete(threadId);
+        creationInFlight.delete(scopeId);
       });
   } catch {
-    creationInFlight.delete(threadId);
+    creationInFlight.delete(scopeId);
   }
 }

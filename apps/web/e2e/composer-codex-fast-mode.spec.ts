@@ -72,7 +72,7 @@ async function setupCodexChat(page: Page): Promise<void> {
         return "showRightPanel" in st && "hideRightPanel" in st;
       });
       if (diffStore) {
-        diffStore.getState().hideRightPanel(th.id);
+        diffStore.getState().hideRightPanel(ws.id);
       }
     },
     { ws: WORKSPACE, th: CODEX_THREAD },

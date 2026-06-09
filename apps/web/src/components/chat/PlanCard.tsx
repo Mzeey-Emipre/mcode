@@ -15,6 +15,7 @@ interface PlanCardProps {
  */
 export function PlanCard({ messageId }: PlanCardProps) {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const allPlans = usePlanStore((s) =>
     activeThreadId ? s.plansByThread[activeThreadId] : undefined,
   );
@@ -24,13 +25,13 @@ export function PlanCard({ messageId }: PlanCardProps) {
     [allPlans, messageId],
   );
 
-  if (!plan || !activeThreadId) return null;
+  if (!plan || !activeThreadId || !activeWorkspaceId) return null;
 
   const sectionCount = plan.sectionsJson?.length ?? 0;
 
   const handleClick = () => {
-    useDiffStore.getState().showRightPanel(activeThreadId);
-    useDiffStore.getState().setRightPanelTab(activeThreadId, "tasks");
+    useDiffStore.getState().showRightPanel(activeWorkspaceId, activeThreadId);
+    useDiffStore.getState().setRightPanelTab(activeWorkspaceId, "tasks");
     usePlanStore.getState().setActiveVersion(activeThreadId, plan.version);
   };
 

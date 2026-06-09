@@ -176,17 +176,19 @@ function ComposerOptionsMenu({
   const hasTasks = useTaskStore(
     (s) => !!(threadId && s.tasksByThread[threadId]?.length),
   );
-  const panelVisible = useDiffStore(
-    (s) => !!(threadId && s.rightPanelByThread[threadId]?.visible),
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const panelVisible = useDiffStore((s) =>
+    activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, threadId) : false,
   );
 
   const toggleTasksPanel = () => {
-    if (!threadId) return;
+    // Scope is thread-only; open/closed is per-thread, width/tab workspace-keyed.
+    if (!threadId || !activeWorkspaceId) return;
     if (panelVisible) {
-      useDiffStore.getState().hideRightPanel(threadId);
+      useDiffStore.getState().hideRightPanel(activeWorkspaceId, threadId);
     } else {
-      useDiffStore.getState().showRightPanel(threadId);
-      useDiffStore.getState().setRightPanelTab(threadId, "tasks");
+      useDiffStore.getState().showRightPanel(activeWorkspaceId, threadId);
+      useDiffStore.getState().setRightPanelTab(activeWorkspaceId, "tasks");
     }
   };
 
@@ -335,17 +337,19 @@ function InlineComposerOptions({
   const hasTasks = useTaskStore(
     (s) => !!(threadId && s.tasksByThread[threadId]?.length),
   );
-  const panelVisible = useDiffStore(
-    (s) => !!(threadId && s.rightPanelByThread[threadId]?.visible),
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const panelVisible = useDiffStore((s) =>
+    activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, threadId) : false,
   );
 
   const toggleTasksPanel = () => {
-    if (!threadId) return;
+    // Scope is thread-only; open/closed is per-thread, width/tab workspace-keyed.
+    if (!threadId || !activeWorkspaceId) return;
     if (panelVisible) {
-      useDiffStore.getState().hideRightPanel(threadId);
+      useDiffStore.getState().hideRightPanel(activeWorkspaceId, threadId);
     } else {
-      useDiffStore.getState().showRightPanel(threadId);
-      useDiffStore.getState().setRightPanelTab(threadId, "tasks");
+      useDiffStore.getState().showRightPanel(activeWorkspaceId, threadId);
+      useDiffStore.getState().setRightPanelTab(activeWorkspaceId, "tasks");
     }
   };
 

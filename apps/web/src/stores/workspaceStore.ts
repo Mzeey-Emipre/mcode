@@ -454,6 +454,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         terminalStore.clearThread(tid);
         diffStore.clearThread(tid);
       }
+      // The right panel is workspace-global, so its state is dropped once per
+      // workspace rather than per thread.
+      diffStore.clearWorkspace(id);
       // Remove threads from store FIRST (same ordering as deleteThread) so
       // any in-flight timer callbacks see threads as gone before timers are cancelled.
       const deletedIdSet = new Set(deletedThreadIds);
