@@ -104,6 +104,10 @@ test.describe("Consolidated chat header", () => {
 
     // The branch item surfaces the current branch name.
     await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/consolidated-header");
+    // Changes shows its keyboard shortcut hint (Ctrl+D on non-Mac, ⌘D on Mac).
+    await expect(page.getByTestId("workspace-menu-changes")).toContainText(/ctrl\+d|⌘d/i);
+    // Items present a pointer cursor to signal they're clickable.
+    await expect(page.getByTestId("workspace-menu-changes")).toHaveCSS("cursor", "pointer");
   });
 
   test("panel toggle shows and hides the workspace-global right panel", async ({ page }) => {

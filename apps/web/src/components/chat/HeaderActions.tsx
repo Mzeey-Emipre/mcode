@@ -19,6 +19,9 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Kbd } from "@/components/palette/Kbd";
+import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";
+import { isMac } from "@/lib/platform";
 import type { Thread } from "@/transport";
 import { openGitHubUrl } from "@/lib/open-url-in-preview";
 
@@ -133,6 +136,12 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     executeCommand("changes.toggle");
   }, []);
 
+  // Mirror the live keybinding so the menu hint stays correct if the user rebinds it.
+  const changesShortcut = formatKeybinding(
+    getKeybindingForCommand("changes.toggle")?.key ?? "mod+d",
+    isMac,
+  );
+
   const copyBranch = useCallback(() => {
     void navigator.clipboard?.writeText(thread.branch);
     setBranchCopied(true);
@@ -187,7 +196,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
               title="Workspace"
               aria-label="Workspace menu"
               data-testid="header-workspace-menu"
-              className="text-foreground/70 hover:text-foreground hover:bg-muted/40"
+              className="cursor-pointer text-foreground/70 hover:text-foreground hover:bg-muted/40"
             >
               <Menu size={14} />
             </Button>
@@ -197,21 +206,24 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
           <DropdownMenuItem
             onClick={openChanges}
             data-testid="workspace-menu-changes"
-            className="flex items-center justify-between gap-3 text-xs"
+            className="flex cursor-pointer items-center justify-between gap-3 text-xs"
           >
             <span className="flex items-center gap-2">
               <Diff size={14} className="text-muted-foreground" /> Changes
             </span>
-            {changedFileCount > 0 && (
-              <span className="font-mono text-[11px] text-muted-foreground">
-                {changedFileCount} {changedFileCount === 1 ? "file" : "files"}
-              </span>
-            )}
+            <span className="flex items-center gap-2">
+              {changedFileCount > 0 && (
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {changedFileCount} {changedFileCount === 1 ? "file" : "files"}
+                </span>
+              )}
+              <Kbd>{changesShortcut}</Kbd>
+            </span>
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={copyBranch}
             data-testid="workspace-menu-branch"
-            className="flex items-center justify-between gap-3 text-xs"
+            className="flex cursor-pointer items-center justify-between gap-3 text-xs"
           >
             <span className="flex items-center gap-2">
               <GitBranch size={14} className="text-muted-foreground" /> Branch
@@ -225,7 +237,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
           <DropdownMenuItem
             onClick={handleCommitOrPush}
             data-testid="workspace-menu-commit"
-            className="flex items-center gap-2 text-xs"
+            className="flex cursor-pointer items-center gap-2 text-xs"
           >
             <Upload size={14} className="text-muted-foreground" /> Commit or push
           </DropdownMenuItem>
@@ -235,7 +247,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
               disabled={!hasCommitsAhead}
               data-testid="workspace-menu-create-pr"
               title={hasCommitsAhead === false ? "No commits ahead of base branch" : undefined}
-              className="flex items-center gap-2 text-xs"
+              className="flex cursor-pointer items-center gap-2 text-xs data-disabled:cursor-not-allowed"
             >
               <GitPullRequest size={14} className="text-muted-foreground" /> Create PR
             </DropdownMenuItem>
@@ -256,8 +268,8 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
               data-testid="header-panel-toggle"
               className={
                 panelVisible
-                  ? "text-foreground bg-muted/40"
-                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
+                  ? "cursor-pointer text-foreground bg-muted/40"
+                  : "cursor-pointer text-foreground/70 hover:text-foreground hover:bg-muted/40"
               }
             >
               <PanelRight size={14} />
