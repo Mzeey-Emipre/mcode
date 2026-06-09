@@ -1,4 +1,4 @@
-/** IDs of editors we detect and can spawn. Mirrors KNOWN_EDITORS in main.ts. */
+/** IDs of editors we detect and can spawn. Mirrors EDITOR_CONFIGS in open-in/index.ts. */
 export type EditorId = "code" | "cursor" | "zed";
 
 /**

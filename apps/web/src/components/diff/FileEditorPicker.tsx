@@ -6,11 +6,10 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { useInstalledEditors } from "@/hooks/useInstalledEditors";
+import { useOpenInApps } from "@/hooks/useOpenInApps";
 import { getTransport } from "@/transport";
 import { useToastStore } from "@/stores/toastStore";
-import { VsCodeIcon, ZedIcon } from "../chat/EditorIcons";
-import { CursorProviderIcon } from "../chat/ProviderIcons";
+import { openInAppIcon } from "../chat/openInAppIcons";
 
 /** Editor identity for the rail's picker dropdown. */
 interface EditorMeta {
@@ -18,16 +17,6 @@ interface EditorMeta {
   readonly label: string;
   readonly icon: React.ReactNode;
 }
-
-/** Editor registry keyed by ID (mirrors detectEditors() output). */
-const EDITOR_CONFIG: Record<
-  string,
-  { label: string; icon: (size: number) => React.ReactNode }
-> = {
-  code: { label: "VS Code", icon: (s) => <VsCodeIcon size={s} /> },
-  cursor: { label: "Cursor", icon: (s) => <CursorProviderIcon size={s} /> },
-  zed: { label: "Zed", icon: (s) => <ZedIcon size={s} /> },
-};
 
 /** Props for FileEditorPicker. */
 interface FileEditorPickerProps {
@@ -63,17 +52,16 @@ export function FileEditorPicker({
   trigger,
   onOpenChange,
 }: FileEditorPickerProps) {
-  const installedEditors = useInstalledEditors();
-  const entries: EditorMeta[] = installedEditors
-    .filter((id) => id in EDITOR_CONFIG)
-    .map((id) => ({
-      id,
-      label: EDITOR_CONFIG[id].label,
-      icon: EDITOR_CONFIG[id].icon(14),
-    }));
+  const apps = useOpenInApps();
+  const editors = apps.filter((app) => app.kind === "editor" && app.detected);
+  const entries: EditorMeta[] = editors.map((app) => ({
+    id: app.id,
+    label: app.label,
+    icon: openInAppIcon(app.iconKey, 14),
+  }));
 
   const handleOpenEditor = (editorId: string) => {
-    const label = EDITOR_CONFIG[editorId]?.label ?? editorId;
+    const label = editors.find((app) => app.id === editorId)?.label ?? editorId;
     getTransport()
       .openInEditor(editorId, filePath, line)
       .catch((err: unknown) =>

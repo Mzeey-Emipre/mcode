@@ -17,7 +17,6 @@ import {
   session,
   shell,
 } from "electron";
-import { execFileSync, spawn, type ChildProcess } from "child_process";
 import { existsSync, createReadStream } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { isAbsolute, join } from "path";
@@ -29,7 +28,7 @@ import { getExtension as bundledGetExtension, isMcodeWorkspacePreviewUrl } from 
 /** Use snapshot-provided module when available (V8 snapshot skips re-init). */
 const getExtension = globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 
-import { buildEditorArgs } from "./editor-args.js";
+import { openInRegistry, FILE_EXPLORER_ID } from "./open-in/index.js";
 import { ServerManager } from "./server-manager.js";
 import { startIpcRelay } from "./ipc-relay.js";
 import {
@@ -57,162 +56,6 @@ import { isDesktopDev } from "./is-desktop-dev.js";
 // before app.whenReady() and any other path-dependent call.
 if (!app.isPackaged) {
   app.setPath("userData", join(app.getPath("appData"), "Mcode-Dev"));
-}
-
-// ---------------------------------------------------------------------------
-// Editor detection (inlined from editors.ts)
-// ---------------------------------------------------------------------------
-
-/** Supported editor identifiers. */
-type EditorId = "code" | "cursor" | "zed";
-
-interface EditorMeta {
-  readonly id: EditorId;
-  readonly label: string;
-  readonly windowsPaths?: readonly string[];
-}
-
-const KNOWN_EDITORS: readonly EditorMeta[] = [
-  {
-    id: "code",
-    label: "VS Code",
-    windowsPaths: [
-      join(
-        process.env.LOCALAPPDATA ?? "",
-        "Programs",
-        "Microsoft VS Code",
-        "bin",
-        "code.cmd",
-      ),
-    ],
-  },
-  {
-    id: "cursor",
-    label: "Cursor",
-    windowsPaths: [
-      join(
-        process.env.LOCALAPPDATA ?? "",
-        "Programs",
-        "cursor",
-        "resources",
-        "app",
-        "bin",
-        "cursor.cmd",
-      ),
-      join(
-        process.env.LOCALAPPDATA ?? "",
-        "Programs",
-        "Cursor",
-        "resources",
-        "app",
-        "bin",
-        "cursor.cmd",
-      ),
-    ],
-  },
-  {
-    id: "zed",
-    label: "Zed",
-    windowsPaths: [
-      join(
-        process.env.LOCALAPPDATA ?? "",
-        "Programs",
-        "Zed",
-        "bin",
-        "zed.exe",
-      ),
-      join(
-        process.env.LOCALAPPDATA ?? "",
-        "Zed",
-        "bin",
-        "zed.exe",
-      ),
-    ],
-  },
-];
-
-/** Cached map from editor ID to resolved executable path. */
-let resolvedEditors: Map<EditorId, string> | null = null;
-
-/** Check whether a CLI command exists on the system PATH. */
-function commandOnPath(cmd: string): boolean {
-  const checkCmd = process.platform === "win32" ? "where" : "which";
-  try {
-    execFileSync(checkCmd, [cmd], { stdio: "pipe", encoding: "utf-8" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Find the executable path for an editor, checking PATH then known install locations. */
-function findEditorCommand(editor: EditorMeta): string | null {
-  if (commandOnPath(editor.id)) return editor.id;
-  if (process.platform === "win32" && editor.windowsPaths) {
-    for (const p of editor.windowsPaths) {
-      if (existsSync(p)) return p;
-    }
-  }
-  return null;
-}
-
-/** Detect which supported editors are installed. Returns list of editor IDs. */
-function detectEditors(): EditorId[] {
-  if (resolvedEditors !== null) return [...resolvedEditors.keys()];
-
-  resolvedEditors = new Map();
-  for (const editor of KNOWN_EDITORS) {
-    const cmd = findEditorCommand(editor);
-    if (cmd) resolvedEditors.set(editor.id, cmd);
-  }
-  return [...resolvedEditors.keys()];
-}
-
-/**
- * Open a path in the given editor as a detached process. If `line` is
- * provided, the editor jumps to that line on open. See `editor-args.ts`
- * for the per-editor CLI flag mapping (VS Code/Cursor use `-g`, Zed
- * uses native `<path>:<line>`).
- */
-function openInEditor(
-  editor: EditorId,
-  path: string,
-  line?: number,
-): Promise<void> {
-  const cmd = resolvedEditors?.get(editor);
-  if (!cmd) {
-    return Promise.reject(
-      new Error(`Editor not detected: ${editor}. Call detectEditors() first.`),
-    );
-  }
-
-  const args = buildEditorArgs(editor, path, line);
-
-  return new Promise<void>((resolve, reject) => {
-    let child: ChildProcess;
-    // On Windows, editor shims (e.g. "code") are .cmd scripts. shell: true lets
-    // Node quote arguments safely instead of hand-rolling cmd.exe /c parsing.
-    if (process.platform === "win32") {
-      child = spawn(cmd, args, {
-        detached: true,
-        stdio: "ignore",
-        shell: true,
-      });
-    } else {
-      child = spawn(cmd, args, { detached: true, stdio: "ignore" });
-    }
-
-    child.on("error", (err: Error) => {
-      reject(new Error(err.message));
-    });
-
-    // If the process spawned successfully, resolve on next tick.
-    // The "spawn" event fires once the child process has been created.
-    child.on("spawn", () => {
-      child.unref();
-      resolve();
-    });
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -391,14 +234,16 @@ function registerIpcHandlers(): void {
     },
   );
 
-  // Editor detection
-  ipcMain.handle("detect-editors", () => {
-    return detectEditors();
+  // Open-in app metadata + detection, sourced from the registry. The renderer
+  // reads labels, icon keys, and kinds from here rather than a local copy.
+  ipcMain.handle("list-open-in-apps", () => {
+    return openInRegistry.list();
   });
 
   // Open a file or directory in the given editor. Optional `line` jumps the
   // editor's cursor to that line on open (file targets only — passing a line
-  // with a directory target is harmless, editors ignore it).
+  // with a directory target is harmless, editors ignore it). The editor
+  // allowlist is the registry: only registered editor-kind apps are accepted.
   ipcMain.handle(
     "open-in-editor",
     async (
@@ -413,15 +258,14 @@ function registerIpcHandlers(): void {
       if (!existsSync(targetPath)) {
         throw new Error(`Path does not exist: ${targetPath}`);
       }
-      const validEditors = new Set(["code", "cursor", "zed"]);
-      if (!validEditors.has(editor)) {
+      if (openInRegistry.kindOf(editor) !== "editor") {
         throw new Error(`Unknown editor: ${editor}`);
       }
-      await openInEditor(editor as EditorId, targetPath, line);
+      await openInRegistry.launch(editor, { path: targetPath, line });
     },
   );
 
-  // Open in file explorer
+  // Open in file explorer (dispatched through the registry's file-manager adapter).
   ipcMain.handle("open-in-explorer", (_event, dirPath: string) => {
     if (!isAbsolute(dirPath)) {
       throw new Error("Explorer path must be absolute");
@@ -429,7 +273,7 @@ function registerIpcHandlers(): void {
     if (!existsSync(dirPath)) {
       throw new Error(`Path does not exist: ${dirPath}`);
     }
-    return shell.openPath(dirPath);
+    return openInRegistry.launch(FILE_EXPLORER_ID, { path: dirPath });
   });
 
   // Open external URL (https, http, mailto), or workspace-relative preview targets in the default browser.

@@ -901,15 +901,15 @@ test.describe("Architecture: Desktop bridge graceful degradation", () => {
     await expect(page.getByText("Projects", { exact: true })).toBeVisible();
   });
 
-  test("native editor detection returns empty array without bridge", async ({
+  test("open-in app listing returns empty array without bridge", async ({
     page,
   }) => {
-    const editors = await page.evaluate(async () => {
+    const apps = await page.evaluate(async () => {
       // Simulate what the transport does: check desktopBridge
-      return window.desktopBridge?.detectEditors() ?? [];
+      return (await window.desktopBridge?.listOpenInApps()) ?? [];
     });
 
-    expect(editors).toEqual([]);
+    expect(apps).toEqual([]);
   });
 });
 

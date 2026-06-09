@@ -1,4 +1,4 @@
-import type { AttachmentMeta } from "./types";
+import type { AttachmentMeta, OpenInApp } from "./types";
 import type { BrowserPerfCounters, BrowserTabSet, McodeBrowserCapture, PreviewPageStatus } from "@mcode/contracts";
 
 /** Discriminated union describing the auto-updater lifecycle state. */
@@ -215,15 +215,15 @@ interface DesktopBridge {
   /**
    * Launch an external editor at the given path (file or directory). When
    * `line` is provided and the target is a file, the editor jumps to that
-   * line. Valid editor IDs come from `detectEditors()`.
+   * line. Valid editor IDs come from `listOpenInApps()`.
    */
   openInEditor(editor: string, path: string, line?: number): Promise<void>;
   /** Open the OS file explorer at the given directory. */
   openInExplorer(dirPath: string): Promise<void>;
   /** Open a URL in the default browser. */
   openExternalUrl(url: string, workspacePath?: string | null): Promise<void>;
-  /** Return a list of detected editor names on the system. */
-  detectEditors(): Promise<string[]>;
+  /** List openable apps (metadata + detection status) from the main-process registry. */
+  listOpenInApps(): Promise<OpenInApp[]>;
   /** Read an image from the system clipboard. Returns metadata or null. */
   readClipboardImage(): Promise<AttachmentMeta | null>;
   /** Save a clipboard file blob to disk. Returns metadata or null. */
