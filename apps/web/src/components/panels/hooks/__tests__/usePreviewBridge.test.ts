@@ -24,8 +24,12 @@ vi.mock("@/stores/diffStore", () => ({
 
 vi.mock("@/stores/workspaceStore", () => ({
   useWorkspaceStore: vi.fn(
-    (selector: (s: { workspaces: Array<{ id: string; path: string }> }) => unknown) =>
-      selector({ workspaces: [] }),
+    (
+      selector: (s: {
+        workspaces: Array<{ id: string; path: string }>;
+        threads: Array<{ id: string; mode: string; worktree_path: string | null }>;
+      }) => unknown,
+    ) => selector({ workspaces: [], threads: [] }),
   ),
 }));
 

@@ -9,6 +9,7 @@ import type { PreviewPageStatus } from "@mcode/contracts";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { resolveScopeBasePath } from "@/lib/resolve-scope-path";
 
 const NAV_ERROR_LABEL: Record<string, string> = {
   "no-bounds": "Wait for the panel to finish layout, then try again.",
@@ -98,8 +99,13 @@ export function usePreviewBridge({
   const phaseRef = useRef(pageStatus.phase);
   phaseRef.current = pageStatus.phase;
 
-  const workspacePath = useWorkspaceStore(
-    (s) => s.workspaces.find((w) => w.id === workspaceId)?.path ?? null,
+  // Relative file paths typed in the omnibox resolve against the scope's local
+  // checkout: the workspace root when threadless or a direct thread, the
+  // thread's worktree once a worktree thread is active. `threadId` is the
+  // opaque panel scope (a workspace id threadless, a thread id otherwise), so
+  // the active thread is whichever thread row matches it.
+  const basePath = useWorkspaceStore((s) =>
+    resolveScopeBasePath(threadId, workspaceId, s.threads, s.workspaces),
   );
 
   const storedUrl = useDiffStore(
@@ -310,13 +316,13 @@ export function usePreviewBridge({
       if (!preview) return;
       setInputUrl(url);
       setNavError(null);
-      void preview.navigate(url, workspacePath).then((r) => {
+      void preview.navigate(url, basePath).then((r) => {
         if (!r.ok) setNavError(formatNavError(r.error));
       }).catch(() => {
         setNavError("Navigation failed.");
       });
     },
-    [workspacePath],
+    [basePath],
   );
 
   return {
