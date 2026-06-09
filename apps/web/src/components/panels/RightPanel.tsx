@@ -14,6 +14,8 @@ import {
   type RightPanelTab,
 } from "@/stores/diffStore";
 import { ScopeSplitPane } from "./ScopeSplitPane";
+import { PanelEmptyState } from "./PanelEmptyState";
+import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
 import { PreviewPanel } from "@/components/panels/PreviewPanel";
 import { TerminalTabContent } from "@/components/terminal/TerminalTabContent";
@@ -219,6 +221,13 @@ export function RightPanel() {
     [storedPanel],
   );
   const { width: panelWidth, activeTab } = panelState;
+  // Tabs are singletons opened on demand; an empty set means no tab is open and
+  // the panel shows the card-grid empty state. Defensive default for any stored
+  // row that predates the openTabs field. See ADR-0004 / issue #610.
+  const openTabs = panelState.openTabs ?? [];
+  // Review and Scope are creatable only in a thread; threadless the panel runs
+  // against the workspace root and offers just Browser/Terminal/Files.
+  const panelScope: PanelScope = activeThreadId ? "thread" : "threadless";
   // Open/closed is per-thread (falling back to the workspace threadless shell);
   // width and active tab stay workspace-global. See ADR-0004.
   const panelVisible = useDiffStore((s) =>
@@ -277,7 +286,14 @@ export function RightPanel() {
     return files.size;
   }, [snapshots]);
 
-  const isChangesActive = panelVisible && activeTab === "changes";
+  // A tab's content renders only when it is both the active tab and actually
+  // open. Guards against a persisted/default activeTab leaking content behind
+  // the card-grid empty state when its type is not in the open set.
+  const changesActive = activeTab === "changes" && openTabs.includes("changes");
+  const previewActive = activeTab === "preview" && openTabs.includes("preview");
+  const terminalActive = activeTab === "terminal" && openTabs.includes("terminal");
+
+  const isChangesActive = panelVisible && changesActive;
   const changesFresh = useChangesFreshness(activeThreadId, changesCount, isChangesActive);
 
   // Drop inactive tab labels when the rendered panel is narrow. Overlay mode
@@ -330,10 +346,10 @@ export function RightPanel() {
   // in the background, and intentionally not gated on the terminal count so
   // killing the last terminal does not immediately respawn one.
   useEffect(() => {
-    if (panelVisible && activeTab === "terminal" && panelScopeId) {
+    if (panelVisible && terminalActive && panelScopeId) {
       ensureTerminalForScope(panelScopeId);
     }
-  }, [panelVisible, activeTab, panelScopeId]);
+  }, [panelVisible, terminalActive, panelScopeId]);
 
   // Close on Escape when overlaid.
   useEffect(() => {
@@ -541,7 +557,7 @@ export function RightPanel() {
       <div ref={headerRef} className="relative flex-none border-b border-border/40">
         <div className="flex h-11 items-center justify-between px-3">
           <div ref={tablistRef} className="flex items-center gap-0.5">
-            {TABS.map((tab) => {
+            {TABS.filter((tab) => openTabs.includes(tab.id)).map((tab) => {
               const isActive = activeTab === tab.id;
               const Icon = tab.icon;
               const showLabel = isActive || !compactTabs;
@@ -597,27 +613,39 @@ export function RightPanel() {
 
       {/* Tab content — DiffPanel and terminal pool stay mounted (stacked) so
           turn expand state, loaded diffs, and xterm scroll anchors survive tab
-          and workspace thread switches. */}
+          and workspace thread switches. With no tab open the panel shows the
+          card-grid empty state, which is itself the create surface. */}
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        {activeTab === "tasks" && activeThreadId && (
+        {openTabs.length === 0 && (
+          <PanelEmptyState
+            scope={panelScope}
+            openTabs={openTabs}
+            onOpen={(id) => setRightPanelTab(activeWorkspaceId!, id)}
+          />
+        )}
+        {activeTab === "tasks" && openTabs.includes("tasks") && activeThreadId && (
           <ScopeSplitPane threadId={activeThreadId} parentTasks={parentTasks} />
         )}
-        <div className={activeTab === "changes" ? "flex flex-1 flex-col min-h-0" : "hidden"}>
+        <div
+          className={
+            changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"
+          }
+        >
           <DiffPanel />
         </div>
-        {activeTab === "preview" && panelScopeId && (
+        {previewActive && panelScopeId && (
           <PreviewPanel threadId={panelScopeId} workspaceId={activeWorkspaceId} />
         )}
         <div
           className={cn(
             "absolute inset-0 flex min-h-0 flex-row overflow-hidden",
-            activeTab !== "terminal" && "pointer-events-none z-0 opacity-0",
-            activeTab === "terminal" && "z-10",
+            !terminalActive && "pointer-events-none z-0 opacity-0",
+            terminalActive && "z-10",
           )}
-          aria-hidden={activeTab !== "terminal"}
-          inert={activeTab !== "terminal" ? true : undefined}
+          aria-hidden={!terminalActive}
+          inert={!terminalActive ? true : undefined}
         >
-          {activeTab === "terminal" && panelScopeId && (
+          {terminalActive && panelScopeId && (
             <TerminalTabContent threadId={panelScopeId} />
           )}
           <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden p-2" />

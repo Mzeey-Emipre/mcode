@@ -10,6 +10,6 @@ const RIGHT_PANEL_SRC = readFileSync(
 describe("RightPanel resize handle stacking", () => {
   it("keeps the col-resize handle above the terminal tab layer", () => {
     expect(RIGHT_PANEL_SRC).toMatch(/z-20[^"]*cursor-col-resize/);
-    expect(RIGHT_PANEL_SRC).toMatch(/activeTab === "terminal" && "z-10"/);
+    expect(RIGHT_PANEL_SRC).toMatch(/terminalActive && "z-10"/);
   });
 });

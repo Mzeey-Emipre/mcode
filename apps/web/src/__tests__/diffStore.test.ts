@@ -132,6 +132,27 @@ describe("diffStore", () => {
       setRightPanelTab("ws-1", "preview");
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
     });
+
+    it("defaults to no open tabs (empty-state card grid)", () => {
+      const { getRightPanel } = useDiffStore.getState();
+      expect(getRightPanel("ws-fresh").openTabs).toEqual([]);
+    });
+
+    it("opens a tab (adds it to openTabs) when first activated", () => {
+      const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "preview");
+      expect(getRightPanel("ws-1").openTabs).toEqual(["preview"]);
+      expect(getRightPanel("ws-1").activeTab).toBe("preview");
+    });
+
+    it("accumulates open tabs in open order without duplicating", () => {
+      const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", "terminal");
+      setRightPanelTab("ws-1", "preview"); // refocus, not reopen
+      expect(getRightPanel("ws-1").openTabs).toEqual(["preview", "terminal"]);
+      expect(getRightPanel("ws-1").activeTab).toBe("preview");
+    });
   });
 
   // The panel is workspace-global: its open state must survive having no thread
