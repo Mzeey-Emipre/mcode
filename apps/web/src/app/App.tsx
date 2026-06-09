@@ -56,6 +56,12 @@ const LazyBrowserViewPrototype = lazy(async () => {
   return { default: m.BrowserViewPrototype };
 });
 
+// THROWAWAY: chat-header prototype, reachable via ?prototype=header. Delete with the prototype.
+const LazyHeaderPrototype = lazy(async () => {
+  const m = await import("@/components/prototype/HeaderPrototype");
+  return { default: m.HeaderPrototype };
+});
+
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
@@ -378,7 +384,7 @@ export function App() {
   // THROWAWAY: short-circuit to the right-panel prototype. Placed after all hooks
   // so hook order is unaffected. Remove when the prototype is folded in or deleted.
   const protoSurface = new URLSearchParams(window.location.search).get("prototype");
-  if (import.meta.env.DEV && (protoSurface === "panel" || protoSurface === "browser")) {
+  if (import.meta.env.DEV && (protoSurface === "panel" || protoSurface === "browser" || protoSurface === "header")) {
     // Seed the variant from the URL eagerly — before transport init reloads to add
     // ?token= (which drops ?variant=). The lazy prototype then reads it from storage.
     const protoVariant = new URLSearchParams(window.location.search).get("variant");
@@ -387,7 +393,13 @@ export function App() {
     }
     return (
       <Suspense fallback={null}>
-        {protoSurface === "browser" ? <LazyBrowserViewPrototype /> : <LazyRightPanelPrototype />}
+        {protoSurface === "browser" ? (
+          <LazyBrowserViewPrototype />
+        ) : protoSurface === "header" ? (
+          <LazyHeaderPrototype />
+        ) : (
+          <LazyRightPanelPrototype />
+        )}
       </Suspense>
     );
   }

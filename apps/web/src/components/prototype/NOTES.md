@@ -75,6 +75,32 @@ page closes the Browser tab closes. "New page" (header / kebab) adds a rail entr
 - Where **Dump page content / Region capture / Screenshot** outputs land in the
   composer (the attach-to-chat flow).
 
+## Chat header (`?prototype=header`)
+
+Question: how the chat header consolidates once the right-panel toggle icons move
+out of it. Keep Create PR + Open visible; collapse the rest into one menu (no
+"environment"/"sources" framing — those aren't mcode concepts); add a dedicated
+right-panel toggle; decide whether the project badge stays.
+
+- **A — Badge + actions:** project badge kept; right = Create PR · Open ·
+  [consolidated menu] · [panel toggle].
+- **B — No badge:** project badge removed (title only); same right cluster.
+- **C — Grouped + edge toggle:** badge removed; Create PR · Open · menu grouped
+  in a bordered pill, panel toggle pushed to the far edge.
+
+The consolidated menu holds the mcode items: Changes (+/-), Branch (main), Commit
+or push. The panel toggle opens/closes the (now workspace-global) right panel.
+
+### Verdict: variant A
+Chosen. The **project badge stays**. The old right-panel toggle icons collapse
+into the consolidated menu, and a dedicated **right-panel toggle** is added. The
+**Open** button is the open-in split button (default-app icon + caret to pick the
+app) from the open-in work (#601-#603 / ADR-0005) — not a plain button.
+
+Remaining design detail: refine the consolidated-menu contents. Create PR is
+already its own button, so avoid duplicating it in the menu; settle the final set
+(Changes / Branch / Commit or push is the starting point).
+
 ## Cleanup
 
 Throwaway. Fold the rail + card-grid empty state into the real panel
