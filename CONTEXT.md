@@ -447,13 +447,66 @@ within their own provider's context window. Distinct from a fork handoff,
 though the orchestrator does consult `last_compact_summary` when building a
 deterministic path-D handoff.
 
+## Right panel
+
+### Right panel
+The workspace-level surface docked to the right of the chat, hosting a set
+of typed tabs (Browser, Terminal, Review, Scope, and later Files). The
+panel itself — its visibility, width, and active tab — is **workspace-global**
+and persists with no thread open. Each tab type sets its own availability:
+some (Browser, Terminal) run against the **workspace root** when no thread
+exists; others (Scope) require a thread. This replaces the former model
+where the entire panel was thread-scoped and could not render without a
+thread. (Per-tab *content* scope — e.g. whether a thread keeps its own
+Browser tabs — is defined on each tab type below, not here.)
+
+### Tab availability
+The rule set governing which tab types a user can create at a given moment.
+Every top-level tab is a **singleton** — at most one Browser, one Terminal,
+one Review, one Scope, one Files. Multiplicity lives *inside* a tab (the
+Browser holds many pages, the Terminal many shells), never as duplicate
+top-level tabs. The set of **creatable** types is filtered twice: by
+**scope** (types needing a thread are dropped when no thread is active) and
+by **cardinality** (singletons already open are dropped). When exactly one
+type is creatable, the add affordance opens it directly instead of showing
+a menu; when none are, the add affordance is hidden. The empty panel and
+the add menu present this same creatable-types set.
+
+### Review tab
+The right-panel tab that shows code changes. **Dual-scope**: its
+git-working-tree views (Unstaged, Staged, Commit, Branch) read the
+**workspace root** and need no thread; its turn views need a thread. The
+two turn views are **Last turn** (the most recent turn's diff — the default
+glance when a thread is active) and **Cumulative** (the thread's net diff
+versus its base). Each view renders exactly one diff; there is no eager
+render of every turn's diff. A per-turn browse, if offered, is a turn
+**picker** that resolves to a single turn's diff, never N diffs at once.
+
+## Open-in app
+
+### Open-in app
+An external application mcode can open the current working directory in: an
+**editor** (VS Code, Visual Studio, Cursor, Zed), a **terminal** (Windows
+Terminal, Git Bash, WSL), a **git GUI** (GitHub Desktop), or the system
+**File Explorer**. Distinct from the in-app right-panel tabs — an open-in
+app launches a separate program against the directory, it does not embed.
+
+### Default open-in app
+The open-in app that the dedicated shortcut and the split button's primary
+action open without the user choosing from the menu. Resolved per thread in
+three tiers: a **thread override** (the app last picked from *that thread's*
+menu, sticky to the thread) wins; otherwise the **global default** from user
+settings; otherwise an **auto-resolution** to the highest-priority installed
+editor, falling back to File Explorer. Choosing an app from a thread's menu
+sets the thread override only; it never changes the global default, which is
+configured in Settings.
+
 ## In-app browser preview
 
 ### Preview
-The embedded in-app browser panel that renders a web URL or a local file
-alongside a thread. Distinct from opening the page in the user's external
-browser. The preview is **thread-scoped**: each thread keeps its own set of
-tabs.
+The embedded in-app browser panel that renders a web URL or a local file.
+It is the **Browser** tab type within the workspace-global right panel.
+Distinct from opening the page in the user's external browser.
 
 ### Preview tab
 One navigable page within the preview, belonging to a thread. A thread can
