@@ -18,6 +18,7 @@ import { usePreviewDockStore } from "@/stores/previewDockStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
 import { useUiStore } from "@/stores/uiStore";
 import { initShortcuts } from "@/lib/shortcuts";
+import { summonTab } from "@/lib/summon-tab";
 import { registerCommand } from "@/lib/command-registry";
 import { setContext } from "@/lib/context-tracker";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
@@ -209,29 +210,9 @@ export function App() {
         id: "terminal.toggle",
         title: "Toggle Terminal",
         category: "View",
-        handler: () => {
-          const { activeWorkspaceId: wid, activeThreadId: tid } =
-            useWorkspaceStore.getState();
-          if (!wid) return;
-          const {
-            getRightPanel,
-            getRightPanelVisible,
-            showRightPanel,
-            setRightPanelTab,
-            hideRightPanel,
-          } = useDiffStore.getState();
-          const panel = getRightPanel(wid);
-          if (!getRightPanelVisible(wid, tid)) {
-            showRightPanel(wid, tid);
-            setRightPanelTab(wid, "terminal");
-          } else if (panel.activeTab !== "terminal") {
-            setRightPanelTab(wid, "terminal");
-          } else {
-            hideRightPanel(wid, tid);
-          }
-          // Terminal creation on open is handled by RightPanel's
-          // ensureTerminalForScope effect (fires for every open path).
-        },
+        // Terminal creation on open is handled by RightPanel's
+        // ensureTerminalForScope effect (fires for every open path).
+        handler: () => summonTab("terminal"),
       }),
       registerCommand({
         id: "settings.open",
@@ -258,83 +239,25 @@ export function App() {
         id: "tasks.toggle",
         title: "Toggle Scope Panel",
         category: "View",
-        handler: () => {
-          const { activeWorkspaceId: wid, activeThreadId: tid } =
-            useWorkspaceStore.getState();
-          if (!wid) return;
-          const {
-            getRightPanel,
-            getRightPanelVisible,
-            showRightPanel,
-            setRightPanelTab,
-            hideRightPanel,
-          } = useDiffStore.getState();
-          const panel = getRightPanel(wid);
-          if (!getRightPanelVisible(wid, tid)) {
-            showRightPanel(wid, tid);
-            setRightPanelTab(wid, "tasks");
-          } else if (panel.activeTab !== "tasks") {
-            setRightPanelTab(wid, "tasks");
-          } else {
-            hideRightPanel(wid, tid);
-          }
-        },
+        // Scope is thread-only; summonTab no-ops when there is no thread.
+        handler: () => summonTab("tasks"),
       }),
       registerCommand({
         id: "changes.toggle",
         title: "Toggle Changes Panel",
         category: "View",
-        handler: () => {
-          const { activeWorkspaceId: wid, activeThreadId: tid } =
-            useWorkspaceStore.getState();
-          if (!wid) return;
-          const {
-            getRightPanel,
-            getRightPanelVisible,
-            showRightPanel,
-            setRightPanelTab,
-            hideRightPanel,
-          } = useDiffStore.getState();
-          const panel = getRightPanel(wid);
-          if (!getRightPanelVisible(wid, tid)) {
-            showRightPanel(wid, tid);
-            setRightPanelTab(wid, "changes");
-          } else if (panel.activeTab !== "changes") {
-            setRightPanelTab(wid, "changes");
-          } else {
-            hideRightPanel(wid, tid);
-          }
-        },
+        handler: () => summonTab("changes"),
       }),
       registerCommand({
         id: "preview.toggle",
         title: "Toggle Preview Panel",
         category: "View",
-        handler: () => {
-          const { activeWorkspaceId: wid, activeThreadId: tid } =
-            useWorkspaceStore.getState();
-          if (!wid) return;
-          const {
-            getRightPanel,
-            getRightPanelVisible,
-            showRightPanel,
-            setRightPanelTab,
-            hideRightPanel,
-          } = useDiffStore.getState();
-          const panel = getRightPanel(wid);
-          if (!getRightPanelVisible(wid, tid)) {
-            showRightPanel(wid, tid);
-            setRightPanelTab(wid, "preview");
-            // Pull focus into the URL field so the user can type a URL
-            // immediately after opening the preview by shortcut.
-            usePreviewFocusStore.getState().requestOmniboxFocus();
-          } else if (panel.activeTab !== "preview") {
-            setRightPanelTab(wid, "preview");
-            usePreviewFocusStore.getState().requestOmniboxFocus();
-          } else {
-            hideRightPanel(wid, tid);
-          }
-        },
+        // Pull focus into the URL field on open/refocus so the user can type a
+        // URL immediately after summoning the Browser by shortcut.
+        handler: () =>
+          summonTab("preview", () =>
+            usePreviewFocusStore.getState().requestOmniboxFocus(),
+          ),
       }),
       registerCommand({
         id: "preview.devDock.toggle",
