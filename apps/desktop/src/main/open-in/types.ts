@@ -9,9 +9,10 @@
 /**
  * The category of an openable app. Drives launch semantics and how the renderer
  * groups apps in the menu. `editor` opens a file/folder, `gitGui` opens a
- * repository, `fileManager` reveals a path in the OS file browser.
+ * repository, `terminal` opens a shell at the working directory, `fileManager`
+ * reveals a path in the OS file browser.
  */
-export type OpenInAppKind = "editor" | "gitGui" | "fileManager";
+export type OpenInAppKind = "editor" | "gitGui" | "terminal" | "fileManager";
 
 /**
  * Serializable metadata for an openable app. This is the shape the renderer
