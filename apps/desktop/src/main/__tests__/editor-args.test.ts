@@ -20,6 +20,11 @@ describe("buildEditorArgs", () => {
     expect(buildEditorArgs("zed", "/abs/file.ts", 42)).toEqual(["/abs/file.ts:42"]);
   });
 
+  it("Visual Studio opens the path as-is, ignoring any line (no folder-mode goto flag)", () => {
+    expect(buildEditorArgs("vs", "/abs/file.ts")).toEqual(["/abs/file.ts"]);
+    expect(buildEditorArgs("vs", "/abs/file.ts", 42)).toEqual(["/abs/file.ts"]);
+  });
+
   it("ignores non-positive or non-finite line numbers", () => {
     expect(buildEditorArgs("code", "/abs/file.ts", 0)).toEqual(["/abs/file.ts"]);
     expect(buildEditorArgs("code", "/abs/file.ts", -5)).toEqual(["/abs/file.ts"]);

@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openInExplorer: (path: string): Promise<void> =>
     ipcRenderer.invoke("open-in-explorer", path),
 
+  /** Open a directory in any registered open-in app by id (editor, git GUI, file manager). */
+  openIn: (appId: string, path: string): Promise<void> =>
+    ipcRenderer.invoke("open-in-app", appId, path),
+
   /** Open a URL in the default browser (https, http, mailto, or resolved mcode-workspace file targets). */
   openExternalUrl: (url: string, workspacePath?: string | null): Promise<void> =>
     ipcRenderer.invoke("open-external-url", url, workspacePath ?? null),

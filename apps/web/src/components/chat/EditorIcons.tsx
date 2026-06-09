@@ -61,6 +61,27 @@ export function VsCodeIcon({ size = 14, className }: IconProps) {
   );
 }
 
+/** Visual Studio - official Microsoft brand mark (simple-icons glyph, brand purple). */
+export function VisualStudioIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+    >
+      <path
+        fill="#5C2D91"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M17.5826 0 8.51902 9.0635 3.05841 4.84189 0 6.12756v11.74488l3.05841 1.28566 5.46061-4.22161L17.5826 24 24 21.2972V2.70285L17.5826 0ZM2.58258 14.7669V9.23308L5.36716 12 2.58258 14.7669ZM14.4174 12 8.34653 17.4174V6.58263L14.4174 12Z"
+      />
+    </svg>
+  );
+}
+
 /** Zed - official Zed Industries logomark (sourced from T3 Code). */
 export function ZedIcon({ size = 14, className }: IconProps) {
   const uid = useId().replace(/:/g, "");

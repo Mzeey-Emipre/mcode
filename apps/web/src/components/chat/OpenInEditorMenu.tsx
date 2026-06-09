@@ -16,7 +16,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 
-interface EditorEntry {
+interface AppEntry {
   readonly id: string;
   readonly label: string;
   readonly icon: React.ReactNode;
@@ -27,21 +27,25 @@ interface OpenInEditorMenuProps {
   dirPath: string;
 }
 
-/** Dropdown menu that opens a directory in an installed code editor or system file explorer. */
+/** Dropdown menu that opens a directory in an installed editor, git GUI, or the system file explorer. */
 export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
   const apps = useOpenInApps();
 
-  const editors = apps.filter((app) => app.kind === "editor" && app.detected);
-  const entries: EditorEntry[] = editors.map((app) => ({
+  // Editors and git GUIs both launch a directory; File Explorer is rendered
+  // separately below because it owns the mod+o shortcut and is always present.
+  const launchable = apps.filter(
+    (app) => (app.kind === "editor" || app.kind === "gitGui") && app.detected,
+  );
+  const entries: AppEntry[] = launchable.map((app) => ({
     id: app.id,
     label: app.label,
     icon: openInAppIcon(app.iconKey, 16),
   }));
 
-  const handleOpenEditor = (editorId: string) => {
-    const label = editors.find((app) => app.id === editorId)?.label ?? editorId;
+  const handleOpenApp = (appId: string) => {
+    const label = launchable.find((app) => app.id === appId)?.label ?? appId;
     getTransport()
-      .openInEditor(editorId, dirPath)
+      .openIn(appId, dirPath)
       .catch((err) =>
         useToastStore.getState().show("error", `Could not open ${label}`, String(err?.message ?? err)),
       );
@@ -80,7 +84,7 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
         {entries.map((entry) => (
           <DropdownMenuItem
             key={entry.id}
-            onClick={() => handleOpenEditor(entry.id)}
+            onClick={() => handleOpenApp(entry.id)}
             className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs"
           >
             {entry.icon}

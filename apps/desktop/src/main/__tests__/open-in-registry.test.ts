@@ -28,13 +28,17 @@ describe("OpenInRegistry", () => {
     it("composes metadata and detection from each adapter, in registration order", () => {
       const registry = new OpenInRegistry([
         fakeAdapter({ id: "code", label: "VS Code", kind: "editor", iconKey: "vscode", detect: () => true }),
+        fakeAdapter({ id: "vs", label: "Visual Studio", kind: "editor", iconKey: "visualstudio", detect: () => false }),
         fakeAdapter({ id: "zed", label: "Zed", kind: "editor", iconKey: "zed", detect: () => false }),
+        fakeAdapter({ id: "github-desktop", label: "GitHub Desktop", kind: "gitGui", iconKey: "githubDesktop", detect: () => true }),
         fakeAdapter({ id: "explorer", label: "File Explorer", kind: "fileManager", iconKey: "explorer", detect: () => true }),
       ]);
 
       expect(registry.list()).toEqual([
         { id: "code", label: "VS Code", kind: "editor", iconKey: "vscode", detected: true },
+        { id: "vs", label: "Visual Studio", kind: "editor", iconKey: "visualstudio", detected: false },
         { id: "zed", label: "Zed", kind: "editor", iconKey: "zed", detected: false },
+        { id: "github-desktop", label: "GitHub Desktop", kind: "gitGui", iconKey: "githubDesktop", detected: true },
         { id: "explorer", label: "File Explorer", kind: "fileManager", iconKey: "explorer", detected: true },
       ]);
     });
@@ -54,10 +58,12 @@ describe("OpenInRegistry", () => {
     it("returns the kind for a registered app and undefined otherwise", () => {
       const registry = new OpenInRegistry([
         fakeAdapter({ id: "code", kind: "editor" }),
+        fakeAdapter({ id: "github-desktop", kind: "gitGui" }),
         fakeAdapter({ id: "explorer", kind: "fileManager" }),
       ]);
 
       expect(registry.kindOf("code")).toBe("editor");
+      expect(registry.kindOf("github-desktop")).toBe("gitGui");
       expect(registry.kindOf("explorer")).toBe("fileManager");
       expect(registry.kindOf("unknown")).toBeUndefined();
     });

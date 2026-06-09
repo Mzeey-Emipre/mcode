@@ -276,6 +276,20 @@ function registerIpcHandlers(): void {
     return openInRegistry.launch(FILE_EXPLORER_ID, { path: dirPath });
   });
 
+  // Open a directory in any registered app by id (editor, git GUI, file
+  // manager). The registry is the allowlist: launch() rejects unknown ids. This
+  // is the kind-agnostic seam the menu uses for non-editor apps such as the git
+  // GUI, which has no dedicated handler.
+  ipcMain.handle("open-in-app", async (_event, appId: string, dirPath: string) => {
+    if (!isAbsolute(dirPath)) {
+      throw new Error("Open-in path must be absolute");
+    }
+    if (!existsSync(dirPath)) {
+      throw new Error(`Path does not exist: ${dirPath}`);
+    }
+    await openInRegistry.launch(appId, { path: dirPath });
+  });
+
   // Open external URL (https, http, mailto), or workspace-relative preview targets in the default browser.
   ipcMain.handle(
     "open-external-url",

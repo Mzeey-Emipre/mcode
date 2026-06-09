@@ -103,7 +103,7 @@ export interface HookExecution {
 }
 
 /** Category of an openable app, mirroring the desktop registry's adapter kinds. */
-export type OpenInAppKind = "editor" | "fileManager";
+export type OpenInAppKind = "editor" | "gitGui" | "fileManager";
 
 /**
  * Openable-app metadata as exposed by the desktop main-process registry. Icons
@@ -297,6 +297,11 @@ export interface McodeTransport {
    */
   openInEditor(editor: string, path: string, line?: number): Promise<void>;
   openInExplorer(dirPath: string): Promise<void>;
+  /**
+   * Open a directory in any registered open-in app by id (editor, git GUI, file
+   * manager). The registry is the allowlist; ids come from `listOpenInApps()`.
+   */
+  openIn(appId: string, dirPath: string): Promise<void>;
 
   // GitHub PR
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;
