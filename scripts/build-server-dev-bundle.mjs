@@ -1,13 +1,13 @@
 /**
  * One-shot dev server bundle: `apps/server` tsc emit (`emitDecoratorMetadata`)
  * followed by esbuild CJS bundle to `apps/desktop/dist/server/server.cjs`, plus
- * Claude SDK cli.js beside it. Shared by desktop dev orchestration and
+ * Claude SDK native CLI binary beside it. Shared by desktop dev orchestration and
  * `scripts/dev-web.mjs` (no `--import tsx` at runtime).
  */
 
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -44,20 +44,38 @@ export function compileServerWithTsc(serverRoot = resolve(repoRootFromScript(), 
 }
 
 /**
- * Copy Claude Agent SDK `cli.js` adjacent to the bundled server entry (the SDK
- * resolves it relative to dirname(import.meta.url) at runtime).
+ * Stage the Claude Agent SDK's native CLI binary next to the bundled server entry.
+ *
+ * SDK >= 0.3 ships the CLI as a platform-specific package
+ * (`@anthropic-ai/claude-agent-sdk-<platform>-<arch>/claude[.exe]`) and resolves
+ * it at runtime via `createRequire(import.meta.url)`. The esbuild bundle rewrites
+ * `import.meta.url` to point at `server.cjs`, so the binary must be reachable by
+ * walking up from `dist/server/` — i.e. under `dist/server/node_modules/`.
+ *
+ * The binary is ~230MB; the copy is skipped when the destination already matches
+ * the source size so dev rebuilds stay fast.
  *
  * @param {string} serverCjsOut Absolute path to `server.cjs`.
  * @param {string} serverPackageRoot Root of `apps/server` (directory with `package.json`).
  */
 export function copyClaudeSdkCliNextTo(serverCjsOut, serverPackageRoot) {
   const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
-  // The SDK no longer exposes "./package.json" in its package exports, so
-  // resolve the main entry instead and walk up to the package root. cli.js
-  // sits alongside sdk.mjs at the package root.
+  const platformPkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`;
+  const binName = process.platform === "win32" ? "claude.exe" : "claude";
+
+  // Resolve from the SDK package itself: bun keeps platform packages as store
+  // siblings of the SDK, not hoisted to the workspace root.
   const sdkEntry = serverRequire.resolve("@anthropic-ai/claude-agent-sdk");
-  const sdkCliSrc = resolve(dirname(sdkEntry), "cli.js");
-  copyFileSync(sdkCliSrc, resolve(dirname(serverCjsOut), "cli.js"));
+  const sdkRequire = createRequire(sdkEntry);
+  const binSrc = sdkRequire.resolve(`${platformPkg}/${binName}`);
+
+  const dstPkgDir = resolve(dirname(serverCjsOut), "node_modules", platformPkg);
+  const binDst = resolve(dstPkgDir, binName);
+  mkdirSync(dstPkgDir, { recursive: true });
+  copyFileSync(resolve(dirname(binSrc), "package.json"), resolve(dstPkgDir, "package.json"));
+  if (!existsSync(binDst) || statSync(binDst).size !== statSync(binSrc).size) {
+    copyFileSync(binSrc, binDst);
+  }
 }
 
 /**
