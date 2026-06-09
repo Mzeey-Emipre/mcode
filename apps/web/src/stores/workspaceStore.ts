@@ -419,7 +419,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     set({ error: null });
     try {
       const workspace = await getTransport().createWorkspace(name, path);
-      set((state) => ({ workspaces: [workspace, ...state.workspaces] }));
+      // The server is idempotent on path: re-adding an existing folder returns
+      // the live workspace (bumped to the top server-side). Dedupe by id before
+      // prepending so a re-add moves the existing entry to the front instead of
+      // rendering it twice.
+      set((state) => ({
+        workspaces: [
+          workspace,
+          ...state.workspaces.filter((w) => w.id !== workspace.id),
+        ],
+      }));
       return workspace;
     } catch (e) {
       set({ error: String(e) });
