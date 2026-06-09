@@ -1,6 +1,6 @@
 import type React from "react";
-import { FolderOpen } from "lucide-react";
-import { VsCodeIcon, ZedIcon } from "./EditorIcons";
+import { FolderOpen, Github } from "lucide-react";
+import { VsCodeIcon, VisualStudioIcon, ZedIcon } from "./EditorIcons";
 import { CursorProviderIcon } from "./ProviderIcons";
 
 /**
@@ -13,10 +13,14 @@ export function openInAppIcon(iconKey: string, size: number): React.ReactNode {
   switch (iconKey) {
     case "vscode":
       return <VsCodeIcon size={size} />;
+    case "visualstudio":
+      return <VisualStudioIcon size={size} />;
     case "cursor":
       return <CursorProviderIcon size={size} />;
     case "zed":
       return <ZedIcon size={size} />;
+    case "githubDesktop":
+      return <Github size={size} />;
     case "explorer":
       return <FolderOpen size={size} />;
     default:

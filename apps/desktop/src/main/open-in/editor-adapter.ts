@@ -5,10 +5,9 @@
  * in the IPC layer.
  */
 
-import { execFileSync, spawn, type ChildProcess } from "child_process";
-import { existsSync } from "fs";
 import { buildEditorArgs, type EditorId } from "../editor-args.js";
 import type { LaunchTarget, OpenInAdapter } from "./types.js";
+import { createExecutableResolver, spawnDetached } from "./spawn-launch.js";
 
 /** Static declaration for an editor adapter. */
 export interface EditorAdapterConfig {
@@ -20,43 +19,13 @@ export interface EditorAdapterConfig {
   readonly windowsPaths?: readonly string[];
 }
 
-/** Check whether a CLI command exists on the system PATH. */
-function commandOnPath(cmd: string): boolean {
-  const checkCmd = process.platform === "win32" ? "where" : "which";
-  try {
-    execFileSync(checkCmd, [cmd], { stdio: "pipe", encoding: "utf-8" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Build an editor adapter from a static config. The resolved executable path is
  * memoized on first detection so {@link OpenInAdapter.launch} reuses it without a
  * second PATH lookup.
  */
 export function createEditorAdapter(config: EditorAdapterConfig): OpenInAdapter {
-  // `undefined` = not yet resolved; `null` = resolved as not installed.
-  let resolvedCommand: string | null | undefined;
-
-  function resolveCommand(): string | null {
-    if (resolvedCommand !== undefined) return resolvedCommand;
-    if (commandOnPath(config.id)) {
-      resolvedCommand = config.id;
-      return resolvedCommand;
-    }
-    if (process.platform === "win32" && config.windowsPaths) {
-      for (const p of config.windowsPaths) {
-        if (existsSync(p)) {
-          resolvedCommand = p;
-          return resolvedCommand;
-        }
-      }
-    }
-    resolvedCommand = null;
-    return resolvedCommand;
-  }
+  const resolveCommand = createExecutableResolver(config.id, config.windowsPaths);
 
   return {
     id: config.id,
@@ -73,26 +42,7 @@ export function createEditorAdapter(config: EditorAdapterConfig): OpenInAdapter 
       if (!cmd) {
         return Promise.reject(new Error(`Editor not detected: ${config.id}`));
       }
-
-      const args = buildEditorArgs(config.id, target.path, target.line);
-
-      return new Promise<void>((resolve, reject) => {
-        let child: ChildProcess;
-        // On Windows, editor shims (e.g. "code") are .cmd scripts. shell: true
-        // lets Node quote arguments safely instead of hand-rolling cmd.exe /c.
-        if (process.platform === "win32") {
-          child = spawn(cmd, args, { detached: true, stdio: "ignore", shell: true });
-        } else {
-          child = spawn(cmd, args, { detached: true, stdio: "ignore" });
-        }
-
-        child.on("error", (err: Error) => reject(new Error(err.message)));
-        // The "spawn" event fires once the child process has been created.
-        child.on("spawn", () => {
-          child.unref();
-          resolve();
-        });
-      });
+      return spawnDetached(cmd, buildEditorArgs(config.id, target.path, target.line));
     },
   };
 }

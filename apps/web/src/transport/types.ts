@@ -103,7 +103,7 @@ export interface HookExecution {
 }
 
 /** Category of an openable app, mirroring the desktop registry's adapter kinds. */
-export type OpenInAppKind = "editor" | "fileManager";
+export type OpenInAppKind = "editor" | "gitGui" | "fileManager";
 
 /**
  * Openable-app metadata as exposed by the desktop main-process registry. Icons
