@@ -66,21 +66,22 @@ async function setupWorkspace(page: Page): Promise<void> {
   );
 }
 
-async function showRightPanel(page: Page, threadId: string): Promise<void> {
+async function showRightPanel(page: Page, workspaceId: string, threadId: string): Promise<void> {
   await page.evaluate(
-    ({ tid }) => {
+    ({ wid, tid }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stores: any[] = (window as any).__mcodeStores ?? [];
       const diffStore = stores.find((s) => {
         const st = s.getState();
-        return "rightPanelByThread" in st && "showRightPanel" in st;
+        return "rightPanelByWorkspace" in st && "showRightPanel" in st;
       });
       if (!diffStore) throw new Error("[E2E] diff store not found");
-      diffStore.getState().showRightPanel(tid);
-      diffStore.getState().setRightPanelTab(tid, "tasks");
-      diffStore.getState().setRightPanelWidth(tid, 520);
+      // Open/closed is per-thread; width/tab stay workspace-global.
+      diffStore.getState().showRightPanel(wid, tid);
+      diffStore.getState().setRightPanelTab(wid, "tasks");
+      diffStore.getState().setRightPanelWidth(wid, 520);
     },
-    { tid: threadId },
+    { wid: workspaceId, tid: threadId },
   );
 }
 
@@ -200,7 +201,7 @@ test.describe("Plan version navigation layout stability", () => {
     await page.waitForLoadState("networkidle");
     await setupWorkspace(page);
     await seedPlanVersions(page, THREAD.id);
-    await showRightPanel(page, THREAD.id);
+    await showRightPanel(page, WORKSPACE.id, THREAD.id);
     await expect(page.getByRole("button", { name: "Next version" })).toBeVisible({
       timeout: 5000,
     });
@@ -255,7 +256,7 @@ test.describe("Plan version navigation layout stability", () => {
 
   test("overlay panel mode keeps stable width on version switch", async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 700 });
-    await showRightPanel(page, THREAD.id);
+    await showRightPanel(page, WORKSPACE.id, THREAD.id);
     await expect(page.getByRole("button", { name: "Next version" })).toBeVisible({
       timeout: 5000,
     });

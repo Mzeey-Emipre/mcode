@@ -64,20 +64,21 @@ async function setupWorkspace(page: Page): Promise<void> {
   );
 }
 
-async function showRightPanel(page: Page, threadId: string): Promise<void> {
+async function showRightPanel(page: Page, workspaceId: string, threadId: string): Promise<void> {
   await page.evaluate(
-    ({ tid }) => {
+    ({ wid, tid }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stores: any[] = (window as any).__mcodeStores ?? [];
       const diffStore = stores.find((s) => {
         const st = s.getState();
-        return "rightPanelByThread" in st && "showRightPanel" in st;
+        return "rightPanelByWorkspace" in st && "showRightPanel" in st;
       });
       if (!diffStore) throw new Error("[E2E] diff store not found");
-      diffStore.getState().showRightPanel(tid);
-      diffStore.getState().setRightPanelTab(tid, "tasks");
+      // Open/closed is per-thread; width/tab stay workspace-global.
+      diffStore.getState().showRightPanel(wid, tid);
+      diffStore.getState().setRightPanelTab(wid, "tasks");
     },
-    { tid: threadId },
+    { wid: workspaceId, tid: threadId },
   );
 }
 
@@ -111,7 +112,7 @@ test.describe("Plan view in Scope tab", () => {
   });
 
   test("scope tab button exists in the right panel header", async ({ page }) => {
-    await showRightPanel(page, THREAD.id);
+    await showRightPanel(page, WORKSPACE.id, THREAD.id);
 
     const scopeTab = page.getByRole("button", { name: "Scope" });
     await expect(scopeTab).toBeVisible({ timeout: 3000 });
@@ -119,7 +120,7 @@ test.describe("Plan view in Scope tab", () => {
 
   test("scope tab shows empty state when no plan and no tasks exist", async ({ page }) => {
     await seedPlanStore(page, THREAD.id);
-    await showRightPanel(page, THREAD.id);
+    await showRightPanel(page, WORKSPACE.id, THREAD.id);
 
     // The empty state shows the existing "Nothing on the docket" message
     await expect(page.getByText("Nothing on the docket")).toBeVisible({ timeout: 3000 });

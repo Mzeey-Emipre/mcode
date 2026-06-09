@@ -210,21 +210,27 @@ export function App() {
         title: "Toggle Terminal",
         category: "View",
         handler: () => {
-          const tid = useWorkspaceStore.getState().activeThreadId;
-          if (!tid) return;
-          const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
-            useDiffStore.getState();
-          const panel = getRightPanel(tid);
-          if (!panel.visible) {
-            showRightPanel(tid);
-            setRightPanelTab(tid, "terminal");
+          const { activeWorkspaceId: wid, activeThreadId: tid } =
+            useWorkspaceStore.getState();
+          if (!wid) return;
+          const {
+            getRightPanel,
+            getRightPanelVisible,
+            showRightPanel,
+            setRightPanelTab,
+            hideRightPanel,
+          } = useDiffStore.getState();
+          const panel = getRightPanel(wid);
+          if (!getRightPanelVisible(wid, tid)) {
+            showRightPanel(wid, tid);
+            setRightPanelTab(wid, "terminal");
           } else if (panel.activeTab !== "terminal") {
-            setRightPanelTab(tid, "terminal");
+            setRightPanelTab(wid, "terminal");
           } else {
-            hideRightPanel(tid);
+            hideRightPanel(wid, tid);
           }
           // Terminal creation on open is handled by RightPanel's
-          // ensureTerminalForThread effect (fires for every open path).
+          // ensureTerminalForScope effect (fires for every open path).
         },
       }),
       registerCommand({
@@ -253,18 +259,24 @@ export function App() {
         title: "Toggle Scope Panel",
         category: "View",
         handler: () => {
-          const tid = useWorkspaceStore.getState().activeThreadId;
-          if (!tid) return;
-          const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
-            useDiffStore.getState();
-          const panel = getRightPanel(tid);
-          if (!panel.visible) {
-            showRightPanel(tid);
-            setRightPanelTab(tid, "tasks");
+          const { activeWorkspaceId: wid, activeThreadId: tid } =
+            useWorkspaceStore.getState();
+          if (!wid) return;
+          const {
+            getRightPanel,
+            getRightPanelVisible,
+            showRightPanel,
+            setRightPanelTab,
+            hideRightPanel,
+          } = useDiffStore.getState();
+          const panel = getRightPanel(wid);
+          if (!getRightPanelVisible(wid, tid)) {
+            showRightPanel(wid, tid);
+            setRightPanelTab(wid, "tasks");
           } else if (panel.activeTab !== "tasks") {
-            setRightPanelTab(tid, "tasks");
+            setRightPanelTab(wid, "tasks");
           } else {
-            hideRightPanel(tid);
+            hideRightPanel(wid, tid);
           }
         },
       }),
@@ -273,18 +285,24 @@ export function App() {
         title: "Toggle Changes Panel",
         category: "View",
         handler: () => {
-          const tid = useWorkspaceStore.getState().activeThreadId;
-          if (!tid) return;
-          const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
-            useDiffStore.getState();
-          const panel = getRightPanel(tid);
-          if (!panel.visible) {
-            showRightPanel(tid);
-            setRightPanelTab(tid, "changes");
+          const { activeWorkspaceId: wid, activeThreadId: tid } =
+            useWorkspaceStore.getState();
+          if (!wid) return;
+          const {
+            getRightPanel,
+            getRightPanelVisible,
+            showRightPanel,
+            setRightPanelTab,
+            hideRightPanel,
+          } = useDiffStore.getState();
+          const panel = getRightPanel(wid);
+          if (!getRightPanelVisible(wid, tid)) {
+            showRightPanel(wid, tid);
+            setRightPanelTab(wid, "changes");
           } else if (panel.activeTab !== "changes") {
-            setRightPanelTab(tid, "changes");
+            setRightPanelTab(wid, "changes");
           } else {
-            hideRightPanel(tid);
+            hideRightPanel(wid, tid);
           }
         },
       }),
@@ -293,22 +311,28 @@ export function App() {
         title: "Toggle Preview Panel",
         category: "View",
         handler: () => {
-          const tid = useWorkspaceStore.getState().activeThreadId;
-          if (!tid) return;
-          const { getRightPanel, showRightPanel, setRightPanelTab, hideRightPanel } =
-            useDiffStore.getState();
-          const panel = getRightPanel(tid);
-          if (!panel.visible) {
-            showRightPanel(tid);
-            setRightPanelTab(tid, "preview");
+          const { activeWorkspaceId: wid, activeThreadId: tid } =
+            useWorkspaceStore.getState();
+          if (!wid) return;
+          const {
+            getRightPanel,
+            getRightPanelVisible,
+            showRightPanel,
+            setRightPanelTab,
+            hideRightPanel,
+          } = useDiffStore.getState();
+          const panel = getRightPanel(wid);
+          if (!getRightPanelVisible(wid, tid)) {
+            showRightPanel(wid, tid);
+            setRightPanelTab(wid, "preview");
             // Pull focus into the URL field so the user can type a URL
             // immediately after opening the preview by shortcut.
             usePreviewFocusStore.getState().requestOmniboxFocus();
           } else if (panel.activeTab !== "preview") {
-            setRightPanelTab(tid, "preview");
+            setRightPanelTab(wid, "preview");
             usePreviewFocusStore.getState().requestOmniboxFocus();
           } else {
-            hideRightPanel(tid);
+            hideRightPanel(wid, tid);
           }
         },
       }),
@@ -317,20 +341,24 @@ export function App() {
         title: "Toggle Preview Capture Tools",
         category: "View",
         handler: () => {
-          const tid = useWorkspaceStore.getState().activeThreadId;
-          if (!tid) return;
+          const { activeThreadId: tid, activeWorkspaceId: wid } =
+            useWorkspaceStore.getState();
+          // The capture dock is thread-scoped (it attaches to a thread's
+          // preview), so this shortcut is a no-op with no thread even though
+          // the panel itself is workspace-global.
+          if (!tid || !wid) return;
           // The dock only renders inside PreviewPanel, which mounts only
           // when the right panel is visible AND on the preview tab. If
           // either is closed, ensure them first so a freshly-toggled
           // dock has somewhere to render. Mirrors preview.toggle (mod+
           // shift+b) so the two shortcuts feel like part of the same
           // surface.
-          const { getRightPanel, showRightPanel, setRightPanelTab } =
+          const { getRightPanel, getRightPanelVisible, showRightPanel, setRightPanelTab } =
             useDiffStore.getState();
-          const panel = getRightPanel(tid);
-          if (!panel.visible || panel.activeTab !== "preview") {
-            showRightPanel(tid);
-            setRightPanelTab(tid, "preview");
+          const panel = getRightPanel(wid);
+          if (!getRightPanelVisible(wid, tid) || panel.activeTab !== "preview") {
+            showRightPanel(wid, tid);
+            setRightPanelTab(wid, "preview");
           }
           usePreviewDockStore.getState().toggle(tid);
         },

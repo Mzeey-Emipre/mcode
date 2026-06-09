@@ -23,18 +23,31 @@ import { resolveActiveTerminalId } from "./resolveActiveTerminalId";
 export function TerminalPoolHost() {
   const { slotEl, offScreenEl } = useTerminalPoolSlot();
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  // The terminal binds to the active thread, or to the workspace itself in the
+  // threadless new-thread view. The store keys this as an opaque scope id.
+  const terminalScopeId = activeThreadId ?? activeWorkspaceId;
   const storedPanel = useDiffStore((s) =>
-    activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined,
+    activeWorkspaceId ? s.rightPanelByWorkspace[activeWorkspaceId] : undefined,
   );
-  const panelState = storedPanel ?? createDefaultRightPanelState();
-  const panelVisible = !!activeThreadId && panelState.visible;
+  const panelState = useMemo(
+    () => storedPanel ?? createDefaultRightPanelState(),
+    [storedPanel],
+  );
+  // Open/closed is per-thread, falling back to the workspace threadless shell.
+  // The active tab stays workspace-global.
+  const panelVisible = useDiffStore((s) =>
+    activeWorkspaceId
+      ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId)
+      : false,
+  );
   const terminalTabVisible =
     panelVisible && panelState.activeTab === "terminal";
 
   const terminals = useTerminalStore((s) => s.terminals);
   const storedActiveTerminalId = useTerminalStore((s) =>
-    activeThreadId
-      ? (s.terminalPanelByThread[activeThreadId] ?? TERMINAL_PANEL_DEFAULTS)
+    terminalScopeId
+      ? (s.terminalPanelByThread[terminalScopeId] ?? TERMINAL_PANEL_DEFAULTS)
           .activeTerminalId
       : null,
   );
@@ -42,16 +55,16 @@ export function TerminalPoolHost() {
   const activeTerminalId = useMemo(
     () =>
       resolveActiveTerminalId(
-        activeThreadId,
+        terminalScopeId,
         storedActiveTerminalId,
         terminals,
       ),
-    [activeThreadId, storedActiveTerminalId, terminals],
+    [terminalScopeId, storedActiveTerminalId, terminals],
   );
 
   const pool = useTerminalStore(selectTerminalPool);
 
-  useTerminalPtyLifecycle(activeThreadId, terminalTabVisible);
+  useTerminalPtyLifecycle(terminalScopeId, terminalTabVisible);
 
   // Prefer the in-panel slot whenever it exists so pool DOM never hops to off-screen
   // on thread switch (that hop blanks xterm until a full re-open).
@@ -60,16 +73,16 @@ export function TerminalPoolHost() {
   const slotSized = !!slotEl && isContainerReadyForFit(slotEl);
 
   useLayoutEffect(() => {
-    if (!activeThreadId || !activeTerminalId) return;
+    if (!terminalScopeId || !activeTerminalId) return;
     if (storedActiveTerminalId !== activeTerminalId) {
-      useTerminalStore.getState().setActiveTerminal(activeThreadId, activeTerminalId);
+      useTerminalStore.getState().setActiveTerminal(terminalScopeId, activeTerminalId);
     }
-  }, [activeThreadId, activeTerminalId, storedActiveTerminalId]);
+  }, [terminalScopeId, activeTerminalId, storedActiveTerminalId]);
 
   useLayoutEffect(() => {
     if (!portalTarget) return;
     dispatchTerminalPoolRefit();
-  }, [activeThreadId, activeTerminalId, terminalTabVisible, portalTarget, slotSized]);
+  }, [terminalScopeId, activeTerminalId, terminalTabVisible, portalTarget, slotSized]);
 
   useEffect(() => {
     if (!slotEl) return;
@@ -85,7 +98,7 @@ export function TerminalPoolHost() {
   const poolContent = (
     <>
       {pool.map(({ term, ownerThreadId }) => {
-        const isActiveThread = ownerThreadId === activeThreadId;
+        const isActiveThread = ownerThreadId === terminalScopeId;
         const isShown =
           terminalTabVisible &&
           isActiveThread &&

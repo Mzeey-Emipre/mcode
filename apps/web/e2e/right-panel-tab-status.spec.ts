@@ -84,7 +84,7 @@ const SNAPSHOTS = [
  */
 async function seedPanel(page: Page, tab: "tasks" | "changes"): Promise<void> {
   await page.evaluate(
-    ({ workspace, thread, tid, snapshots, tab }) => {
+    ({ workspace, thread, tid, wid, snapshots, tab }) => {
       const stores: unknown[] =
         (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
       const getState = (s: unknown) =>
@@ -108,17 +108,17 @@ async function seedPanel(page: Page, tab: "tasks" | "changes"): Promise<void> {
           diffStore as {
             getState: () => {
               setSnapshots: (id: string, snaps: unknown) => void;
-              showRightPanel: (id: string) => void;
+              showRightPanel: (id: string, threadId?: string) => void;
               setRightPanelTab: (id: string, t: string) => void;
             };
           }
         ).getState();
         api.setSnapshots(tid, snapshots);
-        api.showRightPanel(tid);
-        api.setRightPanelTab(tid, tab);
+        api.showRightPanel(wid, tid);
+        api.setRightPanelTab(wid, tab);
       }
     },
-    { workspace: WORKSPACE, thread: THREAD, tid: THREAD.id, snapshots: SNAPSHOTS, tab },
+    { workspace: WORKSPACE, thread: THREAD, tid: THREAD.id, wid: WORKSPACE.id, snapshots: SNAPSHOTS, tab },
   );
 }
 

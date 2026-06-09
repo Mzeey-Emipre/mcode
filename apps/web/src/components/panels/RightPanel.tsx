@@ -19,7 +19,7 @@ import { PreviewPanel } from "@/components/panels/PreviewPanel";
 import { TerminalTabContent } from "@/components/terminal/TerminalTabContent";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { ensureTerminalForThread } from "@/lib/ensure-terminal";
+import { ensureTerminalForScope } from "@/lib/ensure-terminal";
 import { cn } from "@/lib/utils";
 
 /** Static definition of a right-panel tab: id, label, and icon. */
@@ -211,14 +211,24 @@ export function RightPanel() {
   }, []);
 
   const storedPanel = useDiffStore((s) =>
-    activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined,
+    activeWorkspaceId ? s.rightPanelByWorkspace[activeWorkspaceId] : undefined,
   );
   /** Avoid a Zustand selector that allocates a fresh default object every evaluation. */
   const panelState = useMemo(
     () => storedPanel ?? createDefaultRightPanelState(),
-    [storedPanel, viewportWidth],
+    [storedPanel],
   );
-  const { visible: panelVisible, width: panelWidth, activeTab } = panelState;
+  const { width: panelWidth, activeTab } = panelState;
+  // Open/closed is per-thread (falling back to the workspace threadless shell);
+  // width and active tab stay workspace-global. See ADR-0004.
+  const panelVisible = useDiffStore((s) =>
+    activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId) : false,
+  );
+
+  // The Terminal and Preview tabs bind to the active thread, or to the
+  // workspace itself in the threadless new-thread view (where they run against
+  // the local workspace root). Their stores treat this as an opaque scope key.
+  const panelScopeId = activeThreadId ?? activeWorkspaceId;
 
   // Zustand action refs are stable (same identity for the store's lifetime),
   // so destructuring from getState() at render time is safe and avoids
@@ -320,20 +330,20 @@ export function RightPanel() {
   // in the background, and intentionally not gated on the terminal count so
   // killing the last terminal does not immediately respawn one.
   useEffect(() => {
-    if (panelVisible && activeTab === "terminal" && activeThreadId) {
-      ensureTerminalForThread(activeThreadId);
+    if (panelVisible && activeTab === "terminal" && panelScopeId) {
+      ensureTerminalForScope(panelScopeId);
     }
-  }, [panelVisible, activeTab, activeThreadId]);
+  }, [panelVisible, activeTab, panelScopeId]);
 
   // Close on Escape when overlaid.
   useEffect(() => {
-    if (!isOverlay || !panelVisible || !activeThreadId) return;
+    if (!isOverlay || !panelVisible || !activeWorkspaceId) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") hideRightPanel(activeThreadId);
+      if (e.key === "Escape") hideRightPanel(activeWorkspaceId, activeThreadId);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isOverlay, panelVisible, activeThreadId, hideRightPanel]);
+  }, [isOverlay, panelVisible, activeWorkspaceId, activeThreadId, hideRightPanel]);
 
   // Focus handoff for overlay mode. When the panel pops out as a modal we
   // must move focus into it so keyboard users aren't stranded behind the
@@ -362,13 +372,13 @@ export function RightPanel() {
   // so the panel never exceeds the available space after the user shrinks the browser.
   // Runs in both inline and overlay modes: overlay renders at min(panelWidth, 90vw)
   // visually, but the stored width still drives the cramp-detection threshold.
-  // Re-registers when activeThreadId changes (each thread has its own stored width).
+  // Re-registers when activeWorkspaceId changes (each workspace has its own stored width).
   // Throttled with rAF so rapid resize events only trigger one recalculation per frame.
   useEffect(() => {
-    if (!activeThreadId || !panelVisible) return;
+    if (!activeWorkspaceId || !panelVisible) return;
     // Clamp immediately in case the stored width already exceeds the viewport.
     const maxAllowed = window.innerWidth - PANEL_MIN_WIDTH;
-    if (panelWidthRef.current > maxAllowed) setRightPanelWidth(activeThreadId, maxAllowed);
+    if (panelWidthRef.current > maxAllowed) setRightPanelWidth(activeWorkspaceId, maxAllowed);
 
     let rafId: number | null = null;
     const onResize = () => {
@@ -376,7 +386,7 @@ export function RightPanel() {
       rafId = requestAnimationFrame(() => {
         rafId = null;
         const max = window.innerWidth - PANEL_MIN_WIDTH;
-        if (panelWidthRef.current > max) setRightPanelWidth(activeThreadId, max);
+        if (panelWidthRef.current > max) setRightPanelWidth(activeWorkspaceId, max);
       });
     };
     window.addEventListener("resize", onResize);
@@ -384,7 +394,7 @@ export function RightPanel() {
       window.removeEventListener("resize", onResize);
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [activeThreadId, panelVisible]);
+  }, [activeWorkspaceId, panelVisible]);
 
   const onDragStart = useCallback(
     (e: ReactMouseEvent) => {
@@ -398,7 +408,7 @@ export function RightPanel() {
         const delta = startX - moveEvent.clientX;
         // Always leave at least PANEL_MIN_WIDTH px for the chat area
         const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
-        setRightPanelWidth(activeThreadId!, Math.min(startWidth + delta, viewportCap));
+        setRightPanelWidth(activeWorkspaceId!, Math.min(startWidth + delta, viewportCap));
       };
 
       const onMouseUp = () => {
@@ -412,7 +422,7 @@ export function RightPanel() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [panelWidth, activeThreadId],
+    [panelWidth, activeWorkspaceId],
   );
 
   useEffect(() => {
@@ -427,9 +437,11 @@ export function RightPanel() {
   }, []);
 
   // Keep the panel (and terminal pool) mounted when hidden so xterm instances
-  // and scroll anchors survive workspace thread switches. Per-thread visibility
-  // uses Tailwind `hidden` so layout width stays zero.
-  if (!activeThreadId) return null;
+  // and scroll anchors survive workspace thread switches. Workspace-global
+  // visibility uses Tailwind `hidden` so layout width stays zero. The panel is
+  // workspace-scoped, not thread-scoped: it renders with no thread (an empty
+  // shell) and only bails when there is no workspace to anchor it to.
+  if (!activeWorkspaceId) return null;
 
   // Overlay-mode width: cap to 90vw so the chat is still partially visible
   // behind the backdrop and the panel doesn't dominate small screens.
@@ -447,7 +459,7 @@ export function RightPanel() {
             // Blur first so focus inside the panel does not collide with the
             // incoming aria-hidden on the panel container.
             (document.activeElement as HTMLElement | null)?.blur?.();
-            hideRightPanel(activeThreadId);
+            hideRightPanel(activeWorkspaceId, activeThreadId);
           }}
           className="fixed inset-0 z-40 bg-foreground/30 backdrop-blur-[2px] animate-fade-up-in"
         />
@@ -456,7 +468,7 @@ export function RightPanel() {
         ref={panelRef}
         role={isOverlay ? "dialog" : undefined}
         aria-modal={isOverlay ? true : undefined}
-        aria-label={isOverlay ? "Thread side panel" : undefined}
+        aria-label={isOverlay ? "Workspace side panel" : undefined}
         tabIndex={isOverlay ? -1 : undefined}
         style={
           isOverlay
@@ -497,7 +509,7 @@ export function RightPanel() {
             panelWidth >= PANEL_WIDE_WIDTH
               ? narrow
               : Math.min(PANEL_WIDE_WIDTH, viewportCap);
-          setRightPanelWidth(activeThreadId!, Math.max(PANEL_MIN_WIDTH, target));
+          setRightPanelWidth(activeWorkspaceId!, Math.max(PANEL_MIN_WIDTH, target));
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -508,7 +520,7 @@ export function RightPanel() {
               panelWidth >= PANEL_WIDE_WIDTH
                 ? narrow
                 : Math.min(PANEL_WIDE_WIDTH, viewportCap);
-            setRightPanelWidth(activeThreadId!, Math.max(PANEL_MIN_WIDTH, target));
+            setRightPanelWidth(activeWorkspaceId!, Math.max(PANEL_MIN_WIDTH, target));
           }
         }}
       >
@@ -541,7 +553,7 @@ export function RightPanel() {
                   aria-pressed={isActive}
                   aria-label={tabAccessibleLabel(tab.id, scope, changesCount, changesFresh)}
                   title={tab.label}
-                  onClick={() => setRightPanelTab(activeThreadId!, tab.id)}
+                  onClick={() => setRightPanelTab(activeWorkspaceId!, tab.id)}
                   className={cn(
                     "flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.16em] uppercase transition-colors",
                     isActive ? "text-primary" : "text-foreground/70 hover:text-foreground",
@@ -567,7 +579,7 @@ export function RightPanel() {
               // Blur the close button before triggering the hide so focus is
               // not inside the panel when aria-hidden applies on re-render.
               (document.activeElement as HTMLElement | null)?.blur?.();
-              hideRightPanel(activeThreadId!);
+              hideRightPanel(activeWorkspaceId!, activeThreadId);
             }}
             className="h-5 w-5 text-muted-foreground/70 hover:text-foreground hover:bg-transparent transition-colors duration-150"
             aria-label="Close panel"
@@ -593,8 +605,8 @@ export function RightPanel() {
         <div className={activeTab === "changes" ? "flex flex-1 flex-col min-h-0" : "hidden"}>
           <DiffPanel />
         </div>
-        {activeTab === "preview" && (
-          <PreviewPanel threadId={activeThreadId} workspaceId={activeWorkspaceId} />
+        {activeTab === "preview" && panelScopeId && (
+          <PreviewPanel threadId={panelScopeId} workspaceId={activeWorkspaceId} />
         )}
         <div
           className={cn(
@@ -605,8 +617,8 @@ export function RightPanel() {
           aria-hidden={activeTab !== "terminal"}
           inert={activeTab !== "terminal" ? true : undefined}
         >
-          {activeTab === "terminal" && (
-            <TerminalTabContent threadId={activeThreadId} />
+          {activeTab === "terminal" && panelScopeId && (
+            <TerminalTabContent threadId={panelScopeId} />
           )}
           <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden p-2" />
         </div>
