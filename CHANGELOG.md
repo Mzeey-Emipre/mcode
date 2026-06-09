@@ -1,5 +1,107 @@
 # Changelog
 
+## [0.12.0](https://github.com/Mzeey-Empire/mcode/compare/mcode-v0.11.1...mcode-v0.12.0) (2026-06-09)
+
+
+### Features
+
+* **chat-fork:** provider-generated handoff pipeline with B/A/D fallback ladder ([#499](https://github.com/Mzeey-Empire/mcode/issues/499)) ([fb4e712](https://github.com/Mzeey-Empire/mcode/commit/fb4e7123a881faa60fb31371add050b3af92234f))
+* **chat:** attachment previews that shine on web and desktop ([#464](https://github.com/Mzeey-Empire/mcode/issues/464)) ([552bb70](https://github.com/Mzeey-Empire/mcode/commit/552bb70652440cafd2d9dd9afd8f0c21e8f2b38d))
+* **chat:** sticky last user message bar ([#523](https://github.com/Mzeey-Empire/mcode/issues/523)) ([5c34a3c](https://github.com/Mzeey-Empire/mcode/commit/5c34a3cd12d23d43e1f74e5617100776741567a6))
+* **claude:** support /goal command via SDK Stop hook ([#467](https://github.com/Mzeey-Empire/mcode/issues/467)) ([05d9299](https://github.com/Mzeey-Empire/mcode/commit/05d9299631796dd540b40d4cc974f1b32a6053ed))
+* **codex:** narrative pipeline, sub-agent nesting, and fast mode ([#487](https://github.com/Mzeey-Empire/mcode/issues/487)) ([f88a4f2](https://github.com/Mzeey-Empire/mcode/commit/f88a4f29659cf7e96b3778fd934610ef51c69064))
+* **copilot:** cross-platform ordered CLI resolver ([#542](https://github.com/Mzeey-Empire/mcode/issues/542)) ([#544](https://github.com/Mzeey-Empire/mcode/issues/544)) ([f0a6a68](https://github.com/Mzeey-Empire/mcode/commit/f0a6a68e1f26f4b8b384d720297fb1c67b033e0b))
+* **cursor:** clean side-channel forking (path B) ([#569](https://github.com/Mzeey-Empire/mcode/issues/569)) ([7c1eed6](https://github.com/Mzeey-Empire/mcode/commit/7c1eed6667f2d280c0ec974f2170668b65c9174e))
+* **cursor:** Cursor subagent ACP mapping, diagnostics, and desktop demo tour ([#470](https://github.com/Mzeey-Empire/mcode/issues/470)) ([d93e6d4](https://github.com/Mzeey-Empire/mcode/commit/d93e6d4cf29a4159484f22024730719b24cb89d2))
+* **desktop:** gate DevTools to dev desktop and auto-open docked ([#497](https://github.com/Mzeey-Empire/mcode/issues/497)) ([5c13957](https://github.com/Mzeey-Empire/mcode/commit/5c139572caf23bdf5a171547d1fdb9dd477563ce))
+* **desktop:** stable and nightly desktop updates ([#466](https://github.com/Mzeey-Empire/mcode/issues/466)) ([6918732](https://github.com/Mzeey-Empire/mcode/commit/69187323f20345f406b11bfaec1df19d8dd04be4))
+* **diff:** side-rail file actions, editor goto-line, whole-file MD preview ([#498](https://github.com/Mzeey-Empire/mcode/issues/498)) ([5fd16c6](https://github.com/Mzeey-Empire/mcode/commit/5fd16c6fe0a6a4f1117747f0bc30b8eae94dddb3))
+* live tool call narrative flow ([#459](https://github.com/Mzeey-Empire/mcode/issues/459)) ([742e52e](https://github.com/Mzeey-Empire/mcode/commit/742e52e880aba7ddbe45fa227bb1c4231da93582))
+* **models:** add Claude Opus 4.8 ([#535](https://github.com/Mzeey-Empire/mcode/issues/535)) ([6a2533e](https://github.com/Mzeey-Empire/mcode/commit/6a2533ef9705ab83f97bc94ad17168be98453ea8))
+* narrative DB persistence (WIP) ([#571](https://github.com/Mzeey-Empire/mcode/issues/571)) ([5d415d0](https://github.com/Mzeey-Empire/mcode/commit/5d415d08499ba9036dadfedf4311f7d254247c3a))
+* **narrative:** text-vs-thoughts classification + Whisper redesign ([#484](https://github.com/Mzeey-Empire/mcode/issues/484)) ([c906a26](https://github.com/Mzeey-Empire/mcode/commit/c906a2654a38d9b0872bf5b22fd0669d39cee60e))
+* **plan-mode:** adaptive-dock right-tab UX + implementation ([#567](https://github.com/Mzeey-Empire/mcode/issues/567)) ([0d9dca2](https://github.com/Mzeey-Empire/mcode/commit/0d9dca25317a6783a1c9323351e10dfe8e9bfd72))
+* **plan:** plan-mode wizard — composer takeover, durable lifecycle, Whisper redesign ([#496](https://github.com/Mzeey-Empire/mcode/issues/496)) ([82fd5eb](https://github.com/Mzeey-Empire/mcode/commit/82fd5eb2e1a65afbb38792fc715dd40864701312))
+* **preview:** dpcode-class in-app browser - multi-tab, automation pipe, WebContentsView ([#480](https://github.com/Mzeey-Empire/mcode/issues/480)) ([de1950d](https://github.com/Mzeey-Empire/mcode/commit/de1950d29ad7edd9c44012e6e2b94f7c3d1af083))
+* **preview:** in-panel error states for failed loads ([#561](https://github.com/Mzeey-Empire/mcode/issues/561)) ([85eabfa](https://github.com/Mzeey-Empire/mcode/commit/85eabfa4904591a9fb7670b1118eaa0a066a2bb2))
+* **preview:** memory-saver tabs (discard idle background previews) ([#562](https://github.com/Mzeey-Empire/mcode/issues/562)) ([f4709e8](https://github.com/Mzeey-Empire/mcode/commit/f4709e8ec442db765cb898ae969a07ca0331ffa7))
+* **preview:** page-status state model (single channel + reducer) ([#557](https://github.com/Mzeey-Empire/mcode/issues/557)) ([c540c82](https://github.com/Mzeey-Empire/mcode/commit/c540c82d08931311ecfcc0e52bee24d8c66f3339))
+* **preview:** redesigned toolbar, capture dock, design mode ([#517](https://github.com/Mzeey-Empire/mcode/issues/517)) ([91e37a3](https://github.com/Mzeey-Empire/mcode/commit/91e37a365e7b7f09b077bc4aa60ec9cae5372324))
+* **right-panel:** glanceable tab status, drag-handle fixes, terminal auto-start ([#570](https://github.com/Mzeey-Empire/mcode/issues/570)) ([3754847](https://github.com/Mzeey-Empire/mcode/commit/37548471d79eecb8a9d8701d4255c411d18ca3d6))
+* **server:** auto-retry transient turn failures and hide session handoffs ([#595](https://github.com/Mzeey-Empire/mcode/issues/595)) ([0887048](https://github.com/Mzeey-Empire/mcode/commit/0887048065e15f99307a9a3fc5413d23e0ffc17a))
+* **server:** skip DB write for empty turns via TurnSubstance predicate ([#592](https://github.com/Mzeey-Empire/mcode/issues/592)) ([f223a5b](https://github.com/Mzeey-Empire/mcode/commit/f223a5b2b89eeecffc7cf563d396bc8a43ed037f)), closes [#578](https://github.com/Mzeey-Empire/mcode/issues/578)
+* **tasks:** render per-sub-agent TodoWrite groups ([#485](https://github.com/Mzeey-Empire/mcode/issues/485)) ([9f16e4a](https://github.com/Mzeey-Empire/mcode/commit/9f16e4a4d1c2e9873f87615e9cfeba62d6cabb36))
+* treat direct-mode threads as non-PR-able ([#591](https://github.com/Mzeey-Empire/mcode/issues/591)) ([06577a3](https://github.com/Mzeey-Empire/mcode/commit/06577a39b1d5ee02dea8666242bbd89972bfa54f)), closes [#588](https://github.com/Mzeey-Empire/mcode/issues/588)
+* **web:** auto-expand latest turn diffs in By Turn view ([#476](https://github.com/Mzeey-Empire/mcode/issues/476)) ([290835d](https://github.com/Mzeey-Empire/mcode/commit/290835df36d06f6ddbc03bc3759778a65a5ac9db))
+* **web:** default right panel to half width, 384px min, refine resize grip ([bce5cc5](https://github.com/Mzeey-Empire/mcode/commit/bce5cc5c3061753d1ec671aae67e7241b54e7714))
+* **web:** infer syntax language from path-like code fences ([#462](https://github.com/Mzeey-Empire/mcode/issues/462)) ([3cb8b21](https://github.com/Mzeey-Empire/mcode/commit/3cb8b21f9bc6980f9d8601d70e36dbef256490f4))
+* **web:** right panel default width, min width, and resize grip ([#458](https://github.com/Mzeey-Empire/mcode/issues/458)) ([bce5cc5](https://github.com/Mzeey-Empire/mcode/commit/bce5cc5c3061753d1ec671aae67e7241b54e7714))
+* workspace HTML preview links in markdown ([#463](https://github.com/Mzeey-Empire/mcode/issues/463)) ([22f86c1](https://github.com/Mzeey-Empire/mcode/commit/22f86c1ed78a420630be4baa141800e0249307c6))
+
+
+### Bug Fixes
+
+* **auto-updater:** suppress transient DNS errors from update banner ([#505](https://github.com/Mzeey-Empire/mcode/issues/505)) ([482e39b](https://github.com/Mzeey-Empire/mcode/commit/482e39bc55a99783af48d33bd4008310360e31b1))
+* **auto-updater:** suppress transient DNS/network errors from update banner ([482e39b](https://github.com/Mzeey-Empire/mcode/commit/482e39bc55a99783af48d33bd4008310360e31b1))
+* **chat:** never show loading skeleton for slash commands ([#478](https://github.com/Mzeey-Empire/mcode/issues/478)) ([e2b1bbb](https://github.com/Mzeey-Empire/mcode/commit/e2b1bbbdf034149a3515788e526bcd6ab639230d))
+* **chat:** preserve multiline user messages and trim edge whitespace ([#519](https://github.com/Mzeey-Empire/mcode/issues/519)) ([22d075b](https://github.com/Mzeey-Empire/mcode/commit/22d075b01fe30a7d05bf98302a0025fee4f1bfdc))
+* **chat:** preserve narration on thread swap + session resilience ([#546](https://github.com/Mzeey-Empire/mcode/issues/546)) ([093ce41](https://github.com/Mzeey-Empire/mcode/commit/093ce41b46bdd2cd61e1da59ff0efcc8964f64ee))
+* **chat:** stop sticky user bar flicker at scroll clip boundary ([#548](https://github.com/Mzeey-Empire/mcode/issues/548)) ([ea115e3](https://github.com/Mzeey-Empire/mcode/commit/ea115e319b560443426212b51930f6fa5b63534a))
+* **chat:** stuck slash-command popup + typed popup state, declarative availability, flushSync warning ([#547](https://github.com/Mzeey-Empire/mcode/issues/547)) ([7fd46cd](https://github.com/Mzeey-Empire/mcode/commit/7fd46cd6cd2bee70a60881374adc551796bcc476))
+* **ci:** nightly version exceeds Windows VERSIONINFO 16-bit limit ([#472](https://github.com/Mzeey-Empire/mcode/issues/472)) ([182c6d9](https://github.com/Mzeey-Empire/mcode/commit/182c6d9dfb4bec2bddf5cf0ebaf30f453dabbf55))
+* **claude:** disallow AskUserQuestion SDK tool to prevent session stall ([#483](https://github.com/Mzeey-Empire/mcode/issues/483)) ([58e1fc3](https://github.com/Mzeey-Empire/mcode/commit/58e1fc3974817fc75f369e39cebf5950d5f50cb1))
+* **codex:** suppress idle turn timeout from chat UI ([#549](https://github.com/Mzeey-Empire/mcode/issues/549)) ([b3c7a0f](https://github.com/Mzeey-Empire/mcode/commit/b3c7a0f4a3e7fe5db8703efaaaf151f073a3da1a))
+* **codex:** tolerate cold-start latency in app-server initialize ([#545](https://github.com/Mzeey-Empire/mcode/issues/545)) ([a3b5a60](https://github.com/Mzeey-Empire/mcode/commit/a3b5a60bf0581a282ce85fa2788ceef9210c717f))
+* **cursor:** recover from ACP connection closed mid-turn ([#550](https://github.com/Mzeey-Empire/mcode/issues/550)) ([d2e509e](https://github.com/Mzeey-Empire/mcode/commit/d2e509e5f98058a4230ba2342349e383829b829e))
+* dedupe workspace list when re-adding existing project ([#597](https://github.com/Mzeey-Empire/mcode/issues/597)) ([#599](https://github.com/Mzeey-Empire/mcode/issues/599)) ([b0cdf2a](https://github.com/Mzeey-Empire/mcode/commit/b0cdf2aeb8e18a42e0e216d7c37940e7ff925472))
+* **desktop:** nightly builds auto-detect update channel ([#473](https://github.com/Mzeey-Empire/mcode/issues/473)) ([d96d3fe](https://github.com/Mzeey-Empire/mcode/commit/d96d3fe80bd8d18c8c4c673a2748e6597611698b))
+* **dev:** kill full process tree on Windows to release ports ([#488](https://github.com/Mzeey-Empire/mcode/issues/488)) ([8aa8a78](https://github.com/Mzeey-Empire/mcode/commit/8aa8a7869971de52f3f5ab68b995c410146d4aef))
+* **diff:** left-align side-rail buttons so icons stay visible when collapsed ([#516](https://github.com/Mzeey-Empire/mcode/issues/516)) ([632f3ca](https://github.com/Mzeey-Empire/mcode/commit/632f3cac12d3826a1281e484b973cd256523e195))
+* **handoff:** use sessionless path B-prime for stale parent sessions ([#501](https://github.com/Mzeey-Empire/mcode/issues/501)) ([8bc66d2](https://github.com/Mzeey-Empire/mcode/commit/8bc66d23c494bfeb00b1f776150c4f8176697105))
+* navigate to new-thread composer after adding project ([#598](https://github.com/Mzeey-Empire/mcode/issues/598)) ([598a9b4](https://github.com/Mzeey-Empire/mcode/commit/598a9b4686715331daa9e5ee3fbf39e75bb3baeb))
+* preserve composer settings on thread creation ([#503](https://github.com/Mzeey-Empire/mcode/issues/503)) ([fee810c](https://github.com/Mzeey-Empire/mcode/commit/fee810c574c42a3cf9663bff461c22cdf0b8fd7f))
+* **preview:** sync native view on thread switch when panel bounds unchanged ([#508](https://github.com/Mzeey-Empire/mcode/issues/508)) ([6dc3392](https://github.com/Mzeey-Empire/mcode/commit/6dc3392c749fefa806326a1099381b79b95b565b))
+* **queue:** prevent /goal control commands from corrupting running-state mid-turn ([#594](https://github.com/Mzeey-Empire/mcode/issues/594)) ([3f78abf](https://github.com/Mzeey-Empire/mcode/commit/3f78abf1cd4ee59d5ac8d47a60497636bafb6334))
+* **queue:** stop /goal control commands from corrupting running-state mid-turn ([3f78abf](https://github.com/Mzeey-Empire/mcode/commit/3f78abf1cd4ee59d5ac8d47a60497636bafb6334)), closes [#583](https://github.com/Mzeey-Empire/mcode/issues/583)
+* **server:** make turn assistant-message write idempotent ([#577](https://github.com/Mzeey-Empire/mcode/issues/577)) ([#590](https://github.com/Mzeey-Empire/mcode/issues/590)) ([a3e0810](https://github.com/Mzeey-Empire/mcode/commit/a3e08107297efec0137e4dcb25bcb400b9e0933e))
+* **settings:** accept legacy agent.defaults.mode chat on load ([#520](https://github.com/Mzeey-Empire/mcode/issues/520)) ([c05b279](https://github.com/Mzeey-Empire/mcode/commit/c05b279ebf7ba74ab581ad0197ae1ce6936e41d4))
+* **updater:** harden update flow with quiet UI and friendly error toasts ([#581](https://github.com/Mzeey-Empire/mcode/issues/581)) ([1d206cd](https://github.com/Mzeey-Empire/mcode/commit/1d206cdbdb3cf3a125a844ed28eea566bbafdadb))
+* **web:** align code fence background with horizontal overflow ([#465](https://github.com/Mzeey-Empire/mcode/issues/465)) ([4a74884](https://github.com/Mzeey-Empire/mcode/commit/4a748840718cd5401ba8682c0e8abbccd21e3635))
+* **web:** constrain long shell commands in narrative tool rows ([#486](https://github.com/Mzeey-Empire/mcode/issues/486)) ([955b93d](https://github.com/Mzeey-Empire/mcode/commit/955b93d9badc30cf011214b153653d1252529d5d))
+* **web:** fix browser preview navigation and tooltip positioning ([#507](https://github.com/Mzeey-Empire/mcode/issues/507)) ([4a23db0](https://github.com/Mzeey-Empire/mcode/commit/4a23db011594b46466c83d7287c6920c36d0e46e))
+* **web:** hide model reasoning effort for Cursor and Copilot ([#457](https://github.com/Mzeey-Empire/mcode/issues/457)) ([8292cf5](https://github.com/Mzeey-Empire/mcode/commit/8292cf57b47ffb8e953544a201006ea026ad17d0))
+* **web:** hide reasoning effort setting for Cursor and Copilot ([8292cf5](https://github.com/Mzeey-Empire/mcode/commit/8292cf57b47ffb8e953544a201006ea026ad17d0))
+* **web:** open ctrl+click links in preview without replacing active tab ([#551](https://github.com/Mzeey-Empire/mcode/issues/551)) ([235577d](https://github.com/Mzeey-Empire/mcode/commit/235577d77898bf35583e2c994cf64daa668019c5))
+* **web:** preserve tool call logs on switch + perf for thread switches ([#477](https://github.com/Mzeey-Empire/mcode/issues/477)) ([9d23337](https://github.com/Mzeey-Empire/mcode/commit/9d233379c2e85758cff8a5ee536f9460ce776276))
+* **web:** restore /goal pill, harden long-text/attachments, and fix queue deadlock ([#475](https://github.com/Mzeey-Empire/mcode/issues/475)) ([affe461](https://github.com/Mzeey-Empire/mcode/commit/affe461c488f52a6be4feaabf93ddaefc75469e2))
+* **web:** restore CI spinners and sidebar status dot animations ([#506](https://github.com/Mzeey-Empire/mcode/issues/506)) ([9f16c70](https://github.com/Mzeey-Empire/mcode/commit/9f16c70bfd52928292cdbc8e08628c67f6561da0))
+* **web:** restore right panel resize on terminal tab ([#502](https://github.com/Mzeey-Empire/mcode/issues/502)) ([a2122d7](https://github.com/Mzeey-Empire/mcode/commit/a2122d7ed6981ec9c8508399808d61bd1ca6c2ea))
+* **web:** scope inline diff cache by threadId ([#479](https://github.com/Mzeey-Empire/mcode/issues/479)) ([8de95bb](https://github.com/Mzeey-Empire/mcode/commit/8de95bb55933ecd51c41d07765de83bd3297d1b2))
+* **workspace:** dedupe re-added project in client store list ([b0cdf2a](https://github.com/Mzeey-Empire/mcode/commit/b0cdf2aeb8e18a42e0e216d7c37940e7ff925472)), closes [#597](https://github.com/Mzeey-Empire/mcode/issues/597)
+
+
+### Performance Improvements
+
+* **e2e:** parallel workers + auto-detect existing dev server ([#533](https://github.com/Mzeey-Empire/mcode/issues/533)) ([0a49a0d](https://github.com/Mzeey-Empire/mcode/commit/0a49a0d7e135a5027e1cefed0d4e6f32600f8547))
+* incremental typecheck, ESLint cache, turbo cleanup ([#532](https://github.com/Mzeey-Empire/mcode/issues/532)) ([7c5db15](https://github.com/Mzeey-Empire/mcode/commit/7c5db1555ede6f646403ce692ce79390bdeb2def))
+* **install:** drop better-sqlite3 from trustedDependencies ([#460](https://github.com/Mzeey-Empire/mcode/issues/460)) ([599c462](https://github.com/Mzeey-Empire/mcode/commit/599c4620d12a2c2a77289e387e2e6b240dfe9f85))
+* **terminal:** move terminal to right panel tab ([#481](https://github.com/Mzeey-Empire/mcode/issues/481)) ([39336e6](https://github.com/Mzeey-Empire/mcode/commit/39336e6631749f156c3de64dc63650b987465ac2))
+* **verify:** run typecheck, lint, tests concurrently ([#534](https://github.com/Mzeey-Empire/mcode/issues/534)) ([1e4e4ec](https://github.com/Mzeey-Empire/mcode/commit/1e4e4ec151b808d30e42212d8ccbaa9d7dcd19de))
+* **verify:** scope unit tests to changed files via vitest related ([#537](https://github.com/Mzeey-Empire/mcode/issues/537)) ([a503a17](https://github.com/Mzeey-Empire/mcode/commit/a503a1715c1aae012105909aec6ecf27b48156b7))
+* **verify:** tiered verification with fast gate for agent stop hooks ([#536](https://github.com/Mzeey-Empire/mcode/issues/536)) ([6dabbd7](https://github.com/Mzeey-Empire/mcode/commit/6dabbd74940485a520c30f132de65196d90b0465))
+
+
+### Code Refactoring
+
+* add IGoalCapable capability + extract GoalCommand ([#574](https://github.com/Mzeey-Empire/mcode/issues/574)) ([#582](https://github.com/Mzeey-Empire/mcode/issues/582)) ([6533575](https://github.com/Mzeey-Empire/mcode/commit/653357563c6db467b73a928ea8f6904943d5069d))
+* agent provider + handoff architecture overhaul (E, A, B, D, F) ([#543](https://github.com/Mzeey-Empire/mcode/issues/543)) ([b1b4b8a](https://github.com/Mzeey-Empire/mcode/commit/b1b4b8ad13f8f6fa2cf93e77f326d0dab68c6a79))
+* **contracts:** rename InteractionMode value "chat" → "build" ([#515](https://github.com/Mzeey-Empire/mcode/issues/515)) ([8909274](https://github.com/Mzeey-Empire/mcode/commit/8909274633fd8bc0ee8b66f14abd34d9b1d31972))
+* **server:** extract command dispatch to generic CommandRouter ([#579](https://github.com/Mzeey-Empire/mcode/issues/579)) ([#589](https://github.com/Mzeey-Empire/mcode/issues/589)) ([0324547](https://github.com/Mzeey-Empire/mcode/commit/032454734cdc2df1a68c76df6b8dcb61eb4571e3))
+* **server:** extract PlanQuestionService from AgentService ([#586](https://github.com/Mzeey-Empire/mcode/issues/586)) ([fcbab08](https://github.com/Mzeey-Empire/mcode/commit/fcbab08deac5892ee0696ca6f37664a9654022f8)), closes [#573](https://github.com/Mzeey-Empire/mcode/issues/573)
+* **server:** introduce TurnFinalizer seam + turn outcome enum ([#587](https://github.com/Mzeey-Empire/mcode/issues/587)) ([b472f1e](https://github.com/Mzeey-Empire/mcode/commit/b472f1e58603ab85e69ce9f5d7b51885975678fd)), closes [#576](https://github.com/Mzeey-Empire/mcode/issues/576)
+* **server:** lift HandoffCoordinator out of AgentService ([#585](https://github.com/Mzeey-Empire/mcode/issues/585)) ([2a15279](https://github.com/Mzeey-Empire/mcode/commit/2a15279e88fb64dc5b260c0744d8054a4f649289)), closes [#575](https://github.com/Mzeey-Empire/mcode/issues/575)
+* **threadStore:** extract ThreadHydrator + collapse per-thread maps into ThreadRecord ([#524](https://github.com/Mzeey-Empire/mcode/issues/524)) ([05c3304](https://github.com/Mzeey-Empire/mcode/commit/05c3304741cb353157dd847d85a9279f0cfbc4ad))
+
 ## [0.11.1](https://github.com/Mzeey-Empire/mcode/compare/mcode-v0.11.0...mcode-v0.11.1) (2026-05-13)
 
 
