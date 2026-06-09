@@ -102,6 +102,27 @@ export interface HookExecution {
   startedAt: number;
 }
 
+/** Category of an openable app, mirroring the desktop registry's adapter kinds. */
+export type OpenInAppKind = "editor" | "fileManager";
+
+/**
+ * Openable-app metadata as exposed by the desktop main-process registry. Icons
+ * cannot cross the IPC boundary, so the registry supplies an {@link OpenInApp.iconKey}
+ * the renderer maps to a component.
+ */
+export interface OpenInApp {
+  /** Stable identifier used to dispatch launches (e.g. "code", "explorer"). */
+  readonly id: string;
+  /** Human-readable name shown in the menu (e.g. "VS Code"). */
+  readonly label: string;
+  /** App category, driving launch semantics and menu grouping. */
+  readonly kind: OpenInAppKind;
+  /** Renderer-side key for the app's icon component. */
+  readonly iconKey: string;
+  /** Whether the app is installed / available on this system. */
+  readonly detected: boolean;
+}
+
 /** Transport interface consumed by the web app to communicate with the backend. */
 export interface McodeTransport {
   // Workspace commands
@@ -263,8 +284,13 @@ export interface McodeTransport {
   listWorkspaceFiles(workspaceId: string, threadId?: string): Promise<string[]>;
   readFileContent(workspaceId: string, relativePath: string, threadId?: string): Promise<string>;
 
-  // Editor actions
-  detectEditors(): Promise<string[]>;
+  // Open-in app actions
+  /**
+   * List openable apps (editors, file manager) with metadata and detection
+   * status, sourced from the desktop main-process registry. Returns an empty
+   * list when no desktop bridge is present (web build).
+   */
+  listOpenInApps(): Promise<OpenInApp[]>;
   /**
    * Open a path (file or directory) in the given editor. If `line` is
    * provided and the target is a file, the editor jumps to that line.

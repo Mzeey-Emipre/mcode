@@ -3,10 +3,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // FileEditorPicker (rendered when absolutePath is provided) pulls in
-// useInstalledEditors which calls the IPC transport. Tests don't bootstrap
-// the transport, so stub the hook to return no editors.
-vi.mock("@/hooks/useInstalledEditors", () => ({
-  useInstalledEditors: () => [],
+// useOpenInApps which calls the IPC transport. Tests don't bootstrap
+// the transport, so stub the hook to return no apps.
+vi.mock("@/hooks/useOpenInApps", () => ({
+  useOpenInApps: () => [],
 }));
 
 import { SideRail } from "../SideRail";

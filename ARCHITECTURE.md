@@ -545,7 +545,7 @@ The preload script exposes `window.desktopBridge` for operations that require na
 | `openInEditor(editor, path)` | Launch VS Code, Cursor, or Zed |
 | `openInExplorer(path)` | Open in system file explorer |
 | `openExternalUrl(url)` | Open URL in default browser (https only) |
-| `detectEditors()` | Scan for installed editors |
+| `listOpenInApps()` | List openable apps (editors, file manager) with detection status |
 | `readClipboardImage()` | Read image from clipboard, save as temp JPEG |
 | `getLogPath()` | Get the log directory path |
 | `getRecentLogs(lines)` | Read recent log lines |

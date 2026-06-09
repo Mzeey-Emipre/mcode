@@ -616,8 +616,8 @@ export function createWsTransport(
     readFileContent: (workspaceId, relativePath, threadId?) =>
       rpc<string>("file.read", { workspaceId, relativePath, threadId }),
 
-    // Editor (delegated to desktopBridge; no-op over WS)
-    detectEditors: async () => window.desktopBridge?.detectEditors() ?? [],
+    // Open-in apps (delegated to desktopBridge; no-op over WS)
+    listOpenInApps: async () => (await window.desktopBridge?.listOpenInApps()) ?? [],
     openInEditor: async (editor, path, line) =>
       window.desktopBridge?.openInEditor(editor, path, line),
     openInExplorer: async (dirPath) => window.desktopBridge?.openInExplorer(dirPath),

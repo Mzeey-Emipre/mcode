@@ -31,8 +31,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openExternalUrl: (url: string, workspacePath?: string | null): Promise<void> =>
     ipcRenderer.invoke("open-external-url", url, workspacePath ?? null),
 
-  /** Detect which supported editors are installed. */
-  detectEditors: (): Promise<string[]> => ipcRenderer.invoke("detect-editors"),
+  /** List openable apps (metadata + detection status) from the main-process registry. */
+  listOpenInApps: (): Promise<unknown> => ipcRenderer.invoke("list-open-in-apps"),
 
   /** Read an image from the clipboard and save it as a temp JPEG. */
   readClipboardImage: (): Promise<unknown> =>

@@ -1,13 +1,12 @@
 import { useEffect, useCallback } from "react";
 import { FolderOpen } from "lucide-react";
 import { getTransport } from "@/transport";
-import { useInstalledEditors } from "@/hooks/useInstalledEditors";
+import { useOpenInApps } from "@/hooks/useOpenInApps";
 import { registerCommand } from "@/lib/shortcuts";
 import { formatKeybinding } from "@/lib/keybinding-manager";
 import { isMac } from "@/lib/platform";
 import { useToastStore } from "@/stores/toastStore";
-import { VsCodeIcon, ZedIcon } from "./EditorIcons";
-import { CursorProviderIcon } from "./ProviderIcons";
+import { openInAppIcon } from "./openInAppIcons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,12 +22,6 @@ interface EditorEntry {
   readonly icon: React.ReactNode;
 }
 
-const EDITOR_CONFIG: Record<string, { label: string; icon: (size: number) => React.ReactNode }> = {
-  code: { label: "VS Code", icon: (s) => <VsCodeIcon size={s} /> },
-  cursor: { label: "Cursor", icon: (s) => <CursorProviderIcon size={s} /> },
-  zed: { label: "Zed", icon: (s) => <ZedIcon size={s} /> },
-};
-
 interface OpenInEditorMenuProps {
   /** Absolute path to open. */
   dirPath: string;
@@ -36,18 +29,17 @@ interface OpenInEditorMenuProps {
 
 /** Dropdown menu that opens a directory in an installed code editor or system file explorer. */
 export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
-  const installedEditors = useInstalledEditors();
+  const apps = useOpenInApps();
 
-  const entries: EditorEntry[] = installedEditors
-    .filter((id) => id in EDITOR_CONFIG)
-    .map((id) => ({
-      id,
-      label: EDITOR_CONFIG[id].label,
-      icon: EDITOR_CONFIG[id].icon(16),
-    }));
+  const editors = apps.filter((app) => app.kind === "editor" && app.detected);
+  const entries: EditorEntry[] = editors.map((app) => ({
+    id: app.id,
+    label: app.label,
+    icon: openInAppIcon(app.iconKey, 16),
+  }));
 
   const handleOpenEditor = (editorId: string) => {
-    const label = EDITOR_CONFIG[editorId]?.label ?? editorId;
+    const label = editors.find((app) => app.id === editorId)?.label ?? editorId;
     getTransport()
       .openInEditor(editorId, dirPath)
       .catch((err) =>
