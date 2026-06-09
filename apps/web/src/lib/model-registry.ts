@@ -54,6 +54,27 @@ export interface ModelDefinition {
   defaultReasoningLevel?: CodexReasoningLevel;
   /** Billing rate multiplier relative to the base rate (e.g. 1, 0.33, 3). */
   multiplier?: number;
+  /**
+   * ISO date (YYYY-MM-DD) after which the model can no longer be selected.
+   * Mcode authenticates via subscription credentials (never API keys), so a
+   * model whose subscription access window the vendor has end-dated stays
+   * selectable through this day, then renders greyed-out in pickers.
+   */
+  availableUntil?: string;
+}
+
+/**
+ * Returns true when the model is selectable today. Models whose
+ * `availableUntil` date has passed render greyed-out in pickers.
+ */
+export function isModelAvailable(m: ModelDefinition, now: Date = new Date()): boolean {
+  if (!m.availableUntil) return true;
+  // Compare against the local calendar date, not UTC: `availableUntil` is a
+  // zoneless wall date and the picker renders its "Until <date>" badge with
+  // local formatting, so a UTC basis would grey the model out a day early or
+  // late for users far from UTC.
+  const localYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return localYmd <= m.availableUntil;
 }
 
 export const MODEL_PROVIDERS: readonly ModelProvider[] = [
@@ -63,6 +84,11 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     comingSoon: false,
     supportsCompletion: true,
     models: [
+      // Anthropic ends Fable 5 subscription access on 2026-06-22; Mcode
+      // auths via subscription, so the entry gates itself after that date.
+      { id: "claude-fable-5", label: "Claude Fable 5", providerId: "claude",
+        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-fable-5"],
+        availableUntil: "2026-06-22" },
       { id: "claude-opus-4-8", label: "Claude Opus 4.8", providerId: "claude",
         contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-opus-4-8"] },
       { id: "claude-opus-4-7", label: "Claude Opus 4.7", providerId: "claude",
@@ -238,7 +264,9 @@ export function findProviderForModel(modelId: string): ModelProvider | undefined
 
 /** @deprecated Use `getDefaultModelId()` for settings-aware defaults. */
 export function getDefaultModel(): ModelDefinition {
-  return MODEL_PROVIDERS[0].models[0]; // Claude Opus 4.8
+  const claude = MODEL_PROVIDERS[0];
+  // Skip date-gated entries so a not-yet-selectable model never becomes the default.
+  return claude.models.find((m) => isModelAvailable(m)) ?? claude.models[0];
 }
 
 /**

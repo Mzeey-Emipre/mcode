@@ -12,10 +12,10 @@
 
 import { build } from "esbuild";
 import { execSync, execFileSync } from "child_process";
-import { cpSync, copyFileSync, existsSync, rmSync } from "fs";
-import { createRequire } from "module";
+import { cpSync, existsSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { copyClaudeSdkCliNextTo } from "../../../scripts/build-server-dev-bundle.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
@@ -83,7 +83,7 @@ try {
 // bindings that cannot be inlined and must be asarUnpack'd by electron-builder.
 //
 // import.meta.url must resolve to a real file:// URL at runtime because the
-// Claude Agent SDK calls fileURLToPath(import.meta.url) to locate cli.js.
+// Claude Agent SDK calls fileURLToPath(import.meta.url) to locate its native CLI binary.
 // A plain __filename substitution breaks fileURLToPath with ERR_INVALID_URL_SCHEME.
 await build({
   ...shared,
@@ -111,15 +111,11 @@ if (existsSync(drizzleSrc)) {
   console.log(`Copied Drizzle migrations -> ${drizzleDst}`);
 }
 
-// Copy the Claude Agent SDK's cli.js next to server.cjs so the SDK can locate
-// it via dirname(fileURLToPath(import.meta.url)) + "/cli.js".
-// dist/server/** is already in asarUnpack, so both files exist on real disk.
-const localRequire = createRequire(resolve(serverRoot, "package.json"));
-const sdkPkgPath = localRequire.resolve("@anthropic-ai/claude-agent-sdk/package.json");
-const sdkCliSrc = resolve(dirname(sdkPkgPath), "cli.js");
-const sdkCliDst = resolve(desktopRoot, "dist/server/cli.js");
-copyFileSync(sdkCliSrc, sdkCliDst);
-console.log(`Copied SDK cli.js -> ${sdkCliDst}`);
+// Stage the Claude Agent SDK's native CLI binary under dist/server/node_modules
+// so the bundled SDK's createRequire(import.meta.url) resolution finds it.
+// dist/server/** is already in asarUnpack, so the binary exists on real disk.
+copyClaudeSdkCliNextTo(resolve(desktopRoot, "dist/server/server.cjs"), serverRoot);
+console.log("Staged SDK native CLI binary -> dist/server/node_modules");
 
 // Step 3: Build web renderer for Electron (cross-platform env var)
 const rendererOutDir = resolve(desktopRoot, "dist", "renderer");
