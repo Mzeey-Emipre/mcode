@@ -235,6 +235,11 @@ export const WS_METHODS = lazySchema(() => ({
        * inherits `settings.provider.codex.fastMode`.
        */
       codexFastMode: z.boolean().nullable().optional(),
+      /**
+       * Thread-scoped default open-in app id (ADR-0005 tier 1). Pass null to clear
+       * the override so the thread inherits the global default.
+       */
+      defaultOpenInApp: z.string().nullable().optional(),
     }).refine(
       (data) =>
         data.reasoningLevel !== undefined ||
@@ -243,7 +248,8 @@ export const WS_METHODS = lazySchema(() => ({
         data.copilotAgent !== undefined ||
         data.contextWindow !== undefined ||
         data.thinking !== undefined ||
-        data.codexFastMode !== undefined,
+        data.codexFastMode !== undefined ||
+        data.defaultOpenInApp !== undefined,
       { message: "Must provide at least one setting to update" },
     ),
     result: z.boolean(),

@@ -482,6 +482,7 @@ export function createWsTransport(
         contextWindow: settings.contextWindow,
         thinking: settings.thinking,
         codexFastMode: settings.codexFastMode,
+        defaultOpenInApp: settings.defaultOpenInApp,
       }),
     markThreadViewed: (threadId) => rpc<void>("thread.markViewed", { threadId }),
     syncThreadPrs: (workspaceId) =>
@@ -618,6 +619,8 @@ export function createWsTransport(
 
     // Open-in apps (delegated to desktopBridge; no-op over WS)
     listOpenInApps: async () => (await window.desktopBridge?.listOpenInApps()) ?? [],
+    openIn: async (appId, path, line) =>
+      window.desktopBridge?.openIn(appId, path, line),
     openInEditor: async (editor, path, line) =>
       window.desktopBridge?.openInEditor(editor, path, line),
     openInExplorer: async (dirPath) => window.desktopBridge?.openInExplorer(dirPath),

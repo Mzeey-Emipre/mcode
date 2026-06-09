@@ -276,6 +276,22 @@ function registerIpcHandlers(): void {
     return openInRegistry.launch(FILE_EXPLORER_ID, { path: dirPath });
   });
 
+  // Unified open-in seam: dispatch a path to the registry adapter for `appId`.
+  // The registry rejects unknown ids, so no separate allowlist is needed. `line`
+  // is honored only by editor adapters with a file target.
+  ipcMain.handle(
+    "open-in",
+    async (_event, appId: string, targetPath: string, line?: number) => {
+      if (!isAbsolute(targetPath)) {
+        throw new Error("Open-in path must be absolute");
+      }
+      if (!existsSync(targetPath)) {
+        throw new Error(`Path does not exist: ${targetPath}`);
+      }
+      await openInRegistry.launch(appId, { path: targetPath, line });
+    },
+  );
+
   // Open external URL (https, http, mailto), or workspace-relative preview targets in the default browser.
   ipcMain.handle(
     "open-external-url",

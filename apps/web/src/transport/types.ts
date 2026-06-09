@@ -254,6 +254,7 @@ export interface McodeTransport {
       contextWindow?: ContextWindowMode | null;
       thinking?: boolean | null;
       codexFastMode?: boolean | null;
+      defaultOpenInApp?: string | null;
     },
   ): Promise<boolean>;
   /** Clear the "completed" badge for a thread. Transitions completed -> paused in the DB. */
@@ -291,6 +292,13 @@ export interface McodeTransport {
    * list when no desktop bridge is present (web build).
    */
   listOpenInApps(): Promise<OpenInApp[]>;
+  /**
+   * Open a path in the given registry app, dispatched to the right adapter by
+   * the desktop main process. This is the unified seam used by the open-in split
+   * button and the `mod+o` shortcut; `appId` is any id from {@link listOpenInApps}.
+   * `line` is honored only by editor apps with a file target.
+   */
+  openIn(appId: string, path: string, line?: number): Promise<void>;
   /**
    * Open a path (file or directory) in the given editor. If `line` is
    * provided and the target is a file, the editor jumps to that line.

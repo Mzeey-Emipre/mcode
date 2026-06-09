@@ -1,4 +1,5 @@
 import type React from "react";
+import { FolderOpen } from "lucide-react";
 import { VsCodeIcon, ZedIcon } from "./EditorIcons";
 import { CursorProviderIcon } from "./ProviderIcons";
 
@@ -16,6 +17,8 @@ export function openInAppIcon(iconKey: string, size: number): React.ReactNode {
       return <CursorProviderIcon size={size} />;
     case "zed":
       return <ZedIcon size={size} />;
+    case "explorer":
+      return <FolderOpen size={size} />;
     default:
       return null;
   }
