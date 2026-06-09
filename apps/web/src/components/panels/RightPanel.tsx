@@ -8,7 +8,6 @@ import {
   PANEL_WIDE_WIDTH,
   createDefaultRightPanelState,
   getDefaultPanelWidthPx,
-  type RightPanelTab,
 } from "@/stores/diffStore";
 import { ScopeSplitPane } from "./ScopeSplitPane";
 import { PanelEmptyState } from "./PanelEmptyState";
