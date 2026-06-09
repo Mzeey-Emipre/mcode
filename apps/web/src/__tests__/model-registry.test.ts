@@ -49,10 +49,13 @@ describe("ModelRegistry", () => {
     expect(model?.availableUntil).toBe("2026-06-22");
   });
 
-  it("isModelAvailable honors availableUntil inclusively", () => {
+  it("isModelAvailable honors availableUntil inclusively in local time", () => {
     const m = { id: "x", label: "X", providerId: "claude", availableUntil: "2026-06-22" };
-    expect(isModelAvailable(m, new Date("2026-06-22T12:00:00Z"))).toBe(true);
-    expect(isModelAvailable(m, new Date("2026-06-23T00:00:00Z"))).toBe(false);
+    // Local-time Date constructions keep this timezone-independent and match the
+    // local-formatted "Until <date>" badge users see in the picker.
+    expect(isModelAvailable(m, new Date(2026, 5, 22, 12, 0, 0))).toBe(true);
+    expect(isModelAvailable(m, new Date(2026, 5, 22, 23, 59, 59))).toBe(true);
+    expect(isModelAvailable(m, new Date(2026, 5, 23, 0, 0, 0))).toBe(false);
     expect(isModelAvailable({ id: "y", label: "Y", providerId: "claude" })).toBe(true);
   });
 

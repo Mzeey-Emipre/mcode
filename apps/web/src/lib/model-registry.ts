@@ -69,7 +69,12 @@ export interface ModelDefinition {
  */
 export function isModelAvailable(m: ModelDefinition, now: Date = new Date()): boolean {
   if (!m.availableUntil) return true;
-  return now.toISOString().slice(0, 10) <= m.availableUntil;
+  // Compare against the local calendar date, not UTC: `availableUntil` is a
+  // zoneless wall date and the picker renders its "Until <date>" badge with
+  // local formatting, so a UTC basis would grey the model out a day early or
+  // late for users far from UTC.
+  const localYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return localYmd <= m.availableUntil;
 }
 
 export const MODEL_PROVIDERS: readonly ModelProvider[] = [
