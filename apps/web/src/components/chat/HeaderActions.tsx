@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState } from "react";
-import { Menu, PanelRight, Diff, GitBranch, Upload, Check } from "lucide-react";
+import { Menu, PanelRight, Diff, GitBranch, Upload, Check, GitPullRequest } from "lucide-react";
 import { OpenInAppButton } from "./OpenInAppButton";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { PrSplitButton } from "./PrSplitButton";
@@ -154,7 +154,9 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   return (
     <div className="flex items-center justify-end gap-1">
       <div className="flex items-center gap-0.5 bg-muted/20 rounded-md px-1 py-0.5">
-        {prable && dirPath && (
+        {/* Standalone affordance is the live PR status (badge + checks). Creating a
+            PR lives in the consolidated menu below; once a PR exists this takes over. */}
+        {prable && dirPath && pr && (
           <PrSplitButton
             pr={pr}
             hasCommitsAhead={hasCommitsAhead}
@@ -227,6 +229,17 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
           >
             <Upload size={14} className="text-muted-foreground" /> Commit or push
           </DropdownMenuItem>
+          {prable && !pr && (
+            <DropdownMenuItem
+              onClick={() => setCreatePrOpen(true)}
+              disabled={!hasCommitsAhead}
+              data-testid="workspace-menu-create-pr"
+              title={hasCommitsAhead === false ? "No commits ahead of base branch" : undefined}
+              className="flex items-center gap-2 text-xs"
+            >
+              <GitPullRequest size={14} className="text-muted-foreground" /> Create PR
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

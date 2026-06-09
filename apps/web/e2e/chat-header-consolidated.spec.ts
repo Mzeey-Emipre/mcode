@@ -85,25 +85,25 @@ test.describe("Consolidated chat header", () => {
     await page.waitForSelector("[data-testid='chat-header-title']");
   });
 
-  test("keeps Create PR and Open visible alongside the consolidated controls", async ({ page }) => {
-    await expect(page.getByRole("button", { name: /create pr/i })).toBeVisible();
+  test("keeps Open and the consolidated controls visible; Create PR lives in the menu", async ({ page }) => {
     await expect(page.getByRole("button", { name: /^open in /i })).toBeVisible();
     await expect(page.getByTestId("header-workspace-menu")).toBeVisible();
     await expect(page.getByTestId("header-panel-toggle")).toBeVisible();
+    // No standalone Create PR button in the header chrome — it lives in the menu
+    // (no PR exists yet for this thread, so the PR-status badge is absent too).
+    await expect(page.getByRole("button", { name: /create pr/i })).toHaveCount(0);
   });
 
-  test("consolidated menu holds Changes / Branch / Commit or push and not Create PR", async ({ page }) => {
+  test("consolidated menu holds Changes / Branch / Commit or push / Create PR", async ({ page }) => {
     await page.getByTestId("header-workspace-menu").click();
 
     await expect(page.getByTestId("workspace-menu-changes")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toBeVisible();
+    await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
 
     // The branch item surfaces the current branch name.
     await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/consolidated-header");
-    // Create PR is its own button — it must not be duplicated inside the menu.
-    await expect(page.getByTestId("workspace-menu-changes")).not.toContainText(/create pr/i);
-    await expect(page.getByTestId("workspace-menu-commit")).not.toContainText(/create pr/i);
   });
 
   test("panel toggle shows and hides the workspace-global right panel", async ({ page }) => {
