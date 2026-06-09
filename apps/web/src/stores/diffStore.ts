@@ -45,10 +45,16 @@ export interface SelectedFile {
   threadId: string;
 }
 
-/** Workspace-global right panel state (visibility, width, active tab). */
+/** Workspace-global right panel state (visibility, width, open tabs, active tab). */
 export type RightPanelState = {
   readonly visible: boolean;
   readonly width: number;
+  /**
+   * The singleton tab types the user has opened, in open order. Empty means no
+   * tab is open and the panel shows the card-grid empty state (ADR-0004). Tab
+   * types are opened on demand rather than always present.
+   */
+  readonly openTabs: readonly RightPanelTab[];
   readonly activeTab: RightPanelTab;
 };
 
@@ -62,6 +68,7 @@ export function createDefaultRightPanelState(): RightPanelState {
   return {
     visible: false,
     width: getDefaultPanelWidthPx(),
+    openTabs: [],
     activeTab: "tasks",
   };
 }
@@ -103,6 +110,7 @@ function setPanelVisible(
 export const RIGHT_PANEL_DEFAULTS: RightPanelState = {
   visible: false,
   width: PANEL_DEFAULT_WIDTH,
+  openTabs: [],
   activeTab: "tasks",
 } as const;
 
@@ -266,10 +274,16 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   setRightPanelTab: (workspaceId, tab) =>
     set((state) => {
       const current = state.rightPanelByWorkspace[workspaceId] ?? createDefaultRightPanelState();
+      // Activating a tab opens it: tabs are singletons created on demand, so
+      // focusing one that is not yet open adds it to the open set (the card grid
+      // is the create surface). Already-open tabs are just refocused.
+      const openTabs = current.openTabs.includes(tab)
+        ? current.openTabs
+        : [...current.openTabs, tab];
       return {
         rightPanelByWorkspace: {
           ...state.rightPanelByWorkspace,
-          [workspaceId]: { ...current, activeTab: tab },
+          [workspaceId]: { ...current, openTabs, activeTab: tab },
         },
       };
     }),
