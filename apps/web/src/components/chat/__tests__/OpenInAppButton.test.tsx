@@ -93,6 +93,12 @@ function app(over: Partial<OpenInApp> & Pick<OpenInApp, "id">): OpenInApp {
 
 const VSCODE = app({ id: "vscode", label: "VS Code", iconKey: "vscode" });
 const CURSOR = app({ id: "cursor", label: "Cursor", iconKey: "cursor" });
+const WINDOWS_TERMINAL = app({
+  id: "windows-terminal",
+  label: "Windows Terminal",
+  kind: "terminal",
+  iconKey: "windows-terminal",
+});
 const EXPLORER = app({ id: "explorer", label: "File Explorer", kind: "fileManager", iconKey: "explorer" });
 
 describe("OpenInAppButton", () => {
@@ -135,6 +141,16 @@ describe("OpenInAppButton", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cursor" }));
     expect(openInSpy).toHaveBeenCalledWith("cursor", "/dir");
     expect(setThreadSettingsSpy).toHaveBeenCalledWith("t1", { defaultOpenInApp: "cursor" });
+  });
+
+  it("lists a detected terminal and sets it as the thread default when picked", async () => {
+    appsRef.current = [VSCODE, WINDOWS_TERMINAL, EXPLORER];
+    render(<OpenInAppButton dirPath="/dir" threadId="t1" threadOverride={null} />);
+    await userEvent.click(screen.getByRole("button", { name: "Windows Terminal" }));
+    expect(openInSpy).toHaveBeenCalledWith("windows-terminal", "/dir");
+    expect(setThreadSettingsSpy).toHaveBeenCalledWith("t1", {
+      defaultOpenInApp: "windows-terminal",
+    });
   });
 
   it("is disabled with no workspace and registers no shortcut", () => {
