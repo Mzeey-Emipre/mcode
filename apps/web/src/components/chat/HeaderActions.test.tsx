@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { ReactNode, ReactElement } from "react";
 import type { Thread } from "@/transport/types";
 
 // vi.hoisted runs before vi.mock hoisting, so these are available in mock factories.
@@ -34,11 +35,12 @@ vi.mock("@/stores/diffStore", () => {
     getRightPanelVisible: vi.fn().mockReturnValue(false),
     showRightPanel: vi.fn(),
     hideRightPanel: vi.fn(),
+    toggleRightPanel: vi.fn(),
     setRightPanelTab: vi.fn(),
   };
   const store = Object.assign(
     vi.fn((selector: (s: unknown) => unknown) =>
-      selector({ rightPanelByWorkspace: {}, ...actions }),
+      selector({ rightPanelByWorkspace: {}, snapshotsByThread: {}, ...actions }),
     ),
     { getState: vi.fn().mockReturnValue(actions) },
   );
@@ -51,6 +53,17 @@ vi.mock("./OpenInAppButton", () => ({
 
 vi.mock("./CreatePrDialog", () => ({
   CreatePrDialog: () => <div data-testid="create-pr-dialog" />,
+}));
+
+// Render the dropdown inline so menu items are queryable without driving the
+// base-ui open/portal machinery in jsdom (mirrors the OpenInAppButton test).
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ render }: { render: ReactElement }) => render,
+  DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  DropdownMenuItem: ({ children, ...props }: any) => <button {...props}>{children}</button>,
+  DropdownMenuSeparator: () => <hr />,
 }));
 
 vi.mock("@/hooks/useBranchPr", () => ({
@@ -131,7 +144,7 @@ function defaultWorkspaceState() {
   };
 }
 
-describe("HeaderActions - Create PR button", () => {
+describe("HeaderActions - Create PR menu item", () => {
   beforeEach(() => {
     const state = defaultWorkspaceState();
     mockWorkspaceSelector.mockImplementation(
@@ -141,62 +154,60 @@ describe("HeaderActions - Create PR button", () => {
     mockUseHasCommitsAhead.mockReturnValue(null);
   });
 
-  it("shows Create PR button on a worktree thread", () => {
+  it("offers Create PR in the consolidated menu on a worktree thread", () => {
     mockUseHasCommitsAhead.mockReturnValue(true);
     render(<HeaderActions thread={makeThread()} />);
-    const btn = screen.getByRole("button", { name: /create pr/i });
-    expect(btn).toBeInTheDocument();
-    expect(btn).not.toBeDisabled();
+    const item = screen.getByTestId("workspace-menu-create-pr");
+    expect(item).toBeInTheDocument();
+    expect(item).not.toBeDisabled();
   });
 
-  it("disables Create PR button when no commits ahead of base", () => {
+  it("disables Create PR when no commits ahead of base", () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
     render(<HeaderActions thread={makeThread()} />);
-    const btn = screen.getByRole("button", { name: /create pr/i });
-    expect(btn).toBeDisabled();
+    expect(screen.getByTestId("workspace-menu-create-pr")).toBeDisabled();
   });
 
-  it("disables Create PR button while loading (null)", () => {
+  it("disables Create PR while loading (null)", () => {
     mockUseHasCommitsAhead.mockReturnValue(null);
     render(<HeaderActions thread={makeThread()} />);
-    const btn = screen.getByRole("button", { name: /create pr/i });
-    expect(btn).toBeDisabled();
+    expect(screen.getByTestId("workspace-menu-create-pr")).toBeDisabled();
   });
 
-  it("enables Create PR button when commits exist ahead", () => {
+  it("enables Create PR when commits exist ahead", () => {
     mockUseHasCommitsAhead.mockReturnValue(true);
     render(<HeaderActions thread={makeThread()} />);
-    const btn = screen.getByRole("button", { name: /create pr/i });
-    expect(btn).not.toBeDisabled();
+    expect(screen.getByTestId("workspace-menu-create-pr")).not.toBeDisabled();
   });
 
-  it("shows Create PR button on a worktree thread regardless of branch name", () => {
+  it("offers Create PR on a worktree thread regardless of branch name", () => {
     // The gate is mode-based, not branch-based: a worktree thread that happens
     // to sit on a branch named "main" is still PR-able.
     mockUseHasCommitsAhead.mockReturnValue(true);
     render(<HeaderActions thread={makeThread({ branch: "main" })} />);
-    expect(screen.getByRole("button", { name: /create pr/i })).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-menu-create-pr")).toBeInTheDocument();
   });
 
-  it("does not show Create PR button when PR already exists", () => {
+  it("hides Create PR and shows the PR badge when a PR already exists", () => {
     mockUseBranchPr.mockReturnValue({ number: 42, state: "OPEN", url: "https://github.com/test/pr/42" });
     render(<HeaderActions thread={makeThread()} />);
-    expect(screen.queryByRole("button", { name: /create pr/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
     expect(screen.getByText("PR #42")).toBeInTheDocument();
   });
 
-  it("shows tooltip explaining why button is disabled when no commits", () => {
+  it("explains why Create PR is disabled when no commits", () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
     render(<HeaderActions thread={makeThread()} />);
-    const btn = screen.getByRole("button", { name: /create pr/i });
-    expect(btn).toHaveAttribute("title", expect.stringContaining("No commits"));
+    expect(screen.getByTestId("workspace-menu-create-pr")).toHaveAttribute(
+      "title",
+      expect.stringContaining("No commits"),
+    );
   });
 
-  it("has no tooltip when loading (null)", () => {
+  it("has no disabled-reason title when loading (null)", () => {
     mockUseHasCommitsAhead.mockReturnValue(null);
     render(<HeaderActions thread={makeThread()} />);
-    const btn = screen.getByRole("button", { name: /create pr/i });
-    expect(btn).not.toHaveAttribute("title");
+    expect(screen.getByTestId("workspace-menu-create-pr")).not.toHaveAttribute("title");
   });
 });
 
@@ -236,5 +247,41 @@ describe("HeaderActions - PR-ability gating by mode", () => {
     render(<HeaderActions thread={makeThread({ mode: "worktree", branch: "feat/x" })} />);
     expect(mockUseBranchPr).toHaveBeenCalledWith("feat/x", expect.anything());
     expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("ws-1", "feat/x", "thread-1");
+  });
+});
+
+describe("HeaderActions - consolidated header", () => {
+  beforeEach(() => {
+    const state = defaultWorkspaceState();
+    mockWorkspaceSelector.mockImplementation(
+      (selector: (s: unknown) => unknown) => selector(state),
+    );
+    mockUseBranchPr.mockReturnValue(null);
+    mockUseHasCommitsAhead.mockReturnValue(true);
+  });
+
+  it("renders the consolidated workspace menu trigger", () => {
+    render(<HeaderActions thread={makeThread()} />);
+    expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
+  });
+
+  it("renders a single dedicated right-panel toggle", () => {
+    render(<HeaderActions thread={makeThread()} />);
+    const toggle = screen.getByTestId("header-panel-toggle");
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("collapses the old per-tab toggle icons (no terminal/preview/changes buttons)", () => {
+    render(<HeaderActions thread={makeThread()} />);
+    expect(screen.queryByRole("button", { name: /toggle terminal/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /toggle preview/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /toggle changes/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the consolidated menu and panel toggle on a direct-mode thread", () => {
+    render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
+    expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
+    expect(screen.getByTestId("header-panel-toggle")).toBeInTheDocument();
   });
 });

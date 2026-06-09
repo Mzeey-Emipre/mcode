@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState } from "react";
-import { Terminal, Diff, Globe } from "lucide-react";
+import { Menu, PanelRight, Diff, GitBranch, Upload, Check, GitPullRequest } from "lucide-react";
 import { OpenInAppButton } from "./OpenInAppButton";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { PrSplitButton } from "./PrSplitButton";
@@ -7,12 +7,26 @@ import { useBranchPr } from "@/hooks/useBranchPr";
 import { useHasCommitsAhead } from "@/hooks/useHasCommitsAhead";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
+import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { executeCommand } from "@/lib/command-registry";
 import { isPrable } from "@/lib/is-prable";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Kbd } from "@/components/palette/Kbd";
+import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";
+import { isMac } from "@/lib/platform";
 import type { Thread } from "@/transport";
 import { openGitHubUrl } from "@/lib/open-url-in-preview";
+
+/** Composer prefill used by the consolidated menu's "Commit or push" item. */
+const COMMIT_PREFILL = "Commit and push the current changes.";
 
 /** Props for {@link HeaderActions}. */
 interface HeaderActionsProps {
@@ -20,11 +34,14 @@ interface HeaderActionsProps {
 }
 
 /**
- * Renders PR link, editor shortcut, terminal toggle, and diff panel toggle for the active thread header.
- * Polls GitHub for the thread's PR and syncs state changes back to the workspace store.
+ * Renders the consolidated chat-header actions: the PR affordance, the open-in
+ * split button, a single workspace menu (Changes / Branch / Commit or push), and
+ * a dedicated toggle for the workspace-global right panel. Polls GitHub for the
+ * thread's PR and syncs state changes back to the workspace store.
  */
 export function HeaderActions({ thread }: HeaderActionsProps) {
   const [createPrOpen, setCreatePrOpen] = useState(false);
+  const [branchCopied, setBranchCopied] = useState(false);
 
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === thread.workspace_id),
@@ -90,65 +107,51 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     });
   }, [pr, thread.id]);
 
-  const terminalVisible = useDiffStore((s) => {
-    if (!thread?.workspace_id) return false;
-    const panel = s.rightPanelByWorkspace[thread.workspace_id];
-    return (
-      s.getRightPanelVisible(thread.workspace_id, thread.id) &&
-      (panel?.activeTab ?? "tasks") === "terminal"
-    );
+  // Deduplicated count of files touched across the thread's loaded turn snapshots.
+  // Cheap, reactive, and always correct; the precise per-file +/- lives one click
+  // away in the Changes tab (no cumulative diff-stat endpoint exists to total here).
+  const changedFileCount = useDiffStore((s) => {
+    const snaps = s.snapshotsByThread[thread.id];
+    if (!snaps || snaps.length === 0) return 0;
+    const seen = new Set<string>();
+    for (const snap of snaps) {
+      for (const file of snap.files_changed) seen.add(file);
+    }
+    return seen.size;
   });
-  const toggleTerminal = useCallback(() => {
-    executeCommand("terminal.toggle");
+
+  // Effective open/closed state for the workspace-global right panel.
+  const panelVisible = useDiffStore((s) =>
+    thread.workspace_id
+      ? s.getRightPanelVisible(thread.workspace_id, thread.id)
+      : false,
+  );
+
+  const togglePanel = useCallback(() => {
+    if (!thread.workspace_id) return;
+    useDiffStore.getState().toggleRightPanel(thread.workspace_id, thread.id);
+  }, [thread.workspace_id, thread.id]);
+
+  const openChanges = useCallback(() => {
+    executeCommand("changes.toggle");
   }, []);
 
-  const diffActive = useDiffStore((s) => {
-    if (!thread?.workspace_id) return false;
-    const panel = s.rightPanelByWorkspace[thread.workspace_id];
-    return (
-      s.getRightPanelVisible(thread.workspace_id, thread.id) &&
-      (panel?.activeTab ?? "tasks") === "changes"
-    );
-  });
+  // Mirror the live keybinding so the menu hint stays correct if the user rebinds it.
+  const changesShortcut = formatKeybinding(
+    getKeybindingForCommand("changes.toggle")?.key ?? "mod+d",
+    isMac,
+  );
 
-  const previewActive = useDiffStore((s) => {
-    if (!thread?.workspace_id) return false;
-    const panel = s.rightPanelByWorkspace[thread.workspace_id];
-    return (
-      s.getRightPanelVisible(thread.workspace_id, thread.id) &&
-      (panel?.activeTab ?? "tasks") === "preview"
-    );
-  });
+  const copyBranch = useCallback(() => {
+    void navigator.clipboard?.writeText(thread.branch);
+    setBranchCopied(true);
+    setTimeout(() => setBranchCopied(false), 1500);
+  }, [thread.branch]);
 
-  const togglePreview = useCallback(() => {
-    if (!thread?.workspace_id) return;
-    const { getRightPanel, getRightPanelVisible, showRightPanel, setRightPanelTab, hideRightPanel } =
-      useDiffStore.getState();
-    const panel = getRightPanel(thread.workspace_id);
-    if (!getRightPanelVisible(thread.workspace_id, thread.id)) {
-      showRightPanel(thread.workspace_id, thread.id);
-      setRightPanelTab(thread.workspace_id, "preview");
-    } else if (panel.activeTab !== "preview") {
-      setRightPanelTab(thread.workspace_id, "preview");
-    } else {
-      hideRightPanel(thread.workspace_id, thread.id);
-    }
-  }, [thread?.workspace_id, thread?.id]);
-
-  const toggleDiff = useCallback(() => {
-    if (!thread?.workspace_id) return;
-    const { getRightPanel, getRightPanelVisible, showRightPanel, setRightPanelTab, hideRightPanel } =
-      useDiffStore.getState();
-    const panel = getRightPanel(thread.workspace_id);
-    if (!getRightPanelVisible(thread.workspace_id, thread.id)) {
-      showRightPanel(thread.workspace_id, thread.id);
-      setRightPanelTab(thread.workspace_id, "changes");
-    } else if (panel.activeTab !== "changes") {
-      setRightPanelTab(thread.workspace_id, "changes");
-    } else {
-      hideRightPanel(thread.workspace_id, thread.id);
-    }
-  }, [thread?.workspace_id, thread?.id]);
+  const setPendingPrefill = useComposerDraftStore((s) => s.setPendingPrefill);
+  const handleCommitOrPush = useCallback(() => {
+    setPendingPrefill(COMMIT_PREFILL);
+  }, [setPendingPrefill]);
 
   const handleOpenPr = useCallback(
     (url: string, event?: React.MouseEvent) => {
@@ -158,9 +161,11 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   );
 
   return (
-    <div className="flex items-center justify-between gap-0.5">
+    <div className="flex items-center justify-end gap-1">
       <div className="flex items-center gap-0.5 bg-muted/20 rounded-md px-1 py-0.5">
-        {prable && dirPath && (
+        {/* Standalone affordance is the live PR status (badge + checks). Creating a
+            PR lives in the consolidated menu below; once a PR exists this takes over. */}
+        {prable && dirPath && pr && (
           <PrSplitButton
             pr={pr}
             hasCommitsAhead={hasCommitsAhead}
@@ -179,78 +184,100 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
         />
       </div>
 
-      {/* Terminal toggle */}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={toggleTerminal}
-              className={`gap-1 text-xs h-6 ${
-                terminalVisible
-                  ? "text-foreground bg-muted/40"
-                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
-              }`}
-              aria-label="Toggle terminal"
-              aria-pressed={terminalVisible}
-            >
-              <Terminal size={12} />
-            </Button>
-          }
-        />
-        <TooltipContent side="bottom" className="text-xs">
-          Toggle terminal (Ctrl+J)
-        </TooltipContent>
-      </Tooltip>
+      <span className="mx-0.5 h-5 w-px bg-border" aria-hidden />
 
-      {/* Preview panel toggle */}
-      <Tooltip>
-        <TooltipTrigger
+      {/* Consolidated workspace menu — the mcode items, no "environment"/"sources" framing. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger
           render={
             <Button
               variant="ghost"
-              size="xs"
-              onClick={togglePreview}
-              className={`gap-1 text-xs h-6 ${
-                previewActive
-                  ? "text-foreground bg-muted/40"
-                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
-              }`}
-              aria-label="Toggle preview panel"
-              aria-pressed={previewActive}
+              size="icon-xs"
+              title="Workspace"
+              aria-label="Workspace menu"
+              data-testid="header-workspace-menu"
+              className="cursor-pointer text-foreground/70 hover:text-foreground hover:bg-muted/40"
             >
-              <Globe size={12} />
+              <Menu size={14} />
             </Button>
           }
         />
-        <TooltipContent side="bottom" className="text-xs">
-          Toggle preview (Ctrl+Shift+B)
-        </TooltipContent>
-      </Tooltip>
+        <DropdownMenuContent align="end" sideOffset={4} className="min-w-[200px]">
+          <DropdownMenuItem
+            onClick={openChanges}
+            data-testid="workspace-menu-changes"
+            className="flex cursor-pointer items-center justify-between gap-3 text-xs"
+          >
+            <span className="flex items-center gap-2">
+              <Diff size={14} className="text-muted-foreground" /> Changes
+            </span>
+            <span className="flex items-center gap-2">
+              {changedFileCount > 0 && (
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {changedFileCount} {changedFileCount === 1 ? "file" : "files"}
+                </span>
+              )}
+              <Kbd>{changesShortcut}</Kbd>
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={copyBranch}
+            data-testid="workspace-menu-branch"
+            className="flex cursor-pointer items-center justify-between gap-3 text-xs"
+          >
+            <span className="flex items-center gap-2">
+              <GitBranch size={14} className="text-muted-foreground" /> Branch
+            </span>
+            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              {branchCopied && <Check size={12} className="text-primary" />}
+              <span className="max-w-[120px] truncate font-mono">{thread.branch}</span>
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={handleCommitOrPush}
+            data-testid="workspace-menu-commit"
+            className="flex cursor-pointer items-center gap-2 text-xs"
+          >
+            <Upload size={14} className="text-muted-foreground" /> Commit or push
+          </DropdownMenuItem>
+          {prable && !pr && (
+            <DropdownMenuItem
+              onClick={() => setCreatePrOpen(true)}
+              disabled={!hasCommitsAhead}
+              data-testid="workspace-menu-create-pr"
+              title={hasCommitsAhead === false ? "No commits ahead of base branch" : undefined}
+              className="flex cursor-pointer items-center gap-2 text-xs data-disabled:cursor-not-allowed"
+            >
+              <GitPullRequest size={14} className="text-muted-foreground" /> Create PR
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
 
-      {/* Diff panel toggle */}
+      {/* Dedicated right-panel toggle for the workspace-global panel. */}
       <Tooltip>
         <TooltipTrigger
           render={
             <Button
               variant="ghost"
-              size="xs"
-              onClick={toggleDiff}
-              className={`gap-1 text-xs h-6 ${
-                diffActive
-                  ? "text-foreground bg-muted/40"
-                  : "text-foreground/70 hover:text-foreground hover:bg-muted/40"
-              }`}
-              aria-label="Toggle changes panel"
-              aria-pressed={diffActive}
+              size="icon-xs"
+              onClick={togglePanel}
+              aria-label="Toggle panel"
+              aria-pressed={panelVisible}
+              data-testid="header-panel-toggle"
+              className={
+                panelVisible
+                  ? "cursor-pointer text-foreground bg-muted/40"
+                  : "cursor-pointer text-foreground/70 hover:text-foreground hover:bg-muted/40"
+              }
             >
-              <Diff size={12} />
+              <PanelRight size={14} />
             </Button>
           }
         />
         <TooltipContent side="bottom" className="text-xs">
-          Toggle changes (Ctrl+D)
+          Toggle panel
         </TooltipContent>
       </Tooltip>
 
