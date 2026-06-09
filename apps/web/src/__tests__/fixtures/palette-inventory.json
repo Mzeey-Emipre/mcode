@@ -7,7 +7,7 @@
     { "key": "mod+j", "commandId": "terminal.toggle" },
     { "key": "mod+,", "commandId": "settings.open" },
     { "key": "mod+shift+?", "commandId": "shortcuts.help" },
-    { "key": "mod+o", "commandId": "explorer.open" },
+    { "key": "mod+o", "commandId": "openin.openDefault" },
     { "key": "Escape", "commandId": "escape.handle" },
     { "key": "mod+t", "commandId": "tasks.toggle" },
     { "key": "mod+d", "commandId": "changes.toggle" },

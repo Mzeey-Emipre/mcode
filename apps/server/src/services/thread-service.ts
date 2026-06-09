@@ -191,6 +191,7 @@ export class ThreadService {
       context_window_mode?: ContextWindowMode | null;
       thinking?: boolean | null;
       codex_fast_mode?: boolean | null;
+      default_open_in_app?: string | null;
     },
   ): boolean {
     return this.threadRepo.updateSettings(threadId, {
@@ -201,6 +202,7 @@ export class ThreadService {
       ...("context_window_mode" in settings && { context_window_mode: settings.context_window_mode }),
       ...("thinking" in settings && { thinking: settings.thinking }),
       ...("codex_fast_mode" in settings && { codex_fast_mode: settings.codex_fast_mode }),
+      ...("default_open_in_app" in settings && { default_open_in_app: settings.default_open_in_app }),
     });
   }
 

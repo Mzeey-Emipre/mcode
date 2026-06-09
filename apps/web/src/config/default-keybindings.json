@@ -1,7 +1,7 @@
 [
   { "key": "mod+k", "command": "palette.open" },
   { "key": "mod+p", "command": "commandPalette.toggle" },
-  { "key": "mod+o", "command": "explorer.open", "when": "!inputFocused" },
+  { "key": "mod+o", "command": "openin.openDefault", "when": "!inputFocused" },
   { "key": "mod+n", "command": "thread.new", "when": "!inputFocused" },
   { "key": "mod+shift+n", "command": "workspace.new", "when": "!inputFocused" },
   {

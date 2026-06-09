@@ -123,18 +123,6 @@ export interface OpenInApp {
   readonly detected: boolean;
 }
 
-/**
- * What an {@link McodeTransport.openIn} call should open. `line` is honored only
- * by editor-kind apps with a file target; other apps ignore it. Mirrors the
- * desktop registry's launch target.
- */
-export interface OpenInTarget {
-  /** Absolute path to open (file or directory). */
-  readonly path: string;
-  /** Optional 1-based line to jump to (editor + file target only). */
-  readonly line?: number;
-}
-
 /** Transport interface consumed by the web app to communicate with the backend. */
 export interface McodeTransport {
   // Workspace commands
@@ -266,6 +254,7 @@ export interface McodeTransport {
       contextWindow?: ContextWindowMode | null;
       thinking?: boolean | null;
       codexFastMode?: boolean | null;
+      defaultOpenInApp?: string | null;
     },
   ): Promise<boolean>;
   /** Clear the "completed" badge for a thread. Transitions completed -> paused in the DB. */
@@ -304,13 +293,14 @@ export interface McodeTransport {
    */
   listOpenInApps(): Promise<OpenInApp[]>;
   /**
-   * Open a target in the app identified by `appId`. The desktop registry
-   * dispatches to that app's adapter, so the same call opens an editor or
-   * reveals a path in the file manager depending on the app. `appId` values
-   * come from {@link McodeTransport.listOpenInApps}. No-op when no desktop
-   * bridge is present (web build).
+   * Open a path in the given registry app, dispatched to the right adapter by
+   * the desktop main process, so a single call opens an editor or reveals a path
+   * in the file manager. This is the unified seam used by the open-in split
+   * button, the file picker, and the `mod+o` shortcut; `appId` is any id from
+   * {@link McodeTransport.listOpenInApps}. `line` is honored only by editor apps
+   * with a file target. No-op when no desktop bridge is present (web build).
    */
-  openIn(args: { appId: string; target: OpenInTarget }): Promise<void>;
+  openIn(appId: string, path: string, line?: number): Promise<void>;
 
   // GitHub PR
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;

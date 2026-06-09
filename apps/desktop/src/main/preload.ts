@@ -23,15 +23,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   listOpenInApps: (): Promise<unknown> => ipcRenderer.invoke("list-open-in-apps"),
 
   /**
-   * Open a target in the app identified by `appId`. The main-process registry
-   * dispatches to the matching adapter, so a single call opens an editor or
-   * reveals a path in the file manager. `line` (on the target) jumps an editor
-   * to that line for file targets; other apps ignore it.
+   * Open a path in the given registry app. The main-process registry dispatches
+   * to the matching adapter, so a single call opens an editor or reveals a path
+   * in the file manager. `line` jumps an editor to that line for file targets;
+   * other apps ignore it.
    */
-  openIn: (args: {
-    appId: string;
-    target: { path: string; line?: number };
-  }): Promise<void> => ipcRenderer.invoke("open-in", args),
+  openIn: (appId: string, path: string, line?: number): Promise<void> =>
+    ipcRenderer.invoke("open-in", appId, path, line),
 
   /** Read an image from the clipboard and save it as a temp JPEG. */
   readClipboardImage: (): Promise<unknown> =>

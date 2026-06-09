@@ -3,8 +3,8 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import type { OpenInApp } from "@/transport/types";
 
 // The collapsed open-in seam: the renderer talks to a single transport method,
-// `openIn({ appId, target })`. These tests drive FileEditorPicker through a fake
-// transport and assert it dispatches with the right app id and target — proving
+// `openIn(appId, path, line)`. These tests drive FileEditorPicker through a fake
+// transport and assert it dispatches with the right app id and path - proving
 // editor launches and file-manager reveals share one method.
 
 const apps: OpenInApp[] = [
@@ -47,10 +47,7 @@ describe("FileEditorPicker open-in seam", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     fireEvent.click(screen.getByText("VS Code"));
 
-    expect(openIn).toHaveBeenCalledWith({
-      appId: "code",
-      target: { path: "/abs/repo/src/x.ts", line: 42 },
-    });
+    expect(openIn).toHaveBeenCalledWith("code", "/abs/repo/src/x.ts", 42);
   });
 
   it("dispatches openIn with the file-manager app id and dir path for Reveal", () => {
@@ -65,9 +62,6 @@ describe("FileEditorPicker open-in seam", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     fireEvent.click(screen.getByText("Reveal in file manager"));
 
-    expect(openIn).toHaveBeenCalledWith({
-      appId: "explorer",
-      target: { path: "/abs/repo/src" },
-    });
+    expect(openIn).toHaveBeenCalledWith("explorer", "/abs/repo/src");
   });
 });

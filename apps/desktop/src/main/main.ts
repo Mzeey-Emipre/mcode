@@ -240,25 +240,20 @@ function registerIpcHandlers(): void {
     return openInRegistry.list();
   });
 
-  // Open a target in the app identified by `appId`. The registry dispatches to
-  // the matching adapter, so the same handler opens an editor or reveals a path
-  // in the file manager — no per-app branching or allowlist here. The registry
-  // rejects unknown app ids. Optional `line` jumps an editor to that line on
-  // open (file targets only — directory targets ignore it).
+  // Unified open-in seam: dispatch a path to the registry adapter for `appId`.
+  // The registry rejects unknown ids, so no separate allowlist is needed — the
+  // same handler opens an editor or reveals a path in the file manager. `line`
+  // is honored only by editor adapters with a file target (directories ignore it).
   ipcMain.handle(
     "open-in",
-    async (
-      _event,
-      args: { appId: string; target: { path: string; line?: number } },
-    ) => {
-      const { appId, target } = args;
-      if (!isAbsolute(target.path)) {
+    async (_event, appId: string, targetPath: string, line?: number) => {
+      if (!isAbsolute(targetPath)) {
         throw new Error("Open-in path must be absolute");
       }
-      if (!existsSync(target.path)) {
-        throw new Error(`Path does not exist: ${target.path}`);
+      if (!existsSync(targetPath)) {
+        throw new Error(`Path does not exist: ${targetPath}`);
       }
-      await openInRegistry.launch(appId, target);
+      await openInRegistry.launch(appId, { path: targetPath, line });
     },
   );
 

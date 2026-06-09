@@ -283,6 +283,7 @@ export function resolveWorkspaceThreadSettings(threadId: string): ThreadSettings
       contextWindow: (thread.context_window_mode as ContextWindowMode | null) ?? null,
       thinking: thread.thinking ?? null,
       codexFastMode: thread.codex_fast_mode ?? null,
+      defaultOpenInApp: thread.default_open_in_app ?? null,
     };
   }
   return DEFAULT_THREAD_SETTINGS;
@@ -878,6 +879,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if ("contextWindow" in settings) patch.contextWindow = settings.contextWindow;
     if ("thinking" in settings) patch.thinking = settings.thinking;
     if ("codexFastMode" in settings) patch.codexFastMode = settings.codexFastMode;
+    // null clears the override so the thread inherits the global default.
+    if ("defaultOpenInApp" in settings) patch.defaultOpenInApp = settings.defaultOpenInApp;
 
     if (Object.keys(patch).length === 0) return Promise.resolve(false);
 
@@ -904,6 +907,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               ...("contextWindow" in patch && { context_window_mode: patch.contextWindow ?? null }),
               ...("thinking" in patch && { thinking: patch.thinking ?? null }),
               ...("codexFastMode" in patch && { codex_fast_mode: patch.codexFastMode ?? null }),
+              ...("defaultOpenInApp" in patch && { default_open_in_app: patch.defaultOpenInApp ?? null }),
             }
           : t,
       ),
@@ -918,6 +922,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       contextWindow?: ContextWindowMode | null;
       thinking?: boolean | null;
       codexFastMode?: boolean | null;
+      defaultOpenInApp?: string | null;
     } = {
       ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
       ...(patch.interactionMode !== undefined ? { interactionMode: patch.interactionMode } : {}),
@@ -926,6 +931,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       ...("contextWindow" in patch ? { contextWindow: patch.contextWindow } : {}),
       ...("thinking" in patch ? { thinking: patch.thinking } : {}),
       ...("codexFastMode" in patch ? { codexFastMode: patch.codexFastMode } : {}),
+      ...("defaultOpenInApp" in patch ? { defaultOpenInApp: patch.defaultOpenInApp } : {}),
     };
     return getTransport().updateThreadSettings(threadId, transportPatch).catch(() => false);
   },

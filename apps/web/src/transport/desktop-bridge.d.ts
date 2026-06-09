@@ -1,4 +1,4 @@
-import type { AttachmentMeta, OpenInApp, OpenInTarget } from "./types";
+import type { AttachmentMeta, OpenInApp } from "./types";
 import type { BrowserPerfCounters, BrowserTabSet, McodeBrowserCapture, PreviewPageStatus } from "@mcode/contracts";
 
 /** Discriminated union describing the auto-updater lifecycle state. */
@@ -217,11 +217,12 @@ interface DesktopBridge {
   /** List openable apps (metadata + detection status) from the main-process registry. */
   listOpenInApps(): Promise<OpenInApp[]>;
   /**
-   * Open a target in the app identified by `appId`. The main-process registry
-   * dispatches to that app's adapter (editor launch or file-manager reveal).
-   * Valid app IDs come from `listOpenInApps()`.
+   * Open a path in the app identified by `appId`. The main-process registry
+   * dispatches to that app's adapter (editor launch or file-manager reveal), so
+   * a single call handles both. Valid app IDs come from `listOpenInApps()`;
+   * `line` is honored only by editor apps with a file target.
    */
-  openIn(args: { appId: string; target: OpenInTarget }): Promise<void>;
+  openIn(appId: string, path: string, line?: number): Promise<void>;
   /** Read an image from the system clipboard. Returns metadata or null. */
   readClipboardImage(): Promise<AttachmentMeta | null>;
   /** Save a clipboard file blob to disk. Returns metadata or null. */

@@ -87,6 +87,7 @@ function resetState() {
         parent_thread_id: null,
         forked_from_message_id: null,
         last_compact_summary: null,
+        default_open_in_app: null,
       },
     ],
   });

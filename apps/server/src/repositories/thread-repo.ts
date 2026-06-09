@@ -35,6 +35,7 @@ interface ThreadRow {
     thinking: number | null;
     codex_fast_mode: number | null;
     copilot_agent: string | null;
+  default_open_in_app: string | null;
   parent_thread_id: string | null;
   forked_from_message_id: string | null;
   last_compact_summary: string | null;
@@ -71,6 +72,7 @@ function rowToThread(row: ThreadRow): Thread {
     codex_fast_mode:
       row.codex_fast_mode == null ? null : row.codex_fast_mode === 1,
     copilot_agent: (row.copilot_agent ?? null) as string | null,
+    default_open_in_app: row.default_open_in_app ?? null,
     parent_thread_id: row.parent_thread_id,
     forked_from_message_id: row.forked_from_message_id,
     last_compact_summary: row.last_compact_summary,
@@ -79,7 +81,7 @@ function rowToThread(row: ThreadRow): Thread {
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
+  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
 
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
@@ -149,6 +151,7 @@ export class ThreadRepo {
       thinking: null,
       codex_fast_mode: null,
       copilot_agent: null,
+      default_open_in_app: null,
       parent_thread_id: lineage?.parentThreadId ?? null,
       forked_from_message_id: lineage?.forkedFromMessageId ?? null,
       last_compact_summary: null,
@@ -406,6 +409,7 @@ export class ThreadRepo {
       thinking?: boolean | null;
       codex_fast_mode?: boolean | null;
       copilot_agent?: string | null;
+      default_open_in_app?: string | null;
     },
   ): boolean {
     const fields: string[] = [];
@@ -442,6 +446,11 @@ export class ThreadRepo {
     if (settings.copilot_agent !== undefined) {
       fields.push("copilot_agent = ?");
       values.push(settings.copilot_agent);
+    }
+    if (settings.default_open_in_app !== undefined) {
+      fields.push("default_open_in_app = ?");
+      // null clears the override so the thread inherits the global default.
+      values.push(settings.default_open_in_app);
     }
     if (fields.length === 0) return false;
 

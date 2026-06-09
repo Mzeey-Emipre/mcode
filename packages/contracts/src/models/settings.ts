@@ -440,6 +440,18 @@ export const SettingsSchema = lazySchema(() =>
         checkInterval: UpdateCheckIntervalSchema.default("4hours"),
       })
       .default({}),
+
+    /** External "open in" app preferences. */
+    externalApps: z
+      .object({
+        /**
+         * Global default open-in app id (registry id, e.g. "code"). Tier 2 of the
+         * three-tier resolution in ADR-0005. Empty string means unset, so the
+         * split button auto-resolves to the highest-priority installed editor.
+         */
+        defaultEditor: z.string().default(""),
+      })
+      .default({}),
   }),
 );
 
@@ -633,6 +645,11 @@ export const PartialSettingsSchema = lazySchema(() =>
         autoDownload: z.boolean().optional(),
         autoInstallOnQuit: z.boolean().optional(),
         checkInterval: UpdateCheckIntervalSchema.optional(),
+      })
+      .optional(),
+    externalApps: z
+      .object({
+        defaultEditor: z.string().optional(),
       })
       .optional(),
   }),

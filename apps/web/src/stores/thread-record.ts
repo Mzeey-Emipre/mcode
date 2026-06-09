@@ -29,6 +29,8 @@ export interface ThreadSettings {
   contextWindow?: ContextWindowMode | null;
   thinking?: boolean | null;
   codexFastMode?: boolean | null;
+  /** Thread-scoped default open-in app id (ADR-0005 tier 1). Null clears the override. */
+  defaultOpenInApp?: string | null;
 }
 
 /** A permission request with its current resolution state. */
