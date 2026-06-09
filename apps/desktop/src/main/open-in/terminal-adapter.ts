@@ -63,6 +63,18 @@ const REAL_DEPS: TerminalAdapterDeps = {
 };
 
 /**
+ * Quote a token for a `shell: true` spawn on Windows. cmd.exe joins the command
+ * and args into a single line and applies no quoting of its own, so a token
+ * containing whitespace or a shell metacharacter (`& | < > ^ ( )`) would be
+ * split — or, for metacharacters, interpreted by cmd.exe (command injection).
+ * Wrapping such a token in double quotes neutralizes both; Windows paths cannot
+ * contain `"`, so quoting is lossless. Tokens needing no quoting are unchanged.
+ */
+function quoteForShell(token: string): string {
+  return /[\s&|<>^()]/.test(token) ? `"${token}"` : token;
+}
+
+/**
  * Build the CLI arguments to launch a terminal at a working directory. Pure
  * function — the highest-value test target. The arg shapes follow ADR-0006:
  * Windows Terminal `-d <dir>`, WSL `--cd <dir>`, Git Bash `--cd=<dir>`.
@@ -129,16 +141,18 @@ export function createTerminalAdapter(
 
       const args = buildTerminalArgs(config.id, target.path);
 
-      // shell:true lets PATH aliases like `wt` resolve, but cmd.exe concatenates
-      // the command and args without quoting. A launcher resolved to an absolute
-      // path with spaces (Git Bash under "Program Files") would be split at the
-      // first space, so quote it; bare PATH names have no spaces and are untouched.
-      const spawnCmd = /\s/.test(cmd) ? `"${cmd}"` : cmd;
+      // shell:true lets PATH aliases like `wt` and the git-bash launcher resolve,
+      // but cmd.exe concatenates the command and args into one unquoted line. The
+      // launcher path ("Program Files") and the target directory can both carry
+      // spaces or shell metacharacters, so quote every token that needs it; bare
+      // tokens (`wt`, `-d`, a space-free path) pass through untouched.
+      const spawnCmd = quoteForShell(cmd);
+      const spawnArgs = args.map(quoteForShell);
 
       return new Promise<void>((resolve, reject) => {
         // Terminal executables on Windows (wt.exe, wsl.exe, git-bash.exe) launch
         // their own window and resolve their own environment; we fire and forget.
-        const child: ChildProcess = deps.spawn(spawnCmd, args, {
+        const child: ChildProcess = deps.spawn(spawnCmd, spawnArgs, {
           detached: true,
           stdio: "ignore",
           shell: true,

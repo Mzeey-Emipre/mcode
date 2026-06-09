@@ -138,6 +138,25 @@ describe("createTerminalAdapter launch", () => {
     expect(spawns[0]?.cmd).toBe("wt");
   });
 
+  it("quotes a target directory containing spaces so cmd.exe does not split it", async () => {
+    const { deps, spawns } = fakeDeps({ commandOnPath: (c) => c === "wt" });
+    await createTerminalAdapter(WT_CONFIG, deps).launch({
+      path: "C:\\Users\\John Doe\\repo",
+    });
+
+    expect(spawns[0]).toEqual({
+      cmd: "wt",
+      args: ["-d", '"C:\\Users\\John Doe\\repo"'],
+    });
+  });
+
+  it("quotes a target directory with a shell metacharacter so cmd.exe cannot inject", async () => {
+    const { deps, spawns } = fakeDeps({ commandOnPath: (c) => c === "wt" });
+    await createTerminalAdapter(WT_CONFIG, deps).launch({ path: "C:\\repo&calc" });
+
+    expect(spawns[0]?.args).toEqual(["-d", '"C:\\repo&calc"']);
+  });
+
   it("rejects when the terminal is not detected", async () => {
     const { deps, spawns } = fakeDeps();
     await expect(
