@@ -158,6 +158,9 @@ When adding a new setting, ask these questions in order:
   "prDraft": {
     "provider": "",                      // Provider for PR draft generation, empty = inherit default
     "model": ""                          // Model for PR draft generation, empty = provider default
+  },
+  "externalApps": {
+    "defaultEditor": ""                  // Global default open-in app id, "" = auto-resolve
   }
 }
 ```
