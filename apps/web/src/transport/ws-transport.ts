@@ -621,9 +621,6 @@ export function createWsTransport(
     listOpenInApps: async () => (await window.desktopBridge?.listOpenInApps()) ?? [],
     openIn: async (appId, path, line) =>
       window.desktopBridge?.openIn(appId, path, line),
-    openInEditor: async (editor, path, line) =>
-      window.desktopBridge?.openInEditor(editor, path, line),
-    openInExplorer: async (dirPath) => window.desktopBridge?.openInExplorer(dirPath),
 
     // GitHub
     getBranchPr: (branch, cwd) =>

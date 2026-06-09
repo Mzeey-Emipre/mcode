@@ -294,17 +294,13 @@ export interface McodeTransport {
   listOpenInApps(): Promise<OpenInApp[]>;
   /**
    * Open a path in the given registry app, dispatched to the right adapter by
-   * the desktop main process. This is the unified seam used by the open-in split
-   * button and the `mod+o` shortcut; `appId` is any id from {@link listOpenInApps}.
-   * `line` is honored only by editor apps with a file target.
+   * the desktop main process, so a single call opens an editor or reveals a path
+   * in the file manager. This is the unified seam used by the open-in split
+   * button, the file picker, and the `mod+o` shortcut; `appId` is any id from
+   * {@link McodeTransport.listOpenInApps}. `line` is honored only by editor apps
+   * with a file target. No-op when no desktop bridge is present (web build).
    */
   openIn(appId: string, path: string, line?: number): Promise<void>;
-  /**
-   * Open a path (file or directory) in the given editor. If `line` is
-   * provided and the target is a file, the editor jumps to that line.
-   */
-  openInEditor(editor: string, path: string, line?: number): Promise<void>;
-  openInExplorer(dirPath: string): Promise<void>;
 
   // GitHub PR
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;

@@ -8,7 +8,6 @@
 import type {
   LaunchTarget,
   OpenInAdapter,
-  OpenInAppKind,
   OpenInAppMeta,
 } from "./types.js";
 
@@ -39,11 +38,6 @@ export class OpenInRegistry {
       iconKey: a.iconKey,
       detected: a.detect(),
     }));
-  }
-
-  /** The kind of a registered app, or undefined when the id is unknown. */
-  kindOf(appId: string): OpenInAppKind | undefined {
-    return this.adapters.get(appId)?.kind;
   }
 
   /** Dispatch a launch to the adapter for {@link appId}. Rejects for unknown ids. */
