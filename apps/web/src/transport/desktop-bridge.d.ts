@@ -1,4 +1,4 @@
-import type { AttachmentMeta, OpenInApp } from "./types";
+import type { AttachmentMeta, OpenInApp, OpenInTarget } from "./types";
 import type { BrowserPerfCounters, BrowserTabSet, McodeBrowserCapture, PreviewPageStatus } from "@mcode/contracts";
 
 /** Discriminated union describing the auto-updater lifecycle state. */
@@ -212,18 +212,16 @@ interface DesktopBridge {
   getServerUrl(): Promise<{ url: string; ipcPath: string }>;
   /** Open a native folder-picker dialog. Returns the selected path or null. */
   showOpenDialog(options: { title?: string }): Promise<string | null>;
-  /**
-   * Launch an external editor at the given path (file or directory). When
-   * `line` is provided and the target is a file, the editor jumps to that
-   * line. Valid editor IDs come from `listOpenInApps()`.
-   */
-  openInEditor(editor: string, path: string, line?: number): Promise<void>;
-  /** Open the OS file explorer at the given directory. */
-  openInExplorer(dirPath: string): Promise<void>;
   /** Open a URL in the default browser. */
   openExternalUrl(url: string, workspacePath?: string | null): Promise<void>;
   /** List openable apps (metadata + detection status) from the main-process registry. */
   listOpenInApps(): Promise<OpenInApp[]>;
+  /**
+   * Open a target in the app identified by `appId`. The main-process registry
+   * dispatches to that app's adapter (editor launch or file-manager reveal).
+   * Valid app IDs come from `listOpenInApps()`.
+   */
+  openIn(args: { appId: string; target: OpenInTarget }): Promise<void>;
   /** Read an image from the system clipboard. Returns metadata or null. */
   readClipboardImage(): Promise<AttachmentMeta | null>;
   /** Save a clipboard file blob to disk. Returns metadata or null. */

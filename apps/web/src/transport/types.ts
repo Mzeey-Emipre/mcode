@@ -123,6 +123,18 @@ export interface OpenInApp {
   readonly detected: boolean;
 }
 
+/**
+ * What an {@link McodeTransport.openIn} call should open. `line` is honored only
+ * by editor-kind apps with a file target; other apps ignore it. Mirrors the
+ * desktop registry's launch target.
+ */
+export interface OpenInTarget {
+  /** Absolute path to open (file or directory). */
+  readonly path: string;
+  /** Optional 1-based line to jump to (editor + file target only). */
+  readonly line?: number;
+}
+
 /** Transport interface consumed by the web app to communicate with the backend. */
 export interface McodeTransport {
   // Workspace commands
@@ -292,11 +304,13 @@ export interface McodeTransport {
    */
   listOpenInApps(): Promise<OpenInApp[]>;
   /**
-   * Open a path (file or directory) in the given editor. If `line` is
-   * provided and the target is a file, the editor jumps to that line.
+   * Open a target in the app identified by `appId`. The desktop registry
+   * dispatches to that app's adapter, so the same call opens an editor or
+   * reveals a path in the file manager depending on the app. `appId` values
+   * come from {@link McodeTransport.listOpenInApps}. No-op when no desktop
+   * bridge is present (web build).
    */
-  openInEditor(editor: string, path: string, line?: number): Promise<void>;
-  openInExplorer(dirPath: string): Promise<void>;
+  openIn(args: { appId: string; target: OpenInTarget }): Promise<void>;
 
   // GitHub PR
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;

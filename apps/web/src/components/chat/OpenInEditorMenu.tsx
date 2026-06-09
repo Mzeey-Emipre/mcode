@@ -32,6 +32,7 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
   const apps = useOpenInApps();
 
   const editors = apps.filter((app) => app.kind === "editor" && app.detected);
+  const fileManager = apps.find((app) => app.kind === "fileManager");
   const entries: EditorEntry[] = editors.map((app) => ({
     id: app.id,
     label: app.label,
@@ -41,19 +42,21 @@ export function OpenInEditorMenu({ dirPath }: OpenInEditorMenuProps) {
   const handleOpenEditor = (editorId: string) => {
     const label = editors.find((app) => app.id === editorId)?.label ?? editorId;
     getTransport()
-      .openInEditor(editorId, dirPath)
+      .openIn({ appId: editorId, target: { path: dirPath } })
       .catch((err) =>
         useToastStore.getState().show("error", `Could not open ${label}`, String(err?.message ?? err)),
       );
   };
 
+  const fileManagerId = fileManager?.id;
   const handleOpenExplorer = useCallback(() => {
+    if (!fileManagerId) return;
     getTransport()
-      .openInExplorer(dirPath)
+      .openIn({ appId: fileManagerId, target: { path: dirPath } })
       .catch((err) =>
         useToastStore.getState().show("error", "Could not open explorer", String(err?.message ?? err)),
       );
-  }, [dirPath]);
+  }, [dirPath, fileManagerId]);
 
   // Ctrl/Cmd+O shortcut to open in file explorer (via centralized command system)
   useEffect(() => {

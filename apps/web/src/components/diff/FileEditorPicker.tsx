@@ -54,6 +54,7 @@ export function FileEditorPicker({
 }: FileEditorPickerProps) {
   const apps = useOpenInApps();
   const editors = apps.filter((app) => app.kind === "editor" && app.detected);
+  const fileManager = apps.find((app) => app.kind === "fileManager");
   const entries: EditorMeta[] = editors.map((app) => ({
     id: app.id,
     label: app.label,
@@ -63,7 +64,7 @@ export function FileEditorPicker({
   const handleOpenEditor = (editorId: string) => {
     const label = editors.find((app) => app.id === editorId)?.label ?? editorId;
     getTransport()
-      .openInEditor(editorId, filePath, line)
+      .openIn({ appId: editorId, target: { path: filePath, line } })
       .catch((err: unknown) =>
         useToastStore
           .getState()
@@ -76,8 +77,9 @@ export function FileEditorPicker({
   };
 
   const handleReveal = () => {
+    if (!fileManager) return;
     getTransport()
-      .openInExplorer(dirPath)
+      .openIn({ appId: fileManager.id, target: { path: dirPath } })
       .catch((err: unknown) =>
         useToastStore
           .getState()
