@@ -38,6 +38,8 @@ export function BrowseView() {
   const close = useCommandPaletteStore((s) => s.close);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+  const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
+  const setPendingNewThread = useWorkspaceStore((s) => s.setPendingNewThread);
 
   const mode = getPaletteMode(query);
   const isDrivesMode = mode === "drives";
@@ -97,11 +99,25 @@ export function BrowseView() {
     try {
       const ws = await createWorkspace(name, target);
       setActiveWorkspace(ws.id);
+      // Drop straight into the new-thread composer on the just-added project.
+      // setActiveWorkspace clears `pendingNewThread`, so re-set it AFTER
+      // activation; clear the active thread so ChatView shows the composer
+      // rather than a stale thread. Mirrors ProjectsView's "newThread" chain.
+      setActiveThread(null);
+      setPendingNewThread(true);
       close();
     } catch (err) {
       console.error("Failed to create workspace:", err);
     }
-  }, [result, isDrivesMode, createWorkspace, setActiveWorkspace, close]);
+  }, [
+    result,
+    isDrivesMode,
+    createWorkspace,
+    setActiveWorkspace,
+    setActiveThread,
+    setPendingNewThread,
+    close,
+  ]);
 
   // Register the confirm handler so Cmd/Ctrl+Enter in the shell adds the folder.
   // Pass `handleAdd` directly — Zustand's setter does a shallow merge, not a

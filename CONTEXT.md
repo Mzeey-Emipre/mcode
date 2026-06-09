@@ -59,6 +59,11 @@ Workspace-level settings do not exist yet. All user-facing settings (default
 provider, utility provider, etc.) are global (user-level) today. Providers
 are installed on the user's machine, not on the workspace.
 
+**Project** is the user-facing name for a Workspace. Every UI string ("Add
+project", "Recent Projects", "No projects yet") says _project_; the code and
+this glossary say _Workspace_. They are the same thing.
+_Avoid_: using "project" in code or schema; reserve it for user-facing copy.
+
 ### Worktree
 A git worktree provisioned under a workspace so a thread can run against
 an isolated checkout of the repo on its own branch. Standard git semantics

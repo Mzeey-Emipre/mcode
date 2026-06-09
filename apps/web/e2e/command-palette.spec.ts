@@ -60,6 +60,7 @@ async function setupPage(page: import("@playwright/test").Page) {
       sort_order: 0,
     },
     "settings.get": MOCK_SETTINGS,
+    "thread.list": [],
   });
   await page.goto("/");
   // Wait for React to mount — "my-app" appears in the sidebar once the WS connects
@@ -149,5 +150,24 @@ test.describe("Command palette", () => {
     await page.keyboard.press("Control+Enter");
     // Successful add closes the palette.
     await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 3000 });
+  });
+
+  test("adding a project lands in the new-thread composer on that project", async ({ page }) => {
+    await setupPage(page);
+    await page.keyboard.press("Control+k");
+    const input = page.locator('[data-slot="palette-input"]');
+    await input.fill("~/");
+    const dialog = page.getByRole("dialog");
+    await expect(page.getByTestId("palette-add-folder")).toBeVisible();
+    await expect(dialog.locator('[data-slot="command-item"]').first()).toBeVisible();
+    await page.keyboard.press("Control+Enter");
+    // The palette closes and we drop straight into the new-thread composer for
+    // the just-added project — not back to the cold-start landing.
+    await expect(dialog).not.toBeVisible({ timeout: 3000 });
+    await expect(page.getByText("New thread", { exact: true })).toBeVisible({ timeout: 3000 });
+    // The composer badge names the just-added project (from the workspace.create mock).
+    await expect(page.getByText("new-project").first()).toBeVisible();
+    // The landing wordmark is gone — exact match avoids matching "Mcode" in the sidebar.
+    await expect(page.getByText("mcode", { exact: true })).not.toBeVisible();
   });
 });
