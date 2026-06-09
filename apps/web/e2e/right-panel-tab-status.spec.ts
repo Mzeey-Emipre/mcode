@@ -115,6 +115,10 @@ async function seedPanel(page: Page, tab: "tasks" | "changes"): Promise<void> {
         ).getState();
         api.setSnapshots(tid, snapshots);
         api.showRightPanel(wid, tid);
+        // Open both rail tabs so switching can be exercised; the requested tab
+        // is activated last.
+        api.setRightPanelTab(wid, "tasks");
+        api.setRightPanelTab(wid, "changes");
         api.setRightPanelTab(wid, tab);
       }
     },
@@ -177,24 +181,27 @@ test.describe("Right panel tab status", () => {
     );
   });
 
-  test("tabs show scope progress, change count, and the active-tab lamp", async ({ page }, testInfo) => {
+  test("rail icons show scope progress, change count, and the active-tab lamp", async ({ page }, testInfo) => {
     await seedPanel(page, "tasks");
 
-    const scopeTab = page.getByRole("button", { name: /Scope/ });
-    const changesTab = page.getByRole("button", { name: /Changes/ });
+    // Rail icons are addressed by their stable data attribute: the hover-× close
+    // control shares the tab's product label in its accessible name, so a name
+    // match would be ambiguous.
+    const scopeTab = page.locator('[data-rail-tab="tasks"]');
+    const changesTab = page.locator('[data-rail-tab="changes"]');
     await expect(scopeTab).toBeVisible();
 
-    // Scope progress (2 completed of 5) and Changes file count (4 distinct).
+    // Scope progress (2 completed of 5) and Review file count (4 distinct).
     await expect(scopeTab).toContainText("2/5");
     await expect(changesTab).toContainText("4");
 
-    // The active tab carries the amber lamp; the sliding indicator is present.
+    // The active icon carries the amber lamp + its indicator bar.
     await expect(scopeTab).toHaveClass(/text-primary/);
-    await expect(page.getByTestId("tab-indicator")).toBeAttached();
+    await expect(page.getByTestId("rail-active-indicator")).toBeAttached();
 
     await page.screenshot({ path: testInfo.outputPath("scope-active.png") });
 
-    // Switching tabs moves the lamp to Changes.
+    // Switching tabs moves the lamp to Review.
     await changesTab.click();
     await expect(changesTab).toHaveClass(/text-primary/);
     await expect(scopeTab).not.toHaveClass(/text-primary/);
@@ -202,26 +209,26 @@ test.describe("Right panel tab status", () => {
     await page.screenshot({ path: testInfo.outputPath("changes-active.png") });
   });
 
-  test("changes tab pulses fresh when new files land while viewing another tab", async ({ page }) => {
-    // Open on Scope so the Changes tab is inactive; this also baselines the
+  test("review tab pulses fresh when new files land while viewing another tab", async ({ page }) => {
+    // Open on Scope so the Review tab is inactive; this also baselines the
     // current file count so pre-existing changes do not pulse.
     await seedPanel(page, "tasks");
 
-    const changesTab = page.getByRole("button", { name: /Changes/ });
+    const changesTab = page.locator('[data-rail-tab="changes"]');
     await expect(changesTab).toContainText("4");
     await expect(changesTab.locator(".changes-fresh-ring")).toHaveCount(0);
 
-    // A new turn lands while the user is on Scope → Changes goes fresh.
+    // A new turn lands while the user is on Scope → Review goes fresh.
     await addSnapshotWithNewFile(page);
     await expect(changesTab).toContainText("5");
     await expect(changesTab.locator(".changes-fresh-ring")).toBeVisible();
 
-    // Viewing Changes clears the freshness signal.
+    // Viewing Review clears the freshness signal.
     await changesTab.click();
     await expect(changesTab.locator(".changes-fresh-ring")).toHaveCount(0);
   });
 
-  test("changes badge caps the count for very large diffs", async ({ page }) => {
+  test("review badge caps the count for very large diffs", async ({ page }) => {
     // Seed on Scope (Changes inactive) so the DiffPanel does not refetch and
     // overwrite the large snapshot we poke in below.
     await seedPanel(page, "tasks");
@@ -252,7 +259,7 @@ test.describe("Right panel tab status", () => {
     }, THREAD.id);
 
     // 200 distinct files renders as the capped label, not "200".
-    const changesTab = page.getByRole("button", { name: /Changes/ });
+    const changesTab = page.locator('[data-rail-tab="changes"]');
     await expect(changesTab).toContainText("99+");
   });
 });

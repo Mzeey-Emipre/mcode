@@ -155,6 +155,57 @@ describe("diffStore", () => {
     });
   });
 
+  describe("closeRightPanelTab", () => {
+    it("removes a tab from the open set", () => {
+      const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", "terminal");
+      closeRightPanelTab("ws-1", "preview");
+      expect(getRightPanel("ws-1").openTabs).toEqual(["terminal"]);
+    });
+
+    it("moves focus to the most-recently-opened survivor when the active tab closes", () => {
+      const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", "terminal"); // terminal is active
+      closeRightPanelTab("ws-1", "terminal");
+      expect(getRightPanel("ws-1").openTabs).toEqual(["preview"]);
+      expect(getRightPanel("ws-1").activeTab).toBe("preview");
+    });
+
+    it("leaves the active tab unchanged when closing an inactive tab", () => {
+      const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", "terminal"); // terminal is active
+      closeRightPanelTab("ws-1", "preview");
+      expect(getRightPanel("ws-1").activeTab).toBe("terminal");
+    });
+
+    it("empties the open set when the last tab closes (returns to card grid)", () => {
+      const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "preview");
+      closeRightPanelTab("ws-1", "preview");
+      expect(getRightPanel("ws-1").openTabs).toEqual([]);
+    });
+
+    it("is a no-op when the tab is not open", () => {
+      const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "preview");
+      closeRightPanelTab("ws-1", "terminal");
+      expect(getRightPanel("ws-1").openTabs).toEqual(["preview"]);
+      expect(getRightPanel("ws-1").activeTab).toBe("preview");
+    });
+
+    it("affects only the target workspace", () => {
+      const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-2", "preview");
+      closeRightPanelTab("ws-1", "preview");
+      expect(getRightPanel("ws-1").openTabs).toEqual([]);
+      expect(getRightPanel("ws-2").openTabs).toEqual(["preview"]);
+    });
+  });
+
   // The panel is workspace-global: its open state must survive having no thread
   // active (e.g. the threadless workspace shell) and persist across navigation.
   describe("workspace-global persistence", () => {

@@ -1,8 +1,5 @@
-import type { LucideIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ListChecks, Diff, Globe, Terminal, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTaskStore } from "@/stores/taskStore";
 import {
@@ -15,6 +12,7 @@ import {
 } from "@/stores/diffStore";
 import { ScopeSplitPane } from "./ScopeSplitPane";
 import { PanelEmptyState } from "./PanelEmptyState";
+import { ActivityRail, type ScopeProgress } from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
 import { PreviewPanel } from "@/components/panels/PreviewPanel";
@@ -23,37 +21,6 @@ import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext"
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ensureTerminalForScope } from "@/lib/ensure-terminal";
 import { cn } from "@/lib/utils";
-
-/** Static definition of a right-panel tab: id, label, and icon. */
-interface TabDef {
-  readonly id: RightPanelTab;
-  readonly label: string;
-  readonly icon: LucideIcon;
-}
-
-/** The four right-panel tabs, in display order. */
-const TABS: readonly TabDef[] = [
-  { id: "tasks", label: "Scope", icon: ListChecks },
-  { id: "changes", label: "Changes", icon: Diff },
-  { id: "preview", label: "Preview", icon: Globe },
-  { id: "terminal", label: "Terminal", icon: Terminal },
-];
-
-/**
- * Below this rendered panel width (px) the tab strip drops inactive labels to
- * icon-only so four tabs plus their status never crowd at the 384px floor. The
- * active tab keeps its label; every tab keeps its status glyph.
- */
-const COMPACT_TAB_WIDTH = 440;
-
-/**
- * Past this many changed files the Changes badge renders "{cap}+" instead of
- * the exact number. The glance only needs "a lot"; an exact 3-4 digit count
- * adds width without information and would grow the tab on large diffs. Only
- * the rendered label is capped — the underlying count stays exact so freshness
- * detection still registers further growth above the cap.
- */
-const CHANGES_COUNT_CAP = 99;
 
 /**
  * Tracks whether the Changes tab has unreviewed new files for the active
@@ -89,94 +56,7 @@ function useChangesFreshness(
   return fresh;
 }
 
-/** Aggregate task completion across a thread's parent tasks. */
-interface ScopeProgress {
-  readonly done: number;
-  readonly total: number;
-}
-
-/**
- * Per-tab glance status rendered beside the label: Scope task progress and the
- * Changes file count. Returns null for tabs with nothing to report so a calm
- * tab stays a bare label. Terminal and Preview carry no status yet (their
- * running/errored state is not surfaced per-thread).
- */
-function TabStatus({
-  tab,
-  active,
-  scope,
-  changesCount,
-  changesFresh,
-}: {
-  tab: RightPanelTab;
-  active: boolean;
-  scope: ScopeProgress;
-  changesCount: number;
-  changesFresh: boolean;
-}) {
-  if (tab === "tasks") {
-    if (scope.total === 0) return null;
-    const complete = scope.done === scope.total;
-    return (
-      <span
-        className={cn(
-          "font-mono text-[10px] font-medium tabular-nums tracking-normal",
-          complete
-            ? "text-[var(--diff-add-strong)]"
-            : active
-              ? "text-current"
-              : "text-muted-foreground",
-        )}
-      >
-        {scope.done}/{scope.total}
-      </span>
-    );
-  }
-  if (tab === "changes") {
-    if (changesCount === 0) return null;
-    const label = changesCount > CHANGES_COUNT_CAP ? `${CHANGES_COUNT_CAP}+` : String(changesCount);
-    return (
-      <span
-        className={cn(
-          "font-mono text-[10px] font-medium tabular-nums tracking-normal",
-          changesFresh
-            ? "changes-fresh-ring text-primary"
-            : active
-              ? "text-current"
-              : "text-muted-foreground",
-        )}
-      >
-        {label}
-      </span>
-    );
-  }
-  return null;
-}
-
-/**
- * Accessible name for a tab, carrying its glance status as text so screen
- * readers get the same signal sighted users read from the count and the amber
- * freshness color. Also keeps the name complete when narrow mode hides the
- * visible label.
- */
-function tabAccessibleLabel(
-  tab: RightPanelTab,
-  scope: ScopeProgress,
-  changesCount: number,
-  changesFresh: boolean,
-): string {
-  if (tab === "tasks") {
-    return scope.total > 0 ? `Scope, ${scope.done} of ${scope.total} tasks done` : "Scope";
-  }
-  if (tab === "changes") {
-    if (changesCount === 0) return "Changes";
-    const files = `${changesCount} ${changesCount === 1 ? "file" : "files"} changed`;
-    return `Changes, ${files}${changesFresh ? ", new since last viewed" : ""}`;
-  }
-  return tab === "preview" ? "Preview" : "Terminal";
-}
-
-/** Right-side panel with tabs for Tasks, Changes, and Preview. */
+/** Right-side panel: a vertical activity rail navigating open singleton tabs. */
 export function RightPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -242,7 +122,8 @@ export function RightPanel() {
   // Zustand action refs are stable (same identity for the store's lifetime),
   // so destructuring from getState() at render time is safe and avoids
   // adding actions to useCallback/useEffect dependency arrays.
-  const { setRightPanelWidth, setRightPanelTab, hideRightPanel } = useDiffStore.getState();
+  const { setRightPanelWidth, setRightPanelTab, closeRightPanelTab, hideRightPanel } =
+    useDiffStore.getState();
 
   const tasks = useTaskStore(
     (s) => (activeThreadId ? s.tasksByThread[activeThreadId] : undefined),
@@ -295,50 +176,6 @@ export function RightPanel() {
 
   const isChangesActive = panelVisible && changesActive;
   const changesFresh = useChangesFreshness(activeThreadId, changesCount, isChangesActive);
-
-  // Drop inactive tab labels when the rendered panel is narrow. Overlay mode
-  // renders at min(panelWidth, 90vw), so measure against that.
-  const renderedTabWidth = isOverlay
-    ? Math.min(panelWidth, viewportWidth * 0.9)
-    : panelWidth;
-  const compactTabs = renderedTabWidth < COMPACT_TAB_WIDTH;
-
-  // Active-tab underline indicator. Measured imperatively (rather than derived
-  // from layout) so it slides between tabs whose widths vary with their status.
-  const headerRef = useRef<HTMLDivElement>(null);
-  const tablistRef = useRef<HTMLDivElement>(null);
-  const indicatorRef = useRef<HTMLSpanElement>(null);
-  const measureIndicator = useCallback(() => {
-    const header = headerRef.current;
-    const indicator = indicatorRef.current;
-    const active = tablistRef.current?.querySelector<HTMLElement>('[data-tab-active="true"]');
-    if (!header || !indicator) return;
-    // Drive the slide with a GPU-composited transform (translate + scaleX off a
-    // 1px base) rather than animating left/width, so the underline never
-    // triggers layout. scaleX(0) parks it invisibly when there is no target.
-    if (!active) {
-      indicator.style.transform = "scaleX(0)";
-      return;
-    }
-    const headerRect = header.getBoundingClientRect();
-    const activeRect = active.getBoundingClientRect();
-    if (activeRect.width === 0) {
-      indicator.style.transform = "scaleX(0)";
-      return;
-    }
-    const offset = activeRect.left - headerRect.left;
-    indicator.style.transform = `translateX(${offset}px) scaleX(${activeRect.width})`;
-  }, []);
-  useLayoutEffect(() => {
-    measureIndicator();
-  }, [measureIndicator, activeTab, panelVisible, compactTabs, scope, changesCount]);
-  useEffect(() => {
-    const list = tablistRef.current;
-    if (!list || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => measureIndicator());
-    ro.observe(list);
-    return () => ro.disconnect();
-  }, [measureIndicator]);
 
   // Anticipate the next step: opening the Terminal tab spawns a shell when the
   // thread has none, so the user lands in a ready terminal instead of an empty
@@ -551,104 +388,68 @@ export function RightPanel() {
         />
       </div>
 
-      {/* Tab header. The active tab is marked by Filament Amber text and a 2px
-          amber underline that slides between tabs (the One Lamp Rule applied to
-          tab selection); each tab carries a glance status beside its label. */}
-      <div ref={headerRef} className="relative flex-none border-b border-border/40">
-        <div className="flex h-11 items-center justify-between px-3">
-          <div ref={tablistRef} className="flex items-center gap-0.5">
-            {TABS.filter((tab) => openTabs.includes(tab.id)).map((tab) => {
-              const isActive = activeTab === tab.id;
-              const Icon = tab.icon;
-              const showLabel = isActive || !compactTabs;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  data-tab-active={isActive ? "true" : undefined}
-                  aria-pressed={isActive}
-                  aria-label={tabAccessibleLabel(tab.id, scope, changesCount, changesFresh)}
-                  title={tab.label}
-                  onClick={() => setRightPanelTab(activeWorkspaceId!, tab.id)}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.16em] uppercase transition-colors",
-                    isActive ? "text-primary" : "text-foreground/70 hover:text-foreground",
-                  )}
-                >
-                  <Icon size={12} />
-                  {showLabel && <span>{tab.label}</span>}
-                  <TabStatus
-                    tab={tab.id}
-                    active={isActive}
-                    scope={scope}
-                    changesCount={changesCount}
-                    changesFresh={changesFresh}
-                  />
-                </button>
-              );
-            })}
-          </div>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => {
-              // Blur the close button before triggering the hide so focus is
-              // not inside the panel when aria-hidden applies on re-render.
-              (document.activeElement as HTMLElement | null)?.blur?.();
-              hideRightPanel(activeWorkspaceId!, activeThreadId);
-            }}
-            className="h-5 w-5 text-muted-foreground/70 hover:text-foreground hover:bg-transparent transition-colors duration-150"
-            aria-label="Close panel"
-          >
-            <X size={11} />
-          </Button>
-        </div>
-        <span
-          ref={indicatorRef}
-          data-testid="tab-indicator"
-          aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 h-0.5 w-px origin-left rounded-full bg-primary transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+      {/* Rail + content. The vertical activity rail navigates open singleton
+          tabs (active lamp + hover-× close + add control) and holds the panel's
+          close-chrome at its foot; the content area renders the active tab, or
+          the card-grid empty state when nothing is open. */}
+      <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
+        <ActivityRail
+          openTabs={openTabs}
+          activeTab={activeTab}
+          scope={panelScope}
+          scopeProgress={scope}
+          changesCount={changesCount}
+          changesFresh={changesFresh}
+          onSelect={(id) => setRightPanelTab(activeWorkspaceId!, id)}
+          onClose={(id) => closeRightPanelTab(activeWorkspaceId!, id)}
+          onCreate={(id) => setRightPanelTab(activeWorkspaceId!, id)}
+          onClosePanel={() => {
+            // Blur the close button before triggering the hide so focus is not
+            // inside the panel when aria-hidden applies on re-render.
+            (document.activeElement as HTMLElement | null)?.blur?.();
+            hideRightPanel(activeWorkspaceId!, activeThreadId);
+          }}
         />
-      </div>
 
-      {/* Tab content — DiffPanel and terminal pool stay mounted (stacked) so
-          turn expand state, loaded diffs, and xterm scroll anchors survive tab
-          and workspace thread switches. With no tab open the panel shows the
-          card-grid empty state, which is itself the create surface. */}
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        {openTabs.length === 0 && (
-          <PanelEmptyState
-            scope={panelScope}
-            openTabs={openTabs}
-            onOpen={(id) => setRightPanelTab(activeWorkspaceId!, id)}
-          />
-        )}
-        {activeTab === "tasks" && openTabs.includes("tasks") && activeThreadId && (
-          <ScopeSplitPane threadId={activeThreadId} parentTasks={parentTasks} />
-        )}
-        <div
-          className={
-            changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"
-          }
-        >
-          <DiffPanel />
-        </div>
-        {previewActive && panelScopeId && (
-          <PreviewPanel threadId={panelScopeId} workspaceId={activeWorkspaceId} />
-        )}
-        <div
-          className={cn(
-            "absolute inset-0 flex min-h-0 flex-row overflow-hidden",
-            !terminalActive && "pointer-events-none z-0 opacity-0",
-            terminalActive && "z-10",
+        {/* Tab content — DiffPanel and terminal pool stay mounted (stacked) so
+            turn expand state, loaded diffs, and xterm scroll anchors survive tab
+            and workspace thread switches. With no tab open the panel shows the
+            card-grid empty state, which is itself the create surface. */}
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {openTabs.length === 0 && (
+            <PanelEmptyState
+              scope={panelScope}
+              openTabs={openTabs}
+              onOpen={(id) => setRightPanelTab(activeWorkspaceId!, id)}
+            />
           )}
-          aria-hidden={!terminalActive}
-          inert={!terminalActive ? true : undefined}
-        >
-          {terminalActive && panelScopeId && (
-            <TerminalTabContent threadId={panelScopeId} />
+          {activeTab === "tasks" && openTabs.includes("tasks") && activeThreadId && (
+            <ScopeSplitPane threadId={activeThreadId} parentTasks={parentTasks} />
           )}
-          <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden p-2" />
+          <div
+            className={
+              changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"
+            }
+          >
+            <DiffPanel />
+          </div>
+          {previewActive && panelScopeId && (
+            <PreviewPanel threadId={panelScopeId} workspaceId={activeWorkspaceId} />
+          )}
+          <div
+            className={cn(
+              "absolute inset-0 flex min-h-0 flex-row overflow-hidden",
+              !terminalActive && "pointer-events-none z-0 opacity-0",
+              terminalActive && "z-10",
+            )}
+            aria-hidden={!terminalActive}
+            inert={!terminalActive ? true : undefined}
+          >
+            {terminalActive && panelScopeId && (
+              <TerminalTabContent threadId={panelScopeId} />
+            )}
+            <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden p-2" />
+          </div>
         </div>
       </div>
       </div>
