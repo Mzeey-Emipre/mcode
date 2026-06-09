@@ -34,11 +34,12 @@ vi.mock("@/stores/diffStore", () => {
     getRightPanelVisible: vi.fn().mockReturnValue(false),
     showRightPanel: vi.fn(),
     hideRightPanel: vi.fn(),
+    toggleRightPanel: vi.fn(),
     setRightPanelTab: vi.fn(),
   };
   const store = Object.assign(
     vi.fn((selector: (s: unknown) => unknown) =>
-      selector({ rightPanelByWorkspace: {}, ...actions }),
+      selector({ rightPanelByWorkspace: {}, snapshotsByThread: {}, ...actions }),
     ),
     { getState: vi.fn().mockReturnValue(actions) },
   );
@@ -236,5 +237,41 @@ describe("HeaderActions - PR-ability gating by mode", () => {
     render(<HeaderActions thread={makeThread({ mode: "worktree", branch: "feat/x" })} />);
     expect(mockUseBranchPr).toHaveBeenCalledWith("feat/x", expect.anything());
     expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("ws-1", "feat/x", "thread-1");
+  });
+});
+
+describe("HeaderActions - consolidated header", () => {
+  beforeEach(() => {
+    const state = defaultWorkspaceState();
+    mockWorkspaceSelector.mockImplementation(
+      (selector: (s: unknown) => unknown) => selector(state),
+    );
+    mockUseBranchPr.mockReturnValue(null);
+    mockUseHasCommitsAhead.mockReturnValue(true);
+  });
+
+  it("renders the consolidated workspace menu trigger", () => {
+    render(<HeaderActions thread={makeThread()} />);
+    expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
+  });
+
+  it("renders a single dedicated right-panel toggle", () => {
+    render(<HeaderActions thread={makeThread()} />);
+    const toggle = screen.getByTestId("header-panel-toggle");
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("collapses the old per-tab toggle icons (no terminal/preview/changes buttons)", () => {
+    render(<HeaderActions thread={makeThread()} />);
+    expect(screen.queryByRole("button", { name: /toggle terminal/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /toggle preview/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /toggle changes/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the consolidated menu and panel toggle on a direct-mode thread", () => {
+    render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
+    expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
+    expect(screen.getByTestId("header-panel-toggle")).toBeInTheDocument();
   });
 });
