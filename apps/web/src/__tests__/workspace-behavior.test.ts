@@ -47,6 +47,26 @@ describe("Workspace Behavior", () => {
     expect(useWorkspaceStore.getState().workspaces).toContainEqual(ws);
   });
 
+  it("when the user re-adds an existing project, it is deduped and moved to the front", async () => {
+    const existing = createMockWorkspace({ id: "ws-existing", name: "existing" });
+    const other = createMockWorkspace({ id: "ws-other", name: "other" });
+    useWorkspaceStore.setState({ workspaces: [other, existing] });
+
+    // Server is idempotent on path: re-adding returns the live workspace.
+    (
+      mockTransport.createWorkspace as ReturnType<typeof vi.fn>
+    ).mockResolvedValue(existing);
+
+    await useWorkspaceStore
+      .getState()
+      .createWorkspace("existing", "/tmp/existing");
+
+    const { workspaces } = useWorkspaceStore.getState();
+    expect(workspaces).toHaveLength(2);
+    expect(workspaces.filter((w) => w.id === "ws-existing")).toHaveLength(1);
+    expect(workspaces[0].id).toBe("ws-existing");
+  });
+
   it("when the user deletes the active workspace, threads and selection clear", async () => {
     const ws = createMockWorkspace();
     const thread = createMockThread({ workspace_id: ws.id });
