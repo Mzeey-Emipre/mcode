@@ -55,10 +55,11 @@ The Browser tab's content view, now that pages are not top-level panel tabs.
 - **Empty state lists detected localhost ports** as cards (name, port, online
   dot). The sort/filter control (Recently used / Port; All / Online / Hidden) is
   a **future** addition — stubbed disabled.
-- **Design mode** (entered from the header's Design button): a capture toolbar
-  (Region / Viewport / Full page + device frame + exit), a live region selection
-  over the dimmed page, and a captures tray with **Attach N to chat** — the
-  design screenshots become context for the agent.
+- **Design mode** and **Screenshot** already exist and are **not changing** in
+  this revamp — the prototype's design overlay is illustrative only. The work is
+  to surface their existing entry points in the new clean header (a Design icon
+  and a Screenshot icon), with behavior preserved. A future revamp of design
+  mode itself is out of scope here.
 
 ### Multi-page = the right-panel rail (settled)
 Multiple Browser pages live in the **right-panel activity rail**, not a top tab
