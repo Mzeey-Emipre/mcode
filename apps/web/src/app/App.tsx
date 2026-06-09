@@ -44,6 +44,18 @@ const LazyCommandPalette = lazy(async () => {
   return { default: m.CommandPalette };
 });
 
+// THROWAWAY: right-panel revamp prototype, reachable via ?prototype=panel. Delete with the prototype.
+const LazyRightPanelPrototype = lazy(async () => {
+  const m = await import("@/components/prototype/RightPanelPrototype");
+  return { default: m.RightPanelPrototype };
+});
+
+// THROWAWAY: browser-view prototype, reachable via ?prototype=browser. Delete with the prototype.
+const LazyBrowserViewPrototype = lazy(async () => {
+  const m = await import("@/components/prototype/BrowserViewPrototype");
+  return { default: m.BrowserViewPrototype };
+});
+
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
@@ -362,6 +374,23 @@ export function App() {
       applyTheme(theme === "dark");
     }
   }, [theme]);
+
+  // THROWAWAY: short-circuit to the right-panel prototype. Placed after all hooks
+  // so hook order is unaffected. Remove when the prototype is folded in or deleted.
+  const protoSurface = new URLSearchParams(window.location.search).get("prototype");
+  if (import.meta.env.DEV && (protoSurface === "panel" || protoSurface === "browser")) {
+    // Seed the variant from the URL eagerly — before transport init reloads to add
+    // ?token= (which drops ?variant=). The lazy prototype then reads it from storage.
+    const protoVariant = new URLSearchParams(window.location.search).get("variant");
+    if (protoVariant === "A" || protoVariant === "B" || protoVariant === "C") {
+      sessionStorage.setItem("proto-variant", protoVariant);
+    }
+    return (
+      <Suspense fallback={null}>
+        {protoSurface === "browser" ? <LazyBrowserViewPrototype /> : <LazyRightPanelPrototype />}
+      </Suspense>
+    );
+  }
 
   return (
     <TerminalPoolSlotProvider>
