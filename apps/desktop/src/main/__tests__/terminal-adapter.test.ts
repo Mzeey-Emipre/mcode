@@ -108,6 +108,36 @@ describe("createTerminalAdapter launch", () => {
     expect(spawns[0]?.cmd).toBe("C:\\fallback\\wt.exe");
   });
 
+  it("quotes a launcher path containing spaces so cmd.exe does not split it (Git Bash)", async () => {
+    const gitBashPath = "C:\\Program Files\\Git\\git-bash.exe";
+    const { deps, spawns } = fakeDeps({
+      commandOnPath: () => false,
+      fileExists: (p) => p === gitBashPath,
+    });
+    await createTerminalAdapter(
+      {
+        id: "git-bash",
+        label: "Git Bash",
+        iconKey: "git-bash",
+        command: "git-bash",
+        windowsPaths: [gitBashPath],
+      },
+      deps,
+    ).launch({ path: "C:\\repo" });
+
+    expect(spawns[0]).toEqual({
+      cmd: `"${gitBashPath}"`,
+      args: ["--cd=C:\\repo"],
+    });
+  });
+
+  it("does not quote a bare PATH command without spaces", async () => {
+    const { deps, spawns } = fakeDeps({ commandOnPath: (c) => c === "wt" });
+    await createTerminalAdapter(WT_CONFIG, deps).launch({ path: "C:\\repo" });
+
+    expect(spawns[0]?.cmd).toBe("wt");
+  });
+
   it("rejects when the terminal is not detected", async () => {
     const { deps, spawns } = fakeDeps();
     await expect(

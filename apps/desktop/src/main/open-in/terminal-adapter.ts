@@ -129,10 +129,16 @@ export function createTerminalAdapter(
 
       const args = buildTerminalArgs(config.id, target.path);
 
+      // shell:true lets PATH aliases like `wt` resolve, but cmd.exe concatenates
+      // the command and args without quoting. A launcher resolved to an absolute
+      // path with spaces (Git Bash under "Program Files") would be split at the
+      // first space, so quote it; bare PATH names have no spaces and are untouched.
+      const spawnCmd = /\s/.test(cmd) ? `"${cmd}"` : cmd;
+
       return new Promise<void>((resolve, reject) => {
         // Terminal executables on Windows (wt.exe, wsl.exe, git-bash.exe) launch
         // their own window and resolve their own environment; we fire and forget.
-        const child: ChildProcess = deps.spawn(cmd, args, {
+        const child: ChildProcess = deps.spawn(spawnCmd, args, {
           detached: true,
           stdio: "ignore",
           shell: true,
