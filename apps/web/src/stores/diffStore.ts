@@ -194,6 +194,13 @@ interface DiffState {
   hideRightPanel: (workspaceId: string, threadId?: string | null) => void;
   setRightPanelWidth: (workspaceId: string, width: number) => void;
   setRightPanelTab: (workspaceId: string, tab: RightPanelTab) => void;
+  /**
+   * Close (remove) a singleton tab from the open set. When the closed tab was
+   * active, focus falls back to the most-recently-opened remaining tab; with
+   * none left the panel returns to the card-grid empty state. No-op when the tab
+   * is not open. See ADR-0004.
+   */
+  closeRightPanelTab: (workspaceId: string, tab: RightPanelTab) => void;
   setViewMode: (mode: DiffViewMode) => void;
   setRenderMode: (mode: DiffRenderMode) => void;
   getLineWrap: (threadId: string) => boolean;
@@ -284,6 +291,27 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         rightPanelByWorkspace: {
           ...state.rightPanelByWorkspace,
           [workspaceId]: { ...current, openTabs, activeTab: tab },
+        },
+      };
+    }),
+
+  closeRightPanelTab: (workspaceId, tab) =>
+    set((state) => {
+      const current = state.rightPanelByWorkspace[workspaceId] ?? createDefaultRightPanelState();
+      if (!current.openTabs.includes(tab)) return {};
+      const openTabs = current.openTabs.filter((t) => t !== tab);
+      // Closing the active tab hands focus to the most-recently-opened survivor
+      // (the rail's right-most/last entry); with none left, activeTab is left
+      // untouched and inert — the empty-state grid renders and the panel's
+      // content guards on openTabs.includes(activeTab).
+      const activeTab =
+        current.activeTab === tab
+          ? (openTabs[openTabs.length - 1] ?? current.activeTab)
+          : current.activeTab;
+      return {
+        rightPanelByWorkspace: {
+          ...state.rightPanelByWorkspace,
+          [workspaceId]: { ...current, openTabs, activeTab },
         },
       };
     }),

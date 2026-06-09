@@ -89,7 +89,8 @@ async function openPanelOnScope(page: Page): Promise<void> {
           }
         ).getState();
         api.showRightPanel(wid, tid);
-        api.setRightPanelTab(wid, "tasks");
+        // Leave the panel on its empty-state card grid so the Terminal can be
+        // opened through the real create surface.
       }
     },
     { workspace: WORKSPACE, thread: THREAD, tid: THREAD.id, wid: WORKSPACE.id },
@@ -125,7 +126,7 @@ test.describe("Right panel terminal auto-start", () => {
     // No terminals before the tab is opened.
     expect(await terminalCount(page, THREAD.id)).toBe(0);
 
-    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await page.getByTestId("panel-card-terminal").click();
 
     // Opening the tab spawns one without the user clicking "New terminal".
     await expect.poll(() => terminalCount(page, THREAD.id), { timeout: 5_000 }).toBe(1);

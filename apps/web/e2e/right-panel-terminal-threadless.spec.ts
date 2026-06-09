@@ -67,9 +67,9 @@ async function openThreadlessPanel(page: Page): Promise<void> {
             };
           }
         ).getState();
-        // No thread id → threadless workspace visibility.
+        // No thread id → threadless workspace visibility. Leave the panel on
+        // its empty-state card grid so the Terminal opens via the create surface.
         api.showRightPanel(wid);
-        api.setRightPanelTab(wid, "tasks");
       }
     },
     { workspace: WORKSPACE, wid: WORKSPACE.id },
@@ -107,7 +107,7 @@ test.describe("Right panel threadless terminal", () => {
     // No terminals exist for the workspace scope before the tab is opened.
     expect(await terminalCount(page, WORKSPACE.id)).toBe(0);
 
-    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await page.getByTestId("panel-card-terminal").click();
 
     // The shell is keyed by the workspace id (the threadless scope), not a thread.
     await expect.poll(() => terminalCount(page, WORKSPACE.id), { timeout: 5_000 }).toBe(1);
