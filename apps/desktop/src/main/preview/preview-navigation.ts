@@ -132,8 +132,11 @@ export function registerNavigationHandlers(): void {
         // view is blank/error (just created) and we have a URL worth loading.
         // A warm tab that already has its document loaded must NOT be touched.
         const needsRestore = guestUrlNeedsHttpRestore(current);
+        // The tab's own resumeUrl is authoritative; the per-thread hint is only
+        // a cold-start fallback. A page the user opened blank stays blank — it
+        // must never adopt the thread's last URL via the hint.
         const restoreTarget = needsRestore
-          ? (safeHint ?? activeTab?.resumeUrl ?? null)
+          ? (activeTab?.resumeUrl ?? (activeTab?.userCreatedBlank ? null : safeHint))
           : null;
 
         if (restoreTarget) {

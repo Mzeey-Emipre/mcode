@@ -45,6 +45,14 @@ export interface TabState {
   faviconUrl: string | null;
   /** Epoch ms when this tab was last activated. Drives memory-saver LRU ordering (ADR 0002). */
   lastActiveAt: number;
+  /**
+   * True for a page the user explicitly opened as a new, blank tab. Such a tab
+   * must stay on its empty "Enter a URL" state and must NOT adopt the thread's
+   * per-thread resume-URL hint on the next sync (which exists to restore the
+   * thread's last page on cold start / remount). Cleared once the tab navigates
+   * to a real URL.
+   */
+  userCreatedBlank?: boolean;
 }
 
 /** Per-thread tab set: an ordered list plus the id of the mounted tab. */
