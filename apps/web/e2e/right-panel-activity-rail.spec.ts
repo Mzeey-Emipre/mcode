@@ -153,15 +153,27 @@ test.describe("Right panel activity rail", () => {
     await expect(page.locator('[data-rail-tab="terminal"]')).toHaveCount(0);
     await expect(page.locator('[data-rail-tab="preview"]')).toHaveClass(/text-primary/);
 
-    // Closing the last tab returns to the empty-state card grid.
+    // Closing the last tab returns to the empty-state tool list; maximize stays on the rail.
     await page.locator('[data-rail-tab="preview"]').hover();
     await page.getByRole("button", { name: "Close Browser" }).click();
     await expect(page.getByTestId("panel-empty-state")).toBeVisible();
+    await expect(page.getByTestId("rail-maximize-toggle")).toBeVisible();
+  });
+
+  test("maximize button is visible in the empty state", async ({ page }) => {
+    await seed(page);
+
+    await expect(page.getByTestId("panel-empty-state")).toBeVisible();
+    await expect(page.getByTestId("rail-maximize-toggle")).toBeVisible();
+    await expect(page.getByTestId("rail-maximize-toggle")).toHaveAttribute(
+      "aria-label",
+      "Maximize panel",
+    );
   });
 
   test("add control: hidden when nothing is creatable", async ({ page }) => {
-    // Threadless, both creatable types open → nothing left to create.
-    await seed(page, { tabs: ["preview", "terminal"] });
+    // Threadless with every creatable tab open (Browser, Terminal, Review).
+    await seed(page, { tabs: ["preview", "terminal", "changes"] });
 
     const rail = page.getByTestId("activity-rail");
     await expect(rail).toBeVisible();
@@ -169,16 +181,16 @@ test.describe("Right panel activity rail", () => {
   });
 
   test("add control: one creatable type opens directly", async ({ page }) => {
-    // Threadless with only Terminal open → Browser is the sole creatable type.
-    await seed(page, { tabs: ["terminal"] });
+    // Threadless with Browser and Terminal open → Review is the sole creatable type.
+    await seed(page, { tabs: ["preview", "terminal"] });
 
-    const addDirect = page.getByRole("button", { name: "New Browser" });
+    const addDirect = page.getByRole("button", { name: "New Review" });
     await expect(addDirect).toBeVisible();
     // No menu trigger when a single type opens directly.
     await expect(page.getByRole("button", { name: "New tab" })).toHaveCount(0);
 
     await addDirect.click();
-    await expect(page.locator('[data-rail-tab="preview"]')).toHaveClass(/text-primary/);
+    await expect(page.locator('[data-rail-tab="changes"]')).toHaveClass(/text-primary/);
   });
 
   test("add control: several creatable types show a menu", async ({ page }) => {
@@ -197,5 +209,26 @@ test.describe("Right panel activity rail", () => {
     // Choosing Terminal opens and activates it.
     await page.getByRole("menuitem", { name: /Terminal/ }).click();
     await expect(page.locator('[data-rail-tab="terminal"]')).toHaveClass(/text-primary/);
+  });
+
+  test("maximize button fills the content area and restores on second click", async ({ page }) => {
+    await seed(page, { tabs: ["terminal"] });
+
+    const chatMain = page.locator("main").filter({ has: page.getByText("Message Mcode...") });
+    const projectTree = page.getByRole("button", { name: "Activity Rail Delete Activity Rail" });
+    const maximize = page.getByTestId("rail-maximize-toggle");
+
+    await expect(chatMain).toBeVisible();
+    await expect(projectTree).toBeVisible();
+    await expect(maximize).toBeVisible();
+
+    await maximize.click();
+    await expect(chatMain).toBeHidden();
+    await expect(projectTree).toBeVisible();
+    await expect(maximize).toHaveAttribute("aria-label", "Restore panel");
+
+    await maximize.click();
+    await expect(chatMain).toBeVisible();
+    await expect(maximize).toHaveAttribute("aria-label", "Maximize panel");
   });
 });

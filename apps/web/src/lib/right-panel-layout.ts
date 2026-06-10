@@ -1,0 +1,62 @@
+import { useDiffStore } from "@/stores/diffStore";
+import { useUiStore } from "@/stores/uiStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+import {
+  canFitSideBySidePanel,
+  getContentRowWidth,
+} from "@/lib/composer-layout";
+
+/**
+ * After opening the right panel, maximize it when the content row cannot fit
+ * composer and panel side by side. Composer-first: inline mode only when there
+ * is room; otherwise the panel owns the content row.
+ */
+export function applyMaximizeIfCramped(workspaceId: string): void {
+  const panelWidth = useDiffStore.getState().getRightPanel(workspaceId).width;
+  if (canFitSideBySidePanel(getContentRowWidth(), panelWidth)) return;
+  useUiStore.getState().setRightPanelMaximized(true);
+}
+
+/**
+ * Opens the right panel for a workspace/thread and applies cramped-layout maximize.
+ */
+export function showRightPanelAdaptive(
+  workspaceId: string,
+  threadId?: string | null,
+): void {
+  useDiffStore.getState().showRightPanel(workspaceId, threadId);
+  applyMaximizeIfCramped(workspaceId);
+}
+
+/**
+ * Toggles the right panel; on open applies cramped-layout maximize, on close
+ * clears maximize so the chat pane returns cleanly.
+ */
+export function toggleRightPanelAdaptive(
+  workspaceId: string,
+  threadId?: string | null,
+): void {
+  const diff = useDiffStore.getState();
+  const wasVisible = diff.getRightPanelVisible(workspaceId, threadId);
+  diff.toggleRightPanel(workspaceId, threadId);
+  if (wasVisible) {
+    useUiStore.getState().setRightPanelMaximized(false);
+    return;
+  }
+  applyMaximizeIfCramped(workspaceId);
+}
+
+/**
+ * Hides the right panel for the active workspace/thread and clears maximize.
+ */
+export function hideRightPanelAdaptive(workspaceId: string, threadId?: string | null): void {
+  useDiffStore.getState().hideRightPanel(workspaceId, threadId);
+  useUiStore.getState().setRightPanelMaximized(false);
+}
+
+/** Active workspace/thread hide helper for layout guard and Escape paths. */
+export function hideActiveRightPanelAdaptive(): void {
+  const { activeWorkspaceId, activeThreadId } = useWorkspaceStore.getState();
+  if (!activeWorkspaceId) return;
+  hideRightPanelAdaptive(activeWorkspaceId, activeThreadId);
+}

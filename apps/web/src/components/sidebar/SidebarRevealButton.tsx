@@ -58,12 +58,12 @@ export function PanelCollapseIcon({ className }: { className?: string }) {
  * chevron slides outward on hover to telegraph the reveal action.
  */
 export function SidebarRevealButton() {
-  const toggle = useUiStore((s) => s.toggleSidebar);
+  const expandSidebar = useUiStore((s) => s.expandSidebar);
 
   return (
     <Tooltip>
       <TooltipTrigger
-        onClick={toggle}
+        onClick={expandSidebar}
         aria-label="Expand sidebar"
         className={cn(
           "group inline-flex size-7 shrink-0 items-center justify-center rounded-md",

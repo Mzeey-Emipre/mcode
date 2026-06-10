@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useDiffStore } from "@/stores/diffStore";
 import { readThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { getTransport } from "@/transport";
 
 /** Props for TurnChangeSummary. */
@@ -99,7 +100,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
     if (!threadId || !workspaceId) return;
 
     const store = useDiffStore.getState();
-    store.showRightPanel(workspaceId, threadId);
+    showRightPanelAdaptive(workspaceId, threadId);
     store.setRightPanelTab(workspaceId, "changes");
     // "View all diffs" lands on the thread's cumulative diff across every turn.
     store.setViewMode("cumulative");

@@ -10,6 +10,7 @@
     "when": "showLanding && !commandPaletteOpen && !inputFocused"
   },
   { "key": "mod+\\", "command": "sidebar.toggle", "when": "!inputFocused" },
+  { "key": "mod+alt+b", "command": "rightPanel.toggle" },
   { "key": "mod+j", "command": "terminal.toggle" },
   { "key": "mod+,", "command": "settings.open", "when": "!inputFocused" },
   { "key": "mod+shift+?", "command": "shortcuts.help", "when": "!inputFocused" },

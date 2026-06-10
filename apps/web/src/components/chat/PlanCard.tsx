@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { usePlanStore } from "@/stores/planStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { ScrollText, ArrowUpRight } from "lucide-react";
 
 interface PlanCardProps {
@@ -30,7 +31,7 @@ export function PlanCard({ messageId }: PlanCardProps) {
   const sectionCount = plan.sectionsJson?.length ?? 0;
 
   const handleClick = () => {
-    useDiffStore.getState().showRightPanel(activeWorkspaceId, activeThreadId);
+    showRightPanelAdaptive(activeWorkspaceId, activeThreadId);
     useDiffStore.getState().setRightPanelTab(activeWorkspaceId, "tasks");
     usePlanStore.getState().setActiveVersion(activeThreadId, plan.version);
   };

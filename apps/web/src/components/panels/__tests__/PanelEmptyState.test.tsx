@@ -1,7 +1,7 @@
 /**
- * Behaviour tests for the right-panel empty-state card grid (issue #610):
- * scope-filtered cards, the Files coming-soon teaser, the absence of an add
- * control, and opening a tab by clicking its card.
+ * Behaviour tests for the right-panel empty-state tool list (issue #610):
+ * scope-filtered rows, the Files coming-soon teaser, the absence of an add
+ * control, and opening a tab by clicking its row.
  */
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
