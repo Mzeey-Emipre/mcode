@@ -606,6 +606,7 @@ export class GitService {
   ): Promise<string[]> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
     const resolvedBase = base ?? (await this.detectDefaultBranch(cwd));
+    if (!resolvedBase) return [];
     const resolvedTarget = target ?? "HEAD";
     assertSafeRef(resolvedBase);
     assertSafeRef(resolvedTarget);
@@ -638,6 +639,7 @@ export class GitService {
   ): Promise<string> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
     const resolvedBase = base ?? (await this.detectDefaultBranch(cwd));
+    if (!resolvedBase) return "";
     const resolvedTarget = target ?? "HEAD";
     assertSafeRef(resolvedBase);
     assertSafeRef(resolvedTarget);
@@ -660,9 +662,11 @@ export class GitService {
    * - **current ≠ detected base** → `base → current` (review the branch's work).
    * - **current == detected base** (on the base branch) → `current →
    *   origin/current` when an upstream exists, else `base → current` (empty but
-   *   valid — no origin / never pushed).
+   *   valid when the branch has no upstream).
    * - **detached HEAD** → `base → HEAD` (three-dot already takes the merge-base).
    * - **unborn branch** (no commits) → explicit empty state (`isUnborn`).
+   * - **no detectable base** → no base is selected; the picker waits for the
+   *   user to choose one.
    *
    * Reads the workspace root by default; pass `repoPath` to resolve against a
    * thread's worktree so "current branch" is the thread's branch.
@@ -677,6 +681,11 @@ export class GitService {
 
     const base = await this.detectDefaultBranch(cwd);
     const current = getCurrentBranchForPath(cwd);
+
+    if (!base) {
+      const target = current && current !== "HEAD" ? current : "HEAD";
+      return { base: null, target, refs, isUnborn: false };
+    }
 
     // Detached HEAD (no branch name): compare the detected base to HEAD. Three-dot
     // semantics resolve the merge-base internally, so an explicit base is enough.
@@ -729,10 +738,10 @@ export class GitService {
   }
 
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */
-  private readonly defaultBranchCache = new Map<string, string>();
+  private readonly defaultBranchCache = new Map<string, string | null>();
 
   /** Detect the default upstream branch (e.g. main, master) for a repository. */
-  private async detectDefaultBranch(repoPath: string): Promise<string> {
+  private async detectDefaultBranch(repoPath: string): Promise<string | null> {
     const cached = this.defaultBranchCache.get(repoPath);
     if (cached !== undefined) return cached;
 
@@ -742,7 +751,7 @@ export class GitService {
   }
 
   /** Resolve the default branch by probing git refs in order of cheapness. */
-  private async resolveDefaultBranch(repoPath: string): Promise<string> {
+  private async resolveDefaultBranch(repoPath: string): Promise<string | null> {
     // 1. Ask the remote tracking ref (fast, no network, works if origin/HEAD is set)
     try {
       const { stdout } = await execFile(
@@ -773,18 +782,23 @@ export class GitService {
       logger.debug("[detectDefaultBranch] set-head failed, falling back to HEAD", { repoPath, err });
     }
 
-    // 3. Last resort: use whatever HEAD currently points at (works for local-only repos)
-    try {
-      const { stdout } = await execFile(
-        "git",
-        ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"],
-        { timeout: 5_000, windowsHide: true },
-      );
-      return stdout.trim();
-    } catch (err) {
-      logger.debug("[detectDefaultBranch] rev-parse failed, defaulting to main", { repoPath, err });
-      return "main";
+    // 3. Local-only repos have no origin/HEAD; prefer established default branch
+    // names when they exist instead of treating the current feature branch as base.
+    for (const branch of ["main", "master", "develop", "trunk"]) {
+      try {
+        await execFile(
+          "git",
+          ["-C", repoPath, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+          { timeout: 5_000, windowsHide: true },
+        );
+        return branch;
+      } catch {
+        // Keep probing the next conventional default name.
+      }
     }
+
+    logger.debug("[detectDefaultBranch] no default branch detected", { repoPath });
+    return null;
   }
 
   /**

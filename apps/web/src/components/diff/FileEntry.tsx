@@ -25,7 +25,7 @@ interface FileEntryProps {
    * parent-path suffix is suppressed (the folder header above carries it).
    */
   depth?: number;
-  /** When true the diff starts expanded on mount (used for the latest turn). */
+  /** When true the diff starts expanded on mount and after its diff identity changes. */
   defaultExpanded?: boolean;
 }
 
@@ -63,7 +63,7 @@ type DiffState = null | { loading: true } | { loading: false; data: string };
 /**
  * Single file row with an inline expandable diff.
  * Clicking toggles the diff open/closed directly below the filename.
- * Diff is loaded lazily on the first expand.
+ * Diff is loaded lazily on the first expand, or immediately for auto-opened views.
  * Large diffs (>200 lines) are truncated with a "Show all N lines" button.
  */
 export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultExpanded: defaultExpandedProp = false }: FileEntryProps) {
@@ -71,8 +71,9 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
   const [expanded, setExpanded] = useState(defaultExpandedProp);
   const [showAllLines, setShowAllLines] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
+  const cacheKey = `${threadId}:${source}:${id}:${filePath}`;
   // Initialise from the Zustand cache so diffs survive panel close/reopen.
-  const cachedDiff = useDiffStore((s) => s.inlineDiffCache[`${threadId}:${source}:${id}:${filePath}`]);
+  const cachedDiff = useDiffStore((s) => s.inlineDiffCache[cacheKey]);
   const [diffState, setDiffState] = useState<DiffState>(
     () => (cachedDiff !== undefined ? { loading: false, data: cachedDiff } : null),
   );
@@ -84,7 +85,6 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
 
   // Reset local state when the cache identity changes so a reused component
   // instance doesn't show stale content from a previous identity.
-  const cacheKey = `${threadId}:${source}:${id}:${filePath}`;
   useEffect(() => {
     const cached = useDiffStore.getState().inlineDiffCache[cacheKey];
     setDiffState(cached !== undefined ? { loading: false, data: cached } : null);
@@ -93,6 +93,10 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
     loadStartedRef.current = false;
   }, [cacheKey]);
 
+  useEffect(() => {
+    if (defaultExpandedProp) setExpanded(true);
+  }, [cacheKey, defaultExpandedProp]);
+
   const { basename, parent, ext, language, isMarkdown } = useMemo(() => {
     const bn = getFileBasename(filePath);
     const pr = getParentDir(filePath);
@@ -100,9 +104,15 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
     return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath), isMarkdown: isMarkdownFile(filePath) };
   }, [filePath]);
 
-  // Load diff lazily on first expand. Skips if the diff is already cached.
+  // Load diff lazily on first expand. Reads the cache at effect time so a reused
+  // row with a new comparison id does not miss its fresh load.
   useEffect(() => {
-    if (!expanded || loadStartedRef.current || (diffState !== null && !diffState.loading)) return;
+    if (!expanded || loadStartedRef.current) return;
+    const cached = useDiffStore.getState().inlineDiffCache[cacheKey];
+    if (cached !== undefined) {
+      setDiffState({ loading: false, data: cached });
+      return;
+    }
     loadStartedRef.current = true;
 
     let cancelled = false;
@@ -126,7 +136,7 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
       cancelled = true;
       loadStartedRef.current = false;
     };
-  }, [expanded, source, id, filePath, threadId]);
+  }, [expanded, source, id, filePath, threadId, cacheKey]);
 
   const lines = useMemo(
     () =>

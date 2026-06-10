@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { ArrowRight, Check, ChevronDown } from "lucide-react";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
@@ -246,7 +246,7 @@ interface BranchRefPickerProps {
 }
 
 /**
- * The Branch view's operand control: two ref comboboxes (`base … target`) the
+ * The Branch view's operand control: two ref comboboxes (`base -> target`) the
  * user picks independently, always diffed three-dot. Renders into the Review
  * toolbar's contextual operand slot. Resolves its default pair per ADR 0007 and
  * writes the chosen pair to the diff store, which drives the rendered Branch diff.
@@ -275,9 +275,13 @@ export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps)
   return (
     <div className="flex min-w-0 items-center gap-1" data-testid="branch-ref-picker">
       <RefCombobox side="base" value={comparison?.base ?? null} refs={refs} onSelect={setBranchBase} />
-      {/* Three-dot range indicator (always `base...target`, never two-dot). */}
-      <span aria-hidden="true" className="font-mono text-[11px] leading-none text-muted-foreground/40">
-        …
+      {/* Directional cue for the fixed `base...target` comparison. */}
+      <span
+        aria-hidden="true"
+        data-testid="branch-range-arrow"
+        className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/45"
+      >
+        <ArrowRight size={12} strokeWidth={1.8} />
       </span>
       <RefCombobox side="target" value={comparison?.target ?? null} refs={refs} onSelect={setBranchTarget} />
     </div>

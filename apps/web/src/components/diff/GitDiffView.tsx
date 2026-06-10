@@ -150,6 +150,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         // Cache + per-file fetch scope: the real thread (→ its worktree) when in a
         // thread, else the workspace id (the server reads the workspace root).
         threadId={threadId ?? workspaceId}
+        defaultFilesExpanded={view === "branch"}
       />
     </div>
   );

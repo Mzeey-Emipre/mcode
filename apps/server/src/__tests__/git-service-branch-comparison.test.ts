@@ -69,10 +69,12 @@ describe("GitService.resolveBranchComparison", () => {
     current: string;
     branches: Array<{ full: string; short: string; head?: boolean }>;
     hasCommits?: boolean;
-    defaultBranch?: string;
+    defaultBranch?: string | null;
+    localDefaultBranches?: string[];
   }) {
     const hasCommits = opts.hasCommits ?? true;
-    const defaultBranch = opts.defaultBranch ?? "main";
+    const defaultBranch = opts.defaultBranch === undefined ? "main" : opts.defaultBranch;
+    const localDefaultBranches = opts.localDefaultBranches ?? [];
 
     mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
       if (args.includes("branch")) return branchListOutput(opts.branches);
@@ -81,12 +83,20 @@ describe("GitService.resolveBranchComparison", () => {
     });
 
     mockExecFile.mockImplementation(async (_cmd: string, args: string[]) => {
-      if (args.includes("--verify")) {
+      if (args.includes("rev-parse") && args.includes("--verify")) {
         if (!hasCommits) throw new Error("unborn");
         return { stdout: "deadbeef\n", stderr: "" };
       }
       if (args.includes("symbolic-ref")) {
+        if (defaultBranch === null) throw new Error("no origin head");
         return { stdout: `origin/${defaultBranch}\n`, stderr: "" };
+      }
+      if (args.includes("remote")) throw new Error("no origin");
+      if (args.includes("show-ref")) {
+        const ref = args.at(-1) ?? "";
+        const branch = ref.replace("refs/heads/", "");
+        if (localDefaultBranches.includes(branch)) return { stdout: "", stderr: "" };
+        throw new Error("missing local default");
       }
       return { stdout: "", stderr: "" };
     });
@@ -116,7 +126,7 @@ describe("GitService.resolveBranchComparison", () => {
       ],
     });
 
-    const result = await gitService.resolveBranchComparison("ws", REPO);
+    const result = await gitService.resolveBranchComparison("ws", "/repo-no-base");
 
     expect(result).toMatchObject({ base: "main", target: "origin/main", isUnborn: false });
   });
@@ -168,6 +178,44 @@ describe("GitService.resolveBranchComparison", () => {
     const result = await gitService.resolveBranchComparison("ws", REPO);
 
     expect(result).toMatchObject({ base: "develop", target: "feat/y" });
+  });
+
+  it("falls back to a local main branch when origin is unavailable", async () => {
+    setup({
+      current: "feat/local-only",
+      defaultBranch: null,
+      localDefaultBranches: ["main"],
+      branches: [
+        { full: "refs/heads/main", short: "main" },
+        { full: "refs/heads/feat/local-only", short: "feat/local-only", head: true },
+      ],
+    });
+
+    const result = await gitService.resolveBranchComparison("ws", REPO);
+
+    expect(result).toMatchObject({
+      base: "main",
+      target: "feat/local-only",
+      isUnborn: false,
+    });
+  });
+
+  it("opens with no base when no default branch can be detected", async () => {
+    setup({
+      current: "feat/unknown-base",
+      defaultBranch: null,
+      branches: [
+        { full: "refs/heads/feat/unknown-base", short: "feat/unknown-base", head: true },
+      ],
+    });
+
+    const result = await gitService.resolveBranchComparison("ws", "/repo-no-base");
+
+    expect(result).toMatchObject({
+      base: null,
+      target: "feat/unknown-base",
+      isUnborn: false,
+    });
   });
 });
 
@@ -224,6 +272,24 @@ describe("GitService.branchFiles / branchDiff ranges", () => {
       "git",
       ["-C", REPO, "diff", "--name-only", "main...HEAD"],
       expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+  });
+
+  it("returns an explicit empty list when no default base is detected", async () => {
+    mockExecFile.mockImplementation(async (_cmd: string, args: string[]) => {
+      if (args.includes("symbolic-ref")) throw new Error("no origin head");
+      if (args.includes("remote")) throw new Error("no origin");
+      if (args.includes("show-ref")) throw new Error("missing local default");
+      return { stdout: "a.ts", stderr: "" };
+    });
+
+    const files = await gitService.branchFiles("ws", undefined, undefined, REPO);
+
+    expect(files).toEqual([]);
+    expect(mockExecFile).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["diff"]),
+      expect.anything(),
     );
   });
 });

@@ -66,6 +66,8 @@ const SNAPSHOT: TurnSnapshot = {
   created_at: now,
 };
 
+let branchDiffCalls: unknown[] = [];
+
 /** Opens the Review tab with no active thread (threadless workspace scope). */
 async function openThreadlessReview(page: Page): Promise<void> {
   await page.evaluate(
@@ -139,6 +141,7 @@ async function openThreadReview(page: Page): Promise<void> {
 
 test.describe("Review tab — dual-scope view selection", () => {
   test.beforeEach(async ({ page }) => {
+    branchDiffCalls = [];
     await mockWebSocketServer(page, {
       "workspace.list": [WORKSPACE],
       "thread.list": [THREAD],
@@ -149,7 +152,11 @@ test.describe("Review tab — dual-scope view selection", () => {
         (params as { staged?: boolean })?.staged ? ["src/staged.ts"] : ["src/unstaged.ts"],
       "git.workingTreeDiff": "",
       "git.branchFiles": ["src/branch.ts"],
-      "git.branchDiff": "",
+      "git.branchDiff": (params) => {
+        branchDiffCalls.push(params);
+        const base = (params as { base?: string }).base ?? "unknown";
+        return `@@ -1 +1 @@\n-old ${base} line\n+new ${base} line\n`;
+      },
       "git.branchComparison": {
         base: "main",
         target: "feat/x",
@@ -249,7 +256,24 @@ test.describe("Review tab — dual-scope view selection", () => {
     const basePicker = page.getByTestId("branch-base-picker");
     const targetPicker = page.getByTestId("branch-target-picker");
     await expect(basePicker).toContainText("main");
+    await expect(page.getByTestId("branch-range-arrow")).toBeVisible();
     await expect(targetPicker).toContainText("feat/x");
+    // Branch diffs open automatically after the comparison resolves; no file row
+    // click is needed to see the inline diff.
+    await expect(page.getByText("new main line")).toBeVisible();
+    await expect
+      .poll(() =>
+        branchDiffCalls.some(
+          (params) =>
+            (params as { base?: string; target?: string; filePath?: string }).base ===
+              "main" &&
+            (params as { base?: string; target?: string; filePath?: string }).target ===
+              "feat/x" &&
+            (params as { base?: string; target?: string; filePath?: string }).filePath ===
+              "src/branch.ts",
+        ),
+      )
+      .toBe(true);
 
     // Picking a new base ref updates the comparison; the base relabels.
     await basePicker.click();
@@ -257,5 +281,19 @@ test.describe("Review tab — dual-scope view selection", () => {
     await expect(basePicker).toContainText("origin/main");
     // The target side is independent and keeps its selection.
     await expect(targetPicker).toContainText("feat/x");
+    await expect
+      .poll(() =>
+        branchDiffCalls.some(
+          (params) =>
+            (params as { base?: string; target?: string; filePath?: string }).base ===
+              "origin/main" &&
+            (params as { base?: string; target?: string; filePath?: string }).target ===
+              "feat/x" &&
+            (params as { base?: string; target?: string; filePath?: string }).filePath ===
+              "src/branch.ts",
+        ),
+      )
+      .toBe(true);
+    await expect(page.getByText("new origin/main line")).toBeVisible();
   });
 });
