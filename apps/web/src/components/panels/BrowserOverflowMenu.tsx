@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Code2,
   EllipsisVertical,
@@ -14,6 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 
 /** Props for the browser header's overflow (kebab) menu. */
 export interface BrowserOverflowMenuProps {
@@ -42,6 +44,10 @@ function SoonTag() {
  * utilities (region crop, page-content dump), and the planned Developer tools
  * and device-toolbar entries shown as disabled "Soon" stubs. Keeps the everyday
  * header to back/forward, the URL, design, and screenshot.
+ *
+ * While open it suppresses the native Electron BrowserView (which paints above
+ * all HTML and would otherwise occlude this menu) via the shared
+ * preview-suppression count, mirroring how modal dialogs hide the guest view.
  */
 export function BrowserOverflowMenu({
   hasLoadedPage,
@@ -49,8 +55,20 @@ export function BrowserOverflowMenu({
   onRegionCapture,
   onDumpContent,
 }: BrowserOverflowMenuProps) {
+  const [open, setOpen] = useState(false);
+  const increment = usePreviewSuppressionStore((s) => s.increment);
+  const decrement = usePreviewSuppressionStore((s) => s.decrement);
+
+  // Hide the guest BrowserView for the menu's open lifetime so the HTML
+  // popup paints on top instead of behind the native view.
+  useEffect(() => {
+    if (!open) return;
+    increment();
+    return () => decrement();
+  }, [open, increment, decrement]);
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
         render={
           <Button
