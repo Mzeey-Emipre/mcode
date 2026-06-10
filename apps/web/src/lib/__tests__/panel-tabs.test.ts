@@ -27,9 +27,9 @@ describe("PANEL_TAB_TYPES catalog", () => {
     expect(comingSoon).toEqual(["files"]);
   });
 
-  it("marks Review and Scope as thread-only", () => {
+  it("marks only Scope as thread-only (Review is dual-scope)", () => {
     const threadOnly = PANEL_TAB_TYPES.filter((t) => t.needsThread).map((t) => t.id);
-    expect(threadOnly).toEqual(["changes", "tasks"]);
+    expect(threadOnly).toEqual(["tasks"]);
   });
 
   it("gives every openable type a commandId for keycap resolution", () => {
@@ -51,11 +51,12 @@ describe("PANEL_TAB_TYPES catalog", () => {
 });
 
 describe("shownTabTypes — scope filter", () => {
-  it("drops thread-only types when threadless", () => {
+  it("drops thread-only types when threadless (Review stays, dual-scope)", () => {
     expect(ids(shownTabTypes("threadless", []))).toEqual([
       "preview",
       "terminal",
       "files",
+      "changes",
     ]);
   });
 
@@ -75,6 +76,7 @@ describe("shownTabTypes — cardinality filter", () => {
     expect(ids(shownTabTypes("threadless", ["preview"]))).toEqual([
       "terminal",
       "files",
+      "changes",
     ]);
   });
 
@@ -91,13 +93,18 @@ describe("shownTabTypes — cardinality filter", () => {
       "preview",
       "terminal",
       "files",
+      "changes",
     ]);
   });
 });
 
 describe("creatableTypes — coming-soon exclusion", () => {
   it("excludes Files from the creatable set when threadless", () => {
-    expect(ids(creatableTypes("threadless", []))).toEqual(["preview", "terminal"]);
+    expect(ids(creatableTypes("threadless", []))).toEqual([
+      "preview",
+      "terminal",
+      "changes",
+    ]);
   });
 
   it("excludes Files from the creatable set in a thread", () => {
@@ -120,7 +127,10 @@ describe("creatableTypes — coming-soon exclusion", () => {
 
 describe("creatableTypes — combined scope + cardinality", () => {
   it("drops both scope-filtered and already-open types", () => {
-    expect(ids(creatableTypes("threadless", ["preview"]))).toEqual(["terminal"]);
+    expect(ids(creatableTypes("threadless", ["preview"]))).toEqual([
+      "terminal",
+      "changes",
+    ]);
   });
 
   it("returns an empty set when every openable type is open", () => {

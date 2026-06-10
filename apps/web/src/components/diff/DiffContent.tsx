@@ -1,8 +1,8 @@
 import { useEffect, useMemo } from "react";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { getTransport } from "@/transport";
 import { parseDiffLines } from "@/lib/diff-parser";
+import { loadFileDiff } from "@/lib/load-file-diff";
 import { langFromPath } from "@/lib/lang-from-path";
 import { UnifiedDiff } from "./UnifiedDiff";
 import { SideBySideDiff } from "./SideBySideDiff";
@@ -25,18 +25,13 @@ export function DiffContent() {
 
     const load = async () => {
       try {
-        let result: string;
-        const transport = getTransport();
-        if (selectedFile.source === "snapshot") {
-          result = await transport.getSnapshotDiff(selectedFile.id, selectedFile.filePath);
-        } else if (selectedFile.source === "cumulative") {
-          result = await transport.getCumulativeDiff(selectedFile.id, selectedFile.filePath);
-        } else {
-          const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-          result = workspaceId
-            ? await transport.getCommitDiff(workspaceId, selectedFile.id, selectedFile.filePath)
-            : "";
-        }
+        const result = await loadFileDiff(
+          getTransport(),
+          selectedFile.source,
+          selectedFile.id,
+          selectedFile.filePath,
+          selectedFile.threadId,
+        );
         if (!cancelled) setDiffContent(result);
       } catch {
         if (!cancelled) setDiffContent("Failed to load diff");

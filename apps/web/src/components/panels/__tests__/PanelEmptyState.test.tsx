@@ -15,16 +15,17 @@ beforeEach(() => {
 });
 
 describe("PanelEmptyState — scope filter", () => {
-  it("threadless: shows Browser, Terminal, and Files only", () => {
+  it("threadless: shows Browser, Terminal, Files, and Review (dual-scope) but not Scope", () => {
     render(<PanelEmptyState scope="threadless" openTabs={[]} onOpen={vi.fn()} />);
     expect(screen.getByTestId("panel-card-preview")).toBeInTheDocument();
     expect(screen.getByTestId("panel-card-terminal")).toBeInTheDocument();
     expect(screen.getByTestId("panel-card-files")).toBeInTheDocument();
-    expect(screen.queryByTestId("panel-card-changes")).not.toBeInTheDocument();
+    // Review is dual-scope: its git working-tree views need no thread.
+    expect(screen.getByTestId("panel-card-changes")).toBeInTheDocument();
     expect(screen.queryByTestId("panel-card-tasks")).not.toBeInTheDocument();
   });
 
-  it("thread: also shows Review and Scope", () => {
+  it("thread: also shows Scope", () => {
     render(<PanelEmptyState scope="thread" openTabs={[]} onOpen={vi.fn()} />);
     expect(screen.getByTestId("panel-card-changes")).toBeInTheDocument();
     expect(screen.getByTestId("panel-card-tasks")).toBeInTheDocument();

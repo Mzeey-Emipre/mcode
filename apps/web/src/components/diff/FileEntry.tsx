@@ -5,6 +5,7 @@ import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { getTransport } from "@/transport";
 import { parseDiffLines, isMarkdownFile } from "@/lib/diff-parser";
+import { loadFileDiff } from "@/lib/load-file-diff";
 import { parseFirstHunkLine } from "@/lib/parse-first-hunk-line";
 import { langFromPath } from "@/lib/lang-from-path";
 import { UnifiedDiff } from "./UnifiedDiff";
@@ -110,17 +111,7 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
     const load = async () => {
       try {
         const transport = getTransport();
-        let result: string;
-        if (source === "snapshot") {
-          result = await transport.getSnapshotDiff(id, filePath);
-        } else if (source === "cumulative") {
-          result = await transport.getCumulativeDiff(id, filePath);
-        } else {
-          const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-          result = workspaceId
-            ? await transport.getCommitDiff(workspaceId, id, filePath)
-            : "";
-        }
+        const result = await loadFileDiff(transport, source, id, filePath, threadId);
         if (!cancelled) {
           setDiffState({ loading: false, data: result });
           useDiffStore.getState().cacheInlineDiff(threadId, source, id, filePath, result);

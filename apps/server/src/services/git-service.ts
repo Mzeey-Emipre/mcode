@@ -544,6 +544,95 @@ export class GitService {
     }
   }
 
+  /**
+   * List files in a working tree for the given stage. `staged` selects the
+   * index-versus-HEAD diff (`git diff --cached`); otherwise the
+   * working-tree-versus-index diff (`git diff`). Reads the workspace root by
+   * default; pass `repoPath` (a thread's worktree) to read that checkout instead.
+   */
+  async workingTreeFiles(workspaceId: string, staged: boolean, repoPath?: string): Promise<string[]> {
+    const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
+    const args = ["-C", cwd, "diff", "--name-only"];
+    if (staged) args.push("--cached");
+    try {
+      const { stdout } = await execFile("git", args, { timeout: 10_000, windowsHide: true });
+      return stdout.trim().split("\n").filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get the unified diff for a working tree at the given stage. `staged` selects
+   * the index-versus-HEAD diff; otherwise working-tree-versus-index. Reads the
+   * workspace root by default; pass `repoPath` to read a thread's worktree.
+   * Optionally scoped to a single file and truncated.
+   */
+  async workingTreeDiff(
+    workspaceId: string,
+    staged: boolean,
+    filePath?: string,
+    maxLines?: number,
+    repoPath?: string,
+  ): Promise<string> {
+    const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
+    const args = ["-C", cwd, "diff", "--find-renames"];
+    if (staged) args.push("--cached");
+    if (filePath) args.push("--", filePath);
+    try {
+      const { stdout } = await execFile("git", args, { timeout: 10_000, windowsHide: true });
+      const result = stdout.trim();
+      return maxLines ? result.split("\n").slice(0, maxLines).join("\n") : result;
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * List files that differ between a checkout's current branch and its default
+   * base branch (the `base...HEAD` symmetric-difference range). Reads the
+   * workspace root by default; pass `repoPath` to read a thread's worktree (so
+   * HEAD is the thread branch). Returns an empty list when HEAD already matches base.
+   */
+  async branchFiles(workspaceId: string, repoPath?: string): Promise<string[]> {
+    const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
+    const base = await this.detectDefaultBranch(cwd);
+    try {
+      const { stdout } = await execFile(
+        "git",
+        ["-C", cwd, "diff", "--name-only", `${base}...HEAD`],
+        { timeout: 10_000, windowsHide: true },
+      );
+      return stdout.trim().split("\n").filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get the unified diff between a checkout's current branch and its default base
+   * branch (`base...HEAD`). Reads the workspace root by default; pass `repoPath`
+   * to read a thread's worktree. Optionally scoped to a single file and truncated.
+   */
+  async branchDiff(
+    workspaceId: string,
+    filePath?: string,
+    maxLines?: number,
+    repoPath?: string,
+  ): Promise<string> {
+    const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
+    const base = await this.detectDefaultBranch(cwd);
+    const args = ["-C", cwd, "diff", "--find-renames", `${base}...HEAD`];
+    if (filePath) args.push("--", filePath);
+    try {
+      const { stdout } = await execFile("git", args, { timeout: 10_000, windowsHide: true });
+      const result = stdout.trim();
+      return maxLines ? result.split("\n").slice(0, maxLines).join("\n") : result;
+    } catch {
+      return "";
+    }
+  }
+
   /** Push a branch to the origin remote, creating the upstream tracking ref if needed. */
   async push(repoPath: string, branch: string): Promise<void> {
     await execFile(

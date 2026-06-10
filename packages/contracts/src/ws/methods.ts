@@ -340,6 +340,40 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: z.array(z.string()),
   },
+  "git.workingTreeFiles": {
+    params: z.object({
+      workspaceId: z.string(),
+      staged: z.boolean(),
+      threadId: z.string().optional(),
+    }),
+    result: z.array(z.string()),
+  },
+  "git.workingTreeDiff": {
+    params: z.object({
+      workspaceId: z.string(),
+      staged: z.boolean(),
+      filePath: z.string().optional(),
+      maxLines: z.number().int().positive().optional(),
+      threadId: z.string().optional(),
+    }),
+    result: z.string(),
+  },
+  "git.branchFiles": {
+    params: z.object({
+      workspaceId: z.string(),
+      threadId: z.string().optional(),
+    }),
+    result: z.array(z.string()),
+  },
+  "git.branchDiff": {
+    params: z.object({
+      workspaceId: z.string(),
+      filePath: z.string().optional(),
+      maxLines: z.number().int().positive().optional(),
+      threadId: z.string().optional(),
+    }),
+    result: z.string(),
+  },
   "agent.send": {
     params: SendMessageSchema(),
     result: z.void(),

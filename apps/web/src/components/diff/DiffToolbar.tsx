@@ -1,20 +1,14 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Columns2, AlignJustify, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useDiffStore, type DiffViewMode } from "@/stores/diffStore";
+import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import type { PanelScope } from "@/lib/panel-tabs";
+import { visibleReviewViews, defaultReviewView } from "@/lib/review-views";
 
-/** View mode options for the diff panel toolbar. */
-const BASE_VIEW_MODES: { value: DiffViewMode; label: string; worktreeOnly: boolean; settingsGate?: "diffSummary" }[] = [
-  { value: "all", label: "All", worktreeOnly: false },
-  { value: "by-turn", label: "By Turn", worktreeOnly: false },
-  { value: "commits", label: "Commits", worktreeOnly: true },
-  { value: "summary", label: "Summary", worktreeOnly: false, settingsGate: "diffSummary" },
-];
-
-/** Toolbar for the diff panel: view mode switcher + unified/side-by-side toggle. */
+/** Toolbar for the Review tab: dual-scope view switcher + unified/side-by-side toggle. */
 export function DiffToolbar() {
   const viewMode = useDiffStore((s) => s.viewMode);
   const renderMode = useDiffStore((s) => s.renderMode);
@@ -26,37 +20,43 @@ export function DiffToolbar() {
   );
   const toggleLineWrap = useDiffStore((s) => s.toggleLineWrap);
 
-  const isWorktree = useWorkspaceStore((s) => {
-    const thread = s.threads.find((t) => t.id === activeThreadId);
-    return thread?.mode === "worktree";
-  });
+  const isGitRepo = useWorkspaceStore((s) =>
+    s.workspaces.find((w) => w.id === s.activeWorkspaceId)?.is_git_repo ?? false,
+  );
   const diffSummaryEnabled = useSettingsStore((s) => s.settings.diffSummary.enabled);
 
-  const viewModes = BASE_VIEW_MODES.filter((m) => {
-    if (m.worktreeOnly && !isWorktree) return false;
-    if (m.settingsGate === "diffSummary" && !diffSummaryEnabled) return false;
-    return true;
-  });
+  // The Review tab is dual-scope: threadless yields the git working-tree views,
+  // a thread yields the turn views. Runtime gates drop the git views in a
+  // non-git workspace and Summary when its setting is off.
+  const scope: PanelScope = activeThreadId ? "thread" : "threadless";
+  const viewModes = useMemo(
+    () => visibleReviewViews(scope, { isGitRepo, diffSummaryEnabled }),
+    [scope, isGitRepo, diffSummaryEnabled],
+  );
 
-  // Reset to "all" if the active viewMode was filtered out (e.g. summary tab disabled)
+  // Recover when the active view falls out of the current scope or gating (e.g.
+  // switching to a threadless workspace, or disabling the summary setting).
   useEffect(() => {
-    if (!viewModes.some((m) => m.value === viewMode)) {
-      setViewMode("all");
+    if (viewModes.length === 0) return;
+    if (!viewModes.some((m) => m.id === viewMode)) {
+      const fallback = defaultReviewView(scope);
+      setViewMode(viewModes.some((m) => m.id === fallback) ? fallback : viewModes[0].id);
     }
-  }, [viewMode, viewModes, setViewMode]);
+  }, [viewMode, viewModes, scope, setViewMode]);
 
   return (
     <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
       {/* View mode segmented control — underline-on-active rather than the generic shadow-pill */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4" data-testid="review-view-switcher">
         {viewModes.map((mode) => {
-          const active = viewMode === mode.value;
+          const active = viewMode === mode.id;
           return (
             <Button
-              key={mode.value}
+              key={mode.id}
               variant="ghost"
               size="xs"
-              onClick={() => setViewMode(mode.value)}
+              onClick={() => setViewMode(mode.id)}
+              data-testid={`review-view-${mode.id}`}
               aria-pressed={active}
               className={`relative h-auto rounded-none border-0 bg-transparent px-0 pb-1 text-[11px] font-medium tracking-tight hover:bg-transparent ${
                 active

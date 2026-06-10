@@ -385,6 +385,14 @@ export interface McodeTransport {
   getCommitDiff(workspaceId: string, sha: string, filePath?: string, maxLines?: number): Promise<string>;
   /** Get the list of files changed in a specific git commit. */
   getCommitFiles(workspaceId: string, sha: string): Promise<string[]>;
+  /** List working-tree files: staged (index vs HEAD) or unstaged (working vs index). Pass threadId to read the thread's worktree. */
+  getWorkingTreeFiles(workspaceId: string, staged: boolean, threadId?: string): Promise<string[]>;
+  /** Get the unified diff for the working tree (staged or unstaged), optionally per file. Pass threadId to read the thread's worktree. */
+  getWorkingTreeDiff(workspaceId: string, staged: boolean, filePath?: string, maxLines?: number, threadId?: string): Promise<string>;
+  /** List files differing between the current branch and its default base branch. Pass threadId to read the thread's worktree. */
+  getBranchFiles(workspaceId: string, threadId?: string): Promise<string[]>;
+  /** Get the unified diff between the current branch and its default base branch, optionally per file. Pass threadId to read the thread's worktree. */
+  getBranchDiff(workspaceId: string, filePath?: string, maxLines?: number, threadId?: string): Promise<string>;
 
   // GitHub PR (advanced)
   /** Push a branch to the remote. */
