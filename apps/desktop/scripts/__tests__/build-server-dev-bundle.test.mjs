@@ -8,6 +8,7 @@ import {
   claudeSdkPlatformParts,
   copyClaudeSdkCliNextTo,
   copyClaudeSdkCliToDir,
+  electronArchToNpm,
   electronPlatformToNpm,
   expectedClaudeSdkCliPath,
   findClaudeSdkCliPath,
@@ -24,6 +25,15 @@ describe("electronPlatformToNpm", () => {
     expect(electronPlatformToNpm("darwin")).toBe("darwin");
     expect(electronPlatformToNpm("mas")).toBe("darwin");
     expect(electronPlatformToNpm("linux")).toBe("linux");
+  });
+});
+
+describe("electronArchToNpm", () => {
+  it("maps electron-builder Arch enum values to npm arch strings", () => {
+    expect(electronArchToNpm(1)).toBe("x64");
+    expect(electronArchToNpm(3)).toBe("arm64");
+    expect(electronArchToNpm("x64")).toBe("x64");
+    expect(electronArchToNpm("arm64")).toBe("arm64");
   });
 });
 

@@ -13,21 +13,25 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { resolve, dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   claudeSdkPlatformPackageCandidates,
+  electronArchToNpm,
   electronPlatformToNpm,
   repoRootFromScript,
   resolveClaudeSdkCliSources,
 } from "../../../scripts/build-server-dev-bundle.mjs";
 
-const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = repoRootFromScript();
 const serverRoot = resolve(repoRoot, "apps/server");
 
-const targetArch = process.env.MCODE_TARGET_ARCH?.trim() || process.arch;
+const rawTargetArch = process.env.MCODE_TARGET_ARCH?.trim();
+const targetArch = rawTargetArch
+  ? electronArchToNpm(rawTargetArch)
+  : process.arch;
 const npmPlatform = electronPlatformToNpm(process.platform);
 
 try {
@@ -41,7 +45,10 @@ try {
 }
 
 const serverRequire = createRequire(resolve(serverRoot, "package.json"));
-const sdkVersion = serverRequire("@anthropic-ai/claude-agent-sdk/package.json").version;
+const sdkEntry = serverRequire.resolve("@anthropic-ai/claude-agent-sdk");
+const sdkVersion = JSON.parse(
+  readFileSync(resolve(dirname(sdkEntry), "package.json"), "utf8"),
+).version;
 const platformPkg = claudeSdkPlatformPackageCandidates(npmPlatform, targetArch)[0];
 
 console.log(`[ensure-claude-sdk] Installing ${platformPkg}@${sdkVersion} for ${npmPlatform}-${targetArch}...`);
