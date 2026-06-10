@@ -35,9 +35,11 @@ describe("GitDiffView commit selection", () => {
   it("renders the picked commit's files without resolving the latest commit again", async () => {
     render(<GitDiffView view="commit" workspaceId="ws-1" threadId="thread-1" />);
 
-    await screen.findByText("selected.ts");
+    await waitFor(() =>
+      expect(transport.getCommitFiles).toHaveBeenCalledWith("ws-1", "bbbbbbbb2"),
+    );
 
-    expect(transport.getCommitFiles).toHaveBeenCalledWith("ws-1", "bbbbbbbb2");
+    expect(screen.getAllByText("selected.ts").length).toBeGreaterThan(0);
     expect(transport.getGitLog).not.toHaveBeenCalled();
   });
 
