@@ -166,6 +166,9 @@ export const mockTransport: McodeTransport = {
   getWorkingTreeDiff: vi.fn().mockResolvedValue(""),
   getBranchFiles: vi.fn().mockResolvedValue([]),
   getBranchDiff: vi.fn().mockResolvedValue(""),
+  getBranchComparison: vi
+    .fn()
+    .mockResolvedValue({ base: null, target: null, refs: [], isUnborn: false }),
   push: vi.fn().mockResolvedValue({ success: true }),
   generatePrDraft: vi.fn().mockResolvedValue({ title: "", body: "" }),
   createPr: vi.fn().mockResolvedValue({ number: 1, url: "" }),

@@ -150,6 +150,16 @@ test.describe("Review tab — dual-scope view selection", () => {
       "git.workingTreeDiff": "",
       "git.branchFiles": ["src/branch.ts"],
       "git.branchDiff": "",
+      "git.branchComparison": {
+        base: "main",
+        target: "feat/x",
+        refs: [
+          { name: "main", shortSha: "aaaaaaa", type: "local", isCurrent: false },
+          { name: "feat/x", shortSha: "bbbbbbb", type: "local", isCurrent: true },
+          { name: "origin/main", shortSha: "aaaaaaa", type: "remote", isCurrent: false },
+        ],
+        isUnborn: false,
+      },
       "git.log": [],
       "git.commitFiles": [],
     });
@@ -220,5 +230,32 @@ test.describe("Review tab — dual-scope view selection", () => {
     await page.getByTestId("review-view-branch").click();
     await expect(switcher).toContainText("Branch");
     await expect(page.getByTestId("review-operand-slot")).toHaveAttribute("data-operand", "branch");
+  });
+
+  test("branch: the operand slot hosts the base→target ref picker and switches the comparison", async ({
+    page,
+  }) => {
+    await openThreadReview(page);
+
+    const switcher = page.getByTestId("review-view-switcher");
+    await expect(switcher).toBeVisible({ timeout: 5_000 });
+    await switcher.click();
+    await page.getByTestId("review-view-branch").click();
+
+    // The ref picker renders in the operand slot, seeded with the resolved default
+    // pair (base "main" → target "feat/x", per ADR 0007 for current ≠ base).
+    const picker = page.getByTestId("branch-ref-picker");
+    await expect(picker).toBeVisible();
+    const basePicker = page.getByTestId("branch-base-picker");
+    const targetPicker = page.getByTestId("branch-target-picker");
+    await expect(basePicker).toContainText("main");
+    await expect(targetPicker).toContainText("feat/x");
+
+    // Picking a new base ref updates the comparison; the base relabels.
+    await basePicker.click();
+    await page.getByTestId("branch-ref-base-origin/main").click();
+    await expect(basePicker).toContainText("origin/main");
+    // The target side is independent and keeps its selection.
+    await expect(targetPicker).toContainText("feat/x");
   });
 });

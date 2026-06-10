@@ -7,6 +7,7 @@ import type {
   PaginatedMessages,
   AttachmentMeta,
   GitBranch,
+  BranchComparison,
   WorktreeInfo,
   PrInfo,
   PrDetail,
@@ -47,6 +48,7 @@ export type {
   AttachmentMeta,
   StoredAttachment,
   GitBranch,
+  BranchComparison,
   WorktreeInfo,
   PrInfo,
   PrDetail,
@@ -389,10 +391,12 @@ export interface McodeTransport {
   getWorkingTreeFiles(workspaceId: string, staged: boolean, threadId?: string): Promise<string[]>;
   /** Get the unified diff for the working tree (staged or unstaged), optionally per file. Pass threadId to read the thread's worktree. */
   getWorkingTreeDiff(workspaceId: string, staged: boolean, filePath?: string, maxLines?: number, threadId?: string): Promise<string>;
-  /** List files differing between the current branch and its default base branch. Pass threadId to read the thread's worktree. */
-  getBranchFiles(workspaceId: string, threadId?: string): Promise<string[]>;
-  /** Get the unified diff between the current branch and its default base branch, optionally per file. Pass threadId to read the thread's worktree. */
-  getBranchDiff(workspaceId: string, filePath?: string, maxLines?: number, threadId?: string): Promise<string>;
+  /** List files differing between two refs (`base...target`, three-dot). Omit base/target to use the detected default branch → HEAD. Pass threadId to read the thread's worktree. */
+  getBranchFiles(workspaceId: string, base?: string, target?: string, threadId?: string): Promise<string[]>;
+  /** Get the unified diff between two refs (`base...target`, three-dot), optionally per file. Omit base/target to use the detected default branch → HEAD. Pass threadId to read the thread's worktree. */
+  getBranchDiff(workspaceId: string, base?: string, target?: string, filePath?: string, maxLines?: number, threadId?: string): Promise<string>;
+  /** Resolve the default Branch comparison (base→target per ADR 0007) plus the refs that populate the pickers. Pass threadId so "current branch" is the thread's worktree branch. */
+  getBranchComparison(workspaceId: string, threadId?: string): Promise<BranchComparison>;
 
   // GitHub PR (advanced)
   /** Push a branch to the remote. */

@@ -441,12 +441,17 @@ async function dispatch(
     case "git.branchFiles": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return [];
-      return deps.gitService.branchFiles(params.workspaceId, resolveThreadRepoPath(deps, params.threadId));
+      return deps.gitService.branchFiles(params.workspaceId, params.base, params.target, resolveThreadRepoPath(deps, params.threadId));
     }
     case "git.branchDiff": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return "";
-      return deps.gitService.branchDiff(params.workspaceId, params.filePath, params.maxLines, resolveThreadRepoPath(deps, params.threadId));
+      return deps.gitService.branchDiff(params.workspaceId, params.base, params.target, params.filePath, params.maxLines, resolveThreadRepoPath(deps, params.threadId));
+    }
+    case "git.branchComparison": {
+      const ws = deps.workspaceService.findById(params.workspaceId);
+      if (!ws?.is_git_repo) return { base: null, target: null, refs: [], isUnborn: false };
+      return deps.gitService.resolveBranchComparison(params.workspaceId, resolveThreadRepoPath(deps, params.threadId));
     }
 
     // Agent

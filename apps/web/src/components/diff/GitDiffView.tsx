@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getTransport } from "@/transport";
-import type { SelectedFile } from "@/stores/diffStore";
+import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { FileList } from "./FileList";
 
 /** The threadless git working-tree views the Review tab renders against the workspace root. */
@@ -68,10 +68,25 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // The Branch view's diff is driven by the comparison the ref picker resolves
+  // (ADR 0007). Subscribe so picking a new base/target refetches the file list.
+  const branchBase = useDiffStore((s) => s.branchComparison?.base ?? null);
+  const branchTarget = useDiffStore((s) => s.branchComparison?.target ?? null);
+  const branchUnborn = useDiffStore((s) => s.branchComparison?.isUnborn ?? false);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setResolved(null);
+
+    // Branch view waits for the picker to resolve a pair before fetching, unless
+    // HEAD is unborn (explicit empty). Holding `loading` avoids a flash of the
+    // empty state with a stale/default range during resolution.
+    if (view === "branch" && !branchUnborn && (!branchBase || !branchTarget)) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const load = async (): Promise<Resolved> => {
       const transport = getTransport();
@@ -80,8 +95,13 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         return { files, source: view, id: workspaceId };
       }
       if (view === "branch") {
-        const files = await transport.getBranchFiles(workspaceId, threadId);
-        return { files, source: "branch", id: workspaceId };
+        if (branchUnborn || !branchBase || !branchTarget) {
+          return { files: [], source: "branch", id: "branch-empty" };
+        }
+        const files = await transport.getBranchFiles(workspaceId, branchBase, branchTarget, threadId);
+        // The comparison range is folded into the FileList id so the inline diff
+        // cache and per-file fetch vary by pair (git refnames can't contain "..").
+        return { files, source: "branch", id: `${branchBase}...${branchTarget}` };
       }
       // Commit view: the latest HEAD commit (the thread's worktree HEAD when in a
       // thread). Worktrees share the object store, so the per-file diff fetched by
@@ -112,8 +132,9 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     };
     // threadId is a fetch input: switching threads (or thread↔threadless) on the
     // same view+workspace must refetch the worktree's file list, not keep the
-    // previous scope's stale diff.
-  }, [view, workspaceId, threadId]);
+    // previous scope's stale diff. branchBase/branchTarget/branchUnborn are fetch
+    // inputs for the Branch view: picking a new ref pair refetches its file list.
+  }, [view, workspaceId, threadId, branchBase, branchTarget, branchUnborn]);
 
   if (loading) return <LoadingPulse />;
   if (!resolved || resolved.files.length === 0) {

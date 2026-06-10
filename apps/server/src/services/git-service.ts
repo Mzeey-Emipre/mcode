@@ -11,7 +11,7 @@ import { rm, rename, rmdir } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
-import type { GitBranch, WorktreeInfo, GitCommit } from "@mcode/contracts";
+import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 const execFile = promisify(execFileCb);
@@ -589,18 +589,28 @@ export class GitService {
   }
 
   /**
-   * List files that differ between a checkout's current branch and its default
-   * base branch (the `base...HEAD` symmetric-difference range). Reads the
-   * workspace root by default; pass `repoPath` to read a thread's worktree (so
-   * HEAD is the thread branch). Returns an empty list when HEAD already matches base.
+   * List files that differ between two refs as a three-dot comparison
+   * (`base...target`, the symmetric-difference range — only what changed on the
+   * target side since the two diverged). `base`/`target` default to the detected
+   * default branch and HEAD respectively, preserving the legacy `base...HEAD`
+   * behavior for callers that pass neither. The default pair the Branch view
+   * uses is resolved by {@link resolveBranchComparison} per ADR 0007 and passed
+   * explicitly. Reads the workspace root by default; pass `repoPath` to read a
+   * thread's worktree. Returns an empty list when the refs match.
    */
-  async branchFiles(workspaceId: string, repoPath?: string): Promise<string[]> {
+  async branchFiles(
+    workspaceId: string,
+    base?: string,
+    target?: string,
+    repoPath?: string,
+  ): Promise<string[]> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
-    const base = await this.detectDefaultBranch(cwd);
+    const resolvedBase = base ?? (await this.detectDefaultBranch(cwd));
+    const resolvedTarget = target ?? "HEAD";
     try {
       const { stdout } = await execFile(
         "git",
-        ["-C", cwd, "diff", "--name-only", `${base}...HEAD`],
+        ["-C", cwd, "diff", "--name-only", `${resolvedBase}...${resolvedTarget}`],
         { timeout: 10_000, windowsHide: true },
       );
       return stdout.trim().split("\n").filter(Boolean);
@@ -610,19 +620,24 @@ export class GitService {
   }
 
   /**
-   * Get the unified diff between a checkout's current branch and its default base
-   * branch (`base...HEAD`). Reads the workspace root by default; pass `repoPath`
-   * to read a thread's worktree. Optionally scoped to a single file and truncated.
+   * Get the unified diff between two refs as a three-dot comparison
+   * (`base...target`). `base`/`target` default to the detected default branch and
+   * HEAD; see {@link branchFiles} for the range semantics. Reads the workspace
+   * root by default; pass `repoPath` to read a thread's worktree. Optionally
+   * scoped to a single file and truncated.
    */
   async branchDiff(
     workspaceId: string,
+    base?: string,
+    target?: string,
     filePath?: string,
     maxLines?: number,
     repoPath?: string,
   ): Promise<string> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
-    const base = await this.detectDefaultBranch(cwd);
-    const args = ["-C", cwd, "diff", "--find-renames", `${base}...HEAD`];
+    const resolvedBase = base ?? (await this.detectDefaultBranch(cwd));
+    const resolvedTarget = target ?? "HEAD";
+    const args = ["-C", cwd, "diff", "--find-renames", `${resolvedBase}...${resolvedTarget}`];
     if (filePath) args.push("--", filePath);
     try {
       const { stdout } = await execFile("git", args, { timeout: 10_000, windowsHide: true });
@@ -630,6 +645,63 @@ export class GitService {
       return maxLines ? result.split("\n").slice(0, maxLines).join("\n") : result;
     } catch {
       return "";
+    }
+  }
+
+  /**
+   * Resolve the default Branch comparison for a checkout, plus the refs that
+   * populate the base/target pickers. Implements the context-dependent default
+   * from `docs/adr/0007-branch-comparison-default-and-range.md`:
+   *
+   * - **current ≠ detected base** → `base → current` (review the branch's work).
+   * - **current == detected base** (on the base branch) → `current →
+   *   origin/current` when an upstream exists, else `base → current` (empty but
+   *   valid — no origin / never pushed).
+   * - **detached HEAD** → `base → HEAD` (three-dot already takes the merge-base).
+   * - **unborn branch** (no commits) → explicit empty state (`isUnborn`).
+   *
+   * Reads the workspace root by default; pass `repoPath` to resolve against a
+   * thread's worktree so "current branch" is the thread's branch.
+   */
+  async resolveBranchComparison(workspaceId: string, repoPath?: string): Promise<BranchComparison> {
+    const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
+    const refs = listBranchesForPath(cwd);
+
+    if (!(await this.hasCommits(cwd))) {
+      return { base: null, target: null, refs, isUnborn: true };
+    }
+
+    const base = await this.detectDefaultBranch(cwd);
+    const current = getCurrentBranchForPath(cwd);
+
+    // Detached HEAD (no branch name): compare the detected base to HEAD. Three-dot
+    // semantics resolve the merge-base internally, so an explicit base is enough.
+    if (!current || current === "HEAD") {
+      return { base, target: "HEAD", refs, isUnborn: false };
+    }
+
+    // On the base branch, `base...current` is empty — fall back to divergence from
+    // the remote when an upstream exists, else the (empty but valid) base→current.
+    if (current === base) {
+      const remoteRef = `origin/${current}`;
+      const hasUpstream = refs.some((r) => r.type === "remote" && r.name === remoteRef);
+      return { base: current, target: hasUpstream ? remoteRef : current, refs, isUnborn: false };
+    }
+
+    return { base, target: current, refs, isUnborn: false };
+  }
+
+  /** Whether HEAD resolves to a commit (false on an unborn branch / empty repo). */
+  private async hasCommits(repoPath: string): Promise<boolean> {
+    try {
+      await execFile(
+        "git",
+        ["-C", repoPath, "rev-parse", "--verify", "--quiet", "HEAD"],
+        { timeout: 5_000, windowsHide: true },
+      );
+      return true;
+    } catch {
+      return false;
     }
   }
 
