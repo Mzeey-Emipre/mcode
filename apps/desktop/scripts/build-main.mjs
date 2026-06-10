@@ -112,8 +112,8 @@ if (existsSync(drizzleSrc)) {
 }
 
 // Stage the Claude Agent SDK's native CLI binary under dist/server/node_modules
-// so the bundled SDK's createRequire(import.meta.url) resolution finds it.
-// dist/server/** is already in asarUnpack, so the binary exists on real disk.
+// for local dev and pre-packaging verification. Packaged installs receive the
+// binary via after-pack.mjs because electron-builder excludes nested node_modules.
 copyClaudeSdkCliNextTo(resolve(desktopRoot, "dist/server/server.cjs"), serverRoot);
 console.log("Staged SDK native CLI binary -> dist/server/node_modules");
 

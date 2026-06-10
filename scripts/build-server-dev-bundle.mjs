@@ -7,7 +7,7 @@
 
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -44,6 +44,168 @@ export function compileServerWithTsc(serverRoot = resolve(repoRootFromScript(), 
 }
 
 /**
+ * Map electron-builder platform names to npm `process.platform` values.
+ *
+ * @param {string} electronPlatformName
+ * @returns {NodeJS.Platform}
+ */
+export function electronPlatformToNpm(electronPlatformName) {
+  if (electronPlatformName === "win32") return "win32";
+  if (electronPlatformName === "darwin" || electronPlatformName === "mas") return "darwin";
+  if (electronPlatformName === "linux") return "linux";
+  throw new Error(`Unsupported electron platform: ${electronPlatformName}`);
+}
+
+/**
+ * Resolve the on-disk `dist/server` directory inside a packaged app.
+ *
+ * @param {object} args
+ * @param {string} args.appOutDir electron-builder output directory (e.g. `win-unpacked`).
+ * @param {string} args.electronPlatformName
+ * @param {string} args.productFilename App binary filename without extension.
+ */
+export function resolvePackagedServerDir({ appOutDir, electronPlatformName, productFilename }) {
+  const tail = ["app.asar.unpacked", "dist", "server"];
+  if (electronPlatformName === "darwin" || electronPlatformName === "mas") {
+    return resolve(appOutDir, `${productFilename}.app`, "Contents", "Resources", ...tail);
+  }
+  return resolve(appOutDir, "resources", ...tail);
+}
+
+/**
+ * Ordered Claude SDK platform package names to try for a target OS/arch.
+ * Linux musl hosts only install the `-musl` optional dependency.
+ *
+ * @param {NodeJS.Platform} platform
+ * @param {NodeJS.Architecture} arch
+ * @returns {string[]}
+ */
+export function claudeSdkPlatformPackageCandidates(platform, arch) {
+  if (platform === "linux") {
+    return [
+      `@anthropic-ai/claude-agent-sdk-linux-${arch}-musl`,
+      `@anthropic-ai/claude-agent-sdk-linux-${arch}`,
+    ];
+  }
+  return [`@anthropic-ai/claude-agent-sdk-${platform}-${arch}`];
+}
+
+/**
+ * Platform package name and CLI binary filename for the Claude Agent SDK.
+ *
+ * @param {NodeJS.Platform} platform
+ * @param {NodeJS.Architecture} arch
+ */
+export function claudeSdkPlatformParts(platform, arch) {
+  const platformPkg = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;
+  const binName = platform === "win32" ? "claude.exe" : "claude";
+  return { platformPkg, binName };
+}
+
+/**
+ * Expected on-disk path to the staged Claude SDK CLI beside a bundled `server.cjs`.
+ *
+ * @param {string} serverCjsOut Absolute path to `server.cjs`.
+ * @param {NodeJS.Platform} [platform]
+ * @param {NodeJS.Architecture} [arch]
+ */
+export function expectedClaudeSdkCliPath(
+  serverCjsOut,
+  platform = process.platform,
+  arch = process.arch,
+) {
+  const { platformPkg, binName } = claudeSdkPlatformParts(platform, arch);
+  return resolve(dirname(serverCjsOut), "node_modules", platformPkg, binName);
+}
+
+/**
+ * Locate the staged Claude SDK CLI beside `server.cjs`, trying linux musl and glibc names.
+ *
+ * @param {string} serverCjsOut
+ * @param {NodeJS.Platform} platform
+ * @param {NodeJS.Architecture} arch
+ * @returns {string | undefined}
+ */
+export function findClaudeSdkCliPath(serverCjsOut, platform, arch) {
+  const binName = platform === "win32" ? "claude.exe" : "claude";
+  const serverDir = dirname(serverCjsOut);
+  for (const platformPkg of claudeSdkPlatformPackageCandidates(platform, arch)) {
+    const candidate = resolve(serverDir, "node_modules", platformPkg, binName);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the installed Claude SDK platform package and CLI binary on the build host.
+ *
+ * @param {string} serverPackageRoot Root of `apps/server` (directory with `package.json`).
+ * @param {NodeJS.Platform} platform
+ * @param {NodeJS.Architecture} arch
+ */
+export function resolveClaudeSdkCliSources(serverPackageRoot, platform, arch) {
+  const binName = platform === "win32" ? "claude.exe" : "claude";
+  const candidates = claudeSdkPlatformPackageCandidates(platform, arch);
+  const failures = [];
+
+  try {
+    const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
+    // Resolve from the SDK package itself: bun keeps platform packages as store
+    // siblings of the SDK, not hoisted to the workspace root.
+    const sdkEntry = serverRequire.resolve("@anthropic-ai/claude-agent-sdk");
+    const sdkRequire = createRequire(sdkEntry);
+
+    for (const platformPkg of candidates) {
+      try {
+        const binSrc = sdkRequire.resolve(`${platformPkg}/${binName}`);
+        const packageJsonSrc = resolve(dirname(binSrc), "package.json");
+        return { platformPkg, binName, binSrc, packageJsonSrc };
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        failures.push(`${platformPkg}: ${detail}`);
+      }
+    }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    failures.push(detail);
+  }
+
+  const label = candidates.join(" or ");
+  throw new Error(
+    `${label} not installed - run 'bun install' or node apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs (node_modules out of sync with bun.lock): ${failures.join("; ")}`,
+  );
+}
+
+/**
+ * Copy the Claude Agent SDK native CLI into a directory tree (used by afterPack).
+ *
+ * @param {object} args
+ * @param {string} args.destServerDir Absolute path to packaged `dist/server` (or dev equivalent).
+ * @param {string} args.serverPackageRoot Root of `apps/server`.
+ * @param {NodeJS.Platform} args.platform Target npm `process.platform` value.
+ * @param {NodeJS.Architecture} args.arch Target npm `process.arch` value.
+ * @returns {{ platformPkg: string, binDst: string }}
+ */
+export function copyClaudeSdkCliToDir({ destServerDir, serverPackageRoot, platform, arch }) {
+  const { platformPkg, binName, binSrc, packageJsonSrc } = resolveClaudeSdkCliSources(
+    serverPackageRoot,
+    platform,
+    arch,
+  );
+  const dstPkgDir = resolve(destServerDir, "node_modules", platformPkg);
+  const binDst = resolve(dstPkgDir, binName);
+  mkdirSync(dstPkgDir, { recursive: true });
+  copyFileSync(packageJsonSrc, resolve(dstPkgDir, "package.json"));
+  copyFileSync(binSrc, binDst);
+  if (platform !== "win32") {
+    chmodSync(binDst, 0o755);
+  }
+  return { platformPkg, binDst };
+}
+
+/**
  * Stage the Claude Agent SDK's native CLI binary next to the bundled server entry.
  *
  * SDK >= 0.3 ships the CLI as a platform-specific package
@@ -57,22 +219,24 @@ export function compileServerWithTsc(serverRoot = resolve(repoRootFromScript(), 
  *
  * @param {string} serverCjsOut Absolute path to `server.cjs`.
  * @param {string} serverPackageRoot Root of `apps/server` (directory with `package.json`).
+ * @param {NodeJS.Platform} [platform]
+ * @param {NodeJS.Architecture} [arch]
  */
-export function copyClaudeSdkCliNextTo(serverCjsOut, serverPackageRoot) {
-  const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
-  const platformPkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`;
-  const binName = process.platform === "win32" ? "claude.exe" : "claude";
-
-  // Resolve from the SDK package itself: bun keeps platform packages as store
-  // siblings of the SDK, not hoisted to the workspace root.
-  const sdkEntry = serverRequire.resolve("@anthropic-ai/claude-agent-sdk");
-  const sdkRequire = createRequire(sdkEntry);
-  const binSrc = sdkRequire.resolve(`${platformPkg}/${binName}`);
-
+export function copyClaudeSdkCliNextTo(
+  serverCjsOut,
+  serverPackageRoot,
+  platform = process.platform,
+  arch = process.arch,
+) {
+  const { platformPkg, binName, binSrc, packageJsonSrc } = resolveClaudeSdkCliSources(
+    serverPackageRoot,
+    platform,
+    arch,
+  );
   const dstPkgDir = resolve(dirname(serverCjsOut), "node_modules", platformPkg);
   const binDst = resolve(dstPkgDir, binName);
   mkdirSync(dstPkgDir, { recursive: true });
-  copyFileSync(resolve(dirname(binSrc), "package.json"), resolve(dstPkgDir, "package.json"));
+  copyFileSync(packageJsonSrc, resolve(dstPkgDir, "package.json"));
   if (!existsSync(binDst) || statSync(binDst).size !== statSync(binSrc).size) {
     copyFileSync(binSrc, binDst);
   }

@@ -11,6 +11,7 @@
  * - Broken asarUnpack configuration
  * - Server startup crashes invisible in the packaged app
  * - Import/require resolution failures in the CJS bundle
+ * - Missing Claude Agent SDK native CLI (after-pack regression)
  *
  * Usage:
  *   node apps/desktop/scripts/smoke-test.mjs             # auto-detect unpacked dir
@@ -23,6 +24,10 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
+import {
+  findClaudeSdkCliPath,
+  expectedClaudeSdkCliPath,
+} from "../../../scripts/build-server-dev-bundle.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
@@ -91,6 +96,29 @@ function findUnpackedServer() {
 }
 
 /**
+ * Infer the packaged app's npm platform/arch from the release output path.
+ *
+ * @param {string} serverPath Absolute path to packaged `server.cjs`.
+ * @returns {{ platform: NodeJS.Platform, arch: NodeJS.Architecture }}
+ */
+function inferPackagedSdkTarget(serverPath) {
+  const normalized = serverPath.replace(/\\/g, "/");
+  if (normalized.includes("/win-unpacked/")) {
+    return { platform: "win32", arch: "x64" };
+  }
+  if (normalized.includes("/linux-unpacked/")) {
+    return { platform: "linux", arch: "x64" };
+  }
+  if (normalized.includes("/mac-arm64/")) {
+    return { platform: "darwin", arch: "arm64" };
+  }
+  if (normalized.includes("/mac/")) {
+    return { platform: "darwin", arch: "x64" };
+  }
+  return { platform: process.platform, arch: process.arch };
+}
+
+/**
  * --bundle mode: test the pre-packaging bundle with the system node/bun.
  * Skips native module verification but catches JS bundle errors.
  */
@@ -118,6 +146,18 @@ console.log(`[smoke-test] Server: ${found.server}`);
 console.log(`[smoke-test] Runtime: ${found.electron}`);
 if (found.binding) {
   console.log(`[smoke-test] SQLite binding: ${found.binding}`);
+}
+
+if (!bundleOnly) {
+  const sdkTarget = inferPackagedSdkTarget(found.server);
+  const claudeCli = findClaudeSdkCliPath(found.server, sdkTarget.platform, sdkTarget.arch);
+  if (!claudeCli) {
+    const expected = expectedClaudeSdkCliPath(found.server, sdkTarget.platform, sdkTarget.arch);
+    console.error(`[smoke-test] ERROR: Claude SDK CLI binary missing at ${expected}`);
+    console.error("  after-pack.mjs should copy it into app.asar.unpacked/dist/server/node_modules/");
+    process.exit(1);
+  }
+  console.log(`[smoke-test] Claude SDK CLI: ${claudeCli}`);
 }
 
 // ---------------------------------------------------------------------------
