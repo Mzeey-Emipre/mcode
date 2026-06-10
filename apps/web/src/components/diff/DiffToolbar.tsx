@@ -83,6 +83,9 @@ export function DiffToolbar() {
                   onClick={() => setViewMode(mode.id)}
                   data-testid={`review-view-${mode.id}`}
                   data-active={active ? "true" : undefined}
+                  // base-ui menuitems have no checked state; aria-current exposes
+                  // the active view to assistive tech (the Check is visual-only).
+                  aria-current={active ? "true" : undefined}
                   className={cn(
                     "flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs",
                     active ? "text-foreground" : "text-popover-foreground",

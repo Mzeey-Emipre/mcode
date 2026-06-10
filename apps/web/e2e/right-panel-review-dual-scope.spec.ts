@@ -178,6 +178,8 @@ test.describe("Review tab — dual-scope view selection", () => {
     // Open the dropdown — the items render in a portal, not inside the trigger.
     await switcher.click();
     await expect(page.getByTestId("review-view-unstaged")).toBeVisible();
+    // The active view exposes its selected state to assistive tech.
+    await expect(page.getByTestId("review-view-unstaged")).toHaveAttribute("aria-current", "true");
     await expect(page.getByTestId("review-view-staged")).toBeVisible();
     await expect(page.getByTestId("review-view-commit")).toBeVisible();
     await expect(page.getByTestId("review-view-branch")).toBeVisible();
