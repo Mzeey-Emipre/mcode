@@ -592,9 +592,16 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const previewReferenceQueueSignal = usePreviewReferenceQueueStore((s) => s.signal);
 
+  // The preview panel scopes captures to `activeThreadId ?? activeWorkspaceId`
+  // (RightPanel's panelScopeId), so the threadless new-thread composer must
+  // drain under the workspace key or design/screenshot captures never attach.
+  const previewReferenceScopeId = threadId ?? workspaceId;
+
   useEffect(() => {
-    if (!threadId) return;
-    const incoming = usePreviewReferenceQueueStore.getState().drainPreviewReferences(threadId);
+    if (!previewReferenceScopeId) return;
+    const incoming = usePreviewReferenceQueueStore
+      .getState()
+      .drainPreviewReferences(previewReferenceScopeId);
     if (incoming.length === 0) return;
 
     setAttachments((prev) => {
@@ -630,7 +637,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       return [...prev, ...toAdd];
     });
-  }, [threadId, previewReferenceQueueSignal]);
+  }, [previewReferenceScopeId, previewReferenceQueueSignal]);
 
   // Reset reasoning when the selected model does not support the current level
   useEffect(() => {
