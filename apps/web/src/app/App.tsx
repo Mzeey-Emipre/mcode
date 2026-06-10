@@ -13,8 +13,6 @@ import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { resizeRecordCache } from "@/lib/thread-hydrator/record-cache";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useDiffStore } from "@/stores/diffStore";
-import { usePreviewDockStore } from "@/stores/previewDockStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
 import { useUiStore } from "@/stores/uiStore";
 import { initShortcuts } from "@/lib/shortcuts";
@@ -258,33 +256,6 @@ export function App() {
           summonTab("preview", () =>
             usePreviewFocusStore.getState().requestOmniboxFocus(),
           ),
-      }),
-      registerCommand({
-        id: "preview.devDock.toggle",
-        title: "Toggle Preview Capture Tools",
-        category: "View",
-        handler: () => {
-          const { activeThreadId: tid, activeWorkspaceId: wid } =
-            useWorkspaceStore.getState();
-          // The capture dock is thread-scoped (it attaches to a thread's
-          // preview), so this shortcut is a no-op with no thread even though
-          // the panel itself is workspace-global.
-          if (!tid || !wid) return;
-          // The dock only renders inside PreviewPanel, which mounts only
-          // when the right panel is visible AND on the preview tab. If
-          // either is closed, ensure them first so a freshly-toggled
-          // dock has somewhere to render. Mirrors preview.toggle (mod+
-          // shift+b) so the two shortcuts feel like part of the same
-          // surface.
-          const { getRightPanel, getRightPanelVisible, showRightPanel, setRightPanelTab } =
-            useDiffStore.getState();
-          const panel = getRightPanel(wid);
-          if (!getRightPanelVisible(wid, tid) || panel.activeTab !== "preview") {
-            showRightPanel(wid, tid);
-            setRightPanelTab(wid, "preview");
-          }
-          usePreviewDockStore.getState().toggle(tid);
-        },
       }),
       registerCommand({
         id: "preview.guestDevTools.open",

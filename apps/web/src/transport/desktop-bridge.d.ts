@@ -66,6 +66,22 @@ export type PreviewContextReferenceResult =
   | { readonly ok: true; readonly capture: McodeBrowserCapture }
   | { readonly ok: false; readonly error: string };
 
+/**
+ * A localhost port detected as bound by a process on the machine, surfaced in
+ * the empty browser as a one-click card. `name` is a best-effort label for the
+ * service (e.g. a dev-server framework or the owning process); `online` is the
+ * latest reachability probe for `http://localhost:<port>`.
+ *
+ * The detection backend lands in #613; the renderer treats
+ * {@link PreviewBridge.detectLocalPorts} as optional so the empty state
+ * degrades to "no ports" until that method exists.
+ */
+export interface DetectedLocalPort {
+  readonly port: number;
+  readonly name: string;
+  readonly online: boolean;
+}
+
 /** Embedded thread preview backed by an Electron BrowserView. */
 interface PreviewBridge {
   sync(payload: {
@@ -110,6 +126,13 @@ interface PreviewBridge {
   onPageStatus(callback: (status: PreviewPageStatus) => void): () => void;
   /** Cancel any in-progress capture operation (region or element-pick). */
   cancelCapture(): Promise<void>;
+  /**
+   * Detected localhost ports for the empty-browser quick-open list. Optional:
+   * the detection backend (#613) may not be present, in which case the empty
+   * state shows no ports. Each call returns a fresh snapshot with current
+   * online state.
+   */
+  detectLocalPorts?(): Promise<readonly DetectedLocalPort[]>;
   /** Multi-tab control surface (Phase A of the in-app browser rewrite). */
   tabs: PreviewTabsBridge;
   /** Live preview perf counters; dev HUD only. */

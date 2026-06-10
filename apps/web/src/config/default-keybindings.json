@@ -17,7 +17,6 @@
   { "key": "mod+t", "command": "tasks.toggle", "when": "!inputFocused" },
   { "key": "mod+d", "command": "changes.toggle", "when": "!inputFocused" },
   { "key": "mod+shift+b", "command": "preview.toggle", "when": "!inputFocused" },
-  { "key": "mod+shift+d", "command": "preview.devDock.toggle", "when": "!inputFocused" },
   { "key": "mod+shift+y", "command": "preview.guestDevTools.open", "when": "!inputFocused" },
   { "key": "mod+shift+c", "command": "checks.open", "when": "!inputFocused" },
   { "key": "mod+1", "command": "thread.goTo1", "when": "!inputFocused" },

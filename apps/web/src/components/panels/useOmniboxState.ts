@@ -10,7 +10,7 @@ export interface UseOmniboxStateOptions {
   faviconUrl: string | null;
 }
 
-/** Derived smart omnibox UI state plus input event handlers for `SmartOmnibox`. */
+/** Derived smart omnibox UI state plus input event handlers for `BrowserHeader`. */
 export interface OmniboxState {
   /** Value to display in the input. */
   displayValue: string;

@@ -3,7 +3,7 @@ import { create } from "zustand";
 interface PreviewFocusStore {
   /**
    * Monotonically-increasing counter bumped each time the omnibox should
-   * receive focus. SmartOmnibox watches the value via useEffect: whenever it
+   * receive focus. BrowserHeader watches the value via useEffect: whenever it
    * changes, the input is focused and its contents selected so the user can
    * type a new URL immediately.
    *
@@ -19,7 +19,7 @@ interface PreviewFocusStore {
 
 /**
  * Lightweight signal store for "the preview should focus its omnibox now."
- * Read by SmartOmnibox via PreviewPanel; written by the preview.toggle
+ * Read by BrowserHeader via PreviewPanel; written by the preview.toggle
  * command handler when the user opens the preview panel from anywhere via
  * the mod+shift+b shortcut (or the matching menu/click flows once they exist).
  */

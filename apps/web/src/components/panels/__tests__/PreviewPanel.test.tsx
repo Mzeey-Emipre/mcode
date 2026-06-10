@@ -139,9 +139,15 @@ describe("PreviewPanel — full panel state", () => {
     expect(screen.getByLabelText("Preview URL")).toBeInTheDocument();
   });
 
-  it("renders toolbar buttons inside the full panel", () => {
+  it("renders the navigation buttons inside the full panel", () => {
     render(<PreviewPanel threadId="thread-1" />);
-    expect(screen.getByLabelText("Reload")).toBeInTheDocument();
+    expect(screen.getByLabelText("Back")).toBeInTheDocument();
+    expect(screen.getByLabelText("Forward")).toBeInTheDocument();
+  });
+
+  it("shows the localhost-ports empty state when no page is loaded", () => {
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.getByTestId("browser-local-ports")).toBeInTheDocument();
   });
 
   it("accepts an optional workspaceId prop without error", () => {
