@@ -9,7 +9,7 @@ import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { ThoughtSegmentRecordSchema } from "../models/thought-segment.js";
 import { HookExecutionRecordSchema } from "../models/hook-execution.js";
 import { NarrativeEntrySchema, TurnRangeSchema } from "../models/narrative-entry.js";
-import { GitBranchSchema, WorktreeSchema, BranchComparisonSchema } from "../git.js";
+import { GitBranchSchema, WorktreeSchema, BranchComparisonSchema, GitRefSchema } from "../git.js";
 import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
 import { SkillInfoSchema, SkillDiagnosticsSchema } from "../skills.js";
@@ -362,9 +362,9 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({
       workspaceId: z.string(),
       /** Base ref of the comparison; omit to use the detected default branch. */
-      base: z.string().optional(),
+      base: GitRefSchema.optional(),
       /** Target ref of the comparison; omit to use HEAD. */
-      target: z.string().optional(),
+      target: GitRefSchema.optional(),
       threadId: z.string().optional(),
     }),
     result: z.array(z.string()),
@@ -373,9 +373,9 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({
       workspaceId: z.string(),
       /** Base ref of the comparison; omit to use the detected default branch. */
-      base: z.string().optional(),
+      base: GitRefSchema.optional(),
       /** Target ref of the comparison; omit to use HEAD. */
-      target: z.string().optional(),
+      target: GitRefSchema.optional(),
       filePath: z.string().optional(),
       maxLines: z.number().int().positive().optional(),
       threadId: z.string().optional(),

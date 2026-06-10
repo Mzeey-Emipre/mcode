@@ -201,6 +201,16 @@ describe("GitService.branchFiles / branchDiff ranges", () => {
     );
   });
 
+  it("rejects a ref that could smuggle a git flag (argument injection)", async () => {
+    await expect(
+      gitService.branchFiles("ws", "--output=/tmp/pwned", "HEAD", REPO),
+    ).rejects.toThrow(/unsafe git ref/i);
+    await expect(
+      gitService.branchDiff("ws", "main", "-rf", undefined, undefined, REPO),
+    ).rejects.toThrow(/unsafe git ref/i);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
   it("falls back to the detected default base ...HEAD when no pair is given", async () => {
     // symbolic-ref resolves the default branch; the diff call returns the files.
     mockExecFile.mockImplementation(async (_cmd: string, args: string[]) => {

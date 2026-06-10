@@ -11,6 +11,16 @@ export const GitBranchSchema = z.object({
 export type GitBranch = z.infer<typeof GitBranchSchema>;
 
 /**
+ * A git ref string safe to interpolate into a git argv. Rejects a leading `-`
+ * (which git would parse as a flag — argument injection) and restricts to the
+ * characters git refnames and short SHAs actually use. Used to validate the
+ * user-picked base/target of a Branch comparison before they reach `git diff`.
+ */
+export const GitRefSchema = z
+  .string()
+  .regex(/^(?!-)[A-Za-z0-9._/-]+$/, "invalid git ref");
+
+/**
  * A resolved Branch comparison: the base→target ref pair the Review tab's Branch
  * view diffs (always three-dot, `base...target`), plus the refs available to
  * populate the pickers. The default pair is resolved per

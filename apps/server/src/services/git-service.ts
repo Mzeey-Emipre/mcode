@@ -607,6 +607,8 @@ export class GitService {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
     const resolvedBase = base ?? (await this.detectDefaultBranch(cwd));
     const resolvedTarget = target ?? "HEAD";
+    assertSafeRef(resolvedBase);
+    assertSafeRef(resolvedTarget);
     try {
       const { stdout } = await execFile(
         "git",
@@ -637,6 +639,8 @@ export class GitService {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
     const resolvedBase = base ?? (await this.detectDefaultBranch(cwd));
     const resolvedTarget = target ?? "HEAD";
+    assertSafeRef(resolvedBase);
+    assertSafeRef(resolvedTarget);
     const args = ["-C", cwd, "diff", "--find-renames", `${resolvedBase}...${resolvedTarget}`];
     if (filePath) args.push("--", filePath);
     try {
@@ -822,6 +826,19 @@ export class GitService {
 // ---------------------------------------------------------------------------
 // Standalone helper functions (not on the class, to keep them testable)
 // ---------------------------------------------------------------------------
+
+/**
+ * Reject a git ref that could smuggle a flag into a git argv (a leading `-`) or
+ * contains characters outside what refnames and short SHAs use. Guards the
+ * base/target of a Branch comparison before they are interpolated into a rev
+ * range; the WS layer also validates via `GitRefSchema`, this is defense in
+ * depth for any direct caller.
+ */
+function assertSafeRef(ref: string): void {
+  if (!/^(?!-)[A-Za-z0-9._/-]+$/.test(ref)) {
+    throw new Error(`Unsafe git ref: ${ref}`);
+  }
+}
 
 /** List all branches (local, remote, worktree-attached) for a repository path. */
 function listBranchesForPath(repoPath: string): GitBranch[] {
