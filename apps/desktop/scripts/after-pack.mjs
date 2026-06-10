@@ -16,6 +16,7 @@ import { fileURLToPath } from "url";
 import { buildServerBinary } from "./build-server-binary.mjs";
 import {
   copyClaudeSdkCliToDir,
+  electronArchToNpm,
   electronPlatformToNpm,
   resolvePackagedServerDir,
 } from "../../../scripts/build-server-dev-bundle.mjs";
@@ -92,7 +93,7 @@ export default async function afterPack(context) {
     destServerDir: packagedServerDir,
     serverPackageRoot,
     platform: npmPlatform,
-    arch: context.arch,
+    arch: electronArchToNpm(context.arch),
   });
   console.log(`[after-pack] Copied Claude SDK CLI (${platformPkg}) to ${binDst}`);
 

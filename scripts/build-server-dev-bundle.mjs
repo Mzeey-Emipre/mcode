@@ -57,6 +57,33 @@ export function electronPlatformToNpm(electronPlatformName) {
 }
 
 /**
+ * Map electron-builder `Arch` values (string or numeric enum) to npm `process.arch`.
+ *
+ * @param {string | number} electronArch
+ * @returns {NodeJS.Architecture}
+ */
+export function electronArchToNpm(electronArch) {
+  if (typeof electronArch === "string") {
+    if (electronArch === "armv7l") return "arm";
+    return /** @type {NodeJS.Architecture} */ (electronArch);
+  }
+  switch (electronArch) {
+    case 0:
+      return "ia32";
+    case 1:
+      return "x64";
+    case 2:
+      return "arm";
+    case 3:
+      return "arm64";
+    case 4:
+      throw new Error("electron-builder Arch.universal is not supported for Claude SDK platform packages");
+    default:
+      throw new Error(`Unsupported electron-builder arch: ${electronArch}`);
+  }
+}
+
+/**
  * Resolve the on-disk `dist/server` directory inside a packaged app.
  *
  * @param {object} args
