@@ -50,13 +50,16 @@ import type { TurnInputPart, CodexNotification, CodexTurnOptions, ReasoningEffor
  * active streams and tool output keep the turn alive; only a fully silent
  * stretch trips it. Set to 60s (matching Copilot's `COMPLETE_TIMEOUT_MS`) so a
  * stalled upstream turn — where `turn/completed` never arrives and the session
- * stays `isBusy`, exempt from idle eviction — unblocks the UI in seconds instead
- * of leaving it stuck "thinking" for half an hour. The trade-off: a tool that
- * runs silently (no output deltas) for longer than this window will also trip
- * it; that case is logged and suppressed from the chat UI (see
- * {@link CodexTurnIdleTimeoutError}).
+ * stays `isBusy`, exempt from idle eviction — unblocks the UI rather than
+ * leaving it stuck "thinking" indefinitely.
+ *
+ * Set to 5 minutes: tools that run silently (no output deltas, e.g. long
+ * builds or installs) routinely exceed 60s, and tripping the watchdog mid-tool
+ * silently ended healthy turns. The watchdog also re-arms while a permission
+ * approval is pending (user silence, not server silence) and treats inbound
+ * approval requests as liveness via the app-server `activity` event.
  */
-const TURN_TIMEOUT_MS = 60 * 1000;
+const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Internal: a newer `sendMessage` aborted this turn wait (not user-facing). */
 class CodexTurnSupersededError extends Error {
@@ -505,6 +508,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
 
     entry.mapper.prepareForTurn();
 
+    // Only pay the turn/interrupt round-trip when a previous turn is actually
+    // in flight. Interrupting an idle session added a needless RPC (up to its
+    // 5s timeout) of latency to every message.
+    const hadInflightTurn =
+      entry.pendingTurnId !== null || entry.abortPendingTurnWait !== undefined;
+
     entry.abortPendingTurnWait?.();
     entry.abortPendingTurnWait = undefined;
 
@@ -512,7 +521,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     const seq = entry.runTurnSeq;
     entry.pendingTurnId = null;
 
-    await server.interruptTurn();
+    if (hadInflightTurn) {
+      await server.interruptTurn();
+    }
 
     let serverDied = false;
     let endedEmitted = false;
@@ -527,6 +538,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
           settled = true;
           clearTimeout(activityTimer);
           server.removeListener("notification", onNotification);
+          server.removeListener("activity", onActivity);
           server.removeListener("fatal", onFatal);
           if (entry.abortPendingTurnWait === abortThis) entry.abortPendingTurnWait = undefined;
         };
@@ -534,10 +546,19 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
         const armTimer = () => {
           clearTimeout(activityTimer);
           activityTimer = setTimeout(() => {
+            // Silence while an approval card waits on the user is the user's
+            // silence, not the server's: keep the turn alive until they decide.
+            if (this.hasPendingApprovalFor(sessionId)) {
+              armTimer();
+              return;
+            }
             cleanup();
             reject(new CodexTurnIdleTimeoutError());
           }, TURN_TIMEOUT_MS);
         };
+
+        // Server-initiated approval requests count as liveness too.
+        const onActivity = () => armTimer();
 
         const abortThis = () => {
           cleanup();
@@ -574,6 +595,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
 
         armTimer();
         server.on("notification", onNotification);
+        server.on("activity", onActivity);
         server.once("fatal", onFatal);
 
         void (async () => {
@@ -589,10 +611,13 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     } catch (e: unknown) {
       if (e instanceof CodexTurnSupersededError) return;
       if (e instanceof CodexTurnIdleTimeoutError) {
-        logger.debug("Codex turn idle timeout (suppressed from UI)", {
+        logger.warn("Codex turn idle timeout (suppressed from UI)", {
           sessionId,
           timeoutMs: TURN_TIMEOUT_MS,
         });
+        // Interrupt the upstream turn so the app-server state matches the UI
+        // ("ended") instead of silently chewing in the background.
+        void server.interruptTurn();
         return;
       }
       if (!serverDied && seq === entry.runTurnSeq) {
@@ -694,6 +719,14 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     server.on("fatal", () => {
       this.drainPending((e) => e.sessionId === sessionId);
     });
+  }
+
+  /** True when at least one permission approval is awaiting the user for this session. */
+  private hasPendingApprovalFor(sessionId: string): boolean {
+    for (const entry of this.pendingPermissions.values()) {
+      if (entry.sessionId === sessionId) return true;
+    }
+    return false;
   }
 
   /**

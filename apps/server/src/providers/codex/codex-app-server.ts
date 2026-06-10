@@ -320,6 +320,7 @@ export function enrichHandshakeError(err: unknown, stderr: string | null): Error
  *
  * Emits:
  * - `notification(data: unknown)` - JSON-RPC notification forwarded from the RPC client
+ * - `activity()` - a server-initiated request arrived (liveness signal for turn watchdogs)
  * - `fatal(error: string)` - unrecoverable error from stderr, unexpected exit, or handshake failure
  * - `exit(code: number | null, signal: string | null)` - child process exit
  */
@@ -474,6 +475,9 @@ export class CodexAppServer extends EventEmitter {
     // for policy="never", handler-driven supervised mode, silent-deny fallback).
     this.rpc.on("serverRequest", (msg: unknown) => {
       const request = msg as { id?: number; method?: string; params?: Record<string, unknown> };
+      // Let turn-level watchdogs treat an inbound approval request as liveness:
+      // the server is healthy, it is just waiting on a user decision.
+      this.emit("activity");
       void routeCodexServerRequest({
         msg: request,
         approvalPolicy: this.options.approvalPolicy,
@@ -623,16 +627,23 @@ export class CodexAppServer extends EventEmitter {
         return;
       }
 
-      for (const pattern of FATAL_PATTERNS) {
-        if (line.includes(pattern)) {
-          this.lastStderr = line;
-          const msg = `Codex app-server fatal stderr: ${line}`;
-          logger.error(msg, { cliPath: this.cliPath });
-          this.emit("fatal", msg);
-          this.kill().catch((err: unknown) => {
-            logger.error("CodexAppServer: kill after fatal stderr failed", { error: String(err) });
-          });
-          return;
+      // Fatal classification applies only before a thread is established.
+      // Once the session is live, stderr carries tool output and agent-generated
+      // content; a build or curl that prints "ECONNRESET" must not kill the
+      // whole app-server. Post-handshake transport failures surface via the
+      // child exit event and RPC stream-close rejection instead.
+      if (this._threadId === null) {
+        for (const pattern of FATAL_PATTERNS) {
+          if (line.includes(pattern)) {
+            this.lastStderr = line;
+            const msg = `Codex app-server fatal stderr: ${line}`;
+            logger.error(msg, { cliPath: this.cliPath });
+            this.emit("fatal", msg);
+            this.kill().catch((err: unknown) => {
+              logger.error("CodexAppServer: kill after fatal stderr failed", { error: String(err) });
+            });
+            return;
+          }
         }
       }
 
