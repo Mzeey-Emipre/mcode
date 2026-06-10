@@ -1,8 +1,9 @@
 /**
  * electron-builder afterPack hook.
  *
- * 1. Copies browser_v8_context_snapshot.bin into the packaged app resources
- * 2. Flips the LoadBrowserProcessSpecificV8Snapshot fuse on the Electron binary
+ * 1. Built renamed `mcode-server` Electron binary (before fuse flip)
+ * 2. Copied Claude Agent SDK native CLI into the asar-unpacked server tree
+ * 3. Copied browser V8 snapshot (when generated) and flipped security fuses
  *
  * This script is invoked automatically by electron-builder via the
  * "afterPack" config in package.json.
@@ -13,6 +14,11 @@ import { copyFileSync, existsSync } from "fs";
 import { resolve, join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { buildServerBinary } from "./build-server-binary.mjs";
+import {
+  copyClaudeSdkCliToDir,
+  electronPlatformToNpm,
+  resolvePackagedServerDir,
+} from "../../../scripts/build-server-dev-bundle.mjs";
 
 /**
  * @param {import("electron-builder").AfterPackContext} context
@@ -68,6 +74,27 @@ export default async function afterPack(context) {
   });
 
   console.log("[after-pack] Built renamed server binary");
+
+  // -------------------------------------------------------------------------
+  // Step 1b: Copy Claude Agent SDK native CLI into asar-unpacked server tree.
+  // electron-builder excludes nested node_modules from the default files filter,
+  // so build-time staging under dist/server/node_modules does not survive packaging.
+  // -------------------------------------------------------------------------
+
+  const serverPackageRoot = resolve(desktopRoot, "..", "server");
+  const npmPlatform = electronPlatformToNpm(electronPlatformName);
+  const packagedServerDir = resolvePackagedServerDir({
+    appOutDir,
+    electronPlatformName,
+    productFilename,
+  });
+  const { platformPkg, binDst } = copyClaudeSdkCliToDir({
+    destServerDir: packagedServerDir,
+    serverPackageRoot,
+    platform: npmPlatform,
+    arch: context.arch,
+  });
+  console.log(`[after-pack] Copied Claude SDK CLI (${platformPkg}) to ${binDst}`);
 
   // -------------------------------------------------------------------------
   // Step 2: V8 snapshot copy + fuse flip.

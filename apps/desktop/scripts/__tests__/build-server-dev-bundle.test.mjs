@@ -1,0 +1,159 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, rm, stat, access } from "node:fs/promises";
+import { constants } from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import {
+  claudeSdkPlatformPackageCandidates,
+  claudeSdkPlatformParts,
+  copyClaudeSdkCliNextTo,
+  copyClaudeSdkCliToDir,
+  electronPlatformToNpm,
+  expectedClaudeSdkCliPath,
+  findClaudeSdkCliPath,
+  resolveClaudeSdkCliSources,
+  resolvePackagedServerDir,
+} from "../../../../scripts/build-server-dev-bundle.mjs";
+
+const repoRoot = path.resolve(import.meta.dirname, "../../../..");
+const serverRoot = path.join(repoRoot, "apps/server");
+
+describe("electronPlatformToNpm", () => {
+  it("maps electron-builder platform names to npm values", () => {
+    expect(electronPlatformToNpm("win32")).toBe("win32");
+    expect(electronPlatformToNpm("darwin")).toBe("darwin");
+    expect(electronPlatformToNpm("mas")).toBe("darwin");
+    expect(electronPlatformToNpm("linux")).toBe("linux");
+  });
+});
+
+describe("resolvePackagedServerDir", () => {
+  it("resolves Windows and Linux paths under resources/", () => {
+    expect(
+      resolvePackagedServerDir({
+        appOutDir: "C:/dist/win-unpacked",
+        electronPlatformName: "win32",
+        productFilename: "Mcode",
+      }),
+    ).toBe(
+      path.join("C:/dist/win-unpacked", "resources", "app.asar.unpacked", "dist", "server"),
+    );
+  });
+
+  it("resolves macOS paths under Contents/Resources/", () => {
+    const result = resolvePackagedServerDir({
+      appOutDir: "/dist/mac",
+      electronPlatformName: "darwin",
+      productFilename: "Mcode",
+    });
+    expect(result.replace(/\\/g, "/")).toMatch(
+      /\/Mcode\.app\/Contents\/Resources\/app\.asar\.unpacked\/dist\/server$/,
+    );
+  });
+});
+
+describe("claudeSdkPlatformParts", () => {
+  it("uses claude.exe on win32 and claude elsewhere", () => {
+    expect(claudeSdkPlatformParts("win32", "x64")).toEqual({
+      platformPkg: "@anthropic-ai/claude-agent-sdk-win32-x64",
+      binName: "claude.exe",
+    });
+    expect(claudeSdkPlatformParts("darwin", "arm64")).toEqual({
+      platformPkg: "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+      binName: "claude",
+    });
+  });
+});
+
+describe("claudeSdkPlatformPackageCandidates", () => {
+  it("tries linux musl before glibc package names", () => {
+    expect(claudeSdkPlatformPackageCandidates("linux", "x64")).toEqual([
+      "@anthropic-ai/claude-agent-sdk-linux-x64-musl",
+      "@anthropic-ai/claude-agent-sdk-linux-x64",
+    ]);
+  });
+});
+
+describe("resolveClaudeSdkCliSources", () => {
+  it("resolves the installed platform package on the build host", () => {
+    const platform = process.platform;
+    const arch = process.arch;
+    const sources = resolveClaudeSdkCliSources(serverRoot, platform, arch);
+    expect(sources.binSrc).toMatch(/claude(\.exe)?$/);
+    expect(sources.platformPkg).toMatch(/@anthropic-ai\/claude-agent-sdk-/);
+  });
+
+  it("throws a bun install hint when the platform package is missing", () => {
+    expect(() =>
+      resolveClaudeSdkCliSources(serverRoot, "linux", "s390x"),
+    ).toThrow(
+      "not installed - run 'bun install' or node apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs",
+    );
+  });
+});
+
+describe("copyClaudeSdkCliToDir", () => {
+  /** @type {string | undefined} */
+  let tmpDir;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), "claude-sdk-copy-"));
+  });
+
+  afterEach(async () => {
+    if (tmpDir) {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("copies the CLI binary and package.json into dist/server/node_modules", async () => {
+    const serverDir = path.join(tmpDir, "resources", "app.asar.unpacked", "dist", "server");
+    const platform = process.platform;
+    const arch = process.arch;
+    const { binDst } = copyClaudeSdkCliToDir({
+      destServerDir: serverDir,
+      serverPackageRoot: serverRoot,
+      platform,
+      arch,
+    });
+    const expected = expectedClaudeSdkCliPath(path.join(serverDir, "server.cjs"), platform, arch);
+    const found = findClaudeSdkCliPath(path.join(serverDir, "server.cjs"), platform, arch);
+    expect(found).toBe(binDst);
+    if (platform === "linux") {
+      expect(found).toBeTruthy();
+    } else {
+      expect(binDst).toBe(expected);
+    }
+    const binStat = await stat(binDst);
+    expect(binStat.size).toBeGreaterThan(1_000_000);
+    await access(path.join(path.dirname(binDst), "package.json"), constants.R_OK);
+  });
+});
+
+describe("copyClaudeSdkCliNextTo", () => {
+  /** @type {string | undefined} */
+  let tmpDir;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), "claude-sdk-nextto-"));
+  });
+
+  afterEach(async () => {
+    if (tmpDir) {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skipped re-copying when the destination already matches the source size", async () => {
+    const serverCjs = path.join(tmpDir, "server.cjs");
+    copyClaudeSdkCliNextTo(serverCjs, serverRoot);
+    const platform = process.platform;
+    const arch = process.arch;
+    const binDst = findClaudeSdkCliPath(serverCjs, platform, arch);
+    expect(binDst).toBeTruthy();
+    const firstMtime = (await stat(binDst)).mtimeMs;
+    copyClaudeSdkCliNextTo(serverCjs, serverRoot);
+    const secondMtime = (await stat(binDst)).mtimeMs;
+    expect(secondMtime).toBe(firstMtime);
+  });
+});
