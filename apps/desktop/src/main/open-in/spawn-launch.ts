@@ -51,13 +51,16 @@ export function createExecutableResolver(
 }
 
 /**
- * Wrap a token in double quotes for `cmd.exe`. Windows paths cannot contain `"`
- * (it is an illegal filename character), so quoting is both safe and sufficient:
- * spaces stay inside one argument and shell metacharacters such as `&`, `|`, or
- * `^` in a directory name are read literally instead of chaining commands.
+ * Quote a token for a `shell: true` spawn on Windows. cmd.exe joins the command
+ * and args into a single line and applies no quoting of its own, so a token
+ * containing whitespace or a shell metacharacter (`& | < > ^ ( )`) would be
+ * split - or, for metacharacters, interpreted by cmd.exe (command injection).
+ * Wrapping such a token in double quotes neutralizes both; Windows paths cannot
+ * contain `"`, so quoting is lossless. Tokens needing no quoting (e.g. `code`,
+ * `-g`) pass through untouched so PATH shims and CLI flags stay intact.
  */
-function quoteForCmd(token: string): string {
-  return `"${token}"`;
+function quoteForShell(token: string): string {
+  return /[\s&|<>^()]/.test(token) ? `"${token}"` : token;
 }
 
 /**
@@ -69,10 +72,10 @@ function quoteForCmd(token: string): string {
  * path are handled by Node instead of breaking `cmd.exe` word-splitting. Bare
  * PATH commands ("code") and `.cmd`/`.bat` shims still need `shell: true` so
  * Windows can resolve and execute them; with `shell: true` Node forwards the raw
- * argv to `cmd.exe` without quoting, so the executable and every argument are
- * quoted here. That keeps spaced install paths (e.g. "Microsoft VS Code") and
- * spaced target directories intact, and prevents a directory name from injecting
- * a chained command.
+ * argv to `cmd.exe` without quoting, so only tokens that carry spaces or shell
+ * metacharacters are quoted here. That keeps spaced install paths (e.g.
+ * "Microsoft VS Code") and spaced target directories intact without wrapping bare
+ * command names or flags like `-g` in extra quotes.
  */
 export function spawnDetached(cmd: string, args: string[]): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -80,7 +83,7 @@ export function spawnDetached(cmd: string, args: string[]): Promise<void> {
     if (process.platform === "win32" && /\.exe$/i.test(cmd)) {
       child = spawn(cmd, args, { detached: true, stdio: "ignore" });
     } else if (process.platform === "win32") {
-      child = spawn(quoteForCmd(cmd), args.map(quoteForCmd), {
+      child = spawn(quoteForShell(cmd), args.map(quoteForShell), {
         detached: true,
         stdio: "ignore",
         shell: true,

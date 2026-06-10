@@ -89,7 +89,7 @@ describe("createExecutableResolver", () => {
 });
 
 describe("spawnDetached", () => {
-  it("quotes the executable and arguments in the Windows shell branch", async () => {
+  it("quotes only tokens with spaces or shell metacharacters in the Windows shell branch", async () => {
     setPlatform("win32");
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
@@ -104,6 +104,22 @@ describe("spawnDetached", () => {
       expect.objectContaining({ shell: true, detached: true }),
     );
     expect(child.unref).toHaveBeenCalledOnce();
+  });
+
+  it("leaves bare PATH commands and CLI flags unquoted in the Windows shell branch", async () => {
+    setPlatform("win32");
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const promise = spawnDetached("code", ["-g", "C:\\my repo\\file.ts:42"]);
+    child.emit("spawn");
+    await promise;
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "code",
+      ["-g", '"C:\\my repo\\file.ts:42"'],
+      expect.objectContaining({ shell: true, detached: true }),
+    );
   });
 
   it("spawns an .exe directly on Windows without a shell", async () => {
