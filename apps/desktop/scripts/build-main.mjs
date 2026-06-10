@@ -11,11 +11,11 @@
  */
 
 import { build } from "esbuild";
-import { execSync, execFileSync } from "child_process";
+import { execSync } from "child_process";
 import { cpSync, existsSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
-import { copyClaudeSdkCliNextTo } from "../../../scripts/build-server-dev-bundle.mjs";
+import { compileServerWithSwc, copyClaudeSdkCliNextTo } from "../../../scripts/build-server-dev-bundle.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
@@ -56,27 +56,13 @@ await Promise.all([
 console.log("Build complete: dist/main/main.cjs, dist/preload/preload.cjs");
 
 // Step 2: Bundle the server into dist/server/server.cjs
-// Phase 2a: tsc compiles TypeScript to ESM JS, preserving emitDecoratorMetadata
-// (esbuild does not support emitDecoratorMetadata natively; tsc does it correctly).
-// Resolve tsc from the server's local node_modules or fall back to root — the
-// `typescript/bin/tsc` JS file works on all platforms without .cmd shims.
-const localTsc = resolve(serverRoot, "node_modules/typescript/bin/tsc");
-const rootTsc = resolve(serverRoot, "../../node_modules/typescript/bin/tsc");
-const tscBin = existsSync(localTsc) ? localTsc : rootTsc;
-console.log("Compiling server TypeScript...");
-try {
-  execFileSync(process.execPath, [tscBin, "--project", resolve(serverRoot, "tsconfig.build.json")], {
-    cwd: serverRoot,
-    stdio: "inherit",
-  });
-} catch (err) {
-  const tscEntry = resolve(serverRoot, "dist-tsc/index.js");
-  if (!existsSync(tscEntry)) {
-    throw new Error(`tsc failed and did not emit ${tscEntry}`);
-  }
-  console.warn("⚠ tsc reported errors but emitted output — continuing with esbuild bundle");
-  console.warn("  Fix the type errors above to avoid runtime issues in the packaged app");
-}
+// Phase 2a: swc compiles TypeScript to ESM JS, preserving decorator metadata
+// for tsyringe DI (esbuild cannot emit it; swc's `decoratorMetadata` matches
+// tsc's `emitDecoratorMetadata`). swc does not typecheck — that is the
+// separate `typecheck` verify gate's job — which is what makes this pass
+// sub-second instead of ~20s.
+console.log("Compiling server TypeScript (swc)...");
+compileServerWithSwc(serverRoot);
 
 // Phase 2b: esbuild bundles the tsc output into a single CJS file.
 // better-sqlite3 and node-pty are marked external because they contain native
