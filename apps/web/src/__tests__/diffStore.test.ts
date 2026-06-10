@@ -29,7 +29,7 @@ describe("diffStore", () => {
   });
 
   describe("commit picker operand", () => {
-    it("defaults the picked commit to null (latest)", () => {
+    it("starts with no resolved picked commit", () => {
       expect(useDiffStore.getState().selectedCommitSha).toBeNull();
     });
 

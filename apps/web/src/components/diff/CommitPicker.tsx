@@ -54,13 +54,20 @@ export function CommitPicker() {
     if (!activeWorkspaceId) return;
     let cancelled = false;
     setCommits(null);
+    setSelectedSha(null);
 
     const load = async (): Promise<GitCommit[]> => {
       const transport = getTransport();
       const branch = activeThreadId
         ? threadBranch
         : ((await transport.getCurrentBranch(activeWorkspaceId)) ?? undefined);
-      return transport.getGitLog(activeWorkspaceId, branch, COMMIT_LIMIT);
+      return transport.getGitLog(
+        activeWorkspaceId,
+        branch,
+        COMMIT_LIMIT,
+        undefined,
+        activeThreadId ?? undefined,
+      );
     };
 
     void load()
@@ -74,7 +81,7 @@ export function CommitPicker() {
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, activeThreadId, threadBranch]);
+  }, [activeWorkspaceId, activeThreadId, threadBranch, setSelectedSha]);
 
   // Default to the latest commit, and recover when the active pick falls out of
   // the current scope's list (thread or branch switch on the same Commit view).

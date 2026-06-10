@@ -67,8 +67,8 @@ function LoadingPulse() {
 export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const [loading, setLoading] = useState(true);
-  // The Commit view's picked operand (see CommitPicker). Null until the picker
-  // resolves, in which case Commit falls back to the latest HEAD commit.
+  // The Commit view's picked operand (see CommitPicker). Null means the picker
+  // has not resolved a commit yet, or the current scope has no commits.
   const selectedCommitSha = useDiffStore((s) => s.selectedCommitSha);
 
   useEffect(() => {
@@ -86,15 +86,10 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         const files = await transport.getBranchFiles(workspaceId, threadId);
         return { files, source: "branch", id: workspaceId };
       }
-      // Commit view: the picker's chosen commit, defaulting to the latest HEAD
-      // commit (the thread's worktree HEAD when in a thread) before it resolves.
-      // Worktrees share the object store, so the per-file diff fetched by
-      // FileList against the workspace root still resolves the worktree's commit.
-      let sha = selectedCommitSha ?? undefined;
-      if (!sha) {
-        const log = await transport.getGitLog(workspaceId, undefined, 1, undefined, threadId);
-        sha = log[0]?.sha;
-      }
+      // Commit view: the picker's chosen commit. The picker owns defaulting to
+      // the latest HEAD commit, which avoids a duplicate git-log + commit-files
+      // fetch on first render.
+      const sha = selectedCommitSha ?? undefined;
       if (!sha) return { files: [], source: "commit", id: workspaceId };
       const files = await transport.getCommitFiles(workspaceId, sha);
       return { files, source: "commit", id: sha };

@@ -154,11 +154,12 @@ interface DiffState {
   /** View mode within the Changes tab. */
   viewMode: DiffViewMode;
   /**
-   * The commit the Commit view's picker has resolved to, by SHA, or `null` for
-   * its default (the latest commit). This is the Commit comparison's picked
-   * operand: the Review toolbar's commit picker writes it, and the Commit diff
-   * reads it to render exactly that one commit. Reset when the active view
-   * changes so a stale pick never bleeds into the next Commit view.
+   * The commit the Commit view's picker has resolved to, by SHA. `null` means
+   * the picker has not resolved the current scope yet, or the scope has no
+   * commits. This is the Commit comparison's picked operand: the Review toolbar's
+   * commit picker writes it, and the Commit diff reads it to render exactly that
+   * one commit. Reset when the active view changes so a stale pick never bleeds
+   * into the next Commit view.
    */
   selectedCommitSha: string | null;
   /** Diff rendering mode. */
