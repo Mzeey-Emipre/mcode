@@ -43,6 +43,16 @@ describe("REVIEW_VIEWS catalog", () => {
       "summary",
     ]);
   });
+
+  it("carries a picked operand only on the comparison views (Branch, Commit)", () => {
+    expect(REVIEW_VIEWS.filter((v) => v.operand).map((v) => [v.id, v.operand])).toEqual([
+      ["commit", "commit"],
+      ["branch", "branch"],
+    ]);
+    // The fixed-operand views surface no operand control.
+    const fixed = REVIEW_VIEWS.filter((v) => !v.operand).map((v) => v.id);
+    expect(fixed).toEqual(["unstaged", "staged", "last-turn", "cumulative", "summary"]);
+  });
 });
 
 describe("availableReviewViews — dual-scope selection", () => {

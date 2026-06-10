@@ -1,7 +1,14 @@
 import { useEffect, useMemo } from "react";
-import { Columns2, AlignJustify, WrapText } from "lucide-react";
+import { Columns2, AlignJustify, WrapText, Check, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -44,36 +51,63 @@ export function DiffToolbar() {
     }
   }, [viewMode, viewModes, scope, setViewMode]);
 
+  const activeView = useMemo(
+    () => viewModes.find((m) => m.id === viewMode),
+    [viewModes, viewMode],
+  );
+
   return (
     <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
-      {/* View mode segmented control — underline-on-active rather than the generic shadow-pill */}
-      <div className="flex items-center gap-4" data-testid="review-view-switcher">
-        {viewModes.map((mode) => {
-          const active = viewMode === mode.id;
-          return (
-            <Button
-              key={mode.id}
-              variant="ghost"
-              size="xs"
-              onClick={() => setViewMode(mode.id)}
-              data-testid={`review-view-${mode.id}`}
-              aria-pressed={active}
-              className={`relative h-auto rounded-none border-0 bg-transparent px-0 pb-1 text-[11px] font-medium tracking-tight hover:bg-transparent ${
-                active
-                  ? "text-foreground"
-                  : "text-muted-foreground/60 hover:text-foreground/80"
-              }`}
-            >
-              {mode.label}
-              {active && (
-                <span
-                  aria-hidden="true"
-                  className="absolute -bottom-[1px] left-0 right-0 h-[1.5px] bg-foreground/85"
-                />
-              )}
-            </Button>
-          );
-        })}
+      {/* View selection is a dropdown labelled with the active view, with a
+          contextual operand slot beside it for views that carry a picked
+          operand (Branch, Commit). The slot stays empty until the picker
+          slices land. */}
+      <div className="flex min-w-0 items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            data-testid="review-view-switcher"
+            disabled={viewModes.length === 0}
+            aria-label="Select review view"
+            className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium tracking-tight text-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+          >
+            {activeView?.label ?? "—"}
+            <ChevronDown size={11} className="text-muted-foreground/60" />
+          </DropdownMenuTrigger>
+
+          <DropdownMenuContent align="start" sideOffset={4} className="min-w-[150px]">
+            {viewModes.map((mode) => {
+              const active = viewMode === mode.id;
+              return (
+                <DropdownMenuItem
+                  key={mode.id}
+                  onClick={() => setViewMode(mode.id)}
+                  data-testid={`review-view-${mode.id}`}
+                  data-active={active ? "true" : undefined}
+                  // base-ui menuitems have no checked state; aria-current exposes
+                  // the active view to assistive tech (the Check is visual-only).
+                  aria-current={active ? "true" : undefined}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs",
+                    active ? "text-foreground" : "text-popover-foreground",
+                  )}
+                >
+                  <span className="flex-1 text-left">{mode.label}</span>
+                  {active && <Check size={11} className="text-muted-foreground" />}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Operand slot — reserved for the active view's picked operand. Empty
+            for fixed-operand views; the per-operand picker lands in #641/#642. */}
+        {activeView?.operand && (
+          <div
+            className="flex min-w-0 items-center"
+            data-testid="review-operand-slot"
+            data-operand={activeView.operand}
+          />
+        )}
       </div>
 
       <div className="flex items-center gap-0.5">
