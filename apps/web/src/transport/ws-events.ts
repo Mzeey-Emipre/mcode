@@ -324,7 +324,7 @@ export function startPushListeners(): void {
             wsState.activeThreadId === payload.threadId &&
             snap.rightPanelVisibleByThread[payload.threadId] === true &&
             panel?.activeTab === "changes" &&
-            snap.viewMode === "all";
+            snap.viewMode === "cumulative";
 
           if (isViewingAllChanges) {
             useDiffStore.getState().markSnapshotsPending(payload.threadId, true);

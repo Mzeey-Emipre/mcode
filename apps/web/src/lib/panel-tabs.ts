@@ -77,7 +77,10 @@ export const PANEL_TAB_TYPES: readonly PanelTabType[] = [
     label: "Review",
     icon: Diff,
     blurb: "View code changes",
-    needsThread: true,
+    // Dual-scope: the git working-tree views (Unstaged/Staged/Commit/Branch)
+    // read the workspace root and need no thread; a thread adds the turn views.
+    // See CONTEXT.md → "Review tab".
+    needsThread: false,
     commandId: "changes.toggle",
   },
   {

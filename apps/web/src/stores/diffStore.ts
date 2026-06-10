@@ -6,8 +6,20 @@ export type { GitCommit };
 /** Active tab in the right panel. */
 export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal";
 
-/** View mode within the Changes tab. */
-export type DiffViewMode = "by-turn" | "all" | "commits" | "summary";
+/**
+ * View mode within the Review (Changes) tab. The tab is dual-scope: the first
+ * four are threadless git working-tree views (read the workspace root); the last
+ * three are thread turn views. Each renders exactly one diff. See
+ * {@link import("@/lib/review-views").REVIEW_VIEWS} for the selection model.
+ */
+export type DiffViewMode =
+  | "unstaged"
+  | "staged"
+  | "commit"
+  | "branch"
+  | "last-turn"
+  | "cumulative"
+  | "summary";
 
 /** Diff rendering mode. */
 export type DiffRenderMode = "unified" | "side-by-side";
@@ -37,8 +49,13 @@ export function getDefaultPanelWidthPx(): number {
 
 /** Currently selected file for diff viewing. */
 export interface SelectedFile {
-  source: "snapshot" | "cumulative" | "commit";
-  /** Snapshot ID or commit SHA depending on source. */
+  source: "snapshot" | "cumulative" | "commit" | "unstaged" | "staged" | "branch";
+  /**
+   * Identifier resolving the diff for {@link source}: the snapshot ID for
+   * `"snapshot"`, the thread ID for `"cumulative"`, the commit SHA for
+   * `"commit"`, and the workspace ID for the git working-tree views
+   * (`"unstaged"`, `"staged"`, `"branch"`), which read the workspace root.
+   */
   id: string;
   filePath: string;
   /** Thread that owns this selection, used to clear on thread deletion. */
@@ -234,7 +251,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   previewUrlByThread: {},
   rightPanelByWorkspace: {},
   rightPanelVisibleByThread: {},
-  viewMode: "by-turn",
+  viewMode: "last-turn",
   renderMode: "unified",
   lineWrapByThread: {},
   snapshotsByThread: {},

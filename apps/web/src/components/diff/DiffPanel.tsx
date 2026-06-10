@@ -3,15 +3,25 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { DiffToolbar } from "./DiffToolbar";
-import { TurnTimeline } from "./TurnTimeline";
+import { LastTurnView } from "./LastTurnView";
 import { CumulativeView } from "./CumulativeView";
-import { CommitsView } from "./CommitsView";
+import { GitDiffView, type GitView } from "./GitDiffView";
 import { SummaryView } from "./SummaryView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
+/** The threadless git working-tree view ids. */
+const GIT_VIEWS: readonly GitView[] = ["unstaged", "staged", "commit", "branch"];
+
+/** Type guard: whether a view mode is one of the threadless git working-tree views. */
+function isGitView(mode: string): mode is GitView {
+  return (GIT_VIEWS as readonly string[]).includes(mode);
+}
+
 /**
- * Main diff panel: toolbar + single scrollable stream.
- * Files expand inline — no bottom split pane.
+ * The Review (Changes) tab body: toolbar + a single scrollable diff. Dual-scope —
+ * with no thread it renders the git working-tree views (Unstaged/Staged/Commit/
+ * Branch) against the workspace root; with a thread it renders the turn views
+ * (Last turn, Cumulative, Summary). Each view renders exactly one diff.
  */
 export function DiffPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -61,14 +71,14 @@ export function DiffPanel() {
   }, [activeThreadId, snapshots, setSnapshots, setSnapshotsLoading]);
 
   // When a snapshot refresh is pending and the user is no longer viewing the
-  // All-changes view, silently refetch so a return to "All" shows fresh data.
+  // Cumulative view, silently refetch so a return to Cumulative shows fresh data.
   useEffect(() => {
     if (!activeThreadId || !snapshotsPending) return;
-    const isViewingAllChanges =
+    const isViewingCumulative =
       panelVisible &&
       panelState?.activeTab === "changes" &&
-      viewMode === "all";
-    if (isViewingAllChanges) return;
+      viewMode === "cumulative";
+    if (isViewingCumulative) return;
 
     let cancelled = false;
     getTransport()
@@ -87,28 +97,40 @@ export function DiffPanel() {
       <DiffToolbar />
 
       <ScrollArea className="flex-1 min-h-0">
-        {viewMode === "summary" ? (
-          <SummaryView />
-        ) : snapshotsLoading ? (
-          <div className="flex items-center justify-center gap-1.5 py-10">
-            {[0, 150, 300].map((delay) => (
-              <div
-                key={delay}
-                className="h-1 w-1 rounded-full bg-muted-foreground/25 animate-pulse"
-                style={{ animationDelay: `${delay}ms` }}
-              />
-            ))}
-          </div>
-        ) : (
-          <>
-            {viewMode === "by-turn" && <TurnTimeline snapshots={snapshots ?? []} />}
-            {viewMode === "all" && activeThreadId && (
-              <CumulativeView snapshots={snapshots ?? []} threadId={activeThreadId} />
-            )}
-            {viewMode === "commits" && <CommitsView />}
-          </>
-        )}
+        {activeThreadId ? (
+          // The git working-tree views are additive in a thread: they read the
+          // thread's checkout (passed via threadId), alongside the turn views.
+          isGitView(viewMode) && activeWorkspaceId ? (
+            <GitDiffView view={viewMode} workspaceId={activeWorkspaceId} threadId={activeThreadId} />
+          ) : viewMode === "summary" ? (
+            <SummaryView />
+          ) : snapshotsLoading ? (
+            <LoadingPulse />
+          ) : viewMode === "cumulative" ? (
+            <CumulativeView snapshots={snapshots ?? []} threadId={activeThreadId} />
+          ) : (
+            // Default (and "last-turn") thread view: the most recent turn's diff.
+            <LastTurnView snapshots={snapshots ?? []} threadId={activeThreadId} />
+          )
+        ) : activeWorkspaceId && isGitView(viewMode) ? (
+          <GitDiffView view={viewMode} workspaceId={activeWorkspaceId} />
+        ) : null}
       </ScrollArea>
+    </div>
+  );
+}
+
+/** The three-dot loading pulse shown while snapshots load. */
+function LoadingPulse() {
+  return (
+    <div className="flex items-center justify-center gap-1.5 py-10">
+      {[0, 150, 300].map((delay) => (
+        <div
+          key={delay}
+          className="h-1 w-1 rounded-full bg-muted-foreground/25 animate-pulse"
+          style={{ animationDelay: `${delay}ms` }}
+        />
+      ))}
     </div>
   );
 }

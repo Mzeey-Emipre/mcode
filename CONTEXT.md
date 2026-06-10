@@ -475,12 +475,39 @@ the add menu present this same creatable-types set.
 ### Review tab
 The right-panel tab that shows code changes. **Dual-scope**: its
 git-working-tree views (Unstaged, Staged, Commit, Branch) read the
-**workspace root** and need no thread; its turn views need a thread. The
-two turn views are **Last turn** (the most recent turn's diff — the default
-glance when a thread is active) and **Cumulative** (the thread's net diff
-versus its base). Each view renders exactly one diff; there is no eager
-render of every turn's diff. A per-turn browse, if offered, is a turn
-**picker** that resolves to a single turn's diff, never N diffs at once.
+**workspace root** and need no thread; its turn views need a thread. Each
+view renders exactly one diff; there is no eager render of every turn's
+diff.
+
+### Comparison
+What a Review view *is*: a **base** (before) and a **target** (after) that
+resolve to exactly one diff. Some comparisons have **fixed** operands the
+user cannot change (Unstaged = index→worktree; Staged = HEAD→index); others
+have **picked** operands the user chooses through a picker that still
+resolves to a single diff — never N diffs at once. The picked comparisons
+are **Branch** (a base ref → a target ref, both selectable; by default it
+compares the current branch against its detected base, or — when you are
+*on* the base branch — against that branch's remote), **Commit** (one commit
+chosen from a searchable list; default is the latest commit), and the turn
+**picker** (one turn's diff).
+
+### Last turn
+The most recent turn's diff — the default glance when a thread is active.
+
+### Summary
+An AI-written prose recap of the **Cumulative** diff. Not a comparison — a
+**lens**: a toggle that re-renders the Cumulative view's changes as prose in
+place (diff ⇄ summary), rather than a separate view you pick in the switcher.
+Gated behind the diff-summary setting.
+
+### Cumulative
+A thread's **net effect since it started**, committed *and* uncommitted, as
+one diff (the turn-snapshot before the thread's first turn → the snapshot
+after its last). A different **axis** from Branch: Cumulative is measured on
+the turn-snapshot timeline and includes uncommitted work, whereas Branch is
+measured between git refs and shows committed history only. The two coincide
+only when the thread committed everything and its base has not moved.
+_Avoid_: "net diff versus base" (that phrasing collides with Branch).
 
 ## Open-in app
 

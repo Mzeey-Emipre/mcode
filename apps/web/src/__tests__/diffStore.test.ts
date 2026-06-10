@@ -21,7 +21,7 @@ describe("diffStore", () => {
       selectedFile: null,
       diffContent: null,
       diffLoading: false,
-      viewMode: "by-turn",
+      viewMode: "last-turn",
       renderMode: "unified",
       lineWrapByThread: {},
     });

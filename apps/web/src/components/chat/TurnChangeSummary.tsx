@@ -101,7 +101,8 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
     const store = useDiffStore.getState();
     store.showRightPanel(workspaceId, threadId);
     store.setRightPanelTab(workspaceId, "changes");
-    store.setViewMode("by-turn");
+    // "View all diffs" lands on the thread's cumulative diff across every turn.
+    store.setViewMode("cumulative");
 
     // Ensure snapshots are loaded so the panel can display this turn
     if (!store.snapshotsByThread[threadId]) {

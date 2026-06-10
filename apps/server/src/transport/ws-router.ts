@@ -203,6 +203,20 @@ export async function routeMessage(
   }
 }
 
+/**
+ * Resolve a thread's working directory (worktree path or workspace root) for the
+ * git working-tree/branch Review views, so a thread reads its own checkout. Returns
+ * undefined when no thread is given (threadless → the service falls back to the
+ * workspace root) or when the thread/workspace can't be found.
+ */
+function resolveThreadRepoPath(deps: RouterDeps, threadId?: string): string | undefined {
+  if (!threadId) return undefined;
+  const thread = deps.threadRepo.findById(threadId);
+  const ws = thread ? deps.workspaceRepo.findById(thread.workspace_id) : null;
+  if (!thread || !ws) return undefined;
+  return deps.gitService.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
+}
+
 /** Dispatch a validated method call to the appropriate service. */
 async function dispatch(
   method: WsMethodName,
@@ -413,6 +427,26 @@ async function dispatch(
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return [];
       return deps.gitService.commitFiles(params.workspaceId, params.sha);
+    }
+    case "git.workingTreeFiles": {
+      const ws = deps.workspaceService.findById(params.workspaceId);
+      if (!ws?.is_git_repo) return [];
+      return deps.gitService.workingTreeFiles(params.workspaceId, params.staged, resolveThreadRepoPath(deps, params.threadId));
+    }
+    case "git.workingTreeDiff": {
+      const ws = deps.workspaceService.findById(params.workspaceId);
+      if (!ws?.is_git_repo) return "";
+      return deps.gitService.workingTreeDiff(params.workspaceId, params.staged, params.filePath, params.maxLines, resolveThreadRepoPath(deps, params.threadId));
+    }
+    case "git.branchFiles": {
+      const ws = deps.workspaceService.findById(params.workspaceId);
+      if (!ws?.is_git_repo) return [];
+      return deps.gitService.branchFiles(params.workspaceId, resolveThreadRepoPath(deps, params.threadId));
+    }
+    case "git.branchDiff": {
+      const ws = deps.workspaceService.findById(params.workspaceId);
+      if (!ws?.is_git_repo) return "";
+      return deps.gitService.branchDiff(params.workspaceId, params.filePath, params.maxLines, resolveThreadRepoPath(deps, params.threadId));
     }
 
     // Agent

@@ -698,6 +698,14 @@ export function createWsTransport(
       rpc<string>("git.commitDiff", { workspaceId, sha, filePath, maxLines }),
     getCommitFiles: (workspaceId, sha) =>
       rpc<string[]>("git.commitFiles", { workspaceId, sha }),
+    getWorkingTreeFiles: (workspaceId, staged, threadId?) =>
+      rpc<string[]>("git.workingTreeFiles", { workspaceId, staged, threadId }),
+    getWorkingTreeDiff: (workspaceId, staged, filePath?, maxLines?, threadId?) =>
+      rpc<string>("git.workingTreeDiff", { workspaceId, staged, filePath, maxLines, threadId }),
+    getBranchFiles: (workspaceId, threadId?) =>
+      rpc<string[]>("git.branchFiles", { workspaceId, threadId }),
+    getBranchDiff: (workspaceId, filePath?, maxLines?, threadId?) =>
+      rpc<string>("git.branchDiff", { workspaceId, filePath, maxLines, threadId }),
 
     // GitHub PR (advanced)
     push: (workspaceId, branch) =>
