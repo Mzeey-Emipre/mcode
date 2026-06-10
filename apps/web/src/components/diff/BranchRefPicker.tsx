@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { getTransport } from "@/transport";
 import { useDiffStore } from "@/stores/diffStore";
@@ -63,15 +66,75 @@ function useResolveBranchComparison(
   return { comparison, loading };
 }
 
-/** Human-readable group label for a ref type in the picker menu. */
-const REF_GROUP_LABEL: Record<GitBranch["type"], string> = {
-  local: "Local",
-  worktree: "Worktrees",
-  remote: "Remotes",
-};
+/** Refs bucketed for the picker's group sections, in render order. */
+interface RefGroups {
+  worktree: GitBranch[];
+  local: GitBranch[];
+  remote: GitBranch[];
+}
 
-/** One side (base or target) of the comparison: a dropdown labelled with the chosen ref. */
-function RefDropdown({
+/** Bucket the flat ref list into the picker's three sections. */
+function groupRefs(refs: readonly GitBranch[]): RefGroups {
+  const groups: RefGroups = { worktree: [], local: [], remote: [] };
+  for (const ref of refs) groups[ref.type].push(ref);
+  return groups;
+}
+
+/** Section order + headings for the grouped ref menu. */
+const REF_SECTIONS: ReadonlyArray<{ type: GitBranch["type"]; heading: string }> = [
+  { type: "worktree", heading: "Worktrees" },
+  { type: "local", heading: "Local" },
+  { type: "remote", heading: "Remotes" },
+];
+
+/**
+ * Truncate a long ref name in the middle rather than at the tail. Branch names
+ * put the distinctive part last (`…/docstrings/2bbc811`), so tail-ellipsis makes
+ * long siblings identical; keeping both ends tells them apart at a glance.
+ */
+function middleTruncate(name: string, max: number): string {
+  if (name.length <= max) return name;
+  const tail = 12;
+  return `${name.slice(0, max - tail - 1)}…${name.slice(-tail)}`;
+}
+
+/**
+ * A ref name with its remote prefix de-emphasized. Every row in the Remotes
+ * section starts with the same `origin/`; muting it makes the distinctive rest
+ * carry the row. Long names middle-truncate so sibling refs stay tellable apart.
+ */
+function RefName({
+  name,
+  type,
+  active,
+}: {
+  name: string;
+  type: GitBranch["type"];
+  active: boolean;
+}) {
+  const slash = type === "remote" ? name.indexOf("/") : -1;
+  const prefix = slash >= 0 ? name.slice(0, slash + 1) : null;
+  const rest = slash >= 0 ? name.slice(slash + 1) : name;
+  return (
+    <span
+      className={cn(
+        "flex-1 truncate whitespace-nowrap",
+        active ? "text-foreground" : "text-popover-foreground",
+      )}
+      title={name}
+    >
+      {prefix && <span className="text-muted-foreground/50">{prefix}</span>}
+      {middleTruncate(rest, prefix ? 22 : 29)}
+    </span>
+  );
+}
+
+/**
+ * One side (base or target) of the comparison: a quiet toolbar chip that opens a
+ * searchable, grouped ref combobox. Machine facts (ref names, SHAs) are mono;
+ * the current branch carries the amber dot; selection is a row-fill + check.
+ */
+function RefCombobox({
   side,
   value,
   refs,
@@ -82,55 +145,95 @@ function RefDropdown({
   refs: readonly GitBranch[];
   onSelect: (ref: string) => void;
 }) {
-  // Catalog order already groups by type (local → worktree → remote); render
-  // group headers as the type changes so the menu reads as sections.
+  const [open, setOpen] = useState(false);
+  const groups = useMemo(() => groupRefs(refs), [refs]);
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
         data-testid={`branch-${side}-picker`}
         aria-label={`Select ${side} ref`}
-        className="flex h-6 min-w-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium tracking-tight text-foreground hover:bg-accent"
-      >
-        <span className="max-w-[140px] truncate font-mono">{value ?? "Select…"}</span>
-        <ChevronDown size={11} className="shrink-0 text-muted-foreground/60" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={4} className="max-h-[320px] min-w-[180px] overflow-y-auto">
-        {refs.length === 0 ? (
-          <div className="px-2 py-1.5 text-xs text-muted-foreground">No refs</div>
-        ) : (
-          refs.map((ref, i) => {
-            const active = ref.name === value;
-            const showHeader = i === 0 || refs[i - 1].type !== ref.type;
-            return (
-              <div key={`${ref.type}:${ref.name}`}>
-                {showHeader && (
-                  <div className="px-2 pb-0.5 pt-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                    {REF_GROUP_LABEL[ref.type]}
-                  </div>
-                )}
-                <DropdownMenuItem
-                  onClick={() => onSelect(ref.name)}
-                  data-testid={`branch-ref-${side}-${ref.name}`}
-                  aria-current={active ? "true" : undefined}
-                  className={cn(
-                    "flex cursor-pointer items-center gap-2 px-2 py-1 text-xs",
-                    active ? "text-foreground" : "text-popover-foreground",
-                  )}
-                >
-                  <span className="flex-1 truncate text-left font-mono">{ref.name}</span>
-                  {ref.isCurrent && (
-                    <span className="text-[9px] uppercase tracking-wider text-muted-foreground/50">
-                      current
-                    </span>
-                  )}
-                  {active && <Check size={11} className="shrink-0 text-muted-foreground" />}
-                </DropdownMenuItem>
-              </div>
-            );
-          })
+        className={cn(
+          "flex h-6 min-w-0 items-center gap-1 rounded-md px-1.5 font-mono text-[11px] font-medium",
+          "bg-muted/60 text-foreground transition-colors hover:bg-accent",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      >
+        <span className={cn("max-w-[132px] truncate", !value && "text-muted-foreground")}>
+          {value ?? "select ref"}
+        </span>
+        <ChevronDown size={11} className="shrink-0 text-muted-foreground/60" />
+      </PopoverTrigger>
+
+      <PopoverContent align="start" sideOffset={6} className="w-[320px] p-0">
+        <Command>
+          <CommandInput
+            placeholder="Filter refs"
+            className="h-8 py-2 font-mono text-xs"
+            data-testid={`branch-${side}-filter`}
+          />
+          <CommandList className="max-h-[296px]">
+            <CommandEmpty>
+              <div className="flex flex-col items-center gap-2 py-4">
+                <span aria-hidden="true" className="font-mono text-xl leading-none text-muted-foreground/15">
+                  ⊘
+                </span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
+                  No matching refs
+                </span>
+              </div>
+            </CommandEmpty>
+
+            {REF_SECTIONS.map(({ type, heading }) => {
+              const sectionRefs = groups[type];
+              if (sectionRefs.length === 0) return null;
+              return (
+                <CommandGroup
+                  key={type}
+                  heading={heading}
+                  className="[&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[9.5px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.18em] [&_[cmdk-group-heading]]:text-muted-foreground/50"
+                >
+                  {sectionRefs.map((ref) => {
+                    const active = ref.name === value;
+                    return (
+                      <CommandItem
+                        key={ref.name}
+                        value={ref.name}
+                        onSelect={() => {
+                          onSelect(ref.name);
+                          setOpen(false);
+                        }}
+                        data-testid={`branch-ref-${side}-${ref.name}`}
+                        aria-current={active ? "true" : undefined}
+                        className="gap-2 py-1 font-mono text-xs"
+                      >
+                        {/* The amber dot marks the checked-out branch — the same
+                            glance vocabulary as the sidebar's status dots. */}
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full",
+                            ref.isCurrent ? "bg-primary" : "bg-transparent",
+                          )}
+                        />
+                        <RefName name={ref.name} type={ref.type} active={active} />
+                        {active ? (
+                          <Check size={11} className="shrink-0 text-muted-foreground" />
+                        ) : (
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/40">
+                            {ref.shortSha}
+                          </span>
+                        )}
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              );
+            })}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -143,10 +246,10 @@ interface BranchRefPickerProps {
 }
 
 /**
- * The Branch view's operand control: two ref dropdowns (`base … target`) the user
- * picks independently, always diffed three-dot. Renders into the Review toolbar's
- * contextual operand slot. Resolves its default pair per ADR 0007 and writes the
- * chosen pair to the diff store, which drives the rendered Branch diff.
+ * The Branch view's operand control: two ref comboboxes (`base … target`) the
+ * user picks independently, always diffed three-dot. Renders into the Review
+ * toolbar's contextual operand slot. Resolves its default pair per ADR 0007 and
+ * writes the chosen pair to the diff store, which drives the rendered Branch diff.
  */
 export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps) {
   const { comparison, loading } = useResolveBranchComparison(workspaceId, threadId);
@@ -154,21 +257,29 @@ export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps)
   const setBranchTarget = useDiffStore((s) => s.setBranchTarget);
 
   if (loading && !comparison) {
-    return <span className="text-[11px] text-muted-foreground/50">Loading refs…</span>;
+    return (
+      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
+        Resolving
+      </span>
+    );
   }
   if (comparison?.isUnborn) {
-    return <span className="text-[11px] text-muted-foreground/50">No commits yet</span>;
+    return (
+      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
+        No commits yet
+      </span>
+    );
   }
 
   const refs = comparison?.refs ?? [];
   return (
-    <div className="flex min-w-0 items-center gap-0.5" data-testid="branch-ref-picker">
-      <RefDropdown side="base" value={comparison?.base ?? null} refs={refs} onSelect={setBranchBase} />
+    <div className="flex min-w-0 items-center gap-1" data-testid="branch-ref-picker">
+      <RefCombobox side="base" value={comparison?.base ?? null} refs={refs} onSelect={setBranchBase} />
       {/* Three-dot range indicator (always `base...target`, never two-dot). */}
-      <span aria-hidden="true" className="px-0.5 font-mono text-[11px] text-muted-foreground/40">
+      <span aria-hidden="true" className="font-mono text-[11px] leading-none text-muted-foreground/40">
         …
       </span>
-      <RefDropdown side="target" value={comparison?.target ?? null} refs={refs} onSelect={setBranchTarget} />
+      <RefCombobox side="target" value={comparison?.target ?? null} refs={refs} onSelect={setBranchTarget} />
     </div>
   );
 }
