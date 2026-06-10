@@ -53,15 +53,41 @@ const THREAD = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** A detected localhost port the mocked bridge advertises to the empty state. */
+interface MockPort {
+  readonly port: number;
+  readonly name: string;
+  readonly online: boolean;
+}
+
+/** Options controlling the mocked preview bridge's initial state. */
+interface InjectOptions {
+  /** When false, the bridge reports no loaded page so the empty state shows. */
+  readonly loaded?: boolean;
+  /** Ports the empty-state list should render via detectLocalPorts. */
+  readonly ports?: readonly MockPort[];
+}
+
 /**
  * Inject a no-op `window.desktopBridge.preview` before the page loads so the
  * PreviewPanel branches into the chrome-rendering path instead of the
  * "open Mcode from Electron" empty state. Methods resolve with safe defaults
  * so the bridge contract is satisfied without driving any real IPC.
+ *
+ * `loaded` (default true) drives whether onPageStatus reports a real page, so a
+ * test can exercise either the loaded header or the empty localhost-ports body.
+ * Navigations are recorded on `window.__mcodeNav` so port-card clicks are
+ * observable.
  */
-async function injectPreviewBridge(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const noop = (): Promise<void> => Promise.resolve();
+async function injectPreviewBridge(
+  page: Page,
+  options: InjectOptions = {},
+): Promise<void> {
+  const loaded = options.loaded ?? true;
+  const ports = options.ports ?? [];
+  await page.addInitScript(
+    ({ loaded, ports }) => {
+      const noop = (): Promise<void> => Promise.resolve();
     const captureFail = (): Promise<{ ok: false; error: string }> =>
       Promise.resolve({ ok: false, error: "no-preview" });
     const unsub = (): (() => void) => () => undefined;
@@ -85,9 +111,16 @@ async function injectPreviewBridge(page: Page): Promise<void> {
     // cancelCapture resolves it with the cancelled sentinel so the Exit pill
     // path also matches real behaviour (real main process aborts the IPC).
     let pickResolver: ((v: { ok: false; error: string }) => void) | null = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).__mcodeNav = [] as string[];
     const preview = {
       sync: noop,
-      navigate: () => Promise.resolve({ ok: true } as const),
+      navigate: (url: string) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).__mcodeNav.push(url);
+        return Promise.resolve({ ok: true } as const);
+      },
+      detectLocalPorts: () => Promise.resolve(ports),
       goBack: () => Promise.resolve(false),
       goForward: () => Promise.resolve(false),
       reload: noop,
@@ -105,12 +138,12 @@ async function injectPreviewBridge(page: Page): Promise<void> {
       capturePageContext: () =>
         Promise.resolve({ ok: false, error: "no-preview" } as const),
       releaseBrowserCaptureSpills: noop,
-      // Fire onPageStatus synchronously on subscribe with a fake URL so the
-      // panel's hasLoadedPage state flips to true. The capture / design
-      // buttons are now gated on hasLoadedPage to avoid no-op clicks on an
-      // empty preview, which would otherwise leave the click-based tests
-      // (Design aria-pressed, Exit pill, dock rows) firing against disabled
-      // buttons.
+      // Fire onPageStatus synchronously on subscribe. When `loaded`, report a
+      // real URL so hasLoadedPage flips true and the loaded header (Design /
+      // Screenshot, hover reload) renders; the capture / design buttons are
+      // gated on hasLoadedPage to avoid no-op clicks on an empty preview. When
+      // not loaded, report a blank surface so the empty localhost-ports body
+      // owns the panel.
       onPageStatus: (
         cb: (s: {
           url: string | null;
@@ -119,7 +152,15 @@ async function injectPreviewBridge(page: Page): Promise<void> {
           phase: "loading" | "loaded" | "error" | "discarded";
         }) => void,
       ) => {
-        cb({ url: "https://example.com", title: "Example", favicon: null, phase: "loaded" });
+        const status = loaded
+          ? { url: "https://example.com", title: "Example", favicon: null, phase: "loaded" as const }
+          : { url: null, title: null, favicon: null, phase: "loaded" as const };
+        cb(status);
+        // The first emit moves storedUrl off "", which re-runs the bridge's
+        // per-thread reset and blanks the title. A real guest re-emits
+        // page-title-updated after navigation settles; mirror that so the
+        // loaded title survives (storedUrl is now stable, so no further reset).
+        if (loaded) setTimeout(() => cb(status), 0);
         return () => undefined;
       },
       cancelCapture: () => {
@@ -153,9 +194,11 @@ async function injectPreviewBridge(page: Page): Promise<void> {
         setInspect: () => Promise.resolve({ ok: true } as const),
       },
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (window as any).desktopBridge = { preview };
-  });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).desktopBridge = { preview };
+    },
+    { loaded, ports },
+  );
 }
 
 /**
@@ -264,109 +307,123 @@ test.describe("PreviewPanel — desktopBridge absent", () => {
 // Tests — preview chrome (bridge mocked)
 // ---------------------------------------------------------------------------
 
-test.describe("PreviewPanel — chrome with mocked bridge", () => {
+test.describe("PreviewPanel — loaded header", () => {
   test.beforeEach(async ({ page }) => {
-    await injectPreviewBridge(page);
+    await injectPreviewBridge(page, { loaded: true });
     await openAppAtThread(page);
     await openPreviewTab(page);
+    // Opening via mod+shift+b drops focus into the URL field (the focused
+    // state) via a deferred rAF. Blur, let any queued re-focus rAF fire, then
+    // assert the bar has settled into the loaded-title state (input shows the
+    // page title). The rAF focus fires once, so a retried blur eventually wins.
+    const url = page.getByLabel("Preview URL");
+    await expect(async () => {
+      await url.blur();
+      await page.waitForTimeout(60);
+      await expect(url).toHaveValue("Example");
+    }).toPass({ timeout: 8000, intervals: [150, 300, 500] });
   });
 
-  test("toolbar renders the three primary action buttons", async ({ page }) => {
+  test("header renders nav, reload, design, screenshot, and the overflow kebab", async ({ page }) => {
+    await expect(page.getByTestId("browser-header")).toBeVisible();
     await expect(page.getByLabel("Back")).toBeVisible();
     await expect(page.getByLabel("Forward")).toBeVisible();
+    // Reload sits in the nav cluster (outside the URL pill) once a page loads.
     await expect(page.getByLabel("Reload")).toBeVisible();
     await expect(page.getByLabel("Design")).toBeVisible();
     await expect(page.getByLabel("Screenshot")).toBeVisible();
-    await expect(page.getByLabel("Toggle capture tools")).toBeVisible();
-    await expect(page.getByLabel("Open in system browser")).toBeVisible();
+    await expect(page.getByLabel("More browser tools")).toBeVisible();
   });
 
-  test("legacy capture buttons are gone from the primary toolbar", async ({ page }) => {
+  test("loaded bar shows the page title centered in the URL field", async ({ page }) => {
+    await expect(page.getByLabel("Preview URL")).toHaveValue("Example");
+  });
+
+  test("legacy capture buttons are gone from the header", async ({ page }) => {
     await expect(page.getByLabel("Crop region")).toHaveCount(0);
     await expect(page.getByLabel("Pick element")).toHaveCount(0);
     await expect(page.getByLabel("Capture viewport")).toHaveCount(0);
-    await expect(page.getByLabel("Attach page context")).toHaveCount(0);
+    await expect(page.getByLabel("Toggle capture tools")).toHaveCount(0);
   });
 
-  test("capture dock toggles open via the toolbar button", async ({ page }) => {
-    await expect(page.getByTestId("preview-dev-dock")).toHaveCount(0);
-    await page.getByLabel("Toggle capture tools").click();
-    await expect(page.getByTestId("preview-dev-dock")).toBeVisible();
+  test("hovering the loaded bar reveals open-in-external", async ({ page }) => {
+    // Reload lives in the nav cluster and is always present once loaded; only
+    // the external-open arrow stays hidden inside the pill until hover.
+    await expect(page.getByLabel("Reload")).toBeVisible();
+    await expect(page.getByLabel("Open in system browser")).toHaveCount(0);
+    await page.getByTestId("browser-url-bar").hover();
+    await expect(page.getByLabel("Open in system browser")).toBeVisible();
   });
 
-  test("capture dock toggles open via mod+shift+d", async ({ page }) => {
-    await expect(page.getByTestId("preview-dev-dock")).toHaveCount(0);
-    // Opening the preview via Ctrl+Shift+B in beforeEach auto-focuses the
-    // omnibox (preview.toggle requests omnibox focus on its showing branch).
-    // The omnibox is an input, so the inputFocused context flips true and
-    // would swallow Ctrl+Shift+D (gated on !inputFocused). Blur first so the
-    // shortcut reaches the keybinding manager.
-    await page.evaluate(() => {
-      if (document.activeElement instanceof HTMLElement) {
-        document.activeElement.blur();
-      }
-    });
-    await page.keyboard.press("Control+Shift+D");
-    await expect(page.getByTestId("preview-dev-dock")).toBeVisible();
+  test("the overflow kebab lists New page, capture tools, and Soon stubs", async ({ page }) => {
+    await page.getByLabel("More browser tools").click();
+    const menu = page.getByTestId("browser-overflow-menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByText("New page")).toBeVisible();
+    await expect(menu.getByText("Region capture")).toBeVisible();
+    await expect(menu.getByText("Dump page content")).toBeVisible();
+    await expect(menu.getByText("Developer tools")).toBeVisible();
+    await expect(menu.getByText("Show device toolbar")).toBeVisible();
   });
 
-  test("dock surfaces Region and Page context rows", async ({ page }) => {
-    await page.getByLabel("Toggle capture tools").click();
-    // Scope text matches inside each row's testid because the dock surface
-    // repeats the row title in the helper sub-line ("Page context" appears
-    // in both the title span and "Attach structured page context..." span).
-    const regionRow = page.getByTestId("preview-dev-dock-region");
-    const contextRow = page.getByTestId("preview-dev-dock-context");
-    await expect(regionRow).toBeVisible();
-    await expect(contextRow).toBeVisible();
-    await expect(regionRow.getByText("Region capture", { exact: true })).toBeVisible();
-    await expect(contextRow.getByText("Page context", { exact: true })).toBeVisible();
-  });
-
-  test("dock edge can flip from bottom to right via the dock header", async ({ page }) => {
-    await page.getByLabel("Toggle capture tools").click();
-    const dock = page.getByTestId("preview-dev-dock");
-    await expect(dock).toHaveAttribute("data-edge", "bottom");
-    await page.getByLabel("Dock to right").click();
-    await expect(dock).toHaveAttribute("data-edge", "right");
-  });
-
-  test("dock closes via the header X", async ({ page }) => {
-    await page.getByLabel("Toggle capture tools").click();
-    await expect(page.getByTestId("preview-dev-dock")).toBeVisible();
-    await page.getByLabel("Close capture tools").click();
-    await expect(page.getByTestId("preview-dev-dock")).toHaveCount(0);
-  });
-
-  test("design mode aria-pressed flips when toggled", async ({ page }) => {
-    // Use exact: true on getByRole to scope to the toolbar Design button
-    // and exclude the "Exit design mode" pill (whose accessible name also
-    // starts with "Design") which appears once the mode is active.
+  test("design mode aria-pressed toggles on and back off", async ({ page }) => {
     const designBtn = page.getByRole("button", { name: "Design", exact: true });
     await expect(designBtn).toHaveAttribute("aria-pressed", "false");
     await designBtn.click();
     await expect(designBtn).toHaveAttribute("aria-pressed", "true");
-  });
-
-  test("design mode exit pill is the affordance off and click exits the mode", async ({ page }) => {
-    const designBtn = page.getByRole("button", { name: "Design", exact: true });
-    // No pill until mode is active.
-    await expect(page.getByLabel("Exit design mode")).toHaveCount(0);
     await designBtn.click();
-    await expect(page.getByLabel("Exit design mode")).toBeVisible();
-    await page.getByLabel("Exit design mode").click();
-    await expect(page.getByLabel("Exit design mode")).toHaveCount(0);
     await expect(designBtn).toHaveAttribute("aria-pressed", "false");
   });
+});
 
-  test("dock splitter is rendered with the correct orientation when open", async ({ page }) => {
-    await page.getByLabel("Toggle capture tools").click();
-    const splitter = page.getByTestId("preview-dock-splitter");
-    await expect(splitter).toBeVisible();
-    await expect(splitter).toHaveAttribute("aria-orientation", "horizontal");
-    // Flip the dock to the right; splitter should re-orient.
-    await page.getByLabel("Dock to right").click();
-    await expect(splitter).toHaveAttribute("aria-orientation", "vertical");
+// ---------------------------------------------------------------------------
+// Tests — empty browser (localhost ports)
+// ---------------------------------------------------------------------------
+
+test.describe("PreviewPanel — empty localhost ports", () => {
+  const PORTS = [
+    { name: "Mcode", port: 5173, online: true },
+    { name: "API", port: 19400, online: false },
+  ];
+
+  test("lists detected ports with names and online state", async ({ page }) => {
+    await injectPreviewBridge(page, { loaded: false, ports: PORTS });
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+
+    const list = page.getByTestId("browser-local-ports");
+    await expect(list).toBeVisible();
+    const cards = page.getByTestId("browser-local-port");
+    await expect(cards).toHaveCount(2);
+    await expect(list.getByText("Mcode")).toBeVisible();
+    await expect(list.getByText("localhost:5173")).toBeVisible();
+    await expect(list.getByText("API")).toBeVisible();
+
+    const dots = page.getByTestId("browser-local-port-status");
+    await expect(dots.nth(0)).toHaveAttribute("data-online", "true");
+    await expect(dots.nth(1)).toHaveAttribute("data-online", "false");
+  });
+
+  test("the sort/filter control is a disabled stub", async ({ page }) => {
+    await injectPreviewBridge(page, { loaded: false, ports: PORTS });
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+    await expect(page.getByLabel("Sort and filter (coming soon)")).toBeDisabled();
+  });
+
+  test("clicking a port card navigates the preview to that localhost URL", async ({ page }) => {
+    await injectPreviewBridge(page, { loaded: false, ports: PORTS });
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+
+    await page.getByTestId("browser-local-port").first().click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __mcodeNav: string[] }).__mcodeNav,
+        ),
+      )
+      .toContain("http://localhost:5173");
   });
 });
 
