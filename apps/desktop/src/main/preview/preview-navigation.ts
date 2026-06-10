@@ -1,6 +1,8 @@
 /**
  * Navigation IPC handlers for the embedded preview WebContentsView:
- * sync, navigate, go-back, go-forward, reload, open-external, get-navigation-state.
+ * sync, navigate, go-back, go-forward, reload, force-reload, open-external,
+ * get-navigation-state, plus the secondary browser tools surfaced in the header
+ * overflow kebab (clear-cookies, clear-cache, get-zoom, set-zoom).
  */
 
 import { BrowserWindow, ipcMain, shell } from "electron";
@@ -29,6 +31,18 @@ import {
 } from "./preview-local-file.js";
 import { isMcodeWorkspacePreviewUrl } from "@mcode/contracts";
 import { onPreviewHidden, onPreviewVisible } from "./preview-discard-scheduler.js";
+
+/** Lower bound on the preview zoom factor (25%), matching Chromium's floor. */
+const MIN_ZOOM_FACTOR = 0.25;
+/** Upper bound on the preview zoom factor (500%), matching Chromium's ceiling. */
+const MAX_ZOOM_FACTOR = 5;
+
+/** Clamp a requested zoom factor to the supported range and snap to whole percent. */
+function clampZoomFactor(factor: number): number {
+  const safe = Number.isFinite(factor) ? factor : 1;
+  const bounded = Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, safe));
+  return Math.round(bounded * 100) / 100;
+}
 
 /**
  * True when `input` looks like a bare host (e.g. `example.com`, `sub.x.io/path`,
@@ -287,6 +301,65 @@ export function registerNavigationHandlers(): void {
     trustMainProcessFileNavigation(s, url);
     void view.webContents.loadURL(url);
     resetIdle(win, s);
+  });
+
+  ipcMain.handle("preview:force-reload", (_event) => {
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) return;
+    const s = getSession(win);
+    if (s.view && !s.view.webContents.isDestroyed()) {
+      setPreviewLoading(win, s, true);
+      // Hard reload: drop the disk/memory cache so the guest re-fetches every
+      // resource. This is the only difference from preview:reload.
+      s.view.webContents.reloadIgnoringCache();
+      resetIdle(win, s);
+      return;
+    }
+    // View torn down (renderer crash → error panel): recreate and load fresh.
+    // A brand-new load already bypasses the cache, so it honours the intent.
+    if (!s.lastBounds) return;
+    const url = s.resumePreviewUrl ?? "about:blank";
+    const view = ensureView(win, s);
+    view.setBounds(s.lastBounds);
+    mountView(win, view);
+    setPreviewLoading(win, s, true);
+    trustMainProcessFileNavigation(s, url);
+    void view.webContents.loadURL(url);
+    resetIdle(win, s);
+  });
+
+  ipcMain.handle("preview:clear-cookies", async (_event) => {
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) return;
+    const s = getSession(win);
+    if (!s.view || s.view.webContents.isDestroyed()) return;
+    await s.view.webContents.session.clearStorageData({ storages: ["cookies"] });
+  });
+
+  ipcMain.handle("preview:clear-cache", async (_event) => {
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) return;
+    const s = getSession(win);
+    if (!s.view || s.view.webContents.isDestroyed()) return;
+    await s.view.webContents.session.clearCache();
+  });
+
+  ipcMain.handle("preview:get-zoom", (_event): number => {
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) return 1;
+    const s = getSession(win);
+    if (!s.view || s.view.webContents.isDestroyed()) return 1;
+    return clampZoomFactor(s.view.webContents.getZoomFactor());
+  });
+
+  ipcMain.handle("preview:set-zoom", (_event, factor: number): number => {
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) return 1;
+    const s = getSession(win);
+    if (!s.view || s.view.webContents.isDestroyed()) return 1;
+    const clamped = clampZoomFactor(factor);
+    s.view.webContents.setZoomFactor(clamped);
+    return clamped;
   });
 
   ipcMain.handle("preview:open-external", (_event) => {

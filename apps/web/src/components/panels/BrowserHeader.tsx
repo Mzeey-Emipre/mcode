@@ -55,10 +55,20 @@ export interface BrowserHeaderProps {
   readonly onScreenshot: () => void;
   /** Open a new browser page (kebab). */
   readonly onNewPage: () => void;
+  /** Hard reload that bypasses the guest cache (kebab). */
+  readonly onForceReload: () => void;
   /** Region crop capture (kebab). */
   readonly onRegionCapture: () => void;
   /** Page-content dump capture (kebab). */
   readonly onDumpContent: () => void;
+  /** Clear the preview session's cookies (kebab). */
+  readonly onClearCookies: () => void;
+  /** Clear the preview session's HTTP cache (kebab). */
+  readonly onClearCache: () => void;
+  /** Read the guest's current zoom factor (kebab). */
+  readonly onGetZoom: () => Promise<number>;
+  /** Set the guest's zoom factor (kebab). */
+  readonly onSetZoom: (factor: number) => Promise<number>;
 }
 
 /**
@@ -95,8 +105,13 @@ export function BrowserHeader({
   onToggleDesign,
   onScreenshot,
   onNewPage,
+  onForceReload,
   onRegionCapture,
   onDumpContent,
+  onClearCookies,
+  onClearCache,
+  onGetZoom,
+  onSetZoom,
 }: BrowserHeaderProps) {
   const {
     displayValue,
@@ -358,8 +373,13 @@ export function BrowserHeader({
       <BrowserOverflowMenu
         hasLoadedPage={hasLoadedPage}
         onNewPage={onNewPage}
-        onRegionCapture={onRegionCapture}
+        onForceReload={onForceReload}
         onDumpContent={onDumpContent}
+        onRegionCapture={onRegionCapture}
+        onClearCookies={onClearCookies}
+        onClearCache={onClearCache}
+        onGetZoom={onGetZoom}
+        onSetZoom={onSetZoom}
       />
     </div>
   );

@@ -96,6 +96,16 @@ interface PreviewBridge {
   goBack(): Promise<boolean>;
   goForward(): Promise<boolean>;
   reload(): Promise<void>;
+  /** Hard reload that bypasses the guest's HTTP cache (Force reload). */
+  forceReload(): Promise<void>;
+  /** Clear the preview session's cookies. */
+  clearCookies(): Promise<void>;
+  /** Clear the preview session's HTTP cache. */
+  clearCache(): Promise<void>;
+  /** Read the guest's current zoom factor (1 = 100%). */
+  getZoom(): Promise<number>;
+  /** Set the guest's zoom factor; resolves to the clamped factor actually applied. */
+  setZoom(factor: number): Promise<number>;
   openExternal(): Promise<void>;
   /** Open Chrome DevTools attached to the guest WebContents (the embedded site, not the host shell). */
   openGuestDevTools(): Promise<void>;

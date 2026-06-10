@@ -168,6 +168,26 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     reload(): Promise<void> {
       return ipcRenderer.invoke("preview:reload");
     },
+    /** Hard reload that bypasses the guest's HTTP cache (Force reload). */
+    forceReload(): Promise<void> {
+      return ipcRenderer.invoke("preview:force-reload");
+    },
+    /** Clear the preview session's cookies. */
+    clearCookies(): Promise<void> {
+      return ipcRenderer.invoke("preview:clear-cookies");
+    },
+    /** Clear the preview session's HTTP cache. */
+    clearCache(): Promise<void> {
+      return ipcRenderer.invoke("preview:clear-cache");
+    },
+    /** Read the guest's current zoom factor (1 = 100%). */
+    getZoom(): Promise<number> {
+      return ipcRenderer.invoke("preview:get-zoom");
+    },
+    /** Set the guest's zoom factor; returns the clamped factor actually applied. */
+    setZoom(factor: number): Promise<number> {
+      return ipcRenderer.invoke("preview:set-zoom", factor);
+    },
     openExternal(): Promise<void> {
       return ipcRenderer.invoke("preview:open-external");
     },
