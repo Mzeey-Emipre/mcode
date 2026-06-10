@@ -225,8 +225,13 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
         onToggleDesign={onToggleDesignMode}
         onScreenshot={capture.onAddPictureReference}
         onNewPage={tabs.newTab}
+        onForceReload={bridge.onForceReload}
         onRegionCapture={capture.onAddRegionPictureReference}
         onDumpContent={capture.onAddPageContextOnly}
+        onClearCookies={bridge.onClearCookies}
+        onClearCache={bridge.onClearCache}
+        onGetZoom={bridge.onGetZoom}
+        onSetZoom={bridge.onSetZoom}
       />
 
       {bridge.navError ? (

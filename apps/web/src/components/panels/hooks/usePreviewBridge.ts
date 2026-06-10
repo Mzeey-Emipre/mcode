@@ -62,6 +62,16 @@ export interface PreviewBridgeState {
   readonly onGoBack: () => Promise<void>;
   readonly onGoForward: () => Promise<void>;
   readonly onReload: () => Promise<void>;
+  /** Hard reload that bypasses the guest cache. */
+  readonly onForceReload: () => Promise<void>;
+  /** Clear the preview session's cookies. */
+  readonly onClearCookies: () => Promise<void>;
+  /** Clear the preview session's HTTP cache. */
+  readonly onClearCache: () => Promise<void>;
+  /** Read the guest's current zoom factor (1 = 100%). */
+  readonly onGetZoom: () => Promise<number>;
+  /** Set the guest's zoom factor; resolves to the clamped factor applied. */
+  readonly onSetZoom: (factor: number) => Promise<number>;
   readonly onOpenExternal: () => Promise<void>;
   /** Navigate the preview to the given URL or file path. */
   readonly onNavigate: (url: string) => void;
@@ -299,6 +309,30 @@ export function usePreviewBridge({
     await refreshNav();
   }, [pushSync, refreshNav]);
 
+  const onForceReload = useCallback(async () => {
+    const preview = window.desktopBridge?.preview;
+    if (!preview) return;
+    await pushSync(true);
+    await preview.forceReload();
+    await refreshNav();
+  }, [pushSync, refreshNav]);
+
+  const onClearCookies = useCallback(async () => {
+    await window.desktopBridge?.preview?.clearCookies();
+  }, []);
+
+  const onClearCache = useCallback(async () => {
+    await window.desktopBridge?.preview?.clearCache();
+  }, []);
+
+  const onGetZoom = useCallback(async () => {
+    return (await window.desktopBridge?.preview?.getZoom()) ?? 1;
+  }, []);
+
+  const onSetZoom = useCallback(async (factor: number) => {
+    return (await window.desktopBridge?.preview?.setZoom(factor)) ?? 1;
+  }, []);
+
   const onOpenExternal = useCallback(async () => {
     const preview = window.desktopBridge?.preview;
     if (!preview) return;
@@ -342,6 +376,11 @@ export function usePreviewBridge({
     onGoBack,
     onGoForward,
     onReload,
+    onForceReload,
+    onClearCookies,
+    onClearCache,
+    onGetZoom,
+    onSetZoom,
     onOpenExternal,
     onNavigate,
     onRetry,

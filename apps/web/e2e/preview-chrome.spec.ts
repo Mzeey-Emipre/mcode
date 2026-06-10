@@ -124,6 +124,11 @@ async function injectPreviewBridge(
       goBack: () => Promise.resolve(false),
       goForward: () => Promise.resolve(false),
       reload: noop,
+      forceReload: noop,
+      clearCookies: noop,
+      clearCache: noop,
+      getZoom: () => Promise.resolve(1),
+      setZoom: (factor: number) => Promise.resolve(factor),
       openExternal: noop,
       openGuestDevTools: noop,
       onShortcutFired: unsub,
@@ -355,15 +360,35 @@ test.describe("PreviewPanel — loaded header", () => {
     await expect(page.getByLabel("Open in system browser")).toBeVisible();
   });
 
-  test("the overflow kebab lists New page, capture tools, and Soon stubs", async ({ page }) => {
+  test("the overflow kebab lists the relocated tools in order with Soon stubs", async ({ page }) => {
     await page.getByLabel("More browser tools").click();
     const menu = page.getByTestId("browser-overflow-menu");
     await expect(menu).toBeVisible();
     await expect(menu.getByText("New page")).toBeVisible();
-    await expect(menu.getByText("Region capture")).toBeVisible();
+    await expect(menu.getByText("Force reload")).toBeVisible();
     await expect(menu.getByText("Dump page content")).toBeVisible();
+    await expect(menu.getByText("Region capture")).toBeVisible();
     await expect(menu.getByText("Developer tools")).toBeVisible();
     await expect(menu.getByText("Show device toolbar")).toBeVisible();
+    await expect(menu.getByText("Zoom")).toBeVisible();
+    await expect(menu.getByText("Clear cookies")).toBeVisible();
+    await expect(menu.getByText("Clear cache")).toBeVisible();
+    // The two future tools are present but disabled.
+    await expect(menu.getByText("Developer tools").locator("..")).toHaveAttribute(
+      "data-disabled",
+      "",
+    );
+    await expect(menu.getByText("Show device toolbar").locator("..")).toHaveAttribute(
+      "data-disabled",
+      "",
+    );
+
+    // Zoom stepper adjusts the percent readout.
+    await expect(menu.getByText("100%")).toBeVisible();
+    await menu.getByLabel("Zoom in").click();
+    await expect(menu.getByText("110%")).toBeVisible();
+    await menu.getByLabel("Reset zoom").click();
+    await expect(menu.getByText("100%")).toBeVisible();
   });
 
   test("design mode aria-pressed toggles on and back off", async ({ page }) => {
