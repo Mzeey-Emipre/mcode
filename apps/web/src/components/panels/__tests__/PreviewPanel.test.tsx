@@ -32,18 +32,15 @@ vi.mock("../hooks/usePreviewBridge", () => ({
   }),
 }));
 
-// usePreviewTabs is controllable per-test so we can exercise the tab bar's
-// active-tab overlay. Defaults to no tab set (bar renders nothing).
-const tabsState = vi.hoisted(() => ({
-  current: {
-    tabSet: null as unknown,
-    newTab: () => {},
-    activateTab: () => {},
-    closeTab: () => {},
-  },
-}));
+// The panel only consumes usePreviewTabs for the header's "New page" action and
+// the store subscription; page switching/closing lives in the activity rail.
 vi.mock("../hooks/usePreviewTabs", () => ({
-  usePreviewTabs: () => tabsState.current,
+  usePreviewTabs: () => ({
+    tabSet: null,
+    newTab: vi.fn(),
+    activateTab: vi.fn(),
+    closeTab: vi.fn(),
+  }),
 }));
 
 vi.mock("../hooks/usePreviewCapture", () => ({
@@ -89,7 +86,7 @@ describe("PreviewPanel — unavailable state", () => {
 
 describe("PreviewPanel — full panel state", () => {
   beforeEach(() => {
-    // The tab bar's useHorizontalScrollEdges observes layout; jsdom lacks it.
+    // Some panel descendants observe layout via ResizeObserver; jsdom lacks it.
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -159,35 +156,8 @@ describe("PreviewPanel — full panel state", () => {
     expect(screen.getByTestId("preview-panel")).toBeInTheDocument();
   });
 
-  it("keeps the active tab's title when the live page-status is blank", () => {
-    // Simulates the post-reset window: pageStatus is all-null (see the mocked
-    // usePreviewBridge above) while the warm tab still carries its real title.
-    // The overlay must fall back to the tab's own title, not read "New tab".
-    tabsState.current = {
-      ...tabsState.current,
-      tabSet: {
-        threadId: "thread-1",
-        activeTabId: "tab-1",
-        tabs: [
-          {
-            id: "tab-1",
-            threadId: "thread-1",
-            title: "Google",
-            url: "https://www.google.com/search?q=google",
-            faviconUrl: null,
-            warm: true,
-            active: true,
-          },
-        ],
-      },
-    };
-
+  it("no longer renders a horizontal tab strip (the rail is the page switcher)", () => {
     render(<PreviewPanel threadId="thread-1" />);
-
-    const tab = screen.getByTestId("preview-tab");
-    expect(tab).toHaveTextContent("Google");
-    expect(tab).not.toHaveTextContent("New tab");
-
-    tabsState.current = { ...tabsState.current, tabSet: null };
+    expect(screen.queryByTestId("preview-tab-bar")).not.toBeInTheDocument();
   });
 });

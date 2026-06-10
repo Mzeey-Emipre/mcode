@@ -15,6 +15,7 @@ import { ActivityRail, type ScopeProgress } from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
 import { PreviewPanel } from "@/components/panels/PreviewPanel";
+import { usePreviewDisplayTabSet, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { TerminalTabContent } from "@/components/terminal/TerminalTabContent";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -117,6 +118,13 @@ export function RightPanel() {
   // workspace itself in the threadless new-thread view (where they run against
   // the local workspace root). Their stores treat this as an opaque scope key.
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
+
+  // The Browser tab's open pages drive the rail's page switcher. The store is
+  // seeded by the mounted PreviewPanel; reading it here lets the rail render
+  // page entries (and the active-page favicon glyph) even while another tab is
+  // active. Null in web builds with no bridge, where the rail keeps the single
+  // Browser glyph.
+  const browserTabSet = usePreviewDisplayTabSet(panelScopeId);
 
   // Zustand action refs are stable (same identity for the store's lifetime),
   // so destructuring from getState() at render time is safe and avoids
@@ -399,9 +407,25 @@ export function RightPanel() {
           scopeProgress={scope}
           changesCount={changesCount}
           changesFresh={changesFresh}
+          browserTabSet={browserTabSet}
           onSelect={(id) => setRightPanelTab(activeWorkspaceId!, id)}
           onClose={(id) => closeRightPanelTab(activeWorkspaceId!, id)}
           onCreate={(id) => setRightPanelTab(activeWorkspaceId!, id)}
+          onSelectBrowserPage={(pageId) => {
+            // Focus the Browser tab and switch the guest to that page.
+            setRightPanelTab(activeWorkspaceId!, "preview");
+            if (panelScopeId) {
+              void usePreviewTabsStore.getState().activatePage(panelScopeId, pageId);
+            }
+          }}
+          onCloseBrowserPage={(pageId) => {
+            if (!panelScopeId) return;
+            // Closing the last page closes the Browser tab entirely (the rail is
+            // the page switcher, so an empty browser has nothing to show).
+            void usePreviewTabsStore.getState().closePage(panelScopeId, pageId, {
+              onLastClose: () => closeRightPanelTab(activeWorkspaceId!, "preview"),
+            });
+          }}
           onClosePanel={() => {
             // Blur the close button before triggering the hide so focus is not
             // inside the panel when aria-hidden applies on re-render.

@@ -167,6 +167,9 @@ export function registerTabHandlers(): void {
         title: null,
         faviconUrl: null,
         lastActiveAt: Date.now(),
+        // A user-opened page starts blank and must not inherit the thread's
+        // last URL via the per-thread resume hint on the next sync.
+        userCreatedBlank: true,
       });
 
       if (activate && tid === s.lastPreviewThreadId) {
@@ -259,6 +262,9 @@ export function registerTabHandlers(): void {
           title: null,
           faviconUrl: null,
           lastActiveAt: Date.now(),
+          // The user just closed the last page; the replacement stays blank
+          // rather than resurrecting the closed page's URL via the hint.
+          userCreatedBlank: true,
         };
         set.tabs.push(fallback);
         set.activeTabId = fallbackId;

@@ -331,6 +331,40 @@ describe("preview-browser", () => {
     });
   });
 
+  describe("new page (user-created blank tab)", () => {
+    it("opens blank and does not adopt the thread's resume hint", async () => {
+      const win = createWindow();
+      await showPreview(win, { threadId: "thread-1", url: "https://one.com" });
+      const firstView = createdViews[0]!;
+      // Page A has loaded, so the active tab is warm with a real URL.
+      firstView.webContents.getURL.mockReturnValue("https://one.com");
+
+      // The user opens a new page on the active thread.
+      const ev = fakeEvent(win);
+      await ipcHandlers["preview:tabs.create"]!(ev, {
+        threadId: "thread-1",
+        activate: true,
+      });
+      const newView = createdViews[createdViews.length - 1]!;
+      expect(newView).not.toBe(firstView);
+
+      // A later sync still carries the per-thread hint (the renderer's last
+      // URL), but the blank page must stay blank rather than loading it.
+      newView.webContents.loadURL.mockClear();
+      await showPreview(win, { threadId: "thread-1", url: "https://one.com" });
+      expect(newView.webContents.loadURL).not.toHaveBeenCalledWith("https://one.com");
+    });
+
+    it("still restores the hint into a thread's initial (non-user) tab", async () => {
+      // Control: the thread's auto-created first tab is not user-created blank,
+      // so cold-start restore from the hint still works.
+      const win = createWindow();
+      await showPreview(win, { threadId: "thread-restore", url: "https://restore.com" });
+      const view = createdViews[createdViews.length - 1]!;
+      expect(view.webContents.loadURL).toHaveBeenCalledWith("https://restore.com");
+    });
+  });
+
   describe("disposePreviewForWindow (full teardown)", () => {
     it("destroys webContents when the window is closing", async () => {
       const win = createWindow();

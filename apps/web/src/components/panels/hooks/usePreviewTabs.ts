@@ -1,66 +1,57 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import type { BrowserTabSet } from "@mcode/contracts";
-import { usePreviewFocusStore } from "@/stores/previewFocusStore";
+import {
+  usePreviewDisplayTabSet,
+  usePreviewTabsStore,
+  type ClosePageOptions,
+} from "@/stores/previewTabsStore";
 
 /**
- * Renderer-side state + actions for the embedded preview tab bar.
+ * Renderer-side subscription + action surface for a scope's in-app browser
+ * pages.
  *
- * Phase A: the host process is the source of truth for tab membership and the
- * active tab. This hook seeds from `preview:tabs.list` on thread mount,
- * reconciles against `preview:tabs-updated` pushes, and exposes thin wrappers
- * for the three mutating IPCs.
+ * The host process owns tab membership and the active page; this hook seeds
+ * {@link usePreviewTabsStore} from `preview:tabs.list` on mount and reconciles
+ * against `preview:tabs-updated` pushes. Mutations route through the store,
+ * which calls the desktop bridge and writes the result back. Returns the
+ * display tab set (host truth overlaid with the active page's live chrome).
  *
- * The hook is a no-op in non-desktop builds (returns `tabSet: null`).
+ * A no-op in non-desktop builds (the bridge is absent, so `tabSet` stays null).
  */
-export function usePreviewTabs(threadId: string) {
-  const [tabSet, setTabSet] = useState<BrowserTabSet | null>(null);
-  const tabs = window.desktopBridge?.preview?.tabs;
+export function usePreviewTabs(scopeId: string) {
+  const tabSet = usePreviewDisplayTabSet(scopeId);
+  const bridge = window.desktopBridge?.preview?.tabs;
 
   useEffect(() => {
-    if (!tabs) return;
+    if (!bridge) return;
     let cancelled = false;
-    void tabs.list(threadId).then((r) => {
+    const { setTabSet } = usePreviewTabsStore.getState();
+    void bridge.list(scopeId).then((r) => {
       if (cancelled) return;
-      if (r.ok) setTabSet(r.data);
+      if (r.ok) setTabSet(scopeId, r.data);
     });
-    const off = tabs.onUpdated((payload) => {
+    const off = bridge.onUpdated((payload: BrowserTabSet) => {
       if (cancelled) return;
-      if (payload.threadId === threadId) setTabSet(payload);
+      if (payload.threadId === scopeId) setTabSet(scopeId, payload);
     });
     return () => {
       cancelled = true;
       off();
     };
-  }, [tabs, threadId]);
+  }, [bridge, scopeId]);
 
-  const newTab = useCallback(async () => {
-    if (!tabs) return;
-    const r = await tabs.create(threadId, true);
-    if (r.ok) {
-      setTabSet(r.data.tabs);
-      // A freshly-created tab is empty. Match the panel-open shortcut's UX
-      // and put the cursor in the URL field so the user can type a URL
-      // immediately without an extra click.
-      usePreviewFocusStore.getState().requestOmniboxFocus();
-    }
-  }, [tabs, threadId]);
-
-  const activateTab = useCallback(
-    async (tabId: string) => {
-      if (!tabs) return;
-      const r = await tabs.activate(threadId, tabId);
-      if (r.ok) setTabSet(r.data);
-    },
-    [tabs, threadId],
+  const newTab = useCallback(
+    () => usePreviewTabsStore.getState().createPage(scopeId),
+    [scopeId],
   );
-
+  const activateTab = useCallback(
+    (tabId: string) => usePreviewTabsStore.getState().activatePage(scopeId, tabId),
+    [scopeId],
+  );
   const closeTab = useCallback(
-    async (tabId: string) => {
-      if (!tabs) return;
-      const r = await tabs.close(threadId, tabId);
-      if (r.ok) setTabSet(r.data);
-    },
-    [tabs, threadId],
+    (tabId: string, opts?: ClosePageOptions) =>
+      usePreviewTabsStore.getState().closePage(scopeId, tabId, opts),
+    [scopeId],
   );
 
   return { tabSet, newTab, activateTab, closeTab };
