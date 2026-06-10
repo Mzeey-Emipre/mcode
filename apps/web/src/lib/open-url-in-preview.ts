@@ -2,6 +2,7 @@ import { isMcodeWorkspacePreviewUrl } from "@mcode/contracts";
 import type { BrowserTabInfo } from "@mcode/contracts";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 
 /** Returns true when the event is a Ctrl+click (Windows/Linux) or Cmd+click (macOS). */
 export function isModifierClick(e: { ctrlKey: boolean; metaKey: boolean }): boolean {
@@ -107,7 +108,7 @@ export function openUrlInPreview({
   }
 
   const wsPath = resolveWorkspacePath(workspacePath);
-  const { showRightPanel, setRightPanelTab, setPreviewUrlForThread } = useDiffStore.getState();
+  const { setRightPanelTab, setPreviewUrlForThread } = useDiffStore.getState();
   // Width and tab are workspace-global; open/closed is per-thread. The scope is
   // a thread id, or a workspace id for the threadless new-thread preview, so
   // resolve the owning workspace from either and open the panel for that scope.
@@ -117,7 +118,7 @@ export function openUrlInPreview({
     ? thread.workspace_id
     : ws.workspaces.find((w) => w.id === threadId)?.id;
   if (workspaceId) {
-    showRightPanel(workspaceId, thread ? threadId : undefined);
+    showRightPanelAdaptive(workspaceId, thread ? threadId : undefined);
     setRightPanelTab(workspaceId, "preview");
   }
 
