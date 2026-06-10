@@ -1,8 +1,10 @@
 /**
- * One-shot dev server bundle: `apps/server` tsc emit (`emitDecoratorMetadata`)
- * followed by esbuild CJS bundle to `apps/desktop/dist/server/server.cjs`, plus
- * Claude SDK native CLI binary beside it. Shared by desktop dev orchestration and
- * `scripts/dev-web.mjs` (no `--import tsx` at runtime).
+ * One-shot dev server bundle: `apps/server` swc emit (decorator metadata for
+ * tsyringe) followed by esbuild CJS bundle to `apps/desktop/dist/server/server.cjs`,
+ * plus Claude SDK native CLI binary beside it. Shared by desktop dev orchestration
+ * and `scripts/dev-web.mjs` (no `--import tsx` at runtime). Typechecking is NOT
+ * part of this pipeline — it lives in the separate `typecheck` verify gate
+ * (and `tsc --watch` during `dev:desktop` for live feedback).
  */
 
 import { build } from "esbuild";
@@ -31,16 +33,35 @@ export function resolveServerTscBin(serverRoot = resolve(repoRootFromScript(), "
 }
 
 /**
- * Compile apps/server → dist-tsc via tsc (same project as packaged builds).
+ * Compile apps/server → dist-tsc via swc (`.swcrc` carries `decoratorMetadata`,
+ * matching tsc's `emitDecoratorMetadata` for tsyringe DI). ~50x faster than the
+ * tsc emit (sub-second vs ~20s cold) because swc strips types without checking
+ * them — typechecking remains the job of the separate `typecheck` verify gate.
+ *
+ * The output dir stays `dist-tsc` so esbuild call sites need no path changes.
+ * The dir is wiped first: swc is fast enough that incrementality buys nothing,
+ * and a clean emit prevents stale files from a previous tsc run lingering.
  *
  * @param {string} [serverRoot] Root of `apps/server` (directory with `package.json`).
  */
-export function compileServerWithTsc(serverRoot = resolve(repoRootFromScript(), "apps/server")) {
-  const tscBin = resolveServerTscBin(serverRoot);
-  execFileSync(process.execPath, [tscBin, "--project", resolve(serverRoot, "tsconfig.build.json")], {
-    cwd: serverRoot,
-    stdio: "inherit",
-  });
+export function compileServerWithSwc(serverRoot = resolve(repoRootFromScript(), "apps/server")) {
+  const serverRequire = createRequire(resolve(serverRoot, "package.json"));
+  const swcBin = serverRequire.resolve("@swc/cli/bin/swc.js");
+  const outDir = resolve(serverRoot, "dist-tsc");
+  if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
+  execFileSync(
+    process.execPath,
+    [
+      swcBin,
+      "src",
+      "-d",
+      "dist-tsc",
+      "--config-file",
+      resolve(serverRoot, ".swcrc"),
+      "--strip-leading-paths",
+    ],
+    { cwd: serverRoot, stdio: "inherit" },
+  );
 }
 
 /**
@@ -281,8 +302,8 @@ export async function rebuildServerDevBundle(options = {}) {
   const serverRoot = resolve(repoRoot, "apps/server");
   const serverOutFile = resolve(desktopRoot, "dist/server/server.cjs");
 
-  console.log("[server-dev-bundle] Running tsc (apps/server tsconfig.build)...");
-  compileServerWithTsc(serverRoot);
+  console.log("[server-dev-bundle] Compiling apps/server with swc...");
+  compileServerWithSwc(serverRoot);
 
   console.log("[server-dev-bundle] Bundling to dist/server/server.cjs...");
   await build({
