@@ -17,11 +17,13 @@ permissions:
   contents: write
 
 jobs:
-  preflight:
+  setup:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
       last_nightly_tag: ${{ steps.check.outputs.last_nightly_tag }}
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,17 +56,8 @@ jobs:
           fi
           echo "last_nightly_tag=$last_tag" >> "$GITHUB_OUTPUT"
 
-  prepare-release:
-    needs: [preflight]
-    if: needs.preflight.outputs.should_build == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    outputs:
-      tag: ${{ steps.tag.outputs.tag }}
-      version: ${{ steps.tag.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-
       - name: Compute nightly version and tag
+        if: steps.check.outputs.should_build == 'true'
         id: tag
         shell: bash
         env:
@@ -100,6 +93,7 @@ jobs:
           echo "Computed nightly tag: ${tag}"
 
       - name: Generate bot token
+        if: steps.check.outputs.should_build == 'true'
         id: bot-token
         uses: actions/create-github-app-token@v1
         with:
@@ -107,6 +101,7 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Create per-build nightly release
+        if: steps.check.outputs.should_build == 'true'
         env:
           GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           TAG: ${{ steps.tag.outputs.tag }}
@@ -125,8 +120,8 @@ jobs:
             --repo "${{ github.repository }}"
 
   build:
-    needs: [preflight, prepare-release]
-    if: needs.preflight.outputs.should_build == 'true'
+    needs: [setup]
+    if: needs.setup.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -159,20 +154,20 @@ jobs:
       - name: Set nightly package version
         shell: bash
         env:
-          MCODE_NIGHTLY_VERSION: ${{ needs.prepare-release.outputs.version }}
+          MCODE_NIGHTLY_VERSION: ${{ needs.setup.outputs.version }}
         run: |
           node <<'NODE'
           const fs = require("fs");
           const version = process.env.MCODE_NIGHTLY_VERSION;
           if (!version) {
-            console.error("MCODE_NIGHTLY_VERSION not set; this job depends on prepare-release.");
+            console.error("MCODE_NIGHTLY_VERSION not set; this job depends on setup.");
             process.exit(1);
           }
           const pkgPath = "apps/desktop/package.json";
           const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
           pkg.version = version;
           fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-          console.log("Nightly desktop version (from prepare-release):", version);
+          console.log("Nightly desktop version (from setup):", version);
           NODE
 
       - name: Build main & renderer
@@ -246,7 +241,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.prepare-release.outputs.tag }}
+          TAG: ${{ needs.setup.outputs.tag }}
         run: |
           while IFS= read -r f; do
             echo "Uploading: $f -> $TAG"
@@ -254,8 +249,8 @@ jobs:
           done < artifact-list.txt
 
   merge-mac-yml-nightly:
-    needs: [preflight, build, prepare-release]
-    if: needs.preflight.outputs.should_build == 'true'
+    needs: [setup, build]
+    if: needs.setup.outputs.should_build == 'true'
     runs-on: ubuntu-22.04
     steps:
       - name: Download arm64 yml
@@ -369,7 +364,7 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.prepare-release.outputs.tag }}
+          TAG: ${{ needs.setup.outputs.tag }}
         run: |
           if [ -f nightly-mac.yml ]; then
             echo "Uploading merged nightly-mac.yml to $TAG"
