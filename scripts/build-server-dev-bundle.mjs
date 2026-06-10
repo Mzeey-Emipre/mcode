@@ -59,6 +59,10 @@ export function compileServerWithSwc(serverRoot = resolve(repoRootFromScript(), 
       "--config-file",
       resolve(serverRoot, ".swcrc"),
       "--strip-leading-paths",
+      // Compile in-process instead of via a piscina worker pool: worker
+      // threads hit "Not implemented" under the bun version pinned for CI,
+      // and at ~140 files the pool saves nothing anyway.
+      "--sync",
     ],
     { cwd: serverRoot, stdio: "inherit" },
   );
