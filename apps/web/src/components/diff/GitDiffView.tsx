@@ -110,7 +110,10 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [view, workspaceId]);
+    // threadId is a fetch input: switching threads (or thread↔threadless) on the
+    // same view+workspace must refetch the worktree's file list, not keep the
+    // previous scope's stale diff.
+  }, [view, workspaceId, threadId]);
 
   if (loading) return <LoadingPulse />;
   if (!resolved || resolved.files.length === 0) {
