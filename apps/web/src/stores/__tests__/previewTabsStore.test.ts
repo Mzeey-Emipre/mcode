@@ -138,12 +138,26 @@ describe("previewTabsStore", () => {
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBe(remaining);
   });
 
-  it("closePage fires onLastClose when closing the last page", async () => {
+  it("closePage fires onLastClose and drops the scope's set when closing the last page", async () => {
     usePreviewTabsStore.getState().setTabSet(SCOPE, set("a", [page("a")]));
     mockBridge({});
     const onLastClose = vi.fn();
     await usePreviewTabsStore.getState().closePage(SCOPE, "a", { onLastClose });
     expect(onLastClose).toHaveBeenCalledTimes(1);
+    // The host recreates a blank fallback, but the Browser tab is gone; the
+    // scope's set must clear rather than retain a phantom page.
+    expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
+  });
+
+  it("setLiveChrome keeps the same reference when the chrome is unchanged", () => {
+    const { setLiveChrome } = usePreviewTabsStore.getState();
+    setLiveChrome(SCOPE, { title: "T", url: "u", favicon: "f" });
+    const first = usePreviewTabsStore.getState().liveChromeByScope;
+    setLiveChrome(SCOPE, { title: "T", url: "u", favicon: "f" });
+    // An identical tick must not notify subscribers (re-render storm guard).
+    expect(usePreviewTabsStore.getState().liveChromeByScope).toBe(first);
+    setLiveChrome(SCOPE, { title: "Changed", url: "u", favicon: "f" });
+    expect(usePreviewTabsStore.getState().liveChromeByScope).not.toBe(first);
   });
 
   it("page actions are no-ops without a desktop bridge", async () => {

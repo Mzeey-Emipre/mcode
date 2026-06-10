@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { create } from "zustand";
 import type { BrowserTabSet } from "@mcode/contracts";
 import { usePreviewFocusStore } from "./previewFocusStore";
@@ -14,6 +15,13 @@ export interface PreviewLiveChrome {
   readonly title: string | null;
   readonly url: string | null;
   readonly favicon: string | null;
+}
+
+/** Field-wise equality for two live-chrome values (both may be null). */
+function sameLiveChrome(a: PreviewLiveChrome | null, b: PreviewLiveChrome | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.title === b.title && a.url === b.url && a.favicon === b.favicon;
 }
 
 /** The minimal slice of the desktop bridge's tab surface this store drives. */
@@ -111,9 +119,14 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     })),
 
   setLiveChrome: (scopeId, chrome) =>
-    set((s) => ({
-      liveChromeByScope: { ...s.liveChromeByScope, [scopeId]: chrome },
-    })),
+    set((s) => {
+      // The host re-emits page-status many times per second during a load.
+      // Bail when the chrome is unchanged so unchanged ticks don't notify
+      // subscribers (the rail glyph and the whole RightPanel tree subscribe).
+      const prev = s.liveChromeByScope[scopeId] ?? null;
+      if (sameLiveChrome(prev, chrome)) return s;
+      return { liveChromeByScope: { ...s.liveChromeByScope, [scopeId]: chrome } };
+    }),
 
   createPage: async (scopeId) => {
     const tabs = bridgeTabs();
@@ -145,7 +158,12 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     if (isLast) opts?.onLastClose?.();
     get().setLiveChrome(scopeId, null);
     const r = await tabs.close(scopeId, tabId);
-    if (r.ok) get().setTabSet(scopeId, r.data);
+    if (!r.ok) return;
+    // Closing the last page collapses the Browser tab. The host always recreates
+    // a blank fallback page in its returned set, but the tab is gone from the
+    // rail, so drop the scope's set rather than leave that fallback as a phantom
+    // page; reopening Browser re-seeds it via `list`.
+    get().setTabSet(scopeId, isLast ? null : r.data);
   },
 }));
 
@@ -159,5 +177,8 @@ export function usePreviewDisplayTabSet(
 ): BrowserTabSet | null {
   const tabSet = usePreviewTabsStore((s) => (scopeId ? s.tabSetByScope[scopeId] ?? null : null));
   const live = usePreviewTabsStore((s) => (scopeId ? s.liveChromeByScope[scopeId] ?? null : null));
-  return overlayDisplaySet(tabSet, live);
+  // overlayDisplaySet allocates a fresh set when live chrome is present; memoize
+  // on the source references so an unchanged tick yields a stable reference and
+  // does not defeat downstream memoization of the rail.
+  return useMemo(() => overlayDisplaySet(tabSet, live), [tabSet, live]);
 }
