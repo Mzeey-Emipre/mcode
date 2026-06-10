@@ -134,7 +134,7 @@ jobs:
           - os: blacksmith-4vcpu-windows-2025
             build-args: ""
             target-arch: ""
-          - os: ubuntu-22.04
+          - os: blacksmith-4vcpu-ubuntu-2404
             build-args: ""
             target-arch: ""
           - os: blacksmith-12vcpu-macos-26
@@ -200,6 +200,10 @@ jobs:
       - name: Smoke test packaged server
         if: matrix.target-arch == '' || matrix.target-arch == 'arm64'
         run: node apps/desktop/scripts/smoke-test.mjs
+
+      - name: Verify Linux artifacts on Ubuntu 22.04
+        if: runner.os == 'Linux'
+        run: bash apps/desktop/scripts/verify-linux-artifacts-ubuntu22.sh
 
       - name: Upload macOS update metadata (nightly channel)
         if: matrix.target-arch == 'arm64' || matrix.target-arch == 'x64'
