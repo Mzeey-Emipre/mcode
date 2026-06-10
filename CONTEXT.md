@@ -123,6 +123,15 @@ Sub-control of New worktree mode controlling how the new branch is named.
 **Custom** lets the user type one explicitly. Auto is the default, but the
 user can change the default to Custom from settings.
 
+### Composer session
+The composer's per-thread state, treated as one value: draft text,
+attachments, model, provider, reasoning level, composer mode,
+access/permission mode, context window, and provider-specific toggles. Owned
+by one module whose interface is **snapshot** (save the outgoing thread's
+session) and **restore** (install the incoming thread's session as a single
+state transition). Switching threads is one restore; the editor update is an
+implementation detail behind the seam. (Epic #649, slice #655.)
+
 ## Interaction modes
 
 The two modes a thread can be in. Mutually exclusive; orthogonal to the
@@ -280,6 +289,23 @@ a child thread and for the "Context compacted" marker placed after
 compaction runs. Messages are what `forked_from_message_id` points to and
 what hidden messages exclude themselves from in user-visible queries.
 
+### Conversation page
+The unit a thread's visible conversation loads in: one pagination window of
+messages together with their narrative (tool calls, narration segments, hook
+executions), served by a single request whose cost is a fixed number of
+queries regardless of how many turns the page spans. Loading a thread means
+loading its latest conversation page; paging back loads older pages through
+the same interface. (Epic #649, slices #650/#651.)
+
+### Streaming vs settled rendering
+Two adapters at one rendering seam for agent text. While text deltas are
+arriving, a block renders through the **streaming adapter** (plain
+pre-wrapped text with the typing cursor — cheap per frame). Once the block
+settles (its deltas stop, classification resolved), it renders through the
+**settled adapter** — full markdown with code highlighting, parsed once. The
+user sees the same final result; only the cost during streaming differs.
+(Epic #649, slice #658.)
+
 ### Turn outcome
 How a turn ended, as one of three mutually-exclusive states:
 **completed** (the agent finished its work normally), **errored** (the turn
@@ -419,6 +445,33 @@ lacks it, `/goal` passes through to the model as plain text so the model
 still sees what the user typed. Claude implements it today; Codex is the
 planned next implementer (matching the `/goal` Multi-provider command entry
 under `Slash command`).
+
+## Server runtime
+
+### Thread-scoped push
+The routing rule for server-pushed events: a client declares which threads
+it is watching, and an event carrying a thread id is delivered only to
+clients subscribed to that thread. Events without a thread id remain
+broadcast to every client. A window watching one thread never receives
+another thread's streaming traffic; on a thread switch the client
+resubscribes and hydration covers the gap. Payload validation at this seam
+has two adapters: validating (dev, logs schema drift) and pass-through
+(production). (Epic #649, slices #656/#657.)
+
+### Git executor
+The single module that owns running git as a child process on the server:
+asynchronous execution, queueing per repository, timeouts, and caching of
+repeated repository-discovery results. Every git caller — file watching,
+workspace enrichment, worktree cleanup, branch listing — goes through it,
+so a slow git command never blocks the event loop. In tests, a fake executor
+adapter stands in for real process spawns. (Epic #649, slice #659.)
+
+### Snapshot dirtiness gate
+The short-circuit inside turn-snapshot capture: when the working tree is
+clean, the snapshot ref resolves from HEAD with one cheap status check
+instead of staging the whole tree; when dirty, capture behaves as before.
+Turn views and the Cumulative comparison are unaffected — only the cost of
+capturing on a clean tree changes. (Epic #649, slice #660.)
 
 ## Internal / hidden state
 
