@@ -10,6 +10,15 @@ import type { DiffViewMode } from "@/stores/diffStore";
 export type ReviewViewRequirement = "git" | "diffSummary";
 
 /**
+ * The kind of picked operand a comparison view surfaces in the toolbar's
+ * contextual operand slot. `"branch"` picks a base→target ref pair; `"commit"`
+ * picks a single commit. Views with no operand are *fixed* comparisons
+ * (Unstaged, Staged, Last turn, Cumulative) and render no operand control. See
+ * CONTEXT.md → "Comparison".
+ */
+export type ReviewViewOperand = "branch" | "commit";
+
+/**
  * Static metadata describing one Review-tab view for the dual-scope selection
  * model. Pure data — no store or React state. See CONTEXT.md → "Review tab".
  */
@@ -29,6 +38,12 @@ export interface ReviewView {
   readonly threadOnly: boolean;
   /** Optional extra gate beyond scope; see {@link ReviewViewRequirement}. */
   readonly requires?: ReviewViewRequirement;
+  /**
+   * The picked operand this view surfaces beside the switcher, if any. Absent
+   * for fixed comparisons. The toolbar reserves its operand slot for views that
+   * carry one; the picker that fills it lands per-operand in later slices.
+   */
+  readonly operand?: ReviewViewOperand;
 }
 
 /**
@@ -41,8 +56,8 @@ export interface ReviewView {
 export const REVIEW_VIEWS: readonly ReviewView[] = [
   { id: "unstaged", label: "Unstaged", threadOnly: false, requires: "git" },
   { id: "staged", label: "Staged", threadOnly: false, requires: "git" },
-  { id: "commit", label: "Commit", threadOnly: false, requires: "git" },
-  { id: "branch", label: "Branch", threadOnly: false, requires: "git" },
+  { id: "commit", label: "Commit", threadOnly: false, requires: "git", operand: "commit" },
+  { id: "branch", label: "Branch", threadOnly: false, requires: "git", operand: "branch" },
   { id: "last-turn", label: "Last turn", threadOnly: true },
   { id: "cumulative", label: "Cumulative", threadOnly: true },
   { id: "summary", label: "Summary", threadOnly: true, requires: "diffSummary" },
