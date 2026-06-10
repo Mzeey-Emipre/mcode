@@ -237,6 +237,9 @@ function BrowserPageRailTab({
         data-rail-browser-page={page.id}
         data-active={active ? "true" : undefined}
         aria-pressed={active}
+        // The live page (active, and Browser owns the panel) is the current
+        // page in the switcher; expose that beyond the visual lamp.
+        aria-current={active && browserActive ? "page" : undefined}
         aria-label={`Browser page: ${label}`}
         title={label}
         onClick={() => onSelect(page.id)}
