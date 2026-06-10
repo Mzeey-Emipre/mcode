@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
+import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { BrowserHeader } from "./BrowserHeader";
 import { LocalPortsEmptyState } from "./LocalPortsEmptyState";
 import { PreviewErrorPanel } from "./PreviewErrorPanel";
-import { PREVIEW_TABPANEL_ID, PreviewTabBar } from "./PreviewTabBar";
 import { PreviewPerfHud } from "./PreviewPerfHud";
 import { usePreviewBridge } from "./hooks/usePreviewBridge";
 import {
@@ -77,34 +77,29 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     pushSync: bridge.pushSync,
     onSuccess: onCaptureSuccess,
   });
+  // Subscribes the scope's tab set into usePreviewTabsStore and exposes the
+  // "New page" action for the header. Page switching/closing is driven from the
+  // activity rail (the page switcher), so this panel no longer renders a strip.
   const tabs = usePreviewTabs(threadId);
 
   // Page events flow through `preview:page-status`, not `preview:tabs-updated`
-  // (P2). Overlay the active tab's live chrome so its bar entry stays current
-  // without re-serializing the whole tab set on every navigation/favicon tick.
-  const displayTabSet = useMemo(() => {
-    const ts = tabs.tabSet;
-    if (!ts || !ts.activeTabId) return ts;
-    const status = bridge.pageStatus;
-    return {
-      ...ts,
-      tabs: ts.tabs.map((t) =>
-        t.id === ts.activeTabId
-          ? {
-              // Fall back to the tab's own chrome when the live page-status
-              // field is null. The per-thread reset blanks pageStatus on a
-              // thread/url change without the warm guest re-emitting its title,
-              // so overlaying null here would clobber the active tab's real
-              // title and the bar would read "New tab" over a loaded page.
-              ...t,
-              title: status.title ?? t.title,
-              url: status.url ?? t.url,
-              faviconUrl: status.favicon ?? t.faviconUrl,
-            }
-          : t,
-      ),
+  // (P2), so the host-truth tab set lags the active page's live chrome. Publish
+  // it to the store so the rail's page switcher and Browser glyph reflect the
+  // active page as it navigates, without re-serializing the whole tab set on
+  // every favicon tick. Clear on unmount so a backgrounded scope falls back to
+  // each tab's own persisted favicon rather than a stale overlay.
+  useEffect(() => {
+    usePreviewTabsStore.getState().setLiveChrome(threadId, {
+      title: bridge.pageStatus.title,
+      url: bridge.pageStatus.url,
+      favicon: bridge.pageStatus.favicon,
+    });
+  }, [threadId, bridge.pageStatus]);
+  useEffect(() => {
+    return () => {
+      usePreviewTabsStore.getState().setLiveChrome(threadId, null);
     };
-  }, [tabs.tabSet, bridge.pageStatus]);
+  }, [threadId]);
 
   const designModeActive = usePreviewDesignModeStore((s) => s.modes[threadId] === true);
   const designModeToggle = usePreviewDesignModeStore((s) => s.toggle);
@@ -198,12 +193,6 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       data-testid="preview-panel"
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
-      <PreviewTabBar
-        tabSet={displayTabSet}
-        onNewTab={tabs.newTab}
-        onActivate={tabs.activateTab}
-        onClose={tabs.closeTab}
-      />
       <BrowserHeader
         url={bridge.inputUrl}
         pageTitle={bridge.pageTitle}
@@ -240,8 +229,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
           guest paints over it. */}
       <div
         ref={surfaceRef}
-        id={PREVIEW_TABPANEL_ID}
-        role="tabpanel"
+        role="region"
         aria-label="Page preview"
         className={cn(
           "relative mx-2 mb-2 mt-1 min-h-[min(40vh,20rem)] min-w-0 flex-1 rounded-md border border-border/40 bg-muted/10",

@@ -1,4 +1,5 @@
-import { Plus, X } from "lucide-react";
+import { Globe, Plus, X } from "lucide-react";
+import type { BrowserTabInfo, BrowserTabSet } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -195,6 +196,131 @@ function RailTab({
   );
 }
 
+/** Human-readable name for a browser page, used as its rail tooltip / a11y name. */
+function pageLabel(page: BrowserTabInfo): string {
+  if (page.title && page.title.trim().length > 0) return page.title;
+  if (page.url && page.url.trim().length > 0) {
+    try {
+      const u = new URL(page.url);
+      return u.host || u.pathname || page.url;
+    } catch {
+      return page.url;
+    }
+  }
+  return "New page";
+}
+
+/**
+ * One browser page in the rail's page switcher: a favicon glyph (globe
+ * fallback) with the active-tab lamp when its browser owns the panel, plus a
+ * hover-revealed × to close it. Selecting a page focuses the Browser tab and
+ * switches the guest to that page.
+ */
+function BrowserPageRailTab({
+  page,
+  active,
+  browserActive,
+  onSelect,
+  onClose,
+}: {
+  page: BrowserTabInfo;
+  active: boolean;
+  browserActive: boolean;
+  onSelect: (pageId: string) => void;
+  onClose: (pageId: string) => void;
+}) {
+  const label = pageLabel(page);
+  return (
+    <div className="group relative">
+      <button
+        type="button"
+        data-rail-browser-page={page.id}
+        data-active={active ? "true" : undefined}
+        aria-pressed={active}
+        aria-label={`Browser page: ${label}`}
+        title={label}
+        onClick={() => onSelect(page.id)}
+        className={cn(
+          "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
+          active && browserActive
+            ? "bg-card text-primary"
+            : active
+              ? "bg-card/60 text-foreground"
+              : "text-foreground/70 hover:bg-card/60 hover:text-foreground",
+        )}
+      >
+        {page.faviconUrl ? (
+          <img src={page.faviconUrl} alt="" width={17} height={17} className="rounded-[3px]" />
+        ) : (
+          <Globe size={17} />
+        )}
+      </button>
+      {/* Active lamp mirrors the singleton tabs: a short amber bar on the inner
+          edge, shown only when this page is active and Browser owns the panel. */}
+      {active && browserActive && (
+        <span
+          data-testid="rail-active-indicator"
+          aria-hidden
+          className="pointer-events-none absolute -left-1.5 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary"
+        />
+      )}
+      <button
+        type="button"
+        aria-label={`Close page ${label}`}
+        title={`Close ${label}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose(page.id);
+        }}
+        className={cn(
+          "absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-background text-muted-foreground opacity-0 ring-1 ring-border transition",
+          "hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+        )}
+      >
+        <X size={10} />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The Browser tab's rail presence: its open pages as favicon entries, grouped
+ * together so they read as one switcher under the Browser tab. The rail is the
+ * page switcher (there is no horizontal strip); the active page's favicon is
+ * the Browser glyph, and closing the last page closes the Browser tab.
+ */
+function BrowserPageGroup({
+  tabSet,
+  browserActive,
+  onSelectPage,
+  onClosePage,
+}: {
+  tabSet: BrowserTabSet;
+  browserActive: boolean;
+  onSelectPage: (pageId: string) => void;
+  onClosePage: (pageId: string) => void;
+}) {
+  return (
+    <div
+      data-testid="rail-browser-pages"
+      role="group"
+      aria-label="Browser pages"
+      className="flex flex-col items-center gap-1 rounded-lg bg-foreground/[0.03] py-1"
+    >
+      {tabSet.tabs.map((page) => (
+        <BrowserPageRailTab
+          key={page.id}
+          page={page}
+          active={page.id === tabSet.activeTabId}
+          browserActive={browserActive}
+          onSelect={onSelectPage}
+          onClose={onClosePage}
+        />
+      ))}
+    </div>
+  );
+}
+
 /**
  * The dynamic add control: hidden when nothing is creatable, opens the one
  * creatable type directly when exactly one remains, otherwise a menu of the
@@ -292,10 +418,13 @@ export function ActivityRail({
   scopeProgress,
   changesCount,
   changesFresh,
+  browserTabSet,
   onSelect,
   onClose,
   onCreate,
   onClosePanel,
+  onSelectBrowserPage,
+  onCloseBrowserPage,
 }: {
   readonly openTabs: readonly RightPanelTab[];
   readonly activeTab: RightPanelTab;
@@ -303,28 +432,49 @@ export function ActivityRail({
   readonly scopeProgress: ScopeProgress;
   readonly changesCount: number;
   readonly changesFresh: boolean;
+  /** The Browser tab's open pages, or null when none are known (web build / not yet loaded). */
+  readonly browserTabSet: BrowserTabSet | null;
   onSelect: (id: RightPanelTab) => void;
   onClose: (id: RightPanelTab) => void;
   onCreate: (id: RightPanelTab) => void;
   onClosePanel: () => void;
+  onSelectBrowserPage: (pageId: string) => void;
+  onCloseBrowserPage: (pageId: string) => void;
 }) {
   return (
     <div
       data-testid="activity-rail"
       className="flex w-12 flex-none flex-col items-center gap-1 border-r border-border/40 py-2"
     >
-      {openTabs.map((id) => (
-        <RailTab
-          key={id}
-          id={id}
-          active={id === activeTab}
-          scope={scopeProgress}
-          changesCount={changesCount}
-          changesFresh={changesFresh}
-          onSelect={onSelect}
-          onClose={onClose}
-        />
-      ))}
+      {openTabs.map((id) => {
+        // The Browser tab becomes its page switcher: when its pages are known,
+        // render them as a favicon group instead of the single tab glyph. With
+        // none known yet (or a web build with no bridge), fall back to the tab
+        // glyph so Browser is still selectable.
+        if (id === "preview" && browserTabSet && browserTabSet.tabs.length > 0) {
+          return (
+            <BrowserPageGroup
+              key={id}
+              tabSet={browserTabSet}
+              browserActive={activeTab === "preview"}
+              onSelectPage={onSelectBrowserPage}
+              onClosePage={onCloseBrowserPage}
+            />
+          );
+        }
+        return (
+          <RailTab
+            key={id}
+            id={id}
+            active={id === activeTab}
+            scope={scopeProgress}
+            changesCount={changesCount}
+            changesFresh={changesFresh}
+            onSelect={onSelect}
+            onClose={onClose}
+          />
+        );
+      })}
       {/* The add control only appears once a tab is open; with none open the
           empty-state card grid is the create surface. */}
       {openTabs.length > 0 && (
