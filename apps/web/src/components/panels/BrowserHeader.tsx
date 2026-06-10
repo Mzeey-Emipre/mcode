@@ -178,6 +178,27 @@ export function BrowserHeader({
           Navigate forward
         </TooltipContent>
       </Tooltip>
+      {hasLoadedPage ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={cn("shrink-0", ICON_HIT_SLOP)}
+                onClick={onReload}
+                aria-label="Reload"
+              >
+                <RotateCw size={16} aria-hidden />
+              </Button>
+            }
+          />
+          <TooltipContent side="top" sideOffset={6} className="text-xs">
+            Reload page
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
 
       {/* Center bar: morphs across empty / focused / loaded. */}
       <div className="flex min-w-0 flex-1 justify-center px-1">
@@ -186,7 +207,7 @@ export function BrowserHeader({
           onPointerEnter={() => setBarHover(true)}
           onPointerLeave={() => setBarHover(false)}
           className={cn(
-            "flex w-full max-w-md items-center gap-1.5 rounded-full px-3 py-1 transition-all",
+            "flex w-full max-w-xl items-center gap-1.5 rounded-full px-3.5 py-1.5 transition-all",
             focused
               ? "bg-input ring-2 ring-ring/70"
               : loadedHoverReveal
@@ -194,25 +215,7 @@ export function BrowserHeader({
                 : "hover:bg-input/60",
           )}
         >
-          {loadedHoverReveal ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    onClick={onReload}
-                    aria-label="Reload"
-                    className="shrink-0 text-muted-foreground hover:text-foreground"
-                  >
-                    <RotateCw size={14} aria-hidden />
-                  </button>
-                }
-              />
-              <TooltipContent side="top" sideOffset={6} className="text-xs">
-                Reload page
-              </TooltipContent>
-            </Tooltip>
-          ) : faviconVisible ? (
+          {faviconVisible ? (
             <img
               src={faviconUrl!}
               alt=""

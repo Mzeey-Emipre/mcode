@@ -324,10 +324,12 @@ test.describe("PreviewPanel — loaded header", () => {
     }).toPass({ timeout: 8000, intervals: [150, 300, 500] });
   });
 
-  test("header renders nav, design, screenshot, and the overflow kebab", async ({ page }) => {
+  test("header renders nav, reload, design, screenshot, and the overflow kebab", async ({ page }) => {
     await expect(page.getByTestId("browser-header")).toBeVisible();
     await expect(page.getByLabel("Back")).toBeVisible();
     await expect(page.getByLabel("Forward")).toBeVisible();
+    // Reload sits in the nav cluster (outside the URL pill) once a page loads.
+    await expect(page.getByLabel("Reload")).toBeVisible();
     await expect(page.getByLabel("Design")).toBeVisible();
     await expect(page.getByLabel("Screenshot")).toBeVisible();
     await expect(page.getByLabel("More browser tools")).toBeVisible();
@@ -344,12 +346,12 @@ test.describe("PreviewPanel — loaded header", () => {
     await expect(page.getByLabel("Toggle capture tools")).toHaveCount(0);
   });
 
-  test("hovering the loaded bar reveals reload and open-in-external", async ({ page }) => {
-    // Reload and the external-open arrow are hidden until the bar is hovered.
-    await expect(page.getByLabel("Reload")).toHaveCount(0);
+  test("hovering the loaded bar reveals open-in-external", async ({ page }) => {
+    // Reload lives in the nav cluster and is always present once loaded; only
+    // the external-open arrow stays hidden inside the pill until hover.
+    await expect(page.getByLabel("Reload")).toBeVisible();
     await expect(page.getByLabel("Open in system browser")).toHaveCount(0);
     await page.getByTestId("browser-url-bar").hover();
-    await expect(page.getByLabel("Reload")).toBeVisible();
     await expect(page.getByLabel("Open in system browser")).toBeVisible();
   });
 
