@@ -216,7 +216,13 @@ function resetTurnEphemeral(_rec: ThreadRecord): Partial<ThreadRecord> {
     toolCalls: [],
     thoughtSegments: [],
     hooks: [],
+    currentTurnResponseKey: "",
   };
+}
+
+/** Returns a React key shared by the live and just-persisted final response. */
+function createTurnResponseKey(threadId: string): string {
+  return `turn-response:${threadId}:${crypto.randomUUID()}`;
 }
 
 /**
@@ -687,6 +693,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ...settingsPatch,
           ...messagePatch,
           agentStartTime: Date.now(),
+          currentTurnResponseKey: createTurnResponseKey(threadId),
           lastFallback: undefined,
           rateLimit: undefined,
           apiRetry: undefined,
@@ -831,6 +838,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingPreview: "",
           toolCalls: [],
           currentTurnMessageId: "",
+          currentTurnResponseKey: "",
+          assistantResponseKeys: {},
           oldestLoadedSequence: 0,
           hasMoreMessages: false,
           isLoadingMore: false,
@@ -1345,6 +1354,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           records: patchThreadRecord(state.records, threadId, {
             agentStartTime: Date.now(),
             ...resetTurnEphemeral(getThreadRecord(state.records, threadId)),
+            currentTurnResponseKey: createTurnResponseKey(threadId),
           }),
         };
       });
@@ -1390,9 +1400,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             lastSeg && lastSeg.endedAt === undefined
               ? [...segments.slice(0, -1), { ...lastSeg, endedAt: Date.now() }]
               : segments;
+          const responseKey =
+            rec.currentTurnResponseKey || createTurnResponseKey(threadId);
 
           const turnPatch = {
             currentTurnMessageId: message.id,
+            currentTurnResponseKey: responseKey,
+            assistantResponseKeys: {
+              ...rec.assistantResponseKeys,
+              [message.id]: responseKey,
+            },
             streaming: "",
             streamingPreview: "",
             thoughtSegments: closedSegments,
@@ -1431,6 +1448,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               delete nextServerMessageIds[previousId];
             }
 
+            const nextAssistantResponseKeys = { ...rec.assistantResponseKeys };
+            if (previousId in nextAssistantResponseKeys) {
+              nextAssistantResponseKeys[message.id] = nextAssistantResponseKeys[previousId];
+              delete nextAssistantResponseKeys[previousId];
+            }
+
             const replaced = rec.messages.slice(0, -1).concat({
               ...last,
               id: message.id,
@@ -1445,6 +1468,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 persistedToolCallCounts: nextPersistedToolCallCounts,
                 persistedFilesChanged: nextPersistedFilesChanged,
                 serverMessageIds: nextServerMessageIds,
+                assistantResponseKeys: nextAssistantResponseKeys,
                 latestTurnWithChanges:
                   rec.latestTurnWithChanges === previousId ? message.id : rec.latestTurnWithChanges,
                 ...(evicted ? { hasMoreMessages: true } : {}),
@@ -1870,10 +1894,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               ? guardrailMsg
               : null;
           const pending = [message, ...(dedupedGuardrail ? [dedupedGuardrail] : [])];
+          const responseKey =
+            rec.currentTurnResponseKey || createTurnResponseKey(threadId);
 
           const basePatch = {
             streaming: "",
             streamingPreview: "",
+            currentTurnMessageId: message.id,
+            currentTurnResponseKey: responseKey,
+            assistantResponseKeys: {
+              ...rec.assistantResponseKeys,
+              [message.id]: responseKey,
+            },
             thoughtSegments: closedSegments,
             toolCalls: completedCalls,
             permissions: [] as StoredPermission[],
@@ -2231,6 +2263,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streaming: "",
           streamingPreview: "",
           agentStartTime: undefined,
+          currentTurnMessageId: "",
+          currentTurnResponseKey: "",
           toolCalls: [] as ToolCall[],
           isCompacting: false,
           rateLimit: undefined,
@@ -2341,7 +2375,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             ...rec.serverMessageIds,
             [localMsgId]: payload.messageId,
           },
-          currentTurnMessageId: "",
           interruptStopFileNotice,
           awaitingUserStopPersist,
         }),

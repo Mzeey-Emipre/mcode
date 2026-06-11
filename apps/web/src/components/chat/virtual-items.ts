@@ -25,9 +25,52 @@ function isPlanQuestionsMessage(content: string): boolean {
 /** Estimated collapsed height (px) for a streaming card virtual item. */
 export const STREAMING_CARD_COLLAPSED_HEIGHT = 56;
 
+/** State that lets the current turn's live and persisted assistant rows share one React key. */
+export interface CurrentTurnResponseIdentity {
+  threadId: string;
+  messageId?: string;
+  responseKey?: string;
+  responseKeysByMessageId?: Record<string, string>;
+}
+
+/** Returns the stable final-response key for a live turn. */
+export function liveFinalResponseItemKey(
+  threadId: string,
+  responseKey?: string,
+): string {
+  return responseKey || `turn-response:${threadId}:pending`;
+}
+
+/** Returns the message item key, preserving the current turn's live key after persistence. */
+export function assistantMessageItemKey(
+  message: Message,
+  currentTurn?: CurrentTurnResponseIdentity,
+): string {
+  const mappedKey = currentTurn?.responseKeysByMessageId?.[message.id];
+  if (message.role === "assistant" && mappedKey) {
+    return liveFinalResponseItemKey(currentTurn.threadId, mappedKey);
+  }
+  if (
+    message.role === "assistant" &&
+    currentTurn?.messageId === message.id &&
+    currentTurn.responseKey
+  ) {
+    return liveFinalResponseItemKey(currentTurn.threadId, currentTurn.responseKey);
+  }
+  return message.id;
+}
+
 /** Represents an item rendered in the virtualized chat list: messages, tool indicators, or streaming text. */
 export type ChatVirtualItem =
-  | { key: string; type: "message"; message: Message }
+  | {
+      key: string;
+      type: "message";
+      message: Message;
+      assistantState?: {
+        isStreaming: boolean;
+        actionsVisible: boolean;
+      };
+    }
   | { key: string; type: "active-tools"; toolCalls: readonly ToolCall[] }
   | {
       key: string;
@@ -101,21 +144,10 @@ export type ChatVirtualItem =
     }
   | {
       key: string;
-      type: "streaming-response";
-      /**
-       * Live, in-flight response text streaming character-by-character. Lives
-       * in the virtual-item slot the persisted `MessageBubble` will occupy on
-       * `session.message`, so the swap from streaming → persisted is a content
-       * replacement rather than a position jump.
-       */
-      text: string;
-    }
-  | {
-      key: string;
       type: "narrative-indicator";
       /**
        * "X steps · N subagents · phase…" status footer rendered BELOW the
-       * live streaming-response so the writing-animation reads as the primary
+       * live assistant response so the writing animation reads as the primary
        * surface and the progress meta sits underneath. Only emitted while the
        * agent is running.
        */
@@ -133,6 +165,7 @@ export function buildStableItems(
   messages: readonly Message[],
   persistedFilesChanged?: Record<string, string[]>,
   latestTurnWithChanges?: string | null,
+  currentTurn?: CurrentTurnResponseIdentity,
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -150,7 +183,18 @@ export function buildStableItems(
         messageContent: msg.content,
       });
     }
-    items.push({ key: msg.id, type: "message", message: msg });
+    const isCurrentAssistant =
+      msg.role === "assistant" &&
+      (currentTurn?.messageId === msg.id ||
+        currentTurn?.responseKeysByMessageId?.[msg.id] != null);
+    items.push({
+      key: assistantMessageItemKey(msg, currentTurn),
+      type: "message",
+      message: msg,
+      ...(isCurrentAssistant
+        ? { assistantState: { isStreaming: false, actionsVisible: true } }
+        : {}),
+    });
 
     if (msg.role === "assistant") {
       // Late stop hooks (Stop / SessionEnd / PreCompact) render immediately
@@ -208,6 +252,7 @@ export function buildVolatileItems(
   }[],
   hooks?: readonly HookExecution[],
   thoughtSegments?: readonly ThoughtSegment[],
+  currentTurn?: CurrentTurnResponseIdentity,
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
 
@@ -227,10 +272,9 @@ export function buildVolatileItems(
     });
   }
 
-  // Streaming response item — fills the slot where the persisted MessageBubble
-  // will appear on `session.message`. Keeps the live typing text in the same
-  // virtual-list position the persisted bubble lands in, so the swap is a
-  // content replacement rather than a jump.
+  // Provisional assistant message — fills the slot where the persisted
+  // MessageBubble will remain on `session.message`. Keeping the item type and
+  // key stable lets React update the same subtree instead of remounting it.
   const liveText = computeLiveStreamingText({
     thoughtSegments: thoughtSegments ?? [],
     streamingText: streamingText ?? "",
@@ -238,15 +282,30 @@ export function buildVolatileItems(
     toolCalls,
   });
   if (liveText.length > 0) {
+    const threadId = currentTurn?.threadId ?? "__active_thread__";
+    const responseKey = liveFinalResponseItemKey(threadId, currentTurn?.responseKey);
     items.push({
-      key: "streaming-response",
-      type: "streaming-response",
-      text: liveText,
+      key: responseKey,
+      type: "message",
+      message: {
+        id: responseKey,
+        thread_id: threadId,
+        role: "assistant",
+        content: liveText,
+        tool_calls: null,
+        files_changed: null,
+        cost_usd: null,
+        tokens_used: null,
+        timestamp: new Date(0).toISOString(),
+        sequence: Number.MAX_SAFE_INTEGER,
+        attachments: null,
+      },
+      assistantState: { isStreaming: true, actionsVisible: false },
     });
   }
 
   // Narrative indicator — "X steps · N subagents · phase… (0:22)" — rendered
-  // as its own virtual-item slot BELOW the streaming-response so the writing
+  // as its own virtual-item slot BELOW the live assistant response so the writing
   // animation reads as the primary surface and the meta status sits underneath
   // it (rather than above, between the actions molecule and the response).
   // Only emitted while the agent is running.
@@ -332,22 +391,22 @@ export function buildVirtualItems(
     lastItem.message.role === "assistant" &&
     !isPlanQuestionsMessage(lastItem.message.content)
   ) {
-    // narrative-flow, streaming-response, and narrative-indicator all go
+    // narrative-flow, the live assistant message, and narrative-indicator all go
     // BEFORE the last assistant message bubble so the user reads
-    // top-to-bottom: actions → response → progress meta. streaming-response
+    // top-to-bottom: actions → response → progress meta. The live assistant
     // sits under narrative-flow (mirroring where the MessageBubble lands on
-    // persist), and the indicator sits under the streaming-response so the
+    // persist), and the indicator sits under that response so the
     // writing animation reads as the primary surface.
     const headItems = volatileItems.filter(
       (v) =>
         v.type === "narrative-flow" ||
-        v.type === "streaming-response" ||
+        (v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming) ||
         v.type === "narrative-indicator",
     );
     const tailItems = volatileItems.filter(
       (v) =>
         v.type !== "narrative-flow" &&
-        v.type !== "streaming-response" &&
+        !(v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming) &&
         v.type !== "narrative-indicator",
     );
     // Drop the persisted-narrative placeholder for the message that has live
@@ -471,6 +530,7 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
       if (message.role === "system") return 40;
       const contentHeight = estimateMarkdownHeight(message.content);
       if (message.role === "user") return 52 + contentHeight;
+      if (item.assistantState?.isStreaming) return Math.max(contentHeight, 48);
       return 80 + contentHeight;
     }
     case "active-tools":
@@ -511,11 +571,6 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
       // One-line summary plus margin; the component renders null when records
       // are still loading or when the turn had no structured activity.
       return 24;
-    case "streaming-response":
-      // Same shape as a small assistant MessageBubble — virtualizer re-measures
-      // once mounted; this estimate keeps the slot from being too cramped on
-      // first paint while text is still streaming in.
-      return Math.max(estimateMarkdownHeight(item.text), 48);
     case "narrative-indicator":
       // One-line status bar (dot/layers icon + "X steps … 0:22"). 36px keeps
       // pre-allocation tight; the virtualizer re-measures once mounted.

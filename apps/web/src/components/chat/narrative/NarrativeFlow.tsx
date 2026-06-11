@@ -223,7 +223,7 @@ export function NarrativeFlow({
           sits underneath it instead of above it. */}
 
       {/* The in-flight response text lives in its own virtual-item slot
-          (`streaming-response`) rendered as a sibling AFTER this narrative-flow
+          (the provisional assistant message) rendered as a sibling AFTER this narrative-flow
           in MessageList. That keeps the streaming text and the persisted
           MessageBubble at the SAME virtual-list position so the swap on
           `session.message` is a content replacement rather than a position

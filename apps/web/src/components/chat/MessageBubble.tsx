@@ -16,6 +16,7 @@ import { useThreadRecord } from "@/stores/thread-selectors";
 import { AnsweredSummary } from "./plan-questions/AnsweredSummary";
 import { PlanCard } from "./PlanCard";
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
+import { DeltaBlock } from "./narrative/DeltaBlock";
 
 /**
  * Returns true when the assistant message body collapses to nothing visible
@@ -196,6 +197,10 @@ interface MessageBubbleProps {
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Called when the user clicks a quote block to scroll to the original message. */
   onScrollToMessage?: (messageId: string) => void;
+  /** Renders assistant content through the live delta adapter for the active turn. */
+  assistantStreaming?: boolean;
+  /** Controls whether persisted-message actions are interactive for assistant output. */
+  assistantActionsVisible?: boolean;
 }
 
 /** Single image thumbnail with error fallback and optional full-size preview. */
@@ -370,7 +375,14 @@ function QuoteBlock({
 }
 
 /** Renders a single chat message (system, user, or assistant). Memoized to prevent re-renders when the message ref is unchanged. */
-export const MessageBubble = memo(function MessageBubble({ message, onBranch, onReply, onScrollToMessage }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({
+  message,
+  onBranch,
+  onReply,
+  onScrollToMessage,
+  assistantStreaming,
+  assistantActionsVisible = true,
+}: MessageBubbleProps) {
   const [imagePreview, setImagePreview] = useState<{
     items: { src: string; title: string }[];
     initialIndex: number;
@@ -603,6 +615,12 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch, on
   // with redundant role labelling (only one party in the chat besides the
   // user). Provenance — model, tokens, cost, time — now lives in one quiet
   // foot line so the body owns the top of the message.
+  const renderAssistantDelta = assistantStreaming !== undefined;
+  const assistantActionsClass = cn(
+    "flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-1 transition-opacity duration-150",
+    assistantActionsVisible ? "opacity-100" : "pointer-events-none opacity-0",
+  );
+
   return (
     <div className="group/msg space-y-2" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
       {/* Quote block — shown when this message is a reply */}
@@ -613,20 +631,32 @@ export const MessageBubble = memo(function MessageBubble({ message, onBranch, on
           onClick={() => onScrollToMessage?.(message.reply_to_message_id!)}
         />
       )}
-      <div className="text-sm text-foreground">
-        <Suspense fallback={null}>
-          <LazyMarkdownContent content={message.content} isStreaming={false} />
-        </Suspense>
+      <div className="text-sm text-foreground" data-testid="assistant-response-text">
+        {renderAssistantDelta ? (
+          <DeltaBlock
+            text={message.content}
+            isStreaming={assistantStreaming}
+            showCursor={assistantStreaming}
+          />
+        ) : (
+          <Suspense fallback={null}>
+            <LazyMarkdownContent content={message.content} isStreaming={false} />
+          </Suspense>
+        )}
       </div>
       {/* Plan card: shows when a plan was extracted from this message */}
       {message.role === "assistant" && (
         <PlanCard messageId={message.id} />
       )}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
-        {onReply && <ReplyButton onClick={() => onReply(message.id, message.content, "assistant")} />}
-        {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
-        <CopyButton content={textContent} />
-        {(message.model || message.tokens_used != null || message.cost_usd != null || formattedTime) && (
+      <div
+        className={assistantActionsClass}
+        data-testid="assistant-message-actions"
+        aria-hidden={assistantActionsVisible ? undefined : true}
+      >
+        {assistantActionsVisible && onReply && <ReplyButton onClick={() => onReply(message.id, message.content, "assistant")} />}
+        {assistantActionsVisible && onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
+        {assistantActionsVisible && <CopyButton content={textContent} />}
+        {assistantActionsVisible && (message.model || message.tokens_used != null || message.cost_usd != null || formattedTime) && (
           <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/55 transition-colors group-hover/msg:text-muted-foreground/80">
             {[
               modelDisplayLabel,

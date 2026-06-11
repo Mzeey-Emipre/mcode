@@ -94,6 +94,8 @@ export interface ThreadRecord {
   toolCalls: ToolCall[];
   agentStartTime?: number;
   currentTurnMessageId: string;
+  currentTurnResponseKey: string;
+  assistantResponseKeys: Record<string, string>;
   thoughtSegments: ThoughtSegment[];
   hooks: HookExecution[];
   isCompacting: boolean;
@@ -146,6 +148,8 @@ export function createEmptyThreadRecord(): ThreadRecord {
     streamingPreview: "",
     toolCalls: [],
     currentTurnMessageId: "",
+    currentTurnResponseKey: "",
+    assistantResponseKeys: {},
     thoughtSegments: [],
     hooks: [],
     isCompacting: false,

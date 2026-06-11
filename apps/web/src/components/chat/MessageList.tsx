@@ -28,7 +28,6 @@ import { rememberScrollTop, recallScrollTop, forgetScrollTop } from "./scrollPos
 import { NarrativeFlow } from "./narrative";
 import { PersistedNarrative } from "./narrative/PersistedNarrative";
 import { PersistedTurnFooter } from "./narrative/PersistedTurnFooter";
-import { StreamingResponseRow } from "./narrative/StreamingResponseRow";
 import { NarrativeIndicator } from "./narrative/NarrativeIndicator";
 import { PersistedLateHooks } from "./PersistedLateHooks";
 import { StickyUserMessage, STICKY_USER_MESSAGE_ESTIMATED_HEIGHT } from "./StickyUserMessage";
@@ -89,10 +88,18 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
     case "message": {
       const isJustPersisted =
         item.message.role === "assistant" &&
-        currentTurnMessageIdByThread[item.message.thread_id] === item.message.id;
+        currentTurnMessageIdByThread[item.message.thread_id] === item.message.id &&
+        item.assistantState?.actionsVisible !== true;
       return (
         <div className={isJustPersisted ? "assistant-just-persisted" : ""}>
-          <MessageBubble message={item.message} onBranch={onBranch} onReply={onReply} onScrollToMessage={onScrollToMessage} />
+          <MessageBubble
+            message={item.message}
+            onBranch={item.assistantState?.actionsVisible === false ? undefined : onBranch}
+            onReply={item.assistantState?.actionsVisible === false ? undefined : onReply}
+            onScrollToMessage={onScrollToMessage}
+            assistantStreaming={item.assistantState?.isStreaming}
+            assistantActionsVisible={item.assistantState?.actionsVisible}
+          />
         </div>
       );
     }
@@ -147,8 +154,6 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
       return <PersistedLateHooks messageId={item.messageId} />;
     case "persisted-turn-footer":
       return <PersistedTurnFooter messageId={item.messageId} />;
-    case "streaming-response":
-      return <StreamingResponseRow text={item.text} />;
     case "narrative-indicator":
       return (
         <NarrativeIndicator
@@ -310,6 +315,8 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const hooks = useActiveThreadRecord((r) => r.hooks);
   const thoughtSegments = useActiveThreadRecord((r) => r.thoughtSegments);
   const currentTurnMessageId = useActiveThreadRecord((r) => r.currentTurnMessageId);
+  const currentTurnResponseKey = useActiveThreadRecord((r) => r.currentTurnResponseKey);
+  const assistantResponseKeys = useActiveThreadRecord((r) => r.assistantResponseKeys);
   const currentTurnMessageIdByThread = useMemo(
     () => (currentThreadId && currentTurnMessageId
       ? { [currentThreadId]: currentTurnMessageId }
@@ -449,8 +456,21 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages, syncStickyUserMessageVisibility]);
 
   const stableItems = useMemo(
-    () => buildStableItems(messages, persistedFilesChanged, latestTurnWithChanges),
-    [messages, persistedFilesChanged, latestTurnWithChanges],
+    () => buildStableItems(messages, persistedFilesChanged, latestTurnWithChanges, {
+      threadId: currentThreadId ?? "",
+      messageId: currentTurnMessageId || undefined,
+      responseKey: currentTurnResponseKey || undefined,
+      responseKeysByMessageId: assistantResponseKeys,
+    }),
+    [
+      messages,
+      persistedFilesChanged,
+      latestTurnWithChanges,
+      currentThreadId,
+      currentTurnMessageId,
+      currentTurnResponseKey,
+      assistantResponseKeys,
+    ],
   );
 
   const volatileItems = useMemo(() => {
@@ -462,6 +482,14 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       permissions,
       hooks,
       thoughtSegments,
+      currentThreadId
+        ? {
+            threadId: currentThreadId,
+            messageId: currentTurnMessageId || undefined,
+            responseKey: currentTurnResponseKey || undefined,
+            responseKeysByMessageId: assistantResponseKeys,
+          }
+        : undefined,
     );
     const lastMsg = messages[messages.length - 1];
     const committedAssistantBody =
@@ -486,6 +514,9 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     thoughtSegments,
     messages,
     currentThreadId,
+    currentTurnMessageId,
+    currentTurnResponseKey,
+    assistantResponseKeys,
   ]);
 
   const hasToolCalls = toolCalls.length > 0;
