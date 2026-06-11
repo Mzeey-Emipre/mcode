@@ -57,6 +57,7 @@ import { DiffSummaryService } from "./services/diff-summary-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage";
 import { WebSocket } from "ws";
 import { resolveGracePeriodMs } from "./grace-period-ms";
+import { createGraceController } from "./grace-controller";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { normalizeAgentProviderError } from "./services/provider-agent-error-normalize.js";
@@ -564,31 +565,35 @@ function listen(port: number, attempt = 1): void {
   });
 }
 
-/** Timer handle for the active grace period, null when no grace period is running. */
-let graceTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Grace-period controller instance. Created in startServerAndSubscribe so it
+ * can close over the resolved services, and disposed in shutdown so a pending
+ * timer does not fire after an externally-triggered shutdown.
+ */
+let graceController: ReturnType<typeof createGraceController> | null = null;
 
 /** Start HTTP server and subscribe to session changes for grace period shutdown. */
 function startServerAndSubscribe(): void {
   listen(PREFERRED_PORT);
 
+  // isBusy guards against shutting down mid-turn or mid-terminal session.
+  // Both services are resolved from the container before this function is called.
+  const isBusy = () =>
+    agentService.activeCount() > 0 ||
+    terminalService.listActiveSessions().length > 0;
+
+  graceController = createGraceController({
+    graceMs: GRACE_PERIOD_MS,
+    sessionCount,
+    isBusy,
+    shutdown,
+    logger,
+  });
+
   // Subscribe to session changes after the server starts so the grace period
   // only activates once the server is ready to accept connections.
   onSessionChange((count) => {
-    if (count === 0 && !graceTimer) {
-      logger.info("All sessions disconnected, grace period started", {
-        graceMs: GRACE_PERIOD_MS,
-      });
-      graceTimer = setTimeout(() => {
-        if (sessionCount() === 0) {
-          logger.info("Grace period expired with zero sessions, shutdown initiated");
-          shutdown();
-        }
-      }, GRACE_PERIOD_MS);
-    } else if (count > 0 && graceTimer) {
-      logger.info("New session connected, grace period cancelled");
-      clearTimeout(graceTimer);
-      graceTimer = null;
-    }
+    graceController?.handleSessionChange(count);
   });
 }
 
@@ -619,11 +624,10 @@ ipcServer.listen(ipcPath).then(() => {
 async function shutdown(): Promise<void> {
   logger.info("Shutdown initiated");
 
-  // Clear any pending grace period timer
-  if (graceTimer) {
-    clearTimeout(graceTimer);
-    graceTimer = null;
-  }
+  // Disarm the grace-period controller so its timer does not fire after
+  // an externally-triggered shutdown (e.g. SIGTERM).
+  graceController?.dispose();
+  graceController = null;
 
   // 0. Close the MessagePort stream transport
   portPush.detach();

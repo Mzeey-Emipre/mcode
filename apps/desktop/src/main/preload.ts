@@ -11,6 +11,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   /** Get the WebSocket URL (with auth token) and IPC path for connecting to the server. */
   getServerUrl: (): Promise<{ url: string; ipcPath: string }> => ipcRenderer.invoke("get-server-url"),
 
+  /** Verify the server is reachable; the main process silently restarts it if not. */
+  ensureServerRunning: (): Promise<void> => ipcRenderer.invoke("ensure-server-running"),
+
+  /** Report whether this renderer considers the server busy (running turns / terminals).
+   * While any renderer is busy, the main process holds a power save blocker. */
+  setServerBusy: (busy: boolean): Promise<void> =>
+    ipcRenderer.invoke("set-server-busy", busy),
+
   /** Show a native open-directory dialog. Returns the selected path or null. */
   showOpenDialog: (opts: Record<string, unknown>): Promise<string | null> =>
     ipcRenderer.invoke("show-open-dialog", opts),
