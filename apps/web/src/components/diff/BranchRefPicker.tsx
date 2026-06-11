@@ -278,17 +278,10 @@ function CurrentRefChip({ value }: { value: string | null }) {
       aria-label={`Current branch: ${value ?? "unknown"}`}
       title={value ?? "Current branch"}
       className={cn(
-        "flex h-6 min-w-0 shrink items-center gap-1.5 rounded-md px-2 font-mono text-xs font-medium",
+        "flex h-6 min-w-0 shrink items-center rounded-md px-2 font-mono text-xs font-medium",
         "text-muted-foreground",
       )}
     >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "size-1.5 shrink-0 rounded-full",
-          value ? "bg-primary/80" : "bg-muted-foreground/30",
-        )}
-      />
       <span className={cn("max-w-[142px] truncate", !value && "text-muted-foreground")}>
         {value ?? "current"}
       </span>
