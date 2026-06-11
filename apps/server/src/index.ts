@@ -38,6 +38,7 @@ import { PlanQuestionAnswersRepo } from "./repositories/plan-question-answers-re
 import { PlanRepo } from "./repositories/plan-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
+import { warmCodexVersionCache } from "./providers/codex/codex-version";
 import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
@@ -207,7 +208,19 @@ settingsService.on("change", (next) => {
     modelCacheService.invalidate("copilot");
   }
   lastCliPathsForModelCache = next.provider.cli;
+  // Re-warm the Codex version gate when its CLI path changes so the next
+  // send is a cache hit (no blocking spawnSync on the send path).
+  warmCodexVersionGate(next);
 });
+
+/**
+ * Warms the Codex `--version` gate cache off the send path. No-op when the
+ * provider is disabled or the path is already cached.
+ */
+function warmCodexVersionGate(s = settingsService.get()): void {
+  if (!s.provider.enabled.codex) return;
+  void warmCodexVersionCache(s.provider.cli.codex || "codex");
+}
 
 const cleanupWorker = container.resolve(CleanupWorker);
 const prDraftService = container.resolve(PrDraftService);
@@ -278,6 +291,9 @@ providerAvailability
   .verifyAllEnabled()
   .then(() => {
     broadcast("providers.availability", providerAvailability.listAvailability());
+    // Warm the Codex version gate at boot so the first send never pays a
+    // blocking `codex --version` spawnSync.
+    warmCodexVersionGate();
     // Warm the model cache once after CLI verification has gated which providers
     // are usable. Triggering this per WS connect would spam refreshes; running
     // it once at startup is sufficient because ModelCacheService also refreshes
