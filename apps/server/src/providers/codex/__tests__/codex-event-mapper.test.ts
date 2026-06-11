@@ -633,6 +633,89 @@ describe("CodexEventMapper", () => {
         toolCallId: "spawn-1",
         output: "child final",
         isError: false,
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          description: "Do work",
+          prompt: "Do work",
+        },
+      },
+    ]);
+  });
+
+  it("passes Codex sub-agent task, model, kind, and effort metadata through the result", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-meta",
+          tool: "spawnAgent",
+          prompt: "Inspect mapper metadata.",
+          model: "",
+          reasoningEffort: "medium",
+        },
+      },
+    });
+    const spawnCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-meta",
+          tool: "spawnAgent",
+          prompt: "Inspect mapper metadata.",
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+          receiverThreadIds: ["child-meta"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-meta", delta: "Metadata verified." },
+    });
+
+    const childCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-meta", turn: { status: "completed" } },
+    });
+
+    expect(started).toEqual([
+      {
+        type: "toolUse",
+        threadId: "test-thread",
+        toolCallId: "spawn-meta",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          description: "Inspect mapper metadata.",
+          prompt: "Inspect mapper metadata.",
+          reasoningEffort: "medium",
+        },
+      },
+    ]);
+    expect(spawnCompleted).toEqual([]);
+    expect(childCompleted).toEqual([
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "spawn-meta",
+        output: "Metadata verified.",
+        isError: false,
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          description: "Inspect mapper metadata.",
+          prompt: "Inspect mapper metadata.",
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
       },
     ]);
   });
@@ -694,6 +777,7 @@ describe("CodexEventMapper", () => {
         toolCallId: "spawn-1",
         output: "child streamed final",
         isError: false,
+        toolInput: { codexCollabKind: "spawnAgent" },
       },
     ]);
     expect(laterWait).toEqual([]);
@@ -1399,6 +1483,7 @@ describe("CodexEventMapper", () => {
         toolCallId: "collab-a",
         output: "",
         isError: false,
+        toolInput: { codexCollabKind: "spawnAgent" },
       },
     ]);
     expect(mainText).toEqual([

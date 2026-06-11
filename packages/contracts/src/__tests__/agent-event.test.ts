@@ -37,6 +37,19 @@ describe("AgentEventSchema", () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it("parses toolResult events with late tool input metadata", () => {
+    const result = AgentEventSchema().safeParse({
+      type: "toolResult",
+      threadId: "thread-1",
+      toolCallId: "agent-1",
+      output: "done",
+      isError: false,
+      toolInput: { model: "gpt-5.5", reasoningEffort: "high" },
+    });
+
+    expect(result.success).toBe(true);
+  });
 });
 
 describe("compactSummary event", () => {

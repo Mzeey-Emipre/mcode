@@ -1565,6 +1565,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const toolCallId = (params.toolCallId as string) || "";
       const output = (params.output as string) || "";
       const isError = (params.isError as boolean) || false;
+      const rawToolInput = params.toolInput;
+      const incomingInput =
+        rawToolInput && typeof rawToolInput === "object" && !Array.isArray(rawToolInput)
+          ? rawToolInput as Record<string, unknown>
+          : {};
       set((state) => {
         const calls = getThreadRecord(state.records, threadId).toolCalls;
         // Try matching by ID first; fall back to the first incomplete tool call
@@ -1577,7 +1582,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           calls.some((c) => c.parentToolCallId === id && !c.isComplete);
         let matched = false;
         const completeCall = (tc: ToolCall): ToolCall => {
-          const fromInput = tc.toolInput.durationMs;
+          const mergedInput = { ...tc.toolInput, ...incomingInput };
+          const fromInput = mergedInput.durationMs;
           const durationMs =
             typeof fromInput === "number" && Number.isFinite(fromInput)
               ? fromInput
@@ -1586,6 +1592,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 : undefined;
           return {
             ...tc,
+            toolInput: mergedInput,
             output,
             isError,
             isComplete: true,

@@ -26,9 +26,8 @@ function firstMeaningfulLine(text: string): string {
 /**
  * Primary label for a sub-agent row, aligned with Claude {@link AgentRenderer}.
  *
- * Prefers `description` from `cursor/task` metadata. When Cursor only sends the
- * generic Task title during the run, falls back to a truncated `prompt` once
- * enrichment arrives, then a short running placeholder.
+ * Prefers task metadata over final output so completed rows keep a stable task
+ * label while the result renders in the expanded body.
  */
 export function extractSubagentDescription(toolCall: ToolCall): string {
   const input = toolCall.toolInput;
@@ -39,13 +38,13 @@ export function extractSubagentDescription(toolCall: ToolCall): string {
     ? firstMeaningfulLine(toolCall.output)
     : "";
 
-  if (toolCall.isComplete && output) {
-    return truncateNarrative(output);
-  }
   if (description && !isGenericDescription(description)) {
     return description;
   }
   if (prompt) return truncateNarrative(prompt);
+  if (toolCall.isComplete && output) {
+    return truncateNarrative(output);
+  }
   if (!toolCall.isComplete) return "Running subagent";
   return description || "Subagent task";
 }

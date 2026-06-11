@@ -1646,7 +1646,13 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.ToolResult) {
-          this.narrativeStore.updateBufferedToolCallOutput(event.threadId, event.toolCallId, event.output, event.isError);
+          this.narrativeStore.updateBufferedToolCallOutput(
+            event.threadId,
+            event.toolCallId,
+            event.output,
+            event.isError,
+            event.toolInput,
+          );
         }
 
         if (event.type === AgentEventType.TurnStarted) {

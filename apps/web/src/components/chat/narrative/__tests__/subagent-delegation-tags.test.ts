@@ -47,4 +47,18 @@ describe("buildDelegationTags", () => {
     expect(tags).toEqual(["Composer 2.5 Fast"]);
     expect(tags).not.toContain("8.3s");
   });
+
+  it("includes Codex kind, model, and reasoning effort metadata", () => {
+    const tags = buildDelegationTags(
+      mkAgent({
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
+      }),
+    );
+
+    expect(tags).toEqual(["Spawn agent", "GPT-5.5", "High effort"]);
+  });
 });

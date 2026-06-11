@@ -84,6 +84,8 @@ export class CodexEventMapper {
   private openSpawnAgentIds = new Set<string>();
   /** Spawn-agent rows already completed by child turn completion or wait state. */
   private completedSpawnAgentIds = new Set<string>();
+  /** Late metadata for spawned Agent rows, keyed by parent collab item id. */
+  private spawnAgentToolInputById = new Map<string, Record<string, unknown>>();
   /** Private assistant text streamed by Codex child threads, keyed by child thread id. */
   private childAssistantTextByThreadId = new Map<string, string>();
   /**
@@ -251,6 +253,49 @@ export class CodexEventMapper {
     return kind === "spawnAgent" || kind === "spawn_agent";
   }
 
+  /** Returns a trimmed string field from loose Codex protocol item shapes. */
+  private stringField(raw: Record<string, unknown>, key: string): string | undefined {
+    const value = raw[key];
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  /** Compact row label derived from the task prompt. */
+  private promptDescription(prompt: string): string {
+    const firstLine = prompt
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? prompt.trim();
+    return firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 80)}...`;
+  }
+
+  /** Metadata shared by Codex spawn `ToolUse` and its late `ToolResult`. */
+  private buildCollabToolInput(item: CompletedItem): Record<string, unknown> {
+    const raw = item as unknown as Record<string, unknown>;
+    const kind = this.collabToolKind(item);
+    const prompt = this.stringField(raw, "prompt");
+    const model = this.stringField(raw, "model");
+    const reasoningEffort =
+      this.stringField(raw, "reasoningEffort")
+      ?? this.stringField(raw, "reasoning_effort");
+
+    return {
+      codexCollabKind: kind,
+      ...(prompt ? { description: this.promptDescription(prompt), prompt: prompt.slice(0, 2000) } : {}),
+      ...(model ? { model } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+    };
+  }
+
+  /** Merges any newly-arrived spawn metadata for later child/wait completion. */
+  private mergeSpawnAgentToolInput(collabId: string, item: CompletedItem): Record<string, unknown> {
+    const existing = this.spawnAgentToolInputById.get(collabId) ?? {};
+    const next = { ...existing, ...this.buildCollabToolInput(item) };
+    this.spawnAgentToolInputById.set(collabId, next);
+    return next;
+  }
+
   /** Accumulates private child-thread final text without emitting it into the parent reply. */
   private appendChildAssistantText(childThreadId: string | undefined, delta: string): void {
     if (!childThreadId || !delta) return;
@@ -287,12 +332,14 @@ export class CodexEventMapper {
     this.completedSpawnAgentIds.add(collabId);
     this.openSpawnAgentIds.delete(collabId);
     this.popCollabFromScopeStack(collabId);
+    const toolInput = this.spawnAgentToolInputById.get(collabId);
     return [{
       type: AgentEventType.ToolResult,
       threadId: this.threadId,
       toolCallId: collabId,
       output,
       isError,
+      ...(toolInput && Object.keys(toolInput).length > 0 ? { toolInput } : {}),
     }];
   }
 
@@ -364,19 +411,16 @@ export class CodexEventMapper {
     toolCallId: string,
     notification?: CodexNotification,
   ): AgentEvent {
-    const raw = item as unknown as Record<string, unknown>;
-    const kind = this.collabToolKind(item);
-    const prompt = typeof raw.prompt === "string" ? raw.prompt : undefined;
     const nestParent = this.nestingParentToolCallId(notification);
+    const toolInput = this.isSpawnAgentCollab(item)
+      ? this.mergeSpawnAgentToolInput(toolCallId, item)
+      : this.buildCollabToolInput(item);
     return {
       type: AgentEventType.ToolUse,
       threadId: this.threadId,
       toolCallId,
       toolName: "Agent",
-      toolInput: {
-        codexCollabKind: kind,
-        ...(prompt != null && prompt.length > 0 ? { prompt: prompt.slice(0, 2000) } : {}),
-      },
+      toolInput,
       ...(nestParent ? { parentToolCallId: nestParent } : {}),
     };
   }
@@ -715,6 +759,7 @@ export class CodexEventMapper {
     this.collabToolUseFromStartIds.clear();
     this.openSpawnAgentIds.clear();
     this.completedSpawnAgentIds.clear();
+    this.spawnAgentToolInputById.clear();
     this.childAssistantTextByThreadId.clear();
     this.pendingLegacyCollabPops.clear();
     this.collabReceiverThreadToCollabId.clear();
@@ -875,6 +920,7 @@ export class CodexEventMapper {
       if (this.isWaitCollab(item)) {
         return this.mapWaitStates(item);
       }
+      const isSpawn = this.isSpawnAgentCollab(item);
       const out =
         typeof item.result === "string" && item.result.length > 0
           ? item.result
@@ -890,15 +936,18 @@ export class CodexEventMapper {
         isError: typeof item.error === "string" && item.error.length > 0,
       };
       this.registerCollabReceiverThreads(toolCallId, item);
+      if (isSpawn) {
+        this.mergeSpawnAgentToolInput(toolCallId, item);
+      }
       if (this.collabToolUseFromStartIds.has(toolCallId)) {
         this.collabToolUseFromStartIds.delete(toolCallId);
         if (route === "main") this.popCollabFromScopeStack(toolCallId);
-        if (this.isSpawnAgentCollab(item)) return [];
+        if (isSpawn) return [];
         return [toolResultEvent];
       }
       if (route === "child") {
         const toolUseEvent = this.buildCollabToolUseEvent(item, toolCallId, notification);
-        if (this.isSpawnAgentCollab(item)) {
+        if (isSpawn) {
           this.openSpawnAgentIds.add(toolCallId);
           return [toolUseEvent];
         }
@@ -913,7 +962,7 @@ export class CodexEventMapper {
       this.collabScopeStack.push(toolCallId);
       this.pendingLegacyCollabPops.add(toolCallId);
       const toolUseEvent = this.buildCollabToolUseEvent(item, toolCallId, notification);
-      if (this.isSpawnAgentCollab(item)) {
+      if (isSpawn) {
         this.openSpawnAgentIds.add(toolCallId);
         return [toolUseEvent];
       }

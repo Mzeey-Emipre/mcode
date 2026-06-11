@@ -77,6 +77,8 @@ export const AgentEventSchema = lazySchema(() =>
       toolCallId: z.string(),
       output: z.string(),
       isError: z.boolean(),
+      /** Optional late-arriving metadata merged into the matching tool call input. */
+      toolInput: z.record(z.unknown()).optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.TurnComplete),

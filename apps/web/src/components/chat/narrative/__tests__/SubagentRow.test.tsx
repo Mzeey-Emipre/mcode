@@ -57,7 +57,7 @@ describe("SubagentRow", () => {
     expect(screen.getByRole("button")).toBeTruthy();
   });
 
-  it("renders completed subagent output instead of only the spawn prompt", () => {
+  it("renders completed subagent output while keeping the task prompt as the label", () => {
     render(
       <SubagentRow
         toolCall={mkAgent({
@@ -71,7 +71,9 @@ describe("SubagentRow", () => {
     );
 
     expect(screen.getByRole("button")).toBeTruthy();
-    expect(screen.getAllByText("Mapper tests cover wait suppression.")).toHaveLength(2);
-    expect(screen.queryByText("Inspect the Codex mapper tests.")).toBeNull();
+    expect(screen.getByText("Inspect the Codex mapper tests.")).toBeTruthy();
+    expect(screen.getByTestId("subagent-result").textContent).toContain(
+      "Mapper tests cover wait suppression.",
+    );
   });
 });

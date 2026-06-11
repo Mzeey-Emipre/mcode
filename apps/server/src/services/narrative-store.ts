@@ -384,6 +384,7 @@ export class NarrativeStore {
     toolCallId: string,
     output: string,
     isError: boolean,
+    toolInput?: Record<string, unknown>,
   ): void {
     const stack = this.agentCallStack.get(threadId) ?? [];
     const stackIdx = stack.indexOf(toolCallId);
@@ -402,6 +403,12 @@ export class NarrativeStore {
       if (buffer[i].toolCallId === toolCallId) {
         buffer[i].outputSummary = output.slice(0, 500);
         buffer[i].status = isError ? "failed" : "completed";
+        if (toolInput && Object.keys(toolInput).length > 0) {
+          buffer[i]._rawToolInput = {
+            ...(buffer[i]._rawToolInput ?? {}),
+            ...toolInput,
+          };
+        }
         break;
       }
     }

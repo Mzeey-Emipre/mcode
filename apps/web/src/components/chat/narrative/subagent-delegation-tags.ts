@@ -17,6 +17,29 @@ function formatSubagentTypeLabel(subagentType: unknown): string | undefined {
   return undefined;
 }
 
+/** Human label for Codex collab kind metadata. */
+function formatCodexKindLabel(kind: unknown): string | undefined {
+  if (typeof kind !== "string") return undefined;
+  const normalized = kind.trim();
+  if (!normalized) return undefined;
+  if (normalized === "spawnAgent" || normalized === "spawn_agent") return "Spawn agent";
+  if (normalized === "wait") return "Wait";
+  return normalized
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^./, (ch) => ch.toUpperCase());
+}
+
+/** Human label for Codex reasoning effort metadata. */
+function formatReasoningEffortLabel(effort: unknown): string | undefined {
+  if (typeof effort !== "string") return undefined;
+  const normalized = effort.trim();
+  if (!normalized) return undefined;
+  return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)} effort`;
+}
+
 /**
  * Builds short delegation tags for a sub-agent row (task kind and model).
  *
@@ -27,11 +50,16 @@ export function buildDelegationTags(toolCall: ToolCall): string[] {
   const input = toolCall.toolInput;
 
   const typeLabel = formatSubagentTypeLabel(input.subagentType);
+  const codexKindLabel = formatCodexKindLabel(input.codexCollabKind);
   if (typeLabel) tags.push(typeLabel);
+  if (codexKindLabel) tags.push(codexKindLabel);
 
   if (typeof input.model === "string" && input.model.trim().length > 0) {
     tags.push(resolveModelDisplayLabel(input.model));
   }
+
+  const reasoningEffortLabel = formatReasoningEffortLabel(input.reasoningEffort);
+  if (reasoningEffortLabel) tags.push(reasoningEffortLabel);
 
   return tags;
 }
