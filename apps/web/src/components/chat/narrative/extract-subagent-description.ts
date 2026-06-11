@@ -16,6 +16,13 @@ function truncateNarrative(text: string, maxLen = 80): string {
   return `${trimmed.slice(0, maxLen)}…`;
 }
 
+function firstMeaningfulLine(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? "";
+}
+
 /**
  * Primary label for a sub-agent row, aligned with Claude {@link AgentRenderer}.
  *
@@ -28,7 +35,13 @@ export function extractSubagentDescription(toolCall: ToolCall): string {
   const description =
     typeof input.description === "string" ? input.description.trim() : "";
   const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+  const output = typeof toolCall.output === "string"
+    ? firstMeaningfulLine(toolCall.output)
+    : "";
 
+  if (toolCall.isComplete && output) {
+    return truncateNarrative(output);
+  }
   if (description && !isGenericDescription(description)) {
     return description;
   }

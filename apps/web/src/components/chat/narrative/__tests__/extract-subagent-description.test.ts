@@ -36,6 +36,18 @@ describe("extractSubagentDescription", () => {
     ).toBe(prompt);
   });
 
+  it("prefers completed output over the prompt", () => {
+    expect(
+      extractSubagentDescription(
+        mkAgent({
+          isComplete: true,
+          toolInput: { prompt: "Inspect the mapper tests." },
+          output: "Found wait suppression coverage.\n\nDetails follow.",
+        }),
+      ),
+    ).toBe("Found wait suppression coverage.");
+  });
+
   it("shows a running placeholder while incomplete and metadata is generic", () => {
     expect(
       extractSubagentDescription(
