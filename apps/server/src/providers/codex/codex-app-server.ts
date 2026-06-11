@@ -316,6 +316,100 @@ export function enrichHandshakeError(err: unknown, stderr: string | null): Error
 }
 
 /**
+ * Boot-time cold-start warm-up: spawns a throwaway `codex app-server`, runs
+ * `initialize`, and kills it. The first `initialize` on a cold machine pays
+ * for paging the large Rust binary into the OS file cache plus a TLS/auth
+ * round trip to chatgpt.com (~1.7s+, worse on slow networks); paying it at
+ * app boot means the user's first real session starts warm.
+ *
+ * Fire-and-forget safe: never throws, resolves `true` only when `initialize`
+ * was acknowledged within the timeout.
+ */
+export async function warmCodexAppServer(cliPath: string, timeoutMs = 20_000): Promise<boolean> {
+  let resolvedCliPath = cliPath;
+  if (!isAbsolute(cliPath)) {
+    try {
+      resolvedCliPath = await which(cliPath);
+    } catch {
+      return false;
+    }
+  }
+  const needsShell =
+    process.platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd");
+
+  return await new Promise<boolean>((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawn(resolvedCliPath, ["app-server"], {
+        stdio: ["pipe", "pipe", "ignore"],
+        shell: needsShell,
+        env: flattenProcessEnv(process.env),
+        windowsHide: true,
+      });
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      // taskkill reaps the whole tree on Windows; with shell:true a plain
+      // kill() would only hit cmd.exe and orphan the codex child.
+      if (process.platform === "win32" && child.pid != null) {
+        void import("child_process").then(({ execFile }) => {
+          execFile("taskkill", ["/T", "/F", "/PID", String(child.pid)], () => {});
+        });
+      } else {
+        child.kill("SIGKILL");
+      }
+      resolve(ok);
+    };
+
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    child.once("error", () => finish(false));
+    child.once("exit", () => finish(false));
+
+    let buffer = "";
+    child.stdout!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line) as { id?: number };
+          if (msg.id === 1) {
+            logger.info("Codex app-server warm-up completed", { cliPath });
+            finish(true);
+            return;
+          }
+        } catch {
+          // ignore non-JSON output
+        }
+      }
+    });
+
+    child.once("spawn", () => {
+      child.stdin!.write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            clientInfo: { name: "mcode", version: "1.0.0" },
+            capabilities: { experimentalApi: true },
+          },
+        }) + "\n",
+      );
+    });
+  });
+}
+
+/**
  * Manages the lifecycle of a `codex app-server` child process.
  *
  * Emits:

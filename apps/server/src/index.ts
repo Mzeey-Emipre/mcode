@@ -39,6 +39,7 @@ import { PlanRepo } from "./repositories/plan-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { warmCodexVersionCache } from "./providers/codex/codex-version";
+import { warmCodexAppServer } from "./providers/codex/codex-app-server";
 import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
@@ -213,13 +214,23 @@ settingsService.on("change", (next) => {
   warmCodexVersionGate(next);
 });
 
+/** CLI paths whose app-server has already been warmed this run. */
+const warmedCodexPaths = new Set<string>();
+
 /**
- * Warms the Codex `--version` gate cache off the send path. No-op when the
- * provider is disabled or the path is already cached.
+ * Warms the Codex `--version` gate cache and cold-starts a throwaway
+ * app-server (file cache + chatgpt.com TLS/auth) off the send path. No-op
+ * when the provider is disabled; the app-server warm-up runs once per CLI
+ * path per app run.
  */
 function warmCodexVersionGate(s = settingsService.get()): void {
   if (!s.provider.enabled.codex) return;
-  void warmCodexVersionCache(s.provider.cli.codex || "codex");
+  const cliPath = s.provider.cli.codex || "codex";
+  void warmCodexVersionCache(cliPath);
+  if (!warmedCodexPaths.has(cliPath)) {
+    warmedCodexPaths.add(cliPath);
+    void warmCodexAppServer(cliPath);
+  }
 }
 
 const cleanupWorker = container.resolve(CleanupWorker);
