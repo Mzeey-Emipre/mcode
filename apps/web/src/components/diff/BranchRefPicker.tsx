@@ -143,8 +143,8 @@ function RefName({
   return (
     <span
       className={cn(
-        "flex-1 truncate whitespace-nowrap",
-        active ? "text-foreground" : "text-popover-foreground",
+        "min-w-0 flex-1 truncate whitespace-nowrap font-mono text-[11px]",
+        active ? "text-foreground" : "text-foreground/80",
       )}
       title={name}
     >
@@ -156,8 +156,8 @@ function RefName({
 
 /**
  * The selected comparison ref: a quiet toolbar chip that opens a searchable,
- * grouped ref combobox. Machine facts (ref names, SHAs) are mono;
- * the current branch carries the amber dot; selection is a row-fill + check.
+ * grouped ref combobox. Ref rows follow the Commit picker rhythm: primary ref
+ * name, quiet metadata, and a check for the active selection.
  */
 function RefCombobox({
   value,
@@ -197,34 +197,21 @@ function RefCombobox({
       >
       </PopoverTrigger>
 
-      <PopoverContent align="start" sideOffset={6} className="w-[320px] p-0">
+      <PopoverContent align="start" sideOffset={4} className="w-80 p-0">
         <Command>
           <CommandInput
-            placeholder="Filter refs"
-            className="h-8 py-2 font-mono text-xs"
+            placeholder="Search refs..."
+            className="h-8 text-[11.5px]"
             data-testid="branch-target-filter"
           />
-          <CommandList className="max-h-[296px]">
-            <CommandEmpty>
-              <div className="flex flex-col items-center gap-2 py-4">
-                <span aria-hidden="true" className="font-mono text-xl leading-none text-muted-foreground/15">
-                  ⊘
-                </span>
-                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
-                  No matching refs
-                </span>
-              </div>
-            </CommandEmpty>
+          <CommandList>
+            <CommandEmpty className="py-4 text-[11px]">No refs found</CommandEmpty>
 
             {REF_SECTIONS.map(({ type, heading }) => {
               const sectionRefs = groups[type];
               if (sectionRefs.length === 0) return null;
               return (
-                <CommandGroup
-                  key={type}
-                  heading={heading}
-                  className="[&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[9.5px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.18em] [&_[cmdk-group-heading]]:text-muted-foreground/50"
-                >
+                <CommandGroup key={type} heading={heading}>
                   {sectionRefs.map((ref) => {
                     const active = ref.name === value;
                     return (
@@ -237,22 +224,13 @@ function RefCombobox({
                         }}
                         data-testid={`branch-ref-target-${ref.name}`}
                         aria-current={active ? "true" : undefined}
-                        className="gap-2 py-1 font-mono text-xs"
+                        className="gap-2 px-2 py-1.5"
                       >
-                        {/* The amber dot marks the checked-out branch — the same
-                            glance vocabulary as the sidebar's status dots. */}
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            "size-1.5 shrink-0 rounded-full",
-                            ref.isCurrent ? "bg-primary" : "bg-transparent",
-                          )}
-                        />
                         <RefName name={ref.name} type={ref.type} active={active} />
                         {active ? (
                           <Check size={11} className="shrink-0 text-muted-foreground" />
                         ) : (
-                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/40">
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/45">
                             {ref.shortSha}
                           </span>
                         )}
