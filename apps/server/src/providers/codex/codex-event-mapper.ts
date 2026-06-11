@@ -55,6 +55,8 @@ export class CodexEventMapper {
   /** Dedupes `item/completed` reasoning payloads against streamed reasoning deltas. */
   private lastReasoningText = "";
   private readonly threadId: string;
+  /** Codex app-server's own main thread id. Distinct from Mcode's persisted thread UUID. */
+  private mainCodexThreadId: string | undefined;
   /** Per-item streaming command output buffers, keyed by itemId. */
   private readonly commandOutputBuffers = new Map<string, string>();
   /** Open tool-like items keyed by id. Mirrors Claude/Cursor `pendingToolUses` for thought-vs-final classification. */
@@ -90,14 +92,78 @@ export class CodexEventMapper {
    */
   private turnEnded = false;
 
-  constructor(threadId: string) {
+  constructor(threadId: string, mainCodexThreadId?: string) {
     this.threadId = threadId;
+    this.mainCodexThreadId = mainCodexThreadId;
+  }
+
+  /** Updates the app-server thread id used to classify incoming notifications. */
+  setMainCodexThreadId(threadId: string): void {
+    this.mainCodexThreadId = threadId;
   }
 
   /** Reads `params.threadId` from a Codex notification when present. */
   private notificationThreadId(notification: CodexNotification): string | undefined {
     const tid = (notification.params as { threadId?: unknown }).threadId;
     return typeof tid === "string" && tid.length > 0 ? tid : undefined;
+  }
+
+  /** Classifies the notification against the app-server's main and known receiver threads. */
+  private classifyNotificationThread(notification: CodexNotification): "main" | "child" | "unknown" {
+    const notifThread = this.notificationThreadId(notification);
+    if (!notifThread) return "main";
+    if (this.collabReceiverThreadToCollabId.has(notifThread)) return "child";
+    if (this.mainCodexThreadId) {
+      return notifThread === this.mainCodexThreadId ? "main" : "unknown";
+    }
+    return "main";
+  }
+
+  /** Child receiver threads contribute tool rows only; text and lifecycle stay private to Codex. */
+  private mapChildThreadNotification(notification: CodexNotification): AgentEvent[] {
+    const { method } = notification;
+
+    if (method === "item/commandExecution/outputDelta") {
+      const { itemId, delta } = notification.params;
+      if (itemId && delta) {
+        const prev = this.commandOutputBuffers.get(itemId) ?? "";
+        this.commandOutputBuffers.set(itemId, prev + delta);
+      }
+      return [];
+    }
+
+    if (method === "item/started") {
+      const item = notification.params.item as CompletedItem | undefined;
+      const itemType = item?.type;
+      const itemId = typeof item?.id === "string" ? item.id : undefined;
+      if (itemType === "collabAgentToolCall" && itemId && item) {
+        this.collabToolUseFromStartIds.add(itemId);
+        this.registerCollabReceiverThreads(itemId, item);
+        return [this.buildCollabToolUseEvent(item, itemId, notification)];
+      }
+      logger.debug("Codex child thread notification consumed", { method, itemType });
+      return [];
+    }
+
+    if (method === "item/completed") {
+      const item = notification.params.item;
+      const itemType = item?.type;
+      if (
+        itemType === "commandExecution"
+        || itemType === "fileChange"
+        || itemType === "mcpToolCall"
+        || itemType === "dynamicToolCall"
+        || itemType === "function_call"
+        || itemType === "collabAgentToolCall"
+      ) {
+        return this.mapItemCompleted(item, notification, "child");
+      }
+      logger.debug("Codex child thread notification consumed", { method, itemType });
+      return [];
+    }
+
+    logger.debug("Codex child thread notification consumed", { method });
+    return [];
   }
 
   /**
@@ -156,7 +222,11 @@ export class CodexEventMapper {
   /**
    * Builds the Agent `ToolUse` for a collab item (shared by `item/started` and legacy `item/completed`).
    */
-  private buildCollabToolUseEvent(item: CompletedItem, toolCallId: string): AgentEvent {
+  private buildCollabToolUseEvent(
+    item: CompletedItem,
+    toolCallId: string,
+    notification?: CodexNotification,
+  ): AgentEvent {
     const raw = item as unknown as Record<string, unknown>;
     const fromSchema = typeof item.tool === "string" ? item.tool : undefined;
     const kind =
@@ -167,6 +237,7 @@ export class CodexEventMapper {
             ? raw.tool_kind
             : "collab");
     const prompt = typeof raw.prompt === "string" ? raw.prompt : undefined;
+    const nestParent = this.nestingParentToolCallId(notification);
     return {
       type: AgentEventType.ToolUse,
       threadId: this.threadId,
@@ -176,6 +247,7 @@ export class CodexEventMapper {
         codexCollabKind: kind,
         ...(prompt != null && prompt.length > 0 ? { prompt: prompt.slice(0, 2000) } : {}),
       },
+      ...(nestParent ? { parentToolCallId: nestParent } : {}),
     };
   }
 
@@ -185,6 +257,20 @@ export class CodexEventMapper {
    */
   mapNotification(notification: CodexNotification): AgentEvent[] {
     const { method } = notification;
+    const route = this.classifyNotificationThread(notification);
+
+    if (route === "unknown") {
+      logger.warn("CodexEventMapper: dropping unknown-thread notification", {
+        method,
+        notificationThreadId: this.notificationThreadId(notification),
+        mainCodexThreadId: this.mainCodexThreadId,
+      });
+      return [];
+    }
+
+    if (route === "child") {
+      return this.mapChildThreadNotification(notification);
+    }
 
     // turn/started: starts a new turn. Clear the suppress flag so we resume
     // emitting events. (Per-turn buffer reset happens in turn/completed.)
@@ -224,7 +310,7 @@ export class CodexEventMapper {
         this.collabScopeStack.push(itemId);
         this.collabToolUseFromStartIds.add(itemId);
         this.registerCollabReceiverThreads(itemId, item as CompletedItem);
-        return [this.buildCollabToolUseEvent(item as CompletedItem, itemId)];
+        return [this.buildCollabToolUseEvent(item as CompletedItem, itemId, notification)];
       }
       logger.debug("Codex lifecycle notification", { method, itemType });
       return [];
@@ -413,6 +499,7 @@ export class CodexEventMapper {
   private mapItemCompleted(
     item: CompletedItem | undefined,
     notification: CodexNotification,
+    route: "main" | "child" = "main",
   ): AgentEvent[] {
     if (!item) return [];
 
@@ -594,8 +681,12 @@ export class CodexEventMapper {
       this.registerCollabReceiverThreads(toolCallId, item);
       if (this.collabToolUseFromStartIds.has(toolCallId)) {
         this.collabToolUseFromStartIds.delete(toolCallId);
-        this.popCollabFromScopeStack(toolCallId);
+        if (route === "main") this.popCollabFromScopeStack(toolCallId);
         return [toolResultEvent];
+      }
+      if (route === "child") {
+        const toolUseEvent = this.buildCollabToolUseEvent(item, toolCallId, notification);
+        return [toolUseEvent, toolResultEvent];
       }
       // Legacy path: collab completes in one notification without a prior `item/started`.
       // Push onto the nesting stack so subsequent child `item/completed` rows
@@ -605,7 +696,7 @@ export class CodexEventMapper {
       // sub-agent's children does not incorrectly attach beneath it.
       this.collabScopeStack.push(toolCallId);
       this.pendingLegacyCollabPops.add(toolCallId);
-      const toolUseEvent = this.buildCollabToolUseEvent(item, toolCallId);
+      const toolUseEvent = this.buildCollabToolUseEvent(item, toolCallId, notification);
       return [toolUseEvent, toolResultEvent];
     }
 

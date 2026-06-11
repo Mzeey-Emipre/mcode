@@ -406,6 +406,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     // Register after a successful handshake so a mid-handshake thread/started
     // notification cannot persist a stale SDK thread id when init later fails.
     server.on("threadIdChanged", (newThreadId: string) => {
+      mapper.setMainCodexThreadId(newThreadId);
       this.sdkSessionIds.set(sessionId, newThreadId);
       this.emit("event", {
         type: AgentEventType.System,
@@ -424,6 +425,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     }
 
     if (server.threadId) {
+      mapper.setMainCodexThreadId(server.threadId);
       this.sdkSessionIds.set(sessionId, server.threadId);
       this.emit("event", {
         type: AgentEventType.System,

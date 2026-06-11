@@ -112,7 +112,12 @@ function loadNotifications(): { label: string; notifications: CodexNotification[
 }
 
 function replay(notifications: CodexNotification[]) {
-  const mapper = new CodexEventMapper("coverage-thread");
+  const mainThreadId = notifications
+    .filter((n) => n.method === "turn/started")
+    .map((n) => n.params as { threadId?: unknown })
+    .find((params) => typeof params.threadId === "string" && params.threadId.length > 0)
+    ?.threadId as string | undefined;
+  const mapper = new CodexEventMapper("coverage-thread", mainThreadId);
   const methodsSeen = new Set<string>();
   const events: ReturnType<CodexEventMapper["mapNotification"]> = [];
   for (const n of notifications) {
@@ -120,6 +125,19 @@ function replay(notifications: CodexNotification[]) {
     events.push(...mapper.mapNotification(n));
   }
   return { methodsSeen, events };
+}
+
+function loadGoldenScenario(id: string): CodexNotification[] {
+  if (!existsSync(FIXTURE_PATH)) return [];
+  const lines = readFileSync(FIXTURE_PATH, "utf8").split("\n").filter(Boolean);
+  const notifications: CodexNotification[] = [];
+  for (const line of lines) {
+    const row = JSON.parse(line) as NdjsonRow & { scenario?: string };
+    if (row.type === "notification" && row.scenario === id && row.raw?.method) {
+      notifications.push(row.raw);
+    }
+  }
+  return notifications;
 }
 
 describe("Codex protocol coverage", () => {
@@ -212,5 +230,21 @@ describe("Codex protocol coverage", () => {
         "D_subagents scenario did not emit collabAgentToolCall; sub-agent nesting remains unit-test only",
       );
     }
+  });
+
+  it("golden D_subagents emits one TurnComplete after main turn completion", () => {
+    if (label !== "golden") return;
+    const subagentNotifications = loadGoldenScenario("D_subagents");
+    if (subagentNotifications.length === 0) return;
+    const mainThreadId = (subagentNotifications.find((n) => n.method === "turn/started")?.params as { threadId?: string } | undefined)?.threadId;
+    const hasMainCompletion = subagentNotifications.some((n) => {
+      const params = n.params as { threadId?: string };
+      return n.method === "turn/completed" && params.threadId === mainThreadId;
+    });
+    if (!hasMainCompletion) return;
+
+    const { events } = replay(subagentNotifications);
+    const turnCompletes = events.filter((event) => event.type === AgentEventType.TurnComplete);
+    expect(turnCompletes).toHaveLength(1);
   });
 });
