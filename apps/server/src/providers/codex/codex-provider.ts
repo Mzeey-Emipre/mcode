@@ -45,19 +45,14 @@ import {
 import type { TurnInputPart, CodexNotification, CodexTurnOptions, ReasoningEffort } from "./codex-types.js";
 
 /**
- * Maximum wall-clock idle between Codex app-server notifications while
- * waiting for `turn/completed`. The timer resets on every notification so
- * active streams and tool output keep the turn alive; only a fully silent
- * stretch trips it. Set to 60s (matching Copilot's `COMPLETE_TIMEOUT_MS`) so a
- * stalled upstream turn — where `turn/completed` never arrives and the session
- * stays `isBusy`, exempt from idle eviction — unblocks the UI rather than
- * leaving it stuck "thinking" indefinitely.
- *
- * Set to 5 minutes: tools that run silently (no output deltas, e.g. long
- * builds or installs) routinely exceed 60s, and tripping the watchdog mid-tool
- * silently ended healthy turns. The watchdog also re-arms while a permission
- * approval is pending (user silence, not server silence) and treats inbound
- * approval requests as liveness via the app-server `activity` event.
+ * Liveness-probe interval for a silent turn, not a turn deadline. The timer
+ * resets on every notification (including swallowed lifecycle traffic and
+ * inbound approval requests, via the app-server `activity` event). When a
+ * turn stays fully silent for this long, the watchdog pings the app-server
+ * with a cheap RPC: responsive → re-arm (a healthy turn can run forever);
+ * unresponsive → end the turn so the session does not stay `isBusy` (exempt
+ * from idle eviction) with the UI stuck "thinking" indefinitely. While a
+ * permission approval awaits the user, the watchdog re-arms without probing.
  */
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -69,11 +64,11 @@ class CodexTurnSupersededError extends Error {
   }
 }
 
-/** Internal: idle notification watchdog fired; ends the turn without a user error. */
+/** Internal: silent turn AND the app-server failed a liveness probe; ends the turn without a user error. */
 class CodexTurnIdleTimeoutError extends Error {
   constructor() {
     super(
-      `Codex turn timed out after ${TURN_TIMEOUT_MS / 1000}s with no app-server notifications`,
+      `Codex turn abandoned: no notifications for ${TURN_TIMEOUT_MS / 1000}s and the app-server failed a liveness probe`,
     );
     this.name = "CodexTurnIdleTimeoutError";
   }
@@ -556,8 +551,23 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
               armTimer();
               return;
             }
-            cleanup();
-            reject(new CodexTurnIdleTimeoutError());
+            // Probe before giving up: a turn is only abandoned when the
+            // app-server stops answering RPCs, never just for being slow.
+            // A healthy-but-silent turn (long tool, deep reasoning) re-arms
+            // and can run indefinitely.
+            void server.ping().then((alive) => {
+              if (settled) return;
+              if (alive) {
+                logger.debug("Codex turn silent but server responsive; watchdog re-armed", {
+                  sessionId,
+                  silenceMs: TURN_TIMEOUT_MS,
+                });
+                armTimer();
+                return;
+              }
+              cleanup();
+              reject(new CodexTurnIdleTimeoutError());
+            });
           }, TURN_TIMEOUT_MS);
         };
 

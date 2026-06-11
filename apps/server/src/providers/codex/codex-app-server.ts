@@ -458,11 +458,15 @@ export class CodexAppServer extends EventEmitter {
           // Without this, app restarts would try to resume the stale thread ID.
           this.emit("threadIdChanged", newThreadId);
         }
+        this.emit("activity");
         logger.debug("Codex lifecycle notification", { method });
         return;
       }
 
       if (LIFECYCLE_NOTIFICATION_PREFIXES.some((p) => method.startsWith(p))) {
+        // Swallowed from the mapper, but still proof of life: thread/status
+        // and similar lifecycle traffic must reset turn-level watchdogs.
+        this.emit("activity");
         logger.debug("Codex lifecycle notification", { method });
         return;
       }
@@ -594,6 +598,22 @@ export class CodexAppServer extends EventEmitter {
       logger.debug("Codex turn/start acknowledged", { threadId: this.threadId, turnId });
     }
     return turnId;
+  }
+
+  /**
+   * Cheap liveness probe: true when the app-server still answers RPCs.
+   * `model/list` is the lightest request the protocol guarantees post-init.
+   * Used by turn watchdogs to distinguish "long-running but healthy" from
+   * "wedged" before giving up on a silent turn.
+   */
+  async ping(timeoutMs = 10_000): Promise<boolean> {
+    if (!this._isAlive || !this.rpc) return false;
+    try {
+      await this.rpc.sendRequest("model/list", {}, timeoutMs);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
