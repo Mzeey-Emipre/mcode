@@ -242,6 +242,13 @@ should be able to tell when the agent has handed work to a sub-agent. From
 the user's point of view, a sub-agent is still part of the same turn as
 the parent.
 
+A sub-agent counts as **running until its work finishes**, regardless of
+how the provider signals dispatch. Some providers (Codex `spawnAgent`)
+report the dispatch call itself as complete the moment the child is
+created; the timeline must not show the sub-agent as done until the child
+actually reports back. The sub-agent's own narration is not streamed to
+the timeline; only its nested tool calls and its final result are shown.
+
 ### Text delta
 A streaming text chunk emitted by the provider as the agent types its
 output. Many text deltas accumulate during a turn. At emission time the
@@ -265,6 +272,12 @@ thinking is on). Classification happens at the `AssistantMessageBoundary`
 event: a `stop_reason` of `tool_use` closes the buffered deltas as a
 narration segment; `end_turn` / `stop_sequence` / `max_tokens` / `refusal`
 reclassifies them as final-response text instead.
+
+Providers without a stop-reason concept (Codex) classify by **retroactive
+promotion**: every assistant message streams as narration while the turn
+runs, and the last one is promoted to final response when the turn ends.
+The boundary signal is the same either way; only the moment of certainty
+differs.
 
 > **Codebase mismatch (rename pending).** The code currently calls this
 > concept `ThoughtSegment` (table: `thought_segments`). That name is
@@ -646,6 +659,15 @@ agent loads on demand. Skills are surfaced via `SkillInfo` records and
 the skills store. Distinct from the dev-tooling skill concept under
 `AGENTS.md` (which is for contributors developing Mcode itself).
 
+A provider may be the **authoritative source of its own skill catalog**
+(Codex exposes one natively, including skills bundled inside provider
+plugins); the app's own filesystem scan is the fallback when the
+provider's catalog is unreachable. Skills the user disabled in the
+provider's own config do not appear in Mcode. A **provider plugin** is a
+distribution format, not a separate invocable thing: what the user
+invokes is always a skill, and plugin-bundled skills appear in the menu
+badged as plugin entries.
+
 ### Slash command
 A short command the user types in the composer (e.g. `/something`) that
 the Mcode app expands into a richer prompt or action. Editor integration
@@ -653,6 +675,11 @@ lives in the composer's Lexical plugin (`SlashCommandPlugin`,
 `SlashCommandNode`, `SlashCommandPopup`). Distinct from the dev-tooling
 slash commands under `.claude/commands/` etc. (which are for
 contributors).
+
+`/` is the **only** composer gesture, for every provider. Providers with
+their own native invocation syntax (Codex's `$` mentions) get a
+translation at the provider boundary; the user never types the native
+syntax in Mcode.
 
 Slash commands sit in one of three availability layers:
 
