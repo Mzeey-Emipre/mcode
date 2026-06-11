@@ -4,7 +4,7 @@ Internal notes so we do not redo the same experiments. For the product contract 
 
 ## What the user sees
 
-Thought rows come from `AgentEventType.TextDelta` with `isFinalResponse: false`. The web client merges those into `thoughtSegmentsByThread`. Final reply text uses `isFinalResponse: true` and stays out of thought segments.
+Thought rows come from non-final `AgentEventType.TextDelta` events. The web client merges those into `thoughtSegmentsByThread`. Codex assistant text now streams this way until the mapper emits `AssistantMessageBoundary`; the last assistant item of a completed main turn is promoted to the final reply.
 
 Sub-agent rows are `ToolUse` with `toolName: "Agent"`. Children nest when their `ToolUse` carries `parentToolCallId` pointing at the collab item id.
 

@@ -4,18 +4,19 @@ import type { ThoughtSegment, NarrativeItem, NarrativeBuildResult } from "./type
 const AGENT_TOOL_NAME = "Agent";
 
 /**
- * Live response text that should fill the streaming-response virtual-item
+ * Live response text that should fill the provisional assistant-message item
  * slot — i.e. the text the user is actively watching type, which the
  * persisted `MessageBubble` will replace once the turn persists.
  *
  * Mirrors `buildNarrativeItems`'s internal delta-promotion logic so the live
- * timeline (which omits this content from its rows) and the streaming-response
+ * timeline (which omits this content from its rows) and the live assistant
  * slot stay in sync. Returns "" when there is nothing to render — caller
  * suppresses the virtual item in that case.
  *
  *  - When the latest thought segment is open and no tool is running, that
  *    segment IS the live response (tool-free turn, or pre-tool preamble that
- *    will be classified by the next `AssistantMessageBoundary`).
+ *    will be classified by the next `AssistantMessageBoundary`). An explicit
+ *    non-final segment stays in the timeline instead.
  *  - Otherwise, the suffix of `streamingText` past the closed-thought tape is
  *    the final-response text emitted after the last tool completed.
  */
@@ -35,6 +36,7 @@ export function computeLiveStreamingText(params: {
 
   const lastSeg = thoughtSegments[thoughtSegments.length - 1];
   if (lastSeg && lastSeg.endedAt == null) {
+    if (lastSeg.isExplicitNonFinal) return "";
     return lastSeg.text;
   }
 
@@ -103,6 +105,7 @@ type TimelineEvent =
  * in `streamingText` but not in `thoughtSegments`; the surplus over the joined
  * segment texts is appended as a `delta` row. When `isFinalResponse` is omitted
  * (legacy tool-free turns), the last open segment is still elevated to `delta`.
+ * Explicit non-final segments remain thought rows even when no tool is running.
  *
  * When `committedAssistantBody` is set (typically the last assistant bubble after
  * `session.turnComplete`), thought rows that only repeat that body are omitted so
@@ -215,7 +218,11 @@ export function buildNarrativeItems(params: {
       // Fallback when `isFinalResponse` never arrived: streamed text lives in the
       // latest open segment (`streamingSuffix` is empty).
       const useLegacyTapeFinalDelta =
-        streamingSuffix === "" && isLatest && isStreaming && !anyToolRunning;
+        streamingSuffix === "" &&
+        isLatest &&
+        isStreaming &&
+        !anyToolRunning &&
+        !evt.segment.isExplicitNonFinal;
       if (useLegacyTapeFinalDelta) {
         items.push({ type: "delta", text: evt.segment.text });
         emittedFinalDeltaFromTape = true;

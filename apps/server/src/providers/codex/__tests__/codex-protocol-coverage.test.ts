@@ -203,6 +203,34 @@ describe("Codex protocol coverage", () => {
     }
   });
 
+  it("classifies Codex assistant text with assistantMessageBoundary, not final text deltas", () => {
+    const { events } = replay(notifications);
+    const assistantDeltas = events.filter(
+      (e) => e.type === AgentEventType.TextDelta && e.isFinalResponse === true,
+    );
+    const boundaries = events.filter(
+      (e): e is Extract<AgentEvent, { type: "assistantMessageBoundary" }> =>
+        e.type === AgentEventType.AssistantMessageBoundary,
+    );
+    const messages = events.filter((e) => e.type === AgentEventType.Message);
+    const hasAssistantText = notifications.some(
+      (n) => n.method === "item/agentMessage/delta"
+        || (
+          n.method === "item/completed"
+          && ["agentMessage", "message"].includes(
+            ((n.params as { item?: { type?: string } }).item?.type) ?? "",
+          )
+        ),
+    );
+
+    expect(assistantDeltas).toHaveLength(0);
+    if (hasAssistantText) {
+      expect(boundaries.length).toBeGreaterThan(0);
+      expect(messages.length).toBeGreaterThan(0);
+      expect(boundaries.some((e) => e.isFinalResponse)).toBe(true);
+    }
+  });
+
   it("golden fixture documents sub-agent scenario when captured", () => {
     if (label !== "golden") return;
     const lines = readFileSync(FIXTURE_PATH, "utf8").split("\n").filter(Boolean);

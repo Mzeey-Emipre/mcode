@@ -5,6 +5,8 @@ import {
   buildVirtualItems,
   estimateItemHeight,
   STREAMING_CARD_COLLAPSED_HEIGHT,
+  assistantMessageItemKey,
+  liveFinalResponseItemKey,
 } from "@/components/chat/virtual-items";
 import type { ChatVirtualItem } from "@/components/chat/virtual-items";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
@@ -79,6 +81,42 @@ describe("buildStableItems", () => {
   });
 });
 
+describe("final response item keys", () => {
+  it("derives the same key before and after the assistant message persists", () => {
+    const liveKey = liveFinalResponseItemKey("thread-1", "turn-response:thread-1:abc");
+    const persistedKey = assistantMessageItemKey(
+      makeMessage({ id: "persisted-msg", thread_id: "thread-1" }),
+      {
+        threadId: "thread-1",
+        messageId: "persisted-msg",
+        responseKey: "turn-response:thread-1:abc",
+      },
+    );
+
+    expect(persistedKey).toBe(liveKey);
+  });
+
+  it("falls back to the persisted message id outside the active turn", () => {
+    expect(assistantMessageItemKey(makeMessage({ id: "persisted-msg" }))).toBe(
+      "persisted-msg",
+    );
+  });
+
+  it("keeps the inherited key after the active turn marker is cleared", () => {
+    const persistedKey = assistantMessageItemKey(
+      makeMessage({ id: "persisted-msg", thread_id: "thread-1" }),
+      {
+        threadId: "thread-1",
+        responseKeysByMessageId: {
+          "persisted-msg": "turn-response:thread-1:abc",
+        },
+      },
+    );
+
+    expect(persistedKey).toBe("turn-response:thread-1:abc");
+  });
+});
+
 describe("buildVolatileItems", () => {
   it("returns narrative-flow item when agent is running with tool calls", () => {
     const toolCalls = [makeToolCall({ id: "t1" })];
@@ -112,6 +150,35 @@ describe("buildVolatileItems", () => {
   it("passes thoughtSegments through on narrative-flow items", () => {
     const thoughtSegments: ThoughtSegment[] = [{ text: "planning", startedAt: 42, endedAt: 100 }];
     const items = buildVolatileItems([makeToolCall({ id: "t1" })], true, 1000, undefined, undefined, [], thoughtSegments);
+    const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<
+      (typeof items)[number],
+      { type: "narrative-flow" }
+    >;
+    expect(narrativeItem?.thoughtSegments).toEqual(thoughtSegments);
+  });
+
+  it("does not emit a live assistant message for explicit non-final narration", () => {
+    const thoughtSegments: ThoughtSegment[] = [
+      { text: "codex narration", startedAt: 42, isExplicitNonFinal: true },
+    ];
+    const items = buildVolatileItems(
+      [],
+      true,
+      1000,
+      "codex narration",
+      undefined,
+      [],
+      thoughtSegments,
+    );
+
+    expect(
+      items.some(
+        (i) =>
+          i.type === "message" &&
+          i.message.role === "assistant" &&
+          i.assistantState?.isStreaming,
+      ),
+    ).toBe(false);
     const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<
       (typeof items)[number],
       { type: "narrative-flow" }
@@ -170,7 +237,7 @@ describe("buildVirtualItems (combined)", () => {
     expect(result[2]).toMatchObject({ type: "message", key: "msg-2" });
   });
 
-  it("streaming text with agent running emits narrative-flow and streaming-response items", () => {
+  it("streaming text with agent running emits narrative-flow and live assistant message items", () => {
     const messages = [makeMessage({ id: "msg-1" })];
     const result = buildAll(messages, [], "partial response...", true, undefined);
 
@@ -180,26 +247,28 @@ describe("buildVirtualItems (combined)", () => {
     expect(narrative).toBeDefined();
     expect(narrative?.streamingText).toBe("partial response...");
 
-    // The streaming text also surfaces in its own streaming-response slot so
-    // the persisted MessageBubble lands at the same virtual-list position.
-    const streaming = result.find((i) => i.type === "streaming-response") as
-      | (ChatVirtualItem & { type: "streaming-response" })
+    // The streaming text also surfaces as a provisional assistant message so
+    // the persisted MessageBubble keeps the same component and key.
+    const streaming = result.find(
+      (i) => i.type === "message" && i.message.role === "assistant" && i.assistantState?.isStreaming,
+    ) as
+      | (ChatVirtualItem & { type: "message" })
       | undefined;
     expect(streaming).toBeDefined();
-    expect(streaming?.text).toBe("partial response...");
+    expect(streaming?.message.content).toBe("partial response...");
   });
 
-  it("orders narrative-flow → streaming-response → narrative-indicator when agent is running with streaming text", () => {
+  it("orders narrative-flow → live assistant message → narrative-indicator when agent is running with streaming text", () => {
     // Regression for the bug where the indicator sat ABOVE the typewriter
     // streaming. The fix gives the indicator its own virtual-item slot below
-    // the streaming-response so the writing animation reads as the primary
+    // the live assistant message so the writing animation reads as the primary
     // surface and the progress meta sits underneath it.
     const messages = [makeMessage({ id: "msg-1" })];
     const result = buildAll(messages, [], "writing animation text...", true, 1000);
 
     const narrativeFlowIdx = result.findIndex((i) => i.type === "narrative-flow");
     const streamingResponseIdx = result.findIndex(
-      (i) => i.type === "streaming-response",
+      (i) => i.type === "message" && i.message.role === "assistant" && i.assistantState?.isStreaming,
     );
     const indicatorIdx = result.findIndex((i) => i.type === "narrative-indicator");
 
@@ -340,7 +409,7 @@ describe("buildVirtualItems (combined)", () => {
     // user msg, narrative-flow (before split assistant msg), narrative-indicator
     // (status footer below where the live response would render), split
     // assistant msg, persisted-late-hooks(msg-2), persisted-turn-footer(msg-2).
-    // streaming-response is suppressed because a tool is still running —
+    // live assistant response is suppressed because a tool is still running —
     // `computeLiveStreamingText` returns "" while any top-level tool is in
     // flight, since the model isn't streaming user-facing text during tool
     // execution. persisted-turn-footer is NOT suppressed because it sits
@@ -385,7 +454,9 @@ describe("buildVirtualItems (combined)", () => {
 
     const a1Idx = result.findIndex((i) => i.type === "message" && i.key === "a1");
     const narrativeIdx = result.findIndex((i) => i.type === "narrative-flow");
-    const streamingIdx = result.findIndex((i) => i.type === "streaming-response");
+    const streamingIdx = result.findIndex(
+      (i) => i.type === "message" && i.message.role === "assistant" && i.assistantState?.isStreaming,
+    );
 
     expect(a1Idx).toBeGreaterThanOrEqual(0);
     expect(narrativeIdx).toBeGreaterThan(a1Idx);

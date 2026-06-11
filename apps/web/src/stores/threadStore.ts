@@ -1,7 +1,8 @@
 import { create } from "zustand";
-import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
+import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
 import type { ContextWindowMode, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
+import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import { PlanQuestionSchema, PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
@@ -216,7 +217,33 @@ function resetTurnEphemeral(_rec: ThreadRecord): Partial<ThreadRecord> {
     toolCalls: [],
     thoughtSegments: [],
     hooks: [],
+    currentTurnResponseKey: "",
   };
+}
+
+/** Returns a React key shared by the live and just-persisted final response. */
+function createTurnResponseKey(threadId: string): string {
+  return `turn-response:${threadId}:${crypto.randomUUID()}`;
+}
+
+/** Maps a persisted thought row into the live narrative segment shape. */
+function persistedThoughtToSegment(record: ThoughtSegmentRecord): ThoughtSegment {
+  const startedAt = Date.parse(record.started_at);
+  const endedAt = record.ended_at ? Date.parse(record.ended_at) : NaN;
+  return {
+    text: record.text,
+    startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
+    endedAt: Number.isFinite(endedAt) ? endedAt : undefined,
+  };
+}
+
+/** Returns persisted thought rows that should remain visible above the final reply. */
+function visiblePersistedThoughtSegments(
+  thoughts: readonly ThoughtSegmentRecord[],
+): ThoughtSegment[] {
+  return thoughts
+    .filter((thought) => !thought.is_final_response)
+    .map(persistedThoughtToSegment);
 }
 
 /**
@@ -306,6 +333,19 @@ function capMessages(messages: Message[]): { messages: Message[]; evicted: boole
   };
 }
 
+/** Keeps turn response keys only for assistant messages still loaded in memory. */
+function pruneAssistantResponseKeys(
+  responseKeys: Record<string, string>,
+  messages: readonly Message[],
+): Record<string, string> {
+  const assistantIds = new Set(
+    messages.filter((message) => message.role === "assistant").map((message) => message.id),
+  );
+  return Object.fromEntries(
+    Object.entries(responseKeys).filter(([messageId]) => assistantIds.has(messageId)),
+  );
+}
+
 /**
  * Scan a message list for an unanswered plan-questions block.
  * Finds the last assistant message containing a ```plan-questions``` fenced block,
@@ -374,8 +414,8 @@ export function extractPendingPlanQuestions(
 }
 
 /** Zustand store for thread-scoped messages, streaming session state, and agent event handling. */
-/** One coalesced `session.textDelta` span for rAF flushing; merges adjacent chunks with same `isFinalResponse`. */
-type PendingTextChunk = { delta: string; isFinalResponse: boolean };
+/** One coalesced `session.textDelta` span for rAF flushing; preserves missing `isFinalResponse` for legacy fallback behavior. */
+type PendingTextChunk = { delta: string; isFinalResponse?: boolean };
 
 export const useThreadStore = create<ThreadState>((set, get) => {
   let textDeltaFlushRaf: number | null = null;
@@ -423,6 +463,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             continue;
           }
 
+          const isExplicitNonFinal = chunk.isFinalResponse === false;
           const last = segments[segments.length - 1];
           const looksLikeContinuation = (prevText: string, nextText: string): boolean => {
             const trimmedPrev = prevText.trimEnd();
@@ -440,15 +481,30 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             (last.text.length < TINY_SEGMENT_THRESHOLD ||
               looksLikeContinuation(last.text, acc));
           if (!last || (last.endedAt !== undefined && !shouldReopen)) {
-            segments = [...segments, { text: acc, startedAt: Date.now() }];
+            segments = [
+              ...segments,
+              {
+                text: acc,
+                startedAt: Date.now(),
+                ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+              },
+            ];
           } else if (last.endedAt !== undefined && shouldReopen) {
-            const reopened: typeof last = { ...last, text: last.text + acc };
+            const reopened: typeof last = {
+              ...last,
+              text: last.text + acc,
+              ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+            };
             delete (reopened as { endedAt?: number }).endedAt;
             segments = [...segments.slice(0, -1), reopened];
           } else {
             segments = [
               ...segments.slice(0, -1),
-              { ...last, text: last.text + acc },
+              {
+                ...last,
+                text: last.text + acc,
+                ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+              },
             ];
           }
         }
@@ -687,6 +743,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ...settingsPatch,
           ...messagePatch,
           agentStartTime: Date.now(),
+          currentTurnResponseKey: createTurnResponseKey(threadId),
           lastFallback: undefined,
           rateLimit: undefined,
           apiRetry: undefined,
@@ -831,6 +888,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingPreview: "",
           toolCalls: [],
           currentTurnMessageId: "",
+          currentTurnResponseKey: "",
+          assistantResponseKeys: {},
           oldestLoadedSequence: 0,
           hasMoreMessages: false,
           isLoadingMore: false,
@@ -1345,6 +1404,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           records: patchThreadRecord(state.records, threadId, {
             agentStartTime: Date.now(),
             ...resetTurnEphemeral(getThreadRecord(state.records, threadId)),
+            currentTurnResponseKey: createTurnResponseKey(threadId),
           }),
         };
       });
@@ -1390,9 +1450,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             lastSeg && lastSeg.endedAt === undefined
               ? [...segments.slice(0, -1), { ...lastSeg, endedAt: Date.now() }]
               : segments;
+          const responseKey =
+            rec.currentTurnResponseKey || createTurnResponseKey(threadId);
 
           const turnPatch = {
             currentTurnMessageId: message.id,
+            currentTurnResponseKey: responseKey,
+            assistantResponseKeys: {
+              ...rec.assistantResponseKeys,
+              [message.id]: responseKey,
+            },
             streaming: "",
             streamingPreview: "",
             thoughtSegments: closedSegments,
@@ -1431,6 +1498,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               delete nextServerMessageIds[previousId];
             }
 
+            const nextAssistantResponseKeys = { ...rec.assistantResponseKeys };
+            if (previousId in nextAssistantResponseKeys) {
+              nextAssistantResponseKeys[message.id] = nextAssistantResponseKeys[previousId];
+              delete nextAssistantResponseKeys[previousId];
+            }
+
             const replaced = rec.messages.slice(0, -1).concat({
               ...last,
               id: message.id,
@@ -1438,6 +1511,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               timestamp: message.timestamp,
             });
             const { messages: capped, evicted } = capMessages(replaced);
+            const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
+              nextAssistantResponseKeys,
+              capped,
+            );
             return {
               records: patchThreadRecord(state.records, threadId, {
                 ...turnPatch,
@@ -1445,6 +1522,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 persistedToolCallCounts: nextPersistedToolCallCounts,
                 persistedFilesChanged: nextPersistedFilesChanged,
                 serverMessageIds: nextServerMessageIds,
+                assistantResponseKeys: prunedAssistantResponseKeys,
                 latestTurnWithChanges:
                   rec.latestTurnWithChanges === previousId ? message.id : rec.latestTurnWithChanges,
                 ...(evicted ? { hasMoreMessages: true } : {}),
@@ -1453,10 +1531,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
 
           const { messages: capped, evicted } = capMessages([...rec.messages, message]);
+          const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
+            turnPatch.assistantResponseKeys,
+            capped,
+          );
           return {
             records: patchThreadRecord(state.records, threadId, {
               ...turnPatch,
               messages: capped,
+              assistantResponseKeys: prunedAssistantResponseKeys,
               ...(evicted ? { hasMoreMessages: true } : {}),
             }),
           };
@@ -1618,7 +1701,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (method === "session.textDelta") {
       const delta = (params.delta as string) || "";
       if (!delta) return;
-      const isFinalResponse = params.isFinalResponse === true;
+      const rawIsFinalResponse = params.isFinalResponse;
+      const isFinalResponse =
+        typeof rawIsFinalResponse === "boolean" ? rawIsFinalResponse : undefined;
       const hadPending = pendingTextDeltaByThread.has(threadId);
       const existing = pendingTextDeltaByThread.get(threadId) ?? [];
       const next = [...existing];
@@ -1877,10 +1962,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               ? guardrailMsg
               : null;
           const pending = [message, ...(dedupedGuardrail ? [dedupedGuardrail] : [])];
+          const responseKey =
+            rec.currentTurnResponseKey || createTurnResponseKey(threadId);
 
           const basePatch = {
             streaming: "",
             streamingPreview: "",
+            currentTurnMessageId: message.id,
+            currentTurnResponseKey: responseKey,
+            assistantResponseKeys: {
+              ...rec.assistantResponseKeys,
+              [message.id]: responseKey,
+            },
             thoughtSegments: closedSegments,
             toolCalls: completedCalls,
             permissions: [] as StoredPermission[],
@@ -1895,11 +1988,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
 
           const { messages: capped, evicted } = capMessages([...rec.messages, ...pending]);
+          const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
+            basePatch.assistantResponseKeys,
+            capped,
+          );
           return {
             runningThreadIds: nextRunning,
             records: patchThreadRecord(state.records, threadId, {
               ...basePatch,
               messages: capped,
+              assistantResponseKeys: prunedAssistantResponseKeys,
               ...(evicted ? { hasMoreMessages: true } : {}),
             }),
           };
@@ -2238,6 +2336,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streaming: "",
           streamingPreview: "",
           agentStartTime: undefined,
+          currentTurnMessageId: "",
+          currentTurnResponseKey: "",
           toolCalls: [] as ToolCall[],
           isCompacting: false,
           rateLimit: undefined,
@@ -2348,7 +2448,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             ...rec.serverMessageIds,
             [localMsgId]: payload.messageId,
           },
-          currentTurnMessageId: "",
           interruptStopFileNotice,
           awaitingUserStopPersist,
         }),
@@ -2377,9 +2476,19 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       .then(() => {
         const currentId = get().currentThreadId;
         if (!currentId) return;
+        if (currentId !== payload.threadId) return;
         const rec = getRec(currentId);
         const serverRes = rec.narrativeByMessage[payload.messageId];
-        if (!serverRes || !localIdForBackfill) return;
+        if (!serverRes) return;
+        const persistedThoughtSegments = visiblePersistedThoughtSegments(serverRes.thoughts);
+        if (persistedThoughtSegments.length > rec.thoughtSegments.length) {
+          patchRec(currentId, (r) => {
+            if (r.toolCalls.length === 0) return {};
+            if (r.thoughtSegments.length >= persistedThoughtSegments.length) return {};
+            return { thoughtSegments: persistedThoughtSegments };
+          });
+        }
+        if (!localIdForBackfill) return;
         if (localIdForBackfill === payload.messageId) return;
         patchRec(currentId, (r) => ({
           narrativeByMessage: {
