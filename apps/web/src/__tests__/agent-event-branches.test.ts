@@ -11,6 +11,7 @@ import { countActiveSubagentCalls, useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockThread } from "./mocks/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
+import { useTaskStore } from "@/stores/taskStore";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -24,6 +25,7 @@ describe("handleAgentEvent branches", () => {
       activeThreadId: "thread-1",
       threads: [createMockThread({ id: "thread-1" })],
     });
+    useTaskStore.setState({ tasksByThread: {} });
     resetThreadStoreForTests({
       currentThreadId: "thread-1",
       runningThreadIds: new Set(["thread-1"]),
@@ -153,6 +155,45 @@ describe("handleAgentEvent branches", () => {
       model: "composer-2.5-fast",
     });
     expect(calls[0].isComplete).toBe(false);
+  });
+
+  it("session.toolUse updates tasks when duplicate TodoWrite enriches sparse input", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "todo-1",
+        toolName: "TodoWrite",
+        toolInput: {},
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "todo-1",
+        toolName: "TodoWrite",
+        toolInput: {
+          todos: [
+            { id: "a", content: "Run mapper tests", status: "in_progress" },
+          ],
+        },
+      },
+    });
+
+    const calls = getTestThreadToolCalls("thread-1");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].toolInput).toEqual({
+      todos: [
+        { id: "a", content: "Run mapper tests", status: "in_progress" },
+      ],
+    });
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      {
+        id: "a",
+        content: "Run mapper tests",
+        status: "in_progress",
+        group: "Tasks",
+      },
+    ]);
   });
 
   it("toolResult fallback does not mark an Agent call complete when it has active children", () => {

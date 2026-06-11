@@ -1470,30 +1470,58 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const existingCalls = getRec(threadId).toolCalls;
       const toolName = (params.toolName as string) || "unknown";
       const incomingInput = (params.toolInput as Record<string, unknown>) || {};
+      const parentToolCallId = params.parentToolCallId as string | undefined;
+      const applyTodoWriteTasks = (toolInput: Record<string, unknown>) => {
+        if (toolName !== "TodoWrite") return;
+        const todos = toolInput.todos as Array<Record<string, unknown>> | undefined;
+        if (!todos || !Array.isArray(todos)) return;
+
+        const group = parentToolCallId
+          ? resolveAgentGroupLabel(existingCalls, parentToolCallId)
+          : "Tasks";
+
+        const taskItems: TaskItem[] = todos.map((t, i) => ({
+          id: t.id != null ? String(t.id) : String(i),
+          content: String(t.content ?? ""),
+          status: coerceTaskStatus(t.status),
+          group,
+        }));
+
+        useTaskStore.getState().setTaskGroup(threadId, group, taskItems);
+      };
       if (toolCallId) {
         const existing = existingCalls.find((tc) => tc.id === toolCallId);
         if (existing) {
-          // Cursor Task: provisional ToolUse on tool_call, enriched ToolUse on cursor/task.
-          if (
-            !existing.isComplete &&
-            existing.toolName === "Agent" &&
-            toolName === "Agent"
-          ) {
+          // Providers may emit a sparse running ToolUse first, then a richer
+          // ToolUse with the same id when the completion payload arrives.
+          const shouldMergeDuplicate =
+            !existing.isComplete
+            && (
+              Object.keys(existing.toolInput ?? {}).length === 0
+              || existing.toolName !== toolName
+              || (existing.toolName === "Agent" && toolName === "Agent")
+            );
+          if (shouldMergeDuplicate) {
+            const mergedInput = { ...existing.toolInput, ...incomingInput };
             set((state) => {
               const calls = getThreadRecord(state.records, threadId).toolCalls;
               const updated = calls.map((tc) =>
                 tc.id === toolCallId
-                  ? { ...tc, toolInput: { ...tc.toolInput, ...incomingInput } }
+                  ? {
+                      ...tc,
+                      toolName,
+                      toolInput: mergedInput,
+                      parentToolCallId: tc.parentToolCallId ?? parentToolCallId,
+                    }
                   : tc,
               );
               return { records: patchThreadRecord(state.records, threadId, { toolCalls: updated }) };
             });
+            applyTodoWriteTasks(mergedInput);
           }
           return;
         }
       }
-
-      const parentToolCallId = params.parentToolCallId as string | undefined;
 
       // Only mark prior tool calls complete if this isn't a subagent's tool call
       // (subagent calls should not mark the parent Agent call as complete)
@@ -1503,26 +1531,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Intercept TodoWrite calls to populate the task panel.
       // Sub-agent calls are grouped by their parent Agent's description so
       // multiple sub-agents each get their own collapsible section.
-      if (toolName === "TodoWrite") {
-        const toolInput = (params.toolInput as Record<string, unknown>) || {};
-        const todos = toolInput.todos as Array<Record<string, unknown>> | undefined;
-        if (todos && Array.isArray(todos)) {
-          const group = parentToolCallId
-            ? resolveAgentGroupLabel(existingCalls, parentToolCallId)
-            : "Tasks";
-
-          const taskItems: TaskItem[] = todos.map((t, i) => ({
-            id: t.id != null ? String(t.id) : String(i),
-            content: String(t.content ?? ""),
-            status: coerceTaskStatus(t.status),
-            group,
-          }));
-
-          // Always merge by group so sub-agent groups are never wiped out
-          // by a top-level TodoWrite call (or vice versa).
-          useTaskStore.getState().setTaskGroup(threadId, group, taskItems);
-        }
-      }
+      applyTodoWriteTasks(incomingInput);
 
       const toolCall: ToolCall = {
         id: toolCallId || crypto.randomUUID(),

@@ -309,7 +309,6 @@ export class NarrativeStore {
    */
   bufferToolCall(threadId: string, event: BufferToolCallEvent): string | undefined {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
-    const sortOrder = this.nextSortOrder(threadId);
 
     const stack = this.agentCallStack.get(threadId) ?? [];
     // Prefer the SDK-provided parent_tool_use_id on the event (set by the
@@ -331,6 +330,30 @@ export class NarrativeStore {
         source: event.parentToolCallId ? "sdk" : "stack-fallback",
       });
     }
+
+    const existing = buffer.find((tc) => tc.toolCallId === event.toolCallId);
+    if (existing) {
+      const shouldMergeDuplicate =
+        existing.status === "running"
+        && (
+          Object.keys(existing._rawToolInput ?? {}).length === 0
+          || existing.toolName !== event.toolName
+          || (existing.toolName === "Agent" && event.toolName === "Agent")
+        );
+      if (shouldMergeDuplicate) {
+        existing.toolName = event.toolName;
+        existing._rawToolInput = {
+          ...(existing._rawToolInput ?? {}),
+          ...event.toolInput,
+        };
+        if (parentToolCallId && !existing.parentToolCallId) {
+          existing.parentToolCallId = parentToolCallId;
+        }
+      }
+      return existing.parentToolCallId;
+    }
+
+    const sortOrder = this.nextSortOrder(threadId);
     if (event.toolName === "Agent") {
       stack.push(event.toolCallId);
       this.agentCallStack.set(threadId, stack);
