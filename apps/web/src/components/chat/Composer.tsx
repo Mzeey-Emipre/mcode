@@ -46,6 +46,10 @@ import { AgentStatusBar } from "./AgentStatusBar";
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
 import { useTaskStore } from "@/stores/taskStore";
 import { useDiffStore } from "@/stores/diffStore";
+import {
+  hideRightPanelAdaptive,
+  showRightPanelAdaptive,
+} from "@/lib/right-panel-layout";
 import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { resolveBranchName } from "@/lib/branch-name";
 import { useSlashCommand } from "./useSlashCommand";
@@ -185,9 +189,9 @@ function ComposerOptionsMenu({
     // Scope is thread-only; open/closed is per-thread, width/tab workspace-keyed.
     if (!threadId || !activeWorkspaceId) return;
     if (panelVisible) {
-      useDiffStore.getState().hideRightPanel(activeWorkspaceId, threadId);
+      hideRightPanelAdaptive(activeWorkspaceId, threadId);
     } else {
-      useDiffStore.getState().showRightPanel(activeWorkspaceId, threadId);
+      showRightPanelAdaptive(activeWorkspaceId, threadId);
       useDiffStore.getState().setRightPanelTab(activeWorkspaceId, "tasks");
     }
   };
@@ -346,9 +350,9 @@ function InlineComposerOptions({
     // Scope is thread-only; open/closed is per-thread, width/tab workspace-keyed.
     if (!threadId || !activeWorkspaceId) return;
     if (panelVisible) {
-      useDiffStore.getState().hideRightPanel(activeWorkspaceId, threadId);
+      hideRightPanelAdaptive(activeWorkspaceId, threadId);
     } else {
-      useDiffStore.getState().showRightPanel(activeWorkspaceId, threadId);
+      showRightPanelAdaptive(activeWorkspaceId, threadId);
       useDiffStore.getState().setRightPanelTab(activeWorkspaceId, "tasks");
     }
   };

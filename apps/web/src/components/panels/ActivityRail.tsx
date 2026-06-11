@@ -1,4 +1,4 @@
-import { Globe, Plus, X } from "lucide-react";
+import { Globe, Maximize2, Minimize2, Plus, X } from "lucide-react";
 import type { BrowserTabInfo, BrowserTabSet } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import {
@@ -408,11 +408,11 @@ function RailAddControl({
 }
 
 /**
- * Vertical activity rail that navigates the right panel's open singleton tabs.
- * Each open tab is an icon with an active-tab lamp; hovering an icon reveals an
- * × that closes it. An add control offers the creatable set (one opens directly,
- * several show a menu, none hides it). The panel's close-chrome lives at the
- * foot of the rail so it stays reachable in every state. See ADR-0004 / issue #611.
+ * Vertical activity rail for the right panel: maximize/restore at the head, then
+ * open singleton tabs (active lamp, hover-× close, add control when tabs exist).
+ * With no tabs open the rail is only the maximize toggle beside the empty-state
+ * list. The panel itself is opened and closed from the chat-header toggle.
+ * See ADR-0004 / issue #611.
  */
 export function ActivityRail({
   openTabs,
@@ -422,10 +422,11 @@ export function ActivityRail({
   changesCount,
   changesFresh,
   browserTabSet,
+  maximized,
+  onToggleMaximized,
   onSelect,
   onClose,
   onCreate,
-  onClosePanel,
   onSelectBrowserPage,
   onCloseBrowserPage,
 }: {
@@ -437,10 +438,12 @@ export function ActivityRail({
   readonly changesFresh: boolean;
   /** The Browser tab's open pages, or null when none are known (web build / not yet loaded). */
   readonly browserTabSet: BrowserTabSet | null;
+  /** Whether the panel is maximized (fills content area beside the project tree). */
+  readonly maximized: boolean;
+  onToggleMaximized: () => void;
   onSelect: (id: RightPanelTab) => void;
   onClose: (id: RightPanelTab) => void;
   onCreate: (id: RightPanelTab) => void;
-  onClosePanel: () => void;
   onSelectBrowserPage: (pageId: string) => void;
   onCloseBrowserPage: (pageId: string) => void;
 }) {
@@ -449,6 +452,20 @@ export function ActivityRail({
       data-testid="activity-rail"
       className="flex w-12 flex-none flex-col items-center gap-1 border-r border-border/40 py-2"
     >
+      {/* Maximize / restore sits at the rail head (not the foot) so it stays in
+          the first tab stop and never scrolls off-screen on short viewports. */}
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        onClick={onToggleMaximized}
+        className="h-7 w-7 shrink-0 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
+        aria-label={maximized ? "Restore panel" : "Maximize panel"}
+        title={maximized ? "Restore panel" : "Maximize panel"}
+        data-testid="rail-maximize-toggle"
+      >
+        {maximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+      </Button>
+
       {openTabs.map((id) => {
         // The Browser tab becomes its page switcher: when its pages are known,
         // render them as a favicon group instead of the single tab glyph. With
@@ -483,15 +500,6 @@ export function ActivityRail({
       {openTabs.length > 0 && (
         <RailAddControl scope={scope} openTabs={openTabs} onCreate={onCreate} />
       )}
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        onClick={onClosePanel}
-        className="mt-auto h-7 w-7 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
-        aria-label="Close panel"
-      >
-        <X size={13} />
-      </Button>
     </div>
   );
 }

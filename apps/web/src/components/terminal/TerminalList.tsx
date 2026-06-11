@@ -49,8 +49,8 @@ export const TerminalList = memo(function TerminalList({
 
   if (collapsed) {
     return (
-      <div className="flex w-[38px] flex-shrink-0 flex-col border-r border-border">
-        <div className="flex h-[34px] items-center justify-center border-b border-border">
+      <div className="flex w-[38px] flex-shrink-0 flex-col border-r border-border/40 bg-muted/20">
+        <div className="flex h-[34px] items-center justify-center border-b border-border/40">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -104,9 +104,9 @@ export const TerminalList = memo(function TerminalList({
   }
 
   return (
-    <div className="flex w-[148px] flex-shrink-0 flex-col border-r border-border">
+    <div className="flex w-[148px] flex-shrink-0 flex-col border-r border-border/40 bg-muted/20">
       {/* Header: collapse toggle + actions, left-aligned */}
-      <div className="flex h-[34px] items-center gap-0.5 border-b border-border px-1.5">
+      <div className="flex h-[34px] items-center gap-0.5 border-b border-border/40 px-1.5">
         <Tooltip>
           <TooltipTrigger
             render={

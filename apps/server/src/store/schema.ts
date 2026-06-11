@@ -67,7 +67,7 @@ export const threads = sqliteTable(
     contextWindowMode: text("context_window_mode"),
     thinking: integer("thinking"),
     /**
-     * Codex-only: 1 = request `serviceTier: fast`, 0 = standard, null = inherit global
+     * Codex-only: 1 = request `serviceTier: priority` (the "Fast" tier), 0 = standard, null = inherit global
      * `settings.provider.codex.fastMode`.
      */
     codexFastMode: integer("codex_fast_mode"),

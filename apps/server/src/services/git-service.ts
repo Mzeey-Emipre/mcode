@@ -419,7 +419,15 @@ export class GitService {
   }
 
   /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. Pass repoPath to run from a worktree directory instead of the workspace root. */
-  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string, repoPath?: string): Promise<GitCommit[]> {
+  async log(
+    workspaceId: string,
+    branch?: string,
+    limit = 50,
+    baseBranch?: string,
+    repoPath?: string,
+    skip = 0,
+    includeStats = true,
+  ): Promise<GitCommit[]> {
     const workspace = this.requireWorkspace(workspaceId);
     const effectivePath = repoPath ?? workspace.path;
 
@@ -427,16 +435,17 @@ export class GitService {
     const resolvedBase = baseBranch !== undefined
       ? baseBranch
       : branch !== undefined
-        ? await this.detectDefaultBranch(effectivePath)
+        ? await this.detectDefaultComparisonRef(effectivePath)
         : undefined;
 
     const args = [
       "-C", effectivePath,
       "log",
       "--pretty=format:MCODE_SEP%H|||%h|||%s|||%an|||%aI",
-      "--numstat",
       `-${limit}`,
     ];
+    if (skip > 0) args.push(`--skip=${skip}`);
+    if (includeStats) args.push("--numstat");
     // When running from a worktree path, HEAD is the checked-out branch — no need to name it.
     const headRef = repoPath ? "HEAD" : branch;
     if (resolvedBase && headRef) {
@@ -468,7 +477,9 @@ export class GitService {
       if (!sha) continue;
 
       // numstat lines have format: additions\tdeletions\tfilename
-      const filesChanged = lines.slice(1).filter((l) => l.includes("\t")).length;
+      const filesChanged = includeStats
+        ? lines.slice(1).filter((l) => l.includes("\t")).length
+        : 0;
 
       commits.push({
         sha: sha ?? "",
@@ -739,6 +750,49 @@ export class GitService {
 
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */
   private readonly defaultBranchCache = new Map<string, string | null>();
+  private readonly defaultComparisonRefCache = new Map<string, string | null>();
+
+  /** Detect the default comparison ref for commit ranges, preferring the remote-qualified ref. */
+  private async detectDefaultComparisonRef(repoPath: string): Promise<string | null> {
+    const cached = this.defaultComparisonRefCache.get(repoPath);
+    if (cached !== undefined) return cached;
+
+    const result = await this.resolveDefaultComparisonRef(repoPath);
+    this.defaultComparisonRefCache.set(repoPath, result);
+    return result;
+  }
+
+  /** Resolve the default comparison ref, preserving `origin/main` when available. */
+  private async resolveDefaultComparisonRef(repoPath: string): Promise<string | null> {
+    try {
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000, windowsHide: true },
+      );
+      return stdout.trim();
+    } catch (err) {
+      logger.debug("[detectDefaultComparisonRef] origin/HEAD not set, trying set-head", { repoPath, err });
+    }
+
+    try {
+      await execFile(
+        "git",
+        ["-C", repoPath, "remote", "set-head", "origin", "--auto"],
+        { timeout: 1_500, windowsHide: true },
+      );
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000, windowsHide: true },
+      );
+      return stdout.trim();
+    } catch (err) {
+      logger.debug("[detectDefaultComparisonRef] set-head failed, falling back to local default", { repoPath, err });
+    }
+
+    return this.detectDefaultBranch(repoPath);
+  }
 
   /** Detect the default upstream branch (e.g. main, master) for a repository. */
   private async detectDefaultBranch(repoPath: string): Promise<string | null> {
@@ -750,7 +804,7 @@ export class GitService {
     return result;
   }
 
-  /** Resolve the default branch by probing git refs in order of cheapness. */
+  /** Resolve the default comparison branch by probing git refs in order of cheapness. */
   private async resolveDefaultBranch(repoPath: string): Promise<string | null> {
     // 1. Ask the remote tracking ref (fast, no network, works if origin/HEAD is set)
     try {

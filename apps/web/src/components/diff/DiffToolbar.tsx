@@ -15,6 +15,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { visibleReviewViews, defaultReviewView } from "@/lib/review-views";
 import { BranchRefPicker } from "./BranchRefPicker";
+import { CommitPicker } from "./CommitPicker";
 
 /** Toolbar for the Review tab: dual-scope view switcher + unified/side-by-side toggle. */
 export function DiffToolbar() {
@@ -101,8 +102,7 @@ export function DiffToolbar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Operand slot — the active view's picked operand. Branch carries a
-            base→target ref picker; Commit's picker lands in #642. */}
+        {/* Operand slot — the active view's picked operand. */}
         {activeView?.operand && (
           <div
             className="ml-1 flex min-w-0 items-center border-l border-border/25 pl-2"
@@ -115,6 +115,7 @@ export function DiffToolbar() {
                 threadId={activeThreadId ?? undefined}
               />
             )}
+            {activeView.operand === "commit" && <CommitPicker />}
           </div>
         )}
       </div>

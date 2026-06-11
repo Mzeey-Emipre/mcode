@@ -382,7 +382,14 @@ export interface McodeTransport {
   /** Get cumulative diff across all turns for a thread. Implemented in Phase 3. */
   getCumulativeDiff(threadId: string, filePath?: string, maxLines?: number): Promise<string>;
   /** Get commit log for a workspace branch. Pass threadId so the server runs git from the thread's worktree path. */
-  getGitLog(workspaceId: string, branch?: string, limit?: number, baseBranch?: string, threadId?: string): Promise<GitCommit[]>;
+  getGitLog(
+    workspaceId: string,
+    branch?: string,
+    limit?: number,
+    baseBranch?: string,
+    threadId?: string,
+    options?: { skip?: number; includeStats?: boolean },
+  ): Promise<GitCommit[]>;
   /** Get unified diff for a specific git commit. Implemented in Phase 4. */
   getCommitDiff(workspaceId: string, sha: string, filePath?: string, maxLines?: number): Promise<string>;
   /** Get the list of files changed in a specific git commit. */

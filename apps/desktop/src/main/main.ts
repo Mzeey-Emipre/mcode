@@ -13,6 +13,8 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  powerMonitor,
+  powerSaveBlocker,
   protocol,
   session,
   shell,
@@ -46,6 +48,7 @@ import { registerPreviewBrowserHandlers, disposePreviewForWindow } from "./previ
 import { startBrowserUseBridge, disposeBrowserUseBridge } from "./browser-use/index.js";
 import { resolveMcodeWorkspacePreviewUrl } from "./preview/preview-local-file.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
+import { shouldPrintVersion } from "./cli-args.js";
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
 // from the installed prod build. Without this, both share %APPDATA%/Mcode/
@@ -56,6 +59,11 @@ import { isDesktopDev } from "./is-desktop-dev.js";
 // before app.whenReady() and any other path-dependent call.
 if (!app.isPackaged) {
   app.setPath("userData", join(app.getPath("appData"), "Mcode-Dev"));
+}
+
+if (shouldPrintVersion(process.argv)) {
+  console.log(app.getVersion());
+  app.exit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +109,93 @@ function openIfAllowed(url: string): void {
 
 let mainWindow: BrowserWindow | null = null;
 const serverManager = new ServerManager();
+
+// ---------------------------------------------------------------------------
+// Sleep-resilient server lifecycle (self-healing restart + power save blocker)
+// ---------------------------------------------------------------------------
+
+/** Sliding window for counting silent restarts before escalating to the crash dialog. */
+const SILENT_RESTART_WINDOW_MS = 60_000;
+/** Silent restarts allowed within the window; the next failure shows the crash dialog. */
+const SILENT_RESTART_LIMIT = 3;
+
+/** Timestamps of recent silent restarts (pruned to the sliding window). */
+let silentRestartTimestamps: number[] = [];
+/** Single in-flight ensure promise so concurrent triggers (resume + renderer fallback) coalesce. */
+let ensureInFlight: Promise<void> | null = null;
+
+/** Show the Restart / Quit dialog used when the server crashes or restart-loops. */
+async function showServerCrashDialog(code: number | null): Promise<void> {
+  if (!mainWindow) return;
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "error",
+    title: "Server crashed",
+    message: `The Mcode server exited unexpectedly (code ${code ?? "unknown"}).`,
+    buttons: ["Restart", "Quit"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) {
+    await serverManager.restart();
+  } else {
+    app.quit();
+  }
+}
+
+/**
+ * Verify the server is reachable and silently restart it if not.
+ * Called on OS resume and from the renderer's reconnect fallback.
+ * Escalates to the crash dialog after {@link SILENT_RESTART_LIMIT} silent
+ * restarts within {@link SILENT_RESTART_WINDOW_MS} — a restart loop means
+ * something is genuinely broken and hiding it would strand the user.
+ */
+function ensureServerRunning(): Promise<void> {
+  if (ensureInFlight) return ensureInFlight;
+  ensureInFlight = (async () => {
+    if (await serverManager.isHealthy()) return;
+
+    const now = Date.now();
+    silentRestartTimestamps = silentRestartTimestamps.filter(
+      (t) => now - t < SILENT_RESTART_WINDOW_MS,
+    );
+    if (silentRestartTimestamps.length >= SILENT_RESTART_LIMIT) {
+      await showServerCrashDialog(null);
+      return;
+    }
+    silentRestartTimestamps.push(now);
+
+    console.log("[main] Server unhealthy, restarting silently");
+    try {
+      await serverManager.restart();
+    } catch (err) {
+      console.error("[main] Silent server restart failed:", err);
+    }
+  })().finally(() => {
+    ensureInFlight = null;
+  });
+  return ensureInFlight;
+}
+
+/** WebContents ids that currently report the server as busy. */
+const busySenders = new Set<number>();
+/** Sender ids that already have a destroyed-cleanup listener registered. */
+const busyCleanupRegistered = new Set<number>();
+/** Active powerSaveBlocker id, or null when not blocking. */
+let powerSaveBlockerId: number | null = null;
+
+/** Start/stop the app-suspension blocker to match the busy-sender set. */
+function updatePowerSaveBlocker(): void {
+  if (busySenders.size > 0) {
+    if (powerSaveBlockerId === null) {
+      powerSaveBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+      console.log("[main] Power save blocker started (server busy)");
+    }
+  } else if (powerSaveBlockerId !== null) {
+    powerSaveBlocker.stop(powerSaveBlockerId);
+    powerSaveBlockerId = null;
+    console.log("[main] Power save blocker stopped (server idle)");
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Window creation
@@ -379,6 +474,30 @@ function registerIpcHandlers(): void {
     }
   });
 
+  // Renderer fallback: verify the server is up, silently restart if not.
+  ipcMain.handle("ensure-server-running", () => ensureServerRunning());
+
+  // Busy reporting: while any sender is busy, hold a power save blocker so
+  // the OS does not suspend the machine mid-turn. Refcounted per webContents
+  // and cleared on destroy so a crashed/closed renderer cannot leak the blocker.
+  ipcMain.handle("set-server-busy", (event, busy: boolean) => {
+    const id = event.sender.id;
+    if (busy) {
+      busySenders.add(id);
+      if (!busyCleanupRegistered.has(id)) {
+        busyCleanupRegistered.add(id);
+        event.sender.once("destroyed", () => {
+          busySenders.delete(id);
+          busyCleanupRegistered.delete(id);
+          updatePowerSaveBlocker();
+        });
+      }
+    } else {
+      busySenders.delete(id);
+    }
+    updatePowerSaveBlocker();
+  });
+
   // App version + auto-update controls
   ipcMain.handle("app:get-version", () => app.getVersion());
   ipcMain.handle("app:get-update-status", () => getUpdateStatus());
@@ -541,22 +660,15 @@ app.whenReady().then(async () => {
     setBeforeInstallHook(() => serverManager.forceReplace());
 
     // Show a Restart / Quit dialog if the server crashes unexpectedly
-    serverManager.onUnexpectedExit = async (code) => {
-      if (!mainWindow) return;
-      const { response } = await dialog.showMessageBox(mainWindow, {
-        type: "error",
-        title: "Server crashed",
-        message: `The Mcode server exited unexpectedly (code ${code ?? "unknown"}).`,
-        buttons: ["Restart", "Quit"],
-        defaultId: 0,
-        cancelId: 1,
-      });
-      if (response === 0) {
-        await serverManager.restart();
-      } else {
-        app.quit();
-      }
+    serverManager.onUnexpectedExit = (code) => {
+      void showServerCrashDialog(code);
     };
+
+    // Self-heal after sleep: the server's grace timer or the OS may have
+    // killed it while the machine was suspended.
+    powerMonitor.on("resume", () => {
+      void ensureServerRunning();
+    });
 
     // Register custom protocol for attachment files
     registerAttachmentProtocol();

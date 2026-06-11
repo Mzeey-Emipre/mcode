@@ -437,6 +437,23 @@ export class ServerManager {
   }
 
   /**
+   * Probe the server's /health endpoint once. Used by the self-healing
+   * resume path to decide whether a silent restart is needed; a short
+   * timeout keeps the post-sleep check from hanging on a dead socket.
+   */
+  async isHealthy(): Promise<boolean> {
+    if (!this._port) return false;
+    try {
+      const res = await fetch(`http://localhost:${this._port}/health`, {
+        signal: AbortSignal.timeout(3_000),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Force-replace the current server and start a fresh one.
    * Uses {@link forceReplace} to gracefully shut down the old server,
    * then waits briefly before spawning a new one.

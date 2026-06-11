@@ -91,7 +91,7 @@ function app(over: Partial<OpenInApp> & Pick<OpenInApp, "id">): OpenInApp {
   return { label: over.id, kind: "editor", iconKey: over.id, detected: true, ...over };
 }
 
-const VSCODE = app({ id: "vscode", label: "VS Code", iconKey: "vscode" });
+const VSCODE = app({ id: "code", label: "VS Code", iconKey: "vscode" });
 const CURSOR = app({ id: "cursor", label: "Cursor", iconKey: "cursor" });
 const WINDOWS_TERMINAL = app({
   id: "windows-terminal",
@@ -113,14 +113,14 @@ describe("OpenInAppButton", () => {
   it("primary click opens the resolved default (auto-detected top editor)", async () => {
     render(<OpenInAppButton dirPath="/dir" threadId="t1" threadOverride={null} />);
     await userEvent.click(screen.getByRole("button", { name: /open in vs code/i }));
-    expect(openInSpy).toHaveBeenCalledWith("vscode", "/dir");
+    expect(openInSpy).toHaveBeenCalledWith("code", "/dir");
   });
 
   it("mod+o command opens the resolved default through the transport", () => {
     render(<OpenInAppButton dirPath="/dir" threadId="t1" threadOverride={null} />);
     expect(getCommand("openin.openDefault")).toBeDefined();
     executeCommand("openin.openDefault");
-    expect(openInSpy).toHaveBeenCalledWith("vscode", "/dir");
+    expect(openInSpy).toHaveBeenCalledWith("code", "/dir");
   });
 
   it("honours the thread override as tier-1 default", async () => {

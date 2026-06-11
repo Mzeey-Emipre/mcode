@@ -311,3 +311,62 @@ describe("GitService.removeWorktree", () => {
     expect(mockRmdir.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("GitService.log", () => {
+  let gitService: GitService;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    gitService = new GitService({
+      findById: vi.fn().mockReturnValue({ id: "ws-1", path: "/repo", is_git_repo: true }),
+    } as unknown as WorkspaceRepo);
+  });
+
+  it("compares against origin HEAD instead of requiring a local default branch", async () => {
+    mockExecFile
+      .mockResolvedValueOnce({ stdout: "origin/main\n", stderr: "" })
+      .mockResolvedValueOnce({
+        stdout: [
+          "MCODE_SEPabc123456789|||abc1234|||feat: add picker|||Dev|||2026-06-11T12:00:00.000Z",
+          "1\t0\tapps/web/src/components/diff/CommitPicker.tsx",
+        ].join("\n"),
+        stderr: "",
+      });
+
+    const commits = await gitService.log("ws-1", "feat/-commit-picker", 100);
+
+    expect(commits).toHaveLength(1);
+    expect(commits[0]?.shortSha).toBe("abc1234");
+    expect(mockExecFile).toHaveBeenNthCalledWith(
+      2,
+      "git",
+      expect.arrayContaining(["origin/main..feat/-commit-picker"]),
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+  });
+
+  it("supports paged lightweight logs without numstat", async () => {
+    mockExecFile
+      .mockResolvedValueOnce({ stdout: "origin/main\n", stderr: "" })
+      .mockResolvedValueOnce({
+        stdout: "MCODE_SEPdef123456789|||def1234|||fix: older commit|||Dev|||2026-06-10T12:00:00.000Z",
+        stderr: "",
+      });
+
+    const commits = await gitService.log(
+      "ws-1",
+      "feat/-commit-picker",
+      100,
+      undefined,
+      undefined,
+      100,
+      false,
+    );
+
+    expect(commits).toHaveLength(1);
+    expect(commits[0]?.filesChanged).toBe(0);
+    const args = mockExecFile.mock.calls[1]?.[1] as string[];
+    expect(args).toContain("--skip=100");
+    expect(args).not.toContain("--numstat");
+  });
+});

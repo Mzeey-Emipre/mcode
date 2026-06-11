@@ -1,12 +1,18 @@
-import { spawnSync } from "child_process";
+import { spawnSync, execFile } from "child_process";
 
 /** Shell metacharacters that must not appear in a CLI path passed to `shell: true`. */
 const SHELL_METACHAR_RE = /[;&|`$(){}!<>"'\s\n\r]/;
 
-/** TTL for cached version results (5 minutes). */
-const VERSION_CACHE_TTL_MS = 5 * 60 * 1000;
+/** Matches a semver triplet not followed by a fourth dotted segment. */
+const SEMVER_RE = /\b(\d+\.\d+\.\d+)(?!\.\d)/;
 
-/** Cached version check results keyed by cliPath. */
+/**
+ * Cached version check results keyed by cliPath. Successes are cached for the
+ * app lifetime: the check is a min-version gate, and a CLI upgrade mid-run
+ * cannot move below the minimum. Failures are never cached, so a user fixing
+ * a broken install recovers on the next send. The cache is warmed off the
+ * send path at startup via {@link warmCodexVersionCache}.
+ */
 const versionCache = new Map<string, { result: ReturnType<typeof checkCodexVersion>; checkedAt: number }>();
 
 /**
@@ -28,9 +34,10 @@ export function checkCodexVersion(
     return { ok: false, error: `Codex CLI path contains invalid characters: "${cliPath}"` };
   }
 
-  // Return cached result if fresh, avoiding a blocking spawnSync on the event loop.
+  // Cached successes are returned for the app lifetime, avoiding a blocking
+  // spawnSync on the event loop on the send path.
   const cached = versionCache.get(cliPath);
-  if (cached && Date.now() - cached.checkedAt < VERSION_CACHE_TTL_MS) {
+  if (cached) {
     return cached.result;
   }
 
@@ -62,7 +69,7 @@ export function checkCodexVersion(
   }
 
   const output = (result.stdout ?? "") + (result.stderr ?? "");
-  const match = output.match(/\b(\d+\.\d+\.\d+)(?!\.\d)/);
+  const match = output.match(SEMVER_RE);
 
   if (match == null) {
     return { ok: false, error: notFoundError };
@@ -71,6 +78,39 @@ export function checkCodexVersion(
   const success = { ok: true as const, version: match[1] };
   versionCache.set(cliPath, { result: success, checkedAt: Date.now() });
   return success;
+}
+
+/**
+ * Warms the version cache off the send path with a non-blocking `--version`
+ * probe. Call at app startup (and on CLI-path settings changes) so the
+ * synchronous {@link checkCodexVersion} gate in `sendTurn` is a pure cache
+ * hit instead of a blocking spawnSync. No-op when the path is already cached
+ * or contains shell metacharacters; failures are not cached (the send-path
+ * check surfaces the user-facing error with fresh state).
+ */
+export function warmCodexVersionCache(cliPath: string): Promise<void> {
+  if (SHELL_METACHAR_RE.test(cliPath) || versionCache.has(cliPath)) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    execFile(
+      cliPath,
+      ["--version"],
+      { shell: true, timeout: 5000, windowsHide: true, encoding: "utf8" },
+      (err, stdout, stderr) => {
+        if (err == null) {
+          const match = ((stdout ?? "") + (stderr ?? "")).match(SEMVER_RE);
+          if (match != null) {
+            versionCache.set(cliPath, {
+              result: { ok: true, version: match[1] },
+              checkedAt: Date.now(),
+            });
+          }
+        }
+        resolve();
+      },
+    );
+  });
 }
 
 /** Clears the cached version results. Exposed for testing only. */

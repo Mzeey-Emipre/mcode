@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useState, useRef, lazy, Suspense } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatView } from "@/components/chat/ChatView";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
@@ -13,6 +13,7 @@ import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { resizeRecordCache } from "@/lib/thread-hydrator/record-cache";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { COMPOSER_MIN_WIDTH } from "@/stores/diffStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
 import { useUiStore } from "@/stores/uiStore";
 import { initShortcuts } from "@/lib/shortcuts";
@@ -21,6 +22,8 @@ import { registerCommand } from "@/lib/command-registry";
 import { setContext } from "@/lib/context-tracker";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
+import { useComposerLayoutGuard } from "@/hooks/useComposerLayoutGuard";
+import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ToastContainer } from "@/components/Toast";
 import type { SettingsSection } from "@/components/settings/settings-nav";
@@ -50,13 +53,32 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("model");
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
+  const sidebarFloating = useUiStore((s) => s.sidebarFloating);
+  const rightPanelMaximized = useUiStore((s) => s.rightPanelMaximized);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const outerRowRef = useRef<HTMLDivElement>(null);
+  const contentRowRef = useRef<HTMLDivElement>(null);
   const pendingNewThread = useWorkspaceStore((s) => s.pendingNewThread);
   // Landing is the default whenever no thread is active. The new-thread composer
   // takes precedence so the user can compose against an active workspace without
   // bouncing back to the project list.
   const showLanding = activeThreadId === null && !pendingNewThread;
   useIdleReclamation();
+
+  useComposerLayoutGuard(outerRowRef, contentRowRef, {
+    settingsOpen,
+    showLanding,
+    activeWorkspaceId,
+    activeThreadId,
+  });
+
+  // Settings uses a docked project tree; undock the float when entering settings.
+  useEffect(() => {
+    if (settingsOpen) {
+      useUiStore.setState({ sidebarFloating: false, sidebarCollapsed: false });
+    }
+  }, [settingsOpen]);
 
   useEffect(() => {
     startPushListeners();
@@ -187,6 +209,19 @@ export function App() {
         handler: () => useUiStore.getState().toggleSidebar(),
       }),
       registerCommand({
+        id: "rightPanel.toggle",
+        title: "Toggle Right Panel",
+        category: "View",
+        // Panel-level open/close (mirrors the chat-header toggle button); the
+        // per-tab summon commands focus a specific tab, this just shows/hides the
+        // whole panel for the active thread (or the threadless workspace shell).
+        handler: () => {
+          const { activeWorkspaceId, activeThreadId } = useWorkspaceStore.getState();
+          if (!activeWorkspaceId) return;
+          toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId);
+        },
+      }),
+      registerCommand({
         id: "terminal.toggle",
         title: "Toggle Terminal",
         category: "View",
@@ -293,12 +328,14 @@ export function App() {
           appears lifted off the chrome — no inter-panel divider lines required. */}
       <div className="flex h-screen flex-col overflow-hidden bg-page text-foreground">
         <ConnectionBanner />
-        <div className="flex flex-1 gap-1.5 overflow-hidden p-1.5">
-          {/* Settings view force-expands the sidebar so the settings nav is reachable.
-              When the sidebar is hidden, the chat panel claims the full width and the
-              reveal button lives inline in the chat header (see ChatView). */}
-          {(!sidebarCollapsed || settingsOpen) && (
-            <div className="flex shrink-0 overflow-hidden rounded-lg shadow-sm">
+        <div ref={outerRowRef} className="flex flex-1 gap-1.5 overflow-hidden p-1.5">
+          {/* Docked project tree: hidden when collapsed, force-shown in settings,
+              or shown as a float (see below). Maximize hides only the chat pane. */}
+          {(!sidebarCollapsed || settingsOpen) && !sidebarFloating && (
+            <div
+              data-testid="sidebar-docked"
+              className="flex shrink-0 overflow-hidden rounded-lg shadow-sm"
+            >
               <Sidebar
                 settingsOpen={settingsOpen}
                 settingsSection={settingsSection}
@@ -308,8 +345,39 @@ export function App() {
               />
             </div>
           )}
-          <div className="flex flex-1 gap-1.5 overflow-hidden">
-            <main className="flex-1 overflow-hidden rounded-lg bg-background shadow-sm">
+          {sidebarFloating && !sidebarCollapsed && !settingsOpen && (
+            <>
+              <button
+                type="button"
+                aria-label="Close project tree"
+                className="fixed inset-0 z-40 bg-black/20"
+                onClick={() => useUiStore.getState().closeFloatingSidebar()}
+              />
+              <div
+                data-testid="sidebar-floating"
+                className="fixed bottom-1.5 left-1.5 top-1.5 z-50 flex w-72 overflow-hidden rounded-lg shadow-xl ring-1 ring-border/40"
+              >
+                <Sidebar
+                  settingsOpen={false}
+                  settingsSection={settingsSection}
+                  onSettingsSection={setSettingsSection}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  onCloseSettings={() => setSettingsOpen(false)}
+                />
+              </div>
+            </>
+          )}
+          <div
+            ref={contentRowRef}
+            data-testid="content-row"
+            className="flex min-w-0 flex-1 gap-1.5 overflow-hidden"
+          >
+            {/* Chat / settings / landing: hidden when the right panel is maximized. */}
+            {!rightPanelMaximized && (
+            <main
+              className="flex-1 overflow-hidden rounded-lg bg-background shadow-sm"
+              style={{ minWidth: COMPOSER_MIN_WIDTH }}
+            >
               {settingsOpen ? (
                 <Suspense fallback={null}>
                   <LazySettingsView section={settingsSection} />
@@ -329,6 +397,7 @@ export function App() {
                 <ChatView />
               )}
             </main>
+            )}
             {!settingsOpen && !showLanding && (
               <Suspense fallback={null}>
                 <LazyRightPanel />

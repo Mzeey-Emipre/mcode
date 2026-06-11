@@ -67,6 +67,9 @@ function LoadingPulse() {
 export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const [loading, setLoading] = useState(true);
+  // The Commit view's picked operand (see CommitPicker). Null means the picker
+  // has not resolved a commit yet, or the current scope has no commits.
+  const selectedCommitSha = useDiffStore((s) => s.selectedCommitSha);
 
   // The Branch view's diff is driven by the current branch plus the selected
   // comparison ref. Subscribe so picking a new target refetches the file list.
@@ -103,11 +106,10 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         // cache and per-file fetch vary by pair (git refnames can't contain "..").
         return { files, source: "branch", id: `${branchBase}...${branchTarget}` };
       }
-      // Commit view: the latest HEAD commit (the thread's worktree HEAD when in a
-      // thread). Worktrees share the object store, so the per-file diff fetched by
-      // FileList against the workspace root still resolves the worktree's commit.
-      const log = await transport.getGitLog(workspaceId, undefined, 1, undefined, threadId);
-      const sha = log[0]?.sha;
+      // Commit view: the picker's chosen commit. The picker owns defaulting to
+      // the latest HEAD commit, which avoids a duplicate git-log + commit-files
+      // fetch on first render.
+      const sha = selectedCommitSha ?? undefined;
       if (!sha) return { files: [], source: "commit", id: workspaceId };
       const files = await transport.getCommitFiles(workspaceId, sha);
       return { files, source: "commit", id: sha };
@@ -134,7 +136,9 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     // same view+workspace must refetch the worktree's file list, not keep the
     // previous scope's stale diff. branchBase/branchTarget/branchUnborn are fetch
     // inputs for the Branch view: picking a new ref pair refetches its file list.
-  }, [view, workspaceId, threadId, branchBase, branchTarget, branchUnborn]);
+    // previous scope's stale diff. selectedCommitSha is one too: picking a commit
+    // refetches that commit's files (no-op for the non-commit views).
+  }, [view, workspaceId, threadId, branchBase, branchTarget, branchUnborn, selectedCommitSha]);
 
   if (loading) return <LoadingPulse />;
   if (!resolved || resolved.files.length === 0) {
@@ -150,7 +154,10 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         // Cache + per-file fetch scope: the real thread (→ its worktree) when in a
         // thread, else the workspace id (the server reads the workspace root).
         threadId={threadId ?? workspaceId}
-        defaultFilesExpanded={view === "branch"}
+        // Open each file's diff on arrival so switching between the git views
+        // lands on the changes directly, without a click per file (each diff is
+        // still fetched lazily on mount and large diffs stay truncated).
+        defaultFilesExpanded
       />
     </div>
   );

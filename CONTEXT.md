@@ -458,6 +458,20 @@ resubscribes and hydration covers the gap. Payload validation at this seam
 has two adapters: validating (dev, logs schema drift) and pass-through
 (production). (Epic #649, slices #656/#657.)
 
+### Grace period
+The countdown between the last client session disconnecting and the server
+shutting itself down. It only starts when the server is not busy; a busy
+server never begins the countdown, no matter how long clients stay away.
+A new session connecting cancels it. Distinct from session-runtime idle
+eviction (which retires pooled provider CLI sessions, not the server).
+
+### Busy (server)
+The server is busy while any agent turn is in flight or any integrated
+terminal is running. Busy suppresses the grace period and is the condition
+under which the desktop app holds a power-save blocker so the machine does
+not suspend mid-work. Connected-but-idle clients do not make the server
+busy.
+
 ### Git executor
 The single module that owns running git as a child process on the server:
 asynchronous execution, queueing per repository, timeouts, and caching of

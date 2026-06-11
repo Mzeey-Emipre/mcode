@@ -27,10 +27,21 @@ export type DiffRenderMode = "unified" | "side-by-side";
 /** Minimum right panel width in pixels. */
 export const PANEL_MIN_WIDTH = 384;
 /**
- * Fallback width when the viewport is unavailable (tests, SSR). Live UI uses half the
- * viewport via {@link getDefaultPanelWidthPx}.
+ * Minimum width reserved for the chat/composer beside an inline right panel.
+ * Drag and resize clamping use this (not {@link PANEL_MIN_WIDTH}) so the panel
+ * cannot swallow the project tree and still crush the composer to one column.
  */
-export const PANEL_DEFAULT_WIDTH = 380;
+export const COMPOSER_MIN_WIDTH = 480;
+/** Gap between chat main and right panel in App.tsx (`gap-1.5`). */
+export const PANEL_SPLIT_GAP_PX = 6;
+/**
+ * The panel's default width — a fixed value, not a fraction of the viewport, so
+ * the panel opens at the same size on every startup, on every view, regardless of
+ * monitor width. Half-the-viewport defaults made the empty/startup panel balloon
+ * (e.g. 800px on a 1600px screen) and tip into the cramped-chat overlay; a fixed
+ * default keeps it consistent and inline.
+ */
+export const PANEL_DEFAULT_WIDTH = 440;
 /** Wide snap target for the right panel (double-click drag handle). */
 export const PANEL_WIDE_WIDTH = 680;
 
@@ -39,12 +50,23 @@ function clampWidth(w: number): number {
 }
 
 /**
- * Returns the default panel width for the current window (50% of the viewport, clamped
- * to {@link PANEL_MIN_WIDTH}). Used when a thread has no stored width yet.
+ * Returns the panel's default width ({@link PANEL_DEFAULT_WIDTH}, clamped to
+ * {@link PANEL_MIN_WIDTH}). A fixed default keeps the startup size consistent
+ * across views and monitors. Used when a workspace has no stored width yet.
  */
 export function getDefaultPanelWidthPx(): number {
-  if (typeof globalThis.window === "undefined") return clampWidth(PANEL_DEFAULT_WIDTH);
-  return clampWidth(Math.round(globalThis.window.innerWidth * 0.5));
+  return clampWidth(PANEL_DEFAULT_WIDTH);
+}
+
+/**
+ * Largest panel width that still leaves {@link COMPOSER_MIN_WIDTH}px for the
+ * composer in a split row of the given inner width (chat + gap + panel).
+ */
+export function maxPanelWidthInSplit(
+  splitWidthPx: number,
+  gapPx: number = PANEL_SPLIT_GAP_PX,
+): number {
+  return Math.max(PANEL_MIN_WIDTH, splitWidthPx - COMPOSER_MIN_WIDTH - gapPx);
 }
 
 /** Currently selected file for diff viewing. */
@@ -79,7 +101,7 @@ export type RightPanelState = {
 export const DEFAULT_LINE_WRAP = true;
 
 /**
- * Baseline right-panel state for a workspace that has no persisted row (50% viewport width).
+ * Baseline right-panel state for a workspace that has no persisted row (default width).
  */
 export function createDefaultRightPanelState(): RightPanelState {
   return {
@@ -166,6 +188,15 @@ interface DiffState {
    * picked comparison ref when toggling views within the same scope.
    */
   branchComparisonKey: string | null;
+  /**
+   * The commit the Commit view's picker has resolved to, by SHA. `null` means
+   * the picker has not resolved the current scope yet, or the scope has no
+   * commits. This is the Commit comparison's picked operand: the Review toolbar's
+   * commit picker writes it, and the Commit diff reads it to render exactly that
+   * one commit. Reset when the active view changes so a stale pick never bleeds
+   * into the next Commit view.
+   */
+  selectedCommitSha: string | null;
   /** Diff rendering mode. */
   renderMode: DiffRenderMode;
   /** Per-thread line-wrap preference keyed by thread ID. */
@@ -238,6 +269,8 @@ interface DiffState {
   setBranchBase: (ref: string) => void;
   /** Override the target ref of the active Branch comparison (no-op if none resolved). */
   setBranchTarget: (ref: string) => void;
+  /** Set the Commit view's picked operand by SHA, or `null` to fall back to the latest commit. */
+  setSelectedCommitSha: (sha: string | null) => void;
   setRenderMode: (mode: DiffRenderMode) => void;
   getLineWrap: (threadId: string) => boolean;
   toggleLineWrap: (threadId: string) => void;
@@ -273,6 +306,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   viewMode: "last-turn",
   branchComparison: null,
   branchComparisonKey: null,
+  selectedCommitSha: null,
   renderMode: "unified",
   lineWrapByThread: {},
   snapshotsByThread: {},
@@ -354,7 +388,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       };
     }),
 
-  setViewMode: (mode) => set({ viewMode: mode, selectedFile: null, diffContent: null }),
+  setViewMode: (mode) =>
+    set({ viewMode: mode, selectedFile: null, diffContent: null, selectedCommitSha: null }),
   setBranchComparison: (comparison, key) =>
     set({ branchComparison: comparison, branchComparisonKey: key }),
   setBranchBase: (ref) =>
@@ -378,6 +413,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
           }
         : {},
     ),
+  setSelectedCommitSha: (sha) => set({ selectedCommitSha: sha }),
   setRenderMode: (mode) => set({ renderMode: mode }),
   getLineWrap: (threadId) => get().lineWrapByThread[threadId] ?? DEFAULT_LINE_WRAP,
   toggleLineWrap: (threadId) =>

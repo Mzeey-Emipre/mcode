@@ -32,7 +32,7 @@ export function Sidebar({
   onOpenSettings,
   onCloseSettings,
 }: SidebarProps) {
-  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const collapseSidebar = useUiStore((s) => s.collapseSidebar);
 
   const handleEditJson = () => {
     if (window.desktopBridge) {
@@ -63,7 +63,7 @@ export function Sidebar({
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={toggleSidebar}
+              onClick={collapseSidebar}
               aria-label="Collapse sidebar"
               className="text-muted-foreground"
             >

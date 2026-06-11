@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   useDiffStore,
   PANEL_MIN_WIDTH,
+  COMPOSER_MIN_WIDTH,
+  PANEL_SPLIT_GAP_PX,
+  maxPanelWidthInSplit,
   getDefaultPanelWidthPx,
   createDefaultRightPanelState,
   DEFAULT_LINE_WRAP,
@@ -22,8 +25,27 @@ describe("diffStore", () => {
       diffContent: null,
       diffLoading: false,
       viewMode: "last-turn",
+      selectedCommitSha: null,
       renderMode: "unified",
       lineWrapByThread: {},
+    });
+  });
+
+  describe("commit picker operand", () => {
+    it("starts with no resolved picked commit", () => {
+      expect(useDiffStore.getState().selectedCommitSha).toBeNull();
+    });
+
+    it("stores the picked commit SHA", () => {
+      useDiffStore.getState().setSelectedCommitSha("abc1234");
+      expect(useDiffStore.getState().selectedCommitSha).toBe("abc1234");
+    });
+
+    it("resets the picked commit when the active view changes", () => {
+      const { setSelectedCommitSha, setViewMode } = useDiffStore.getState();
+      setSelectedCommitSha("abc1234");
+      setViewMode("commit");
+      expect(useDiffStore.getState().selectedCommitSha).toBeNull();
     });
   });
 
@@ -116,6 +138,19 @@ describe("diffStore", () => {
       const { setRightPanelWidth, getRightPanel } = useDiffStore.getState();
       setRightPanelWidth("ws-1", 100);
       expect(getRightPanel("ws-1").width).toBe(PANEL_MIN_WIDTH);
+    });
+  });
+
+  describe("maxPanelWidthInSplit", () => {
+    it("reserves composer min width and split gap from the row width", () => {
+      const split = 1200;
+      expect(maxPanelWidthInSplit(split)).toBe(
+        split - COMPOSER_MIN_WIDTH - PANEL_SPLIT_GAP_PX,
+      );
+    });
+
+    it("never returns below PANEL_MIN_WIDTH", () => {
+      expect(maxPanelWidthInSplit(500)).toBe(PANEL_MIN_WIDTH);
     });
   });
 

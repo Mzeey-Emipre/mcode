@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
 import { initTransport } from "./transport";
+import { initDesktopPowerReporting } from "./lib/desktop-power";
 import "./index.css";
 
 /** Render an error fallback when transport initialization fails. */
@@ -64,6 +65,9 @@ renderConnecting(root);
 
 initTransport()
   .then(() => {
+    // Desktop only: report running turns / open terminals to the main
+    // process so it can hold a power save blocker while the server is busy.
+    initDesktopPowerReporting();
     root.innerHTML = "";
     createRoot(root).render(
       <StrictMode>
