@@ -156,6 +156,31 @@ describe("buildVolatileItems", () => {
     >;
     expect(narrativeItem?.thoughtSegments).toEqual(thoughtSegments);
   });
+
+  it("does not mirror open unclassified narration into a provisional assistant message", () => {
+    const thoughtSegments: ThoughtSegment[] = [
+      { text: "I will check the README before running Prettier.", startedAt: 42 },
+    ];
+    const items = buildVolatileItems(
+      [],
+      true,
+      1000,
+      "I will check the README before running Prettier.",
+      undefined,
+      [],
+      thoughtSegments,
+    );
+
+    expect(items.some((i) => i.type === "narrative-flow")).toBe(true);
+    expect(
+      items.some(
+        (i) =>
+          i.type === "message" &&
+          i.message.role === "assistant" &&
+          i.assistantState?.isStreaming,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("buildVirtualItems (combined)", () => {

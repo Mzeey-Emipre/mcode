@@ -13,11 +13,11 @@ const AGENT_TOOL_NAME = "Agent";
  * slot stay in sync. Returns "" when there is nothing to render — caller
  * suppresses the virtual item in that case.
  *
- *  - When the latest thought segment is open and no tool is running, that
- *    segment IS the live response (tool-free turn, or pre-tool preamble that
- *    will be classified by the next `AssistantMessageBoundary`).
- *  - Otherwise, the suffix of `streamingText` past the closed-thought tape is
- *    the final-response text emitted after the last tool completed.
+ *  - The suffix of `streamingText` past the closed-thought tape is the
+ *    final-response text emitted after the last tool completed.
+ *  - An open thought segment is still unclassified. Keeping it in the
+ *    narrative flow avoids moving pre-tool narration into the response slot
+ *    and then snapping it back when the first tool call arrives.
  */
 export function computeLiveStreamingText(params: {
   thoughtSegments: readonly ThoughtSegment[];
@@ -32,11 +32,6 @@ export function computeLiveStreamingText(params: {
     (tc) => tc.parentToolCallId == null && !tc.isComplete,
   );
   if (anyToolRunning) return "";
-
-  const lastSeg = thoughtSegments[thoughtSegments.length - 1];
-  if (lastSeg && lastSeg.endedAt == null) {
-    return lastSeg.text;
-  }
 
   const tape = thoughtSegments.map((s) => s.text).join("");
   if (streamingText.startsWith(tape) && streamingText.length > tape.length) {
@@ -127,15 +122,6 @@ export function buildNarrativeItems(params: {
       : params.thoughtSegments;
 
   if (thoughtSegments.length === 0 && toolCalls.length === 0 && hooks.length === 0) {
-    if (isAgentRunning && streamingText.length > 0) {
-      // The agent is streaming its final (and only) response — no tools were
-      // called, so this text IS the assistant reply, not a reasoning step.
-      // Render as delta (full-weight prose) instead of a thought (italic/dimmed).
-      return {
-        items: [{ type: "delta", text: streamingText }],
-        counts: { steps: 0, thoughts: 0, subagents: 0 },
-      };
-    }
     return { items: [], counts: { steps: 0, thoughts: 0, subagents: 0 } };
   }
 
@@ -193,35 +179,15 @@ export function buildNarrativeItems(params: {
     pendingGroup.length = 0;
   };
 
-  // Find the index of the last thought segment for active-state detection.
-  const lastSegmentStartedAt = thoughtSegments.length > 0
-    ? thoughtSegments[thoughtSegments.length - 1].startedAt
-    : -1;
-
   const thoughtTape = thoughtSegments.map((s) => s.text).join("");
   const streamingSuffix =
     isAgentRunning && !anyToolRunning && streamingText.startsWith(thoughtTape)
       ? streamingText.slice(thoughtTape.length)
       : "";
 
-  let emittedFinalDeltaFromTape = false;
-
   for (const evt of timeline) {
     if (evt.kind === "thought") {
       flushGroup();
-      const isLatest = evt.segment.startedAt === lastSegmentStartedAt;
-      const isStreaming = evt.segment.endedAt == null;
-
-      // Fallback when `isFinalResponse` never arrived: streamed text lives in the
-      // latest open segment (`streamingSuffix` is empty).
-      const useLegacyTapeFinalDelta =
-        streamingSuffix === "" && isLatest && isStreaming && !anyToolRunning;
-      if (useLegacyTapeFinalDelta) {
-        items.push({ type: "delta", text: evt.segment.text });
-        emittedFinalDeltaFromTape = true;
-        continue;
-      }
-
       // `isActive` drives `DeltaBlock.isStreaming` inside `ThoughtBlock`.
       // While the agent turn is live, every thought segment (including ones
       // that have just closed because a tool_use boundary fired) animates
@@ -270,7 +236,6 @@ export function buildNarrativeItems(params: {
   }
 
   if (
-    !emittedFinalDeltaFromTape &&
     streamingSuffix.length > 0 &&
     isAgentRunning
   ) {

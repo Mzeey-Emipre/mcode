@@ -69,9 +69,9 @@ describe("buildNarrativeItems counts", () => {
     expect(counts.steps).toBe(1);
   });
 
-  it("does not count the streaming final response as a thought", () => {
+  it("keeps an open unclassified segment as a thought until final-response certainty", () => {
     const thoughts: ThoughtSegment[] = [
-      mkThought("streaming-final", 1000), // no endedAt → still streaming
+      mkThought("I will check the file.", 1000), // no endedAt -> still unclassified
     ];
     const { items, counts } = buildNarrativeItems({
       toolCalls: [],
@@ -80,9 +80,9 @@ describe("buildNarrativeItems counts", () => {
       streamingText: "",
       isAgentRunning: true,
     });
-    // Final streaming response renders as `delta`, not `thought` (no anyToolRunning)
-    expect(items.find((it) => it.type === "delta")).toBeDefined();
-    expect(counts.thoughts).toBe(0);
+    expect(items.find((it) => it.type === "delta")).toBeUndefined();
+    expect(items.find((it) => it.type === "thought")).toBeDefined();
+    expect(counts.thoughts).toBe(1);
   });
 
   it("appends isFinal surplus as delta after thoughts when streaming extends past segment tape", () => {
