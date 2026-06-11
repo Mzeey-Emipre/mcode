@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Check, ChevronDown } from "lucide-react";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
+import { Button } from "@/components/ui/button";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   Command,
@@ -173,18 +174,28 @@ function RefCombobox({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        data-testid="branch-target-picker"
-        aria-label="Select comparison ref"
-        className={cn(
-          "flex h-6 min-w-0 items-center gap-1 rounded-md px-1.5 font-mono text-[11px] font-medium",
-          "bg-muted/60 text-foreground transition-colors hover:bg-accent",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-        )}
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            data-testid="branch-target-picker"
+            aria-label="Select comparison ref"
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            className={cn(
+              "h-6 min-w-0 max-w-[164px] flex-1 shrink justify-between gap-1.5 rounded-md px-2 font-mono text-xs font-medium",
+              "bg-background/75 text-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklch,var(--border),transparent_40%)]",
+              "hover:bg-accent/80 aria-expanded:bg-accent/80",
+            )}
+          >
+            <span className={cn("min-w-0 truncate", !value && "text-muted-foreground")}>
+              {value ?? "select ref"}
+            </span>
+            <ChevronDown size={11} className="shrink-0 text-muted-foreground/65" />
+          </Button>
+        }
       >
-        <span className={cn("max-w-[132px] truncate", !value && "text-muted-foreground")}>
-          {value ?? "select ref"}
-        </span>
-        <ChevronDown size={11} className="shrink-0 text-muted-foreground/60" />
       </PopoverTrigger>
 
       <PopoverContent align="start" sideOffset={6} className="w-[320px] p-0">
@@ -264,14 +275,21 @@ function CurrentRefChip({ value }: { value: string | null }) {
   return (
     <span
       data-testid="branch-current-ref"
-      aria-label="Current branch"
+      aria-label={`Current branch: ${value ?? "unknown"}`}
       title={value ?? "Current branch"}
       className={cn(
-        "flex h-6 min-w-0 items-center rounded-md px-1.5 font-mono text-[11px] font-medium",
-        "bg-muted/35 text-foreground/80",
+        "flex h-6 min-w-0 shrink items-center gap-1.5 rounded-md px-2 font-mono text-xs font-medium",
+        "text-muted-foreground",
       )}
     >
-      <span className={cn("max-w-[132px] truncate", !value && "text-muted-foreground")}>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "size-1.5 shrink-0 rounded-full",
+          value ? "bg-primary/80" : "bg-muted-foreground/30",
+        )}
+      />
+      <span className={cn("max-w-[142px] truncate", !value && "text-muted-foreground")}>
         {value ?? "current"}
       </span>
     </span>
@@ -312,13 +330,18 @@ export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps)
 
   const refs = comparison?.refs ?? [];
   return (
-    <div className="flex min-w-0 items-center gap-1" data-testid="branch-ref-picker">
+    <div
+      className="flex h-7 min-w-0 max-w-[min(46vw,390px)] items-center gap-1 overflow-hidden rounded-lg border border-border/30 bg-muted/25 px-1 shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground),transparent_94%)]"
+      data-testid="branch-ref-picker"
+      role="group"
+      aria-label="Branch comparison range"
+    >
       <CurrentRefChip value={comparison?.base ?? null} />
       {/* Directional cue for the fixed current-to-selected comparison. */}
       <span
         aria-hidden="true"
         data-testid="branch-range-arrow"
-        className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/45"
+        className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/50"
       >
         <ArrowRight size={12} strokeWidth={1.8} />
       </span>

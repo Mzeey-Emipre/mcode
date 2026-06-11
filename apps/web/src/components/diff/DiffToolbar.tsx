@@ -105,7 +105,7 @@ export function DiffToolbar() {
             base→target ref picker; Commit's picker lands in #642. */}
         {activeView?.operand && (
           <div
-            className="flex min-w-0 items-center"
+            className="ml-1 flex min-w-0 items-center border-l border-border/25 pl-2"
             data-testid="review-operand-slot"
             data-operand={activeView.operand}
           >
