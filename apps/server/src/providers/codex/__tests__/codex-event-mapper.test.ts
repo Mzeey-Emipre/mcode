@@ -824,6 +824,213 @@ describe("CodexEventMapper", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Thread-scoped routing
+  // ---------------------------------------------------------------------------
+
+  it("treats notifications with no thread id as main-thread notifications", () => {
+    mapper = new CodexEventMapper("test-thread", "main-codex-thread");
+
+    const delta = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { delta: "main text" },
+    });
+    const completed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { turn: { status: "completed" } },
+    });
+
+    expect(delta).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "main text" }]);
+    expect(completed.some((event) => event.type === "turnComplete")).toBe(true);
+  });
+
+  it("drops unknown-thread notifications before they mutate main turn state", async () => {
+    const { logger } = await import("@mcode/shared");
+    mapper = new CodexEventMapper("test-thread", "main-codex-thread");
+
+    const unknown = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "stray-thread",
+        item: { type: "commandExecution", id: "cmd-stray", command: "pwd", aggregatedOutput: "x", exitCode: 0 },
+      },
+    });
+    const main = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "main-codex-thread", turn: { status: "completed" } },
+    });
+
+    expect(unknown).toEqual([]);
+    expect(main).toHaveLength(1);
+    expect(main[0]).toMatchObject({ type: "turnComplete" });
+    expect(logger.warn).toHaveBeenCalledWith(
+      "CodexEventMapper: dropping unknown-thread notification",
+      expect.objectContaining({ method: "item/completed", notificationThreadId: "stray-thread" }),
+    );
+  });
+
+  it("consumes child-thread text and reasoning without adding it to the main final reply", () => {
+    mapper = new CodexEventMapper("test-thread", "main-codex-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-codex-thread",
+        item: { type: "collabAgentToolCall", id: "collab-a", tool: "spawnAgent" },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-codex-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-a",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-thread"],
+          result: "done",
+        },
+      },
+    });
+
+    const childText = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-thread", delta: "child private text" },
+    });
+    const childReasoning = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/reasoning/textDelta",
+      params: { threadId: "child-thread", delta: "child private reasoning" },
+    });
+    const mainText = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "main-codex-thread", delta: "main final" },
+    });
+    const completed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "main-codex-thread", turn: { status: "completed" } },
+    });
+
+    expect(childText).toEqual([]);
+    expect(childReasoning).toEqual([]);
+    expect(mainText).toEqual([
+      { type: "textDelta", threadId: "test-thread", delta: "main final", isFinalResponse: true },
+    ]);
+    expect(completed.find((event) => event.type === "message")).toMatchObject({
+      type: "message",
+      content: "main final",
+    });
+  });
+
+  it("does not let child turn/completed reset or latch the main turn", () => {
+    mapper = new CodexEventMapper("test-thread", "main-codex-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-codex-thread",
+        item: { type: "collabAgentToolCall", id: "collab-a", tool: "spawnAgent" },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-codex-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-a",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-thread"],
+          result: "done",
+        },
+      },
+    });
+
+    const childCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-thread", turn: { status: "completed" } },
+    });
+    const mainText = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "main-codex-thread", delta: "still streaming" },
+    });
+    const mainCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "main-codex-thread", turn: { status: "completed" } },
+    });
+
+    expect(childCompleted).toEqual([]);
+    expect(mainText).toEqual([
+      { type: "textDelta", threadId: "test-thread", delta: "still streaming", isFinalResponse: true },
+    ]);
+    expect(mainCompleted.filter((event) => event.type === "turnComplete")).toHaveLength(1);
+  });
+
+  it("still maps child-thread tools under the registered sub-agent row", () => {
+    mapper = new CodexEventMapper("test-thread", "main-codex-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-codex-thread",
+        item: { type: "collabAgentToolCall", id: "collab-a", tool: "spawnAgent" },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-codex-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-a",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-thread"],
+          result: "done",
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/commandExecution/outputDelta",
+      params: { threadId: "child-thread", itemId: "cmd-child", delta: "ok" },
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-thread",
+        item: { type: "commandExecution", id: "cmd-child", command: "git status", exitCode: 0 },
+      },
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "toolUse",
+        toolCallId: "cmd-child",
+        parentToolCallId: "collab-a",
+      }),
+      expect.objectContaining({
+        type: "toolResult",
+        toolCallId: "cmd-child",
+        output: "ok",
+      }),
+    ]);
+  });
+
+  // ---------------------------------------------------------------------------
   // Unrecognized notification method
   // ---------------------------------------------------------------------------
 
