@@ -156,6 +156,35 @@ describe("buildVolatileItems", () => {
     >;
     expect(narrativeItem?.thoughtSegments).toEqual(thoughtSegments);
   });
+
+  it("does not emit a live assistant message for explicit non-final narration", () => {
+    const thoughtSegments: ThoughtSegment[] = [
+      { text: "codex narration", startedAt: 42, isExplicitNonFinal: true },
+    ];
+    const items = buildVolatileItems(
+      [],
+      true,
+      1000,
+      "codex narration",
+      undefined,
+      [],
+      thoughtSegments,
+    );
+
+    expect(
+      items.some(
+        (i) =>
+          i.type === "message" &&
+          i.message.role === "assistant" &&
+          i.assistantState?.isStreaming,
+      ),
+    ).toBe(false);
+    const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<
+      (typeof items)[number],
+      { type: "narrative-flow" }
+    >;
+    expect(narrativeItem?.thoughtSegments).toEqual(thoughtSegments);
+  });
 });
 
 describe("buildVirtualItems (combined)", () => {

@@ -29,8 +29,8 @@ For pipeline traps and shared behavior with Claude, see [narrative-pipeline.md](
 
 | Element | Expected behavior |
 |--------|-------------------|
-| Thought rows | Dimmed / “thinking” style blocks built from `TextDelta` with `isFinalResponse: false`. |
-| Final reply | Full-weight prose from `TextDelta` with `isFinalResponse: true`, then committed message on turn end. |
+| Thought rows | Dimmed / “thinking” style blocks built from non-final `TextDelta` events. |
+| Final reply | Full-weight prose from the assistant item promoted by `AssistantMessageBoundary`, then committed message on turn end. |
 | Agent / sub-agent row | `ToolUse` with `toolName: "Agent"`; label may reflect Codex collab kind (e.g. spawn). |
 | Child tools | Nested under the correct Agent row; expandable like today’s narrative. |
 | Turn footer | Step / sub-agent counts and duration reflect nested tools and Agent rows (existing narrative rules). |
@@ -44,7 +44,7 @@ For pipeline traps and shared behavior with Claude, see [narrative-pipeline.md](
 - **Thought stream**: Any Codex notification that represents non-final model text must map to `AgentEventType.TextDelta` with `isFinalResponse: false`.  
   Known sources today: `item/reasoning/*`, `item/completed` with `type: "reasoning"`, and experimental `item/plan/delta` when the app-server uses it for live planning text.
 
-- **Final answer stream**: `item/agentMessage/delta` and equivalent completed shapes map to `TextDelta` with `isFinalResponse: true`.
+- **Assistant stream**: `item/agentMessage/delta` and equivalent completed shapes map to non-final `TextDelta` events while the turn is running. At main turn completion, the mapper emits `AssistantMessageBoundary` with `isFinalResponse: true` for the last assistant item and persists that item as the final reply.
 
 - **Sub-agent scope**: Child `ToolUse` events must include `parentToolCallId` set to the Codex collab item id when the work is under that sub-agent.
 

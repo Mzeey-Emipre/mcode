@@ -386,6 +386,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
 
     server.on("fatal", (error: string) => {
       logger.error("CodexAppServer fatal", { sessionId, error });
+      for (const event of mapper.drainPendingAssistantBoundary(false)) {
+        this.emit("event", event);
+      }
       this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
       this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       void this.runtime.stop(sessionId);
@@ -472,6 +475,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
 
   /** Graceful protocol interrupt of the in-flight turn (does not kill the process). */
   async interrupt(state: CodexSessionState): Promise<void> {
+    for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
+      this.emit("event", event);
+    }
     await state.server.interruptTurn();
   }
 
@@ -481,6 +487,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
    * Drives every teardown path (stop, shutdown, eviction, stale-discard).
    */
   async close(state: CodexSessionState): Promise<void> {
+    for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
+      this.emit("event", event);
+    }
     this.drainPending((e) => e.sessionId === state.sessionId);
     await state.server.kill();
   }
@@ -507,6 +516,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     const entry = this.runtime.get(sessionId);
     if (!entry) return;
 
+    for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
+      this.emit("event", event);
+    }
     entry.mapper.prepareForTurn();
 
     // Only pay the turn/interrupt round-trip when a previous turn is actually
@@ -631,6 +643,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
           sessionId,
           timeoutMs: TURN_TIMEOUT_MS,
         });
+        for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
+          this.emit("event", event);
+        }
         // Interrupt the upstream turn so the app-server state matches the UI
         // ("ended") instead of silently chewing in the background.
         void server.interruptTurn();
@@ -639,6 +654,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
       if (!serverDied && seq === entry.runTurnSeq) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         logger.error("Codex turn failed", { sessionId, error: errorMessage });
+        for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
+          this.emit("event", event);
+        }
         this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
       }
     } finally {

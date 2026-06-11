@@ -139,12 +139,12 @@ export const AgentEventSchema = lazySchema(() =>
       delta: z.string(),
       /**
        * Set to `true` when this delta belongs to the final user-facing response
-       * (i.e. all tool calls have been resolved for this turn). The client uses
+       * for providers that can classify it while streaming. The client uses
        * this to suppress creating a ThoughtSegment row for these deltas.
        *
-       * Not set for tool-free turns (no lookahead is possible at the provider
-       * layer); the client fallback in `build-narrative.ts` and the
-       * `persistTurn` suffix-match safeguard handle that case instead.
+       * `AssistantMessageBoundary` is the authoritative classifier. Providers
+       * without stop reasons, such as Codex, may stream assistant text as
+       * non-final and promote the last assistant item at turn completion.
        */
       isFinalResponse: z.boolean().optional(),
     }),
@@ -291,9 +291,8 @@ export const AgentEventSchema = lazySchema(() =>
        *   other non-finalizing value) — the deltas were preamble. The consumer
        *   should close the open thought segment so it persists as a thought.
        *
-       * This is the authoritative classification signal, replacing the legacy
-       * `hasFiredToolThisTurn && pendingToolUses==0` heuristic for tool-free
-       * turns and other cases the heuristic could not lookahead for.
+       * This is the authoritative classification signal. Providers without a
+       * stop reason use it for retroactive promotion of the last assistant item.
        */
       type: z.literal(AgentEventType.AssistantMessageBoundary),
       threadId: z.string(),
