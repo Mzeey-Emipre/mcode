@@ -287,7 +287,7 @@ export function buildVolatileItems(
     isAgentRunning,
     toolCalls,
   });
-  if (liveText.length > 0) {
+  if (liveText.length > 0 && !currentTurn?.messageId) {
     const threadId = currentTurn?.threadId ?? "__active_thread__";
     const responseKey = liveFinalResponseItemKey(threadId, currentTurn?.responseKey);
     items.push({

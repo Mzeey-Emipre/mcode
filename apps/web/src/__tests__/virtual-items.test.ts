@@ -115,6 +115,38 @@ describe("final response item keys", () => {
 
     expect(persistedKey).toBe("turn-response:thread-1:abc");
   });
+
+  it("does not duplicate the response key after the assistant message has persisted", () => {
+    const currentTurn = {
+      threadId: "thread-1",
+      messageId: "persisted-msg",
+      responseKey: "turn-response:thread-1:abc",
+      responseKeysByMessageId: {
+        "persisted-msg": "turn-response:thread-1:abc",
+      },
+    };
+    const stable = buildStableItems(
+      [makeMessage({ id: "persisted-msg", thread_id: "thread-1" })],
+      undefined,
+      undefined,
+      currentTurn,
+    );
+    const volatile = buildVolatileItems(
+      [],
+      true,
+      1000,
+      "confirmed final suffix",
+      undefined,
+      [],
+      [],
+      currentTurn,
+    );
+    const items = buildVirtualItems(stable, volatile, false);
+
+    expect(
+      items.filter((item) => item.key === "turn-response:thread-1:abc"),
+    ).toHaveLength(1);
+  });
 });
 
 describe("buildVolatileItems", () => {
