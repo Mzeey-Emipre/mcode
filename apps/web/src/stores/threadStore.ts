@@ -226,6 +226,37 @@ function createTurnResponseKey(threadId: string): string {
   return `turn-response:${threadId}:${crypto.randomUUID()}`;
 }
 
+/**
+ * Resolve the response key for a newly persisted assistant message and the
+ * live key for any follow-up streaming in the same turn.
+ *
+ * A turn can persist multiple assistant messages (e.g. Codex narration
+ * between tool batches plus the final response). The live key may only be
+ * claimed once — handing it to a second message would give two React siblings
+ * the same key — so the live key rotates after each claim, and a key already
+ * claimed by another message is never reused.
+ */
+function claimTurnResponseKey(
+  rec: ThreadRecord,
+  threadId: string,
+  messageId: string,
+): { responseKey: string; nextLiveKey: string } {
+  const existing = rec.assistantResponseKeys[messageId];
+  if (existing) {
+    // Redelivered message: keep its key and leave the live key untouched.
+    return {
+      responseKey: existing,
+      nextLiveKey: rec.currentTurnResponseKey || createTurnResponseKey(threadId),
+    };
+  }
+  const liveKey = rec.currentTurnResponseKey;
+  const liveKeyClaimed =
+    liveKey !== "" && Object.values(rec.assistantResponseKeys).includes(liveKey);
+  const responseKey =
+    liveKey && !liveKeyClaimed ? liveKey : createTurnResponseKey(threadId);
+  return { responseKey, nextLiveKey: createTurnResponseKey(threadId) };
+}
+
 /** Maps a persisted thought row into the live narrative segment shape. */
 function persistedThoughtToSegment(record: ThoughtSegmentRecord): ThoughtSegment {
   const startedAt = Date.parse(record.started_at);
@@ -1450,12 +1481,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             lastSeg && lastSeg.endedAt === undefined
               ? [...segments.slice(0, -1), { ...lastSeg, endedAt: Date.now() }]
               : segments;
-          const responseKey =
-            rec.currentTurnResponseKey || createTurnResponseKey(threadId);
+          const { responseKey, nextLiveKey } = claimTurnResponseKey(
+            rec,
+            threadId,
+            message.id,
+          );
 
           const turnPatch = {
             currentTurnMessageId: message.id,
-            currentTurnResponseKey: responseKey,
+            currentTurnResponseKey: nextLiveKey,
             assistantResponseKeys: {
               ...rec.assistantResponseKeys,
               [message.id]: responseKey,
@@ -1962,14 +1996,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               ? guardrailMsg
               : null;
           const pending = [message, ...(dedupedGuardrail ? [dedupedGuardrail] : [])];
-          const responseKey =
-            rec.currentTurnResponseKey || createTurnResponseKey(threadId);
+          const { responseKey, nextLiveKey } = claimTurnResponseKey(
+            rec,
+            threadId,
+            message.id,
+          );
 
           const basePatch = {
             streaming: "",
             streamingPreview: "",
             currentTurnMessageId: message.id,
-            currentTurnResponseKey: responseKey,
+            currentTurnResponseKey: nextLiveKey,
             assistantResponseKeys: {
               ...rec.assistantResponseKeys,
               [message.id]: responseKey,
