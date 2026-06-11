@@ -44,6 +44,33 @@ const lastLoadThreadsAtByWorkspace = new Map<string, number>();
 /** Minimum interval between reconnect-triggered thread-list fetches to avoid rapid-reconnect storms. */
 const LOAD_THREADS_RECONNECT_COOLDOWN_MS = 5_000;
 
+/** Minimum interval between desktop ensure-server-running requests. */
+const ENSURE_SERVER_THROTTLE_MS = 15_000;
+/** Timestamp of the last ensure-server-running request (module-level: one server per app). */
+let lastEnsureServerAt = 0;
+
+/**
+ * Ask the Electron main process to verify (and silently restart) the server.
+ * Throttled so rapid reconnect attempts do not stack health checks. No-op in
+ * browser builds where `desktopBridge` is absent.
+ *
+ * Returns whether a request was actually issued. Exported for unit testing.
+ */
+export function requestEnsureServerRunning(now: number = Date.now()): boolean {
+  if (now - lastEnsureServerAt < ENSURE_SERVER_THROTTLE_MS) return false;
+  lastEnsureServerAt = now;
+  if (typeof window === "undefined") return false;
+  void window.desktopBridge?.ensureServerRunning?.()?.catch(() => {
+    // Best-effort: reconnect backoff continues regardless.
+  });
+  return true;
+}
+
+/** Reset the ensure-server throttle. Test-only. */
+export function resetEnsureServerThrottleForTest(): void {
+  lastEnsureServerAt = 0;
+}
+
 type Listener = (data: unknown) => void;
 
 /**
@@ -336,6 +363,13 @@ export function createWsTransport(
 
   function scheduleReconnect(immediate = false) {
     if (reconnectTimer) return;
+
+    // Non-auth disconnects may mean the server died (e.g. killed during OS
+    // sleep). Ask the desktop main process to health-check and self-heal it;
+    // throttled so backoff retries do not stack requests.
+    if (!immediate) {
+      requestEnsureServerRunning();
+    }
 
     // Auth failures use immediate reconnect (delay=0) for the first
     // MAX_IMMEDIATE_AUTH_RETRIES attempts, then fall back to normal backoff

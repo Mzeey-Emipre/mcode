@@ -243,6 +243,19 @@ interface SpellcheckBridge {
 interface DesktopBridge {
   /** Return the URL and IPC path of the local mcode server. */
   getServerUrl(): Promise<{ url: string; ipcPath: string }>;
+  /**
+   * Verify the server is reachable; the main process silently restarts it if
+   * not. Optional: older desktop builds may not expose it, so call sites use
+   * optional chaining.
+   */
+  ensureServerRunning?(): Promise<void>;
+  /**
+   * Report whether this renderer considers the server busy (running turns or
+   * terminals). While any renderer is busy the main process holds a power
+   * save blocker so the OS does not suspend mid-turn. Optional: older desktop
+   * builds may not expose it.
+   */
+  setServerBusy?(busy: boolean): Promise<void>;
   /** Open a native folder-picker dialog. Returns the selected path or null. */
   showOpenDialog(options: { title?: string }): Promise<string | null>;
   /** Open a URL in the default browser. */
