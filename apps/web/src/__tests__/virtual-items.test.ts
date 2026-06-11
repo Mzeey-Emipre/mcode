@@ -258,6 +258,85 @@ describe("buildVirtualItems (combined)", () => {
     expect(streaming?.message.content).toBe("partial response...");
   });
 
+  it("does not duplicate the current assistant response key after persistence", () => {
+    const responseKey = "turn-response:thread-1:response-1";
+    const messages = [
+      makeMessage({ id: "u1", sequence: 1, role: "user", content: "start" }),
+      makeMessage({ id: "a1", sequence: 2, role: "assistant", content: "persisted response" }),
+    ];
+    const stable = buildStableItems(messages, undefined, null, {
+      threadId: "thread-1",
+      messageId: "a1",
+      responseKey,
+      responseKeysByMessageId: { a1: responseKey },
+    });
+    const volatile = buildVolatileItems(
+      [makeToolCall({ id: "tc-1", isComplete: true })],
+      true,
+      1000,
+      "live response",
+      undefined,
+      undefined,
+      undefined,
+      {
+        threadId: "thread-1",
+        messageId: "a1",
+        responseKey,
+        responseKeysByMessageId: { a1: responseKey },
+      },
+    );
+
+    const result = buildVirtualItems(stable, volatile, true);
+    const responseItems = result.filter((item) => item.key === responseKey);
+
+    expect(responseItems).toHaveLength(1);
+    expect(responseItems[0]).toMatchObject({
+      type: "message",
+      message: { id: "a1", content: "persisted response" },
+      assistantState: { isStreaming: false },
+    });
+  });
+
+  it("drops duplicate live response keys even when no tools are present", () => {
+    const responseKey = "turn-response:thread-1:response-2";
+    const messages = [
+      makeMessage({ id: "a1", sequence: 1, role: "assistant", content: "persisted response" }),
+    ];
+    const stable = buildStableItems(messages, undefined, null, {
+      threadId: "thread-1",
+      messageId: "a1",
+      responseKey,
+      responseKeysByMessageId: { a1: responseKey },
+    });
+    const volatile = buildVolatileItems(
+      [],
+      true,
+      1000,
+      "live response",
+      undefined,
+      undefined,
+      undefined,
+      {
+        threadId: "thread-1",
+        messageId: "a1",
+        responseKey,
+        responseKeysByMessageId: { a1: responseKey },
+      },
+    );
+
+    const result = buildVirtualItems(stable, volatile, false);
+
+    expect(result.filter((item) => item.key === responseKey)).toHaveLength(1);
+    expect(
+      result.some(
+        (item) =>
+          item.type === "message" &&
+          item.assistantState?.isStreaming &&
+          item.key === responseKey,
+      ),
+    ).toBe(false);
+  });
+
   it("orders narrative-flow → live assistant message → narrative-indicator when agent is running with streaming text", () => {
     // Regression for the bug where the indicator sat ABOVE the typewriter
     // streaming. The fix gives the indicator its own virtual-item slot below
