@@ -227,8 +227,8 @@ export type {
 } from "./models/permission.js";
 
 // Git / GitHub
-export { GitBranchSchema, WorktreeSchema, GitCommitSchema } from "./git.js";
-export type { GitBranch, WorktreeInfo, GitCommit } from "./git.js";
+export { GitBranchSchema, WorktreeSchema, GitCommitSchema, BranchComparisonSchema } from "./git.js";
+export type { GitBranch, WorktreeInfo, GitCommit, BranchComparison } from "./git.js";
 
 export { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrParamsSchema, CreatePrResultSchema, CheckRunSchema, ChecksStatusSchema } from "./github.js";
 export type { PrInfo, PrDetail, PrDraft, CreatePrParams, CreatePrResult, CheckRun, ChecksStatus } from "./github.js";

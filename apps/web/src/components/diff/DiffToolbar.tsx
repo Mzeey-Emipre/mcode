@@ -14,6 +14,7 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { visibleReviewViews, defaultReviewView } from "@/lib/review-views";
+import { BranchRefPicker } from "./BranchRefPicker";
 import { CommitPicker } from "./CommitPicker";
 
 /** Toolbar for the Review tab: dual-scope view switcher + unified/side-by-side toggle. */
@@ -23,6 +24,7 @@ export function DiffToolbar() {
   const setViewMode = useDiffStore((s) => s.setViewMode);
   const setRenderMode = useDiffStore((s) => s.setRenderMode);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const lineWrap = useDiffStore((s) =>
     activeThreadId ? s.getLineWrap(activeThreadId) : true,
   );
@@ -100,15 +102,19 @@ export function DiffToolbar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Operand slot — reserved for the active view's picked operand. Commit
-            fills it with the commit picker; Branch's picker lands in #641, so
-            its slot stays empty for now. Fixed-operand views render no slot. */}
+        {/* Operand slot — the active view's picked operand. */}
         {activeView?.operand && (
           <div
-            className="flex min-w-0 items-center"
+            className="ml-1 flex min-w-0 items-center border-l border-border/25 pl-2"
             data-testid="review-operand-slot"
             data-operand={activeView.operand}
           >
+            {activeView.operand === "branch" && activeWorkspaceId && (
+              <BranchRefPicker
+                workspaceId={activeWorkspaceId}
+                threadId={activeThreadId ?? undefined}
+              />
+            )}
             {activeView.operand === "commit" && <CommitPicker />}
           </div>
         )}

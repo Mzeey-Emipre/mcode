@@ -4,6 +4,7 @@ import type {
   WorkspaceEnrichment,
   Thread,
   GitBranch,
+  BranchComparison,
   WorktreeInfo,
   AttachmentMeta,
   SkillInfo,
@@ -744,10 +745,12 @@ export function createWsTransport(
       rpc<string[]>("git.workingTreeFiles", { workspaceId, staged, threadId }),
     getWorkingTreeDiff: (workspaceId, staged, filePath?, maxLines?, threadId?) =>
       rpc<string>("git.workingTreeDiff", { workspaceId, staged, filePath, maxLines, threadId }),
-    getBranchFiles: (workspaceId, threadId?) =>
-      rpc<string[]>("git.branchFiles", { workspaceId, threadId }),
-    getBranchDiff: (workspaceId, filePath?, maxLines?, threadId?) =>
-      rpc<string>("git.branchDiff", { workspaceId, filePath, maxLines, threadId }),
+    getBranchFiles: (workspaceId, base?, target?, threadId?) =>
+      rpc<string[]>("git.branchFiles", { workspaceId, base, target, threadId }),
+    getBranchDiff: (workspaceId, base?, target?, filePath?, maxLines?, threadId?) =>
+      rpc<string>("git.branchDiff", { workspaceId, base, target, filePath, maxLines, threadId }),
+    getBranchComparison: (workspaceId, threadId?) =>
+      rpc<BranchComparison>("git.branchComparison", { workspaceId, threadId }),
 
     // GitHub PR (advanced)
     push: (workspaceId, branch) =>

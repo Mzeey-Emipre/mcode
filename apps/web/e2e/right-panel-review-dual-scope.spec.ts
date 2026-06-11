@@ -66,6 +66,8 @@ const SNAPSHOT: TurnSnapshot = {
   created_at: now,
 };
 
+let branchDiffCalls: unknown[] = [];
+
 /** Opens the Review tab with no active thread (threadless workspace scope). */
 async function openThreadlessReview(page: Page): Promise<void> {
   await page.evaluate(
@@ -139,6 +141,7 @@ async function openThreadReview(page: Page): Promise<void> {
 
 test.describe("Review tab — dual-scope view selection", () => {
   test.beforeEach(async ({ page }) => {
+    branchDiffCalls = [];
     await mockWebSocketServer(page, {
       "workspace.list": [WORKSPACE],
       "thread.list": [THREAD],
@@ -149,7 +152,22 @@ test.describe("Review tab — dual-scope view selection", () => {
         (params as { staged?: boolean })?.staged ? ["src/staged.ts"] : ["src/unstaged.ts"],
       "git.workingTreeDiff": "",
       "git.branchFiles": ["src/branch.ts"],
-      "git.branchDiff": "",
+      "git.branchDiff": (params) => {
+        branchDiffCalls.push(params);
+        const base = (params as { base?: string }).base ?? "unknown";
+        const target = (params as { target?: string }).target ?? "unknown";
+        return `@@ -1 +1 @@\n-old ${base} to ${target} line\n+new ${base} to ${target} line\n`;
+      },
+      "git.branchComparison": {
+        base: "main",
+        target: "feat/x",
+        refs: [
+          { name: "main", shortSha: "aaaaaaa", type: "local", isCurrent: false },
+          { name: "feat/x", shortSha: "bbbbbbb", type: "local", isCurrent: true },
+          { name: "origin/main", shortSha: "aaaaaaa", type: "remote", isCurrent: false },
+        ],
+        isUnborn: false,
+      },
       "git.log": [],
       "git.commitFiles": [],
     });
@@ -220,5 +238,63 @@ test.describe("Review tab — dual-scope view selection", () => {
     await page.getByTestId("review-view-branch").click();
     await expect(switcher).toContainText("Branch");
     await expect(page.getByTestId("review-operand-slot")).toHaveAttribute("data-operand", "branch");
+  });
+
+  test("branch: the operand slot fixes the current branch and picks only the comparison ref", async ({
+    page,
+  }) => {
+    await openThreadReview(page);
+
+    const switcher = page.getByTestId("review-view-switcher");
+    await expect(switcher).toBeVisible({ timeout: 5_000 });
+    await switcher.click();
+    await page.getByTestId("review-view-branch").click();
+
+    // The operand slot fixes the current branch on the left and only the right
+    // comparison ref is selectable. The server default `main...feat/x` is adapted
+    // to the user-facing `feat/x -> main` shape.
+    const picker = page.getByTestId("branch-ref-picker");
+    await expect(picker).toBeVisible();
+    await expect(page.getByTestId("branch-base-picker")).toHaveCount(0);
+    await expect(page.getByTestId("branch-current-ref")).toContainText("feat/x");
+    const targetPicker = page.getByTestId("branch-target-picker");
+    await expect(page.getByTestId("branch-range-arrow")).toBeVisible();
+    await expect(targetPicker).toContainText("main");
+    // Branch diffs open automatically after the comparison resolves; no file row
+    // click is needed to see the inline diff.
+    await expect(page.getByText("new feat/x to main line")).toBeVisible();
+    await expect
+      .poll(() =>
+        branchDiffCalls.some(
+          (params) =>
+            (params as { base?: string; target?: string; filePath?: string }).base ===
+              "feat/x" &&
+            (params as { base?: string; target?: string; filePath?: string }).target ===
+              "main" &&
+            (params as { base?: string; target?: string; filePath?: string }).filePath ===
+              "src/branch.ts",
+        ),
+      )
+      .toBe(true);
+
+    // Picking a new comparison ref updates only the right side.
+    await targetPicker.click();
+    await page.getByTestId("branch-ref-target-origin/main").click();
+    await expect(page.getByTestId("branch-current-ref")).toContainText("feat/x");
+    await expect(targetPicker).toContainText("origin/main");
+    await expect
+      .poll(() =>
+        branchDiffCalls.some(
+          (params) =>
+            (params as { base?: string; target?: string; filePath?: string }).base ===
+              "feat/x" &&
+            (params as { base?: string; target?: string; filePath?: string }).target ===
+              "origin/main" &&
+            (params as { base?: string; target?: string; filePath?: string }).filePath ===
+              "src/branch.ts",
+        ),
+      )
+      .toBe(true);
+    await expect(page.getByText("new feat/x to origin/main line")).toBeVisible();
   });
 });

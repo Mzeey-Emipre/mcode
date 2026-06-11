@@ -7,9 +7,10 @@ status: accepted
 ## Context
 
 The Review tab's git views are moving from fixed diffs to **comparisons** — a
-base ref and a target ref that the user can pick (see `CONTEXT.md` → Comparison).
-The Branch comparison is the first with two user-selectable sides, which forces
-two decisions a casual reader would otherwise assume the opposite of:
+resolved ref pair that produces one diff (see `CONTEXT.md` → Comparison).
+The Branch comparison fixes the current branch on the left and lets the user
+pick the comparison ref on the right. Its default pair still needs two decisions
+a casual reader would otherwise assume the opposite of:
 
 1. **What does Branch compare by default?** The obvious answer — "the current
    branch against its remote" (`current → origin/current`) — answers *"what

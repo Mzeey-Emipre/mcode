@@ -11,7 +11,7 @@ import { rm, rename, rmdir } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
-import type { GitBranch, WorktreeInfo, GitCommit } from "@mcode/contracts";
+import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 
 const execFile = promisify(execFileCb);
@@ -435,7 +435,7 @@ export class GitService {
     const resolvedBase = baseBranch !== undefined
       ? baseBranch
       : branch !== undefined
-        ? await this.detectDefaultBranch(effectivePath)
+        ? await this.detectDefaultComparisonRef(effectivePath)
         : undefined;
 
     const args = [
@@ -600,18 +600,31 @@ export class GitService {
   }
 
   /**
-   * List files that differ between a checkout's current branch and its default
-   * base branch (the `base...HEAD` symmetric-difference range). Reads the
-   * workspace root by default; pass `repoPath` to read a thread's worktree (so
-   * HEAD is the thread branch). Returns an empty list when HEAD already matches base.
+   * List files that differ between two refs as a three-dot comparison
+   * (`base...target`, the symmetric-difference range — only what changed on the
+   * target side since the two diverged). `base`/`target` default to the detected
+   * default branch and HEAD respectively, preserving the legacy `base...HEAD`
+   * behavior for callers that pass neither. The default pair the Branch view
+   * uses is resolved by {@link resolveBranchComparison} per ADR 0007 and passed
+   * explicitly. Reads the workspace root by default; pass `repoPath` to read a
+   * thread's worktree. Returns an empty list when the refs match.
    */
-  async branchFiles(workspaceId: string, repoPath?: string): Promise<string[]> {
+  async branchFiles(
+    workspaceId: string,
+    base?: string,
+    target?: string,
+    repoPath?: string,
+  ): Promise<string[]> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
-    const base = await this.detectDefaultBranch(cwd);
+    const resolvedBase = base ?? (await this.detectDefaultBranch(cwd));
+    if (!resolvedBase) return [];
+    const resolvedTarget = target ?? "HEAD";
+    assertSafeRef(resolvedBase);
+    assertSafeRef(resolvedTarget);
     try {
       const { stdout } = await execFile(
         "git",
-        ["-C", cwd, "diff", "--name-only", `${base}...HEAD`],
+        ["-C", cwd, "diff", "--name-only", `${resolvedBase}...${resolvedTarget}`],
         { timeout: 10_000, windowsHide: true },
       );
       return stdout.trim().split("\n").filter(Boolean);
@@ -621,19 +634,27 @@ export class GitService {
   }
 
   /**
-   * Get the unified diff between a checkout's current branch and its default base
-   * branch (`base...HEAD`). Reads the workspace root by default; pass `repoPath`
-   * to read a thread's worktree. Optionally scoped to a single file and truncated.
+   * Get the unified diff between two refs as a three-dot comparison
+   * (`base...target`). `base`/`target` default to the detected default branch and
+   * HEAD; see {@link branchFiles} for the range semantics. Reads the workspace
+   * root by default; pass `repoPath` to read a thread's worktree. Optionally
+   * scoped to a single file and truncated.
    */
   async branchDiff(
     workspaceId: string,
+    base?: string,
+    target?: string,
     filePath?: string,
     maxLines?: number,
     repoPath?: string,
   ): Promise<string> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
-    const base = await this.detectDefaultBranch(cwd);
-    const args = ["-C", cwd, "diff", "--find-renames", `${base}...HEAD`];
+    const resolvedBase = base ?? (await this.detectDefaultBranch(cwd));
+    if (!resolvedBase) return "";
+    const resolvedTarget = target ?? "HEAD";
+    assertSafeRef(resolvedBase);
+    assertSafeRef(resolvedTarget);
+    const args = ["-C", cwd, "diff", "--find-renames", `${resolvedBase}...${resolvedTarget}`];
     if (filePath) args.push("--", filePath);
     try {
       const { stdout } = await execFile("git", args, { timeout: 10_000, windowsHide: true });
@@ -641,6 +662,70 @@ export class GitService {
       return maxLines ? result.split("\n").slice(0, maxLines).join("\n") : result;
     } catch {
       return "";
+    }
+  }
+
+  /**
+   * Resolve the default Branch comparison for a checkout, plus the refs that
+   * populate the base/target pickers. Implements the context-dependent default
+   * from `docs/adr/0007-branch-comparison-default-and-range.md`:
+   *
+   * - **current ≠ detected base** → `base → current` (review the branch's work).
+   * - **current == detected base** (on the base branch) → `current →
+   *   origin/current` when an upstream exists, else `base → current` (empty but
+   *   valid when the branch has no upstream).
+   * - **detached HEAD** → `base → HEAD` (three-dot already takes the merge-base).
+   * - **unborn branch** (no commits) → explicit empty state (`isUnborn`).
+   * - **no detectable base** → no base is selected; the picker waits for the
+   *   user to choose one.
+   *
+   * Reads the workspace root by default; pass `repoPath` to resolve against a
+   * thread's worktree so "current branch" is the thread's branch.
+   */
+  async resolveBranchComparison(workspaceId: string, repoPath?: string): Promise<BranchComparison> {
+    const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
+    const refs = listBranchesForPath(cwd);
+
+    if (!(await this.hasCommits(cwd))) {
+      return { base: null, target: null, refs, isUnborn: true };
+    }
+
+    const base = await this.detectDefaultBranch(cwd);
+    const current = getCurrentBranchForPath(cwd);
+
+    if (!base) {
+      const target = current && current !== "HEAD" ? current : "HEAD";
+      return { base: null, target, refs, isUnborn: false };
+    }
+
+    // Detached HEAD (no branch name): compare the detected base to HEAD. Three-dot
+    // semantics resolve the merge-base internally, so an explicit base is enough.
+    if (!current || current === "HEAD") {
+      return { base, target: "HEAD", refs, isUnborn: false };
+    }
+
+    // On the base branch, `base...current` is empty — fall back to divergence from
+    // the remote when an upstream exists, else the (empty but valid) base→current.
+    if (current === base) {
+      const remoteRef = `origin/${current}`;
+      const hasUpstream = refs.some((r) => r.type === "remote" && r.name === remoteRef);
+      return { base: current, target: hasUpstream ? remoteRef : current, refs, isUnborn: false };
+    }
+
+    return { base, target: current, refs, isUnborn: false };
+  }
+
+  /** Whether HEAD resolves to a commit (false on an unborn branch / empty repo). */
+  private async hasCommits(repoPath: string): Promise<boolean> {
+    try {
+      await execFile(
+        "git",
+        ["-C", repoPath, "rev-parse", "--verify", "--quiet", "HEAD"],
+        { timeout: 5_000, windowsHide: true },
+      );
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -664,10 +749,53 @@ export class GitService {
   }
 
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */
-  private readonly defaultBranchCache = new Map<string, string>();
+  private readonly defaultBranchCache = new Map<string, string | null>();
+  private readonly defaultComparisonRefCache = new Map<string, string | null>();
 
-  /** Detect the default upstream ref (e.g. origin/main, main) for a repository. */
-  private async detectDefaultBranch(repoPath: string): Promise<string> {
+  /** Detect the default comparison ref for commit ranges, preferring the remote-qualified ref. */
+  private async detectDefaultComparisonRef(repoPath: string): Promise<string | null> {
+    const cached = this.defaultComparisonRefCache.get(repoPath);
+    if (cached !== undefined) return cached;
+
+    const result = await this.resolveDefaultComparisonRef(repoPath);
+    this.defaultComparisonRefCache.set(repoPath, result);
+    return result;
+  }
+
+  /** Resolve the default comparison ref, preserving `origin/main` when available. */
+  private async resolveDefaultComparisonRef(repoPath: string): Promise<string | null> {
+    try {
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000, windowsHide: true },
+      );
+      return stdout.trim();
+    } catch (err) {
+      logger.debug("[detectDefaultComparisonRef] origin/HEAD not set, trying set-head", { repoPath, err });
+    }
+
+    try {
+      await execFile(
+        "git",
+        ["-C", repoPath, "remote", "set-head", "origin", "--auto"],
+        { timeout: 1_500, windowsHide: true },
+      );
+      const { stdout } = await execFile(
+        "git",
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000, windowsHide: true },
+      );
+      return stdout.trim();
+    } catch (err) {
+      logger.debug("[detectDefaultComparisonRef] set-head failed, falling back to local default", { repoPath, err });
+    }
+
+    return this.detectDefaultBranch(repoPath);
+  }
+
+  /** Detect the default upstream branch (e.g. main, master) for a repository. */
+  private async detectDefaultBranch(repoPath: string): Promise<string | null> {
     const cached = this.defaultBranchCache.get(repoPath);
     if (cached !== undefined) return cached;
 
@@ -676,8 +804,8 @@ export class GitService {
     return result;
   }
 
-  /** Resolve the default comparison ref by probing git refs in order of cheapness. */
-  private async resolveDefaultBranch(repoPath: string): Promise<string> {
+  /** Resolve the default comparison branch by probing git refs in order of cheapness. */
+  private async resolveDefaultBranch(repoPath: string): Promise<string | null> {
     // 1. Ask the remote tracking ref (fast, no network, works if origin/HEAD is set)
     try {
       const { stdout } = await execFile(
@@ -685,7 +813,7 @@ export class GitService {
         ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
         { timeout: 5_000, windowsHide: true },
       );
-      return stdout.trim();
+      return stdout.trim().replace(/^[^/]+\//, "");
     } catch (err) {
       logger.debug("[detectDefaultBranch] origin/HEAD not set, trying set-head", { repoPath, err });
     }
@@ -703,23 +831,28 @@ export class GitService {
         ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
         { timeout: 5_000, windowsHide: true },
       );
-      return stdout.trim();
+      return stdout.trim().replace(/^[^/]+\//, "");
     } catch (err) {
       logger.debug("[detectDefaultBranch] set-head failed, falling back to HEAD", { repoPath, err });
     }
 
-    // 3. Last resort: use whatever HEAD currently points at (works for local-only repos)
-    try {
-      const { stdout } = await execFile(
-        "git",
-        ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"],
-        { timeout: 5_000, windowsHide: true },
-      );
-      return stdout.trim();
-    } catch (err) {
-      logger.debug("[detectDefaultBranch] rev-parse failed, defaulting to main", { repoPath, err });
-      return "main";
+    // 3. Local-only repos have no origin/HEAD; prefer established default branch
+    // names when they exist instead of treating the current feature branch as base.
+    for (const branch of ["main", "master", "develop", "trunk"]) {
+      try {
+        await execFile(
+          "git",
+          ["-C", repoPath, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+          { timeout: 5_000, windowsHide: true },
+        );
+        return branch;
+      } catch {
+        // Keep probing the next conventional default name.
+      }
     }
+
+    logger.debug("[detectDefaultBranch] no default branch detected", { repoPath });
+    return null;
   }
 
   /**
@@ -761,6 +894,19 @@ export class GitService {
 // ---------------------------------------------------------------------------
 // Standalone helper functions (not on the class, to keep them testable)
 // ---------------------------------------------------------------------------
+
+/**
+ * Reject a git ref that could smuggle a flag into a git argv (a leading `-`) or
+ * contains characters outside what refnames and short SHAs use. Guards the
+ * base/target of a Branch comparison before they are interpolated into a rev
+ * range; the WS layer also validates via `GitRefSchema`, this is defense in
+ * depth for any direct caller.
+ */
+function assertSafeRef(ref: string): void {
+  if (!/^(?!-)[A-Za-z0-9._/-]+$/.test(ref)) {
+    throw new Error(`Unsafe git ref: ${ref}`);
+  }
+}
 
 /** List all branches (local, remote, worktree-attached) for a repository path. */
 function listBranchesForPath(repoPath: string): GitBranch[] {

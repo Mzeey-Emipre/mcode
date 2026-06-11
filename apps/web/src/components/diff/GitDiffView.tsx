@@ -71,10 +71,25 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
   // has not resolved a commit yet, or the current scope has no commits.
   const selectedCommitSha = useDiffStore((s) => s.selectedCommitSha);
 
+  // The Branch view's diff is driven by the current branch plus the selected
+  // comparison ref. Subscribe so picking a new target refetches the file list.
+  const branchBase = useDiffStore((s) => s.branchComparison?.base ?? null);
+  const branchTarget = useDiffStore((s) => s.branchComparison?.target ?? null);
+  const branchUnborn = useDiffStore((s) => s.branchComparison?.isUnborn ?? false);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setResolved(null);
+
+    // Branch view waits for the picker to resolve a pair before fetching, unless
+    // HEAD is unborn (explicit empty). Holding `loading` avoids a flash of the
+    // empty state with a stale/default range during resolution.
+    if (view === "branch" && !branchUnborn && (!branchBase || !branchTarget)) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const load = async (): Promise<Resolved> => {
       const transport = getTransport();
@@ -83,8 +98,13 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         return { files, source: view, id: workspaceId };
       }
       if (view === "branch") {
-        const files = await transport.getBranchFiles(workspaceId, threadId);
-        return { files, source: "branch", id: workspaceId };
+        if (branchUnborn || !branchBase || !branchTarget) {
+          return { files: [], source: "branch", id: "branch-empty" };
+        }
+        const files = await transport.getBranchFiles(workspaceId, branchBase, branchTarget, threadId);
+        // The comparison range is folded into the FileList id so the inline diff
+        // cache and per-file fetch vary by pair (git refnames can't contain "..").
+        return { files, source: "branch", id: `${branchBase}...${branchTarget}` };
       }
       // Commit view: the picker's chosen commit. The picker owns defaulting to
       // the latest HEAD commit, which avoids a duplicate git-log + commit-files
@@ -114,9 +134,11 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     };
     // threadId is a fetch input: switching threads (or thread↔threadless) on the
     // same view+workspace must refetch the worktree's file list, not keep the
+    // previous scope's stale diff. branchBase/branchTarget/branchUnborn are fetch
+    // inputs for the Branch view: picking a new ref pair refetches its file list.
     // previous scope's stale diff. selectedCommitSha is one too: picking a commit
     // refetches that commit's files (no-op for the non-commit views).
-  }, [view, workspaceId, threadId, selectedCommitSha]);
+  }, [view, workspaceId, threadId, branchBase, branchTarget, branchUnborn, selectedCommitSha]);
 
   if (loading) return <LoadingPulse />;
   if (!resolved || resolved.files.length === 0) {

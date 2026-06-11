@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { TurnSnapshot, GitCommit } from "@mcode/contracts";
+import type { TurnSnapshot, GitCommit, BranchComparison } from "@mcode/contracts";
 
-export type { GitCommit };
+export type { GitCommit, BranchComparison };
 
 /** Active tab in the right panel. */
 export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal";
@@ -176,6 +176,19 @@ interface DiffState {
   /** View mode within the Changes tab. */
   viewMode: DiffViewMode;
   /**
+   * The Branch view's current→selected comparison for the current scope, or null
+   * until the picker resolves it. Drives both the ref picker and the rendered
+   * Branch diff. See
+   * `docs/adr/0007-branch-comparison-default-and-range.md`.
+   */
+  branchComparison: BranchComparison | null;
+  /**
+   * The scope key (`workspaceId:threadId`) {@link branchComparison} was resolved
+   * for. Lets the picker re-resolve on a scope change while preserving a user's
+   * picked comparison ref when toggling views within the same scope.
+   */
+  branchComparisonKey: string | null;
+  /**
    * The commit the Commit view's picker has resolved to, by SHA. `null` means
    * the picker has not resolved the current scope yet, or the scope has no
    * commits. This is the Commit comparison's picked operand: the Review toolbar's
@@ -250,6 +263,12 @@ interface DiffState {
    */
   closeRightPanelTab: (workspaceId: string, tab: RightPanelTab) => void;
   setViewMode: (mode: DiffViewMode) => void;
+  /** Store a resolved Branch comparison for a scope, keyed for staleness tracking. */
+  setBranchComparison: (comparison: BranchComparison | null, key: string | null) => void;
+  /** Override the base ref of the active Branch comparison (no-op if none resolved). */
+  setBranchBase: (ref: string) => void;
+  /** Override the target ref of the active Branch comparison (no-op if none resolved). */
+  setBranchTarget: (ref: string) => void;
   /** Set the Commit view's picked operand by SHA, or `null` to fall back to the latest commit. */
   setSelectedCommitSha: (sha: string | null) => void;
   setRenderMode: (mode: DiffRenderMode) => void;
@@ -285,6 +304,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   rightPanelByWorkspace: {},
   rightPanelVisibleByThread: {},
   viewMode: "last-turn",
+  branchComparison: null,
+  branchComparisonKey: null,
   selectedCommitSha: null,
   renderMode: "unified",
   lineWrapByThread: {},
@@ -369,6 +390,29 @@ export const useDiffStore = create<DiffState>((set, get) => ({
 
   setViewMode: (mode) =>
     set({ viewMode: mode, selectedFile: null, diffContent: null, selectedCommitSha: null }),
+  setBranchComparison: (comparison, key) =>
+    set({ branchComparison: comparison, branchComparisonKey: key }),
+  setBranchBase: (ref) =>
+    set((s) =>
+      s.branchComparison
+        ? {
+            branchComparison: { ...s.branchComparison, base: ref },
+            // Changing an operand invalidates the selected file's diff.
+            selectedFile: null,
+            diffContent: null,
+          }
+        : {},
+    ),
+  setBranchTarget: (ref) =>
+    set((s) =>
+      s.branchComparison
+        ? {
+            branchComparison: { ...s.branchComparison, target: ref },
+            selectedFile: null,
+            diffContent: null,
+          }
+        : {},
+    ),
   setSelectedCommitSha: (sha) => set({ selectedCommitSha: sha }),
   setRenderMode: (mode) => set({ renderMode: mode }),
   getLineWrap: (threadId) => get().lineWrapByThread[threadId] ?? DEFAULT_LINE_WRAP,
