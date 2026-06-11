@@ -155,7 +155,8 @@ test.describe("Review tab — dual-scope view selection", () => {
       "git.branchDiff": (params) => {
         branchDiffCalls.push(params);
         const base = (params as { base?: string }).base ?? "unknown";
-        return `@@ -1 +1 @@\n-old ${base} line\n+new ${base} line\n`;
+        const target = (params as { target?: string }).target ?? "unknown";
+        return `@@ -1 +1 @@\n-old ${base} to ${target} line\n+new ${base} to ${target} line\n`;
       },
       "git.branchComparison": {
         base: "main",
@@ -239,7 +240,7 @@ test.describe("Review tab — dual-scope view selection", () => {
     await expect(page.getByTestId("review-operand-slot")).toHaveAttribute("data-operand", "branch");
   });
 
-  test("branch: the operand slot hosts the base→target ref picker and switches the comparison", async ({
+  test("branch: the operand slot fixes the current branch and picks only the comparison ref", async ({
     page,
   }) => {
     await openThreadReview(page);
@@ -249,51 +250,51 @@ test.describe("Review tab — dual-scope view selection", () => {
     await switcher.click();
     await page.getByTestId("review-view-branch").click();
 
-    // The ref picker renders in the operand slot, seeded with the resolved default
-    // pair (base "main" → target "feat/x", per ADR 0007 for current ≠ base).
+    // The operand slot fixes the current branch on the left and only the right
+    // comparison ref is selectable. The server default `main...feat/x` is adapted
+    // to the user-facing `feat/x -> main` shape.
     const picker = page.getByTestId("branch-ref-picker");
     await expect(picker).toBeVisible();
-    const basePicker = page.getByTestId("branch-base-picker");
+    await expect(page.getByTestId("branch-base-picker")).toHaveCount(0);
+    await expect(page.getByTestId("branch-current-ref")).toContainText("feat/x");
     const targetPicker = page.getByTestId("branch-target-picker");
-    await expect(basePicker).toContainText("main");
     await expect(page.getByTestId("branch-range-arrow")).toBeVisible();
-    await expect(targetPicker).toContainText("feat/x");
+    await expect(targetPicker).toContainText("main");
     // Branch diffs open automatically after the comparison resolves; no file row
     // click is needed to see the inline diff.
-    await expect(page.getByText("new main line")).toBeVisible();
+    await expect(page.getByText("new feat/x to main line")).toBeVisible();
     await expect
       .poll(() =>
         branchDiffCalls.some(
           (params) =>
             (params as { base?: string; target?: string; filePath?: string }).base ===
-              "main" &&
-            (params as { base?: string; target?: string; filePath?: string }).target ===
               "feat/x" &&
+            (params as { base?: string; target?: string; filePath?: string }).target ===
+              "main" &&
             (params as { base?: string; target?: string; filePath?: string }).filePath ===
               "src/branch.ts",
         ),
       )
       .toBe(true);
 
-    // Picking a new base ref updates the comparison; the base relabels.
-    await basePicker.click();
-    await page.getByTestId("branch-ref-base-origin/main").click();
-    await expect(basePicker).toContainText("origin/main");
-    // The target side is independent and keeps its selection.
-    await expect(targetPicker).toContainText("feat/x");
+    // Picking a new comparison ref updates only the right side.
+    await targetPicker.click();
+    await page.getByTestId("branch-ref-target-origin/main").click();
+    await expect(page.getByTestId("branch-current-ref")).toContainText("feat/x");
+    await expect(targetPicker).toContainText("origin/main");
     await expect
       .poll(() =>
         branchDiffCalls.some(
           (params) =>
             (params as { base?: string; target?: string; filePath?: string }).base ===
-              "origin/main" &&
-            (params as { base?: string; target?: string; filePath?: string }).target ===
               "feat/x" &&
+            (params as { base?: string; target?: string; filePath?: string }).target ===
+              "origin/main" &&
             (params as { base?: string; target?: string; filePath?: string }).filePath ===
               "src/branch.ts",
         ),
       )
       .toBe(true);
-    await expect(page.getByText("new origin/main line")).toBeVisible();
+    await expect(page.getByText("new feat/x to origin/main line")).toBeVisible();
   });
 });

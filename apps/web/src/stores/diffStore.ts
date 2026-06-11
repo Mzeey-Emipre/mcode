@@ -154,16 +154,16 @@ interface DiffState {
   /** View mode within the Changes tab. */
   viewMode: DiffViewMode;
   /**
-   * The Branch view's resolved (and possibly user-overridden) base→target
-   * comparison for the current scope, or null until the picker resolves it.
-   * Drives both the ref picker and the rendered Branch diff. See
+   * The Branch view's current→selected comparison for the current scope, or null
+   * until the picker resolves it. Drives both the ref picker and the rendered
+   * Branch diff. See
    * `docs/adr/0007-branch-comparison-default-and-range.md`.
    */
   branchComparison: BranchComparison | null;
   /**
    * The scope key (`workspaceId:threadId`) {@link branchComparison} was resolved
    * for. Lets the picker re-resolve on a scope change while preserving a user's
-   * picked pair when toggling views within the same scope.
+   * picked comparison ref when toggling views within the same scope.
    */
   branchComparisonKey: string | null;
   /** Diff rendering mode. */

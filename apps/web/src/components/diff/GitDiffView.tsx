@@ -68,8 +68,8 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // The Branch view's diff is driven by the comparison the ref picker resolves
-  // (ADR 0007). Subscribe so picking a new base/target refetches the file list.
+  // The Branch view's diff is driven by the current branch plus the selected
+  // comparison ref. Subscribe so picking a new target refetches the file list.
   const branchBase = useDiffStore((s) => s.branchComparison?.base ?? null);
   const branchTarget = useDiffStore((s) => s.branchComparison?.target ?? null);
   const branchUnborn = useDiffStore((s) => s.branchComparison?.isUnborn ?? false);

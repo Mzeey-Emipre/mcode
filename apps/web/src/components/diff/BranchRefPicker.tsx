@@ -21,9 +21,10 @@ function scopeKey(workspaceId: string, threadId?: string): string {
 
 /**
  * Resolves the default Branch comparison for a scope (per ADR 0007) and seeds it
- * into the diff store. Re-resolves when the scope changes; preserves a user's
- * picked pair when the active comparison was already resolved for this scope (so
- * toggling views within a scope keeps the chosen base/target). Returns the
+ * into the diff store as `current -> selected ref`. Re-resolves when the scope
+ * changes; preserves a user's picked target when the active comparison was
+ * already resolved for this scope (so toggling views within a scope keeps the
+ * chosen target). Returns the
  * current comparison plus whether the initial resolve is in flight.
  */
 function useResolveBranchComparison(
@@ -49,7 +50,7 @@ function useResolveBranchComparison(
       .getBranchComparison(workspaceId, threadId)
       .then((result) => {
         if (cancelled) return;
-        setBranchComparison(result, key);
+        setBranchComparison(normalizeToCurrentComparison(result), key);
         setLoading(false);
       })
       .catch(() => {
@@ -64,6 +65,29 @@ function useResolveBranchComparison(
   }, [key, workspaceId, threadId, setBranchComparison]);
 
   return { comparison, loading };
+}
+
+/**
+ * Adapt the server's semantic default (`base...current` for feature branches)
+ * into the toolbar model the user sees: current branch fixed on the left, one
+ * selectable comparison ref on the right.
+ */
+function normalizeToCurrentComparison(comparison: BranchComparison): BranchComparison {
+  if (comparison.isUnborn) return comparison;
+
+  const current = comparison.refs.find((ref) => ref.isCurrent)?.name ?? (
+    comparison.target === "HEAD" ? "HEAD" : null
+  );
+  if (!current) return comparison;
+
+  const selected =
+    comparison.base === null
+      ? null
+      : comparison.base === current
+        ? comparison.target
+        : comparison.base;
+
+  return { ...comparison, base: current, target: selected };
 }
 
 /** Refs bucketed for the picker's group sections, in render order. */
@@ -130,17 +154,15 @@ function RefName({
 }
 
 /**
- * One side (base or target) of the comparison: a quiet toolbar chip that opens a
- * searchable, grouped ref combobox. Machine facts (ref names, SHAs) are mono;
+ * The selected comparison ref: a quiet toolbar chip that opens a searchable,
+ * grouped ref combobox. Machine facts (ref names, SHAs) are mono;
  * the current branch carries the amber dot; selection is a row-fill + check.
  */
 function RefCombobox({
-  side,
   value,
   refs,
   onSelect,
 }: {
-  side: "base" | "target";
   value: string | null;
   refs: readonly GitBranch[];
   onSelect: (ref: string) => void;
@@ -151,8 +173,8 @@ function RefCombobox({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        data-testid={`branch-${side}-picker`}
-        aria-label={`Select ${side} ref`}
+        data-testid="branch-target-picker"
+        aria-label="Select comparison ref"
         className={cn(
           "flex h-6 min-w-0 items-center gap-1 rounded-md px-1.5 font-mono text-[11px] font-medium",
           "bg-muted/60 text-foreground transition-colors hover:bg-accent",
@@ -170,7 +192,7 @@ function RefCombobox({
           <CommandInput
             placeholder="Filter refs"
             className="h-8 py-2 font-mono text-xs"
-            data-testid={`branch-${side}-filter`}
+            data-testid="branch-target-filter"
           />
           <CommandList className="max-h-[296px]">
             <CommandEmpty>
@@ -203,7 +225,7 @@ function RefCombobox({
                           onSelect(ref.name);
                           setOpen(false);
                         }}
-                        data-testid={`branch-ref-${side}-${ref.name}`}
+                        data-testid={`branch-ref-target-${ref.name}`}
                         aria-current={active ? "true" : undefined}
                         className="gap-2 py-1 font-mono text-xs"
                       >
@@ -237,6 +259,25 @@ function RefCombobox({
   );
 }
 
+/** Read-only chip for the current branch on the left side of the comparison. */
+function CurrentRefChip({ value }: { value: string | null }) {
+  return (
+    <span
+      data-testid="branch-current-ref"
+      aria-label="Current branch"
+      title={value ?? "Current branch"}
+      className={cn(
+        "flex h-6 min-w-0 items-center rounded-md px-1.5 font-mono text-[11px] font-medium",
+        "bg-muted/35 text-foreground/80",
+      )}
+    >
+      <span className={cn("max-w-[132px] truncate", !value && "text-muted-foreground")}>
+        {value ?? "current"}
+      </span>
+    </span>
+  );
+}
+
 /** Props for {@link BranchRefPicker}. */
 interface BranchRefPickerProps {
   /** Active workspace id (the repo whose refs populate the pickers). */
@@ -246,14 +287,12 @@ interface BranchRefPickerProps {
 }
 
 /**
- * The Branch view's operand control: two ref comboboxes (`base -> target`) the
- * user picks independently, always diffed three-dot. Renders into the Review
- * toolbar's contextual operand slot. Resolves its default pair per ADR 0007 and
- * writes the chosen pair to the diff store, which drives the rendered Branch diff.
+ * The Branch view's operand control: a read-only current-branch chip on the left
+ * and one selected comparison ref on the right. The stored pair is always
+ * `current...selected`, and the right side is the only picker.
  */
 export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps) {
   const { comparison, loading } = useResolveBranchComparison(workspaceId, threadId);
-  const setBranchBase = useDiffStore((s) => s.setBranchBase);
   const setBranchTarget = useDiffStore((s) => s.setBranchTarget);
 
   if (loading && !comparison) {
@@ -274,8 +313,8 @@ export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps)
   const refs = comparison?.refs ?? [];
   return (
     <div className="flex min-w-0 items-center gap-1" data-testid="branch-ref-picker">
-      <RefCombobox side="base" value={comparison?.base ?? null} refs={refs} onSelect={setBranchBase} />
-      {/* Directional cue for the fixed `base...target` comparison. */}
+      <CurrentRefChip value={comparison?.base ?? null} />
+      {/* Directional cue for the fixed current-to-selected comparison. */}
       <span
         aria-hidden="true"
         data-testid="branch-range-arrow"
@@ -283,7 +322,7 @@ export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps)
       >
         <ArrowRight size={12} strokeWidth={1.8} />
       </span>
-      <RefCombobox side="target" value={comparison?.target ?? null} refs={refs} onSelect={setBranchTarget} />
+      <RefCombobox value={comparison?.target ?? null} refs={refs} onSelect={setBranchTarget} />
     </div>
   );
 }
