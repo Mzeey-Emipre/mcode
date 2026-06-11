@@ -152,6 +152,83 @@ async function setupThread(page: Page, messages: Array<Record<string, unknown>> 
   }, { workspace: WORKSPACE, thread: THREAD, seededMessages: messages });
 }
 
+async function dispatchThreadEvent(page: Page, threadId: string, event: unknown) {
+  await page.evaluate(({ targetThreadId, agentEvent }) => {
+    const stores: Array<{ getState: () => Record<string, unknown> }> =
+      (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
+        .__mcodeStores ?? [];
+    const threadStore = stores.find((store) => {
+      const state = store.getState();
+      return "handleAgentEvent" in state && "records" in state;
+    });
+    const state = threadStore?.getState() as
+      | { handleAgentEvent: (threadId: string, event: unknown) => void }
+      | undefined;
+    if (!state) throw new Error("thread store not found");
+    state.handleAgentEvent(targetThreadId, agentEvent);
+  }, { targetThreadId: threadId, agentEvent: event });
+}
+
+async function commitAssistantMessage(page: Page, threadId: string, messageId: string, content: string) {
+  await page.evaluate(({ targetThreadId, targetMessageId, text }) => {
+    const stores: Array<{ getState: () => Record<string, unknown> }> =
+      (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
+        .__mcodeStores ?? [];
+    const threadStore = stores.find((store) => {
+      const state = store.getState();
+      return "handleAgentEvent" in state && "records" in state;
+    });
+    const state = threadStore?.getState() as
+      | {
+          handleAgentEvent: (threadId: string, event: unknown) => void;
+        }
+      | undefined;
+    if (!state) throw new Error("thread store not found");
+    state.handleAgentEvent(targetThreadId, {
+      method: "session.message",
+      params: { content: text, messageId: targetMessageId, tokens: 12 },
+    });
+  }, { targetThreadId: threadId, targetMessageId: messageId, text: content });
+}
+
+async function markTurnPersisted(page: Page, threadId: string, messageId: string) {
+  await page.evaluate(({ targetThreadId, targetMessageId }) => {
+    const stores: Array<{ getState: () => Record<string, unknown> }> =
+      (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
+        .__mcodeStores ?? [];
+    const threadStore = stores.find((store) => {
+      const state = store.getState();
+      return "handleTurnPersisted" in state && "records" in state;
+    });
+    const state = threadStore?.getState() as
+      | { handleTurnPersisted: (payload: unknown) => void }
+      | undefined;
+    if (!state) throw new Error("thread store not found");
+    state.handleTurnPersisted({
+      threadId: targetThreadId,
+      messageId: targetMessageId,
+      toolCallCount: 0,
+      filesChanged: [],
+    });
+  }, { targetThreadId: threadId, targetMessageId: messageId });
+}
+
+async function getCurrentTurnMessageId(page: Page, threadId: string) {
+  return page.evaluate((targetThreadId) => {
+    const stores: Array<{ getState: () => Record<string, unknown> }> =
+      (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
+        .__mcodeStores ?? [];
+    const threadStore = stores.find((store) => {
+      const state = store.getState();
+      return "records" in state;
+    });
+    const state = threadStore?.getState() as
+      | { records: Map<string, { currentTurnMessageId?: string }> }
+      | undefined;
+    return state?.records.get(targetThreadId)?.currentTurnMessageId ?? "";
+  }, threadId);
+}
+
 test.describe("final response continuity", () => {
   test.beforeEach(async ({ page }) => {
     serverMessages = [userMessage()];
@@ -181,59 +258,19 @@ test.describe("final response continuity", () => {
       "- Third visible item",
     ].join("\n");
 
-    await page.evaluate(({ threadId }) => {
-      const stores: Array<{ getState: () => Record<string, unknown> }> =
-        (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
-          .__mcodeStores ?? [];
-      const threadStore = stores.find((store) => {
-        const state = store.getState();
-        return "handleAgentEvent" in state && "records" in state;
-      });
-      const state = threadStore?.getState() as
-        | { handleAgentEvent: (threadId: string, event: unknown) => void }
-        | undefined;
-      if (!state) throw new Error("thread store not found");
-      state.handleAgentEvent(threadId, { method: "session.turnStarted", params: {} });
-    }, { threadId: THREAD.id });
-
-    await page.evaluate(({ threadId }) => {
-      const stores: Array<{ getState: () => Record<string, unknown> }> =
-        (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
-          .__mcodeStores ?? [];
-      const threadStore = stores.find((store) => {
-        const state = store.getState();
-        return "handleAgentEvent" in state && "records" in state;
-      });
-      const state = threadStore?.getState() as
-        | { handleAgentEvent: (threadId: string, event: unknown) => void }
-        | undefined;
-      if (!state) throw new Error("thread store not found");
-      state.handleAgentEvent(threadId, {
-        method: "session.textDelta",
-        params: { delta: "Final answer", isFinalResponse: true },
-      });
-    }, { threadId: THREAD.id });
+    await dispatchThreadEvent(page, THREAD.id, { method: "session.turnStarted", params: {} });
+    await dispatchThreadEvent(page, THREAD.id, {
+      method: "session.textDelta",
+      params: { delta: "Final answer", isFinalResponse: true },
+    });
 
     const response = page.getByTestId("assistant-response-text").last();
     await expect(response).toContainText("Final answer");
 
-    await page.evaluate(({ threadId, text }) => {
-      const stores: Array<{ getState: () => Record<string, unknown> }> =
-        (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
-          .__mcodeStores ?? [];
-      const threadStore = stores.find((store) => {
-        const state = store.getState();
-        return "handleAgentEvent" in state && "records" in state;
-      });
-      const state = threadStore?.getState() as
-        | { handleAgentEvent: (threadId: string, event: unknown) => void }
-        | undefined;
-      if (!state) throw new Error("thread store not found");
-      state.handleAgentEvent(threadId, {
-        method: "session.textDelta",
-        params: { delta: text.slice("Final answer".length), isFinalResponse: true },
-      });
-    }, { threadId: THREAD.id, text: finalText });
+    await dispatchThreadEvent(page, THREAD.id, {
+      method: "session.textDelta",
+      params: { delta: finalText.slice("Final answer".length), isFinalResponse: true },
+    });
 
     await expect(page.getByTestId("assistant-message-actions").last()).toHaveAttribute("aria-hidden", "true");
 
@@ -253,32 +290,9 @@ test.describe("final response continuity", () => {
       };
     });
 
-    await page.evaluate(({ threadId, text }) => {
-      const stores: Array<{ getState: () => Record<string, unknown> }> =
-        (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
-          .__mcodeStores ?? [];
-      const threadStore = stores.find((store) => {
-        const state = store.getState();
-        return "handleAgentEvent" in state && "records" in state;
-      });
-      const state = threadStore?.getState() as
-        | {
-            handleAgentEvent: (threadId: string, event: unknown) => void;
-            handleTurnPersisted: (payload: unknown) => void;
-          }
-        | undefined;
-      if (!state) throw new Error("thread store not found");
-      state.handleAgentEvent(threadId, {
-        method: "session.message",
-        params: { content: text, messageId: "assistant-persisted", tokens: 12 },
-      });
-      state.handleTurnPersisted({
-        threadId,
-        messageId: "assistant-persisted",
-        toolCallCount: 0,
-        filesChanged: [],
-      });
-    }, { threadId: THREAD.id, text: finalText });
+    await commitAssistantMessage(page, THREAD.id, "assistant-persisted", finalText);
+    await expect(page.getByTestId("assistant-message-actions").last()).toHaveAttribute("aria-hidden", "true");
+    await markTurnPersisted(page, THREAD.id, "assistant-persisted");
 
     await expect(page.getByTestId("assistant-message-actions").last()).not.toHaveAttribute("aria-hidden", "true");
     await expect(page.locator("[data-message-id='assistant-persisted']")).toBeVisible();
@@ -305,5 +319,45 @@ test.describe("final response continuity", () => {
     await expect(page.locator("[data-message-id='assistant-persisted']")).toBeVisible();
     await expect(page.getByText("Final answer that should keep the same DOM node.")).toBeVisible();
     await expect(page.getByText("Third visible item")).toBeVisible();
+  });
+
+  test("keeps the response node when turnComplete promotes streaming text", async ({ page }) => {
+    const finalText = "Codex-style final answer promoted at turn complete.";
+
+    await dispatchThreadEvent(page, THREAD.id, { method: "session.turnStarted", params: {} });
+    await dispatchThreadEvent(page, THREAD.id, {
+      method: "session.textDelta",
+      params: { delta: finalText, isFinalResponse: true },
+    });
+
+    const response = page.getByTestId("assistant-response-text").last();
+    await expect(response).toContainText("Codex-style final answer");
+    const before = await response.evaluate((node) => {
+      (window as unknown as { __finalResponseNode?: Element }).__finalResponseNode = node;
+      const scroller = document.querySelector("[data-testid='message-list'] .overflow-y-auto") as HTMLElement | null;
+      return { scrollTop: scroller?.scrollTop ?? 0 };
+    });
+
+    await dispatchThreadEvent(page, THREAD.id, {
+      method: "session.turnComplete",
+      params: { tokensIn: 0, tokensOut: 4, costUsd: 0 },
+    });
+
+    const promotedMessageId = await getCurrentTurnMessageId(page, THREAD.id);
+    expect(promotedMessageId).not.toBe("");
+    await expect(page.getByTestId("assistant-message-actions").last()).toHaveAttribute("aria-hidden", "true");
+    await markTurnPersisted(page, THREAD.id, promotedMessageId);
+    await expect(page.getByTestId("assistant-message-actions").last()).not.toHaveAttribute("aria-hidden", "true");
+
+    const after = await response.evaluate((node, beforeScrollTop) => {
+      const win = window as unknown as { __finalResponseNode?: Element };
+      const scroller = document.querySelector("[data-testid='message-list'] .overflow-y-auto") as HTMLElement | null;
+      return {
+        sameNode: win.__finalResponseNode === node,
+        scrollDelta: Math.abs((scroller?.scrollTop ?? 0) - beforeScrollTop),
+      };
+    }, before.scrollTop);
+    expect(after.sameNode).toBe(true);
+    expect(after.scrollDelta).toBeLessThan(2);
   });
 });

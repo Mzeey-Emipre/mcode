@@ -312,6 +312,19 @@ function capMessages(messages: Message[]): { messages: Message[]; evicted: boole
   };
 }
 
+/** Keeps turn response keys only for assistant messages still loaded in memory. */
+function pruneAssistantResponseKeys(
+  responseKeys: Record<string, string>,
+  messages: readonly Message[],
+): Record<string, string> {
+  const assistantIds = new Set(
+    messages.filter((message) => message.role === "assistant").map((message) => message.id),
+  );
+  return Object.fromEntries(
+    Object.entries(responseKeys).filter(([messageId]) => assistantIds.has(messageId)),
+  );
+}
+
 /**
  * Scan a message list for an unanswered plan-questions block.
  * Finds the last assistant message containing a ```plan-questions``` fenced block,
@@ -1461,6 +1474,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               timestamp: message.timestamp,
             });
             const { messages: capped, evicted } = capMessages(replaced);
+            const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
+              nextAssistantResponseKeys,
+              capped,
+            );
             return {
               records: patchThreadRecord(state.records, threadId, {
                 ...turnPatch,
@@ -1468,7 +1485,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 persistedToolCallCounts: nextPersistedToolCallCounts,
                 persistedFilesChanged: nextPersistedFilesChanged,
                 serverMessageIds: nextServerMessageIds,
-                assistantResponseKeys: nextAssistantResponseKeys,
+                assistantResponseKeys: prunedAssistantResponseKeys,
                 latestTurnWithChanges:
                   rec.latestTurnWithChanges === previousId ? message.id : rec.latestTurnWithChanges,
                 ...(evicted ? { hasMoreMessages: true } : {}),
@@ -1477,10 +1494,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
 
           const { messages: capped, evicted } = capMessages([...rec.messages, message]);
+          const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
+            turnPatch.assistantResponseKeys,
+            capped,
+          );
           return {
             records: patchThreadRecord(state.records, threadId, {
               ...turnPatch,
               messages: capped,
+              assistantResponseKeys: prunedAssistantResponseKeys,
               ...(evicted ? { hasMoreMessages: true } : {}),
             }),
           };
@@ -1920,11 +1942,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
 
           const { messages: capped, evicted } = capMessages([...rec.messages, ...pending]);
+          const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
+            basePatch.assistantResponseKeys,
+            capped,
+          );
           return {
             runningThreadIds: nextRunning,
             records: patchThreadRecord(state.records, threadId, {
               ...basePatch,
               messages: capped,
+              assistantResponseKeys: prunedAssistantResponseKeys,
               ...(evicted ? { hasMoreMessages: true } : {}),
             }),
           };

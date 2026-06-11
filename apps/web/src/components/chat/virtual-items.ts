@@ -187,12 +187,16 @@ export function buildStableItems(
       msg.role === "assistant" &&
       (currentTurn?.messageId === msg.id ||
         currentTurn?.responseKeysByMessageId?.[msg.id] != null);
+    const isPersisted =
+      msg.role === "assistant" &&
+      persistedFilesChanged != null &&
+      Object.prototype.hasOwnProperty.call(persistedFilesChanged, msg.id);
     items.push({
       key: assistantMessageItemKey(msg, currentTurn),
       type: "message",
       message: msg,
       ...(isCurrentAssistant
-        ? { assistantState: { isStreaming: false, actionsVisible: true } }
+        ? { assistantState: { isStreaming: false, actionsVisible: isPersisted } }
         : {}),
     });
 

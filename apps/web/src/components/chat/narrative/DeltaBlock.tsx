@@ -81,6 +81,11 @@ const REMOUNT_TARGET_THRESHOLD = 96;
  */
 const REMOUNT_TAIL_CHARS = 24;
 
+const TYPEWRITER_FRAME_MS = 32;
+const DEFAULT_STEP_CEILING = 28;
+const LONG_RESPONSE_STEP_CEILING = 160;
+const LONG_RESPONSE_LENGTH = 2_000;
+
 /**
  * Reveals `target` character-by-character at a steady rate, with adaptive
  * catch-up when the target races ahead of the displayed text.
@@ -99,10 +104,9 @@ const REMOUNT_TAIL_CHARS = 24;
  *   live node flips from streaming to persisted while the typewriter is still
  *   behind, the rAF loop keeps catching up instead of snapping to full height.
  *
- * Idle rate: ~6 chars per animation frame (≈360 chars/sec at 60fps).
- * Catch-up: `step = clamp(6, ceil(behind / 8), 28)` — each frame closes
- * roughly 1/8 of the gap, capped so even huge coalesced batches still read
- * as fast typing rather than a single-frame paste.
+ * Idle rate: ~6 chars every 32ms. Catch-up closes roughly 1/8 of the gap per
+ * paint, with a higher cap for long responses so markdown re-render work stays
+ * bounded during large flushes.
  *
  * When `target` shrinks (e.g., the parent reset for a new turn), the
  * displayed value resets immediately and the animation cancels.
@@ -119,6 +123,7 @@ function useTypewriter(target: string, isStreaming: boolean): string {
   const targetRef = useRef(target);
   const displayedRef = useRef(displayed);
   const rafRef = useRef<number | null>(null);
+  const lastPaintAtRef = useRef<number>(0);
 
   // Mirror current target / displayed into refs so the rAF tick (which
   // closes over the first render only) always reads fresh values.
@@ -140,22 +145,25 @@ function useTypewriter(target: string, isStreaming: boolean): string {
     // Loop already in flight: it'll see the new target via the ref.
     if (rafRef.current != null) return;
 
-    const tick = (): void => {
+    const tick = (now: number): void => {
       const t = targetRef.current;
       const d = displayedRef.current;
       if (d.length >= t.length) {
         rafRef.current = null;
         return;
       }
+      if (now - lastPaintAtRef.current < TYPEWRITER_FRAME_MS) {
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+      lastPaintAtRef.current = now;
       const behind = t.length - d.length;
-      // Step floor (6 chars/frame ≈ 360 chars/sec) keeps tiny deltas visibly
-      // typing instead of popping in within a single frame. Step ceiling
-      // (28 chars/frame ≈ 1680 chars/sec) prevents huge coalesced batches
-      // from skipping the typewriter entirely — even a 1000-char buffer
-      // takes ~600 ms to drain at the cap, which still reads as fast typing.
-      // The middle band (behind / 8) keeps the natural exponential-decay
-      // catch-up so mid-size gaps feel snappy but not jumpy.
-      const step = Math.max(6, Math.min(28, Math.ceil(behind / 8)));
+      const stepCeiling =
+        t.length >= LONG_RESPONSE_LENGTH ? LONG_RESPONSE_STEP_CEILING : DEFAULT_STEP_CEILING;
+      // A 32ms paint cadence keeps markdown parsing out of the rAF hot path.
+      // Long targets get a larger step cap so large provider flushes catch up
+      // without hundreds of full markdown re-renders.
+      const step = Math.max(6, Math.min(stepCeiling, Math.ceil(behind / 8)));
       const next = t.slice(0, d.length + step);
       displayedRef.current = next;
       setDisplayed(next);
