@@ -1,6 +1,7 @@
 import {
   resetThreadStoreForTests,
   getTestThreadStreaming,
+  getTestThreadStreamingPreview,
   getTestThreadThoughtSegments,
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
@@ -114,5 +115,37 @@ describe("threadStore assistantMessageBoundary", () => {
 
     const segs = getTestThreadThoughtSegments(tid) ?? [];
     expect(segs).toEqual([{ text: "old thought", startedAt: 1, endedAt: 2 }]);
+  });
+
+  it("clears stale streamed text when a new turn starts after stop or resume", () => {
+    const tid = "thread-resume";
+    resetThreadStoreForTests({
+      records: new Map<string, ThreadRecord>([
+        [
+          tid,
+          {
+            ...createEmptyThreadRecord(),
+            streaming: "Using gpt-writing for the README note.",
+            streamingPreview: "Using gpt-writing for the README note.",
+            currentTurnMessageId: "assistant-old",
+            currentTurnResponseKey: "turn-response:old",
+            thoughtSegments: [
+              {
+                text: "Using gpt-writing for the README note.",
+                startedAt: 1,
+              },
+            ],
+          },
+        ],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent(tid, {
+      method: "session.turnStarted",
+    });
+
+    expect(getTestThreadStreaming(tid)).toBeUndefined();
+    expect(getTestThreadStreamingPreview(tid)).toBeUndefined();
+    expect(getTestThreadThoughtSegments(tid) ?? []).toEqual([]);
   });
 });

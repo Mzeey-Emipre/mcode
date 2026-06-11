@@ -213,9 +213,12 @@ export function scheduleDrainAfterEdit(threadId: string): void {
  */
 function resetTurnEphemeral(_rec: ThreadRecord): Partial<ThreadRecord> {
   return {
+    streaming: "",
+    streamingPreview: "",
     toolCalls: [],
     thoughtSegments: [],
     hooks: [],
+    currentTurnMessageId: "",
     currentTurnResponseKey: "",
   };
 }
