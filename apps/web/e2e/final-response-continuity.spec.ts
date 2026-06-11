@@ -171,7 +171,15 @@ test.describe("final response continuity", () => {
   });
 
   test("keeps the response node and scroll position when streaming persists", async ({ page }) => {
-    const finalText = "Final answer that should keep the same DOM node.";
+    const finalText = [
+      "Final answer that should keep the same DOM node.",
+      "",
+      "This paragraph is intentionally long enough to wrap across several visual lines in the transcript. It makes the streaming bubble reserve the height of the final markdown before the typewriter has caught up.",
+      "",
+      "- First visible item",
+      "- Second visible item",
+      "- Third visible item",
+    ].join("\n");
 
     await page.evaluate(({ threadId }) => {
       const stores: Array<{ getState: () => Record<string, unknown> }> =
@@ -188,6 +196,27 @@ test.describe("final response continuity", () => {
       state.handleAgentEvent(threadId, { method: "session.turnStarted", params: {} });
     }, { threadId: THREAD.id });
 
+    await page.evaluate(({ threadId }) => {
+      const stores: Array<{ getState: () => Record<string, unknown> }> =
+        (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
+          .__mcodeStores ?? [];
+      const threadStore = stores.find((store) => {
+        const state = store.getState();
+        return "handleAgentEvent" in state && "records" in state;
+      });
+      const state = threadStore?.getState() as
+        | { handleAgentEvent: (threadId: string, event: unknown) => void }
+        | undefined;
+      if (!state) throw new Error("thread store not found");
+      state.handleAgentEvent(threadId, {
+        method: "session.textDelta",
+        params: { delta: "Final answer", isFinalResponse: true },
+      });
+    }, { threadId: THREAD.id });
+
+    const response = page.getByTestId("assistant-response-text").last();
+    await expect(response).toContainText("Final answer");
+
     await page.evaluate(({ threadId, text }) => {
       const stores: Array<{ getState: () => Record<string, unknown> }> =
         (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
@@ -202,18 +231,26 @@ test.describe("final response continuity", () => {
       if (!state) throw new Error("thread store not found");
       state.handleAgentEvent(threadId, {
         method: "session.textDelta",
-        params: { delta: text, isFinalResponse: true },
+        params: { delta: text.slice("Final answer".length), isFinalResponse: true },
       });
     }, { threadId: THREAD.id, text: finalText });
 
-    const response = page.getByTestId("assistant-response-text").last();
-    await expect(response).toContainText("Final answer");
     await expect(page.getByTestId("assistant-message-actions").last()).toHaveAttribute("aria-hidden", "true");
 
     const continuity = await response.evaluate((node) => {
       (window as unknown as { __finalResponseNode?: Element }).__finalResponseNode = node;
       const scroller = document.querySelector("[data-testid='message-list'] .overflow-y-auto") as HTMLElement | null;
-      return { scrollTop: scroller?.scrollTop ?? 0 };
+      const nestedScrollableCount = Array.from(node.querySelectorAll<HTMLElement>("*")).filter((el) => {
+        const style = getComputedStyle(el);
+        const scrollsY = el.scrollHeight > el.clientHeight && /(auto|scroll)/.test(style.overflowY);
+        const scrollsX = el.scrollWidth > el.clientWidth && /(auto|scroll)/.test(style.overflowX);
+        return scrollsY || scrollsX;
+      }).length;
+      return {
+        height: node.getBoundingClientRect().height,
+        nestedScrollableCount,
+        scrollTop: scroller?.scrollTop ?? 0,
+      };
     });
 
     await page.evaluate(({ threadId, text }) => {
@@ -250,11 +287,13 @@ test.describe("final response continuity", () => {
       const win = window as unknown as { __finalResponseNode?: Element };
       const scroller = document.querySelector("[data-testid='message-list'] .overflow-y-auto") as HTMLElement | null;
       return {
+        height: node.getBoundingClientRect().height,
         sameNode: win.__finalResponseNode === node,
         scrollDelta: Math.abs((scroller?.scrollTop ?? 0) - beforeScrollTop),
       };
     }, continuity.scrollTop);
-
+    expect(continuity.nestedScrollableCount).toBe(0);
+    expect(Math.abs(result.height - continuity.height)).toBeLessThan(36);
     expect(result.sameNode).toBe(true);
     expect(result.scrollDelta).toBeLessThan(2);
 
@@ -264,6 +303,7 @@ test.describe("final response continuity", () => {
     await expect.poll(() => findStore(page, ["handleAgentEvent", "records"])).toBe(true);
     await setupThread(page, serverMessages);
     await expect(page.locator("[data-message-id='assistant-persisted']")).toBeVisible();
-    await expect(page.getByText(finalText)).toBeVisible();
+    await expect(page.getByText("Final answer that should keep the same DOM node.")).toBeVisible();
+    await expect(page.getByText("Third visible item")).toBeVisible();
   });
 });

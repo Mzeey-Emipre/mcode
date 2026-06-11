@@ -287,7 +287,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     activeThreadId ? s.runningThreadIds.has(activeThreadId) : false,
   );
   const agentStartTime = useActiveThreadRecord((r) => r.agentStartTime);
-  const streamingText = useActiveThreadRecord((r) => r.streamingPreview);
+  const streamingText = useActiveThreadRecord((r) => r.streaming);
   const toolCallsRaw = useActiveThreadRecord((r) => r.toolCalls);
   const persistedFilesChanged = useThreadStore(
     useShallow((s) => {

@@ -94,9 +94,10 @@ const REMOUNT_TAIL_CHARS = 24;
  *   during streaming). `displayed` starts at `target.length - REMOUNT_TAIL_CHARS`
  *   so only the last few chars typewriter in, avoiding the multi-hundred-char
  *   "dump" the user would otherwise see.
- * - When `isStreaming` is false, `displayed` starts at `target` and the loop
- *   never runs — completed segments render their full text immediately on
- *   mount so persisted history doesn't re-typewriter when scrolled into view.
+ * - When `isStreaming` is false on first mount, `displayed` starts at `target`
+ *   so persisted history doesn't re-typewriter when scrolled into view. If a
+ *   live node flips from streaming to persisted while the typewriter is still
+ *   behind, the rAF loop keeps catching up instead of snapping to full height.
  *
  * Idle rate: ~6 chars per animation frame (≈360 chars/sec at 60fps).
  * Catch-up: `step = clamp(6, ceil(behind / 8), 28)` — each frame closes
@@ -161,19 +162,7 @@ function useTypewriter(target: string, isStreaming: boolean): string {
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-  }, [target]);
-
-  // When the segment completes mid-animation, snap to target so the cursor
-  // disappears against the full text rather than against a half-typed line.
-  useEffect(() => {
-    if (!isStreaming && displayedRef.current !== target) {
-      if (rafRef.current != null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      setDisplayed(target);
-    }
-  }, [isStreaming, target]);
+  }, [target, isStreaming]);
 
   // Cancel any in-flight frame on unmount.
   useEffect(() => () => {
