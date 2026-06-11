@@ -185,8 +185,7 @@ function RefCombobox({
             aria-haspopup="dialog"
             className={cn(
               "h-6 min-w-0 max-w-[164px] flex-1 shrink justify-between gap-1.5 rounded-md px-2 font-mono text-xs font-medium",
-              "bg-background/75 text-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklch,var(--border),transparent_40%)]",
-              "hover:bg-accent/80 aria-expanded:bg-accent/80",
+              "text-foreground shadow-none hover:bg-foreground/[0.06] aria-expanded:bg-foreground/[0.06]",
             )}
           >
             <span className={cn("min-w-0 truncate", !value && "text-muted-foreground")}>
@@ -330,15 +329,17 @@ export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps)
       aria-label="Branch comparison range"
     >
       <CurrentRefChip value={comparison?.base ?? null} />
-      {/* Directional cue for the fixed current-to-selected comparison. */}
-      <span
-        aria-hidden="true"
-        data-testid="branch-range-arrow"
-        className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/50"
-      >
-        <ArrowRight size={12} strokeWidth={1.8} />
-      </span>
-      <RefCombobox value={comparison?.target ?? null} refs={refs} onSelect={setBranchTarget} />
+      {/* Target side: divider + arrow + picker share one hover surface (no nested chip). */}
+      <div className="flex min-w-0 flex-1 items-center gap-0.5 border-l border-border/25 pl-1">
+        <span
+          aria-hidden="true"
+          data-testid="branch-range-arrow"
+          className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/50"
+        >
+          <ArrowRight size={12} strokeWidth={1.8} />
+        </span>
+        <RefCombobox value={comparison?.target ?? null} refs={refs} onSelect={setBranchTarget} />
+      </div>
     </div>
   );
 }
