@@ -1,7 +1,8 @@
 import { create } from "zustand";
-import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
+import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
 import type { ContextWindowMode, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
+import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import { PlanQuestionSchema, PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
@@ -225,6 +226,26 @@ function createTurnResponseKey(threadId: string): string {
   return `turn-response:${threadId}:${crypto.randomUUID()}`;
 }
 
+/** Maps a persisted thought row into the live narrative segment shape. */
+function persistedThoughtToSegment(record: ThoughtSegmentRecord): ThoughtSegment {
+  const startedAt = Date.parse(record.started_at);
+  const endedAt = record.ended_at ? Date.parse(record.ended_at) : NaN;
+  return {
+    text: record.text,
+    startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
+    endedAt: Number.isFinite(endedAt) ? endedAt : undefined,
+  };
+}
+
+/** Returns persisted thought rows that should remain visible above the final reply. */
+function visiblePersistedThoughtSegments(
+  thoughts: readonly ThoughtSegmentRecord[],
+): ThoughtSegment[] {
+  return thoughts
+    .filter((thought) => !thought.is_final_response)
+    .map(persistedThoughtToSegment);
+}
+
 /**
  * Walk up the parentToolCallId chain to find the nearest Agent tool call
  * and return its description as a group label for TodoWrite tasks.
@@ -393,8 +414,8 @@ export function extractPendingPlanQuestions(
 }
 
 /** Zustand store for thread-scoped messages, streaming session state, and agent event handling. */
-/** One coalesced `session.textDelta` span for rAF flushing; merges adjacent chunks with same `isFinalResponse`. */
-type PendingTextChunk = { delta: string; isFinalResponse: boolean };
+/** One coalesced `session.textDelta` span for rAF flushing; preserves missing `isFinalResponse` for legacy fallback behavior. */
+type PendingTextChunk = { delta: string; isFinalResponse?: boolean };
 
 export const useThreadStore = create<ThreadState>((set, get) => {
   let textDeltaFlushRaf: number | null = null;
@@ -442,6 +463,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             continue;
           }
 
+          const isExplicitNonFinal = chunk.isFinalResponse === false;
           const last = segments[segments.length - 1];
           const looksLikeContinuation = (prevText: string, nextText: string): boolean => {
             const trimmedPrev = prevText.trimEnd();
@@ -459,15 +481,30 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             (last.text.length < TINY_SEGMENT_THRESHOLD ||
               looksLikeContinuation(last.text, acc));
           if (!last || (last.endedAt !== undefined && !shouldReopen)) {
-            segments = [...segments, { text: acc, startedAt: Date.now() }];
+            segments = [
+              ...segments,
+              {
+                text: acc,
+                startedAt: Date.now(),
+                ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+              },
+            ];
           } else if (last.endedAt !== undefined && shouldReopen) {
-            const reopened: typeof last = { ...last, text: last.text + acc };
+            const reopened: typeof last = {
+              ...last,
+              text: last.text + acc,
+              ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+            };
             delete (reopened as { endedAt?: number }).endedAt;
             segments = [...segments.slice(0, -1), reopened];
           } else {
             segments = [
               ...segments.slice(0, -1),
-              { ...last, text: last.text + acc },
+              {
+                ...last,
+                text: last.text + acc,
+                ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+              },
             ];
           }
         }
@@ -1657,7 +1694,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (method === "session.textDelta") {
       const delta = (params.delta as string) || "";
       if (!delta) return;
-      const isFinalResponse = params.isFinalResponse === true;
+      const rawIsFinalResponse = params.isFinalResponse;
+      const isFinalResponse =
+        typeof rawIsFinalResponse === "boolean" ? rawIsFinalResponse : undefined;
       const hadPending = pendingTextDeltaByThread.has(threadId);
       const existing = pendingTextDeltaByThread.get(threadId) ?? [];
       const next = [...existing];
@@ -2430,9 +2469,19 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       .then(() => {
         const currentId = get().currentThreadId;
         if (!currentId) return;
+        if (currentId !== payload.threadId) return;
         const rec = getRec(currentId);
         const serverRes = rec.narrativeByMessage[payload.messageId];
-        if (!serverRes || !localIdForBackfill) return;
+        if (!serverRes) return;
+        const persistedThoughtSegments = visiblePersistedThoughtSegments(serverRes.thoughts);
+        if (persistedThoughtSegments.length > rec.thoughtSegments.length) {
+          patchRec(currentId, (r) => {
+            if (r.toolCalls.length === 0) return {};
+            if (r.thoughtSegments.length >= persistedThoughtSegments.length) return {};
+            return { thoughtSegments: persistedThoughtSegments };
+          });
+        }
+        if (!localIdForBackfill) return;
         if (localIdForBackfill === payload.messageId) return;
         patchRec(currentId, (r) => ({
           narrativeByMessage: {

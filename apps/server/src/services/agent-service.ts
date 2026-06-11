@@ -1568,6 +1568,7 @@ export class AgentService {
             this.narrativeStore.dropOpenThought(event.threadId);
           } else {
             this.narrativeStore.closeOpenThought(event.threadId);
+            this.turnFinalizer.resetStreamingText(event.threadId);
           }
         }
 

@@ -85,6 +85,24 @@ describe("buildNarrativeItems counts", () => {
     expect(counts.thoughts).toBe(0);
   });
 
+  it("keeps an explicit non-final open segment as a thought when no tool is running", () => {
+    const thoughts: ThoughtSegment[] = [
+      { ...mkThought("codex narration", 1000), isExplicitNonFinal: true },
+    ];
+    const { items, counts } = buildNarrativeItems({
+      toolCalls: [],
+      hooks: [],
+      thoughtSegments: thoughts,
+      streamingText: "codex narration",
+      isAgentRunning: true,
+    });
+
+    expect(items.some((it) => it.type === "delta")).toBe(false);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ type: "thought", isActive: true });
+    expect(counts.thoughts).toBe(1);
+  });
+
   it("appends isFinal surplus as delta after thoughts when streaming extends past segment tape", () => {
     const thoughts: ThoughtSegment[] = [
       mkThought("pre-tool reasoning", 100, 700),

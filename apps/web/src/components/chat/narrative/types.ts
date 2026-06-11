@@ -10,6 +10,8 @@ export interface ThoughtSegment {
   startedAt: number;
   /** Epoch ms when the segment ended (next toolUse or turnComplete). Undefined if still streaming. */
   endedAt?: number;
+  /** True when the provider explicitly classified this segment as non-final narration. */
+  isExplicitNonFinal?: boolean;
 }
 
 /**

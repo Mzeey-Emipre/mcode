@@ -26,9 +26,9 @@ Across both runs, Codex split "thinking" from "answer" cleanly at the wire: anyt
 | `item/started` (commandExecution) | Shell command starting | between reasoning and final message | B:12 |
 | `item/commandExecution/outputDelta` | Streaming stdout/stderr token | repeated | B:13,14 |
 | `item/completed` (commandExecution) | Command finished, includes `command`, `aggregatedOutput`, `exitCode` | after command stream | B:15 |
-| `item/started` (agentMessage) | Final assistant turn began | after tools | A:12 / B:16 |
-| `item/agentMessage/delta` | Streaming final answer token | many | A:13 / B:17–31 |
-| `item/completed` (agentMessage) | Final answer text closed | end of answer stream | A:14 / B:32 |
+| `item/started` (agentMessage) | Assistant text item began | after tools in these traces | A:12 / B:16 |
+| `item/agentMessage/delta` | Streaming assistant text token | many | A:13 / B:17-31 |
+| `item/completed` (agentMessage) | Assistant text item closed | end of answer stream in these traces | A:14 / B:32 |
 | `turn/completed` | Turn ended with `status: "completed"`, `turn.items` length 0 | terminal | A:18 / B:36 |
 
 `turn.items` was **empty** (`itemsLen: 0`) in both completed turns. Streaming items are the only place children appear; the post-hoc `turn.items` array was not populated in this CLI version. Code that depends on `turn.items` to reconstruct child order is unsafe — trust live ordering.
@@ -37,15 +37,15 @@ Across both runs, Codex split "thinking" from "answer" cleanly at the wire: anyt
 
 | Method | Route in Mcode | Evidence |
 |---|---|---|
-| `item/agentMessage/delta` | `TextDelta` with `isFinalResponse: true` | A:13, B:17–31 stream the user-facing answer |
+| `item/agentMessage/delta` | non-final `TextDelta`; later `AssistantMessageBoundary` promotes the last assistant item on main turn completion | A:13, B:17-31 stream the user-facing answer |
 | `item/reasoning/textDelta` | `TextDelta` with `isFinalResponse: false` (thought) | **unverified in this run** — low effort produced no deltas |
 | `item/reasoning/summaryTextDelta` | `TextDelta` with `isFinalResponse: false` (thought) | unverified — no deltas in either run |
 | `item/reasoning/summaryPartAdded` | ignore (lifecycle) | unverified |
 | `item/plan/delta` | `TextDelta` with `isFinalResponse: false` (thought, experimental) | unverified |
 | `item/completed` type `reasoning` | If `summary` or `reasoningContent` non-empty, emit `TextDelta isFinalResponse:false` as delta vs accumulator | summary was empty on A:11; mapper's diff-vs-accumulator stays correct |
-| `item/completed` type `agentMessage` | no event (text already streamed) | A:14, B:32 confirm — final text was complete by the time completed fired |
+| `item/completed` type `agentMessage` | holds the assistant boundary for one-event lookahead | A:14, B:32 confirm final text was complete by the time completed fired |
 
-The current mapper at `apps/server/src/providers/codex/codex-event-mapper.ts:128-164` already implements these rules. The traces give no contradiction; they just don't exercise the reasoning/plan paths under default settings.
+The current mapper implements these routes. The traces give no contradiction; they just do not exercise the reasoning and plan paths under default settings.
 
 ## Sub-agent nesting (collabAgentToolCall)
 

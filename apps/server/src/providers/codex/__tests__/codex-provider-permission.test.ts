@@ -60,7 +60,7 @@ describe("CodexProvider permission flow", () => {
     // Pre-register a session entry so drain logic has something to iterate.
     seedSession(provider, sessionId, threadId, {
       server: { kill: vi.fn().mockResolvedValue(undefined), interruptTurn: vi.fn().mockResolvedValue(undefined), isAlive: true },
-      mapper: { reset: vi.fn() },
+      mapper: { reset: vi.fn(), drainPendingAssistantBoundary: vi.fn(() => []) },
       lastUsedAt: Date.now() - 1000,
       sandboxMode: "workspace-write",
     });
@@ -173,7 +173,7 @@ describe("CodexProvider permission flow", () => {
     fakeServer.isAlive = true;
     seedSession(provider, sessionId, threadId, {
       server: fakeServer,
-      mapper: { reset: vi.fn() },
+      mapper: { reset: vi.fn(), drainPendingAssistantBoundary: vi.fn(() => []) },
       lastUsedAt: Date.now(),
       sandboxMode: "workspace-write",
     });
