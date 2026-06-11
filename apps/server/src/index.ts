@@ -40,8 +40,6 @@ import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { warmCodexVersionCache } from "./providers/codex/codex-version";
 import { warmCodexAppServer } from "./providers/codex/codex-app-server";
-import { warmCopilotCliResolution } from "./providers/copilot/copilot-cli-resolver";
-import { EnvService } from "./services/env-service";
 import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
@@ -211,35 +209,27 @@ settingsService.on("change", (next) => {
     modelCacheService.invalidate("copilot");
   }
   lastCliPathsForModelCache = next.provider.cli;
-  // Re-warm provider CLI gates when settings change so the next send is a
-  // cache hit (no blocking spawnSync on the send path).
-  warmProviderCliGates(next);
+  // Re-warm the Codex version gate when its CLI path changes so the next
+  // send is a cache hit (no blocking spawnSync on the send path).
+  warmCodexVersionGate(next);
 });
 
 /** CLI paths whose app-server has already been warmed this run. */
 const warmedCodexPaths = new Set<string>();
 
 /**
- * Warms provider CLI gates off the send path for enabled CLI providers:
- * Codex `--version` cache + a throwaway app-server cold start (file cache and
- * chatgpt.com TLS/auth), and the Copilot CLI resolution probes. Repeat calls
- * are cheap: each underlying cache dedupes per path.
+ * Warms the Codex `--version` gate cache and cold-starts a throwaway
+ * app-server (file cache + chatgpt.com TLS/auth) off the send path. No-op
+ * when the provider is disabled; the app-server warm-up runs once per CLI
+ * path per app run.
  */
-function warmProviderCliGates(s = settingsService.get()): void {
-  if (s.provider.enabled.codex) {
-    const cliPath = s.provider.cli.codex || "codex";
-    void warmCodexVersionCache(cliPath);
-    if (!warmedCodexPaths.has(cliPath)) {
-      warmedCodexPaths.add(cliPath);
-      void warmCodexAppServer(cliPath);
-    }
-  }
-  if (s.provider.enabled.copilot) {
-    warmCopilotCliResolution(
-      { configuredPath: s.provider.cli.copilot || undefined },
-      container.resolve(EnvService).getEnv(),
-      process.platform,
-    );
+function warmCodexVersionGate(s = settingsService.get()): void {
+  if (!s.provider.enabled.codex) return;
+  const cliPath = s.provider.cli.codex || "codex";
+  void warmCodexVersionCache(cliPath);
+  if (!warmedCodexPaths.has(cliPath)) {
+    warmedCodexPaths.add(cliPath);
+    void warmCodexAppServer(cliPath);
   }
 }
 
@@ -312,9 +302,9 @@ providerAvailability
   .verifyAllEnabled()
   .then(() => {
     broadcast("providers.availability", providerAvailability.listAvailability());
-    // Warm provider CLI gates at boot so the first send never pays a
-    // blocking version/resolution spawnSync.
-    warmProviderCliGates();
+    // Warm the Codex version gate at boot so the first send never pays a
+    // blocking `codex --version` spawnSync.
+    warmCodexVersionGate();
     // Warm the model cache once after CLI verification has gated which providers
     // are usable. Triggering this per WS connect would spam refreshes; running
     // it once at startup is sufficient because ModelCacheService also refreshes

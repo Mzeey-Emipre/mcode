@@ -278,15 +278,8 @@ export function resolveCopilotCli(
 ): CopilotCliResolution {
   const cacheKey = resolutionCacheKey(ctx);
   const cached = resolutionCache.get(cacheKey);
-  if (cached) {
-    // Successful resolutions are stable for the app lifetime (the entry and
-    // version cannot regress mid-run), so the blocking spawnSync probes run
-    // at most once per path. Not-found results keep the short TTL so a user
-    // fixing a broken install recovers without restarting.
-    const isFresh =
-      cached.resolution.source !== "not-found"
-      || Date.now() - cached.checkedAt < RESOLUTION_CACHE_TTL_MS;
-    if (isFresh) return cached.resolution;
+  if (cached && Date.now() - cached.checkedAt < RESOLUTION_CACHE_TTL_MS) {
+    return cached.resolution;
   }
 
   const configured = ctx.configuredPath?.trim();
@@ -328,25 +321,6 @@ function resolveAutoDiscovery(
 /** Clears cached resolution results. Exposed for testing only. */
 export function clearResolutionCache(): void {
   resolutionCache.clear();
-}
-
-/**
- * Warms the resolution cache off the send path. The resolver's spawnSync
- * probes block the event loop; deferring them to a boot-time tick means the
- * first Copilot send is a pure cache hit. No-op cost when already cached.
- */
-export function warmCopilotCliResolution(
-  ctx: CopilotCliResolveContext,
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-): void {
-  setImmediate(() => {
-    try {
-      resolveCopilotCli(ctx, createNodeResolverIO(env, platform));
-    } catch {
-      // Warm-up is best-effort; the send path re-resolves and surfaces errors.
-    }
-  });
 }
 
 /** Real adapter: Node fs + spawnSync. `shell:true` on win32 resolves `.cmd`/`.ps1` shims for probes. */
