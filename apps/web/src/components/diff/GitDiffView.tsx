@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getTransport } from "@/transport";
-import type { SelectedFile } from "@/stores/diffStore";
+import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { FileList } from "./FileList";
 
 /** The threadless git working-tree views the Review tab renders against the workspace root. */
@@ -67,6 +67,9 @@ function LoadingPulse() {
 export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const [loading, setLoading] = useState(true);
+  // The Commit view's picked operand (see CommitPicker). Null means the picker
+  // has not resolved a commit yet, or the current scope has no commits.
+  const selectedCommitSha = useDiffStore((s) => s.selectedCommitSha);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,11 +86,10 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         const files = await transport.getBranchFiles(workspaceId, threadId);
         return { files, source: "branch", id: workspaceId };
       }
-      // Commit view: the latest HEAD commit (the thread's worktree HEAD when in a
-      // thread). Worktrees share the object store, so the per-file diff fetched by
-      // FileList against the workspace root still resolves the worktree's commit.
-      const log = await transport.getGitLog(workspaceId, undefined, 1, undefined, threadId);
-      const sha = log[0]?.sha;
+      // Commit view: the picker's chosen commit. The picker owns defaulting to
+      // the latest HEAD commit, which avoids a duplicate git-log + commit-files
+      // fetch on first render.
+      const sha = selectedCommitSha ?? undefined;
       if (!sha) return { files: [], source: "commit", id: workspaceId };
       const files = await transport.getCommitFiles(workspaceId, sha);
       return { files, source: "commit", id: sha };
@@ -112,8 +114,9 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     };
     // threadId is a fetch input: switching threads (or thread↔threadless) on the
     // same view+workspace must refetch the worktree's file list, not keep the
-    // previous scope's stale diff.
-  }, [view, workspaceId, threadId]);
+    // previous scope's stale diff. selectedCommitSha is one too: picking a commit
+    // refetches that commit's files (no-op for the non-commit views).
+  }, [view, workspaceId, threadId, selectedCommitSha]);
 
   if (loading) return <LoadingPulse />;
   if (!resolved || resolved.files.length === 0) {

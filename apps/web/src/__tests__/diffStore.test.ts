@@ -25,8 +25,27 @@ describe("diffStore", () => {
       diffContent: null,
       diffLoading: false,
       viewMode: "last-turn",
+      selectedCommitSha: null,
       renderMode: "unified",
       lineWrapByThread: {},
+    });
+  });
+
+  describe("commit picker operand", () => {
+    it("starts with no resolved picked commit", () => {
+      expect(useDiffStore.getState().selectedCommitSha).toBeNull();
+    });
+
+    it("stores the picked commit SHA", () => {
+      useDiffStore.getState().setSelectedCommitSha("abc1234");
+      expect(useDiffStore.getState().selectedCommitSha).toBe("abc1234");
+    });
+
+    it("resets the picked commit when the active view changes", () => {
+      const { setSelectedCommitSha, setViewMode } = useDiffStore.getState();
+      setSelectedCommitSha("abc1234");
+      setViewMode("commit");
+      expect(useDiffStore.getState().selectedCommitSha).toBeNull();
     });
   });
 

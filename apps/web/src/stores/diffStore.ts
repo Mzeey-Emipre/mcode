@@ -175,6 +175,15 @@ interface DiffState {
   readonly rightPanelVisibleByThread: Record<string, boolean>;
   /** View mode within the Changes tab. */
   viewMode: DiffViewMode;
+  /**
+   * The commit the Commit view's picker has resolved to, by SHA. `null` means
+   * the picker has not resolved the current scope yet, or the scope has no
+   * commits. This is the Commit comparison's picked operand: the Review toolbar's
+   * commit picker writes it, and the Commit diff reads it to render exactly that
+   * one commit. Reset when the active view changes so a stale pick never bleeds
+   * into the next Commit view.
+   */
+  selectedCommitSha: string | null;
   /** Diff rendering mode. */
   renderMode: DiffRenderMode;
   /** Per-thread line-wrap preference keyed by thread ID. */
@@ -241,6 +250,8 @@ interface DiffState {
    */
   closeRightPanelTab: (workspaceId: string, tab: RightPanelTab) => void;
   setViewMode: (mode: DiffViewMode) => void;
+  /** Set the Commit view's picked operand by SHA, or `null` to fall back to the latest commit. */
+  setSelectedCommitSha: (sha: string | null) => void;
   setRenderMode: (mode: DiffRenderMode) => void;
   getLineWrap: (threadId: string) => boolean;
   toggleLineWrap: (threadId: string) => void;
@@ -274,6 +285,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   rightPanelByWorkspace: {},
   rightPanelVisibleByThread: {},
   viewMode: "last-turn",
+  selectedCommitSha: null,
   renderMode: "unified",
   lineWrapByThread: {},
   snapshotsByThread: {},
@@ -355,7 +367,9 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       };
     }),
 
-  setViewMode: (mode) => set({ viewMode: mode, selectedFile: null, diffContent: null }),
+  setViewMode: (mode) =>
+    set({ viewMode: mode, selectedFile: null, diffContent: null, selectedCommitSha: null }),
+  setSelectedCommitSha: (sha) => set({ selectedCommitSha: sha }),
   setRenderMode: (mode) => set({ renderMode: mode }),
   getLineWrap: (threadId) => get().lineWrapByThread[threadId] ?? DEFAULT_LINE_WRAP,
   toggleLineWrap: (threadId) =>

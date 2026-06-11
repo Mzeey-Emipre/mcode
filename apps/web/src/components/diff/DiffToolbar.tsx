@@ -14,6 +14,7 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { visibleReviewViews, defaultReviewView } from "@/lib/review-views";
+import { CommitPicker } from "./CommitPicker";
 
 /** Toolbar for the Review tab: dual-scope view switcher + unified/side-by-side toggle. */
 export function DiffToolbar() {
@@ -99,14 +100,17 @@ export function DiffToolbar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Operand slot — reserved for the active view's picked operand. Empty
-            for fixed-operand views; the per-operand picker lands in #641/#642. */}
+        {/* Operand slot — reserved for the active view's picked operand. Commit
+            fills it with the commit picker; Branch's picker lands in #641, so
+            its slot stays empty for now. Fixed-operand views render no slot. */}
         {activeView?.operand && (
           <div
             className="flex min-w-0 items-center"
             data-testid="review-operand-slot"
             data-operand={activeView.operand}
-          />
+          >
+            {activeView.operand === "commit" && <CommitPicker />}
+          </div>
         )}
       </div>
 
