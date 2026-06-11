@@ -51,13 +51,210 @@ describe("CodexEventMapper", () => {
     });
   });
 
-  it("returns empty array for item/started non-collab", () => {
+  it("emits running toolUse for item/started commandExecution", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/started",
       params: { item: { type: "commandExecution", id: "x" } },
     });
-    expect(events).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "toolUse",
+        threadId: "test-thread",
+        toolCallId: "x",
+        toolName: "command_execution",
+        toolInput: {},
+      },
+    ]);
+  });
+
+  it("emits live command start, enriched command use, then command result", () => {
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { item: { type: "commandExecution", id: "cmd-live" } },
+    });
+    const completed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "commandExecution",
+          id: "cmd-live",
+          command: "echo hi",
+          aggregatedOutput: "hi\n",
+          exitCode: 0,
+        },
+      },
+    });
+
+    expect(started).toEqual([
+      {
+        type: "toolUse",
+        threadId: "test-thread",
+        toolCallId: "cmd-live",
+        toolName: "command_execution",
+        toolInput: {},
+      },
+    ]);
+    expect(completed).toEqual([
+      {
+        type: "toolUse",
+        threadId: "test-thread",
+        toolCallId: "cmd-live",
+        toolName: "command_execution",
+        toolInput: { command: "echo hi" },
+      },
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "cmd-live",
+        output: "hi\n",
+        isError: false,
+      },
+    ]);
+  });
+
+  it("emits only toolResult at completion when command start already had full details", () => {
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { item: { type: "commandExecution", id: "cmd-known", command: "echo hi" } },
+    });
+
+    const completed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "commandExecution",
+          id: "cmd-known",
+          command: "echo hi",
+          aggregatedOutput: "hi\n",
+          exitCode: 0,
+        },
+      },
+    });
+
+    expect(completed).toEqual([
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "cmd-known",
+        output: "hi\n",
+        isError: false,
+      },
+    ]);
+  });
+
+  it("enriches sparse mcpToolCall start from completion details", () => {
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { item: { type: "mcpToolCall", id: "mcp-live" } },
+    });
+    const completed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "mcpToolCall",
+          id: "mcp-live",
+          server: "filesystem",
+          tool: "read_file",
+          arguments: JSON.stringify({ path: "README.md" }),
+          result: "contents",
+        },
+      },
+    });
+
+    expect(started).toEqual([
+      {
+        type: "toolUse",
+        threadId: "test-thread",
+        toolCallId: "mcp-live",
+        toolName: "mcp:/unknown",
+        toolInput: {},
+      },
+    ]);
+    expect(completed[0]).toEqual({
+      type: "toolUse",
+      threadId: "test-thread",
+      toolCallId: "mcp-live",
+      toolName: "mcp:filesystem/read_file",
+      toolInput: { path: "README.md" },
+    });
+    expect(completed[1]).toEqual({
+      type: "toolResult",
+      threadId: "test-thread",
+      toolCallId: "mcp-live",
+      output: "contents",
+      isError: false,
+    });
+  });
+
+  it("keeps completed-only commandExecution fallback when no item/started arrived", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "commandExecution",
+          id: "cmd-fallback",
+          command: "pwd",
+          aggregatedOutput: "/repo\n",
+          exitCode: 0,
+        },
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "toolUse",
+        threadId: "test-thread",
+        toolCallId: "cmd-fallback",
+        toolName: "command_execution",
+        toolInput: { command: "pwd" },
+      },
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "cmd-fallback",
+        output: "/repo\n",
+        isError: false,
+      },
+    ]);
+  });
+
+  it("classifies text after completed-only commandExecution as final response", () => {
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "commandExecution",
+          id: "cmd-fallback",
+          command: "pwd",
+          aggregatedOutput: "/repo\n",
+          exitCode: 0,
+        },
+      },
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { delta: "Done" },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "textDelta",
+        threadId: "test-thread",
+        delta: "Done",
+        isFinalResponse: true,
+      },
+    ]);
   });
 
   // ---------------------------------------------------------------------------

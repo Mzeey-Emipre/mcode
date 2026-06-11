@@ -32,6 +32,10 @@ const SILENT_ITEM_TYPES = new Set([
  * Handles the actual notification protocol from codex app-server >= 0.104.0.
  * Source: codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts
  *
+ * Tool lifecycle: `item/started` emits a running tool row when Codex gives us
+ * a stable item id, even if the payload is sparse. `item/completed` enriches
+ * that row with full input details and emits the matching result.
+ *
  * Subagent nesting: `item/started` for `collabAgentToolCall` emits the `Agent` tool row early.
  * Child tools on the parent thread use `collabScopeStack` (single open collab only; parallel
  * collabs omit stack peek to avoid mis-attribution). Child tools on Codex receiver threads
@@ -59,6 +63,8 @@ export class CodexEventMapper {
   private mainCodexThreadId: string | undefined;
   /** Per-item streaming command output buffers, keyed by itemId. */
   private readonly commandOutputBuffers = new Map<string, string>();
+  /** Start-time ToolUse signatures, so completion enrichment only emits when details changed. */
+  private readonly startedToolUseSignatures = new Map<string, string>();
   /** Open tool-like items keyed by id. Mirrors Claude/Cursor `pendingToolUses` for thought-vs-final classification. */
   private readonly pendingToolItems = new Set<string>();
   /** True once any tool-like item has fired this turn. Distinguishes pre-tool preamble from post-tool final reply. */
@@ -251,6 +257,97 @@ export class CodexEventMapper {
     };
   }
 
+  /** Parses Codex tool arguments without dropping malformed input. */
+  private parseToolArguments(args: CompletedItem["arguments"]): Record<string, unknown> {
+    if (typeof args === "string") {
+      try { return JSON.parse(args) as Record<string, unknown>; }
+      catch { return { arguments: args }; }
+    }
+    if (args && typeof args === "object") return args as Record<string, unknown>;
+    return {};
+  }
+
+  /** Builds the running `ToolUse` row for non-Agent Codex tool-like items. */
+  private buildToolUseEvent(
+    item: CompletedItem,
+    toolCallId: string,
+    notification?: CodexNotification,
+  ): AgentEvent | undefined {
+    const itemType = item.type;
+    const nestParent = this.nestingParentToolCallId(notification);
+
+    if (itemType === "function_call") {
+      return {
+        type: AgentEventType.ToolUse,
+        threadId: this.threadId,
+        toolCallId,
+        toolName: typeof item.name === "string" ? item.name : "function",
+        toolInput: this.parseToolArguments(item.arguments),
+        ...(nestParent ? { parentToolCallId: nestParent } : {}),
+      };
+    }
+
+    if (itemType === "commandExecution") {
+      return {
+        type: AgentEventType.ToolUse,
+        threadId: this.threadId,
+        toolCallId,
+        toolName: "command_execution",
+        toolInput: typeof item.command === "string" && item.command.length > 0
+          ? { command: item.command }
+          : {},
+        ...(nestParent ? { parentToolCallId: nestParent } : {}),
+      };
+    }
+
+    if (itemType === "fileChange") {
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      const paths = changes.map((c) => c.path).filter(Boolean).join(", ");
+      return {
+        type: AgentEventType.ToolUse,
+        threadId: this.threadId,
+        toolCallId,
+        toolName: "file_change",
+        toolInput: paths.length > 0 ? { files: paths } : {},
+        ...(nestParent ? { parentToolCallId: nestParent } : {}),
+      };
+    }
+
+    if (itemType === "mcpToolCall" || itemType === "dynamicToolCall") {
+      const toolName = itemType === "mcpToolCall"
+        ? `mcp:${item.server ?? ""}/${item.tool ?? item.name ?? "unknown"}`
+        : (item.name ?? "dynamic_tool");
+      return {
+        type: AgentEventType.ToolUse,
+        threadId: this.threadId,
+        toolCallId,
+        toolName,
+        toolInput: this.parseToolArguments(item.arguments),
+        ...(nestParent ? { parentToolCallId: nestParent } : {}),
+      };
+    }
+
+    return undefined;
+  }
+
+  /** Stable enough for same-turn start/completion enrichment checks. */
+  private toolUseSignature(event: AgentEvent): string {
+    if (event.type !== AgentEventType.ToolUse) return "";
+    return JSON.stringify({
+      toolName: event.toolName,
+      toolInput: event.toolInput,
+      parentToolCallId: event.parentToolCallId ?? null,
+    });
+  }
+
+  /** Returns true when completion has new ToolUse details worth broadcasting. */
+  private shouldEmitCompletionToolUse(toolCallId: string, event: AgentEvent | undefined): event is AgentEvent {
+    if (!event) return false;
+    const started = this.startedToolUseSignatures.get(toolCallId);
+    this.startedToolUseSignatures.delete(toolCallId);
+    return started == null || started !== this.toolUseSignature(event);
+  }
+
   /**
    * Translates a single `CodexNotification` into zero or more `AgentEvent` objects.
    * Returns an empty array for silently consumed notification types.
@@ -311,6 +408,13 @@ export class CodexEventMapper {
         this.collabToolUseFromStartIds.add(itemId);
         this.registerCollabReceiverThreads(itemId, item as CompletedItem);
         return [this.buildCollabToolUseEvent(item as CompletedItem, itemId, notification)];
+      }
+      if (itemType && itemId && TOOL_LIKE_ITEM_TYPES.has(itemType) && itemType !== "webSearch") {
+        const toolUse = this.buildToolUseEvent(item as CompletedItem, itemId, notification);
+        if (toolUse) {
+          this.startedToolUseSignatures.set(itemId, this.toolUseSignature(toolUse));
+          return [toolUse];
+        }
       }
       logger.debug("Codex lifecycle notification", { method, itemType });
       return [];
@@ -389,8 +493,11 @@ export class CodexEventMapper {
       const completedItem = notification.params.item;
       const completedType = completedItem?.type;
       const completedId = typeof completedItem?.id === "string" ? completedItem.id : undefined;
-      if (completedType && completedId && TOOL_LIKE_ITEM_TYPES.has(completedType)) {
-        this.pendingToolItems.delete(completedId);
+      if (completedType && TOOL_LIKE_ITEM_TYPES.has(completedType)) {
+        this.hasFiredToolThisTurn = true;
+        if (completedId) {
+          this.pendingToolItems.delete(completedId);
+        }
       }
       logger.debug("Codex item/completed", { type: completedType });
       return this.mapItemCompleted(completedItem, notification);
@@ -472,6 +579,7 @@ export class CodexEventMapper {
     this.assistantFinalText = "";
     this.lastReasoningText = "";
     this.commandOutputBuffers.clear();
+    this.startedToolUseSignatures.clear();
     this.collabScopeStack = [];
     this.collabToolUseFromStartIds.clear();
     this.pendingLegacyCollabPops.clear();
@@ -564,23 +672,7 @@ export class CodexEventMapper {
     // OpenAI Responses API shape - function_call items carry tool invocations
     if (itemType === "function_call") {
       const toolCallId = item.id ?? `fc-${randomUUID()}`;
-      let toolInput: Record<string, unknown> = {};
-      if (typeof item.arguments === "string") {
-        try { toolInput = JSON.parse(item.arguments) as Record<string, unknown>; }
-        catch { toolInput = { arguments: item.arguments }; }
-      } else if (item.arguments && typeof item.arguments === "object") {
-        toolInput = item.arguments as Record<string, unknown>;
-      }
-      const toolName = typeof item.name === "string" ? item.name : "function";
-      const nestParent = this.nestingParentToolCallId(notification);
-      const toolUseEvent: AgentEvent = {
-        type: AgentEventType.ToolUse,
-        threadId,
-        toolCallId,
-        toolName,
-        toolInput,
-        ...(nestParent ? { parentToolCallId: nestParent } : {}),
-      };
+      const toolUseEvent = this.buildToolUseEvent(item, toolCallId, notification);
       const toolResultEvent: AgentEvent = {
         type: AgentEventType.ToolResult,
         threadId,
@@ -588,7 +680,9 @@ export class CodexEventMapper {
         output: typeof item.output === "string" ? item.output : "",
         isError: false,
       };
-      return [toolUseEvent, toolResultEvent];
+      return this.shouldEmitCompletionToolUse(toolCallId, toolUseEvent)
+        ? [toolUseEvent, toolResultEvent]
+        : [toolResultEvent];
     }
 
     if (itemType === "commandExecution") {
@@ -612,15 +706,7 @@ export class CodexEventMapper {
       const output = bufferedOutput || textOut;
       this.commandOutputBuffers.delete(toolCallId);
 
-      const nestParent = this.nestingParentToolCallId(notification);
-      const toolUseEvent: AgentEvent = {
-        type: AgentEventType.ToolUse,
-        threadId,
-        toolCallId,
-        toolName: "command_execution",
-        toolInput: { command: item.command ?? "" },
-        ...(nestParent ? { parentToolCallId: nestParent } : {}),
-      };
+      const toolUseEvent = this.buildToolUseEvent(item, toolCallId, notification);
       const toolResultEvent: AgentEvent = {
         type: AgentEventType.ToolResult,
         threadId,
@@ -628,22 +714,16 @@ export class CodexEventMapper {
         output,
         isError: item.exitCode != null && item.exitCode !== 0,
       };
-      return [toolUseEvent, toolResultEvent];
+      return this.shouldEmitCompletionToolUse(toolCallId, toolUseEvent)
+        ? [toolUseEvent, toolResultEvent]
+        : [toolResultEvent];
     }
 
     if (itemType === "fileChange") {
       const toolCallId = item.id ?? `fchg-${randomUUID()}`;
       const changes = item.changes ?? [];
       const paths = changes.map((c) => c.path).join(", ");
-      const nestParent = this.nestingParentToolCallId(notification);
-      const toolUseEvent: AgentEvent = {
-        type: AgentEventType.ToolUse,
-        threadId,
-        toolCallId,
-        toolName: "file_change",
-        toolInput: { files: paths },
-        ...(nestParent ? { parentToolCallId: nestParent } : {}),
-      };
+      const toolUseEvent = this.buildToolUseEvent(item, toolCallId, notification);
       const toolResultEvent: AgentEvent = {
         type: AgentEventType.ToolResult,
         threadId,
@@ -651,7 +731,9 @@ export class CodexEventMapper {
         output: paths,
         isError: false,
       };
-      return [toolUseEvent, toolResultEvent];
+      return this.shouldEmitCompletionToolUse(toolCallId, toolUseEvent)
+        ? [toolUseEvent, toolResultEvent]
+        : [toolResultEvent];
     }
 
     if (itemType === "collabAgentToolCall") {
@@ -702,25 +784,7 @@ export class CodexEventMapper {
 
     if (itemType === "mcpToolCall" || itemType === "dynamicToolCall") {
       const toolCallId = item.id ?? `mcp-${randomUUID()}`;
-      let toolInput: Record<string, unknown> = {};
-      if (typeof item.arguments === "string") {
-        try { toolInput = JSON.parse(item.arguments) as Record<string, unknown>; }
-        catch { toolInput = { arguments: item.arguments }; }
-      } else if (item.arguments && typeof item.arguments === "object") {
-        toolInput = item.arguments as Record<string, unknown>;
-      }
-      const toolName = itemType === "mcpToolCall"
-        ? `mcp:${item.server ?? ""}/${item.tool ?? item.name ?? "unknown"}`
-        : (item.name ?? "dynamic_tool");
-      const nestParent = this.nestingParentToolCallId(notification);
-      const toolUseEvent: AgentEvent = {
-        type: AgentEventType.ToolUse,
-        threadId,
-        toolCallId,
-        toolName,
-        toolInput,
-        ...(nestParent ? { parentToolCallId: nestParent } : {}),
-      };
+      const toolUseEvent = this.buildToolUseEvent(item, toolCallId, notification);
       const toolResultEvent: AgentEvent = {
         type: AgentEventType.ToolResult,
         threadId,
@@ -728,7 +792,9 @@ export class CodexEventMapper {
         output: String(item.error ?? item.result ?? ""),
         isError: !!item.error,
       };
-      return [toolUseEvent, toolResultEvent];
+      return this.shouldEmitCompletionToolUse(toolCallId, toolUseEvent)
+        ? [toolUseEvent, toolResultEvent]
+        : [toolResultEvent];
     }
 
     if (SILENT_ITEM_TYPES.has(itemType)) {

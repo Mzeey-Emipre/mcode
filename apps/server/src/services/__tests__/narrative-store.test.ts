@@ -258,6 +258,25 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       store.clearTurn(THREAD);
       expect(store.getBufferedToolCalls(THREAD)).toHaveLength(0);
     });
+
+    it("merges sparse duplicate ToolUse details without adding a second row", () => {
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.bufferToolCall(THREAD, {
+        toolCallId: "cmd-1",
+        toolName: "command_execution",
+        toolInput: {},
+      });
+      store.bufferToolCall(THREAD, {
+        toolCallId: "cmd-1",
+        toolName: "command_execution",
+        toolInput: { command: "echo hi" },
+      });
+
+      const calls = store.getBufferedToolCalls(THREAD);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]._rawToolInput).toEqual({ command: "echo hi" });
+    });
   });
 
   describe("Classification precedence + is_final_response safety net", () => {
