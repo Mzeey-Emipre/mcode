@@ -416,7 +416,15 @@ async function dispatch(
           repoPath = deps.gitService.resolveWorkingDir(wsForThread.path, t.mode, t.worktree_path);
         }
       }
-      return deps.gitService.log(params.workspaceId, params.branch, params.limit, params.baseBranch, repoPath);
+      return deps.gitService.log(
+        params.workspaceId,
+        params.branch,
+        params.limit,
+        params.baseBranch,
+        repoPath,
+        params.skip,
+        params.includeStats,
+      );
     }
     case "git.commitDiff": {
       const ws = deps.workspaceService.findById(params.workspaceId);

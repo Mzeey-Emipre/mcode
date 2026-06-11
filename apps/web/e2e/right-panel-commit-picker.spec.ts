@@ -59,6 +59,22 @@ const COMMITS: GitCommit[] = [
   { sha: "cccccccc3", shortSha: "ccccccc", message: "chore: tidy imports", author: "Dev", date: now, filesChanged: 1 },
 ];
 
+const FIRST_PAGE_COMMITS: GitCommit[] = [
+  ...COMMITS,
+  ...Array.from({ length: 97 }, (_, i) => ({
+    sha: `f${String(i).padStart(7, "0")}`,
+    shortSha: `f${String(i).padStart(6, "0")}`,
+    message: `test: filler commit ${i}`,
+    author: "Dev",
+    date: now,
+    filesChanged: 0,
+  })),
+];
+
+const OLDER_COMMITS: GitCommit[] = [
+  { sha: "999999999", shortSha: "9999999", message: "fix: older regression", author: "Dev", date: now, filesChanged: 1 },
+];
+
 /** Thread-scoped commits come from the thread worktree HEAD, not the workspace root. */
 const THREAD_COMMITS: GitCommit[] = [
   { sha: "dddddddd4", shortSha: "ddddddd", message: "feat: thread worktree head", author: "Dev", date: now, filesChanged: 1 },
@@ -70,6 +86,7 @@ const FILES_BY_SHA: Record<string, string[]> = {
   aaaaaaaa1: ["src/widget.ts"],
   bbbbbbbb2: ["src/seam.ts"],
   cccccccc3: ["src/imports.ts"],
+  "999999999": ["src/older.ts"],
   dddddddd4: ["src/thread.ts"],
   eeeeeeee5: ["src/thread-fallback.ts"],
 };
@@ -98,6 +115,14 @@ const DIFF_BY_SHA_AND_FILE: Record<string, string> = {
     "@@ -1 +1 @@",
     "-old thread",
     "+thread worktree head diff body",
+  ].join("\n"),
+  "999999999:src/older.ts": [
+    "diff --git a/src/older.ts b/src/older.ts",
+    "--- a/src/older.ts",
+    "+++ b/src/older.ts",
+    "@@ -1 +1 @@",
+    "-old path",
+    "+older searched diff body",
   ].join("\n"),
 };
 
@@ -182,9 +207,9 @@ test.describe("Review tab — Commit picker", () => {
       "git.currentBranch": "feature/widget",
       "git.log": (params) => {
         gitLogCalls.push(params);
-        return (params as { threadId?: string } | undefined)?.threadId === THREAD.id
-          ? THREAD_COMMITS
-          : COMMITS;
+        const p = params as { threadId?: string; skip?: number } | undefined;
+        if (p?.threadId === THREAD.id) return THREAD_COMMITS;
+        return p?.skip ? OLDER_COMMITS : FIRST_PAGE_COMMITS;
       },
       "git.commitFiles": (params) => FILES_BY_SHA[(params as { sha: string }).sha] ?? [],
       "git.commitDiff": (params) => {
@@ -218,7 +243,6 @@ test.describe("Review tab — Commit picker", () => {
 
     // The default selection's diff renders — the latest commit's single file.
     await expect(page.getByText("widget.ts")).toBeVisible();
-    await page.getByText("widget.ts").click();
     await expect(page.getByText("latest widget diff body")).toBeVisible();
   });
 
@@ -239,7 +263,6 @@ test.describe("Review tab — Commit picker", () => {
     await expect(trigger).toContainText("bbbbbbb");
     await expect(page.getByText("seam.ts")).toBeVisible();
     await expect(page.getByText("widget.ts")).toHaveCount(0);
-    await page.getByText("seam.ts").click();
     await expect(page.getByText("selected commit diff body")).toBeVisible();
   });
 
@@ -251,6 +274,30 @@ test.describe("Review tab — Commit picker", () => {
     await page.getByPlaceholder("Search commits…").fill("ccccccc");
     await expect(page.getByTestId("commit-picker-item-ccccccc")).toBeVisible();
     await expect(page.getByTestId("commit-picker-item-aaaaaaa")).toHaveCount(0);
+  });
+
+  test("searches older commits on demand", async ({ page }) => {
+    await openCommitView(page);
+
+    const trigger = page.getByTestId("commit-picker-trigger");
+    await trigger.click();
+    await page.getByPlaceholder("Search commits…").fill("older regression");
+    await page.getByRole("button", { name: "Search older commits" }).click();
+
+    await expect(page.getByTestId("commit-picker-item-9999999")).toBeVisible();
+    await page.getByTestId("commit-picker-item-9999999").click();
+    await expect(trigger).toContainText("9999999");
+    await expect(page.getByText("older.ts")).toBeVisible();
+
+    expect(gitLogCalls).toContainEqual(
+      expect.objectContaining({
+        workspaceId: WORKSPACE.id,
+        branch: "feature/widget",
+        limit: 100,
+        skip: 100,
+        includeStats: false,
+      }),
+    );
   });
 
   test("thread: uses the thread worktree commit list and renders its HEAD diff", async ({ page }) => {
@@ -270,7 +317,6 @@ test.describe("Review tab — Commit picker", () => {
     );
 
     await expect(page.getByText("thread.ts")).toBeVisible();
-    await page.getByText("thread.ts").click();
     await expect(page.getByText("thread worktree head diff body")).toBeVisible();
   });
 });

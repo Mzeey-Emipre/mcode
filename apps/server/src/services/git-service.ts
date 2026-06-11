@@ -419,7 +419,15 @@ export class GitService {
   }
 
   /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. Pass repoPath to run from a worktree directory instead of the workspace root. */
-  async log(workspaceId: string, branch?: string, limit = 50, baseBranch?: string, repoPath?: string): Promise<GitCommit[]> {
+  async log(
+    workspaceId: string,
+    branch?: string,
+    limit = 50,
+    baseBranch?: string,
+    repoPath?: string,
+    skip = 0,
+    includeStats = true,
+  ): Promise<GitCommit[]> {
     const workspace = this.requireWorkspace(workspaceId);
     const effectivePath = repoPath ?? workspace.path;
 
@@ -434,9 +442,10 @@ export class GitService {
       "-C", effectivePath,
       "log",
       "--pretty=format:MCODE_SEP%H|||%h|||%s|||%an|||%aI",
-      "--numstat",
       `-${limit}`,
     ];
+    if (skip > 0) args.push(`--skip=${skip}`);
+    if (includeStats) args.push("--numstat");
     // When running from a worktree path, HEAD is the checked-out branch — no need to name it.
     const headRef = repoPath ? "HEAD" : branch;
     if (resolvedBase && headRef) {
@@ -468,7 +477,9 @@ export class GitService {
       if (!sha) continue;
 
       // numstat lines have format: additions\tdeletions\tfilename
-      const filesChanged = lines.slice(1).filter((l) => l.includes("\t")).length;
+      const filesChanged = includeStats
+        ? lines.slice(1).filter((l) => l.includes("\t")).length
+        : 0;
 
       commits.push({
         sha: sha ?? "",
@@ -655,7 +666,7 @@ export class GitService {
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */
   private readonly defaultBranchCache = new Map<string, string>();
 
-  /** Detect the default upstream branch (e.g. main, master) for a repository. */
+  /** Detect the default upstream ref (e.g. origin/main, main) for a repository. */
   private async detectDefaultBranch(repoPath: string): Promise<string> {
     const cached = this.defaultBranchCache.get(repoPath);
     if (cached !== undefined) return cached;
@@ -665,7 +676,7 @@ export class GitService {
     return result;
   }
 
-  /** Resolve the default branch by probing git refs in order of cheapness. */
+  /** Resolve the default comparison ref by probing git refs in order of cheapness. */
   private async resolveDefaultBranch(repoPath: string): Promise<string> {
     // 1. Ask the remote tracking ref (fast, no network, works if origin/HEAD is set)
     try {
@@ -674,7 +685,7 @@ export class GitService {
         ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
         { timeout: 5_000, windowsHide: true },
       );
-      return stdout.trim().replace(/^[^/]+\//, "");
+      return stdout.trim();
     } catch (err) {
       logger.debug("[detectDefaultBranch] origin/HEAD not set, trying set-head", { repoPath, err });
     }
@@ -692,7 +703,7 @@ export class GitService {
         ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
         { timeout: 5_000, windowsHide: true },
       );
-      return stdout.trim().replace(/^[^/]+\//, "");
+      return stdout.trim();
     } catch (err) {
       logger.debug("[detectDefaultBranch] set-head failed, falling back to HEAD", { repoPath, err });
     }
