@@ -227,7 +227,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
       codexFastMode !== undefined
         ? codexFastMode
         : settings.provider.codex?.fastMode === true;
-    const fastServiceTier = useFastTier ? "fast" : undefined;
+    // The app-server's model/list advertises the fast tier with id "priority"
+    // (display name "Fast"). Sending "fast" is silently ignored upstream, so
+    // fast mode had no effect. Only some models (e.g. gpt-5.4 / gpt-5.5)
+    // expose the tier; the server falls back to standard for the rest.
+    const fastServiceTier = useFastTier ? "priority" : undefined;
 
     const turnOptions = {
       model: model || undefined,
