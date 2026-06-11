@@ -45,18 +45,16 @@ import {
 import type { TurnInputPart, CodexNotification, CodexTurnOptions, ReasoningEffort } from "./codex-types.js";
 
 /**
- * Maximum wall-clock idle between Codex app-server notifications while
- * waiting for `turn/completed`. The timer resets on every notification so
- * active streams and tool output keep the turn alive; only a fully silent
- * stretch trips it. Set to 60s (matching Copilot's `COMPLETE_TIMEOUT_MS`) so a
- * stalled upstream turn — where `turn/completed` never arrives and the session
- * stays `isBusy`, exempt from idle eviction — unblocks the UI in seconds instead
- * of leaving it stuck "thinking" for half an hour. The trade-off: a tool that
- * runs silently (no output deltas) for longer than this window will also trip
- * it; that case is logged and suppressed from the chat UI (see
- * {@link CodexTurnIdleTimeoutError}).
+ * Liveness-probe interval for a silent turn, not a turn deadline. The timer
+ * resets on every notification (including swallowed lifecycle traffic and
+ * inbound approval requests, via the app-server `activity` event). When a
+ * turn stays fully silent for this long, the watchdog pings the app-server
+ * with a cheap RPC: responsive → re-arm (a healthy turn can run forever);
+ * unresponsive → end the turn so the session does not stay `isBusy` (exempt
+ * from idle eviction) with the UI stuck "thinking" indefinitely. While a
+ * permission approval awaits the user, the watchdog re-arms without probing.
  */
-const TURN_TIMEOUT_MS = 60 * 1000;
+const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Internal: a newer `sendMessage` aborted this turn wait (not user-facing). */
 class CodexTurnSupersededError extends Error {
@@ -66,11 +64,11 @@ class CodexTurnSupersededError extends Error {
   }
 }
 
-/** Internal: idle notification watchdog fired; ends the turn without a user error. */
+/** Internal: silent turn AND the app-server failed a liveness probe; ends the turn without a user error. */
 class CodexTurnIdleTimeoutError extends Error {
   constructor() {
     super(
-      `Codex turn timed out after ${TURN_TIMEOUT_MS / 1000}s with no app-server notifications`,
+      `Codex turn abandoned: no notifications for ${TURN_TIMEOUT_MS / 1000}s and the app-server failed a liveness probe`,
     );
     this.name = "CodexTurnIdleTimeoutError";
   }
@@ -224,7 +222,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
       codexFastMode !== undefined
         ? codexFastMode
         : settings.provider.codex?.fastMode === true;
-    const fastServiceTier = useFastTier ? "fast" : undefined;
+    // The app-server's model/list advertises the fast tier with id "priority"
+    // (display name "Fast"). Sending "fast" is silently ignored upstream, so
+    // fast mode had no effect. Only some models (e.g. gpt-5.4 / gpt-5.5)
+    // expose the tier; the server falls back to standard for the rest.
+    const fastServiceTier = useFastTier ? "priority" : undefined;
 
     const turnOptions = {
       model: model || undefined,
@@ -505,6 +507,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
 
     entry.mapper.prepareForTurn();
 
+    // Only pay the turn/interrupt round-trip when a previous turn is actually
+    // in flight. Interrupting an idle session added a needless RPC (up to its
+    // 5s timeout) of latency to every message.
+    const hadInflightTurn =
+      entry.pendingTurnId !== null || entry.abortPendingTurnWait !== undefined;
+
     entry.abortPendingTurnWait?.();
     entry.abortPendingTurnWait = undefined;
 
@@ -512,7 +520,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     const seq = entry.runTurnSeq;
     entry.pendingTurnId = null;
 
-    await server.interruptTurn();
+    if (hadInflightTurn) {
+      await server.interruptTurn();
+    }
 
     let serverDied = false;
     let endedEmitted = false;
@@ -527,6 +537,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
           settled = true;
           clearTimeout(activityTimer);
           server.removeListener("notification", onNotification);
+          server.removeListener("activity", onActivity);
           server.removeListener("fatal", onFatal);
           if (entry.abortPendingTurnWait === abortThis) entry.abortPendingTurnWait = undefined;
         };
@@ -534,10 +545,34 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
         const armTimer = () => {
           clearTimeout(activityTimer);
           activityTimer = setTimeout(() => {
-            cleanup();
-            reject(new CodexTurnIdleTimeoutError());
+            // Silence while an approval card waits on the user is the user's
+            // silence, not the server's: keep the turn alive until they decide.
+            if (this.hasPendingApprovalFor(sessionId)) {
+              armTimer();
+              return;
+            }
+            // Probe before giving up: a turn is only abandoned when the
+            // app-server stops answering RPCs, never just for being slow.
+            // A healthy-but-silent turn (long tool, deep reasoning) re-arms
+            // and can run indefinitely.
+            void server.ping().then((alive) => {
+              if (settled) return;
+              if (alive) {
+                logger.debug("Codex turn silent but server responsive; watchdog re-armed", {
+                  sessionId,
+                  silenceMs: TURN_TIMEOUT_MS,
+                });
+                armTimer();
+                return;
+              }
+              cleanup();
+              reject(new CodexTurnIdleTimeoutError());
+            });
           }, TURN_TIMEOUT_MS);
         };
+
+        // Server-initiated approval requests count as liveness too.
+        const onActivity = () => armTimer();
 
         const abortThis = () => {
           cleanup();
@@ -574,6 +609,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
 
         armTimer();
         server.on("notification", onNotification);
+        server.on("activity", onActivity);
         server.once("fatal", onFatal);
 
         void (async () => {
@@ -589,10 +625,13 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     } catch (e: unknown) {
       if (e instanceof CodexTurnSupersededError) return;
       if (e instanceof CodexTurnIdleTimeoutError) {
-        logger.debug("Codex turn idle timeout (suppressed from UI)", {
+        logger.warn("Codex turn idle timeout (suppressed from UI)", {
           sessionId,
           timeoutMs: TURN_TIMEOUT_MS,
         });
+        // Interrupt the upstream turn so the app-server state matches the UI
+        // ("ended") instead of silently chewing in the background.
+        void server.interruptTurn();
         return;
       }
       if (!serverDied && seq === entry.runTurnSeq) {
@@ -694,6 +733,14 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     server.on("fatal", () => {
       this.drainPending((e) => e.sessionId === sessionId);
     });
+  }
+
+  /** True when at least one permission approval is awaiting the user for this session. */
+  private hasPendingApprovalFor(sessionId: string): boolean {
+    for (const entry of this.pendingPermissions.values()) {
+      if (entry.sessionId === sessionId) return true;
+    }
+    return false;
   }
 
   /**

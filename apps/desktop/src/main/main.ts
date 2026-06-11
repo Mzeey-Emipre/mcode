@@ -46,6 +46,7 @@ import { registerPreviewBrowserHandlers, disposePreviewForWindow } from "./previ
 import { startBrowserUseBridge, disposeBrowserUseBridge } from "./browser-use/index.js";
 import { resolveMcodeWorkspacePreviewUrl } from "./preview/preview-local-file.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
+import { shouldPrintVersion } from "./cli-args.js";
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
 // from the installed prod build. Without this, both share %APPDATA%/Mcode/
@@ -56,6 +57,11 @@ import { isDesktopDev } from "./is-desktop-dev.js";
 // before app.whenReady() and any other path-dependent call.
 if (!app.isPackaged) {
   app.setPath("userData", join(app.getPath("appData"), "Mcode-Dev"));
+}
+
+if (shouldPrintVersion(process.argv)) {
+  console.log(app.getVersion());
+  app.exit(0);
 }
 
 // ---------------------------------------------------------------------------

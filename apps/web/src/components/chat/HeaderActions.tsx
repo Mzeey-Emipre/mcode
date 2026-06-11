@@ -7,6 +7,7 @@ import { useBranchPr } from "@/hooks/useBranchPr";
 import { useHasCommitsAhead } from "@/hooks/useHasCommitsAhead";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
+import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { executeCommand } from "@/lib/command-registry";
 import { isPrable } from "@/lib/is-prable";
@@ -129,7 +130,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
 
   const togglePanel = useCallback(() => {
     if (!thread.workspace_id) return;
-    useDiffStore.getState().toggleRightPanel(thread.workspace_id, thread.id);
+    toggleRightPanelAdaptive(thread.workspace_id, thread.id);
   }, [thread.workspace_id, thread.id]);
 
   const openChanges = useCallback(() => {
@@ -139,6 +140,12 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
   // Mirror the live keybinding so the menu hint stays correct if the user rebinds it.
   const changesShortcut = formatKeybinding(
     getKeybindingForCommand("changes.toggle")?.key ?? "mod+d",
+    isMac,
+  );
+
+  // Live keycap for the right-panel toggle, shown in the button's tooltip.
+  const panelShortcut = formatKeybinding(
+    getKeybindingForCommand("rightPanel.toggle")?.key ?? "mod+alt+b",
     isMac,
   );
 
@@ -277,7 +284,8 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
           }
         />
         <TooltipContent side="bottom" className="text-xs">
-          Toggle panel
+          Toggle panel{" "}
+          <span className="text-foreground">{panelShortcut}</span>
         </TooltipContent>
       </Tooltip>
 

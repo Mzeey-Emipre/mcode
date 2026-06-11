@@ -30,6 +30,7 @@ import type {
 import { buildReasoningOptions } from "./build-reasoning-options.js";
 import { listClaudeModels } from "./list-models.js";
 import { applyUltrathinkPrefix, resolveSdkModelSlug } from "./resolve-slug.js";
+import { clampContextWindowToMode, resolveAutoCompactWindow } from "./context-window.js";
 import { readAnthropicOauthToken } from "@mcode/shared/usage";
 import { AnthropicOAuthUsageSource } from "./usage/oauth-usage-source.js";
 import { AnthropicHeaderUsageSource } from "./usage/header-usage-source.js";
@@ -979,6 +980,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
     const resumeId = this.sdkSessionIds.get(sessionId) ?? uuid;
 
+    const autoCompactWindow = resolveAutoCompactWindow(contextWindowMode, resolvedModel);
+
     const baseOptions = {
       cwd: resolvedCwd,
       // sdkModelSlug appends "[1m]" when the user opted into the 1M context window
@@ -1133,6 +1136,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       }) satisfies CanUseTool,
       ...buildReasoningOptions(reasoningLevel, resolvedModel, thinking),
       ...(fallbackModel && { fallbackModel }),
+      // SDK 0.3.x derives its auto-compaction trigger from the model's 1M
+      // capability ceiling; in standard mode that means compaction never fires
+      // before the 200k tier rejects the request. resolveAutoCompactWindow
+      // pins the window to 200k unless the session actually runs on the 1M
+      // wire tier (mode plus model support). Inline `settings` is the SDK's
+      // `--settings` layer, so this takes precedence over any autoCompactWindow
+      // in the user's own settings.json.
+      ...(autoCompactWindow !== undefined && {
+        settings: { autoCompactWindow },
+      }),
       includePartialMessages: true,
       // Guardrails are fixed at session creation. If the user changes the
       // setting between turns while the session is still live in memory, the
@@ -1723,13 +1736,22 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
               // Extract the authoritative context window from SDK modelUsage.
               // modelUsage is Record<modelId, { contextWindow?: number, ... }>.
+              // SDK 0.3.x reports the model's 1M capability ceiling here even
+              // when the session runs on the standard 200k tier, so clamp to
+              // the window mode the subprocess was actually spawned with.
               const sdkModelUsage = (anyMsg.modelUsage ?? {}) as Record<
                 string,
                 { contextWindow?: number }
               >;
-              const sdkContextWindow = Object.values(sdkModelUsage).find(
-                (u) => typeof u.contextWindow === "number",
-              )?.contextWindow;
+              const sdkContextWindow = clampContextWindowToMode(
+                Object.values(sdkModelUsage).find(
+                  (u) =>
+                    typeof u.contextWindow === "number" &&
+                    Number.isFinite(u.contextWindow),
+                )?.contextWindow,
+                entry?.contextWindowMode,
+                entry?.model,
+              );
 
               const usage = (anyMsg.usage ?? {}) as {
                 input_tokens?: number;

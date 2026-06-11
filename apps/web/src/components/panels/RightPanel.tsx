@@ -1,11 +1,15 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useTaskStore } from "@/stores/taskStore";
 import {
   useDiffStore,
   PANEL_MIN_WIDTH,
   PANEL_WIDE_WIDTH,
+  COMPOSER_MIN_WIDTH,
+  PANEL_SPLIT_GAP_PX,
+  maxPanelWidthInSplit,
   createDefaultRightPanelState,
   getDefaultPanelWidthPx,
 } from "@/stores/diffStore";
@@ -18,7 +22,6 @@ import { PreviewPanel } from "@/components/panels/PreviewPanel";
 import { usePreviewDisplayTabSet, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { TerminalTabContent } from "@/components/terminal/TerminalTabContent";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ensureTerminalForScope } from "@/lib/ensure-terminal";
 import { cn } from "@/lib/utils";
 
@@ -61,36 +64,11 @@ export function RightPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
-  // Render the panel as a modal overlay anchored to the right edge with a
-  // backdrop covering the chat whenever side-by-side layout would leave the
-  // chat uncomfortably narrow. Two triggers:
-  //  1. Viewport below the md breakpoint — a second pane always feels cramped.
-  //  2. Panel width would leave less than CHAT_COMFORT_MIN for the chat after
-  //     accounting for the sidebar — i.e. the user dragged the panel wide
-  //     enough that it should pop out instead of squeezing the chat.
-  const isWide = useMediaQuery("(min-width: 768px)");
-
-  // Track viewport width so the pop-out threshold recomputes when the user
-  // resizes the window (not just when they drag the panel).
-  const [viewportWidth, setViewportWidth] = useState(() =>
-    typeof window === "undefined" ? 0 : window.innerWidth,
-  );
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    let rafId: number | null = null;
-    const onResize = () => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        setViewportWidth(window.innerWidth);
-      });
-    };
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      if (rafId !== null) cancelAnimationFrame(rafId);
-    };
-  }, []);
+  // Maximized mode fills the content area beside the project tree and hides the
+  // chat/composer (App.tsx suppresses the chat pane). A transient view toggle,
+  // not a stored width — the panel keeps its width so restoring drops back inline.
+  const maximized = useUiStore((s) => s.rightPanelMaximized);
+  const toggleMaximized = useUiStore((s) => s.toggleRightPanelMaximized);
 
   const storedPanel = useDiffStore((s) =>
     activeWorkspaceId ? s.rightPanelByWorkspace[activeWorkspaceId] : undefined,
@@ -129,7 +107,7 @@ export function RightPanel() {
   // Zustand action refs are stable (same identity for the store's lifetime),
   // so destructuring from getState() at render time is safe and avoids
   // adding actions to useCallback/useEffect dependency arrays.
-  const { setRightPanelWidth, setRightPanelTab, closeRightPanelTab, hideRightPanel } =
+  const { setRightPanelWidth, setRightPanelTab, closeRightPanelTab } =
     useDiffStore.getState();
 
   const tasks = useTaskStore(
@@ -141,14 +119,6 @@ export function RightPanel() {
     () => (tasks ?? []).filter((t) => t.group === "Tasks"),
     [tasks],
   );
-
-  // Thresholds tuned for a readable chat column next to an expanded sidebar.
-  const CHAT_COMFORT_MIN = 520;
-  const SIDEBAR_BUFFER = 290;
-  const LAYOUT_GAPS = 24;
-  const wouldCrampChat =
-    panelWidth + CHAT_COMFORT_MIN + SIDEBAR_BUFFER + LAYOUT_GAPS > viewportWidth;
-  const isOverlay = !isWide || wouldCrampChat;
 
   // Tab-strip glance status. Scope progress counts completed and cancelled
   // tasks as settled (a dropped task is no longer pending work); Changes counts
@@ -195,66 +165,58 @@ export function RightPanel() {
     }
   }, [panelVisible, terminalActive, panelScopeId]);
 
-  // Close on Escape when overlaid.
+  // Exit maximize when the panel is hidden so the user never lands on a blank
+  // full-screen shell with no panel chrome to restore from.
+  const setMaximized = useUiStore.getState().setRightPanelMaximized;
   useEffect(() => {
-    if (!isOverlay || !panelVisible || !activeWorkspaceId) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") hideRightPanel(activeWorkspaceId, activeThreadId);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isOverlay, panelVisible, activeWorkspaceId, activeThreadId, hideRightPanel]);
-
-  // Focus handoff for overlay mode. When the panel pops out as a modal we
-  // must move focus into it so keyboard users aren't stranded behind the
-  // backdrop, and restore focus to whatever opened it when it closes.
-  const panelRef = useRef<HTMLDivElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!isOverlay || !panelVisible) return;
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-    // Defer to next frame so the panel is in the DOM before focus moves.
-    const rafId = requestAnimationFrame(() => panelRef.current?.focus());
-    return () => {
-      cancelAnimationFrame(rafId);
-      previousFocusRef.current?.focus?.();
-    };
-  }, [isOverlay, panelVisible]);
+    if (maximized && !panelVisible) setMaximized(false);
+  }, [maximized, panelVisible, setMaximized]);
 
   const draggingRef = useRef(false);
   const dragListenersRef = useRef<{ move: (e: globalThis.MouseEvent) => void; up: () => void } | null>(null);
+  const panelRootRef = useRef<HTMLDivElement>(null);
   // Ref keeps the latest panelWidth readable inside the resize handler without
   // the handler needing to be re-registered on every width change.
   const panelWidthRef = useRef(panelWidth);
   useEffect(() => { panelWidthRef.current = panelWidth; }, [panelWidth]);
 
-  // Re-clamp stored width when the panel becomes visible or the window is resized
-  // so the panel never exceeds the available space after the user shrinks the browser.
-  // Runs in both inline and overlay modes: overlay renders at min(panelWidth, 90vw)
-  // visually, but the stored width still drives the cramp-detection threshold.
-  // Re-registers when activeWorkspaceId changes (each workspace has its own stored width).
-  // Throttled with rAF so rapid resize events only trigger one recalculation per frame.
+  /** Max panel width that still leaves {@link COMPOSER_MIN_WIDTH}px for the chat. */
+  const getMaxPanelWidth = useCallback((): number => {
+    const split = panelRootRef.current?.parentElement;
+    if (!split) {
+      return Math.max(PANEL_MIN_WIDTH, window.innerWidth - COMPOSER_MIN_WIDTH);
+    }
+    return maxPanelWidthInSplit(split.clientWidth);
+  }, []);
+
+  // Re-clamp stored width when the split row shrinks (window resize, sidebar
+  // toggle, etc.) so the panel never eats the composer's minimum width.
   useEffect(() => {
-    if (!activeWorkspaceId || !panelVisible) return;
-    // Clamp immediately in case the stored width already exceeds the viewport.
-    const maxAllowed = window.innerWidth - PANEL_MIN_WIDTH;
-    if (panelWidthRef.current > maxAllowed) setRightPanelWidth(activeWorkspaceId, maxAllowed);
+    if (!activeWorkspaceId || !panelVisible || maximized) return;
+    const split = panelRootRef.current?.parentElement;
+    if (!split) return;
+
+    const clampToSplit = () => {
+      const max = maxPanelWidthInSplit(split.clientWidth);
+      if (panelWidthRef.current > max) setRightPanelWidth(activeWorkspaceId, max);
+    };
+
+    clampToSplit();
 
     let rafId: number | null = null;
-    const onResize = () => {
+    const ro = new ResizeObserver(() => {
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
-        const max = window.innerWidth - PANEL_MIN_WIDTH;
-        if (panelWidthRef.current > max) setRightPanelWidth(activeWorkspaceId, max);
+        clampToSplit();
       });
-    };
-    window.addEventListener("resize", onResize);
+    });
+    ro.observe(split);
     return () => {
-      window.removeEventListener("resize", onResize);
+      ro.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [activeWorkspaceId, panelVisible]);
+  }, [activeWorkspaceId, panelVisible, maximized]);
 
   const onDragStart = useCallback(
     (e: ReactMouseEvent) => {
@@ -266,9 +228,11 @@ export function RightPanel() {
       const onMouseMove = (moveEvent: globalThis.MouseEvent) => {
         if (!draggingRef.current) return;
         const delta = startX - moveEvent.clientX;
-        // Always leave at least PANEL_MIN_WIDTH px for the chat area
-        const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
-        setRightPanelWidth(activeWorkspaceId!, Math.min(startWidth + delta, viewportCap));
+        const maxWidth = getMaxPanelWidth();
+        setRightPanelWidth(
+          activeWorkspaceId!,
+          Math.max(PANEL_MIN_WIDTH, Math.min(startWidth + delta, maxWidth)),
+        );
       };
 
       const onMouseUp = () => {
@@ -282,7 +246,7 @@ export function RightPanel() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [panelWidth, activeWorkspaceId],
+    [panelWidth, activeWorkspaceId, getMaxPanelWidth],
   );
 
   useEffect(() => {
@@ -303,58 +267,37 @@ export function RightPanel() {
   // shell) and only bails when there is no workspace to anchor it to.
   if (!activeWorkspaceId) return null;
 
-  // Overlay-mode width: cap to 90vw so the chat is still partially visible
-  // behind the backdrop and the panel doesn't dominate small screens.
-  const overlayWidth = isOverlay
-    ? `min(${panelWidth}px, 90vw)`
-    : undefined;
-
   return (
-    <>
-      {/* Backdrop — overlay mode with panel open only. Click dismisses the panel. */}
-      {isOverlay && panelVisible && (
-        <div
-          role="presentation"
-          onClick={() => {
-            // Blur first so focus inside the panel does not collide with the
-            // incoming aria-hidden on the panel container.
-            (document.activeElement as HTMLElement | null)?.blur?.();
-            hideRightPanel(activeWorkspaceId, activeThreadId);
-          }}
-          className="fixed inset-0 z-40 bg-foreground/30 backdrop-blur-[2px] animate-fade-up-in"
-        />
+    <div
+      ref={panelRootRef}
+      style={
+        maximized
+          ? undefined
+          : {
+              width: panelWidth,
+              minWidth: PANEL_MIN_WIDTH,
+              maxWidth: `calc(100% - ${COMPOSER_MIN_WIDTH}px - ${PANEL_SPLIT_GAP_PX}px)`,
+            }
+      }
+      className={cn(
+        "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg bg-background shadow-sm focus:outline-none",
+        !panelVisible && "hidden",
+        // Maximized fills the content area (App hides the chat pane); inline
+        // mode is sized by the stored width above.
+        maximized && "flex-1",
       )}
-      <div
-        ref={panelRef}
-        role={isOverlay ? "dialog" : undefined}
-        aria-modal={isOverlay ? true : undefined}
-        aria-label={isOverlay ? "Workspace side panel" : undefined}
-        tabIndex={isOverlay ? -1 : undefined}
-        style={
-          isOverlay
-            // Drop minWidth entirely on overlay: on narrow viewports the
-            // 90vw cap would still exceed a large pixel minimum.
-            ? { width: overlayWidth }
-            : { width: panelWidth, minWidth: PANEL_MIN_WIDTH, maxWidth: `calc(100vw - ${PANEL_MIN_WIDTH}px)` }
-        }
-        className={cn(
-          "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background focus:outline-none",
-          !panelVisible && "hidden",
-          isOverlay
-            ? "fixed inset-y-0 right-0 z-50 shadow-sm animate-fade-up-in"
-            : "rounded-lg shadow-sm",
-        )}
-        // Pair aria-hidden with inert: inert auto-blurs any focused
-        // descendant on apply, which avoids Chrome's "Blocked aria-hidden on
-        // an element because its descendant retained focus" warning when the
-        // user clicks the close button (focus is on the button when the
-        // panel is told to hide). Same pattern as the terminal tab below.
-        aria-hidden={!panelVisible}
-        inert={!panelVisible ? true : undefined}
-      >
+      // Pair aria-hidden with inert: inert auto-blurs any focused descendant on
+      // apply, which avoids Chrome's "Blocked aria-hidden on an element because
+      // its descendant retained focus" warning when the user clicks the close
+      // button (focus is on the button when the panel is told to hide). Same
+      // pattern as the terminal tab below.
+      aria-hidden={!panelVisible}
+      inert={!panelVisible ? true : undefined}
+    >
       {/* Drag handle (left edge) — double-click snaps between default and wide.
-          Kept visible in overlay mode too, so the user can shrink the panel
-          below the crowding threshold and snap it back into the inline layout. */}
+          Hidden while maximized: the panel owns the full content area, so there
+          is nothing to resize against. */}
+      {!maximized && (
       <div
         role="separator"
         aria-orientation="vertical"
@@ -363,23 +306,23 @@ export function RightPanel() {
         className="group absolute inset-y-0 left-0 z-20 flex w-3 cursor-col-resize items-stretch justify-center focus:outline-none"
         onMouseDown={onDragStart}
         onDoubleClick={() => {
-          const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
+          const maxWidth = getMaxPanelWidth();
           const narrow = getDefaultPanelWidthPx();
           const target =
             panelWidth >= PANEL_WIDE_WIDTH
               ? narrow
-              : Math.min(PANEL_WIDE_WIDTH, viewportCap);
+              : Math.min(PANEL_WIDE_WIDTH, maxWidth);
           setRightPanelWidth(activeWorkspaceId!, Math.max(PANEL_MIN_WIDTH, target));
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            const viewportCap = window.innerWidth - PANEL_MIN_WIDTH;
+            const maxWidth = getMaxPanelWidth();
             const narrow = getDefaultPanelWidthPx();
             const target =
               panelWidth >= PANEL_WIDE_WIDTH
                 ? narrow
-                : Math.min(PANEL_WIDE_WIDTH, viewportCap);
+                : Math.min(PANEL_WIDE_WIDTH, maxWidth);
             setRightPanelWidth(activeWorkspaceId!, Math.max(PANEL_MIN_WIDTH, target));
           }
         }}
@@ -394,11 +337,11 @@ export function RightPanel() {
           className="pointer-events-none my-2.5 w-px shrink-0 rounded-full bg-transparent transition-colors group-hover:bg-border group-focus-visible:w-0.5 group-focus-visible:bg-ring group-active:w-0.5 group-active:bg-muted-foreground/60"
         />
       </div>
+      )}
 
-      {/* Rail + content. The vertical activity rail navigates open singleton
-          tabs (active lamp + hover-× close + add control) and holds the panel's
-          close-chrome at its foot; the content area renders the active tab, or
-          the card-grid empty state when nothing is open. */}
+      {/* Rail + content. The activity rail carries the maximize toggle and, once
+          tabs are open, tab navigation and the add control. With no tabs the rail
+          is just the maximize button beside the empty-state create list. */}
       <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
         <ActivityRail
           openTabs={openTabs}
@@ -408,6 +351,8 @@ export function RightPanel() {
           changesCount={changesCount}
           changesFresh={changesFresh}
           browserTabSet={browserTabSet}
+          maximized={maximized}
+          onToggleMaximized={toggleMaximized}
           onSelect={(id) => setRightPanelTab(activeWorkspaceId!, id)}
           onClose={(id) => closeRightPanelTab(activeWorkspaceId!, id)}
           onCreate={(id) => setRightPanelTab(activeWorkspaceId!, id)}
@@ -425,12 +370,6 @@ export function RightPanel() {
             void usePreviewTabsStore.getState().closePage(panelScopeId, pageId, {
               onLastClose: () => closeRightPanelTab(activeWorkspaceId!, "preview"),
             });
-          }}
-          onClosePanel={() => {
-            // Blur the close button before triggering the hide so focus is not
-            // inside the panel when aria-hidden applies on re-render.
-            (document.activeElement as HTMLElement | null)?.blur?.();
-            hideRightPanel(activeWorkspaceId!, activeThreadId);
           }}
         />
 
@@ -475,7 +414,6 @@ export function RightPanel() {
           </div>
         </div>
       </div>
-      </div>
-    </>
+    </div>
   );
 }

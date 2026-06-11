@@ -316,10 +316,105 @@ export function enrichHandshakeError(err: unknown, stderr: string | null): Error
 }
 
 /**
+ * Boot-time cold-start warm-up: spawns a throwaway `codex app-server`, runs
+ * `initialize`, and kills it. The first `initialize` on a cold machine pays
+ * for paging the large Rust binary into the OS file cache plus a TLS/auth
+ * round trip to chatgpt.com (~1.7s+, worse on slow networks); paying it at
+ * app boot means the user's first real session starts warm.
+ *
+ * Fire-and-forget safe: never throws, resolves `true` only when `initialize`
+ * was acknowledged within the timeout.
+ */
+export async function warmCodexAppServer(cliPath: string, timeoutMs = 20_000): Promise<boolean> {
+  let resolvedCliPath = cliPath;
+  if (!isAbsolute(cliPath)) {
+    try {
+      resolvedCliPath = await which(cliPath);
+    } catch {
+      return false;
+    }
+  }
+  const needsShell =
+    process.platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd");
+
+  return await new Promise<boolean>((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawn(resolvedCliPath, ["app-server"], {
+        stdio: ["pipe", "pipe", "ignore"],
+        shell: needsShell,
+        env: flattenProcessEnv(process.env),
+        windowsHide: true,
+      });
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      // taskkill reaps the whole tree on Windows; with shell:true a plain
+      // kill() would only hit cmd.exe and orphan the codex child.
+      if (process.platform === "win32" && child.pid != null) {
+        void import("child_process").then(({ execFile }) => {
+          execFile("taskkill", ["/T", "/F", "/PID", String(child.pid)], () => {});
+        });
+      } else {
+        child.kill("SIGKILL");
+      }
+      resolve(ok);
+    };
+
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    child.once("error", () => finish(false));
+    child.once("exit", () => finish(false));
+
+    let buffer = "";
+    child.stdout!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line) as { id?: number };
+          if (msg.id === 1) {
+            logger.info("Codex app-server warm-up completed", { cliPath });
+            finish(true);
+            return;
+          }
+        } catch {
+          // ignore non-JSON output
+        }
+      }
+    });
+
+    child.once("spawn", () => {
+      child.stdin!.write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            clientInfo: { name: "mcode", version: "1.0.0" },
+            capabilities: { experimentalApi: true },
+          },
+        }) + "\n",
+      );
+    });
+  });
+}
+
+/**
  * Manages the lifecycle of a `codex app-server` child process.
  *
  * Emits:
  * - `notification(data: unknown)` - JSON-RPC notification forwarded from the RPC client
+ * - `activity()` - a server-initiated request arrived (liveness signal for turn watchdogs)
  * - `fatal(error: string)` - unrecoverable error from stderr, unexpected exit, or handshake failure
  * - `exit(code: number | null, signal: string | null)` - child process exit
  */
@@ -457,11 +552,15 @@ export class CodexAppServer extends EventEmitter {
           // Without this, app restarts would try to resume the stale thread ID.
           this.emit("threadIdChanged", newThreadId);
         }
+        this.emit("activity");
         logger.debug("Codex lifecycle notification", { method });
         return;
       }
 
       if (LIFECYCLE_NOTIFICATION_PREFIXES.some((p) => method.startsWith(p))) {
+        // Swallowed from the mapper, but still proof of life: thread/status
+        // and similar lifecycle traffic must reset turn-level watchdogs.
+        this.emit("activity");
         logger.debug("Codex lifecycle notification", { method });
         return;
       }
@@ -474,6 +573,9 @@ export class CodexAppServer extends EventEmitter {
     // for policy="never", handler-driven supervised mode, silent-deny fallback).
     this.rpc.on("serverRequest", (msg: unknown) => {
       const request = msg as { id?: number; method?: string; params?: Record<string, unknown> };
+      // Let turn-level watchdogs treat an inbound approval request as liveness:
+      // the server is healthy, it is just waiting on a user decision.
+      this.emit("activity");
       void routeCodexServerRequest({
         msg: request,
         approvalPolicy: this.options.approvalPolicy,
@@ -593,6 +695,22 @@ export class CodexAppServer extends EventEmitter {
   }
 
   /**
+   * Cheap liveness probe: true when the app-server still answers RPCs.
+   * `model/list` is the lightest request the protocol guarantees post-init.
+   * Used by turn watchdogs to distinguish "long-running but healthy" from
+   * "wedged" before giving up on a silent turn.
+   */
+  async ping(timeoutMs = 10_000): Promise<boolean> {
+    if (!this._isAlive || !this.rpc) return false;
+    try {
+      await this.rpc.sendRequest("model/list", {}, timeoutMs);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Best-effort interrupt for the in-flight turn without killing the app-server.
    * Used before starting a new turn so stale `turn/completed` waits cannot resolve early.
    */
@@ -623,16 +741,23 @@ export class CodexAppServer extends EventEmitter {
         return;
       }
 
-      for (const pattern of FATAL_PATTERNS) {
-        if (line.includes(pattern)) {
-          this.lastStderr = line;
-          const msg = `Codex app-server fatal stderr: ${line}`;
-          logger.error(msg, { cliPath: this.cliPath });
-          this.emit("fatal", msg);
-          this.kill().catch((err: unknown) => {
-            logger.error("CodexAppServer: kill after fatal stderr failed", { error: String(err) });
-          });
-          return;
+      // Fatal classification applies only before a thread is established.
+      // Once the session is live, stderr carries tool output and agent-generated
+      // content; a build or curl that prints "ECONNRESET" must not kill the
+      // whole app-server. Post-handshake transport failures surface via the
+      // child exit event and RPC stream-close rejection instead.
+      if (this._threadId === null) {
+        for (const pattern of FATAL_PATTERNS) {
+          if (line.includes(pattern)) {
+            this.lastStderr = line;
+            const msg = `Codex app-server fatal stderr: ${line}`;
+            logger.error(msg, { cliPath: this.cliPath });
+            this.emit("fatal", msg);
+            this.kill().catch((err: unknown) => {
+              logger.error("CodexAppServer: kill after fatal stderr failed", { error: String(err) });
+            });
+            return;
+          }
         }
       }
 

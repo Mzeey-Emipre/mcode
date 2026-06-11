@@ -132,6 +132,10 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         // Cache + per-file fetch scope: the real thread (→ its worktree) when in a
         // thread, else the workspace id (the server reads the workspace root).
         threadId={threadId ?? workspaceId}
+        // Open each file's diff on arrival so switching between the git views
+        // lands on the changes directly, without a click per file (each diff is
+        // still fetched lazily on mount and large diffs stay truncated).
+        defaultFilesExpanded
       />
     </div>
   );

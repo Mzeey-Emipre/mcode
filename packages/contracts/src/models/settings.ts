@@ -305,7 +305,7 @@ export const SettingsSchema = lazySchema(() =>
         codex: z
           .object({
             /**
-             * When true, pass `serviceTier: "fast"` on Codex turns (OpenAI fast tier when available).
+             * When true, pass `serviceTier: "priority"` on Codex turns (OpenAI "Fast" tier when the model supports it).
              */
             fastMode: z.boolean().optional(),
             /** @deprecated Migrated into {@link fastMode}; still read from disk for older settings files. */

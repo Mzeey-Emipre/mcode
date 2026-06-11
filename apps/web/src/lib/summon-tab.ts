@@ -1,6 +1,7 @@
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore, type RightPanelTab } from "@/stores/diffStore";
 import { PANEL_TAB_TYPES } from "@/lib/panel-tabs";
+import { hideRightPanelAdaptive, showRightPanelAdaptive } from "@/lib/right-panel-layout";
 
 /** Whether a tab type only makes sense once a thread exists (Scope, and Review until it goes dual-scope). */
 function tabNeedsThread(tab: RightPanelTab): boolean {
@@ -28,23 +29,17 @@ export function summonTab(tab: RightPanelTab, onFocus?: () => void): void {
   if (!wid) return;
   if (tabNeedsThread(tab) && !tid) return;
 
-  const {
-    getRightPanel,
-    getRightPanelVisible,
-    showRightPanel,
-    setRightPanelTab,
-    hideRightPanel,
-  } = useDiffStore.getState();
+  const { getRightPanel, getRightPanelVisible, setRightPanelTab } = useDiffStore.getState();
   const panel = getRightPanel(wid);
 
   if (!getRightPanelVisible(wid, tid)) {
-    showRightPanel(wid, tid);
+    showRightPanelAdaptive(wid, tid);
     setRightPanelTab(wid, tab);
     onFocus?.();
   } else if (panel.activeTab !== tab) {
     setRightPanelTab(wid, tab);
     onFocus?.();
   } else {
-    hideRightPanel(wid, tid);
+    hideRightPanelAdaptive(wid, tid);
   }
 }
