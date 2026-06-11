@@ -51,6 +51,7 @@ const WHEEL_UP_FOLLOW_PAUSE_MS = 750;
 const OVERSCAN = 8;
 const DEFAULT_ITEM_HEIGHT = 80;
 const PAGINATION_THRESHOLD = 200;
+const NARRATIVE_INDICATOR_EXIT_MS = 220;
 /** Top inset on the scroll container when the sticky user bar is hidden (`pt-4`). */
 const MESSAGE_LIST_TOP_PADDING_PX = 16;
 /**
@@ -161,6 +162,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
           subagentCount={item.subagentCount}
           activeToolCalls={item.activeToolCalls}
           startTime={item.startTime}
+          isExiting={item.isExiting}
         />
       );
   }
@@ -279,6 +281,11 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const stickyUserMessageTargetRef = useRef<{ id: string; itemIndex: number } | null>(null);
   /** Latest virtualizer instance for scroll-time sticky visibility checks. */
   const virtualizerRef = useRef<StickyVisibilityVirtualizer | null>(null);
+  const lastNarrativeIndicatorRef =
+    useRef<Extract<ChatVirtualItem, { type: "narrative-indicator" }> | null>(null);
+  const narrativeIndicatorExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [exitingNarrativeIndicator, setExitingNarrativeIndicator] =
+    useState<Extract<ChatVirtualItem, { type: "narrative-indicator" }> | null>(null);
 
   const messages = useActiveThreadRecord((r) => r.messages);
   const loading = useActiveThreadRecord((r) => r.loading);
@@ -519,10 +526,62 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     assistantResponseKeys,
   ]);
 
+  const liveNarrativeIndicator = useMemo(
+    () =>
+      volatileItems.find(
+        (item): item is Extract<ChatVirtualItem, { type: "narrative-indicator" }> =>
+          item.type === "narrative-indicator",
+      ) ?? null,
+    [volatileItems],
+  );
+
+  useLayoutEffect(() => {
+    if (narrativeIndicatorExitTimerRef.current) {
+      clearTimeout(narrativeIndicatorExitTimerRef.current);
+      narrativeIndicatorExitTimerRef.current = null;
+    }
+
+    if (liveNarrativeIndicator) {
+      lastNarrativeIndicatorRef.current = liveNarrativeIndicator;
+      setExitingNarrativeIndicator(null);
+      return;
+    }
+
+    const lastIndicator = lastNarrativeIndicatorRef.current;
+    if (!lastIndicator) return;
+
+    lastNarrativeIndicatorRef.current = null;
+    setExitingNarrativeIndicator({
+      ...lastIndicator,
+      key: `${lastIndicator.key}-exit`,
+      isExiting: true,
+    });
+    narrativeIndicatorExitTimerRef.current = setTimeout(() => {
+      setExitingNarrativeIndicator(null);
+      narrativeIndicatorExitTimerRef.current = null;
+    }, NARRATIVE_INDICATOR_EXIT_MS);
+  }, [liveNarrativeIndicator]);
+
+  useEffect(() => {
+    return () => {
+      if (narrativeIndicatorExitTimerRef.current) {
+        clearTimeout(narrativeIndicatorExitTimerRef.current);
+      }
+    };
+  }, []);
+
+  const visibleVolatileItems = useMemo(
+    () =>
+      exitingNarrativeIndicator
+        ? [...volatileItems, exitingNarrativeIndicator]
+        : volatileItems,
+    [volatileItems, exitingNarrativeIndicator],
+  );
+
   const hasToolCalls = toolCalls.length > 0;
   const items = useMemo(
-    () => buildVirtualItems(stableItems, volatileItems, hasToolCalls),
-    [stableItems, volatileItems, hasToolCalls],
+    () => buildVirtualItems(stableItems, visibleVolatileItems, hasToolCalls),
+    [stableItems, visibleVolatileItems, hasToolCalls],
   );
 
   const lastUserMessage = useMemo(() => {

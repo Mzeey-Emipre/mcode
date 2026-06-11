@@ -3,6 +3,7 @@ import { formatDuration } from "@/lib/time";
 import type { ToolCall } from "@/transport/types";
 import { TOOL_PHASE_LABELS } from "../tool-renderers/constants";
 import { StackedLayersIcon, stackedLayersIconClassName } from "./StackedLayersIcon";
+import { cn } from "@/lib/utils";
 
 /** Derive the current phase label from active tool calls. */
 function derivePhaseLabel(toolCalls: readonly ToolCall[]): string {
@@ -27,6 +28,8 @@ interface NarrativeIndicatorProps {
   activeToolCalls: readonly ToolCall[];
   /** Epoch ms when the agent turn started, used to compute elapsed time. */
   startTime?: number;
+  /** True while the row is leaving after turn completion. */
+  isExiting?: boolean;
 }
 
 /**
@@ -43,6 +46,7 @@ export function NarrativeIndicator({
   subagentCount,
   activeToolCalls,
   startTime,
+  isExiting = false,
 }: NarrativeIndicatorProps) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -64,7 +68,14 @@ export function NarrativeIndicator({
     subagentCount === 1 ? "1 subagent" : `${subagentCount} subagents`;
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 mt-1.5">
+    <div
+      className={cn(
+        "mt-1.5 flex items-center gap-2 overflow-hidden px-4 py-2 transition-all duration-200 ease-out",
+        isExiting && "mt-0 max-h-0 translate-y-1 py-0 opacity-0",
+        !isExiting && "max-h-10 translate-y-0 opacity-100",
+      )}
+      aria-hidden={isExiting ? true : undefined}
+    >
       <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
         {/* When sub-agents are dispatched, the stacked-layers icon (with its
             float + per-layer ripple) becomes the "agent working" mark — more

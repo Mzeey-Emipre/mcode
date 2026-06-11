@@ -155,6 +155,8 @@ export type ChatVirtualItem =
       subagentCount: number;
       activeToolCalls: readonly ToolCall[];
       startTime: number | undefined;
+      /** True while the status row is animating out after the turn completes. */
+      isExiting?: boolean;
     };
 
 /**
@@ -405,13 +407,13 @@ export function buildVirtualItems(
       (v) =>
         v.type === "narrative-flow" ||
         (v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming) ||
-        v.type === "narrative-indicator",
+        (v.type === "narrative-indicator" && !v.isExiting),
     );
     const tailItems = volatileItems.filter(
       (v) =>
         v.type !== "narrative-flow" &&
         !(v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming) &&
-        v.type !== "narrative-indicator",
+        !(v.type === "narrative-indicator" && !v.isExiting),
     );
     // Drop the persisted-narrative placeholder for the message that has live
     // narrative-flow above it, to avoid double-rendering the same timeline
@@ -534,7 +536,7 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
       if (message.role === "system") return 40;
       const contentHeight = estimateMarkdownHeight(message.content);
       if (message.role === "user") return 52 + contentHeight;
-      if (item.assistantState?.isStreaming) return Math.max(contentHeight, 48);
+      if (item.assistantState) return Math.max(contentHeight, 48);
       return 80 + contentHeight;
     }
     case "active-tools":
