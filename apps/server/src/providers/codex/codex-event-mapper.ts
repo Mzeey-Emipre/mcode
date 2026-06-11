@@ -41,10 +41,12 @@ const SILENT_ITEM_TYPES = new Set([
  * only means the child thread was created. The row completes from the child
  * thread's `turn/completed`, or from `wait`'s per-child `agentsStates`,
  * whichever arrives first. `wait` itself is parent-thread plumbing and never
- * emits a row. Child tools on the parent thread use `collabScopeStack` (single
- * open collab only; parallel collabs omit stack peek to avoid mis-attribution).
- * Child tools on Codex receiver threads use `receiverThreadIds` from completed
- * `spawnAgent` collabs mapped to the collab item id.
+ * emits a row. Parent turn completion does not synthesize sub-agent results;
+ * some rejected spawn attempts have no receiver thread and no later completion.
+ * Child tools on the parent thread use `collabScopeStack` (single open collab
+ * only; parallel collabs omit stack peek to avoid mis-attribution). Child tools
+ * on Codex receiver threads use `receiverThreadIds` from completed `spawnAgent`
+ * collabs mapped to the collab item id.
  *
  * Thinking stream: `item/reasoning/*` plus experimental `item/plan/delta` map to non-final
  * text deltas (`AgentEventType.TextDelta` with `isFinalResponse: false`) so the UI can show thought segments.
@@ -89,7 +91,7 @@ export class CodexEventMapper {
   private collabScopeStack: string[] = [];
   /** Collab ids for which `item/started` already emitted `ToolUse` (completion emits `ToolResult` only). */
   private collabToolUseFromStartIds = new Set<string>();
-  /** Spawn-agent rows that have started but have not received child completion yet. */
+  /** Spawn-agent rows with a known receiver thread that have not received child completion yet. */
   private openSpawnAgentIds = new Set<string>();
   /** Spawn-agent rows already completed by child turn completion or wait state. */
   private completedSpawnAgentIds = new Set<string>();
@@ -172,8 +174,9 @@ export class CodexEventMapper {
       if (itemType === "collabAgentToolCall" && itemId && item) {
         if (this.isWaitCollab(item)) return [];
         this.collabToolUseFromStartIds.add(itemId);
-        if (this.isSpawnAgentCollab(item)) this.openSpawnAgentIds.add(itemId);
-        this.registerCollabReceiverThreads(itemId, item);
+        if (this.isSpawnAgentCollab(item) && this.registerCollabReceiverThreads(itemId, item) > 0) {
+          this.openSpawnAgentIds.add(itemId);
+        }
         return [this.buildCollabToolUseEvent(item, itemId, notification)];
       }
       logger.debug("Codex child thread notification consumed", { method, itemType });
@@ -220,23 +223,38 @@ export class CodexEventMapper {
    * Registers Codex receiver child threads so later notifications on those threads
    * nest under the matching `collabAgentToolCall` Agent row.
    */
-  private registerCollabReceiverThreads(collabId: string, item: CompletedItem): void {
+  private registerCollabReceiverThreads(collabId: string, item: CompletedItem): number {
     const raw = item as unknown as Record<string, unknown>;
+    const receiverThreadIds = new Set<string>();
     const ids = raw.receiverThreadIds;
-    if (!Array.isArray(ids)) return;
-    for (const id of ids) {
-      if (typeof id === "string" && id.length > 0) {
-        this.collabReceiverThreadToCollabId.set(id, collabId);
+    if (Array.isArray(ids)) {
+      for (const id of ids) {
+        if (typeof id === "string" && id.length > 0) {
+          receiverThreadIds.add(id);
+        }
       }
     }
     const agentsStates = raw.agentsStates;
     if (agentsStates && typeof agentsStates === "object") {
       for (const childThreadId of Object.keys(agentsStates as Record<string, unknown>)) {
         if (childThreadId.length > 0) {
-          this.collabReceiverThreadToCollabId.set(childThreadId, collabId);
+          receiverThreadIds.add(childThreadId);
         }
       }
     }
+    for (const id of receiverThreadIds) {
+      this.collabReceiverThreadToCollabId.set(id, collabId);
+    }
+    return receiverThreadIds.size;
+  }
+
+  private hasReceiverThreadMetadata(item: CompletedItem): boolean {
+    const raw = item as unknown as Record<string, unknown>;
+    return Array.isArray(raw.receiverThreadIds) || (raw.agentsStates != null && typeof raw.agentsStates === "object");
+  }
+
+  private shouldTrackCollabScope(item: CompletedItem, isSpawn: boolean, receiverCount: number): boolean {
+    return !isSpawn || receiverCount > 0 || !this.hasReceiverThreadMetadata(item);
   }
 
   /** Returns the Codex collab tool name while tolerating older snake/camel shapes. */
@@ -350,15 +368,6 @@ export class CodexEventMapper {
       isError,
       ...(toolInput && Object.keys(toolInput).length > 0 ? { toolInput } : {}),
     }];
-  }
-
-  /** Completes any spawn Agent rows still open when the parent turn finishes. */
-  private flushOpenSpawnAgents(): AgentEvent[] {
-    const events: AgentEvent[] = [];
-    for (const collabId of [...this.openSpawnAgentIds]) {
-      events.push(...this.completeSpawnAgent(collabId, "Sub-agent finished."));
-    }
-    return events;
   }
 
   /** Maps a `wait` collab's per-child state payload into Agent ToolResults. */
@@ -693,6 +702,9 @@ export class CodexEventMapper {
       const item = notification.params.item as CompletedItem | undefined;
       const itemType = item?.type;
       const itemId = typeof item?.id === "string" ? item.id : undefined;
+      if (itemType === "collabAgentToolCall" && item && this.isWaitCollab(item)) {
+        return [];
+      }
       const boundaryEvents = this.drainAssistantBoundaryBeforeItem(itemId);
       // The coordinator started a new tool-like item: any legacy collab whose
       // children have finished should be popped now so this new tool doesn't
@@ -705,14 +717,16 @@ export class CodexEventMapper {
       }
       if (itemType === "collabAgentToolCall" && itemId) {
         const collabItem = item as CompletedItem;
-        if (this.isWaitCollab(collabItem)) {
-          return boundaryEvents;
-        }
         const toolUseEvent = this.buildCollabToolUseEvent(collabItem, itemId, notification);
-        this.collabScopeStack.push(itemId);
+        const isSpawn = this.isSpawnAgentCollab(collabItem);
+        const receiverCount = isSpawn ? this.registerCollabReceiverThreads(itemId, collabItem) : 0;
+        if (this.shouldTrackCollabScope(collabItem, isSpawn, receiverCount)) {
+          this.collabScopeStack.push(itemId);
+        }
         this.collabToolUseFromStartIds.add(itemId);
-        if (this.isSpawnAgentCollab(collabItem)) this.openSpawnAgentIds.add(itemId);
-        this.registerCollabReceiverThreads(itemId, collabItem);
+        if (isSpawn && receiverCount > 0) {
+          this.openSpawnAgentIds.add(itemId);
+        }
         return [...boundaryEvents, toolUseEvent];
       }
       if (itemType && itemId && TOOL_LIKE_ITEM_TYPES.has(itemType) && itemType !== "webSearch") {
@@ -801,7 +815,17 @@ export class CodexEventMapper {
       const completedType = completedItem?.type;
       const completedId = typeof completedItem?.id === "string" ? completedItem.id : undefined;
       const isAssistantItem = completedType === "agentMessage" || completedType === "message";
-      const boundaryEvents = isAssistantItem ? [] : this.drainAssistantBoundaryBeforeItem(completedId);
+      const collabCompletedItem = completedType === "collabAgentToolCall" ? completedItem : undefined;
+      const isWaitCompletion = collabCompletedItem ? this.isWaitCollab(collabCompletedItem) : false;
+      const isStartedSpawnCompletion =
+        collabCompletedItem != null
+        && completedId != null
+        && this.isSpawnAgentCollab(collabCompletedItem)
+        && this.collabToolUseFromStartIds.has(completedId);
+      const boundaryEvents =
+        isAssistantItem || isWaitCompletion || isStartedSpawnCompletion
+          ? []
+          : this.drainAssistantBoundaryBeforeItem(completedId);
       logger.debug("Codex item/completed", { type: completedType });
       return [...boundaryEvents, ...this.mapItemCompleted(completedItem, notification)];
     }
@@ -836,10 +860,7 @@ export class CodexEventMapper {
       const tokensOut = usage.output_tokens ?? 0;
       const totalProcessedTokens = inputTokens + cachedInputTokens + tokensOut;
 
-      const events: AgentEvent[] = [
-        ...boundaryEvents,
-        ...this.flushOpenSpawnAgents(),
-      ];
+      const events: AgentEvent[] = [...boundaryEvents];
       if (text) {
         events.push({ type: AgentEventType.Message, threadId: this.threadId, content: text, tokens: null });
       }
@@ -1056,9 +1077,10 @@ export class CodexEventMapper {
         output: out || `Collaboration (${kind})`,
         isError: typeof item.error === "string" && item.error.length > 0,
       };
-      this.registerCollabReceiverThreads(toolCallId, item);
+      const receiverCount = isSpawn ? this.registerCollabReceiverThreads(toolCallId, item) : 0;
       if (isSpawn) {
         this.mergeSpawnAgentToolInput(toolCallId, item);
+        if (receiverCount > 0) this.openSpawnAgentIds.add(toolCallId);
       }
       if (this.collabToolUseFromStartIds.has(toolCallId)) {
         this.collabToolUseFromStartIds.delete(toolCallId);
@@ -1068,10 +1090,7 @@ export class CodexEventMapper {
       }
       if (route === "child") {
         const toolUseEvent = this.buildCollabToolUseEvent(item, toolCallId, notification);
-        if (isSpawn) {
-          this.openSpawnAgentIds.add(toolCallId);
-          return [toolUseEvent];
-        }
+        if (isSpawn) return [toolUseEvent];
         return [toolUseEvent, toolResultEvent];
       }
       // Legacy path: collab completes in one notification without a prior `item/started`.
@@ -1081,12 +1100,11 @@ export class CodexEventMapper {
       // we drop this collab off the stack so coordinator work after the
       // sub-agent's children does not incorrectly attach beneath it.
       const toolUseEvent = this.buildCollabToolUseEvent(item, toolCallId, notification);
-      this.collabScopeStack.push(toolCallId);
-      this.pendingLegacyCollabPops.add(toolCallId);
-      if (isSpawn) {
-        this.openSpawnAgentIds.add(toolCallId);
-        return [toolUseEvent];
+      if (this.shouldTrackCollabScope(item, isSpawn, receiverCount)) {
+        this.collabScopeStack.push(toolCallId);
+        this.pendingLegacyCollabPops.add(toolCallId);
       }
+      if (isSpawn) return [toolUseEvent];
       return [toolUseEvent, toolResultEvent];
     }
 

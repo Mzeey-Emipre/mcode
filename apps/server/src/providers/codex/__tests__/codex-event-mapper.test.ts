@@ -1019,23 +1019,28 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
-  it("flushes open spawnAgent rows on parent turn completion", () => {
+  it("does not synthesize spawnAgent results on parent turn completion", () => {
     mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/started",
-      params: { item: { type: "collabAgentToolCall", id: "spawn-open", tool: "spawnAgent" } },
-    });
-    mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "item/completed",
       params: {
         item: {
           type: "collabAgentToolCall",
           id: "spawn-open",
           tool: "spawnAgent",
-          receiverThreadIds: ["child-open"],
+          receiverThreadIds: [],
         },
       },
+    });
+    const finalText = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { itemId: "msg-final", delta: "Final after rejected spawn." },
+    });
+    const finalItem = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { item: { type: "agentMessage", id: "msg-final" } },
     });
 
     const events = mapper.mapNotification({
@@ -1044,20 +1049,31 @@ describe("CodexEventMapper", () => {
       params: { turn: { status: "completed" } },
     });
 
-    expect(events[0]).toMatchObject({
-      type: "toolResult",
-      toolCallId: "spawn-open",
-      output: "Sub-agent finished.",
-      isError: false,
+    expect(finalText).toEqual([
+      {
+        type: "textDelta",
+        threadId: "test-thread",
+        delta: "Final after rejected spawn.",
+        isFinalResponse: false,
+      },
+    ]);
+    expect(finalItem).toEqual([]);
+    expect(events.find((event) => event.type === "toolResult" && event.toolCallId === "spawn-open")).toBeUndefined();
+    expect(events[0]).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
+    expect(events.find((event) => event.type === "message")).toMatchObject({
+      type: "message",
+      content: "Final after rejected spawn.",
     });
     expect(events.some((event) => event.type === "turnComplete")).toBe(true);
   });
 
   it("nests commandExecution on Codex receiver thread via receiverThreadIds", () => {
+    mapper = new CodexEventMapper("test-thread", "parent-thread");
     mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/started",
       params: {
+        threadId: "parent-thread",
         item: { type: "collabAgentToolCall", id: "collab-a", tool: "spawnAgent", prompt: "x" },
       },
     });
@@ -1099,10 +1115,12 @@ describe("CodexEventMapper", () => {
   });
 
   it("nests commandExecution under inner collab on a nested receiver thread (two-level sub-agents)", () => {
+    mapper = new CodexEventMapper("test-thread", "parent-thread");
     mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/started",
       params: {
+        threadId: "parent-thread",
         item: { type: "collabAgentToolCall", id: "collab-outer", tool: "spawnAgent", prompt: "outer" },
       },
     });

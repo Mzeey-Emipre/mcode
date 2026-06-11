@@ -165,6 +165,197 @@ describe("CodexEventMapper defect regressions", () => {
     expect(toolUse?.type === AgentEventType.ToolUse && toolUse.parentToolCallId).toBe("collab-only");
   });
 
+  it("does not use Mcode thread id as Codex main thread fallback", () => {
+    mapper = new CodexEventMapper("mcode-thread", "codex-main");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "codex-main",
+        item: { type: "collabAgentToolCall", id: "collab-main", tool: "spawnAgent" },
+      },
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "mcode-thread",
+        item: {
+          type: "commandExecution",
+          id: "cmd-wrong-thread",
+          command: "git status",
+          aggregatedOutput: "clean",
+          exitCode: 0,
+        },
+      },
+    });
+
+    expect(events).toEqual([]);
+  });
+
+  it("does not flush spawnAgent with empty receiverThreadIds as Sub-agent finished", () => {
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-empty",
+          tool: "spawnAgent",
+          receiverThreadIds: [],
+          agentsStates: {},
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { itemId: "msg-final", delta: "Final response." },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { item: { type: "agentMessage", id: "msg-final" } },
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { turn: { status: "completed" } },
+    });
+
+    expect(events.find((e) => e.type === AgentEventType.ToolResult && e.toolCallId === "spawn-empty")).toBeUndefined();
+    expect(events[0]).toMatchObject({ type: AgentEventType.AssistantMessageBoundary, isFinalResponse: true });
+    expect(events.find((e) => e.type === AgentEventType.Message)).toMatchObject({
+      type: AgentEventType.Message,
+      content: "Final response.",
+    });
+  });
+
+  it("does not nest parent-thread tools under provisional spawn starts without receivers", () => {
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-empty",
+          tool: "spawnAgent",
+          receiverThreadIds: [],
+          agentsStates: {},
+        },
+      },
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "commandExecution",
+          id: "cmd-after-empty-spawn",
+          command: "git status",
+          aggregatedOutput: "clean",
+          exitCode: 0,
+        },
+      },
+    });
+
+    const toolUse = events.find((e) => e.type === AgentEventType.ToolUse);
+    expect(toolUse).toMatchObject({
+      type: AgentEventType.ToolUse,
+      toolCallId: "cmd-after-empty-spawn",
+    });
+    expect(toolUse?.type === AgentEventType.ToolUse ? toolUse.parentToolCallId : undefined).toBeUndefined();
+  });
+
+  it("keeps final assistant boundary pending across wait bookkeeping", () => {
+    mapper = new CodexEventMapper(tid, "codex-main");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "codex-main",
+        item: { type: "collabAgentToolCall", id: "spawn-1", tool: "spawnAgent" },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "codex-main",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-1",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-1"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "codex-main", itemId: "msg-final", delta: "Done." },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "codex-main",
+        item: { type: "agentMessage", id: "msg-final" },
+      },
+    });
+
+    const waitStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "codex-main",
+        item: {
+          type: "collabAgentToolCall",
+          id: "wait-1",
+          tool: "wait",
+          receiverThreadIds: ["child-1"],
+        },
+      },
+    });
+    const waitCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "codex-main",
+        item: {
+          type: "collabAgentToolCall",
+          id: "wait-1",
+          tool: "wait",
+          agentsStates: {
+            "child-1": { status: "completed", message: "child done" },
+          },
+        },
+      },
+    });
+    const completed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "codex-main", turn: { status: "completed" } },
+    });
+
+    expect(waitStarted).toEqual([]);
+    expect(waitCompleted).toEqual([
+      expect.objectContaining({
+        type: AgentEventType.ToolResult,
+        toolCallId: "spawn-1",
+        output: "child done",
+      }),
+    ]);
+    expect(completed[0]).toMatchObject({ type: AgentEventType.AssistantMessageBoundary, isFinalResponse: true });
+    expect(completed.find((e) => e.type === AgentEventType.Message)).toMatchObject({
+      type: AgentEventType.Message,
+      content: "Done.",
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Defect 3: legacy collab path must release the stack when coordinator
   // resumes, so later tools do not incorrectly attach beneath the collab.
