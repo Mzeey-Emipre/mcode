@@ -538,7 +538,7 @@ describe("CodexEventMapper", () => {
     expect(events[1]).toMatchObject({ type: "toolResult", output: "" });
   });
 
-  it("after item/started collab, item/completed emits only toolResult", () => {
+  it("keeps spawnAgent row running when spawn item completes", () => {
     mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/started",
@@ -566,13 +566,244 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toHaveLength(1);
+    expect(events).toEqual([]);
+  });
+
+  it("suppresses wait rows and completes spawnAgent from wait child state", () => {
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-1",
+          tool: "spawnAgent",
+          prompt: "Do work",
+        },
+      },
+    });
+    const spawnCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-1",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-1"],
+          result: "dispatch complete",
+        },
+      },
+    });
+    const waitStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "wait-1",
+          tool: "wait",
+          receiverThreadIds: ["child-1"],
+        },
+      },
+    });
+    const waitCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "wait-1",
+          tool: "wait",
+          receiverThreadIds: ["child-1"],
+          agentsStates: {
+            "child-1": { status: "completed", message: "child final" },
+          },
+        },
+      },
+    });
+
+    expect(started).toHaveLength(1);
+    expect(spawnCompleted).toEqual([]);
+    expect(waitStarted).toEqual([]);
+    expect(waitCompleted).toEqual([
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "spawn-1",
+        output: "child final",
+        isError: false,
+      },
+    ]);
+  });
+
+  it("completes spawnAgent from child turn completion before wait", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: { type: "collabAgentToolCall", id: "spawn-1", tool: "spawnAgent" },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-1",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-1"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-1", delta: "child streamed final" },
+    });
+
+    const childCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-1", turn: { status: "completed" } },
+    });
+    const laterWait = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "wait-1",
+          tool: "wait",
+          agentsStates: {
+            "child-1": { status: "completed", message: "later wait final" },
+          },
+        },
+      },
+    });
+
+    expect(childCompleted).toEqual([
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "spawn-1",
+        output: "child streamed final",
+        isError: false,
+      },
+    ]);
+    expect(laterWait).toEqual([]);
+  });
+
+  it("completes parallel spawnAgents independently from wait states", () => {
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { item: { type: "collabAgentToolCall", id: "spawn-a", tool: "spawnAgent" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-a",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-a"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { item: { type: "collabAgentToolCall", id: "spawn-b", tool: "spawnAgent" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-b",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-b"],
+        },
+      },
+    });
+
+    const firstWait = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "wait-a",
+          tool: "wait",
+          agentsStates: {
+            "child-b": { status: "completed", message: "B done" },
+          },
+        },
+      },
+    });
+    const secondWait = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "wait-b",
+          tool: "wait",
+          agentsStates: {
+            "child-a": { status: "completed", message: "A done" },
+          },
+        },
+      },
+    });
+
+    expect(firstWait).toEqual([
+      expect.objectContaining({ type: "toolResult", toolCallId: "spawn-b", output: "B done" }),
+    ]);
+    expect(secondWait).toEqual([
+      expect.objectContaining({ type: "toolResult", toolCallId: "spawn-a", output: "A done" }),
+    ]);
+  });
+
+  it("flushes open spawnAgent rows on parent turn completion", () => {
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { item: { type: "collabAgentToolCall", id: "spawn-open", tool: "spawnAgent" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-open",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-open"],
+        },
+      },
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { turn: { status: "completed" } },
+    });
+
     expect(events[0]).toMatchObject({
       type: "toolResult",
-      toolCallId: "collab-1",
-      output: "Done",
+      toolCallId: "spawn-open",
+      output: "Sub-agent finished.",
       isError: false,
     });
+    expect(events.some((event) => event.type === "turnComplete")).toBe(true);
   });
 
   it("nests commandExecution on Codex receiver thread via receiverThreadIds", () => {
@@ -717,7 +948,7 @@ describe("CodexEventMapper", () => {
     });
   });
 
-  it("maps collabAgentToolCall to Agent toolUse + toolResult for narrative nesting (legacy, no item/started)", () => {
+  it("maps legacy spawnAgent completion to a running Agent toolUse", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/completed",
@@ -732,18 +963,12 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       type: "toolUse",
       toolCallId: "collab-1",
       toolName: "Agent",
       toolInput: { codexCollabKind: "spawn_agent", prompt: "Review security" },
-    });
-    expect(events[1]).toMatchObject({
-      type: "toolResult",
-      toolCallId: "collab-1",
-      output: "Done",
-      isError: false,
     });
   });
 
@@ -1118,7 +1343,7 @@ describe("CodexEventMapper", () => {
     expect(childText).toEqual([]);
     expect(childReasoning).toEqual([]);
     expect(mainText).toEqual([
-      { type: "textDelta", threadId: "test-thread", delta: "main final", isFinalResponse: true },
+      { type: "textDelta", threadId: "test-thread", delta: "main final" },
     ]);
     expect(completed.find((event) => event.type === "message")).toMatchObject({
       type: "message",
@@ -1167,7 +1392,15 @@ describe("CodexEventMapper", () => {
       params: { threadId: "main-codex-thread", turn: { status: "completed" } },
     });
 
-    expect(childCompleted).toEqual([]);
+    expect(childCompleted).toEqual([
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "collab-a",
+        output: "",
+        isError: false,
+      },
+    ]);
     expect(mainText).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "still streaming", isFinalResponse: true },
     ]);
