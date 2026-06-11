@@ -51,11 +51,11 @@ buildNarrativeItems groups by parentToolCallId → SubagentRow children
     │
     ▼
 virtual-items.ts splits live turn into three slots:
-  narrative-flow (timeline) → streaming-response (typing bubble slot)
+  narrative-flow (timeline) → provisional assistant message (typing bubble slot)
   → narrative-indicator (step/subagent meta below the response)
     │
     ▼
-NarrativeFlow + StreamingResponseRow + NarrativeIndicator render live turn
+NarrativeFlow + MessageBubble + NarrativeIndicator render live turn
     │
     ▼
 PersistedTurnFooter appears after narrative.list RPC resolves
@@ -79,8 +79,8 @@ misclassified preamble or duplicate assistant bodies:
    fired this turn. May be absent on tool-free turns; boundary event wins.
 3. **Client segment routing** — `threadStore` retracts or closes the open
    thought segment on `session.assistantMessageBoundary`. Final response text
-   stays in `streamingByThread` and renders via the `streaming-response`
-   virtual slot, not `thoughtSegmentsByThread`.
+   stays in the thread streaming buffer and renders via a provisional
+   assistant message item, not `thoughtSegmentsByThread`.
 4. **Persist suffix match** — `narrative-store.ts` `persistNarrative` tags the
    last matching thought row `is_final_response` before DB insert as a safety
    net for older rows or reconnect gaps.
@@ -351,6 +351,6 @@ ship a bug:
 5. Wall-clock snapshots use `useState` + `useEffect`, not `useMemo`.
 6. `NarrativeCounts.steps` is the count of top-level tool calls only — not
    thought segments. Live `narrative-indicator` must use the same definition.
-7. Final response text renders in the `streaming-response` virtual slot;
+7. Final response text renders as a provisional assistant message item;
    preamble text renders as thought rows inside `narrative-flow`. The
    `AssistantMessageBoundary` event is the authoritative split.

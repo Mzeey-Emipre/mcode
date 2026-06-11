@@ -216,7 +216,13 @@ function resetTurnEphemeral(_rec: ThreadRecord): Partial<ThreadRecord> {
     toolCalls: [],
     thoughtSegments: [],
     hooks: [],
+    currentTurnResponseKey: "",
   };
+}
+
+/** Returns a React key shared by the live and just-persisted final response. */
+function createTurnResponseKey(threadId: string): string {
+  return `turn-response:${threadId}:${crypto.randomUUID()}`;
 }
 
 /**
@@ -304,6 +310,19 @@ function capMessages(messages: Message[]): { messages: Message[]; evicted: boole
     messages: messages.slice(messages.length - MESSAGE_WINDOW_SIZE),
     evicted: true,
   };
+}
+
+/** Keeps turn response keys only for assistant messages still loaded in memory. */
+function pruneAssistantResponseKeys(
+  responseKeys: Record<string, string>,
+  messages: readonly Message[],
+): Record<string, string> {
+  const assistantIds = new Set(
+    messages.filter((message) => message.role === "assistant").map((message) => message.id),
+  );
+  return Object.fromEntries(
+    Object.entries(responseKeys).filter(([messageId]) => assistantIds.has(messageId)),
+  );
 }
 
 /**
@@ -687,6 +706,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ...settingsPatch,
           ...messagePatch,
           agentStartTime: Date.now(),
+          currentTurnResponseKey: createTurnResponseKey(threadId),
           lastFallback: undefined,
           rateLimit: undefined,
           apiRetry: undefined,
@@ -831,6 +851,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingPreview: "",
           toolCalls: [],
           currentTurnMessageId: "",
+          currentTurnResponseKey: "",
+          assistantResponseKeys: {},
           oldestLoadedSequence: 0,
           hasMoreMessages: false,
           isLoadingMore: false,
@@ -1345,6 +1367,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           records: patchThreadRecord(state.records, threadId, {
             agentStartTime: Date.now(),
             ...resetTurnEphemeral(getThreadRecord(state.records, threadId)),
+            currentTurnResponseKey: createTurnResponseKey(threadId),
           }),
         };
       });
@@ -1390,9 +1413,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             lastSeg && lastSeg.endedAt === undefined
               ? [...segments.slice(0, -1), { ...lastSeg, endedAt: Date.now() }]
               : segments;
+          const responseKey =
+            rec.currentTurnResponseKey || createTurnResponseKey(threadId);
 
           const turnPatch = {
             currentTurnMessageId: message.id,
+            currentTurnResponseKey: responseKey,
+            assistantResponseKeys: {
+              ...rec.assistantResponseKeys,
+              [message.id]: responseKey,
+            },
             streaming: "",
             streamingPreview: "",
             thoughtSegments: closedSegments,
@@ -1431,6 +1461,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               delete nextServerMessageIds[previousId];
             }
 
+            const nextAssistantResponseKeys = { ...rec.assistantResponseKeys };
+            if (previousId in nextAssistantResponseKeys) {
+              nextAssistantResponseKeys[message.id] = nextAssistantResponseKeys[previousId];
+              delete nextAssistantResponseKeys[previousId];
+            }
+
             const replaced = rec.messages.slice(0, -1).concat({
               ...last,
               id: message.id,
@@ -1438,6 +1474,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               timestamp: message.timestamp,
             });
             const { messages: capped, evicted } = capMessages(replaced);
+            const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
+              nextAssistantResponseKeys,
+              capped,
+            );
             return {
               records: patchThreadRecord(state.records, threadId, {
                 ...turnPatch,
@@ -1445,6 +1485,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 persistedToolCallCounts: nextPersistedToolCallCounts,
                 persistedFilesChanged: nextPersistedFilesChanged,
                 serverMessageIds: nextServerMessageIds,
+                assistantResponseKeys: prunedAssistantResponseKeys,
                 latestTurnWithChanges:
                   rec.latestTurnWithChanges === previousId ? message.id : rec.latestTurnWithChanges,
                 ...(evicted ? { hasMoreMessages: true } : {}),
@@ -1453,10 +1494,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
 
           const { messages: capped, evicted } = capMessages([...rec.messages, message]);
+          const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
+            turnPatch.assistantResponseKeys,
+            capped,
+          );
           return {
             records: patchThreadRecord(state.records, threadId, {
               ...turnPatch,
               messages: capped,
+              assistantResponseKeys: prunedAssistantResponseKeys,
               ...(evicted ? { hasMoreMessages: true } : {}),
             }),
           };
@@ -1870,10 +1916,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               ? guardrailMsg
               : null;
           const pending = [message, ...(dedupedGuardrail ? [dedupedGuardrail] : [])];
+          const responseKey =
+            rec.currentTurnResponseKey || createTurnResponseKey(threadId);
 
           const basePatch = {
             streaming: "",
             streamingPreview: "",
+            currentTurnMessageId: message.id,
+            currentTurnResponseKey: responseKey,
+            assistantResponseKeys: {
+              ...rec.assistantResponseKeys,
+              [message.id]: responseKey,
+            },
             thoughtSegments: closedSegments,
             toolCalls: completedCalls,
             permissions: [] as StoredPermission[],
@@ -1888,11 +1942,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
 
           const { messages: capped, evicted } = capMessages([...rec.messages, ...pending]);
+          const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
+            basePatch.assistantResponseKeys,
+            capped,
+          );
           return {
             runningThreadIds: nextRunning,
             records: patchThreadRecord(state.records, threadId, {
               ...basePatch,
               messages: capped,
+              assistantResponseKeys: prunedAssistantResponseKeys,
               ...(evicted ? { hasMoreMessages: true } : {}),
             }),
           };
@@ -2231,6 +2290,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streaming: "",
           streamingPreview: "",
           agentStartTime: undefined,
+          currentTurnMessageId: "",
+          currentTurnResponseKey: "",
           toolCalls: [] as ToolCall[],
           isCompacting: false,
           rateLimit: undefined,
@@ -2341,7 +2402,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             ...rec.serverMessageIds,
             [localMsgId]: payload.messageId,
           },
-          currentTurnMessageId: "",
           interruptStopFileNotice,
           awaitingUserStopPersist,
         }),

@@ -4,12 +4,12 @@ import type { ThoughtSegment, NarrativeItem, NarrativeBuildResult } from "./type
 const AGENT_TOOL_NAME = "Agent";
 
 /**
- * Live response text that should fill the streaming-response virtual-item
+ * Live response text that should fill the provisional assistant-message item
  * slot — i.e. the text the user is actively watching type, which the
  * persisted `MessageBubble` will replace once the turn persists.
  *
  * Mirrors `buildNarrativeItems`'s internal delta-promotion logic so the live
- * timeline (which omits this content from its rows) and the streaming-response
+ * timeline (which omits this content from its rows) and the live assistant
  * slot stay in sync. Returns "" when there is nothing to render — caller
  * suppresses the virtual item in that case.
  *
