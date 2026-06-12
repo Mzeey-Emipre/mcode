@@ -37,6 +37,9 @@ const MIN_ZOOM_FACTOR = 0.25;
 /** Upper bound on the preview zoom factor (500%), matching Chromium's ceiling. */
 const MAX_ZOOM_FACTOR = 5;
 
+/** JPEG quality for the overlay freeze-frame snapshot (see preview:capture-snapshot). */
+const SNAPSHOT_JPEG_QUALITY = 82;
+
 /** Clamp a requested zoom factor to the supported range and snap to whole percent. */
 function clampZoomFactor(factor: number): number {
   const safe = Number.isFinite(factor) ? factor : 1;
@@ -187,6 +190,26 @@ export function registerNavigationHandlers(): void {
       onPreviewVisible(win, s);
     },
   );
+
+  // Freeze-frame for overlay suppression: the renderer captures the live page
+  // as a data URL right before it detaches the native view (which composites
+  // above all HTML), then shows the image in the view's place so an open
+  // dialog/menu floats over a frozen page instead of a blank hole. JPEG keeps
+  // the IPC payload small; the frame is a transient stand-in, not an artifact.
+  ipcMain.handle("preview:capture-snapshot", async (_event): Promise<string | null> => {
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) return null;
+    const s = getSession(win);
+    const view = s.view;
+    if (!view || view.webContents.isDestroyed()) return null;
+    try {
+      const image = await view.webContents.capturePage();
+      if (image.isEmpty()) return null;
+      return `data:image/jpeg;base64,${image.toJPEG(SNAPSHOT_JPEG_QUALITY).toString("base64")}`;
+    } catch {
+      return null;
+    }
+  });
 
   ipcMain.handle(
     "preview:navigate",

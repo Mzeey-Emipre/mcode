@@ -92,6 +92,12 @@ interface PreviewBridge {
     /** Active workspace id; scopes preview spill files under the Mcode app data directory. */
     workspaceId?: string | null;
   }): Promise<void>;
+  /**
+   * Capture the live preview as a data-URL freeze-frame, shown in place of the
+   * native view while overlays suppress it. Resolves null when nothing is
+   * mounted to capture.
+   */
+  captureSnapshot(): Promise<string | null>;
   navigate(url: string, workspacePath?: string | null): Promise<PreviewNavigateResult>;
   goBack(): Promise<boolean>;
   goForward(): Promise<boolean>;

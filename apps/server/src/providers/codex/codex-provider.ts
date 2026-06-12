@@ -158,6 +158,25 @@ export function generatedImagePathFromCodexItem(item: CompletedItem | undefined)
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/**
+ * True when a turn lifecycle notification belongs to the app-server's main
+ * thread. Sub-agent (collab receiver) threads stream their own `turn/started`
+ * and `turn/completed` over the same connection, tagged with their own
+ * `threadId`; letting those drive the provider's turn bookkeeping ends the
+ * main turn early (UI drops the running indicator while streaming continues,
+ * and the still-busy session becomes evictable). Notifications without a
+ * `threadId`, or before the main thread id is known, are treated as main.
+ */
+function isMainThreadNotification(
+  server: { threadId: string | null },
+  params: Record<string, unknown> | undefined,
+): boolean {
+  const notifThreadId = typeof params?.threadId === "string" && params.threadId.length > 0
+    ? params.threadId
+    : undefined;
+  return !notifThreadId || !server.threadId || notifThreadId === server.threadId;
+}
+
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
 @injectable()
 export class CodexProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CodexSessionState> {
@@ -382,7 +401,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
 
     server.on("notification", (notification) => {
       const n = notification as { method?: string; params?: Record<string, unknown> };
-      if (n.method === "turn/started") {
+      if (n.method === "turn/started" && isMainThreadNotification(server, n.params)) {
         const turn = n.params?.turn as { id?: string } | undefined;
         const flatTurnId =
           typeof n.params?.turnId === "string" ? n.params.turnId : undefined;
@@ -615,6 +634,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
           armTimer();
           const n = notification as { method?: string; params?: Record<string, unknown> };
           if (n.method === "turn/completed") {
+            // Sub-agent receiver threads complete their own turns mid-run;
+            // only the main thread's completion settles this wait.
+            if (!isMainThreadNotification(server, n.params)) return;
             const turn = n.params?.turn as { id?: string } | undefined;
             const tid = turn?.id;
             if (tid && entry.pendingTurnId && tid !== entry.pendingTurnId) {
