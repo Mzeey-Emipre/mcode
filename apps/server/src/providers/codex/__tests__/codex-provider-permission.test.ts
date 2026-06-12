@@ -58,6 +58,7 @@ describe("CodexProvider permission flow", () => {
       { assign: vi.fn(), isWindowsJob: false } as never,
       stubEnvService() as never,
       { list: vi.fn(() => []) } as never,
+      { persistGeneratedImageFromPath: vi.fn() } as never,
     );
     // Pre-register a session entry so drain logic has something to iterate.
     seedSession(provider, sessionId, threadId, {

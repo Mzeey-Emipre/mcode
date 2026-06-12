@@ -47,6 +47,7 @@ function makeProvider(skillList: (...args: unknown[]) => unknown[] = vi.fn(() =>
     { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
     { list: skillList } as never,
+    { persistGeneratedImageFromPath: vi.fn() } as never,
   );
 }
 

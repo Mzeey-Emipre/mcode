@@ -78,6 +78,7 @@ function makeProvider(): CodexProvider {
     { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
     { list: vi.fn(() => []) } as never,
+    { persistGeneratedImageFromPath: vi.fn() } as never,
   );
 }
 

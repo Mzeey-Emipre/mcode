@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
+import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
 import type { ContextWindowMode, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
@@ -255,6 +255,20 @@ function claimTurnResponseKey(
   const responseKey =
     liveKey && !liveKeyClaimed ? liveKey : createTurnResponseKey(threadId);
   return { responseKey, nextLiveKey: createTurnResponseKey(threadId) };
+}
+
+function parseStoredAttachments(value: unknown): StoredAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is StoredAttachment => {
+    if (!item || typeof item !== "object") return false;
+    const record = item as Record<string, unknown>;
+    return (
+      typeof record.id === "string" &&
+      typeof record.name === "string" &&
+      typeof record.mimeType === "string" &&
+      typeof record.sizeBytes === "number"
+    );
+  });
 }
 
 /** Maps a persisted thought row into the live narrative segment shape. */
@@ -1456,7 +1470,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (method === "session.message") {
       markPriorToolCallsComplete();
       const content = (params.content as string) || "";
-      if (content) {
+      const attachments = parseStoredAttachments(params.attachments);
+      if (content || attachments.length > 0) {
         const message: Message = {
           id: (params.messageId as string) || crypto.randomUUID(),
           thread_id: threadId,
@@ -1468,7 +1483,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           tokens_used: (params.tokens as number) ?? null,
           timestamp: new Date().toISOString(),
           sequence: messageSequenceFor(threadId),
-          attachments: null,
+          attachments: attachments.length > 0 ? attachments : null,
           // Server injects the model after persisting; defaults to null when
           // unknown (legacy clients, non-Claude providers without model info).
           model: (params.model as string | null | undefined) ?? null,
@@ -1541,8 +1556,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             const replaced = rec.messages.slice(0, -1).concat({
               ...last,
               id: message.id,
+              content: message.content,
               tokens_used: message.tokens_used,
               timestamp: message.timestamp,
+              attachments: message.attachments,
             });
             const { messages: capped, evicted } = capMessages(replaced);
             const prunedAssistantResponseKeys = pruneAssistantResponseKeys(

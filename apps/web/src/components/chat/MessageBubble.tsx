@@ -600,7 +600,8 @@ export const MessageBubble = memo(function MessageBubble({
   // Assistant body that collapses to nothing visible (e.g. cursor-agent's
   // plan-mode output is exclusively a `plan-questions` fenced block, which
   // the markdown renderer suppresses).
-  if (isAssistantContentEmpty(message.content)) {
+  const assistantContentEmpty = isAssistantContentEmpty(message.content);
+  if (assistantContentEmpty && !hasAttachments) {
     // For answered plan-questions messages, show a read-only summary
     // instead of hiding the bubble entirely (AC-1.28).
     if (isAnsweredPlanMessage) {
@@ -620,6 +621,9 @@ export const MessageBubble = memo(function MessageBubble({
     "flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-1 transition-opacity duration-150",
     assistantActionsVisible ? "opacity-100" : "pointer-events-none opacity-0",
   );
+  const assistantReplyContent =
+    textContent.trim() ||
+    (imageAttachments.length > 0 ? "[Generated image]" : "[Assistant message]");
 
   return (
     <div className="group/msg space-y-2" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
@@ -631,19 +635,58 @@ export const MessageBubble = memo(function MessageBubble({
           onClick={() => onScrollToMessage?.(message.reply_to_message_id!)}
         />
       )}
-      <div className="text-sm text-foreground" data-testid="assistant-response-text">
-        {renderAssistantDelta ? (
-          <DeltaBlock
-            text={message.content}
-            isStreaming={assistantStreaming}
-            showCursor={assistantStreaming}
-          />
-        ) : (
-          <Suspense fallback={null}>
-            <LazyMarkdownContent content={message.content} isStreaming={false} />
-          </Suspense>
-        )}
-      </div>
+      {imageAttachments.length > 0 && (
+        <div
+          className={cn(
+            "flex justify-start gap-1.5",
+            imageAttachments.length > 2 ? "flex-wrap" : "",
+          )}
+          data-testid="assistant-image-attachments"
+        >
+          {imageAttachments.map((img, idx) => {
+            const src = buildStoredAttachmentImageSrc(message.thread_id, img.id, img.mimeType);
+            return (
+              <ImageThumbnail
+                key={img.id}
+                src={src}
+                name={img.name}
+                single={imageAttachments.length === 1}
+                onOpenPreview={() =>
+                  setImagePreview({ items: imageSlides, initialIndex: idx })
+                }
+              />
+            );
+          })}
+        </div>
+      )}
+      {fileAttachments.length > 0 && (
+        <div className="flex flex-wrap justify-start gap-2">
+          {fileAttachments.map((file) => (
+            <FileAttachmentTile
+              key={file.id}
+              variant="transcript"
+              name={file.name}
+              sizeBytes={file.sizeBytes}
+              mimeType={file.mimeType}
+            />
+          ))}
+        </div>
+      )}
+      {!assistantContentEmpty && (
+        <div className="text-sm text-foreground" data-testid="assistant-response-text">
+          {renderAssistantDelta ? (
+            <DeltaBlock
+              text={message.content}
+              isStreaming={assistantStreaming}
+              showCursor={assistantStreaming}
+            />
+          ) : (
+            <Suspense fallback={null}>
+              <LazyMarkdownContent content={message.content} isStreaming={false} />
+            </Suspense>
+          )}
+        </div>
+      )}
       {/* Plan card: shows when a plan was extracted from this message */}
       {message.role === "assistant" && (
         <PlanCard messageId={message.id} />
@@ -653,9 +696,9 @@ export const MessageBubble = memo(function MessageBubble({
         data-testid="assistant-message-actions"
         aria-hidden={assistantActionsVisible ? undefined : true}
       >
-        {assistantActionsVisible && onReply && <ReplyButton onClick={() => onReply(message.id, message.content, "assistant")} />}
+        {assistantActionsVisible && onReply && <ReplyButton onClick={() => onReply(message.id, assistantReplyContent, "assistant")} />}
         {assistantActionsVisible && onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
-        {assistantActionsVisible && <CopyButton content={textContent} />}
+        {assistantActionsVisible && textContent.trim() && <CopyButton content={textContent} />}
         {assistantActionsVisible && (message.model || message.tokens_used != null || message.cost_usd != null || formattedTime) && (
           <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/55 transition-colors group-hover/msg:text-muted-foreground/80">
             {[
@@ -667,6 +710,14 @@ export const MessageBubble = memo(function MessageBubble({
           </span>
         )}
       </div>
+      <ImageAttachmentLightbox
+        open={imagePreview !== null}
+        onOpenChange={(open) => {
+          if (!open) setImagePreview(null);
+        }}
+        items={imagePreview?.items ?? []}
+        initialIndex={imagePreview?.initialIndex ?? 0}
+      />
     </div>
   );
 });

@@ -1442,6 +1442,10 @@ export class AgentService {
           // Agent calls via updateBufferedToolCallOutput.
         }
 
+        if (event.type === AgentEventType.GeneratedAttachment) {
+          this.turnFinalizer.bufferAssistantAttachments(event.threadId, [event.attachment]);
+        }
+
         if (event.type === AgentEventType.Message) {
           try {
             // Record the thread's active model on the message so the UI can
@@ -1453,10 +1457,12 @@ export class AgentService {
             // eagerly. TurnFinalizer.finalize materializes the row only when the
             // TurnSubstance predicate holds, so a turn that produced no tool call,
             // body, narration, or hook leaves no assistant row (#578).
+            const attachments = this.turnFinalizer.getBufferedAssistantAttachments(event.threadId);
             const messageId = this.turnFinalizer.bufferAssistantBody(
               event.threadId,
               event.content,
               modelForMessage,
+              attachments,
             );
             // Carry the deterministic message ID so the broadcast schema passes it
             // through to the client. The client uses it for stable message identity
@@ -1467,6 +1473,9 @@ export class AgentService {
             // footer renders without the model until a thread refresh re-fetches
             // the persisted row from the DB.
             event.model = modelForMessage;
+            if (attachments.length > 0) {
+              event.attachments = attachments;
+            }
             this.turnFinalizer.resetStreamingText(event.threadId);
           } catch (err) {
             logger.error("Failed to persist assistant message", {
