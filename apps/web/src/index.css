@@ -659,6 +659,20 @@ input[type="range"].settings-range::-moz-range-thumb {
   animation: assistant-just-persisted-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Turn-end exit for the live narrative step indicator: fade while collapsing
+   the row (max-height covers the bar's content + padding; margin-top folds
+   away with it) so the rows below glide up instead of snapping. Duration must
+   match EXIT_DURATION_MS in NarrativeIndicator.tsx. */
+@keyframes narrative-indicator-out {
+  from { opacity: 1; max-height: 48px; margin-top: 6px; }
+  to   { opacity: 0; max-height: 0;    margin-top: 0; }
+}
+
+.narrative-indicator-exit {
+  overflow: hidden;
+  animation: narrative-indicator-out 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .narrative-row-enter,
   .thought-row.narrative-row-enter,
@@ -667,7 +681,8 @@ input[type="range"].settings-range::-moz-range-thumb {
   }
 
   .thought-settling,
-  .assistant-just-persisted {
+  .assistant-just-persisted,
+  .narrative-indicator-exit {
     animation: none;
   }
 
