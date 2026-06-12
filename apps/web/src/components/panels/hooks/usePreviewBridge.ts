@@ -28,6 +28,18 @@ export function formatNavError(code: string): string {
   return NAV_ERROR_LABEL[code] ?? code;
 }
 
+/**
+ * Snapshot shown in the native view's place while an overlay suppresses it.
+ * `width`/`height` are the surface's CSS-px size at capture time; the panel
+ * pins the <img> to them so resizing while frozen clips instead of stretching.
+ */
+export interface PreviewFreezeFrame {
+  /** JPEG data URL of the captured page. */
+  readonly url: string;
+  readonly width: number;
+  readonly height: number;
+}
+
 /** Options for the {@link usePreviewBridge} hook. */
 export interface UsePreviewBridgeOptions {
   /** Thread id that owns this preview session. */
@@ -56,10 +68,10 @@ export interface PreviewBridgeState {
   /** Persisted URL for the current thread (Zustand store). */
   readonly storedUrl: string;
   /**
-   * Freeze-frame data URL shown in the native view's place while an overlay
+   * Freeze-frame shown in the native view's place while an overlay
    * suppresses it, or null when the live view owns the surface.
    */
-  readonly freezeFrame: string | null;
+  readonly freezeFrame: PreviewFreezeFrame | null;
   /** Push current bounds and visibility to the native BrowserView. */
   readonly pushSync: (visible: boolean) => Promise<void>;
   /** Refresh navigation state (canGoBack / canGoForward) from IPC. */
@@ -248,7 +260,7 @@ export function usePreviewBridge({
   // it stand in. Order matters: capture while the view is still mounted
   // (capturePage needs a painted surface), commit the <img>, wait a frame so
   // it is on screen underneath the native view, then detach.
-  const [freezeFrame, setFreezeFrame] = useState<string | null>(null);
+  const [freezeFrame, setFreezeFrame] = useState<PreviewFreezeFrame | null>(null);
   const suppressionCount = usePreviewSuppressionStore((s) => s.count);
   const prevSuppressionRef = useRef(0);
   useEffect(() => {
@@ -276,9 +288,13 @@ export function usePreviewBridge({
     let cancelled = false;
     void (async () => {
       let frame: string | null = null;
+      // The surface rect at capture time, in CSS px. The <img> is pinned to
+      // this size so a resize while the overlay is open clips/reveals like a
+      // real frozen viewport instead of stretching the snapshot.
+      const rect = surfaceRef.current?.getBoundingClientRect() ?? null;
       // Only a loaded page has pixels worth freezing; the empty/ports surface
       // is plain HTML that overlays already stack above.
-      if (storedUrlRef.current.trim().length > 0) {
+      if (storedUrlRef.current.trim().length > 0 && rect) {
         try {
           frame = (await window.desktopBridge?.preview?.captureSnapshot?.()) ?? null;
         } catch {
@@ -286,8 +302,8 @@ export function usePreviewBridge({
         }
       }
       if (cancelled) return;
-      if (frame) {
-        setFreezeFrame(frame);
+      if (frame && rect) {
+        setFreezeFrame({ url: frame, width: rect.width, height: rect.height });
         // Two RAFs ~= one painted frame: the <img> must be on screen before
         // the native view detaches or the surface blanks for a frame.
         await new Promise<void>((resolve) =>

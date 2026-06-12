@@ -114,6 +114,22 @@ test.describe("preview freeze-frame", () => {
       expect(Math.abs(frameBox!.width - surfaceBox!.width)).toBeLessThan(4);
       expect(Math.abs(frameBox!.height - surfaceBox!.height)).toBeLessThan(4);
 
+      // Resize while frozen: the snapshot must stay pinned to its
+      // capture-time size (clip/reveal, never stretch) and keep standing in
+      // for the detached view — a stray bounds sync must not remount the
+      // native view above the open menu.
+      const before = await frame.boundingBox();
+      await app.evaluate(({ BrowserWindow }, delta) => {
+        const w = BrowserWindow.getAllWindows()[0];
+        const [width, height] = w.getSize();
+        w.setSize(width + delta, height - delta);
+      }, 80);
+      await win.waitForTimeout(800);
+      await expect(frame).toBeVisible();
+      const after = await frame.boundingBox();
+      expect(Math.abs(after!.width - before!.width)).toBeLessThan(2);
+      expect(Math.abs(after!.height - before!.height)).toBeLessThan(2);
+
       // Closing the menu remounts the live view and clears the snapshot.
       await win.keyboard.press("Escape");
       await expect(frame).not.toBeAttached();
