@@ -383,6 +383,10 @@ for (const provider of providerRegistry.resolveAll()) {
   });
 
   provider.on("event", (event: AgentEvent) => {
+    if (event.type === AgentEventType.GeneratedAttachment) {
+      return;
+    }
+
     let enrichedEvent = event;
 
     // Enrich non-Agent tool calls with their parent Agent ID.

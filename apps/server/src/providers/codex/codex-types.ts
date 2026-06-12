@@ -189,6 +189,10 @@ export interface CompletedItem {
   reasoningContent?: string[];
 
   // function_call (OpenAI Responses API shape, may appear in some versions)
+  // imageGeneration
+  savedPath?: string;
+  revisedPrompt?: string | null;
+
   [key: string]: unknown;
 }
 

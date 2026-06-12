@@ -215,6 +215,33 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
     }));
   });
 
+  it("materializes an image-only assistant row for generated attachments", async () => {
+    insertMessage(db, "u1", "user", "draw this", 1);
+    narrativeStore.beginTurn(THREAD);
+    narrativeStore.resetTurnCounters(THREAD);
+    const attachment = {
+      id: "img-1",
+      name: "generated.png",
+      mimeType: "image/png",
+      sizeBytes: 128,
+    };
+
+    finalizer.bufferAssistantAttachments(THREAD, [attachment]);
+    await finalizer.finalize(THREAD, "completed");
+
+    const { messages } = new MessageRepo(db).listByThread(THREAD, 10);
+    const assistant = messages.find((m) => m.role === "assistant");
+    expect(assistant?.content).toBe("");
+    expect(assistant?.attachments).toEqual([attachment]);
+    expect(broadcast).toHaveBeenCalledWith("agent.event", expect.objectContaining({
+      type: "message",
+      threadId: THREAD,
+      content: "",
+      attachments: [attachment],
+      messageId: assistant?.id,
+    }));
+  });
+
   it("flushes interrupted streaming text into a new assistant row that tool calls attach to", async () => {
     // A user stop arrives mid-stream: streamed text accumulated but the
     // provider never emitted a Message row. The flush must create the

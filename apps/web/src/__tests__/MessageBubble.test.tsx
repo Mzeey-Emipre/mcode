@@ -200,4 +200,36 @@ describe("MessageBubble assistant plan-questions suppression", () => {
     );
     expect(container.textContent ?? "").not.toMatch(/assistant/i);
   });
+
+  it("renders assistant image attachments even when the text body is empty", async () => {
+    const user = userEvent.setup();
+    const threadUuid = "550e8400-e29b-41d4-a716-446655440000";
+    const message: Message = {
+      ...makeAssistantMessage(""),
+      thread_id: threadUuid,
+      attachments: [
+        {
+          id: "img-1",
+          name: "generated.png",
+          mimeType: "image/png",
+          sizeBytes: 128,
+        },
+      ],
+    };
+
+    const { container } = render(<MessageBubble message={message} />);
+
+    const tray = container.querySelector("[data-testid='assistant-image-attachments']");
+    expect(tray).toBeTruthy();
+    const btn = container.querySelector('[aria-label="Preview image generated.png"]');
+    expect(btn).toBeTruthy();
+    expect(container.querySelector("[data-testid='markdown-content']")).toBeNull();
+
+    await user.click(btn!);
+    const lb = container.querySelector("[data-testid='mock-lightbox']");
+    expect(lb?.getAttribute("data-active-src")).toBe(
+      `mcode-attachment://${threadUuid}/img-1.png`,
+    );
+    expect(lb?.getAttribute("data-active-title")).toBe("generated.png");
+  });
 });

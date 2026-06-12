@@ -24,3 +24,33 @@ describe("AgentEvent provider_unavailable", () => {
     expect(parsed.configuredPath).toBe("/custom/claude");
   });
 });
+
+describe("AgentEvent generated attachments", () => {
+  const attachment = {
+    id: "img-1",
+    name: "generated.png",
+    mimeType: "image/png",
+    sizeBytes: 128,
+  };
+
+  it("parses a generatedAttachment event", () => {
+    const parsed = AgentEventSchema().parse({
+      type: "generatedAttachment",
+      threadId: "t-1",
+      attachment,
+    });
+    expect(parsed.type).toBe(AgentEventType.GeneratedAttachment);
+  });
+
+  it("parses assistant message attachments", () => {
+    const parsed = AgentEventSchema().parse({
+      type: "message",
+      threadId: "t-1",
+      content: "",
+      tokens: null,
+      attachments: [attachment],
+    });
+    if (parsed.type !== "message") throw new Error("unreachable");
+    expect(parsed.attachments).toEqual([attachment]);
+  });
+});

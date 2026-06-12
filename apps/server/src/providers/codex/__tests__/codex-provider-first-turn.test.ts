@@ -53,6 +53,7 @@ describe("CodexProvider first turn on new session", () => {
       { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
       { assign: vi.fn(), isWindowsJob: false } as never,
       stubEnvService() as never,
+      { persistGeneratedImageFromPath: vi.fn() } as never,
     );
 
     const ended = new Promise<void>((resolve) => {
@@ -104,6 +105,7 @@ describe("CodexProvider first turn on new session", () => {
       { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
       { assign: vi.fn(), isWindowsJob: false } as never,
       stubEnvService() as never,
+      { persistGeneratedImageFromPath: vi.fn() } as never,
     );
 
     void provider.sendTurn({

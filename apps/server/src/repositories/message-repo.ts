@@ -166,15 +166,25 @@ export class MessageRepo {
     content: string;
     sequence: number;
     model?: string | null;
+    attachments?: StoredAttachment[];
   }): Message {
     const now = new Date().toISOString();
     const modelValue = input.model ?? null;
+    const attachmentsJson =
+      input.attachments && input.attachments.length > 0
+        ? JSON.stringify(input.attachments)
+        : null;
 
-    this.db
+    const result = this.db
       .prepare(
-        "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, model, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, 0)",
+        "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, model, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, 0)",
       )
-      .run(input.id, input.threadId, input.content, now, input.sequence, modelValue);
+      .run(input.id, input.threadId, input.content, now, input.sequence, attachmentsJson, modelValue);
+
+    const attachments =
+      result.changes === 0 && input.attachments && input.attachments.length > 0
+        ? this.appendAttachments(input.id, input.attachments)
+        : (input.attachments ?? null);
 
     return {
       id: input.id,
@@ -187,12 +197,33 @@ export class MessageRepo {
       tokens_used: null,
       timestamp: now,
       sequence: input.sequence,
-      attachments: null,
+      attachments,
       reply_to_message_id: null,
       quoted_text: null,
       model: modelValue,
       is_internal: false,
     };
+  }
+
+  /** Append stored attachments to an existing message, deduping by attachment id. */
+  appendAttachments(messageId: string, attachments: StoredAttachment[]): StoredAttachment[] {
+    if (attachments.length === 0) return [];
+    const row = this.db
+      .prepare("SELECT attachments FROM messages WHERE id = ? AND is_internal = 0")
+      .get(messageId) as Pick<MessageRow, "attachments"> | undefined;
+    const parsed = parseJsonField(row?.attachments ?? null);
+    const existing = Array.isArray(parsed)
+      ? (parsed as StoredAttachment[])
+      : [];
+    const byId = new Map(existing.map((att) => [att.id, att]));
+    for (const att of attachments) {
+      byId.set(att.id, att);
+    }
+    const merged = [...byId.values()];
+    this.db
+      .prepare("UPDATE messages SET attachments = ? WHERE id = ? AND is_internal = 0")
+      .run(merged.length > 0 ? JSON.stringify(merged) : null, messageId);
+    return merged;
   }
 
   /**
