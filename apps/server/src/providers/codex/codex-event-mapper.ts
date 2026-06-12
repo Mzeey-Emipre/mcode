@@ -2,6 +2,11 @@ import { randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
+import {
+  BoundedToolOutputBuffer,
+  boundToolOutput,
+  type BoundedToolOutputResult,
+} from "../../services/bounded-tool-output.js";
 import type { CodexNotification, CompletedItem } from "./codex-types.js";
 
 /** Notification methods that produce no agent events (module-level to avoid per-call allocation). */
@@ -80,7 +85,7 @@ export class CodexEventMapper {
   /** Codex app-server's own main thread id. Distinct from Mcode's persisted thread UUID. */
   private mainCodexThreadId: string | undefined;
   /** Per-item streaming command output buffers, keyed by itemId. */
-  private readonly commandOutputBuffers = new Map<string, string>();
+  private readonly commandOutputBuffers = new Map<string, BoundedToolOutputBuffer>();
   /** Start-time ToolUse signatures, so completion enrichment only emits when details changed. */
   private readonly startedToolUseSignatures = new Map<string, string>();
   /**
@@ -98,7 +103,9 @@ export class CodexEventMapper {
   /** Late metadata for spawned Agent rows, keyed by parent collab item id. */
   private spawnAgentToolInputById = new Map<string, Record<string, unknown>>();
   /** Private assistant text streamed by Codex child threads, keyed by child thread id. */
-  private childAssistantTextByThreadId = new Map<string, string>();
+  private childAssistantTextByThreadId = new Map<string, BoundedToolOutputBuffer>();
+  /** Forces streamed output through artifact spooling during memory pressure. */
+  private forceOutputArtifacts = false;
   /**
    * Collab ids pushed onto the stack via the legacy path (`item/completed`
    * arrived without a prior `item/started`). These need to be popped once the
@@ -130,6 +137,81 @@ export class CodexEventMapper {
     this.mainCodexThreadId = threadId;
   }
 
+  /** Enables or disables artifact-first buffering for future output chunks. */
+  setOutputTruncationMode(enabled: boolean): void {
+    this.forceOutputArtifacts = enabled;
+    for (const buffer of this.commandOutputBuffers.values()) {
+      buffer.setForceArtifact(enabled);
+    }
+    for (const buffer of this.childAssistantTextByThreadId.values()) {
+      buffer.setForceArtifact(enabled);
+    }
+  }
+
+  private commandOutputBuffer(toolCallId: string): BoundedToolOutputBuffer {
+    let buffer = this.commandOutputBuffers.get(toolCallId);
+    if (!buffer) {
+      buffer = new BoundedToolOutputBuffer(this.threadId, toolCallId, {
+        forceArtifact: this.forceOutputArtifacts,
+      });
+      this.commandOutputBuffers.set(toolCallId, buffer);
+    }
+    return buffer;
+  }
+
+  private childAssistantBuffer(childThreadId: string): BoundedToolOutputBuffer {
+    let buffer = this.childAssistantTextByThreadId.get(childThreadId);
+    if (!buffer) {
+      const collabId = this.collabReceiverThreadToCollabId.get(childThreadId) ?? childThreadId;
+      buffer = new BoundedToolOutputBuffer(this.threadId, collabId, {
+        forceArtifact: this.forceOutputArtifacts,
+      });
+      this.childAssistantTextByThreadId.set(childThreadId, buffer);
+    }
+    return buffer;
+  }
+
+  private boundedOutput(
+    toolCallId: string,
+    output: string | BoundedToolOutputBuffer | undefined,
+    fallback = "",
+  ): BoundedToolOutputResult {
+    if (output instanceof BoundedToolOutputBuffer) {
+      return output.finalize(fallback);
+    }
+    return boundToolOutput({
+      threadId: this.threadId,
+      toolCallId,
+      output: output ?? fallback,
+      forceArtifact: this.forceOutputArtifacts,
+    });
+  }
+
+  private toolResultEvent(args: {
+    toolCallId: string;
+    output: string | BoundedToolOutputBuffer | undefined;
+    isError: boolean;
+    toolInput?: Record<string, unknown>;
+    fallback?: string;
+  }): AgentEvent {
+    const bounded = this.boundedOutput(args.toolCallId, args.output, args.fallback);
+    return {
+      type: AgentEventType.ToolResult,
+      threadId: this.threadId,
+      toolCallId: args.toolCallId,
+      output: bounded.output,
+      isError: args.isError,
+      ...(bounded.outputTruncated
+        ? {
+            outputTruncated: true,
+            outputTotalBytes: bounded.outputTotalBytes,
+            outputArtifactPath: bounded.outputArtifactPath,
+          }
+        : {}),
+      ...(args.toolInput && Object.keys(args.toolInput).length > 0 ? { toolInput: args.toolInput } : {}),
+    };
+  }
+
   /** Reads `params.threadId` from a Codex notification when present. */
   private notificationThreadId(notification: CodexNotification): string | undefined {
     const tid = (notification.params as { threadId?: unknown }).threadId;
@@ -155,8 +237,7 @@ export class CodexEventMapper {
     if (method === "item/commandExecution/outputDelta") {
       const { itemId, delta } = notification.params;
       if (itemId && delta) {
-        const prev = this.commandOutputBuffers.get(itemId) ?? "";
-        this.commandOutputBuffers.set(itemId, prev + delta);
+        this.commandOutputBuffer(itemId).append(delta);
       }
       return [];
     }
@@ -326,20 +407,24 @@ export class CodexEventMapper {
   /** Accumulates private child-thread final text without emitting it into the parent reply. */
   private appendChildAssistantText(childThreadId: string | undefined, delta: string): void {
     if (!childThreadId || !delta) return;
-    const prev = this.childAssistantTextByThreadId.get(childThreadId) ?? "";
-    this.childAssistantTextByThreadId.set(childThreadId, prev + delta);
+    this.childAssistantBuffer(childThreadId).append(delta);
   }
 
   /** Stores a child-thread full-text snapshot as a delta against any streamed text. */
   private mergeChildAssistantFullText(childThreadId: string | undefined, fullText: string): void {
     if (!childThreadId || !fullText) return;
-    const prev = this.childAssistantTextByThreadId.get(childThreadId) ?? "";
+    const buffer = this.childAssistantBuffer(childThreadId);
+    const prev = buffer.retainedText();
+    if (buffer.isPreviewTruncated() && fullText.length >= prev.length) {
+      buffer.replaceWith(fullText);
+      return;
+    }
     if (fullText.length > prev.length && fullText.startsWith(prev)) {
-      this.childAssistantTextByThreadId.set(childThreadId, fullText);
+      buffer.replaceWith(fullText);
       return;
     }
     if (!prev.includes(fullText)) {
-      this.childAssistantTextByThreadId.set(childThreadId, prev + fullText);
+      buffer.append(fullText);
     }
   }
 
@@ -353,21 +438,18 @@ export class CodexEventMapper {
   }
 
   /** Emits the spawn Agent ToolResult once; later child/wait completions are ignored. */
-  private completeSpawnAgent(collabId: string | undefined, output: string, isError = false): AgentEvent[] {
+  private completeSpawnAgent(
+    collabId: string | undefined,
+    output: string | BoundedToolOutputBuffer | undefined,
+    isError = false,
+  ): AgentEvent[] {
     if (!collabId || this.completedSpawnAgentIds.has(collabId)) return [];
     if (!this.openSpawnAgentIds.has(collabId)) return [];
     this.completedSpawnAgentIds.add(collabId);
     this.openSpawnAgentIds.delete(collabId);
     this.popCollabFromScopeStack(collabId);
     const toolInput = this.spawnAgentToolInputById.get(collabId);
-    return [{
-      type: AgentEventType.ToolResult,
-      threadId: this.threadId,
-      toolCallId: collabId,
-      output,
-      isError,
-      ...(toolInput && Object.keys(toolInput).length > 0 ? { toolInput } : {}),
-    }];
+    return [this.toolResultEvent({ toolCallId: collabId, output, isError, toolInput })];
   }
 
   /** Maps a `wait` collab's per-child state payload into Agent ToolResults. */
@@ -804,8 +886,7 @@ export class CodexEventMapper {
       const boundaryEvents = this.drainPendingAssistantBoundary(false);
       const { itemId, delta } = notification.params;
       if (itemId && delta) {
-        const prev = this.commandOutputBuffers.get(itemId) ?? "";
-        this.commandOutputBuffers.set(itemId, prev + delta);
+        this.commandOutputBuffer(itemId).append(delta);
       }
       return boundaryEvents;
     }
@@ -994,13 +1075,11 @@ export class CodexEventMapper {
     if (itemType === "function_call") {
       const toolCallId = item.id ?? `fc-${randomUUID()}`;
       const toolUseEvent = this.buildToolUseEvent(item, toolCallId, notification);
-      const toolResultEvent: AgentEvent = {
-        type: AgentEventType.ToolResult,
-        threadId,
+      const toolResultEvent = this.toolResultEvent({
         toolCallId,
-        output: typeof item.output === "string" ? item.output : "",
         isError: false,
-      };
+        output: typeof item.output === "string" ? item.output : "",
+      });
       return this.shouldEmitCompletionToolUse(toolCallId, toolUseEvent)
         ? [toolUseEvent, toolResultEvent]
         : [toolResultEvent];
@@ -1011,12 +1090,12 @@ export class CodexEventMapper {
       // Prefer streaming-buffered output; fall back to item.output.
       // The buffer is keyed by itemId from outputDelta notifications which should
       // match item.id, but delete by value scan as a safety net.
-      let bufferedOutput = this.commandOutputBuffers.get(toolCallId) ?? "";
+      let bufferedOutput = this.commandOutputBuffers.get(toolCallId);
       if (!bufferedOutput && this.commandOutputBuffers.size > 0 && !item.id) {
         // Fallback: if no item.id was provided, grab the most recent buffer entry
         const lastKey = [...this.commandOutputBuffers.keys()].pop();
         if (lastKey) {
-          bufferedOutput = this.commandOutputBuffers.get(lastKey) ?? "";
+          bufferedOutput = this.commandOutputBuffers.get(lastKey);
           this.commandOutputBuffers.delete(lastKey);
         }
       }
@@ -1024,17 +1103,15 @@ export class CodexEventMapper {
         typeof item.aggregatedOutput === "string" && item.aggregatedOutput.length > 0
           ? item.aggregatedOutput
           : (typeof item.output === "string" ? item.output : "");
-      const output = bufferedOutput || textOut;
       this.commandOutputBuffers.delete(toolCallId);
 
       const toolUseEvent = this.buildToolUseEvent(item, toolCallId, notification);
-      const toolResultEvent: AgentEvent = {
-        type: AgentEventType.ToolResult,
-        threadId,
+      const toolResultEvent = this.toolResultEvent({
         toolCallId,
-        output,
         isError: item.exitCode != null && item.exitCode !== 0,
-      };
+        output: bufferedOutput,
+        fallback: textOut,
+      });
       return this.shouldEmitCompletionToolUse(toolCallId, toolUseEvent)
         ? [toolUseEvent, toolResultEvent]
         : [toolResultEvent];
@@ -1045,13 +1122,11 @@ export class CodexEventMapper {
       const changes = item.changes ?? [];
       const paths = changes.map((c) => c.path).join(", ");
       const toolUseEvent = this.buildToolUseEvent(item, toolCallId, notification);
-      const toolResultEvent: AgentEvent = {
-        type: AgentEventType.ToolResult,
-        threadId,
+      const toolResultEvent = this.toolResultEvent({
         toolCallId,
-        output: paths,
         isError: false,
-      };
+        output: paths,
+      });
       return this.shouldEmitCompletionToolUse(toolCallId, toolUseEvent)
         ? [toolUseEvent, toolResultEvent]
         : [toolResultEvent];
@@ -1070,13 +1145,11 @@ export class CodexEventMapper {
             ? item.error
             : "";
       const kind = this.collabToolKind(item);
-      const toolResultEvent: AgentEvent = {
-        type: AgentEventType.ToolResult,
-        threadId,
+      const toolResultEvent = this.toolResultEvent({
         toolCallId,
-        output: out || `Collaboration (${kind})`,
         isError: typeof item.error === "string" && item.error.length > 0,
-      };
+        output: out || `Collaboration (${kind})`,
+      });
       const receiverCount = isSpawn ? this.registerCollabReceiverThreads(toolCallId, item) : 0;
       if (isSpawn) {
         this.mergeSpawnAgentToolInput(toolCallId, item);
@@ -1111,13 +1184,11 @@ export class CodexEventMapper {
     if (itemType === "mcpToolCall" || itemType === "dynamicToolCall") {
       const toolCallId = item.id ?? `mcp-${randomUUID()}`;
       const toolUseEvent = this.buildToolUseEvent(item, toolCallId, notification);
-      const toolResultEvent: AgentEvent = {
-        type: AgentEventType.ToolResult,
-        threadId,
+      const toolResultEvent = this.toolResultEvent({
         toolCallId,
-        output: String(item.error ?? item.result ?? ""),
         isError: !!item.error,
-      };
+        output: String(item.error ?? item.result ?? ""),
+      });
       return this.shouldEmitCompletionToolUse(toolCallId, toolUseEvent)
         ? [toolUseEvent, toolResultEvent]
         : [toolResultEvent];

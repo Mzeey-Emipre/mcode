@@ -16,6 +16,7 @@ import { buildDelegationTags } from "./subagent-delegation-tags";
 import { extractSubagentDescription } from "./extract-subagent-description";
 import { StackedLayersIcon, stackedLayersIconClassName } from "./StackedLayersIcon";
 import { DeltaBlock } from "./DeltaBlock";
+import { ToolOutputTruncationNotice } from "./ToolOutputTruncationNotice";
 
 interface SubagentRowProps {
   toolCall: ToolCall;
@@ -128,6 +129,7 @@ interface ExpandableSubagentRowProps extends SubagentRowProps {
  * Collapsible sub-agent row for nested child tools or a final sub-agent result.
  */
 function ExpandableSubagentRow({
+  toolCall,
   children,
   hooks,
   allToolCalls,
@@ -219,6 +221,7 @@ function ExpandableSubagentRow({
             className="min-w-0 max-w-full pl-7 pr-2 py-1 text-foreground/85"
             data-testid="subagent-result"
           >
+            <ToolOutputTruncationNotice toolCall={toolCall} />
             <DeltaBlock text={finalOutput} isStreaming={false} showCursor={false} />
           </div>
         )}

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@mcode/shared", () => ({
+  getMcodeDir: () => process.env.MCODE_DATA_DIR ?? ".",
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
@@ -113,6 +114,46 @@ describe("CodexEventMapper", () => {
         isError: false,
       },
     ]);
+  });
+
+  it("bounds streamed command output and writes the full artifact", async () => {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const fullOutput =
+      "A".repeat(200 * 1024)
+      + "M".repeat(16 * 1024)
+      + "Z".repeat(80 * 1024);
+
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/commandExecution/outputDelta",
+      params: { itemId: "cmd-big", delta: fullOutput },
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "commandExecution",
+          id: "cmd-big",
+          command: "large-output",
+          exitCode: 0,
+        },
+      },
+    });
+    const result = events.find((event) => event.type === "toolResult");
+
+    expect(result).toMatchObject({
+      type: "toolResult",
+      toolCallId: "cmd-big",
+      outputTruncated: true,
+      outputTotalBytes: Buffer.byteLength(fullOutput, "utf8"),
+    });
+    expect(result?.type === "toolResult" ? Buffer.byteLength(result.output, "utf8") : 0).toBe(256 * 1024);
+    expect(result?.type === "toolResult" ? result.output.startsWith("A".repeat(1024)) : false).toBe(true);
+    expect(result?.type === "toolResult" ? result.output.endsWith("Z".repeat(1024)) : false).toBe(true);
+    expect(result?.type === "toolResult" ? existsSync(result.outputArtifactPath ?? "") : false).toBe(true);
+    expect(result?.type === "toolResult" ? readFileSync(result.outputArtifactPath!, "utf8") : "").toBe(fullOutput);
   });
 
   it("emits only toolResult at completion when command start already had full details", () => {
@@ -1765,6 +1806,59 @@ describe("CodexEventMapper", () => {
         output: "ok",
       }),
     ]);
+  });
+
+  it("bounds large sub-agent final output and writes the full artifact", async () => {
+    const { existsSync, readFileSync } = await import("node:fs");
+    mapper = new CodexEventMapper("test-thread", "main-codex-thread");
+    const fullOutput =
+      "A".repeat(200 * 1024)
+      + "M".repeat(16 * 1024)
+      + "Z".repeat(80 * 1024);
+
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-codex-thread",
+        item: { type: "collabAgentToolCall", id: "collab-a", tool: "spawnAgent" },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-codex-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-a",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-thread"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-thread", delta: fullOutput },
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-thread", turn: { status: "completed" } },
+    });
+    const result = events.find((event) => event.type === "toolResult");
+
+    expect(result).toMatchObject({
+      type: "toolResult",
+      toolCallId: "collab-a",
+      outputTruncated: true,
+      outputTotalBytes: Buffer.byteLength(fullOutput, "utf8"),
+    });
+    expect(result?.type === "toolResult" ? Buffer.byteLength(result.output, "utf8") : 0).toBe(256 * 1024);
+    expect(result?.type === "toolResult" ? existsSync(result.outputArtifactPath ?? "") : false).toBe(true);
+    expect(result?.type === "toolResult" ? readFileSync(result.outputArtifactPath!, "utf8") : "").toBe(fullOutput);
   });
 
   // ---------------------------------------------------------------------------

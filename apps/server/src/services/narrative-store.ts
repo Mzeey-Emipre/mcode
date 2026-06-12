@@ -385,6 +385,11 @@ export class NarrativeStore {
     output: string,
     isError: boolean,
     toolInput?: Record<string, unknown>,
+    outputMeta?: {
+      outputTruncated?: boolean;
+      outputTotalBytes?: number;
+      outputArtifactPath?: string;
+    },
   ): void {
     const stack = this.agentCallStack.get(threadId) ?? [];
     const stackIdx = stack.indexOf(toolCallId);
@@ -402,6 +407,15 @@ export class NarrativeStore {
     for (let i = buffer.length - 1; i >= 0; i--) {
       if (buffer[i].toolCallId === toolCallId) {
         buffer[i].outputSummary = output.slice(0, 500);
+        buffer[i].outputTruncated = outputMeta?.outputTruncated === true;
+        delete buffer[i].outputTotalBytes;
+        delete buffer[i].outputArtifactPath;
+        if (outputMeta?.outputTotalBytes != null) {
+          buffer[i].outputTotalBytes = outputMeta.outputTotalBytes;
+        }
+        if (outputMeta?.outputArtifactPath) {
+          buffer[i].outputArtifactPath = outputMeta.outputArtifactPath;
+        }
         buffer[i].status = isError ? "failed" : "completed";
         if (toolInput && Object.keys(toolInput).length > 0) {
           buffer[i]._rawToolInput = {

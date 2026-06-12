@@ -76,4 +76,21 @@ describe("SubagentRow", () => {
       "Mapper tests cover wait suppression.",
     );
   });
+
+  it("shows truncation metadata for bounded subagent output", () => {
+    render(
+      <SubagentRow
+        toolCall={mkAgent({
+          output: "preview",
+          outputTruncated: true,
+          outputTotalBytes: 512 * 1024,
+          outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\agent.txt",
+        })}
+        children={[]}
+        hooks={[]}
+      />,
+    );
+
+    expect(screen.getByText(/Output truncated/).textContent).toContain("512 KB total");
+  });
 });

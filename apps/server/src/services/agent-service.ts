@@ -16,6 +16,7 @@ import type {
   ReasoningLevel,
   ContextWindowMode,
   IProviderRegistry,
+  IAgentProvider,
   TurnRequest,
   AgentEvent,
   ProviderId,
@@ -39,7 +40,7 @@ import { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-r
 import { GitService } from "./git-service";
 import { AttachmentService } from "./attachment-service";
 import { SnapshotService } from "./snapshot-service";
-import { MemoryPressureService } from "./memory-pressure-service";
+import { MemoryPressureService, type MemoryPressureSnapshot } from "./memory-pressure-service";
 import { broadcast } from "../transport/push";
 import { GoalCommand } from "../commands/goal-command";
 import { CommandRouter } from "../commands/command-router";
@@ -367,6 +368,8 @@ export class AgentService {
       throw new Error(`cwd is not a valid absolute directory: ${cwd}`);
     }
 
+    this.memoryPressureService.assertCanStartTurn();
+
     // Compute next sequence number and persist user message
     const { messages: existingMessages } = this.messageRepo.listByThread(threadId, 1);
     const nextSeq =
@@ -547,7 +550,7 @@ export class AgentService {
     const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
 
     this.activeSessionIds.add(threadId);
-    this.memoryPressureService.markActive();
+    this.memoryPressureService.markActive(threadId);
 
     // Emit the live-session "turn started" signal before any other events so
     // clients can populate runningThreadIds (drives sidebar + composer indicators).
@@ -1102,9 +1105,7 @@ export class AgentService {
     broadcast("thread.status", { threadId, status: "paused" });
     if (this.activeSessionIds.has(threadId)) {
       this.activeSessionIds.delete(threadId);
-      if (this.activeSessionIds.size === 0) {
-        this.memoryPressureService.markIdle();
-      }
+      this.memoryPressureService.markIdle(threadId);
     }
   }
 
@@ -1185,9 +1186,7 @@ export class AgentService {
   private trackSessionEnded(threadId: string): void {
     if (!this.activeSessionIds.has(threadId)) return;
     this.activeSessionIds.delete(threadId);
-    if (this.activeSessionIds.size === 0) {
-      this.memoryPressureService.markIdle();
-    }
+    this.memoryPressureService.markIdle(threadId);
   }
 
   /**
@@ -1344,9 +1343,9 @@ export class AgentService {
     const pendingRollback = dispatch?.pendingRollback ?? null;
 
     this.disarmTurnRetryWindow(threadId);
-    this.activeSessionIds.delete(threadId);
-    if (this.activeSessionIds.size === 0) {
-      this.memoryPressureService.markIdle();
+    const wasActive = this.activeSessionIds.delete(threadId);
+    if (wasActive) {
+      this.memoryPressureService.markIdle(threadId);
     }
     // Roll the just-installed command side effect back so a failed send doesn't
     // leave a hidden gate (e.g. a Stop-hook goal) active on the next turn. Runs
@@ -1396,6 +1395,10 @@ export class AgentService {
   init(): void {
     if (this.initialized) return;
     this.initialized = true;
+
+    this.memoryPressureService.onPressureChange((snapshot) => {
+      this.handleMemoryPressure(snapshot);
+    });
 
     for (const provider of this.providerRegistry.resolveAll()) {
       provider.on("event", (event: AgentEvent) => {
@@ -1653,6 +1656,11 @@ export class AgentService {
             event.output,
             event.isError,
             event.toolInput,
+            {
+              ...(event.outputTruncated === true ? { outputTruncated: true } : {}),
+              ...(event.outputTotalBytes != null ? { outputTotalBytes: event.outputTotalBytes } : {}),
+              ...(event.outputArtifactPath ? { outputArtifactPath: event.outputArtifactPath } : {}),
+            },
           );
         }
 
@@ -1662,7 +1670,7 @@ export class AgentService {
           // already added the thread before emitting TurnStarted.
           if (!this.activeSessionIds.has(event.threadId)) {
             this.activeSessionIds.add(event.threadId);
-            this.memoryPressureService.markActive();
+            this.memoryPressureService.markActive(event.threadId);
           }
           // Reset per-turn state that must survive past turn finalize so late
           // hooks can attach to the previous turn. Re-seeding them here rather
@@ -1855,6 +1863,27 @@ export class AgentService {
           this.pendingExitPlanMarkdown.delete(event.threadId);
           this.planCapturedThisTurn.delete(event.threadId);
         }
+      });
+    }
+  }
+
+  private handleMemoryPressure(snapshot: MemoryPressureSnapshot): void {
+    const truncateOutput = snapshot.level !== "normal";
+    for (const provider of this.providerRegistry.resolveAll()) {
+      const memoryAware = provider as IAgentProvider & {
+        setOutputTruncationMode?: (enabled: boolean) => void;
+        shedMemoryPressure?: (level: MemoryPressureSnapshot["level"]) => Promise<void> | void;
+      };
+
+      memoryAware.setOutputTruncationMode?.(truncateOutput);
+      if (snapshot.level === "normal" || typeof memoryAware.shedMemoryPressure !== "function") {
+        continue;
+      }
+      Promise.resolve(memoryAware.shedMemoryPressure(snapshot.level)).catch((err: unknown) => {
+        logger.warn("Provider memory-pressure shedding failed", {
+          level: snapshot.level,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
     }
   }

@@ -9,5 +9,8 @@ export function recordToToolCall(record: ToolCallRecord): ToolCall {
     output: record.output_summary || null,
     isError: record.status === "failed",
     isComplete: true,
+    ...(record.output_truncated === 1 ? { outputTruncated: true } : {}),
+    ...(typeof record.output_total_bytes === "number" ? { outputTotalBytes: record.output_total_bytes } : {}),
+    ...(record.output_artifact_path ? { outputArtifactPath: record.output_artifact_path } : {}),
   };
 }

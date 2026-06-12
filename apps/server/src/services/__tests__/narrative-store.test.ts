@@ -221,6 +221,25 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(store.getCurrentParentToolCallId(THREAD)).toBeUndefined();
     });
 
+    it("persists tool output truncation metadata", () => {
+      seedAssistantMessage("m1", "", 1);
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.bufferToolCall(THREAD, toolUse("tc-1", "Bash"));
+
+      store.updateBufferedToolCallOutput(THREAD, "tc-1", "preview", false, undefined, {
+        outputTruncated: true,
+        outputTotalBytes: 300_000,
+        outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
+      });
+      store.persistNarrative(THREAD, "m1", "", "completed");
+
+      const tools = new ToolCallRecordRepo(db).listByMessage("m1");
+      expect(tools[0].output_truncated).toBe(1);
+      expect(tools[0].output_total_bytes).toBe(300_000);
+      expect(tools[0].output_artifact_path).toBe("C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt");
+    });
+
     it("clears the whole stack on the final Message event", () => {
       store.beginTurn(THREAD);
       store.resetTurnCounters(THREAD);

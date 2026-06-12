@@ -13,6 +13,7 @@ import type { ToolCall } from "@/transport/types";
 import type { ToolGroup } from "./types";
 import { extractToolInputDetail } from "./tool-detail";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
+import { ToolOutputTruncationNotice } from "./ToolOutputTruncationNotice";
 
 interface ToolSummaryLineProps {
   /** The group of consecutive tool calls to summarize. */
@@ -137,15 +138,21 @@ export function ToolSummaryLine({
 
                 {/* Inline content blocks */}
                 {tc.isComplete && !tc.isError && isShellTool(tc.toolName) && tc.output && (
-                  <pre className="max-w-full text-[0.75rem] font-mono rounded px-2 py-1 bg-[var(--code-bg)] text-foreground/80 overflow-x-auto whitespace-pre-wrap break-words max-h-40">
-                    {tc.output}
-                  </pre>
+                  <div className="flex min-w-0 max-w-full flex-col gap-1">
+                    <ToolOutputTruncationNotice toolCall={tc} />
+                    <pre className="max-w-full text-[0.75rem] font-mono rounded px-2 py-1 bg-[var(--code-bg)] text-foreground/80 overflow-x-auto whitespace-pre-wrap break-words max-h-40">
+                      {tc.output}
+                    </pre>
+                  </div>
                 )}
 
                 {tc.isError && tc.output && (
-                  <pre className="max-w-full text-[0.75rem] font-mono rounded px-2 py-1 bg-[var(--diff-remove)]/10 text-[var(--diff-remove)] overflow-x-auto whitespace-pre-wrap break-words max-h-40">
-                    {tc.output}
-                  </pre>
+                  <div className="flex min-w-0 max-w-full flex-col gap-1">
+                    <ToolOutputTruncationNotice toolCall={tc} />
+                    <pre className="max-w-full text-[0.75rem] font-mono rounded px-2 py-1 bg-[var(--diff-remove)]/10 text-[var(--diff-remove)] overflow-x-auto whitespace-pre-wrap break-words max-h-40">
+                      {tc.output}
+                    </pre>
+                  </div>
                 )}
               </li>
             );

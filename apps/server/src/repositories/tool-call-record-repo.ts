@@ -16,6 +16,9 @@ interface ToolCallRecordRow {
   tool_name: string;
   input_summary: string;
   output_summary: string;
+  output_truncated: number;
+  output_total_bytes: number | null;
+  output_artifact_path: string | null;
   status: string;
   started_at: string;
   completed_at: string | null;
@@ -30,6 +33,9 @@ export interface CreateToolCallRecordInput {
   toolName: string;
   inputSummary: string;
   outputSummary: string;
+  outputTruncated?: boolean;
+  outputTotalBytes?: number;
+  outputArtifactPath?: string;
   status: ToolCallStatus;
   sortOrder: number;
   parentToolCallId?: string;
@@ -43,6 +49,9 @@ function rowToToolCallRecord(row: ToolCallRecordRow): ToolCallRecord {
     tool_name: row.tool_name,
     input_summary: row.input_summary,
     output_summary: row.output_summary,
+    output_truncated: row.output_truncated,
+    output_total_bytes: row.output_total_bytes,
+    output_artifact_path: row.output_artifact_path,
     status: row.status as ToolCallStatus,
     started_at: row.started_at,
     completed_at: row.completed_at,
@@ -51,7 +60,7 @@ function rowToToolCallRecord(row: ToolCallRecordRow): ToolCallRecord {
 }
 
 const TOOL_CALL_RECORD_COLUMNS =
-  "id, message_id, parent_tool_call_id, tool_name, input_summary, output_summary, status, started_at, completed_at, sort_order";
+  "id, message_id, parent_tool_call_id, tool_name, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, status, started_at, completed_at, sort_order";
 
 /** Repository for tool call record creation and retrieval against SQLite. */
 @injectable()
@@ -63,7 +72,7 @@ export class ToolCallRecordRepo {
 
   constructor(@inject("Database") private readonly db: Database.Database) {
     this.stmtInsert = db.prepare(
-      "INSERT OR IGNORE INTO tool_call_records (id, message_id, parent_tool_call_id, tool_name, input_summary, output_summary, status, started_at, completed_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO tool_call_records (id, message_id, parent_tool_call_id, tool_name, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, status, started_at, completed_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     this.stmtListByMessage = db.prepare(
       `SELECT ${TOOL_CALL_RECORD_COLUMNS} FROM tool_call_records WHERE message_id = ? ORDER BY sort_order ASC`,
@@ -89,6 +98,9 @@ export class ToolCallRecordRepo {
       input.toolName,
       input.inputSummary,
       input.outputSummary,
+      input.outputTruncated === true ? 1 : 0,
+      input.outputTotalBytes ?? null,
+      input.outputArtifactPath ?? null,
       input.status,
       now,
       completedAt,
@@ -102,6 +114,9 @@ export class ToolCallRecordRepo {
       tool_name: input.toolName,
       input_summary: input.inputSummary,
       output_summary: input.outputSummary,
+      output_truncated: input.outputTruncated === true ? 1 : 0,
+      output_total_bytes: input.outputTotalBytes ?? null,
+      output_artifact_path: input.outputArtifactPath ?? null,
       status: input.status,
       started_at: now,
       completed_at: completedAt,
@@ -122,6 +137,9 @@ export class ToolCallRecordRepo {
           item.toolName,
           item.inputSummary,
           item.outputSummary,
+          item.outputTruncated === true ? 1 : 0,
+          item.outputTotalBytes ?? null,
+          item.outputArtifactPath ?? null,
           item.status,
           now,
           completedAt,

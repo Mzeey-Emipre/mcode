@@ -197,6 +197,32 @@ export function applySchemaPatches(db: Database.Database): void {
       assign();
     }
   }
+
+  const toolCols = (
+    db.prepare("PRAGMA table_info(tool_call_records)").all() as Array<{ name: string }>
+  ).map((r) => r.name);
+  const addToolCallColumn = (columnSql: string): void => {
+    try {
+      db.prepare(`ALTER TABLE tool_call_records ADD COLUMN ${columnSql}`).run();
+    } catch (err) {
+      if (
+        !(err instanceof Error) ||
+        !err.message.includes("duplicate column name")
+      ) {
+        throw err;
+      }
+    }
+  };
+
+  if (toolCols.length > 0 && !toolCols.includes("output_truncated")) {
+    addToolCallColumn("output_truncated INTEGER DEFAULT 0 NOT NULL");
+  }
+  if (toolCols.length > 0 && !toolCols.includes("output_total_bytes")) {
+    addToolCallColumn("output_total_bytes INTEGER");
+  }
+  if (toolCols.length > 0 && !toolCols.includes("output_artifact_path")) {
+    addToolCallColumn("output_artifact_path TEXT");
+  }
 }
 
 function runMigrations(db: Database.Database): void {

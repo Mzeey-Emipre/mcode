@@ -126,6 +126,8 @@ function build(): Built {
   const memoryPressureService = {
     markActive: vi.fn(),
     markIdle: vi.fn(),
+    assertCanStartTurn: vi.fn(),
+    onPressureChange: vi.fn(),
   } as unknown as MemoryPressureService;
   const taskRepo = { get: vi.fn(() => []), upsert: vi.fn() } as unknown as TaskRepo;
   const settingsService = {

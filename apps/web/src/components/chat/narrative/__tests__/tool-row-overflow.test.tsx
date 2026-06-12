@@ -103,4 +103,30 @@ describe("narrative tool row layout classes", () => {
     expect(container.querySelector(".lucide-terminal")).toBeTruthy();
     expect(screen.getByText("Ran command")).toBeTruthy();
   });
+
+  it("ToolSummaryLine shows truncation metadata for bounded output", () => {
+    const group: ToolGroup = {
+      calls: [
+        makeBashCall({
+          id: "tc-truncated",
+          output: "preview",
+          isComplete: true,
+          outputTruncated: true,
+          outputTotalBytes: 300 * 1024,
+          outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
+        }),
+      ],
+    };
+
+    render(
+      <div className={COLUMN_CLASS}>
+        <ToolSummaryLine group={group} hasError={false} hasCancelled={false} />
+      </div>,
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByText(/Output truncated/).textContent).toContain("300 KB total");
+    expect(screen.getByText(/Output truncated/).textContent).toContain("full output saved");
+  });
 });
