@@ -222,6 +222,7 @@ export class BoundedToolOutputBuffer {
 
   private flushArtifactChunks(): void {
     if (!this.artifactPath || this.artifactChunks.length === 0) return;
+    mkdirSync(dirname(this.artifactPath), { recursive: true, mode: 0o700 });
     appendFileSync(this.artifactPath, this.artifactChunks.join(""), {
       encoding: "utf8",
       mode: 0o600,

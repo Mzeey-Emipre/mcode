@@ -91,6 +91,21 @@ describe("bounded tool output", () => {
     expect(result.output.includes("M".repeat(1024))).toBe(false);
   });
 
+  it("recreates the artifact directory before flushing queued chunks", () => {
+    const buffer = new BoundedToolOutputBuffer("thread-1", "tool-1", {
+      forceArtifact: true,
+    });
+    const artifactPath = resolveToolOutputArtifactPath("thread-1", "tool-1");
+    const largeOutput = "x".repeat(300 * 1024);
+
+    buffer.append("small");
+    rmSync(dirname(artifactPath), { recursive: true, force: true });
+    buffer.append(largeOutput);
+    const result = buffer.finalize();
+
+    expect(readFileSync(result.outputArtifactPath!, "utf8")).toBe(`small${largeOutput}`);
+  });
+
   it("prunes stale artifacts and keeps fresh artifacts", () => {
     const stale = boundToolOutput({
       threadId: "thread-1",
