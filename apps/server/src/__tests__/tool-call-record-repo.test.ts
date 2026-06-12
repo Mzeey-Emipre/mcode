@@ -47,6 +47,22 @@ describe("V7 migration", () => {
 
     db.close();
   });
+
+  it("adds tool output truncation columns", () => {
+    const db = openMemoryDatabase();
+
+    const cols = (
+      db.prepare("PRAGMA table_info(tool_call_records)").all() as Array<{ name: string }>
+    ).map((row) => row.name);
+
+    expect(cols).toEqual(expect.arrayContaining([
+      "output_truncated",
+      "output_total_bytes",
+      "output_artifact_path",
+    ]));
+
+    db.close();
+  });
 });
 
 describe("ToolCallRecordRepo", () => {
@@ -67,6 +83,9 @@ describe("ToolCallRecordRepo", () => {
       toolName: "Read",
       inputSummary: "file.ts",
       outputSummary: "200 lines",
+      outputTruncated: true,
+      outputTotalBytes: 300_000,
+      outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
       status: "completed",
       sortOrder: 0,
     };
@@ -78,6 +97,9 @@ describe("ToolCallRecordRepo", () => {
     expect(record.tool_name).toBe("Read");
     expect(record.input_summary).toBe("file.ts");
     expect(record.output_summary).toBe("200 lines");
+    expect(record.output_truncated).toBe(1);
+    expect(record.output_total_bytes).toBe(300_000);
+    expect(record.output_artifact_path).toBe("C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt");
     expect(record.status).toBe("completed");
     expect(record.sort_order).toBe(0);
     expect(record.parent_tool_call_id).toBeNull();
@@ -86,6 +108,7 @@ describe("ToolCallRecordRepo", () => {
     const records = repo.listByMessage(messageId);
     expect(records).toHaveLength(1);
     expect(records[0]!.id).toBe(record.id);
+    expect(records[0]!.output_truncated).toBe(1);
   });
 
   it("bulkCreate inserts multiple records in a transaction", () => {

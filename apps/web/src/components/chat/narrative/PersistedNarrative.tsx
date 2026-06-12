@@ -125,6 +125,9 @@ export function PersistedNarrative({ messageId, messageContent }: PersistedNarra
       isError: r.status === "failed",
       isComplete:
         r.status === "completed" || r.status === "failed" || r.status === "cancelled",
+      ...(r.output_truncated === 1 ? { outputTruncated: true } : {}),
+      ...(typeof r.output_total_bytes === "number" ? { outputTotalBytes: r.output_total_bytes } : {}),
+      ...(r.output_artifact_path ? { outputArtifactPath: r.output_artifact_path } : {}),
       parentToolCallId: r.parent_tool_call_id ?? undefined,
       startedAt: Date.parse(r.started_at) || 0,
     }));

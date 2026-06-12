@@ -1699,6 +1699,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const toolCallId = (params.toolCallId as string) || "";
       const output = (params.output as string) || "";
       const isError = (params.isError as boolean) || false;
+      const outputTruncated = params.outputTruncated === true;
+      const outputTotalBytes =
+        typeof params.outputTotalBytes === "number" && Number.isFinite(params.outputTotalBytes)
+          ? params.outputTotalBytes
+          : undefined;
+      const outputArtifactPath =
+        typeof params.outputArtifactPath === "string" && params.outputArtifactPath.length > 0
+          ? params.outputArtifactPath
+          : undefined;
       const rawToolInput = params.toolInput;
       const incomingInput =
         rawToolInput && typeof rawToolInput === "object" && !Array.isArray(rawToolInput)
@@ -1730,6 +1739,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             output,
             isError,
             isComplete: true,
+            ...(outputTruncated ? { outputTruncated: true } : {}),
+            ...(outputTotalBytes != null ? { outputTotalBytes } : {}),
+            ...(outputArtifactPath ? { outputArtifactPath } : {}),
             ...(durationMs != null ? { durationMs } : {}),
           };
         };

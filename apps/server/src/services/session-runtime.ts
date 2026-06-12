@@ -163,6 +163,28 @@ export class SessionRuntime<TState> {
     return this.sessions.size;
   }
 
+  /** Snapshot of live pooled session states. */
+  states(): TState[] {
+    return [...this.sessions.values()].map((entry) => entry.state);
+  }
+
+  /**
+   * Evict every pooled session that is not busy, regardless of idle age.
+   * Used under active memory pressure to shrink provider session pools while
+   * preserving in-flight turns.
+   */
+  async evictNonBusy(reason: string): Promise<{ before: number; after: number; evicted: string[] }> {
+    const before = this.sessions.size;
+    const evicted: string[] = [];
+    for (const [sessionId, entry] of [...this.sessions]) {
+      if (this.adapter.isBusy(entry.state)) continue;
+      evicted.push(sessionId);
+      logger.info("SessionRuntime evicting non-busy session", { sessionId, reason });
+      await this.stop(sessionId);
+    }
+    return { before, after: this.sessions.size, evicted };
+  }
+
   /**
    * Stop one session: graceful protocol interrupt, then provider close, then
    * the converged hard kill (`taskkill /T /F` on Windows) for any surfaced PID.

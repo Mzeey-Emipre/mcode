@@ -106,6 +106,20 @@ describe("SessionRuntime", () => {
     expect(rt.size).toBe(1); // survived because isBusy() is true
   });
 
+  it("evicts non-busy sessions under memory pressure and preserves busy sessions", async () => {
+    const rt = makeRuntime(adapter);
+    await rt.acquire({ ...ACQUIRE, sessionId: "idle" });
+    const busy = await rt.acquire({ ...ACQUIRE, sessionId: "busy" });
+    busy.busy = true;
+
+    const result = await rt.evictNonBusy("test-pressure");
+
+    expect(result).toEqual({ before: 2, after: 1, evicted: ["idle"] });
+    expect(rt.size).toBe(1);
+    expect(adapter.calls).toContain("close:idle");
+    expect(adapter.calls).not.toContain("close:busy");
+  });
+
   it("stop() runs interrupt then close in order", async () => {
     const rt = makeRuntime(adapter);
     await rt.acquire(ACQUIRE);

@@ -82,6 +82,31 @@ describe("buildPersistedNarrativeItems", () => {
     }
   });
 
+  it("hydrates persisted truncation metadata onto tool calls", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [
+        makeTool({
+          id: "t-1",
+          output_summary: "preview",
+          output_truncated: 1,
+          output_total_bytes: 300_000,
+          output_artifact_path: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
+        }),
+      ],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type === "tool-group") {
+      expect(items[0].group.calls[0]).toMatchObject({
+        outputTruncated: true,
+        outputTotalBytes: 300_000,
+        outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
+      });
+    }
+  });
+
   it("hooks-only: emits a hook row per record", () => {
     const items = buildPersistedNarrativeItems({
       tools: [],

@@ -19,6 +19,7 @@ import { EnvService } from "../../services/env-service.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import { AttachmentService } from "../../services/attachment-service.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
+import type { MemoryPressureLevel } from "../../services/memory-pressure-service.js";
 import { DeterministicForker } from "../../services/handoff/session-forker.js";
 import type {
   IAgentProvider,
@@ -203,6 +204,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
   private pendingStops = new Set<string>();
   /** Pending host-side permission approvals keyed by requestId. */
   private pendingPermissions = new Map<string, PendingPermissionEntry>();
+  /** When true, active mappers spool output chunks to artifacts immediately. */
+  private outputTruncationMode = false;
   /**
    * Turn input + options carried from `sendTurn` to `spawn` so a freshly
    * spawned session can run its first turn. The runtime's `acquire` only hands
@@ -223,6 +226,26 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     this.runtime = new SessionRuntime<CodexSessionState>(this, {
       jobObject: this.jobObject,
       envService: this.envService,
+    });
+  }
+
+  /** Switch Codex mapper output buffering for active and future sessions. */
+  setOutputTruncationMode(enabled: boolean): void {
+    if (this.outputTruncationMode === enabled) return;
+    this.outputTruncationMode = enabled;
+    for (const state of this.runtime.states()) {
+      state.mapper.setOutputTruncationMode(enabled);
+    }
+  }
+
+  /** Evict idle Codex sessions while preserving active turns. */
+  async shedMemoryPressure(level: MemoryPressureLevel): Promise<void> {
+    const result = await this.runtime.evictNonBusy(`memory-pressure:${level}`);
+    logger.info("Codex session pool shed memory pressure", {
+      level,
+      before: result.before,
+      after: result.after,
+      evicted: result.evicted.length,
     });
   }
 
@@ -398,6 +421,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     });
 
     const mapper = new CodexEventMapper(threadId);
+    mapper.setOutputTruncationMode(this.outputTruncationMode);
 
     server.on("notification", (notification) => {
       const n = notification as { method?: string; params?: Record<string, unknown> };
@@ -504,9 +528,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     return { state, pids: [] };
   }
 
-  /** Eviction guard: a turn is in flight while `pendingTurnId` is set. */
+  /** Eviction guard: a turn is in flight while sendTurn is awaiting completion. */
   isBusy(state: CodexSessionState): boolean {
-    return state.pendingTurnId != null;
+    return state.pendingTurnId != null || state.abortPendingTurnWait !== undefined;
   }
 
   /** Graceful protocol interrupt of the in-flight turn (does not kill the process). */

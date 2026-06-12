@@ -87,6 +87,12 @@ export const AgentEventSchema = lazySchema(() =>
       toolCallId: z.string(),
       output: z.string(),
       isError: z.boolean(),
+      /** True when the output preview omits middle bytes from the full output. */
+      outputTruncated: z.boolean().optional(),
+      /** UTF-8 byte count for the full tool output before preview bounding. */
+      outputTotalBytes: z.number().int().nonnegative().optional(),
+      /** Runtime artifact path containing the full output when truncation occurred. */
+      outputArtifactPath: z.string().optional(),
       /** Optional late-arriving metadata merged into the matching tool call input. */
       toolInput: z.record(z.unknown()).optional(),
     }),

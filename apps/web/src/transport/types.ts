@@ -77,6 +77,12 @@ export interface ToolCall {
   output: string | null;
   isError: boolean;
   isComplete: boolean;
+  /** True when the live output preview omits middle bytes from the full output. */
+  outputTruncated?: boolean;
+  /** UTF-8 byte count for the full output when the server bounded the preview. */
+  outputTotalBytes?: number;
+  /** Runtime artifact path containing the full output when truncation occurred. */
+  outputArtifactPath?: string;
   /** ID of the parent Agent tool call, if this is a subagent child. */
   parentToolCallId?: string;
   /** Elapsed wall-clock seconds reported by the most recent toolProgress event. */

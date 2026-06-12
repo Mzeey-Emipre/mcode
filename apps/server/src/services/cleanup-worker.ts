@@ -21,6 +21,7 @@ import { killDescendantsByName } from "./process-kill.js";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { broadcast } from "../transport/push.js";
 import { HandoffStorage } from "./handoff/handoff-storage.js";
+import { pruneStaleToolOutputArtifacts } from "./bounded-tool-output.js";
 
 /** How often to check for due cleanup jobs (ms). */
 const POLL_INTERVAL_MS = 5_000;
@@ -69,6 +70,10 @@ export class CleanupWorker {
   start(): void {
     if (this.pollTimer !== null) return;
     this.cleanupJobRepo.resetAttempts();
+    const removedArtifacts = pruneStaleToolOutputArtifacts();
+    if (removedArtifacts > 0) {
+      logger.info("Pruned stale tool-output artifacts", { removed: removedArtifacts });
+    }
     void this.reconcileOnStartup().catch((err) => {
       logger.error("CleanupWorker startup reconciliation errored", {
         error: err instanceof Error ? err.message : String(err),

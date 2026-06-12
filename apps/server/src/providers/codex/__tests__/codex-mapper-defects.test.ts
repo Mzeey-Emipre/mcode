@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@mcode/shared", () => ({
+  getMcodeDir: () => process.env.MCODE_DATA_DIR ?? ".",
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
