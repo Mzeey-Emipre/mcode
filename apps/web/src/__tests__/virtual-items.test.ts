@@ -220,21 +220,26 @@ describe("buildVirtualItems (combined)", () => {
     const result = buildAll(messages, toolCalls, undefined, false, undefined);
 
     const types = result.map((item) => item.type);
-    // msg-1, narrative-flow, msg-2, persisted-late-hooks(msg-2),
-    // persisted-turn-footer(msg-2). The persisted-narrative for msg-2 is
-    // filtered out (live narrative-flow above the bubble owns the timeline),
-    // but the persisted-turn-footer is NOT filtered — it sits AFTER the
-    // bubble and owns the post-response summary that closes the turn.
+    // msg-1, narrative-flow, msg-2, narrative-indicator,
+    // persisted-late-hooks(msg-2), persisted-turn-footer(msg-2). The
+    // persisted-narrative for msg-2 is filtered out (live narrative-flow
+    // above the bubble owns the timeline), but the persisted-turn-footer is
+    // NOT filtered — it sits AFTER the bubble and owns the post-response
+    // summary that closes the turn. The narrative-indicator lingers after the
+    // turn (isAgentRunning=false, tool calls still volatile) so it can play
+    // its exit transition, and sits right after the bubble.
     expect(types).toEqual([
       "message",
       "narrative-flow",
       "message",
+      "narrative-indicator",
       "persisted-late-hooks",
       "persisted-turn-footer",
     ]);
     expect(result[0]).toMatchObject({ type: "message", key: "msg-1" });
     expect(result[1]).toMatchObject({ type: "narrative-flow" });
     expect(result[2]).toMatchObject({ type: "message", key: "msg-2" });
+    expect(result[3]).toMatchObject({ type: "narrative-indicator", isAgentRunning: false });
   });
 
   it("streaming text with agent running emits narrative-flow and live assistant message items", () => {
@@ -393,10 +398,24 @@ describe("buildVirtualItems (combined)", () => {
     expect(indicator?.subagentCount).toBe(2);
   });
 
-  it("does not emit a narrative-indicator when the agent is not running", () => {
+  it("does not emit a narrative-indicator when not running and no tool calls remain", () => {
     const messages = [makeMessage({ id: "msg-1" })];
     const result = buildAll(messages, [], undefined, false, undefined);
     expect(result.some((i) => i.type === "narrative-indicator")).toBe(false);
+  });
+
+  it("keeps the narrative-indicator (isAgentRunning=false) while tool calls are still volatile", () => {
+    // Regression for issue #695: removing the indicator item at turnComplete
+    // made it vanish in a single frame. It now stays emitted through the
+    // turn's volatile tail so NarrativeIndicator can animate out; the
+    // component renders null once the exit completes.
+    const toolCalls = [makeToolCall({ id: "tc-1", isComplete: true })];
+    const items = buildVolatileItems(toolCalls, false, 1000, undefined);
+    const indicator = items.find((i) => i.type === "narrative-indicator") as
+      | (ChatVirtualItem & { type: "narrative-indicator" })
+      | undefined;
+    expect(indicator).toBeDefined();
+    expect(indicator?.isAgentRunning).toBe(false);
   });
 
   it("indicator (running, no streaming) appends narrative-flow followed by narrative-indicator", () => {
@@ -460,7 +479,8 @@ describe("buildVirtualItems (combined)", () => {
 
     // Persisted-narrative(msg-1) precedes the assistant message, then
     // persisted-late-hooks(msg-1) and persisted-turn-footer(msg-1) follow it,
-    // then user, then narrative-flow (no split because the tail isn't an
+    // then user, then narrative-flow and the lingering narrative-indicator
+    // appended at the tail (no split because the trailing message isn't an
     // assistant).
     const types = result.map((item) => item.type);
     expect(types).toEqual([
@@ -470,6 +490,7 @@ describe("buildVirtualItems (combined)", () => {
       "persisted-turn-footer",
       "message",
       "narrative-flow",
+      "narrative-indicator",
     ]);
   });
 
@@ -485,9 +506,10 @@ describe("buildVirtualItems (combined)", () => {
     const result = buildAll(messages, toolCalls, "Here is my answer...", true, 99999);
 
     const types = result.map((item) => item.type);
-    // user msg, narrative-flow (before split assistant msg), narrative-indicator
-    // (status footer below where the live response would render), split
-    // assistant msg, persisted-late-hooks(msg-2), persisted-turn-footer(msg-2).
+    // user msg, narrative-flow (before split assistant msg), split assistant
+    // msg, narrative-indicator (status footer below the response — it stays
+    // under the bubble through the persist swap so its exit transition plays
+    // in place), persisted-late-hooks(msg-2), persisted-turn-footer(msg-2).
     // live assistant response is suppressed because a tool is still running —
     // `computeLiveStreamingText` returns "" while any top-level tool is in
     // flight, since the model isn't streaming user-facing text during tool
@@ -497,13 +519,13 @@ describe("buildVirtualItems (combined)", () => {
     expect(types).toEqual([
       "message",
       "narrative-flow",
-      "narrative-indicator",
       "message",
+      "narrative-indicator",
       "persisted-late-hooks",
       "persisted-turn-footer",
     ]);
     expect(result[0]).toMatchObject({ key: "msg-1" });
-    expect(result[3]).toMatchObject({ key: "msg-2" });
+    expect(result[2]).toMatchObject({ key: "msg-2" });
     const narrativeItem = result[1] as ChatVirtualItem & { type: "narrative-flow" };
     expect(narrativeItem.toolCalls).toHaveLength(2);
     expect(narrativeItem.streamingText).toBe("Here is my answer...");
@@ -685,4 +707,24 @@ describe("estimateItemHeight", () => {
     expect(estimateItemHeight(item)).toBe(STREAMING_CARD_COLLAPSED_HEIGHT);
   });
 
+  it("estimates the streaming slot and the persisted assistant bubble identically", () => {
+    // Regression for issue #695: the streaming provisional bubble and the
+    // persisted assistant message share a virtual-item key and render the
+    // same chrome, so their estimates must match — a difference reflows the
+    // virtualizer and nudges the scroll position at persist time.
+    const content = "A response body.\n\nWith a second paragraph and a list:\n- one\n- two\n";
+    const streaming: ChatVirtualItem = {
+      key: "turn-response:thread-1:abc",
+      type: "message",
+      message: makeMessage({ content }),
+      assistantState: { isStreaming: true, actionsVisible: false },
+    };
+    const persisted: ChatVirtualItem = {
+      key: "turn-response:thread-1:abc",
+      type: "message",
+      message: makeMessage({ content }),
+      assistantState: { isStreaming: false, actionsVisible: true },
+    };
+    expect(estimateItemHeight(streaming)).toBe(estimateItemHeight(persisted));
+  });
 });

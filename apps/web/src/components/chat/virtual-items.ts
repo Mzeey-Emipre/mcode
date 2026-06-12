@@ -148,13 +148,17 @@ export type ChatVirtualItem =
       /**
        * "X steps · N subagents · phase…" status footer rendered BELOW the
        * live assistant response so the writing animation reads as the primary
-       * surface and the progress meta sits underneath. Only emitted while the
-       * agent is running.
+       * surface and the progress meta sits underneath. Emitted while the agent
+       * is running and kept through the turn's volatile tail (tool calls still
+       * in memory) so the component can animate out instead of vanishing in a
+       * single frame; it renders nothing once its exit completes.
        */
       stepCount: number;
       subagentCount: number;
       activeToolCalls: readonly ToolCall[];
       startTime: number | undefined;
+      /** False once the turn ended — tells the component to play its exit. */
+      isAgentRunning: boolean;
     };
 
 /**
@@ -312,8 +316,10 @@ export function buildVolatileItems(
   // as its own virtual-item slot BELOW the live assistant response so the writing
   // animation reads as the primary surface and the meta status sits underneath
   // it (rather than above, between the actions molecule and the response).
-  // Only emitted while the agent is running.
-  if (isAgentRunning) {
+  // Kept emitted after the turn ends (while the turn's tool calls are still in
+  // volatile memory) so NarrativeIndicator can animate out; it renders null
+  // once the exit transition completes.
+  if (isAgentRunning || toolCalls.length > 0) {
     const topLevelTools = toolCalls.filter((tc) => tc.parentToolCallId == null);
     // Match `buildNarrativeItems` / `NarrativeCounts.steps`: top-level tool
     // calls only. Thought segments are tracked separately in the footer.
@@ -329,6 +335,7 @@ export function buildVolatileItems(
       subagentCount,
       activeToolCalls,
       startTime: agentStartTime,
+      isAgentRunning,
     });
   }
 
@@ -412,17 +419,20 @@ export function buildVirtualItems(
     lastItem.message.role === "assistant" &&
     !isPlanQuestionsMessage(lastItem.message.content)
   ) {
-    // narrative-flow, the live assistant message, and narrative-indicator all go
-    // BEFORE the last assistant message bubble so the user reads
-    // top-to-bottom: actions → response → progress meta. The live assistant
-    // sits under narrative-flow (mirroring where the MessageBubble lands on
-    // persist), and the indicator sits under that response so the
-    // writing animation reads as the primary surface.
+    // narrative-flow and the live assistant message go BEFORE the last
+    // assistant message bubble so the user reads top-to-bottom: actions →
+    // response. The live assistant sits under narrative-flow (mirroring where
+    // the MessageBubble lands on persist). The narrative-indicator goes
+    // immediately AFTER the bubble so the progress meta stays underneath the
+    // response — including through the persist swap, where it now lingers to
+    // play its exit transition instead of jumping above the bubble.
     const headItems = dedupedVolatileItems.filter(
       (v) =>
         v.type === "narrative-flow" ||
-        (v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming) ||
-        v.type === "narrative-indicator",
+        (v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming),
+    );
+    const indicatorItems = dedupedVolatileItems.filter(
+      (v) => v.type === "narrative-indicator",
     );
     const tailItems = dedupedVolatileItems.filter(
       (v) =>
@@ -460,13 +470,23 @@ export function buildVirtualItems(
     return [
       ...filteredStable.slice(0, newLastAssistantIdx),
       ...headItems,
-      ...filteredStable.slice(newLastAssistantIdx),
+      filteredStable[newLastAssistantIdx],
+      ...indicatorItems,
+      ...filteredStable.slice(newLastAssistantIdx + 1),
       ...tailItems,
     ];
   }
 
   return [...stableItems, ...dedupedVolatileItems];
 }
+
+/**
+ * Estimated chrome (px) around an assistant bubble's markdown body: the
+ * reserved actions row, provenance foot line, and inter-block spacing.
+ * Used for BOTH the streaming provisional bubble and the persisted message —
+ * they must stay equal so persisting a turn never changes the estimate.
+ */
+const ASSISTANT_BUBBLE_CHROME_PX = 80;
 
 const LIST_ITEM_RE = /^[-*]\s|^\d+\.\s/;
 const LINE_HEIGHT = 22;
@@ -551,8 +571,12 @@ export function estimateItemHeight(item: ChatVirtualItem): number {
       if (message.role === "system") return 40;
       const contentHeight = estimateMarkdownHeight(message.content);
       if (message.role === "user") return 52 + contentHeight;
-      if (item.assistantState?.isStreaming) return Math.max(contentHeight, 48);
-      return 80 + contentHeight;
+      // Streaming and persisted assistant bubbles share one estimate: they
+      // render the same chrome (the DeltaBlock stays mounted on persist and
+      // the actions row reserves its height while hidden), and they share a
+      // virtual-item key. A differing estimate made the persist swap reflow
+      // the virtualizer by the chrome offset and nudge the scroll position.
+      return ASSISTANT_BUBBLE_CHROME_PX + contentHeight;
     }
     case "active-tools":
       return Math.min(item.toolCalls.length * 48, 400);

@@ -161,6 +161,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
           subagentCount={item.subagentCount}
           activeToolCalls={item.activeToolCalls}
           startTime={item.startTime}
+          isAgentRunning={item.isAgentRunning}
         />
       );
   }
