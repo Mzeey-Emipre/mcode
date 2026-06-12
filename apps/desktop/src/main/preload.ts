@@ -164,6 +164,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }): Promise<void> {
       return ipcRenderer.invoke("preview:sync", payload);
     },
+    /**
+     * Capture the live preview as a data-URL freeze-frame. Shown in place of
+     * the native view while a renderer overlay suppresses it, so the hide
+     * reads as a frozen page rather than a blank hole. Resolves null when no
+     * page is mounted to capture.
+     */
+    captureSnapshot(): Promise<string | null> {
+      return ipcRenderer.invoke("preview:capture-snapshot");
+    },
     navigate(url: string, workspacePath?: string | null): Promise<{ ok: true } | { ok: false; error: string }> {
       return ipcRenderer.invoke("preview:navigate", url, workspacePath ?? null);
     },

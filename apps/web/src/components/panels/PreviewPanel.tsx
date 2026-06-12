@@ -239,8 +239,30 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
         className={cn(
           "relative mx-2 mb-2 mt-1 min-h-[min(40vh,20rem)] min-w-0 flex-1 rounded-md border border-border/40 bg-muted/10",
           showLocalPorts && "overflow-y-auto",
+          // Clip the pinned freeze-frame when the surface shrinks mid-overlay.
+          bridge.freezeFrame && "overflow-hidden",
         )}
       >
+        {/* Freeze-frame stand-in: while an overlay (dialog, menu) suppresses
+            the native WebContentsView, this snapshot keeps the page visibly
+            present instead of leaving a blank hole. The live view composites
+            above it once remounted, so the swap back is invisible. Pinned to
+            its capture-time size and clipped by the surface so a resize while
+            frozen reveals/clips like a real viewport instead of stretching. */}
+        {bridge.freezeFrame ? (
+          <img
+            src={bridge.freezeFrame.url}
+            alt=""
+            aria-hidden
+            draggable={false}
+            data-testid="preview-freeze-frame"
+            className="pointer-events-none absolute left-0 top-0 max-w-none"
+            style={{
+              width: bridge.freezeFrame.width,
+              height: bridge.freezeFrame.height,
+            }}
+          />
+        ) : null}
         {/* Loading: thin indeterminate progress bar at top of content area.
             motion-safe gates the animation so users with prefers-reduced-motion
             get a static bar instead of a perpetual sweep. */}
