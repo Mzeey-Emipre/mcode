@@ -36,6 +36,29 @@ describe("extractSubagentDescription", () => {
     ).toBe(prompt);
   });
 
+  it("keeps the prompt as the completed row label", () => {
+    expect(
+      extractSubagentDescription(
+        mkAgent({
+          isComplete: true,
+          toolInput: { prompt: "Inspect the mapper tests." },
+          output: "Found wait suppression coverage.\n\nDetails follow.",
+        }),
+      ),
+    ).toBe("Inspect the mapper tests.");
+  });
+
+  it("uses completed output as a fallback when no task metadata exists", () => {
+    expect(
+      extractSubagentDescription(
+        mkAgent({
+          isComplete: true,
+          output: "Found wait suppression coverage.\n\nDetails follow.",
+        }),
+      ),
+    ).toBe("Found wait suppression coverage.");
+  });
+
   it("shows a running placeholder while incomplete and metadata is generic", () => {
     expect(
       extractSubagentDescription(

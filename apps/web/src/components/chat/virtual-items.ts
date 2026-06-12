@@ -365,8 +365,25 @@ export function buildVirtualItems(
   volatileItems: readonly ChatVirtualItem[],
   hasToolCalls: boolean,
 ): ChatVirtualItem[] {
-  if (!hasToolCalls || volatileItems.length === 0) {
-    return [...stableItems, ...volatileItems];
+  if (volatileItems.length === 0) {
+    return [...stableItems];
+  }
+
+  // During session.message handoff, the live provisional bubble and persisted
+  // assistant bubble intentionally share a key. Only one can be in React's
+  // sibling list at a time.
+  const stableKeys = new Set(stableItems.map((item) => item.key));
+  const dedupedVolatileItems = volatileItems.filter(
+    (item) =>
+      !(
+        item.type === "message" &&
+        item.assistantState?.isStreaming &&
+        stableKeys.has(item.key)
+      ),
+  );
+
+  if (!hasToolCalls || dedupedVolatileItems.length === 0) {
+    return [...stableItems, ...dedupedVolatileItems];
   }
 
   // Split volatile items: narrative-flow goes before the last assistant
@@ -401,13 +418,13 @@ export function buildVirtualItems(
     // sits under narrative-flow (mirroring where the MessageBubble lands on
     // persist), and the indicator sits under that response so the
     // writing animation reads as the primary surface.
-    const headItems = volatileItems.filter(
+    const headItems = dedupedVolatileItems.filter(
       (v) =>
         v.type === "narrative-flow" ||
         (v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming) ||
         v.type === "narrative-indicator",
     );
-    const tailItems = volatileItems.filter(
+    const tailItems = dedupedVolatileItems.filter(
       (v) =>
         v.type !== "narrative-flow" &&
         !(v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming) &&
@@ -438,7 +455,7 @@ export function buildVirtualItems(
         idx >= 0,
     );
     if (newLastAssistantIdx === -1) {
-      return [...stableItems, ...volatileItems];
+      return [...stableItems, ...dedupedVolatileItems];
     }
     return [
       ...filteredStable.slice(0, newLastAssistantIdx),
@@ -448,7 +465,7 @@ export function buildVirtualItems(
     ];
   }
 
-  return [...stableItems, ...volatileItems];
+  return [...stableItems, ...dedupedVolatileItems];
 }
 
 const LIST_ITEM_RE = /^[-*]\s|^\d+\.\s/;

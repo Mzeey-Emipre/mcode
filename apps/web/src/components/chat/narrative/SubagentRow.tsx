@@ -15,6 +15,7 @@ import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout
 import { buildDelegationTags } from "./subagent-delegation-tags";
 import { extractSubagentDescription } from "./extract-subagent-description";
 import { StackedLayersIcon, stackedLayersIconClassName } from "./StackedLayersIcon";
+import { DeltaBlock } from "./DeltaBlock";
 
 interface SubagentRowProps {
   toolCall: ToolCall;
@@ -65,10 +66,13 @@ export function SubagentRow({ toolCall, children, hooks, allToolCalls, depth = 0
   const isRunning = !toolCall.isComplete;
   const isErrored = toolCall.isComplete && toolCall.isError;
   const hasChildren = children.length > 0;
+  const finalOutput = toolCall.isComplete && typeof toolCall.output === "string"
+    ? toolCall.output.trim()
+    : "";
   const description = extractSubagentDescription(toolCall);
   const delegationTags = useMemo(() => buildDelegationTags(toolCall), [toolCall]);
 
-  if (!hasChildren) {
+  if (!hasChildren && !finalOutput) {
     return (
       <div
         className="flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden px-2 py-1 text-[0.8125rem]"
@@ -107,6 +111,7 @@ export function SubagentRow({ toolCall, children, hooks, allToolCalls, depth = 0
       delegationTags={delegationTags}
       isRunning={isRunning}
       isErrored={isErrored}
+      finalOutput={finalOutput}
     />
   );
 }
@@ -116,10 +121,11 @@ interface ExpandableSubagentRowProps extends SubagentRowProps {
   delegationTags: readonly string[];
   isRunning: boolean;
   isErrored: boolean;
+  finalOutput: string;
 }
 
 /**
- * Collapsible sub-agent row when nested tool calls exist (Claude SDK path).
+ * Collapsible sub-agent row for nested child tools or a final sub-agent result.
  */
 function ExpandableSubagentRow({
   children,
@@ -130,6 +136,7 @@ function ExpandableSubagentRow({
   delegationTags,
   isRunning,
   isErrored,
+  finalOutput,
 }: ExpandableSubagentRowProps) {
   const [open, setOpen] = useState(isRunning);
   const userToggledRef = useRef(false);
@@ -189,9 +196,11 @@ function ExpandableSubagentRow({
 
         <DelegationTags tags={delegationTags} />
 
-        <span className="font-mono text-[0.6875rem] text-muted-foreground/50 shrink-0">
-          {!isRunning ? `· ${metaText}` : metaText}
-        </span>
+        {metaText && (
+          <span className="font-mono text-[0.6875rem] text-muted-foreground/50 shrink-0">
+            {!isRunning ? `· ${metaText}` : metaText}
+          </span>
+        )}
 
         {isErrored && (
           <span className="font-mono text-[0.625rem] font-medium px-1 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
@@ -205,19 +214,28 @@ function ExpandableSubagentRow({
       </button>
 
       <AnimatedCollapsible open={open}>
-        {/* Mini-timeline: a hairline rail emerges inside the expanded sub-agent
-            because the children are a nested group that the eye benefits from
-            tracking as one unit. The rail aligns with the parent's stacked-
-            layers icon (centred at ~x=15), so it reads as "these calls belong
-            to this sub-agent" rather than a generic indent. */}
-        <div className="relative min-w-0 max-w-full pl-7 mt-0.5 pb-1">
+        {finalOutput && (
           <div
-            className="absolute left-[14px] top-1 bottom-2 w-px bg-border/50 pointer-events-none"
-            aria-hidden
-          />
-          <ul className="min-w-0 max-w-full space-y-px max-h-64 overflow-y-auto overflow-x-hidden">
-          {visibleChildren.map((tc, idx) => {
-            const isActive = idx === lastIncompleteIdx;
+            className="min-w-0 max-w-full pl-7 pr-2 py-1 text-foreground/85"
+            data-testid="subagent-result"
+          >
+            <DeltaBlock text={finalOutput} isStreaming={false} showCursor={false} />
+          </div>
+        )}
+        {children.length > 0 && (
+          /* Mini-timeline: a hairline rail emerges inside the expanded sub-agent
+              because the children are a nested group that the eye benefits from
+              tracking as one unit. The rail aligns with the parent's stacked-
+              layers icon (centred at ~x=15), so it reads as "these calls belong
+              to this sub-agent" rather than a generic indent. */
+          <div className="relative min-w-0 max-w-full pl-7 mt-0.5 pb-1">
+            <div
+              className="absolute left-[14px] top-1 bottom-2 w-px bg-border/50 pointer-events-none"
+              aria-hidden
+            />
+            <ul className="min-w-0 max-w-full space-y-px max-h-64 overflow-y-auto overflow-x-hidden">
+            {visibleChildren.map((tc, idx) => {
+              const isActive = idx === lastIncompleteIdx;
 
             if (tc.toolName === "Agent" && depth < MAX_DEPTH) {
               return (
@@ -250,9 +268,10 @@ function ExpandableSubagentRow({
                 )}
               </li>
             );
-          })}
-        </ul>
-        </div>
+            })}
+          </ul>
+          </div>
+        )}
         {children.length > CHILD_CAP && (
           <button
             type="button"

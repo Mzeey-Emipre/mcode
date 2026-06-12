@@ -275,4 +275,31 @@ describe("Codex protocol coverage", () => {
     const turnCompletes = events.filter((event) => event.type === AgentEventType.TurnComplete);
     expect(turnCompletes).toHaveLength(1);
   });
+
+  it("golden D_subagents suppresses wait rows and completes spawn rows from child state", () => {
+    if (label !== "golden") return;
+    const subagentNotifications = loadGoldenScenario("D_subagents");
+    if (subagentNotifications.length === 0) return;
+
+    const { events } = replay(subagentNotifications);
+    const toolUses = events.filter(
+      (event): event is Extract<AgentEvent, { type: "toolUse" }> =>
+        event.type === AgentEventType.ToolUse,
+    );
+    const spawnUses = toolUses.filter(
+      (event) => event.toolName === "Agent" && event.toolInput.codexCollabKind === "spawnAgent",
+    );
+    const waitUses = toolUses.filter(
+      (event) => event.toolName === "Agent" && event.toolInput.codexCollabKind === "wait",
+    );
+    const spawnResults = events.filter(
+      (event) =>
+        event.type === AgentEventType.ToolResult
+        && spawnUses.some((use) => use.toolCallId === event.toolCallId),
+    );
+
+    expect(spawnUses.length).toBeGreaterThan(0);
+    expect(waitUses).toHaveLength(0);
+    expect(spawnResults.length).toBeGreaterThan(0);
+  });
 });

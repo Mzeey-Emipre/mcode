@@ -174,4 +174,54 @@ describe("Tool Call Matching", () => {
     expect(calls[0].output).toBe("first-result"); // preserved
     expect(calls[1].output).toBe("second-result"); // newly completed
   });
+
+  it("tool result merges late metadata into the matching tool input", () => {
+    resetThreadStoreForTests({
+      records: new Map<string, ThreadRecord>([
+        [
+          "thread-1",
+          {
+            ...createEmptyThreadRecord(),
+            toolCalls: [
+              {
+                id: "agent-1",
+                toolName: "Agent",
+                toolInput: {
+                  codexCollabKind: "spawnAgent",
+                  description: "Inspect mapper tests",
+                },
+                output: null,
+                isError: false,
+                isComplete: false,
+              },
+            ],
+          },
+        ],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolResult",
+      params: {
+        toolCallId: "agent-1",
+        output: "done",
+        isError: false,
+        toolInput: {
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
+      },
+    });
+    vi.runAllTimers();
+
+    const [call] = getTestThreadToolCalls("thread-1");
+    expect(call.isComplete).toBe(true);
+    expect(call.output).toBe("done");
+    expect(call.toolInput).toEqual({
+      codexCollabKind: "spawnAgent",
+      description: "Inspect mapper tests",
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+    });
+  });
 });

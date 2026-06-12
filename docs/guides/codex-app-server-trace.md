@@ -4,6 +4,8 @@ Source traces: `/tmp/codex-trace/A.ndjson`, `/tmp/codex-trace/B.ndjson` captured
 
 Trace harness: `scripts/codex-trace.mjs` (spawns `codex app-server`, NDJSON JSON-RPC 2.0, records every inbound notification in order).
 
+Runtime trace: set `MCODE_CODEX_TRACE=1` to log each app-server notification plus mapped `AgentEvent` summaries while reproducing narrative issues in Mcode.
+
 ## Executive summary
 
 Across both runs, Codex split "thinking" from "answer" cleanly at the wire: anything user-facing arrived only via `item/agentMessage/delta` (and its bookending `item/started` / `item/completed` for type `agentMessage`). The `reasoning` item arrived as a single `item/started` + `item/completed` with `summary.length === 0` and no `item/reasoning/*` delta stream fired at all on low reasoning effort. So in practice, Mcode only has one verified non-final channel today, but several schema-declared ones (`item/reasoning/textDelta`, `summaryTextDelta`, `item/plan/delta`) that did not fire in these runs and remain unverified.
@@ -52,8 +54,10 @@ The current mapper implements these routes. The traces give no contradiction; th
 **Verified in golden fixture** (`apps/server/src/providers/codex/__tests__/fixtures/codex-protocol-golden.ndjson`, scenario `D_subagents`, codex-cli 0.130.0, capture via `scripts/codex-protocol-capture.mjs`):
 
 - Many `item/started` / `item/completed` rows with `type: "collabAgentToolCall"` (`spawnAgent`, `wait`).
+- `item/started` can be provisional: rejected or superseded spawn attempts may carry empty `receiverThreadIds` and empty `agentsStates`.
 - Parent-thread `commandExecution` rows often appear **without** `parentToolCallId` because **multiple collabs are open at once**; `nestingParentToolCallId()` returns `undefined` when `collabScopeStack.length > 1` (same rule as Claude parallel sub-agents).
 - Some `commandExecution` / `outputDelta` notifications use **child thread IDs** (different `threadId` in params). Those are not replayed into the parent mapper today; nested shell output on the parent timeline may be incomplete until we subscribe or forward child-thread events.
+- `spawnAgent` `item/completed` means child creation completed. The Agent row should finish from child `turn/completed` or a `wait` `agentsStates` result, not from the spawn item itself.
 - No `item/reasoning/*` or `item/plan/delta` in this capture (low/default effort).
 - `configWarning` appeared once; listed in `KNOWN_METHODS` / silenced set in protocol coverage test.
 
@@ -61,12 +65,12 @@ Replay: `bun run test src/providers/codex/__tests__/codex-protocol-coverage.test
 
 ## Gaps (union methods never observed)
 
-Schema-declared notifications that did not fire in either scenario, kept as schema-only:
+Schema-declared notifications that did not fire in either initial trace scenario and remain unverified outside the golden fixture:
 
 - `item/reasoning/textDelta`, `item/reasoning/summaryTextDelta`, `item/reasoning/summaryPartAdded`
 - `item/plan/delta`, `turn/plan/updated`
-- `item/started` and `item/completed` for: `collabAgentToolCall`, `fileChange`, `mcpToolCall`, `dynamicToolCall`, `webSearch`, `plan`, `imageView`, `imageGeneration`, `contextCompaction`, `enteredReviewMode`, `exitedReviewMode`
-- `error`, `model/rerouted`, `deprecationNotice`, `configWarning`, `skills/changed`, `turn/diff/updated`, `item/fileChange/outputDelta`, `item/autoApprovalReview/started|completed`, `item/mcpToolCall/progress`
+- `item/started` and `item/completed` for: `fileChange`, `mcpToolCall`, `dynamicToolCall`, `webSearch`, `plan`, `imageView`, `imageGeneration`, `contextCompaction`, `enteredReviewMode`, `exitedReviewMode`
+- `error`, `model/rerouted`, `deprecationNotice`, `skills/changed`, `turn/diff/updated`, `item/fileChange/outputDelta`, `item/autoApprovalReview/started|completed`, `item/mcpToolCall/progress`
 
 ## Methods Mcode currently treats as "unrecognized" (warn-level log noise)
 

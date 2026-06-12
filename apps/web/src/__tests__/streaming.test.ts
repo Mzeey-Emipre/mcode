@@ -4,6 +4,7 @@ import {
   getTestThreadStreaming,
   getTestThreadStreamingPreview,
   getTestThreadToolCalls,
+  readThreadField,
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -48,6 +49,35 @@ describe("Agent Message Flow", () => {
     expect(getTestActiveMessages()[0].content).toBe("Hello world");
     expect(getTestActiveMessages()[0].role).toBe("assistant");
     expect(getTestActiveMessages()[0].tokens_used).toBe(42);
+  });
+
+  it("session.message assigns distinct response keys when one turn persists multiple assistant messages", () => {
+    const threadId = "thread-1";
+    useThreadStore.setState({ currentThreadId: threadId });
+    const { handleAgentEvent } = useThreadStore.getState();
+
+    // Codex narration turn: an assistant message lands mid-turn, then the
+    // final response lands as a second message with different content.
+    handleAgentEvent(threadId, {
+      method: "session.message",
+      params: { content: "Narration before tool batch", messageId: "msg-1" },
+    });
+    handleAgentEvent(threadId, {
+      method: "session.message",
+      params: { content: "Final response", messageId: "msg-2" },
+    });
+    vi.runAllTimers();
+
+    const keys = readThreadField(threadId, (r) => r.assistantResponseKeys)!;
+    expect(keys["msg-1"]).toBeTruthy();
+    expect(keys["msg-2"]).toBeTruthy();
+    // Sharing a key would render two React siblings with the same key.
+    expect(keys["msg-1"]).not.toBe(keys["msg-2"]);
+    // The live key rotates after each claim so follow-up streaming in the
+    // same turn never collides with an already-persisted bubble.
+    const liveKey = readThreadField(threadId, (r) => r.currentTurnResponseKey);
+    expect(liveKey).not.toBe(keys["msg-1"]);
+    expect(liveKey).not.toBe(keys["msg-2"]);
   });
 
   it("session.message only appends when threadId matches currentThreadId", () => {
