@@ -241,6 +241,20 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
           showLocalPorts && "overflow-y-auto",
         )}
       >
+        {/* Freeze-frame stand-in: while an overlay (dialog, menu) suppresses
+            the native WebContentsView, this snapshot keeps the page visibly
+            present instead of leaving a blank hole. The live view composites
+            above it once remounted, so the swap back is invisible. */}
+        {bridge.freezeFrame ? (
+          <img
+            src={bridge.freezeFrame}
+            alt=""
+            aria-hidden
+            draggable={false}
+            data-testid="preview-freeze-frame"
+            className="pointer-events-none absolute inset-0 size-full rounded-[inherit] object-fill"
+          />
+        ) : null}
         {/* Loading: thin indeterminate progress bar at top of content area.
             motion-safe gates the animation so users with prefers-reduced-motion
             get a static bar instead of a perpetual sweep. */}

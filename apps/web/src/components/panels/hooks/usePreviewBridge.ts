@@ -55,6 +55,11 @@ export interface PreviewBridgeState {
   readonly pageStatus: PreviewPageStatus;
   /** Persisted URL for the current thread (Zustand store). */
   readonly storedUrl: string;
+  /**
+   * Freeze-frame data URL shown in the native view's place while an overlay
+   * suppresses it, or null when the live view owns the surface.
+   */
+  readonly freezeFrame: string | null;
   /** Push current bounds and visibility to the native BrowserView. */
   readonly pushSync: (visible: boolean) => Promise<void>;
   /** Refresh navigation state (canGoBack / canGoForward) from IPC. */
@@ -155,8 +160,13 @@ export function usePreviewBridge({
       if (!preview) return;
       const el = surfaceRef.current;
       const hint = storedUrlRef.current.trim() || null;
-      // Keep the native view hidden while an error panel owns the surface.
-      const effectiveVisible = visible && phaseRef.current !== "error";
+      // Suppression (overlay open) and the error panel both force the native
+      // view hidden regardless of what the caller asked for, so stray
+      // pushSync(true) calls (ResizeObserver, thread switch) cannot pop the
+      // view back above an open overlay.
+      const suppressed = usePreviewSuppressionStore.getState().count > 0;
+      const effectiveVisible =
+        visible && !suppressed && phaseRef.current !== "error";
       if (!effectiveVisible || !el) {
         await preview.sync({
           visible: false,
@@ -231,26 +241,74 @@ export function usePreviewBridge({
     return unsub;
   }, [threadId, refreshNav]);
 
-  // Hide the native WebContentsView while any modal/dialog overlay is open
-  // in the renderer. Without this the native view paints above all HTML and
-  // covers Dialog/CommandPalette/etc. The bounds are remembered on the host
-  // (s.lastBounds), so reattach is seamless.
+  // While any modal/dialog overlay is open in the renderer the native
+  // WebContentsView must be detached: it composites above all HTML and would
+  // occlude the overlay. Naively detaching leaves a blank hole where the page
+  // was, so on the first suppressor we grab a freeze-frame of the page and let
+  // it stand in. Order matters: capture while the view is still mounted
+  // (capturePage needs a painted surface), commit the <img>, wait a frame so
+  // it is on screen underneath the native view, then detach.
+  const [freezeFrame, setFreezeFrame] = useState<string | null>(null);
   const suppressionCount = usePreviewSuppressionStore((s) => s.count);
+  const prevSuppressionRef = useRef(0);
   useEffect(() => {
-    if (suppressionCount > 0) {
-      void pushSyncRef.current(false);
-    } else {
-      void pushSyncRef.current(true);
+    const prev = prevSuppressionRef.current;
+    prevSuppressionRef.current = suppressionCount;
+    if (suppressionCount === 0) {
+      // Remount first, clear the frame after: the live view paints above the
+      // <img> once attached, so the swap is invisible, whereas clearing early
+      // would flash the empty surface. Skip the clear if another suppressor
+      // opened while the sync was in flight.
+      void pushSyncRef.current(true).finally(() => {
+        if (usePreviewSuppressionStore.getState().count === 0) {
+          setFreezeFrame(null);
+        }
+      });
+      return;
     }
+    if (prev > 0) {
+      // Nested suppressor (e.g. dialog over menu): the view is already hidden
+      // and the existing freeze-frame stays valid; capturing a detached view
+      // would yield an empty image.
+      void pushSyncRef.current(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      let frame: string | null = null;
+      // Only a loaded page has pixels worth freezing; the empty/ports surface
+      // is plain HTML that overlays already stack above.
+      if (storedUrlRef.current.trim().length > 0) {
+        try {
+          frame = (await window.desktopBridge?.preview?.captureSnapshot?.()) ?? null;
+        } catch {
+          frame = null;
+        }
+      }
+      if (cancelled) return;
+      if (frame) {
+        setFreezeFrame(frame);
+        // Two RAFs ~= one painted frame: the <img> must be on screen before
+        // the native view detaches or the surface blanks for a frame.
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+        if (cancelled) return;
+      }
+      void pushSyncRef.current(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [suppressionCount]);
 
   // Re-sync the native view on every error<->non-error transition: hide it when
-  // an error panel takes over, re-show it when a retry clears the error. Defer to
-  // suppression: a load completing while a dialog/overlay is open must not reshow
-  // the BrowserView above it, so respect suppressionCount instead of forcing true.
+  // an error panel takes over, re-show it when a retry clears the error.
+  // pushSync itself defers to suppression, so a load completing while a
+  // dialog/overlay is open cannot reshow the BrowserView above it.
   useEffect(() => {
-    void pushSyncRef.current(suppressionCount === 0);
-  }, [pageStatus.phase, suppressionCount]);
+    void pushSyncRef.current(true);
+  }, [pageStatus.phase]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
@@ -371,6 +429,7 @@ export function usePreviewBridge({
     faviconUrl,
     pageStatus,
     storedUrl,
+    freezeFrame,
     pushSync,
     refreshNav,
     onGoBack,
