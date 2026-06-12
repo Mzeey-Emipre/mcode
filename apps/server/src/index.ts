@@ -58,7 +58,7 @@ import { HandoffStorage } from "./services/handoff/handoff-storage";
 import { WebSocket } from "ws";
 import { resolveGracePeriodMs } from "./grace-period-ms";
 import { createGraceController } from "./grace-controller";
-import { AgentEventType } from "@mcode/contracts";
+import { AgentEventType, isSkillCatalogCapable } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { normalizeAgentProviderError } from "./services/provider-agent-error-normalize.js";
 import type Database from "better-sqlite3";
@@ -372,6 +372,14 @@ skillWatcherService.registerDebouncedInvalidateListener(() => {
 // listener fires. We read the stack via getCurrentParentToolCallId to enrich
 // non-Agent tool calls with their parent ID.
 for (const provider of providerRegistry.resolveAll()) {
+  if (isSkillCatalogCapable(provider)) {
+    provider.onSkillsChanged(() => {
+      skillService.invalidate();
+      broadcast("skills.changed", {});
+      portPush.send("skills.changed", {});
+    });
+  }
+
   provider.on("permission_request", (request) => {
     broadcast("permission.request", request);
     portPush.send("permission.request", request);

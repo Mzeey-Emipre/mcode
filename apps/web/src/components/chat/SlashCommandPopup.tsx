@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { Terminal, Zap, Puzzle, Sparkles, RefreshCw } from "lucide-react";
 import { NAMESPACE_BADGE_STYLES } from "@/lib/slash-command-styles";
@@ -7,7 +6,6 @@ import type { Command, PopupState } from "./useSlashCommand";
 
 const ITEM_HEIGHT = 44; // px per row
 const VISIBLE_ITEMS = 8;
-const VIRTUAL_THRESHOLD = 20; // use virtual scroll only above this count
 // Footer (Refresh row) intrinsic height: border-t (1px) + py-1 (8px) + icon
 // button height (~20px). Used to estimate popup height for the above/below
 // placement calculation; the rendered footer remains naturally sized.
@@ -26,12 +24,11 @@ interface SlashCommandPopupProps {
 
 /**
  * Floating popup that lists slash command suggestions anchored to the
- * composer editor. Handles keyboard navigation via `selectedIndex`, virtualises
- * long lists past `VIRTUAL_THRESHOLD`, flips above/below the anchor based on
- * available viewport space, and dismisses on outside click. The render priority
- * (error → list → inline loader → empty) is encoded by the {@link PopupState}
- * union rather than a comment, so this component is an exhaustive switch on
- * `state.kind`.
+ * composer editor. Handles keyboard navigation via `selectedIndex`, caps the
+ * visible list height, flips above/below the anchor based on available viewport
+ * space, and dismisses on outside click. The render priority (error → list →
+ * inline loader → empty) is encoded by the {@link PopupState} union rather than
+ * a comment, so this component is an exhaustive switch on `state.kind`.
  */
 export function SlashCommandPopup({
   state,
@@ -48,28 +45,12 @@ export function SlashCommandPopup({
     state.kind === "ready" || state.kind === "staleRevalidating" ? state.items : [];
   const isOpen = state.kind !== "closed";
 
-  const virtualizer = useVirtualizer({
-    count: items.length > VIRTUAL_THRESHOLD ? items.length : 0,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => ITEM_HEIGHT,
-    overscan: 2,
-    // react-virtual defaults to flushSync(rerender) on sync measurement, which
-    // fires inside its commit-phase layout effect and triggers React's
-    // "flushSync called from inside a lifecycle method" warning. The popup list
-    // does not need a synchronous re-render, so opt out.
-    useFlushSync: false,
-  });
-
   // Scroll selected item into view
   useEffect(() => {
     if (!isOpen) return;
-    if (items.length > VIRTUAL_THRESHOLD) {
-      virtualizer.scrollToIndex(selectedIndex, { align: "auto" });
-    } else {
-      const el = scrollRef.current?.querySelector(`[data-index="${selectedIndex}"]`);
-      el?.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedIndex, isOpen, items.length, virtualizer]);
+    const el = scrollRef.current?.querySelector(`[data-index="${selectedIndex}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex, isOpen, items.length]);
 
   // Dismiss on outside click
   useEffect(() => {
@@ -108,8 +89,6 @@ export function SlashCommandPopup({
       ? { bottom: window.innerHeight - anchorRect.top + 4 }
       : { top: anchorRect.bottom + 4 }),
   };
-
-  const useVirtual = items.length > VIRTUAL_THRESHOLD;
 
   return (
     // role="listbox" is intentionally NOT on this outer wrapper: the
@@ -153,34 +132,15 @@ export function SlashCommandPopup({
                   aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
                   style={{ maxHeight: listMaxHeight, overflowY: "auto" }}
                 >
-                  {useVirtual ? (
-                    <div role="presentation" style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-                      {virtualizer.getVirtualItems().map((vi) => (
-                        <div
-                          key={vi.key}
-                          role="presentation"
-                          style={{ position: "absolute", top: vi.start, width: "100%", height: vi.size }}
-                          data-index={vi.index}
-                        >
-                          <CommandRow
-                            cmd={items[vi.index]}
-                            selected={vi.index === selectedIndex}
-                            onSelect={onSelect}
-                          />
-                        </div>
-                      ))}
+                  {items.map((cmd, i) => (
+                    <div key={cmd.name} role="presentation" data-index={i}>
+                      <CommandRow
+                        cmd={cmd}
+                        selected={i === selectedIndex}
+                        onSelect={onSelect}
+                      />
                     </div>
-                  ) : (
-                    items.map((cmd, i) => (
-                      <div key={cmd.name} role="presentation" data-index={i}>
-                        <CommandRow
-                          cmd={cmd}
-                          selected={i === selectedIndex}
-                          onSelect={onSelect}
-                        />
-                      </div>
-                    ))
-                  )}
+                  ))}
                 </div>
                 <div className="flex items-center justify-end border-t border-border px-2 py-1">
                   <button

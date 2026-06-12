@@ -19,6 +19,8 @@ export const SkillInfoSchema = lazySchema(() =>
     kind: SkillKindSchema.default("skill"),
     source: SkillSourceSchema.default("plugin"),
     providers: z.array(z.string()).default([]),
+    nativeName: z.string().optional(),
+    path: z.string().optional(),
   }),
 );
 /** Metadata for a discovered skill or command. */

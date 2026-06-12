@@ -18,6 +18,7 @@ import {
   type IProviderRegistry,
   type ProviderUsageInfo,
   getExtension,
+  isSkillCatalogCapable,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
 import { discoverCopilotAgents } from "../providers/copilot/copilot-agent-discovery.js";
@@ -616,8 +617,16 @@ async function dispatch(
       return deps.configService.discover(params.workspacePath);
 
     // Skills
-    case "skill.list":
-      return deps.skillService.list(params.cwd, params.providerId);
+    case "skill.list": {
+      let nativeSkills;
+      if (params.providerId === "codex") {
+        const provider = deps.providerRegistry.resolve("codex");
+        nativeSkills = isSkillCatalogCapable(provider)
+          ? await provider.listSkills(params.cwd)
+          : undefined;
+      }
+      return deps.skillService.list(params.cwd, params.providerId, nativeSkills);
+    }
     case "skill.diagnose":
       return deps.skillService.diagnose(params.cwd);
 

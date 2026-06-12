@@ -21,8 +21,8 @@ vi.mock("../codex-app-server.js", async () => {
     threadId = "sdk-thread-1";
     resumeFailed = false;
     async start(): Promise<void> {}
-    async sendTurn(): Promise<string> {
-      return sendTurnMock();
+    async sendTurn(input: unknown, turnOptions: unknown): Promise<string> {
+      return sendTurnMock(input, turnOptions);
     }
     async interruptTurn(): Promise<void> {}
     async kill(): Promise<void> {}
@@ -77,6 +77,7 @@ function makeProvider(): CodexProvider {
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
     { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
+    { list: vi.fn(() => []) } as never,
   );
 }
 

@@ -75,6 +75,14 @@ const FIXTURE_SKILLS = [
   { name: "tdd-workflow", description: "Follow strict TDD discipline", kind: "skill", source: "agent" },
 ];
 
+/** Plugin-style payload large enough to cover the slash popup's long-list path. */
+const LONG_PLUGIN_SKILLS = Array.from({ length: 25 }, (_, i) => ({
+  name: `example-plugin:skill-${i.toString().padStart(2, "0")}`,
+  description: `Example plugin skill ${i}`,
+  kind: "skill" as const,
+  source: "plugin" as const,
+}));
+
 /** Boot the app with one workspace + one thread, plus caller-supplied overrides. */
 async function bootApp(page: Page, extra: RpcOverrides = {}): Promise<void> {
   await mockWebSocketServer(page, {
@@ -238,5 +246,21 @@ test.describe("Slash command popup", () => {
       path: "e2e/screenshots/slash-command/05-cursor-provider-skills.png",
       fullPage: true,
     });
+  });
+
+  test("06 - long plugin skill list opens without React flushSync warning", async ({ page }) => {
+    const flushSyncWarnings: string[] = [];
+    page.on("console", (msg) => {
+      const text = msg.text();
+      if (text.includes("flushSync was called")) flushSyncWarnings.push(text);
+    });
+
+    await bootApp(page, { "skill.list": LONG_PLUGIN_SKILLS });
+    await openPopup(page, "/example-plugin");
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator("[role='option']")).toHaveCount(25);
+    await page.waitForTimeout(100);
+
+    expect(flushSyncWarnings).toEqual([]);
   });
 });

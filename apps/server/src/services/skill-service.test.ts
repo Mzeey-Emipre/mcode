@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { SkillService } from "./skill-service.js";
+import { SkillService, codexPluginNameFromSkillPath } from "./skill-service.js";
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "skill-svc-"));
@@ -178,6 +178,122 @@ describe("SkillService", () => {
       const skill = items.find((i) => i.name === "codex-skill");
       expect(skill).toBeDefined();
       expect(skill!.providers).toEqual(["codex"]);
+    });
+
+    it("scans Codex plugin cache skills with plugin prefixes", () => {
+      const skillDir = join(
+        fakeHome,
+        ".codex",
+        "plugins",
+        "cache",
+        "openai-bundled",
+        "impeccable",
+        "2.1.1",
+        "skills",
+        "audit",
+      );
+      mkdirSync(skillDir, { recursive: true });
+      const skillPath = join(skillDir, "SKILL.md");
+      writeMd(skillPath, { name: "audit", description: "Run audit checks" });
+
+      const items = new SkillService().list(undefined, "codex");
+      expect(items.find((i) => i.name === "impeccable:audit")).toMatchObject({
+        kind: "skill",
+        source: "plugin",
+        nativeName: "audit",
+        path: skillPath,
+        providers: ["codex"],
+      });
+    });
+
+    it("scans bundled Codex runtime plugin skills", () => {
+      const skillDir = join(
+        fakeHome,
+        ".cache",
+        "codex-runtimes",
+        "codex-primary-runtime",
+        "plugins",
+        "openai-primary-runtime",
+        "plugins",
+        "documents",
+        "skills",
+        "documents",
+      );
+      mkdirSync(skillDir, { recursive: true });
+      writeMd(join(skillDir, "SKILL.md"), { name: "documents", description: "Edit documents" });
+
+      const items = new SkillService().list(undefined, "codex");
+      expect(items.find((i) => i.name === "documents:documents")).toMatchObject({
+        kind: "skill",
+        source: "plugin",
+        nativeName: "documents",
+        providers: ["codex"],
+      });
+    });
+
+    it("lets native Codex catalog entries override disk fallback duplicates", () => {
+      const skillDir = join(
+        fakeHome,
+        ".codex",
+        "plugins",
+        "cache",
+        "openai-bundled",
+        "browser",
+        "1.0.0",
+        "skills",
+        "control-in-app-browser",
+      );
+      mkdirSync(skillDir, { recursive: true });
+      const skillPath = join(skillDir, "SKILL.md");
+      writeMd(skillPath, { name: "control-in-app-browser", description: "Fallback browser skill" });
+
+      const native = {
+        name: "control-in-app-browser",
+        description: "Native browser skill",
+        kind: "skill" as const,
+        source: "plugin" as const,
+        providers: ["codex"],
+        nativeName: "control-in-app-browser",
+        path: skillPath,
+      };
+
+      const items = new SkillService().list(undefined, "codex", [native]);
+      expect(items.find((i) => i.name === "browser:control-in-app-browser")).toBeUndefined();
+      expect(items.find((i) => i.name === "control-in-app-browser")).toMatchObject({
+        description: "Native browser skill",
+        source: "plugin",
+      });
+    });
+
+    it("extracts Codex plugin names from cache and runtime skill paths", () => {
+      const cacheSkillPath = join(
+        fakeHome,
+        ".codex",
+        "plugins",
+        "cache",
+        "openai-bundled",
+        "browser",
+        "1.0.0",
+        "skills",
+        "control-in-app-browser",
+        "SKILL.md",
+      );
+      const runtimeSkillPath = join(
+        fakeHome,
+        ".cache",
+        "codex-runtimes",
+        "codex-primary-runtime",
+        "plugins",
+        "openai-primary-runtime",
+        "plugins",
+        "documents",
+        "skills",
+        "documents",
+        "SKILL.md",
+      );
+
+      expect(codexPluginNameFromSkillPath(cacheSkillPath, fakeHome)).toBe("browser");
+      expect(codexPluginNameFromSkillPath(runtimeSkillPath, fakeHome)).toBe("documents");
     });
 
     it("tags skills from ~/.agents/skills with providers=['codex'] only", () => {

@@ -59,11 +59,30 @@ const COMMANDS: Command[] = [
   { name: "baz", description: "Third command", namespace: "mcode" },
 ];
 
+const LONG_COMMANDS: Command[] = Array.from({ length: 25 }, (_, i) => ({
+  name: `skill-${i.toString().padStart(2, "0")}`,
+  description: `Skill ${i}`,
+  namespace: "skill",
+}));
+
 function renderPopup(selectedIndex: number) {
   return render(
     <SlashCommandPopup
       state={{ kind: "ready", items: COMMANDS }}
       selectedIndex={selectedIndex}
+      anchorRect={makeAnchorRect()}
+      onSelect={() => {}}
+      onDismiss={() => {}}
+      onRetry={() => {}}
+    />,
+  );
+}
+
+function renderLongPopup() {
+  return render(
+    <SlashCommandPopup
+      state={{ kind: "ready", items: LONG_COMMANDS }}
+      selectedIndex={0}
       anchorRect={makeAnchorRect()}
       onSelect={() => {}}
       onDismiss={() => {}}
@@ -101,5 +120,11 @@ describe("SlashCommandPopup selection indicator", () => {
     renderPopup(1);
     const unselectedRow = screen.getByRole("option", { name: /foo/ });
     expect(unselectedRow).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("renders long skill lists as ordinary rows", () => {
+    renderLongPopup();
+    expect(screen.getByRole("option", { name: /skill-00/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /skill-24/ })).toBeInTheDocument();
   });
 });
