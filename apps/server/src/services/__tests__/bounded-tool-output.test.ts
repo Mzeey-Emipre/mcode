@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, rmSync, statSync, utimesSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
 import {
   BoundedToolOutputBuffer,
   TOOL_OUTPUT_PREVIEW_BYTES,
@@ -10,8 +11,26 @@ import {
 } from "../bounded-tool-output.js";
 
 describe("bounded tool output", () => {
+  let originalDataDir: string | undefined;
+  let testDataDir: string;
+
+  beforeAll(() => {
+    originalDataDir = process.env.MCODE_DATA_DIR;
+    testDataDir = mkdtempSync(join(tmpdir(), "mcode-bounded-output-"));
+    process.env.MCODE_DATA_DIR = testDataDir;
+  });
+
+  afterAll(() => {
+    if (originalDataDir === undefined) {
+      delete process.env.MCODE_DATA_DIR;
+    } else {
+      process.env.MCODE_DATA_DIR = originalDataDir;
+    }
+    rmSync(testDataDir, { recursive: true, force: true });
+  });
+
   beforeEach(() => {
-    rmSync(join(process.env.MCODE_DATA_DIR!, "artifacts", "tool-output"), {
+    rmSync(join(testDataDir, "artifacts", "tool-output"), {
       recursive: true,
       force: true,
     });
