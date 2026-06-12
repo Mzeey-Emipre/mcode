@@ -77,6 +77,7 @@ function makeProvider(): CodexProvider {
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
     { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
+    { persistGeneratedImageFromPath: vi.fn() } as never,
   );
 }
 

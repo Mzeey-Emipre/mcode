@@ -3,7 +3,7 @@
   "hooks": {
     "preToolUse": [
       {
-        "command": "bash -c 'if echo \"$TOOL_INPUT\" | grep -qE \"\\.env(\\.|$)\" && ! echo \"$TOOL_INPUT\" | grep -qE \"\\.env\\.example(\\.|$)\"; then echo \"BLOCK: Do not edit .env files directly. Update .env.example instead.\"; exit 2; fi'",
+        "command": "node scripts/agent/hooks/block-env-edits.mjs",
         "matcher": "edit_file|create_file"
       }
     ],

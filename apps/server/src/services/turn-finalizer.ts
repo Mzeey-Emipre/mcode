@@ -20,7 +20,7 @@
 import { createHash } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
-import type { AgentEvent } from "@mcode/contracts";
+import type { AgentEvent, StoredAttachment } from "@mcode/contracts";
 import type Database from "better-sqlite3";
 import { broadcast } from "../transport/push";
 import type { MessageRepo } from "../repositories/message-repo";
@@ -40,6 +40,7 @@ interface TurnRef {
 interface BufferedBody {
   content: string;
   model: string | null;
+  attachments: StoredAttachment[];
 }
 
 /**
@@ -70,6 +71,8 @@ export class TurnFinalizer {
   private readonly streamingAssistantTextByThread = new Map<string, string>();
   /** Buffered provider assistant body awaiting materialization at finalize, per thread. */
   private readonly bufferedBodyByThread = new Map<string, BufferedBody>();
+  /** Generated attachments awaiting materialization with the assistant row. */
+  private readonly bufferedAttachmentsByThread = new Map<string, StoredAttachment[]>();
   /** Threads whose assistant row was already materialized this turn (e.g. eagerly for a plan FK). */
   private readonly materializedThreads = new Set<string>();
 
@@ -102,9 +105,30 @@ export class TurnFinalizer {
    * take, so callers can carry it on the broadcast and plan-output paths before
    * the row exists.
    */
-  bufferAssistantBody(threadId: string, content: string, model: string | null): string {
-    this.bufferedBodyByThread.set(threadId, { content, model });
+  bufferAssistantBody(
+    threadId: string,
+    content: string,
+    model: string | null,
+    attachments = this.getBufferedAssistantAttachments(threadId),
+  ): string {
+    this.bufferedBodyByThread.set(threadId, { content, model, attachments });
     return deriveTurnAssistantMessageId(threadId, this.turnAnchorId(threadId));
+  }
+
+  /** Buffer assistant-generated attachments until the turn's assistant row is materialized. */
+  bufferAssistantAttachments(threadId: string, attachments: StoredAttachment[]): void {
+    if (attachments.length === 0) return;
+    const existing = this.bufferedAttachmentsByThread.get(threadId) ?? [];
+    const byId = new Map(existing.map((att) => [att.id, att]));
+    for (const att of attachments) {
+      byId.set(att.id, att);
+    }
+    this.bufferedAttachmentsByThread.set(threadId, [...byId.values()]);
+  }
+
+  /** Return generated attachments buffered for the current assistant turn. */
+  getBufferedAssistantAttachments(threadId: string): StoredAttachment[] {
+    return this.bufferedAttachmentsByThread.get(threadId) ?? [];
   }
 
   /** Record the pre-turn git ref so the turn's file changes can be diffed at finalize. */
@@ -128,6 +152,7 @@ export class TurnFinalizer {
     // is itself recordable activity even after its buffered body was consumed.
     if (this.materializedThreads.has(threadId)) return true;
     if (this.hasBufferedBody(threadId)) return true;
+    if (this.getBufferedAssistantAttachments(threadId).length > 0) return true;
     return this.narrativeStore.hasBufferedNarrative(threadId);
   }
 
@@ -278,6 +303,11 @@ export class TurnFinalizer {
     if (last?.role === "assistant") {
       this.streamingAssistantTextByThread.delete(threadId);
       this.bufferedBodyByThread.delete(threadId);
+      const attachments = this.getBufferedAssistantAttachments(threadId);
+      if (attachments.length > 0) {
+        this.messageRepo.appendAttachments(last.id, attachments);
+      }
+      this.bufferedAttachmentsByThread.delete(threadId);
       this.materializedThreads.add(threadId);
       return { id: last.id, content: last.content ?? "" };
     }
@@ -290,6 +320,10 @@ export class TurnFinalizer {
     const fromProvider = buffered != null;
     const content = fromProvider ? buffered.content : (streamed ?? "");
     const model = fromProvider ? buffered.model : (this.threadRepo.findById(threadId)?.model ?? null);
+    const bufferedAttachments = this.getBufferedAssistantAttachments(threadId);
+    const attachments = fromProvider
+      ? this.mergeAttachments(buffered.attachments, bufferedAttachments)
+      : bufferedAttachments;
 
     const nextSeq = last ? last.sequence + 1 : 1;
     const anchorId = last ? last.id : `seq:${nextSeq}`;
@@ -300,17 +334,20 @@ export class TurnFinalizer {
         content,
         sequence: nextSeq,
         model,
+        attachments: attachments.length > 0 ? attachments : undefined,
       });
       this.streamingAssistantTextByThread.delete(threadId);
       this.bufferedBodyByThread.delete(threadId);
+      this.bufferedAttachmentsByThread.delete(threadId);
       this.materializedThreads.add(threadId);
-      if (!fromProvider && content) {
+      if (!fromProvider && (content || attachments.length > 0)) {
         broadcast("agent.event", {
           type: AgentEventType.Message,
           threadId,
           content,
           tokens: null,
           messageId: msg.id,
+          ...(attachments.length > 0 ? { attachments } : {}),
         } satisfies AgentEvent);
       }
       return { id: msg.id, content };
@@ -332,8 +369,22 @@ export class TurnFinalizer {
     this.turnRefBefore.delete(threadId);
     this.streamingAssistantTextByThread.delete(threadId);
     this.bufferedBodyByThread.delete(threadId);
+    this.bufferedAttachmentsByThread.delete(threadId);
     this.materializedThreads.delete(threadId);
     this.narrativeStore.clearTurn(threadId);
     this.persistingThreads.delete(threadId);
+  }
+
+  private mergeAttachments(
+    first: StoredAttachment[],
+    second: StoredAttachment[],
+  ): StoredAttachment[] {
+    if (first.length === 0) return second;
+    if (second.length === 0) return first;
+    const byId = new Map(first.map((att) => [att.id, att]));
+    for (const att of second) {
+      byId.set(att.id, att);
+    }
+    return [...byId.values()];
   }
 }

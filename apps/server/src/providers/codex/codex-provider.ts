@@ -17,6 +17,7 @@ import { SettingsService } from "../../services/settings-service.js";
 import { JobObject } from "../../services/job-object.js";
 import { EnvService } from "../../services/env-service.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
+import { AttachmentService } from "../../services/attachment-service.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { DeterministicForker } from "../../services/handoff/session-forker.js";
 import type {
@@ -42,7 +43,7 @@ import {
   mapDecisionToCodexResponse,
   synthesizeCodexPermissionRequest,
 } from "./codex-permission-mapper.js";
-import type { TurnInputPart, CodexNotification, CodexTurnOptions, ReasoningEffort } from "./codex-types.js";
+import type { TurnInputPart, CodexNotification, CodexTurnOptions, ReasoningEffort, CompletedItem } from "./codex-types.js";
 
 /**
  * Liveness-probe interval for a silent turn, not a turn deadline. The timer
@@ -146,6 +147,17 @@ function toCodexEffort(level?: ReasoningLevel): ReasoningEffort | undefined {
   return level as ReasoningEffort;
 }
 
+/** Return the generated image path from an app-server imageGeneration item. */
+export function generatedImagePathFromCodexItem(item: CompletedItem | undefined): string | null {
+  if (!item || item.type !== "imageGeneration") return null;
+  const status = typeof item.status === "string" ? item.status.toLowerCase() : "";
+  if (status === "failed" || status === "error") return null;
+  const savedPath = (item as { savedPath?: unknown }).savedPath;
+  if (typeof savedPath !== "string") return null;
+  const trimmed = savedPath.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 /**
  * True when a turn lifecycle notification belongs to the app-server's main
  * thread. Sub-agent (collab receiver) threads stream their own `turn/started`
@@ -205,6 +217,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("JobObject") private readonly jobObject: JobObject,
     @inject(EnvService) private readonly envService: EnvService,
+    @inject(AttachmentService) private readonly attachmentService: AttachmentService,
   ) {
     super();
     this.runtime = new SessionRuntime<CodexSessionState>(this, {
@@ -396,8 +409,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
         const entry = this.runtime.get(sessionId);
         if (entry && turnId) entry.pendingTurnId = turnId;
       }
+      const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification as CodexNotification);
+      for (const event of generatedImageEvents) {
+        this.emit("event", event);
+      }
       const events = mapper.mapNotification(notification as CodexNotification);
-      traceCodexIngest(threadId, n.method, n.params, events);
+      traceCodexIngest(threadId, n.method, n.params, [...generatedImageEvents, ...events]);
       for (const event of events) {
         this.emit("event", event);
       }
@@ -692,6 +709,38 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
         endedEmitted = true;
         this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       }
+    }
+  }
+
+  /** Persist Codex-generated image output files before the turn finalizes. */
+  private mapGeneratedImageEvents(threadId: string, notification: CodexNotification): AgentEvent[] {
+    if (notification.method !== "item/completed") return [];
+    const item = notification.params.item;
+    if (item?.type !== "imageGeneration") return [];
+
+    const savedPath = generatedImagePathFromCodexItem(item);
+    if (!savedPath) {
+      logger.debug("Codex imageGeneration completed without a savedPath", {
+        threadId,
+        itemId: item.id,
+      });
+      return [];
+    }
+
+    try {
+      const attachment = this.attachmentService.persistGeneratedImageFromPath(threadId, savedPath);
+      return [{
+        type: AgentEventType.GeneratedAttachment,
+        threadId,
+        attachment,
+      }];
+    } catch (err) {
+      logger.warn("Codex generated image could not be persisted", {
+        threadId,
+        itemId: item.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
     }
   }
 

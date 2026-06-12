@@ -5,9 +5,10 @@
  */
 
 import { injectable } from "tsyringe";
-import { existsSync, statSync, rmSync } from "fs";
+import { randomUUID } from "crypto";
+import { existsSync, statSync, rmSync, copyFileSync, mkdirSync } from "fs";
 import { copyFile, mkdir, unlink } from "fs/promises";
-import { join, resolve, relative } from "path";
+import { basename, extname, join, resolve, relative } from "path";
 import { getMcodeDir } from "@mcode/shared";
 import type { AttachmentMeta, StoredAttachment } from "@mcode/contracts";
 import {
@@ -21,6 +22,7 @@ const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const MAX_PDF_SIZE = 32 * 1024 * 1024;
 const MAX_TEXT_SIZE = 1 * 1024 * 1024;
 const MAX_DOCUMENT_SIZE = 16 * 1024 * 1024;
+const MAX_GENERATED_IMAGE_SIZE = 16 * 1024 * 1024;
 
 /**
  * Pattern matching safe attachment IDs: alphanumerics, hyphens, and underscores only.
@@ -51,9 +53,43 @@ export function getMaxSizeForMime(mimeType: string): number {
   return MAX_IMAGE_SIZE; // conservative fallback
 }
 
+/** Return the stored MIME type for supported image file extensions. */
+export function imageMimeTypeFromPath(filePath: string): string | null {
+  const ext = extname(filePath).toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".png") return "image/png";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".webp") return "image/webp";
+  return null;
+}
+
 /** Resolve the base directory for attachment storage. */
 function getAttachmentsDir(): string {
   return join(getMcodeDir(), "attachments");
+}
+
+function assertSafeId(kind: string, value: string): void {
+  if (!SAFE_ID_PATTERN.test(value)) {
+    throw new Error(
+      `Invalid ${kind}: ${value}. Only alphanumerics, hyphens, and underscores are allowed.`,
+    );
+  }
+}
+
+function resolveStoredAttachmentPath(baseDir: string, id: string, mimeType: string): string {
+  const ext = storedAttachmentSuffix(mimeType);
+  if (!ext) throw new Error(`Unsupported attachment MIME type: ${mimeType}`);
+  const destPath = resolve(baseDir, `${id}${ext}`);
+  const rel = relative(baseDir, destPath);
+  if (rel.startsWith("..") || resolve(baseDir, rel) !== destPath) {
+    throw new Error(`Attachment path escapes thread directory: ${id}`);
+  }
+  return destPath;
+}
+
+function displayNameFromPath(filePath: string): string {
+  const name = basename(filePath).replace(/[\x00-\x1f\x7f]/g, "").trim();
+  return name.length > 0 ? name : "generated-image";
 }
 
 /** Persists and reads file attachments for agent threads. */
@@ -110,20 +146,8 @@ export class AttachmentService {
         }
 
         // Validate attachment ID to prevent path traversal
-        if (!SAFE_ID_PATTERN.test(att.id)) {
-          throw new Error(
-            `Invalid attachment ID: ${att.id}. Only alphanumerics, hyphens, and underscores are allowed.`,
-          );
-        }
-
-        const ext = storedAttachmentSuffix(att.mimeType);
-        const destPath = resolve(baseDir, `${att.id}${ext}`);
-
-        // Verify destination stays within the thread attachment directory
-        const rel = relative(baseDir, destPath);
-        if (rel.startsWith("..") || resolve(baseDir, rel) !== destPath) {
-          throw new Error(`Attachment path escapes thread directory: ${att.id}`);
-        }
+        assertSafeId("attachment ID", att.id);
+        const destPath = resolveStoredAttachmentPath(baseDir, att.id, att.mimeType);
 
         await copyFile(att.sourcePath, destPath);
 
@@ -158,6 +182,42 @@ export class AttachmentService {
     return {
       stored: results.map((r) => r.stored),
       persisted: results.map((r) => r.persisted).filter((p): p is AttachmentMeta => p != null),
+    };
+  }
+
+  /** Copy a Codex-generated image into Mcode-managed attachment storage. */
+  persistGeneratedImageFromPath(threadId: string, sourcePath: string): StoredAttachment {
+    assertSafeId("thread ID", threadId);
+
+    const mimeType = imageMimeTypeFromPath(sourcePath);
+    if (!mimeType) {
+      throw new Error("Generated image has an unsupported file extension");
+    }
+    if (!existsSync(sourcePath)) {
+      throw new Error("Generated image file not found");
+    }
+
+    const stat = statSync(sourcePath);
+    if (!stat.isFile()) {
+      throw new Error("Generated image source is not a file");
+    }
+    if (stat.size > MAX_GENERATED_IMAGE_SIZE) {
+      throw new Error(
+        `Generated image exceeds ${MAX_GENERATED_IMAGE_SIZE} byte limit (actual: ${stat.size})`,
+      );
+    }
+
+    const id = randomUUID();
+    const baseDir = join(getAttachmentsDir(), threadId);
+    mkdirSync(baseDir, { recursive: true });
+    const destPath = resolveStoredAttachmentPath(baseDir, id, mimeType);
+    copyFileSync(sourcePath, destPath);
+
+    return {
+      id,
+      name: displayNameFromPath(sourcePath),
+      mimeType,
+      sizeBytes: stat.size,
     };
   }
 

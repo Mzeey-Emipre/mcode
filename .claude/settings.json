@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'if echo \"$TOOL_INPUT\" | grep -qE \"\\.env(\\.|$)\" && ! echo \"$TOOL_INPUT\" | grep -qE \"\\.env\\.example(\\.|$)\"; then echo \"BLOCK: Do not edit .env files directly. Update .env.example instead.\"; exit 2; fi'"
+            "command": "node ${CLAUDE_PROJECT_DIR}/scripts/agent/hooks/block-env-edits.mjs"
           }
         ]
       }
