@@ -14,6 +14,8 @@ import { useQueueStore } from "./queueStore";
 import { useTaskStore } from "./taskStore";
 import { useComposerDraftStore } from "./composerDraftStore";
 import { useDiffStore } from "./diffStore";
+import { usePreviewReferenceQueueStore } from "./previewReferenceQueueStore";
+import { usePreviewTabsStore } from "./previewTabsStore";
 import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
 import { useSettingsStore } from "./settingsStore";
 import { sanitizeCustomBranchInput, resolveBranchName } from "@/lib/branch-name";
@@ -27,6 +29,11 @@ function generateBranchId(): string {
 const SYNC_THROTTLE_MS = 30_000;
 /** Tracks the last syncThreadPrs request time per workspace. */
 const lastSyncTime = new Map<string, number>();
+
+async function clearPreviewResources(threadId: string): Promise<void> {
+  await usePreviewTabsStore.getState().clearScope(threadId);
+  usePreviewReferenceQueueStore.getState().clearThread(threadId);
+}
 
 /**
  * Trailing-edge debounce window for `markThreadViewed` RPCs. Rapid sidebar
@@ -439,11 +446,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   deleteWorkspace: async (id) => {
     set({ error: null });
     try {
-      await getTransport().deleteWorkspace(id);
-      bumpThreadListMutationEpoch(id);
       const deletedThreadIds = get()
         .threads.filter((t) => t.workspace_id === id)
         .map((t) => t.id);
+      await Promise.all(deletedThreadIds.map((tid) => clearPreviewResources(tid)));
+      await getTransport().deleteWorkspace(id);
+      bumpThreadListMutationEpoch(id);
       const draftStore = useComposerDraftStore.getState();
       const taskStore = useTaskStore.getState();
       const terminalStore = useTerminalStore.getState();
@@ -952,6 +960,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const isClientOnly = !!(row?.clientPreparing || row?.clientError);
 
       if (isClientOnly) {
+        await clearPreviewResources(threadId);
         if (workspaceIdForEpoch) {
           bumpThreadListMutationEpoch(workspaceIdForEpoch);
         }
@@ -978,6 +987,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
+      await clearPreviewResources(threadId);
       await getTransport().deleteThread(threadId, cleanupWorktree);
       if (workspaceIdForEpoch) {
         bumpThreadListMutationEpoch(workspaceIdForEpoch);

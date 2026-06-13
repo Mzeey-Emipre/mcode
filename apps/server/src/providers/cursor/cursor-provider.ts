@@ -323,18 +323,18 @@ export class CursorProvider
    * yet, hand it to `runtime.stop` (interrupt → close → hard kill). Records a
    * pending stop if the session has not spawned at all.
    */
-  stopSession(sessionId: string): void {
+  async stopSession(sessionId: string): Promise<void> {
     const entry = this.runtime.get(sessionId);
     this.cancelPendingForThread(sessionId);
     if (entry?.acpSessionId && entry.activeTurnState) {
       entry.pendingUserStopAbort = true;
     }
     if (entry?.acpSessionId) {
-      void entry.connection.cancel({ sessionId: entry.acpSessionId }).catch(() => {});
+      await entry.connection.cancel({ sessionId: entry.acpSessionId }).catch(() => {});
     } else if (entry) {
       // Entry exists but ACP session hasn't opened yet; tear down immediately.
       const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
-      void this.runtime.stop(sessionId);
+      await this.runtime.stop(sessionId);
       this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
     } else {
       this.pendingStops.add(sessionId);
@@ -348,11 +348,9 @@ export class CursorProvider
    * a graceful cancel — this tears the runtime down (interrupt → close → hard
    * kill), so a stale ACP connection is replaced rather than reused on retry.
    */
-  discardSession(sessionId: string): void {
+  async discardSession(sessionId: string): Promise<void> {
     if (this.runtime.get(sessionId) === undefined) return;
-    void this.runtime.stop(sessionId).catch((err: unknown) => {
-      logger.warn("Cursor discardSession failed", { sessionId, error: String(err) });
-    });
+    await this.runtime.stop(sessionId);
   }
 
 

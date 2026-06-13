@@ -38,6 +38,7 @@ function makeMinimalDeps(
     prDraftService: undefined as unknown as RouterDeps["prDraftService"],
     threadRepo: undefined as unknown as RouterDeps["threadRepo"],
     workspaceRepo: undefined as unknown as RouterDeps["workspaceRepo"],
+    threadTeardownService: undefined as unknown as RouterDeps["threadTeardownService"],
     ...overrides,
   } as unknown as RouterDeps & { authToken: string; shutdown: () => void };
 }

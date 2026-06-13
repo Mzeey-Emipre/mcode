@@ -62,6 +62,11 @@ import type { ModelCacheService } from "../services/model-cache-service.js";
 import type { DiffSummaryService } from "../services/diff-summary-service.js";
 import type { HandoffStorage } from "../services/handoff/handoff-storage.js";
 import { loadConversationPage } from "../services/conversation-page.js";
+import type { ThreadTeardownService } from "../services/thread-teardown-service.js";
+
+function teardownFailureMessage(result: PromiseRejectedResult): string {
+  return result.reason instanceof Error ? result.reason.message : String(result.reason);
+}
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
@@ -114,6 +119,8 @@ export interface RouterDeps {
   filesystemBrowser: FilesystemBrowser;
   /** Generates and persists AI-powered diff summaries for threads. */
   diffSummaryService: DiffSummaryService;
+  /** Tears down provider and terminal resources owned by a thread before deletion. */
+  threadTeardownService: ThreadTeardownService;
 }
 
 /**
@@ -219,6 +226,19 @@ function resolveThreadRepoPath(deps: RouterDeps, threadId?: string): string | un
   return deps.gitService.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
 }
 
+async function teardownWorkspaceThreads(deps: RouterDeps, workspaceId: string): Promise<void> {
+  const threads = deps.threadRepo.listAllByWorkspace(workspaceId);
+  const results = await Promise.allSettled(
+    threads.map((thread) => deps.threadTeardownService.teardownThread(thread.id)),
+  );
+  const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failures.length > 0) {
+    throw new Error(
+      `Workspace teardown failed for ${workspaceId}: ${failures.map(teardownFailureMessage).join("; ")}`,
+    );
+  }
+}
+
 /** Dispatch a validated method call to the appropriate service. */
 async function dispatch(
   method: WsMethodName,
@@ -255,6 +275,7 @@ async function dispatch(
       return workspace;
     }
     case "workspace.delete": {
+      await teardownWorkspaceThreads(deps, params.id);
       const result = deps.workspaceService.delete(params.id);
       if (result) {
         deps.gitWatcherService.unwatchWorkspace(params.id);
@@ -263,6 +284,7 @@ async function dispatch(
       return result;
     }
     case "workspace.forceDelete": {
+      await teardownWorkspaceThreads(deps, params.id);
       const result = deps.workspaceService.forceDelete(params.id);
       if (result) {
         deps.gitWatcherService.unwatchWorkspace(params.id);
@@ -316,7 +338,8 @@ async function dispatch(
       );
     case "thread.delete": {
       deps.ciWatcherService.unwatch(params.threadId);
-      return deps.threadService.delete(
+      await deps.threadTeardownService.teardownThread(params.threadId);
+      return await deps.threadService.delete(
         params.threadId,
         params.cleanupWorktree,
       );

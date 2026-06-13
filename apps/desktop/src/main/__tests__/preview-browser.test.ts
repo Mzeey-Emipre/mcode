@@ -878,6 +878,31 @@ describe("preview-browser", () => {
       expect(closed.data.activeTabId).toBe(closed.data.tabs[0]!.id);
     });
 
+    it("tabs.closeScope disposes every page owned by a deleted thread", async () => {
+      const win = createWindow();
+      await showPreview(win, { threadId: "thread-A", url: "https://one.test" });
+      const firstView = createdViews[0]!;
+
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+        threadId: "thread-A",
+      });
+      expect(created.ok).toBe(true);
+      const secondView = createdViews[createdViews.length - 1]!;
+
+      const closed = callTabs<{ tabs: unknown[]; activeTabId: string | null }>(
+        win,
+        "preview:tabs.closeScope",
+        { threadId: "thread-A" },
+      );
+
+      expect(closed.ok).toBe(true);
+      if (!closed.ok) return;
+      expect(closed.data.tabs).toHaveLength(0);
+      expect(closed.data.activeTabId).toBeNull();
+      expect(firstView.webContents.close).toHaveBeenCalled();
+      expect(secondView.webContents.close).toHaveBeenCalled();
+    });
+
     it("tab sets are isolated per thread (thread restore)", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });

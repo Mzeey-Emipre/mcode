@@ -49,6 +49,7 @@ function makeMinimalDeps(
     workspaceRepo: undefined as unknown as RouterDeps["workspaceRepo"],
     ciWatcherService: undefined as unknown as RouterDeps["ciWatcherService"],
     providerAvailability: undefined as unknown as RouterDeps["providerAvailability"],
+    threadTeardownService: undefined as unknown as RouterDeps["threadTeardownService"],
     ...overrides,
   } as unknown as RouterDeps & { authToken: string; shutdown: () => void };
 }

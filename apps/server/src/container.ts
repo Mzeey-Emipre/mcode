@@ -67,6 +67,7 @@ import { ShellEnvResolver } from "./services/shell-env-resolver";
 import { EnvService } from "./services/env-service";
 import { UtilityCompletionService } from "./services/utility-completion-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
+import { ThreadTeardownService } from "./services/thread-teardown-service";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(mcodeDir: string): typeof container {
@@ -289,6 +290,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     AgentService,
     { useClass: AgentService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ThreadTeardownService,
+    { useClass: ThreadTeardownService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

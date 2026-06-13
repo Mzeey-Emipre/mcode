@@ -2275,7 +2275,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   }
 
   /** Abort a running session, or record a pending stop if the session hasn't been created yet. */
-  stopSession(sessionId: string): void {
+  async stopSession(sessionId: string): Promise<void> {
     // Normalize to the raw UUID that canUseTool stores as threadId.
     const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
     // Reject all pending permission requests for this session and notify frontend.
@@ -2290,11 +2290,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     const entry = this.runtime.get(sessionId);
     if (entry) {
       // The runtime's stop runs interrupt (closeQueue) → close (query.close) →
-      // hard taskkill of the spawned PID. Fire-and-forget; callers that need to
-      // await the subprocess exit use waitForSessionExit.
-      void this.runtime.stop(sessionId).catch((err: unknown) => {
-        logger.warn("Claude stopSession failed", { sessionId, error: String(err) });
-      });
+      // hard taskkill of the spawned PID.
+      await this.runtime.stop(sessionId);
     } else {
       // Session not yet created (sendMessage still in flight). Record the
       // stop so doSendMessage tears the session down immediately after
@@ -2312,11 +2309,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
    * deliberately leaves goals and pending permissions intact, since the caller
    * retries the same turn on a new session.
    */
-  discardSession(sessionId: string): void {
+  async discardSession(sessionId: string): Promise<void> {
     if (this.runtime.get(sessionId) === undefined) return;
-    void this.runtime.stop(sessionId).catch((err: unknown) => {
-      logger.warn("Claude discardSession failed", { sessionId, error: String(err) });
-    });
+    await this.runtime.stop(sessionId);
   }
 
   /**

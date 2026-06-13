@@ -285,4 +285,32 @@ export function registerTabHandlers(): void {
       return { ok: true, data: tabs };
     },
   );
+
+  ipcMain.handle(
+    "preview:tabs.closeScope",
+    (_event, payload: { threadId?: unknown }): TabIpcResult<BrowserTabSet> => {
+      const win = BrowserWindow.fromWebContents(_event.sender);
+      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
+      const tid = normaliseThreadId(payload?.threadId);
+      if (!tid) return { ok: false, error: "invalid-thread-id" };
+
+      const s = getSession(win);
+      const set = s.tabsByThread.get(tid);
+      if (set) {
+        for (const tab of set.tabs) {
+          disposeTabView(win, s, tab);
+        }
+        s.tabsByThread.delete(tid);
+      }
+      if (s.lastPreviewThreadId === tid) {
+        s.lastPreviewThreadId = null;
+        s.resumePreviewUrl = null;
+      }
+
+      const empty: BrowserTabSet = { threadId: tid, activeTabId: null, tabs: [] };
+      sendTabsUpdated(win, empty);
+      logger.info("Preview: tab scope closed", { threadId: tid });
+      return { ok: true, data: empty };
+    },
+  );
 }
