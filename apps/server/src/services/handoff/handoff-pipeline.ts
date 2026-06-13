@@ -3,8 +3,9 @@
  * {@link SessionForker}.
  *
  * The pipeline builds a {@link ForkRequest} and calls `provider.forker.fork(req)`.
- * Each provider owns the strategy: CleanForker (Claude/Cursor, path B) or
- * DeterministicForker (Codex/Copilot, path D). The `sessionForkOnResume` field
+ * Each provider owns the strategy: clean-resume providers use CleanForker
+ * (path B); unsupported providers use DeterministicForker (path D). The
+ * `sessionForkOnResume` field
  * is now metadata only (provenance), not the dispatch key.
  *
  * On a classified non-retryable provider error (quota/auth/context-overflow/
@@ -15,7 +16,6 @@
 import { inject, injectable } from "tsyringe";
 import { logger } from "@mcode/shared";
 import { ThreadRepo } from "../../repositories/thread-repo.js";
-import { MessageRepo } from "../../repositories/message-repo.js";
 import { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import { ToolCallRecordRepo } from "../../repositories/tool-call-record-repo.js";
 import { ThoughtSegmentRepo } from "../../repositories/thought-segment-repo.js";
@@ -31,6 +31,7 @@ import type {
   ToolCallRecord,
   ThoughtSegmentRecord,
   Message,
+  ForkHistoryBudget,
 } from "@mcode/contracts";
 /**
  * Render an Error-shaped value for structured logging. Winston cannot
@@ -73,9 +74,6 @@ import type {
 interface IThreadRepo {
   findById(id: string): Promise<any> | any;
 }
-interface IMessageRepo {
-  listIncludingInternal(threadId: string): Promise<any[]> | any[];
-}
 interface IWorkspaceRepo {
   findById(id: string): Promise<any> | any;
 }
@@ -108,6 +106,28 @@ const PROVIDER_CALL_TIMEOUT_MS = 120_000;
  */
 const REPLAY_BUDGET_CHARS = 100_000;
 
+function formatHistoryBudgetNotice(historyBudget?: ForkHistoryBudget): string | null {
+  if (!historyBudget) return null;
+  const lines: string[] = [];
+  if (historyBudget.omittedBeforeCount > 0) {
+    const suffix = historyBudget.omittedBeforeCount === 1 ? "" : "s";
+    lines.push(
+      `[${historyBudget.omittedBeforeCount} earlier message${suffix} elided because the fork history budget was reached]`,
+    );
+  }
+  if (historyBudget.truncatedMessages.length > 0) {
+    const suffix = historyBudget.truncatedMessages.length === 1 ? "" : "s";
+    lines.push(`[${historyBudget.truncatedMessages.length} retained message${suffix} truncated by the fork history budget]`);
+  }
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
+function prefixHistoryBudgetNotice(text: string, historyBudget?: ForkHistoryBudget): string {
+  const notice = formatHistoryBudgetNotice(historyBudget);
+  if (!notice) return text;
+  return text ? `${notice}\n\n${text}` : notice;
+}
+
 @injectable()
 export class HandoffPipelineService {
   /**
@@ -119,7 +139,6 @@ export class HandoffPipelineService {
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: IThreadRepo,
-    @inject(MessageRepo) private readonly messageRepo: IMessageRepo,
     @inject("IProviderRegistry") private readonly providerRegistry: Pick<IProviderRegistry, "resolve">,
     @inject(WorkspaceRepo) private readonly workspaceRepo: IWorkspaceRepo,
     @inject(ToolCallRecordRepo) private readonly toolCallRecordRepo: IToolCallRecordRepo,
@@ -132,7 +151,6 @@ export class HandoffPipelineService {
    */
   static forTesting(deps: {
     threadRepo: IThreadRepo;
-    messageRepo: IMessageRepo;
     providerRegistry: Pick<IProviderRegistry, "resolve">;
     workspaceRepo?: IWorkspaceRepo;
     toolCallRecordRepo?: IToolCallRecordRepo;
@@ -140,7 +158,6 @@ export class HandoffPipelineService {
   }): HandoffPipelineService {
     const svc = Object.create(HandoffPipelineService.prototype) as HandoffPipelineService;
     (svc as any).threadRepo = deps.threadRepo;
-    (svc as any).messageRepo = deps.messageRepo;
     (svc as any).providerRegistry = deps.providerRegistry;
     (svc as any).workspaceRepo = deps.workspaceRepo ?? {
       findById: async () => ({ path: process.cwd() }),
@@ -175,12 +192,9 @@ export class HandoffPipelineService {
     const parentCwd: string = parent.worktree_path ?? workspace.path;
 
     const parentProvider = this.tryResolveProvider(parent.provider);
-    const messages = await this.messageRepo.listIncludingInternal(req.parentThreadId);
-    const forkIndex = messages.findIndex((m: any) => m.id === req.forkedFromMessageId);
+    const messagesUpToFork = req.messagesUpToFork;
+    const forkIndex = messagesUpToFork.findIndex((m: any) => m.id === req.forkedFromMessageId);
     if (forkIndex === -1) throw new Error(`Fork message ${req.forkedFromMessageId} not in parent`);
-    // Slice to only include messages up to and including the fork anchor so that
-    // later parent messages cannot leak into the child handoff context.
-    const messagesUpToFork = messages.slice(0, forkIndex + 1);
     const forkMsg = messagesUpToFork[forkIndex];
 
     const prompt = buildHandoffPrompt({
@@ -200,11 +214,14 @@ export class HandoffPipelineService {
     // PARENT provider's side-channel resume body (not the child's delivery,
     // which is off-band), so it is a fixed generous cap rather than a function
     // of the child provider's per-turn input window.
-    const conversationHistory = buildConversationReplay(messagesUpToFork, REPLAY_BUDGET_CHARS, null);
+    const conversationHistory = prefixHistoryBudgetNotice(
+      buildConversationReplay(messagesUpToFork, REPLAY_BUDGET_CHARS, null),
+      req.historyBudget,
+    );
 
     // Pre-gather the deterministic (path-D) signals from the parent thread so
     // DeterministicForker stays stateless. These are no-ops for provider paths
-    // (B/A) — the forkers simply ignore the extra fields.
+    // (path B) since the clean forker ignores the extra fields.
     const deterministicInputs = await this.gatherDeterministicInputs(parent, messagesUpToFork, forkMsg);
 
     const forkReq: ForkRequest = {
@@ -216,6 +233,7 @@ export class HandoffPipelineService {
       parentSdkSessionId: parentSdkSession,
       conversationHistory,
       messagesUpToFork,
+      historyBudget: req.historyBudget,
       parentThread: parent,
       childThreadId: req.childThreadId,
       ...deterministicInputs,

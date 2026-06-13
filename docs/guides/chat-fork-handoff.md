@@ -14,21 +14,21 @@ The pipeline lives in `apps/server/src/services/handoff/`.
 
 Two paths are tried in order. The result of the first path that succeeds becomes the handoff artifact.
 
-**Path B -- clean-fork providers (e.g. Claude, Cursor).** The pipeline calls `runSideChannelQuery` on the parent provider. This issues a new query against a forked copy of the provider's existing session without mutating it, so the parent thread's conversation state is unchanged. Path B requires a live `sdk_session_id` on the parent thread because the side-channel must resume the correct provider conversation.
+**Path B -- clean-fork providers (Claude, Cursor, Codex, Copilot).** The pipeline calls `runSideChannelQuery` on the parent provider. This issues a new query against a forked copy of the provider's existing session without mutating it, so the parent thread's conversation state is unchanged. Path B requires a live `sdk_session_id` on the parent thread because the side-channel must resume the correct provider conversation.
 
 **Path D -- deterministic fallback.** Always available. Builds the handoff by walking the message list up to the fork point and rendering a structured Markdown summary. No provider call is made. Path D fires when the parent provider does not support forking at all (`sessionForkOnResume === "unsupported"`), when the parent has no `sdk_session_id` and the provider is clean-resume, or when path B throws an error that error-classification routes as quota, auth, context-overflow, or fatal (errors for which retrying would hit the same wall).
 
-Transient errors (network blips, 5xx, AbortController timeout at 60s) also route to path D so forks always succeed.
+Transient errors (network blips, 5xx, AbortController timeout at 120 seconds) also route to path D so forks always succeed.
 
 ## Provider capabilities
 
-Two fields on the provider interface control which path fires. Both are declared in `packages/contracts/src/providers/interfaces.ts`.
+Provider fork capability is declared in `packages/contracts/src/providers/interfaces.ts`.
 
-`sessionForkOnResume: "clean" | "unsupported"` -- declares whether the provider supports side-channel queries (`"clean"`) or not (`"unsupported"`). Omitting this field or returning `null` is treated as `"unsupported"`.
+`sessionForkOnResume: "clean" | "unsupported"` -- declares whether the provider supports side-channel queries (`"clean"`) or not (`"unsupported"`).
 
-`maxInputCharactersPerTurn: number` -- the provider's per-turn input character cap. The pipeline uses this to guard against oversized provider output.
+`forker: SessionForker` -- produces the handoff artifact. Clean providers use `CleanForker`; unsupported providers use `DeterministicForker`.
 
-Implement `runSideChannelQuery` on path-B providers. It receives an `AbortSignal` that fires after 60 seconds.
+Implement `runSideChannelQuery` on path-B providers. It receives an `AbortSignal` that fires after 120 seconds.
 
 ## Storage layout
 
@@ -59,7 +59,8 @@ The mode is recorded in `HandoffMeta.mode` (`"full"` or `"minimal"`) and in the 
 
 The pipeline includes several guards to avoid blocking or corrupting the fork flow:
 
-- **60-second timeout.** An `AbortController` wraps every provider call. If the controller fires, the pipeline catches the abort and falls to path D with `reason: "transient"`.
+- **120-second timeout.** An `AbortController` wraps every provider call. If the controller fires, the pipeline catches the abort and falls to path D with `reason: "transient"`.
+- **Fork history budget.** Parent history is read in newest-first pages under a byte budget. The handoff records when older history was elided.
 - **25 MB attachment size cap.** `HandoffStorage.copyAttachments` skips any attachment larger than 25 MB and records a sentinel `sha256: "<skipped>"` in the manifest.
 - **Budget truncation at section boundaries.** When a provider returns more than 115% of the computed character budget, `applyBudgetGuard` truncates at the nearest H2 heading boundary and appends a notice so the child agent knows the doc was cut.
 - **Abandoned-child cleanup.** Before writing the artifact, `AgentService` re-fetches the child thread. If it has been hard-deleted between orchestration start and the write, the artifact is dropped and the fork fails cleanly rather than writing orphaned files.

@@ -322,6 +322,7 @@ export type {
   HandoffMode,
   LadderStep,
   ForkAnchorRole,
+  ForkHistoryBudget,
   ProviderErrorClass,
 } from "./providers/session-forker.js";
 

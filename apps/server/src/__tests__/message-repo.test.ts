@@ -126,6 +126,41 @@ ORDER BY m.sequence ASC`,
     });
   });
 
+  describe("listByThreadUpToSequenceBudgeted", () => {
+    it("keeps newest messages within the byte budget and reports older elision", () => {
+      for (let i = 1; i <= 4; i++) {
+        repo.create("thread-1", "user", `msg-${i}`, i);
+      }
+
+      const result = repo.listByThreadUpToSequenceBudgeted("thread-1", 4, {
+        maxBytes: 10,
+        pageSize: 2,
+      });
+
+      expect(result.messages.map((m) => m.sequence)).toEqual([3, 4]);
+      expect(result.budget.omittedBeforeCount).toBe(2);
+      expect(result.budget.retainedBytes).toBe(10);
+      expect(result.budget.truncatedMessages).toEqual([]);
+    });
+
+    it("truncates the fork anchor when one message exceeds the byte budget", () => {
+      repo.create("thread-1", "user", "older", 1);
+      const anchor = repo.create("thread-1", "assistant", "abcdef", 2);
+
+      const result = repo.listByThreadUpToSequenceBudgeted("thread-1", 2, {
+        maxBytes: 3,
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0].id).toBe(anchor.id);
+      expect(result.messages[0].content).toBe("abc");
+      expect(result.budget.omittedBeforeCount).toBe(1);
+      expect(result.budget.truncatedMessages).toEqual([
+        { id: anchor.id, originalBytes: 6, retainedBytes: 3 },
+      ]);
+    });
+  });
+
   describe("create with reply fields", () => {
     it("persists replyToMessageId and quotedText", () => {
       const original = repo.create("thread-1", "assistant", "hello", 1);

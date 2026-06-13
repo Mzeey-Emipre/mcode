@@ -14,9 +14,10 @@ export type {
   ProviderErrorClass,
   HandoffMeta,
   HandoffArtifact,
+  ForkHistoryBudget,
 } from "@mcode/contracts";
 
-import type { ForkAnchorRole } from "@mcode/contracts";
+import type { ForkAnchorRole, ForkHistoryBudget, Message } from "@mcode/contracts";
 
 /** Input to the pipeline's orchestrate() method. */
 export interface HandoffRequest {
@@ -25,6 +26,10 @@ export interface HandoffRequest {
   forkAnchorRole: ForkAnchorRole;
   childThreadId: string;
   childProviderId: string;
+  /** Parent messages retained under the fork history budget, ascending. */
+  messagesUpToFork: Message[];
+  /** Byte-budget metadata for the retained parent history window. */
+  historyBudget?: ForkHistoryBudget;
   /** The user's new message in the fork composer that the child agent will receive as its first turn. */
   userFollowUpMessage: string;
 }

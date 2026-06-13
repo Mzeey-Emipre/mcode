@@ -3,12 +3,12 @@
  * to produce a handoff document. Vendors the /handoff skill instructions and
  * tailors them with fork context.
  *
- * Off-band delivery (PRD #538) retired the full-vs-minimal mode selection, the
- * child-input character budget, and the >115% truncation/overflow guard: the
- * full doc is now written to an OS temp file and the child reads it on demand
- * via a one-shot ScopedPreGrant, so doc-body sizing no longer needs to fit a
- * provider's per-turn input window. The prompt therefore asks for a complete,
- * self-contained document with no character cap.
+ * PRD #538 retired the full-vs-minimal mode selection, the child-input
+ * character budget, and the >115% truncation/overflow guard. Most providers
+ * read the full doc from an OS temp file via a one-shot ScopedPreGrant.
+ * Providers without that read path may receive the bounded artifact inline.
+ * The prompt therefore asks for a complete, self-contained document with no
+ * character cap.
  */
 
 import type { ForkAnchorRole } from "./handoff-types.js";
