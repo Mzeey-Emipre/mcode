@@ -3,11 +3,10 @@ import type { DiffViewMode } from "@/stores/diffStore";
 
 /**
  * A requirement a Review view depends on beyond its scope. `"git"` views need a
- * git repository (the four working-tree views); `"diffSummary"` is gated behind
- * the diff-summary setting. Views with no requirement are always offered in their
- * scope.
+ * git repository (the four working-tree views). Views with no requirement are
+ * always offered in their scope.
  */
-export type ReviewViewRequirement = "git" | "diffSummary";
+export type ReviewViewRequirement = "git";
 
 /**
  * The kind of picked operand a comparison view surfaces in the toolbar's
@@ -29,7 +28,7 @@ export interface ReviewView {
   readonly label: string;
   /**
    * Whether the view requires an active thread. The turn views (Last turn,
-   * Cumulative, Summary) describe a thread's turns and are thread-only; the git
+   * Cumulative) describe a thread's turns and are thread-only; the git
    * working-tree views (Unstaged/Staged/Commit/Branch) work in *both* scopes —
    * threadless they read the workspace root, in a thread they read the thread's
    * checkout. So the Review tab is dual-scope and additive: a thread keeps the
@@ -60,7 +59,6 @@ export const REVIEW_VIEWS: readonly ReviewView[] = [
   { id: "branch", label: "Branch", threadOnly: false, requires: "git", operand: "branch" },
   { id: "last-turn", label: "Last turn", threadOnly: true },
   { id: "cumulative", label: "Cumulative", threadOnly: true },
-  { id: "summary", label: "Summary", threadOnly: true, requires: "diffSummary" },
 ];
 
 /**
@@ -78,14 +76,12 @@ export function availableReviewViews(scope: PanelScope): readonly ReviewView[] {
 export interface ReviewViewGates {
   /** Whether the active workspace is a git repository (gates the git views). */
   readonly isGitRepo: boolean;
-  /** Whether the diff-summary feature is enabled (gates the Summary view). */
-  readonly diffSummaryEnabled: boolean;
 }
 
 /**
  * The Review views the user can actually pick right now: {@link availableReviewViews}
- * filtered by the runtime gates (git presence for the working-tree views, the
- * diff-summary setting for Summary). Pure. Returns catalog order.
+ * filtered by the runtime gates (git presence for the working-tree views).
+ * Pure. Returns catalog order.
  */
 export function visibleReviewViews(
   scope: PanelScope,
@@ -93,7 +89,6 @@ export function visibleReviewViews(
 ): readonly ReviewView[] {
   return availableReviewViews(scope).filter((view) => {
     if (view.requires === "git" && !gates.isGitRepo) return false;
-    if (view.requires === "diffSummary" && !gates.diffSummaryEnabled) return false;
     return true;
   });
 }

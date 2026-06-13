@@ -28,6 +28,8 @@ describe("diffStore", () => {
       selectedCommitSha: null,
       renderMode: "unified",
       lineWrapByThread: {},
+      inlineDiffCache: {},
+      diffRevisionByScope: {},
     });
   });
 
@@ -73,6 +75,42 @@ describe("diffStore", () => {
       clearThread("thread-1");
       expect(getLineWrap("thread-1")).toBe(true);
       expect(useDiffStore.getState().lineWrapByThread["thread-1"]).toBeUndefined();
+    });
+  });
+
+  describe("diff revisions", () => {
+    it("increments per mutable diff scope", () => {
+      const { bumpDiffRevision } = useDiffStore.getState();
+      bumpDiffRevision("thread-1");
+      bumpDiffRevision("thread-1");
+      bumpDiffRevision("workspace-1");
+
+      expect(useDiffStore.getState().diffRevisionByScope["thread-1"]).toBe(2);
+      expect(useDiffStore.getState().diffRevisionByScope["workspace-1"]).toBe(1);
+    });
+
+    it("evicts inline diff cache entries for the refreshed mutable scope", () => {
+      const { cacheInlineDiff, bumpDiffRevision } = useDiffStore.getState();
+      cacheInlineDiff("thread-1", "branch", "origin/main...feat/x", "src/a.ts", "diff-a");
+      cacheInlineDiff("thread-2", "branch", "origin/main...feat/y", "src/b.ts", "diff-b");
+
+      bumpDiffRevision("thread-1");
+
+      const state = useDiffStore.getState();
+      expect(state.inlineDiffCache["thread-1:branch:origin/main...feat/x:src/a.ts"]).toBeUndefined();
+      expect(state.inlineDiffCache["thread-2:branch:origin/main...feat/y:src/b.ts"]).toBe("diff-b");
+    });
+
+    it("evicts cumulative inline diff cache when snapshots refresh", () => {
+      const { cacheInlineDiff, setSnapshots } = useDiffStore.getState();
+      cacheInlineDiff("thread-1", "cumulative", "thread-1", "src/a.ts", "old");
+      cacheInlineDiff("thread-1", "snapshot", "s1", "src/a.ts", "snapshot");
+
+      setSnapshots("thread-1", []);
+
+      const state = useDiffStore.getState();
+      expect(state.inlineDiffCache["thread-1:cumulative:thread-1:src/a.ts"]).toBeUndefined();
+      expect(state.inlineDiffCache["thread-1:snapshot:s1:src/a.ts"]).toBe("snapshot");
     });
   });
 
