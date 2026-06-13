@@ -61,6 +61,7 @@ import { HandoffCoordinator } from "./handoff/handoff-coordinator.js";
 import { ScopedPreGrantService } from "./scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import { TurnErrorPolicy } from "./turn-error-policy.js";
+import type { TurnOutcome } from "./turn-outcome.js";
 
 /**
  * Escape special XML characters in a string to prevent injection into
@@ -138,6 +139,8 @@ export class AgentService {
    * give-up so the retry's own terminal events still reach the UI.
    */
   private readonly endedSuppressionThreads = new Set<string>();
+  /** Threads that have already entered the finalizer for the current turn. */
+  private readonly terminalFinalizedThreads = new Set<string>();
   /**
    * Per-thread dispatch state for transient retries. Fire-and-forget providers
    * (Claude) can return from `sendTurn` before the stream ends, so the retry
@@ -1086,23 +1089,6 @@ export class AgentService {
     const sessionId = `mcode-${threadId}`;
     const thread = this.threadRepo.findById(threadId);
     const providerId = (thread?.provider ?? "claude") as ProviderId;
-    let provider: import("@mcode/contracts").IAgentProvider | null = null;
-    try {
-      provider = this.providerRegistry.resolve(providerId);
-    } catch {
-      // Provider may not be available
-    }
-    if (provider) {
-      try {
-        await provider.stopSession(sessionId);
-      } catch (err) {
-        logger.warn("Provider stopSession failed", {
-          threadId,
-          providerId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
     // Tear down any armed transient-retry window so a scheduled stream retry
     // can't re-dispatch after the user stopped, and the suppression flags don't
     // outlive the turn (they would otherwise swallow the next turn's terminal
@@ -1111,7 +1097,18 @@ export class AgentService {
     // A user stop ends the turn. The finalizer flushes partial assistant text,
     // persists buffered tool calls (running ones inherit "cancelled"), captures
     // the snapshot, broadcasts turn.persisted, and clears per-turn state.
-    await this.turnFinalizer.finalize(threadId, "cancelled");
+    const finalize = this.finalizeTerminalTurn(threadId, "cancelled", "user stop");
+    try {
+      const provider = this.providerRegistry.resolve(providerId);
+      await provider.stopSession(sessionId);
+    } catch (err) {
+      logger.warn("Provider stopSession failed", {
+        threadId,
+        providerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    await (finalize ?? Promise.resolve());
     this.threadRepo.updateStatus(threadId, "paused");
     broadcast("thread.status", { threadId, status: "paused" });
     if (this.activeSessionIds.has(threadId)) {
@@ -1348,6 +1345,27 @@ export class AgentService {
     this.retryingThreads.delete(threadId);
     this.endedSuppressionThreads.delete(threadId);
     this.turnRetryDispatchByThread.delete(threadId);
+  }
+
+  /**
+   * Starts finalization once for a terminal turn path. Provider streams can emit
+   * both Error/TurnComplete and a trailing Ended for the same turn.
+   */
+  private finalizeTerminalTurn(
+    threadId: string,
+    outcome: TurnOutcome,
+    source: string,
+  ): Promise<void> | null {
+    if (this.terminalFinalizedThreads.has(threadId)) return null;
+    this.terminalFinalizedThreads.add(threadId);
+    return this.turnFinalizer.finalize(threadId, outcome).catch((err) => {
+      logger.error("finalize failed on terminal event", {
+        threadId,
+        outcome,
+        source,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 
   /**
@@ -1798,6 +1816,7 @@ export class AgentService {
           // while late hooks from the prior turn can still increment the old one.
           this.narrativeStore.resetTurnCounters(event.threadId);
           this.turnCompleteSeenByThread.delete(event.threadId);
+          this.terminalFinalizedThreads.delete(event.threadId);
         }
 
         if (event.type === AgentEventType.TurnComplete) {
@@ -1811,12 +1830,7 @@ export class AgentService {
           // flushLateHook instead of the normal mid-turn buffer.
           this.turnCompleteSeenByThread.add(event.threadId);
 
-          this.turnFinalizer.finalize(event.threadId, "completed").catch((err) => {
-            logger.error("finalize failed on turnComplete", {
-              threadId: event.threadId,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
+          void this.finalizeTerminalTurn(event.threadId, "completed", "turnComplete");
 
           // Clear the "running" flag so agent.listRunning no longer reports
           // this thread and shutdown won't downgrade it to "interrupted."
@@ -1876,12 +1890,7 @@ export class AgentService {
           // exists (e.g. a pre-turn CLI-not-found failure) rather than
           // broadcasting turn.persisted against the wrong (user) message id.
           this.disarmTurnRetryWindow(event.threadId);
-          this.turnFinalizer.finalize(event.threadId, "errored").catch((err) => {
-            logger.error("finalize failed on error event", {
-              threadId: event.threadId,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
+          void this.finalizeTerminalTurn(event.threadId, "errored", "error");
           // Turn-scoped cleanup of any one-shot handoff Read grant when the
           // first Turn errors out before completing normally.
           this.scopedPreGrant.clear(event.threadId);
@@ -1972,6 +1981,21 @@ export class AgentService {
           // teardown/cleanup below; the retry (or give-up) owns the real `Ended`.
           if (this.shouldSuppressTurnEnded(event.threadId)) {
             return;
+          }
+          const thread = this.threadRepo.findById(event.threadId);
+          const shouldInferCodexCancellation = event.outcome == null
+            && thread?.provider === "codex"
+            && this.activeSessionIds.has(event.threadId);
+          const outcome = event.outcome
+            ?? (shouldInferCodexCancellation ? "cancelled" : undefined);
+          if (outcome) {
+            if (shouldInferCodexCancellation) {
+              const finalText = this.narrativeStore.takeOpenThought(event.threadId);
+              if (finalText) {
+                this.turnFinalizer.appendStreamingText(event.threadId, finalText);
+              }
+            }
+            void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
           }
           this.trackSessionEnded(event.threadId);
           // Turn-scoped cleanup of any one-shot handoff Read grant. No-op on
@@ -2321,8 +2345,13 @@ ${userMessage}`;
   }
 
   /** Stop all active agent sessions (for graceful shutdown). */
-  stopAll(): void {
+  async stopAll(): Promise<void> {
     const ids = [...this.activeSessionIds];
+    await Promise.all(
+      ids.map((threadId) =>
+        this.finalizeTerminalTurn(threadId, "cancelled", "shutdown") ?? Promise.resolve(),
+      ),
+    );
     for (const threadId of ids) {
       const sessionId = `mcode-${threadId}`;
       const thread = this.threadRepo.findById(threadId);

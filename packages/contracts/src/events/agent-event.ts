@@ -3,6 +3,8 @@ import { lazySchema } from "../utils/lazySchema.js";
 import { QuotaCategorySchema } from "../providers/usage.js";
 import { StoredAttachmentSchema } from "../models/attachment.js";
 
+const TurnOutcomeSchema = z.enum(["completed", "errored", "cancelled"]);
+
 /**
  * All valid `type` discriminants for `AgentEvent`.
  * Use these constants instead of string literals to get autocomplete and
@@ -120,6 +122,8 @@ export const AgentEventSchema = lazySchema(() =>
     z.object({
       type: z.literal(AgentEventType.Ended),
       threadId: z.string(),
+      outcome: TurnOutcomeSchema.optional(),
+      reason: z.string().optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.System),

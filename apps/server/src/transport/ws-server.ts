@@ -47,8 +47,13 @@ const ATTACHMENT_EXT_MIME: Record<string, string> = {
   odp: "application/vnd.oasis.opendocument.presentation",
 };
 
+type WsServerDeps = RouterDeps & {
+  authToken: string;
+  shutdown: () => void;
+};
+
 /** Create and configure the HTTP + WebSocket server. */
-export function createWsServer(deps: RouterDeps & { authToken: string; shutdown: () => void }): {
+export function createWsServer(deps: WsServerDeps): {
   httpServer: Server;
   wss: WebSocketServer;
 } {

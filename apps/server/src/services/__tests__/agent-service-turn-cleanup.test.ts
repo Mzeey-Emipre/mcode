@@ -3,9 +3,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent, Thread, IProviderRegistry } from "@mcode/contracts";
+import type Database from "better-sqlite3";
+import { openMemoryDatabase } from "../../store/database.js";
+import { ThreadRepo as RealThreadRepo } from "../../repositories/thread-repo.js";
+import { WorkspaceRepo as RealWorkspaceRepo } from "../../repositories/workspace-repo.js";
+import { MessageRepo as RealMessageRepo } from "../../repositories/message-repo.js";
+import { ToolCallRecordRepo as RealToolCallRecordRepo } from "../../repositories/tool-call-record-repo.js";
+import { ThoughtSegmentRepo as RealThoughtSegmentRepo } from "../../repositories/thought-segment-repo.js";
+import { HookExecutionRepo as RealHookExecutionRepo } from "../../repositories/hook-execution-repo.js";
 import { AgentService } from "../agent-service.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
+import { broadcast } from "../../transport/push.js";
 import type { ThreadRepo } from "../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../repositories/message-repo.js";
@@ -355,5 +364,143 @@ describe("AgentService turn cleanup", () => {
 
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markIdle).toHaveBeenCalled();
+  });
+});
+
+describe("AgentService Ended finalization", () => {
+  let db: Database.Database;
+  let threadRepo: RealThreadRepo;
+  let workspaceRepo: RealWorkspaceRepo;
+  let messageRepo: RealMessageRepo;
+  let providerEmitter: EventEmitter & { sendTurn: ReturnType<typeof vi.fn>; stopSession: ReturnType<typeof vi.fn> };
+  let service: AgentService;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db = openMemoryDatabase();
+    threadRepo = new RealThreadRepo(db);
+    workspaceRepo = new RealWorkspaceRepo(db);
+    messageRepo = new RealMessageRepo(db);
+    const toolCallRecordRepo = new RealToolCallRecordRepo(db);
+    const thoughtSegmentRepo = new RealThoughtSegmentRepo(db);
+    const hookExecutionRepo = new RealHookExecutionRepo(db);
+    providerEmitter = Object.assign(new EventEmitter(), {
+      sendTurn: vi.fn(() => Promise.resolve()),
+      stopSession: vi.fn(),
+      shutdown: vi.fn(),
+    });
+
+    const providerRegistry = {
+      resolve: vi.fn(() => providerEmitter),
+      resolveAll: vi.fn(() => [providerEmitter]),
+      shutdown: vi.fn(),
+    } as unknown as IProviderRegistry;
+    const gitService = {
+      resolveWorkingDir: vi.fn(() => process.cwd()),
+      listWorktrees: vi.fn(() => []),
+    } as unknown as GitService;
+    const attachmentService = {
+      persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
+    } as unknown as AttachmentService;
+    const snapshotService = {
+      captureRef: vi.fn(() => Promise.resolve("ref-before")),
+      getFilesChanged: vi.fn(() => Promise.resolve([])),
+    } as unknown as SnapshotService;
+    const memoryPressureService = {
+      markActive: vi.fn(),
+      markIdle: vi.fn(),
+      assertCanStartTurn: vi.fn(),
+      onPressureChange: vi.fn(),
+    } as unknown as MemoryPressureService;
+    const settingsService = {
+      get: vi.fn(() => ({
+        model: { defaults: { fallbackId: undefined } },
+        agent: { guardrails: { maxBudgetUsd: 0, maxTurns: 0 } },
+        provider: { enabled: {}, cli: {} },
+      })),
+      on: vi.fn(),
+    } as unknown as SettingsService;
+    const planQuestionAnswersRepo = {
+      markAnswered: vi.fn(),
+      isAnswered: vi.fn(() => false),
+      listAnsweredForThread: vi.fn(() => []),
+    } as unknown as PlanQuestionAnswersRepo;
+
+    service = new AgentService(
+      threadRepo,
+      workspaceRepo,
+      messageRepo,
+      gitService,
+      attachmentService,
+      providerRegistry,
+      { create: vi.fn() } as unknown as ThreadService,
+      hookExecutionRepo,
+      { listByThread: vi.fn(() => []), create: vi.fn() } as unknown as TurnSnapshotRepo,
+      snapshotService,
+      db,
+      memoryPressureService,
+      { get: vi.fn(() => []), upsert: vi.fn() } as unknown as TaskRepo,
+      settingsService,
+      { assertUsable: vi.fn() } as unknown as ProviderAvailabilityService,
+      planQuestionAnswersRepo,
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
+      { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
+      new NarrativeStore(messageRepo, toolCallRecordRepo, thoughtSegmentRepo, hookExecutionRepo),
+      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+    );
+    service.init();
+  });
+
+  it("persists partial assistant text when a running turn ends with only Ended", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "codex");
+
+    await service.sendMessage(thread.id, "please investigate", "default", "gpt-5", [], undefined, "codex");
+    providerEmitter.emit("event", {
+      type: AgentEventType.TextDelta,
+      threadId: thread.id,
+      delta: "partial answer before the provider stopped",
+      isFinalResponse: false,
+    } satisfies AgentEvent);
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.Ended,
+      threadId: thread.id,
+    } satisfies AgentEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const { messages } = messageRepo.listByThread(thread.id, 10);
+    const assistant = messages.find((message) => message.role === "assistant");
+    expect(assistant?.content).toBe("partial answer before the provider stopped");
+    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      threadId: thread.id,
+      messageId: assistant?.id,
+    }));
+  });
+
+  it("does not infer cancellation from a bare Ended event for non-Codex providers", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "cursor");
+
+    await service.sendMessage(thread.id, "please investigate", "default", "gpt-5", [], undefined, "cursor");
+    providerEmitter.emit("event", {
+      type: AgentEventType.TextDelta,
+      threadId: thread.id,
+      delta: "partial cursor text",
+      isFinalResponse: false,
+    } satisfies AgentEvent);
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.Ended,
+      threadId: thread.id,
+    } satisfies AgentEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const { messages } = messageRepo.listByThread(thread.id, 10);
+    expect(messages.some((message) =>
+      message.role === "assistant" && message.content === "partial cursor text",
+    )).toBe(false);
+    expect(broadcast).not.toHaveBeenCalledWith("turn.persisted", expect.anything());
   });
 });

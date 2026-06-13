@@ -54,3 +54,18 @@ describe("AgentEvent generated attachments", () => {
     expect(parsed.attachments).toEqual([attachment]);
   });
 });
+
+describe("AgentEvent ended outcome", () => {
+  it("parses a terminal Ended outcome", () => {
+    const parsed = AgentEventSchema().parse({
+      type: "ended",
+      threadId: "t-1",
+      outcome: "errored",
+      reason: "codex_idle_timeout",
+    });
+
+    expect(parsed.type).toBe(AgentEventType.Ended);
+    if (parsed.type !== AgentEventType.Ended) throw new Error("unreachable");
+    expect(parsed.outcome).toBe("errored");
+  });
+});

@@ -150,6 +150,7 @@ describe("/health endpoint", () => {
     expect((body as Record<string, unknown>).status).toBe("ok");
     expect((body as Record<string, unknown>).activeAgents).toBe(2);
   });
+
 });
 
 describe("/shutdown endpoint", () => {
