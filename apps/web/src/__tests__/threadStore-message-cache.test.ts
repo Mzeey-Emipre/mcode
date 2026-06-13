@@ -34,6 +34,11 @@ function resetThreadStoreTestState() {
   clearRecordCache();
   vi.clearAllMocks();
   (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: fakeMessages, hasMore: false });
+  (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+    messages: fakeMessages,
+    hasMore: false,
+    narrativeByMessage: {},
+  });
   resetThreadStoreForTests({
     currentThreadId: null,
     runningThreadIds: new Set<string>(),
@@ -46,19 +51,20 @@ describe("loadMessages cache integration", () => {
     resetThreadStoreTestState();
   });
 
-  it("calls getMessages on first load (cache miss) and populates cache", async () => {
+  it("calls conversation.page on first load (cache miss) and populates cache", async () => {
     await useThreadStore.getState().loadMessages("t1");
 
-    expect(mockTransport.getMessages).toHaveBeenCalledWith("t1", MESSAGE_FETCH_SIZE);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t1", MESSAGE_FETCH_SIZE);
+    expect(mockTransport.getMessages).not.toHaveBeenCalled();
     expect(getTestActiveMessages()).toEqual(fakeMessages);
     expect(getCachedRecord("t1")).toBeDefined();
     expect(getCachedRecord("t1")?.messages).toEqual(fakeMessages);
   });
 
-  it("on cache hit, does not call getMessages and renders from cache", async () => {
+  it("on cache hit, does not call conversation.page and renders from cache", async () => {
     // First load primes the cache
     await useThreadStore.getState().loadMessages("t1");
-    expect(mockTransport.getMessages).toHaveBeenCalledTimes(1);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
 
     // Switch away
     useThreadStore.setState((s) => ({
@@ -68,7 +74,7 @@ describe("loadMessages cache integration", () => {
 
     // Switch back -- should hit cache
     await useThreadStore.getState().loadMessages("t1");
-    expect(mockTransport.getMessages).toHaveBeenCalledTimes(1); // unchanged
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1); // unchanged
     expect(getTestActiveMessages()).toEqual(fakeMessages);
     expect(useThreadStore.getState().currentThreadId).toBe("t1");
   });

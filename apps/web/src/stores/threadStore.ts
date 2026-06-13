@@ -696,7 +696,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     try {
       const cursor = getRec(threadId).oldestLoadedSequence;
       const epoch = getRec(threadId).loadEpoch;
-      const { messages: olderMessages, hasMore } = await getTransport().getMessages(threadId, OLDER_PAGE_SIZE, cursor);
+      const {
+        messages: olderMessages,
+        hasMore,
+        narrativeByMessage,
+      } = await getTransport().loadConversationPage(threadId, OLDER_PAGE_SIZE, cursor);
 
       const isStale = get().currentThreadId !== threadId
         || getRec(threadId).loadEpoch !== epoch;
@@ -717,6 +721,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       patchRec(threadId, (r) => ({
         messages: [...olderMessages, ...r.messages],
         persistedToolCallCounts: { ...r.persistedToolCallCounts, ...newCounts },
+        narrativeByMessage: { ...narrativeByMessage, ...r.narrativeByMessage },
         oldestLoadedSequence: newOldest,
         hasMoreMessages: hasMore,
         isLoadingMore: false,

@@ -2,10 +2,19 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { WebSocket } from "ws";
 import {
   addClient,
+  broadcast,
   broadcastTerminalData,
+  subscribeClientToThread,
+  unsubscribeClientFromThread,
   _resetForTest,
 } from "./push.js";
 import { decodeTerminalDataFrame } from "@mcode/contracts";
+import {
+  createPassThroughTransportPayloadValidator,
+  createValidatingTransportPayloadValidator,
+  resetTransportPayloadValidatorForTest,
+  setTransportPayloadValidatorForTest,
+} from "./payload-validation.js";
 
 function fakeOpenSocket(received: Array<{ buf: Buffer; binary: boolean }>): WebSocket {
   const ws: Partial<WebSocket> = {
@@ -22,8 +31,14 @@ function fakeOpenSocket(received: Array<{ buf: Buffer; binary: boolean }>): WebS
 }
 
 describe("broadcastTerminalData", () => {
-  beforeEach(() => _resetForTest());
-  afterEach(() => _resetForTest());
+  beforeEach(() => {
+    _resetForTest();
+    resetTransportPayloadValidatorForTest();
+  });
+  afterEach(() => {
+    _resetForTest();
+    resetTransportPayloadValidatorForTest();
+  });
 
   it("sends a binary frame to every connected client", () => {
     const a: Array<{ buf: Buffer; binary: boolean }> = [];
@@ -49,5 +64,86 @@ describe("broadcastTerminalData", () => {
     broadcastTerminalData("pty-1", 0, payload);
     const decoded = decodeTerminalDataFrame(new Uint8Array(received[0].buf));
     expect(decoded.payload).toEqual(payload);
+  });
+});
+
+describe("broadcast", () => {
+  beforeEach(() => {
+    _resetForTest();
+    resetTransportPayloadValidatorForTest();
+  });
+  afterEach(() => {
+    _resetForTest();
+    resetTransportPayloadValidatorForTest();
+  });
+
+  it("routes thread-scoped events only to clients subscribed to that thread", () => {
+    const a: Array<{ buf: Buffer; binary: boolean }> = [];
+    const b: Array<{ buf: Buffer; binary: boolean }> = [];
+    const wsA = fakeOpenSocket(a);
+    const wsB = fakeOpenSocket(b);
+    addClient(wsA);
+    addClient(wsB);
+    subscribeClientToThread(wsA, "thread-a");
+    subscribeClientToThread(wsB, "thread-b");
+
+    broadcast("agent.event", {
+      type: "textDelta",
+      threadId: "thread-a",
+      delta: "hello",
+    });
+
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(0);
+    expect(JSON.parse(a[0].buf.toString("utf-8")).data.threadId).toBe("thread-a");
+  });
+
+  it("stops routing after a client unsubscribes from a thread", () => {
+    const received: Array<{ buf: Buffer; binary: boolean }> = [];
+    const ws = fakeOpenSocket(received);
+    addClient(ws);
+    subscribeClientToThread(ws, "thread-a");
+    unsubscribeClientFromThread(ws, "thread-a");
+
+    broadcast("agent.event", {
+      type: "textDelta",
+      threadId: "thread-a",
+      delta: "hello",
+    });
+
+    expect(received).toHaveLength(0);
+  });
+
+  it("broadcasts threadless events to every client", () => {
+    const a: Array<{ buf: Buffer; binary: boolean }> = [];
+    const b: Array<{ buf: Buffer; binary: boolean }> = [];
+    addClient(fakeOpenSocket(a));
+    addClient(fakeOpenSocket(b));
+
+    broadcast("skills.changed", {});
+
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+  });
+
+  it("lets tests swap validating and pass-through payload adapters", () => {
+    const validating: Array<{ buf: Buffer; binary: boolean }> = [];
+    const validatingWs = fakeOpenSocket(validating);
+    addClient(validatingWs);
+    subscribeClientToThread(validatingWs, "thread-a");
+    setTransportPayloadValidatorForTest(createValidatingTransportPayloadValidator());
+
+    broadcast("thread.status", { threadId: "thread-a", status: "not-a-status" });
+    expect(validating).toHaveLength(0);
+
+    _resetForTest();
+    const passThrough: Array<{ buf: Buffer; binary: boolean }> = [];
+    const passThroughWs = fakeOpenSocket(passThrough);
+    addClient(passThroughWs);
+    subscribeClientToThread(passThroughWs, "thread-a");
+    setTransportPayloadValidatorForTest(createPassThroughTransportPayloadValidator());
+
+    broadcast("thread.status", { threadId: "thread-a", status: "not-a-status" });
+    expect(passThrough).toHaveLength(1);
   });
 });

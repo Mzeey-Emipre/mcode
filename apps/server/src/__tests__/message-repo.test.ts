@@ -65,20 +65,28 @@ describe("MessageRepo", () => {
       repo.create("thread-1", "user", "x", 1);
       const stmt = db.prepare(
         `EXPLAIN QUERY PLAN
-SELECT id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, reply_to_message_id, quoted_text, model,
-(SELECT COUNT(*) FROM tool_call_records WHERE message_id = m.id) AS tool_call_count
-FROM (
+WITH page AS (
   SELECT m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.reply_to_message_id, m.quoted_text, m.model
   FROM messages m
-  WHERE m.thread_id = ?
+  WHERE m.thread_id = ? AND m.is_internal = 0
   ORDER BY m.sequence DESC
   LIMIT ?
-) m
-ORDER BY m.sequence ASC`,
+),
+tool_counts AS (
+  SELECT message_id, COUNT(*) AS tool_call_count
+  FROM tool_call_records
+  WHERE message_id IN (SELECT id FROM page)
+  GROUP BY message_id
+)
+SELECT page.*, COALESCE(tool_counts.tool_call_count, 0) AS tool_call_count
+FROM page
+LEFT JOIN tool_counts ON tool_counts.message_id = page.id
+ORDER BY page.sequence ASC`,
       );
       const plan = stmt.all("thread-1", 11) as Array<{ detail?: string }>;
       const text = plan.map((r) => r.detail ?? "").join("\n").toUpperCase();
       expect(text).not.toContain("SCAN TOOL_CALL_RECORDS");
+      expect(text).not.toContain("CORRELATED");
     });
   });
 

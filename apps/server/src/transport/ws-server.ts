@@ -256,7 +256,7 @@ export function createWsServer(deps: RouterDeps & { authToken: string; shutdown:
         // Not JSON or not a header — fall through to normal routing
       }
 
-      routeMessage(raw, deps)
+      routeMessage(raw, deps, { client: ws })
         .then((response) => {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(response));

@@ -8,6 +8,7 @@ import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import type { WebSocket } from "ws";
 
 import {
   WS_METHODS,
@@ -50,7 +51,8 @@ import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { WorkspaceEnricher } from "../services/workspace-enricher";
 import type { FilesystemBrowser } from "../services/filesystem-browser";
-import { broadcast } from "./push";
+import { broadcast, subscribeClientToThread, unsubscribeClientFromThread } from "./push";
+import { getTransportPayloadValidator } from "./payload-validation.js";
 import {
   ProviderCliMissingError,
   isProviderAvailabilityError,
@@ -59,6 +61,7 @@ import type { ProviderAvailabilityService } from "../services/provider-availabil
 import type { ModelCacheService } from "../services/model-cache-service.js";
 import type { DiffSummaryService } from "../services/diff-summary-service.js";
 import type { HandoffStorage } from "../services/handoff/handoff-storage.js";
+import { loadConversationPage } from "../services/conversation-page.js";
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
@@ -120,6 +123,7 @@ export interface RouterDeps {
 export async function routeMessage(
   raw: string,
   deps: RouterDeps,
+  context: { client?: WebSocket } = {},
 ): Promise<WebSocketResponse> {
   let request: WebSocketRequest;
   try {
@@ -170,17 +174,14 @@ export async function routeMessage(
       request.method as WsMethodName,
       paramsResult.data,
       deps,
+      context,
     );
 
-    // Validate result
-    const resultValidation = methodDef.result.safeParse(result);
-    if (!resultValidation.success) {
-      logger.warn("Result validation failed", {
-        method: request.method,
-        error: resultValidation.error.message,
-      });
-      // Still return the result - schema drift should not block responses
-    }
+    getTransportPayloadValidator().validateRpcResult(
+      request.method,
+      result,
+      methodDef.result,
+    );
 
     return { id: request.id, result };
   } catch (err) {
@@ -224,8 +225,20 @@ async function dispatch(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: any,
   deps: RouterDeps,
+  context: { client?: WebSocket },
 ): Promise<unknown> {
   switch (method) {
+    case "push.subscribeThread":
+      if (context.client) {
+        subscribeClientToThread(context.client, params.threadId);
+      }
+      return;
+    case "push.unsubscribeThread":
+      if (context.client) {
+        unsubscribeClientFromThread(context.client, params.threadId);
+      }
+      return;
+
     // Workspace
     case "workspace.list":
       return deps.workspaceService.list();
@@ -550,6 +563,12 @@ async function dispatch(
           deps.planQuestionAnswersRepo.listAnsweredForThread(params.threadId),
       };
     }
+    case "conversation.page":
+      return loadConversationPage(deps, {
+        threadId: params.threadId,
+        limit: params.limit,
+        before: params.before,
+      });
 
     // Files
     case "file.list":

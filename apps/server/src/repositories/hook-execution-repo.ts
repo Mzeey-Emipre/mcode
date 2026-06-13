@@ -137,6 +137,27 @@ export class HookExecutionRepo {
     return rows.map(rowToRecord);
   }
 
+  /** List hook executions for many messages in one indexed query, grouped by message id. */
+  listByMessages(messageIds: readonly string[]): Map<string, HookExecutionRecord[]> {
+    const grouped = new Map<string, HookExecutionRecord[]>();
+    if (messageIds.length === 0) return grouped;
+
+    const placeholders = messageIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT ${COLUMNS} FROM hook_executions WHERE message_id IN (${placeholders}) ORDER BY message_id ASC, sort_order ASC`,
+      )
+      .all(...messageIds) as HookExecutionRow[];
+
+    for (const row of rows) {
+      const record = rowToRecord(row);
+      const list = grouped.get(record.message_id) ?? [];
+      list.push(record);
+      grouped.set(record.message_id, list);
+    }
+    return grouped;
+  }
+
   /** Count the number of hook executions for a message. */
   countByMessage(messageId: string): number {
     const row = this.stmtCountByMessage.get(messageId) as { count: number };

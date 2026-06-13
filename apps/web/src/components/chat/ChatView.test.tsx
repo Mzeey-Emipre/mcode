@@ -6,8 +6,12 @@ import type { Thread } from "@/transport/types";
 // Store mocks must be declared before importing the component under test.
 
 /** Holds the store snapshot backing both the hook selector and `getState()` (real Zustand API). */
-const { chatViewWorkspaceMockRef } = vi.hoisted(() => ({
+const { chatViewWorkspaceMockRef, chatViewTransportMock } = vi.hoisted(() => ({
   chatViewWorkspaceMockRef: { current: null as Record<string, unknown> | null },
+  chatViewTransportMock: {
+    subscribeThread: vi.fn(),
+    unsubscribeThread: vi.fn(),
+  },
 }));
 
 vi.mock("@/stores/workspaceStore", () => ({
@@ -60,6 +64,10 @@ vi.mock("@/stores/composerDraftStore", () => ({
   useComposerDraftStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector({ setPendingPrefill: vi.fn() })
   ),
+}));
+
+vi.mock("@/transport", () => ({
+  getTransport: () => chatViewTransportMock,
 }));
 
 // Composer and MessageList have deep dependencies; stub them out.
@@ -177,6 +185,10 @@ function setupWorkspaceMock(state: ReturnType<typeof defaultWorkspaceState>) {
 
 describe("ChatView - Thread Title Double-Click Rename", () => {
   beforeEach(() => {
+    chatViewTransportMock.subscribeThread.mockResolvedValue(undefined);
+    chatViewTransportMock.unsubscribeThread.mockResolvedValue(undefined);
+    chatViewTransportMock.subscribeThread.mockClear();
+    chatViewTransportMock.unsubscribeThread.mockClear();
     setupWorkspaceMock(defaultWorkspaceState());
   });
 

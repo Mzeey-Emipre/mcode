@@ -115,7 +115,10 @@ export const mockTransport: McodeTransport = {
   dismissPlanQuestions: vi.fn().mockResolvedValue(undefined),
   getActiveAgentCount: vi.fn().mockResolvedValue(0),
   listRunning: vi.fn().mockResolvedValue([]),
+  subscribeThread: vi.fn().mockResolvedValue(undefined),
+  unsubscribeThread: vi.fn().mockResolvedValue(undefined),
   getMessages: vi.fn().mockResolvedValue({ messages: [], hasMore: false }),
+  loadConversationPage: vi.fn(),
   createAndSendMessage: vi.fn(),
   updateThreadTitle: vi.fn().mockResolvedValue(true),
   updateThreadSettings: vi.fn().mockResolvedValue(true),
@@ -194,3 +197,10 @@ export const mockTransport: McodeTransport = {
   }),
   readLatestHandoff: vi.fn().mockResolvedValue(null),
 };
+
+vi.mocked(mockTransport.loadConversationPage).mockImplementation(
+  async (threadId: string, limit: number, before?: number) => {
+    const result = await mockTransport.getMessages(threadId, limit, before);
+    return { ...result, narrativeByMessage: {} };
+  },
+);

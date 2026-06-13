@@ -157,6 +157,27 @@ export class ToolCallRecordRepo {
     return rows.map(rowToToolCallRecord);
   }
 
+  /** List tool call records for many messages in one indexed query, grouped by message id. */
+  listByMessages(messageIds: readonly string[]): Map<string, ToolCallRecord[]> {
+    const grouped = new Map<string, ToolCallRecord[]>();
+    if (messageIds.length === 0) return grouped;
+
+    const placeholders = messageIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT ${TOOL_CALL_RECORD_COLUMNS} FROM tool_call_records WHERE message_id IN (${placeholders}) ORDER BY message_id ASC, sort_order ASC`,
+      )
+      .all(...messageIds) as ToolCallRecordRow[];
+
+    for (const row of rows) {
+      const record = rowToToolCallRecord(row);
+      const list = grouped.get(record.message_id) ?? [];
+      list.push(record);
+      grouped.set(record.message_id, list);
+    }
+    return grouped;
+  }
+
   /** List child tool call records for a parent, ordered by sort_order ascending. */
   listByParent(parentToolCallId: string): ToolCallRecord[] {
     const rows = this.stmtListByParent.all(parentToolCallId) as ToolCallRecordRow[];

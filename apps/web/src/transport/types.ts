@@ -36,6 +36,7 @@ import type {
   PermissionDecision,
   PermissionRequest,
   CreateAndSendResult,
+  ConversationPage,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -65,7 +66,7 @@ export type {
   ProviderModelInfo,
 } from "@mcode/contracts";
 
-export type { PaginatedMessages, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
+export type { PaginatedMessages, ConversationPage, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
@@ -248,6 +249,10 @@ export interface McodeTransport {
    * optimistic client-side set was lost (reload, new tab, reconnect).
    */
   listRunning(): Promise<string[]>;
+  /** Subscribe this client connection to push events for the active thread. */
+  subscribeThread(threadId: string): Promise<void>;
+  /** Remove this client connection's push subscription for a thread. */
+  unsubscribeThread(threadId: string): Promise<void>;
 
   // Thread mutations
   updateThreadTitle(threadId: string, title: string): Promise<boolean>;
@@ -282,6 +287,8 @@ export interface McodeTransport {
    * @returns Paginated response with messages array and hasMore flag.
    */
   getMessages(threadId: string, limit: number, before?: number): Promise<PaginatedMessages>;
+  /** Fetch persisted messages and grouped narrative for one thread page. */
+  loadConversationPage(threadId: string, limit: number, before?: number): Promise<ConversationPage>;
 
   // Config
   discoverConfig(workspacePath: string): Promise<Record<string, unknown>>;

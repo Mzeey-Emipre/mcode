@@ -22,7 +22,7 @@ import type {
 } from "./types";
 import type { CreateAndSendResult } from "@mcode/contracts";
 import { emitPtyReconnectGap } from "@/components/terminal/ptyDataRegistry";
-import type { PaginatedMessages, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability } from "@mcode/contracts";
+import type { PaginatedMessages, ConversationPage, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
@@ -246,7 +246,10 @@ export function createWsTransport(
       // Deferred import avoids a circular dependency at module evaluation time.
       const nowForThreads = Date.now();
       import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
-        const { activeWorkspaceId, loadThreads } = useWorkspaceStore.getState();
+        const { activeWorkspaceId, activeThreadId, loadThreads } = useWorkspaceStore.getState();
+        if (activeThreadId) {
+          rpc<void>("push.subscribeThread", { threadId: activeThreadId }).catch(() => {});
+        }
         if (!activeWorkspaceId) return;
         const last = lastLoadThreadsAtByWorkspace.get(activeWorkspaceId) ?? 0;
         if (nowForThreads - last <= LOAD_THREADS_RECONNECT_COOLDOWN_MS) return;
@@ -634,10 +637,14 @@ export function createWsTransport(
       rpcBinary<AttachmentMeta | null>("clipboard.saveFile", { mimeType, fileName }, data),
     getActiveAgentCount: () => rpc<number>("agent.activeCount", {}),
     listRunning: () => rpc<string[]>("agent.listRunning", {}),
+    subscribeThread: (threadId) => rpc<void>("push.subscribeThread", { threadId }),
+    unsubscribeThread: (threadId) => rpc<void>("push.unsubscribeThread", { threadId }),
 
     // Messages
     getMessages: (threadId, limit, before?) =>
       rpc<PaginatedMessages>("message.list", { threadId, limit, ...(before != null ? { before } : {}) }),
+    loadConversationPage: (threadId, limit, before?) =>
+      rpc<ConversationPage>("conversation.page", { threadId, limit, ...(before != null ? { before } : {}) }),
 
     // Config
     discoverConfig: (workspacePath) =>

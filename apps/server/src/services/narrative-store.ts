@@ -36,7 +36,7 @@
 import { injectable, inject } from "tsyringe";
 import { randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
-import type { NarrativeEntry, TurnRange } from "@mcode/contracts";
+import type { Message, NarrativeEntry, TurnRange } from "@mcode/contracts";
 import { MessageRepo } from "../repositories/message-repo";
 import {
   ToolCallRecordRepo,
@@ -135,13 +135,28 @@ export class NarrativeStore {
       range?.before,
     );
 
+    return this.loadForMessages(messages);
+  }
+
+  /**
+   * Build persisted narrative entries for an already-loaded message page.
+   * Used by the conversation-page RPC so messages and narrative share one page
+   * query and the child tables are fetched once each across all assistants.
+   */
+  loadForMessages(messages: readonly Message[]): NarrativeEntry[] {
     const entries: NarrativeEntry[] = [];
-    for (const m of messages) {
+    const assistantMessages = messages.filter((m) => m.role === "assistant");
+    const assistantMessageIds = assistantMessages.map((m) => m.id);
+    const toolsByMessage = this.toolCallRecordRepo.listByMessages(assistantMessageIds);
+    const thoughtsByMessage = this.thoughtSegmentRepo.listByMessages(assistantMessageIds);
+    const hooksByMessage = this.hookExecutionRepo.listByMessages(assistantMessageIds);
+
+    for (const m of assistantMessages) {
       if (m.role !== "assistant") continue;
 
-      const tools = this.toolCallRecordRepo.listByMessage(m.id);
-      const thoughts = this.thoughtSegmentRepo.listByMessage(m.id);
-      const hooks = this.hookExecutionRepo.listByMessage(m.id);
+      const tools = toolsByMessage.get(m.id) ?? [];
+      const thoughts = thoughtsByMessage.get(m.id) ?? [];
+      const hooks = hooksByMessage.get(m.id) ?? [];
 
       const finalSeg = thoughts.find((t) => (t.is_final_response ?? 0) !== 0);
       entries.push({

@@ -91,12 +91,51 @@ export async function mockWebSocketServer(
         }
         return;
       }
+      if (method === "conversation.page" && "message.list" in overrides) {
+        const handler = overrides["message.list"];
+        try {
+          const messageResult =
+            typeof handler === "function"
+              ? await (handler as (params?: unknown) => unknown | Promise<unknown>)(msg.params)
+              : handler;
+          const paginated = Array.isArray(messageResult)
+            ? { messages: messageResult, hasMore: false, answeredPlanMessageIds: [] }
+            : messageResult as { messages?: unknown[]; hasMore?: boolean; answeredPlanMessageIds?: unknown[] };
+          ws.send(JSON.stringify({
+            id: msg.id,
+            result: {
+              messages: paginated.messages ?? [],
+              hasMore: paginated.hasMore ?? false,
+              answeredPlanMessageIds: paginated.answeredPlanMessageIds ?? [],
+              narrativeByMessage: {},
+            },
+          }));
+        } catch (err) {
+          ws.send(
+            JSON.stringify({
+              id: msg.id,
+              error: {
+                code: -32000,
+                message: err instanceof Error ? err.message : "Override handler failed",
+              },
+            }),
+          );
+        }
+        return;
+      }
       // Default responses
       let result: unknown;
       // `message.list` matches the generic *.list branch below but must return a
       // paginated shape; returning [] leaves loadMessages in an error state.
       if (method === "message.list") {
         result = { messages: [], hasMore: false, answeredPlanMessageIds: [] };
+      } else if (method === "conversation.page") {
+        result = {
+          messages: [],
+          hasMore: false,
+          answeredPlanMessageIds: [],
+          narrativeByMessage: {},
+        };
       } else if (method === "permission.listPending") {
         result = [];
       } else if (method === "thread.getTasks") {
@@ -109,8 +148,11 @@ export async function mockWebSocketServer(
       else if (method === "git.currentBranch") result = "main";
       else if (method === "agent.activeCount") result = 0;
       else if (method === "agent.listRunning") result = [];
+      else if (method === "push.subscribeThread" || method === "push.unsubscribeThread") result = undefined;
       else if (method === "agent.dismissPlanQuestions") result = undefined;
       else if (method === "plan.list") result = [];
+      else if (method === "thread.syncPrs") result = [];
+      else if (method === "workspace.enrich") result = { items: [] };
       else if (method === "app.version") result = "0.0.1-test";
       else if (method === "config.discover") result = {};
       // Return canonical settings defaults so App can bootstrap correctly.

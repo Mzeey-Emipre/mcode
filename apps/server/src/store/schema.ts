@@ -77,6 +77,8 @@ export const threads = sqliteTable(
   },
   (table) => [
     index("idx_threads_workspace").on(table.workspaceId),
+    index("idx_threads_workspace_deleted").on(table.workspaceId, table.deletedAt),
+    index("idx_threads_workspace_recency").on(table.workspaceId, desc(table.updatedAt)),
     index("idx_threads_status").on(table.status),
     index("idx_threads_parent_thread_id").on(table.parentThreadId),
     index("idx_threads_forked_from_message_id").on(table.forkedFromMessageId),

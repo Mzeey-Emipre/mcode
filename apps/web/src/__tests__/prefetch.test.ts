@@ -34,11 +34,13 @@ describe("prefetch", () => {
     vi.useFakeTimers();
     clearRecordCache();
     vi.mocked(mockTransport.getMessages).mockReset();
-    vi.mocked(mockTransport.getMessages).mockResolvedValue({
+    vi.mocked(mockTransport.loadConversationPage).mockReset();
+    vi.mocked(mockTransport.loadConversationPage).mockResolvedValue({
       messages: [
         createMockMessage({ id: "m1", thread_id: "t1", sequence: 1 }),
       ],
       hasMore: false,
+      narrativeByMessage: {},
     });
 
     // Ensure threadStore registers the hydrator before prefetch runs.
@@ -60,11 +62,12 @@ describe("prefetch", () => {
     schedulePrefetch("t1");
 
     // Not yet fired
-    expect(mockTransport.getMessages).not.toHaveBeenCalled();
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
 
     // Advance past debounce
     vi.advanceTimersByTime(150);
-    expect(mockTransport.getMessages).toHaveBeenCalledWith("t1", 100);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t1", 100);
+    expect(mockTransport.getMessages).not.toHaveBeenCalled();
 
     // Let the async prefetch settle
     await vi.runAllTimersAsync();
@@ -76,7 +79,7 @@ describe("prefetch", () => {
     cancelPrefetch();
 
     vi.advanceTimersByTime(200);
-    expect(mockTransport.getMessages).not.toHaveBeenCalled();
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
   });
 
   it("skips threads that are already cached", () => {
@@ -85,37 +88,38 @@ describe("prefetch", () => {
     schedulePrefetch("t1");
     vi.advanceTimersByTime(150);
 
-    expect(mockTransport.getMessages).not.toHaveBeenCalled();
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
   });
 
   it("prevents duplicate in-flight requests", async () => {
     // First prefetch: resolved after a tick
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let resolveFirst!: (v: any) => void;
-    vi.mocked(mockTransport.getMessages).mockImplementationOnce(
+    vi.mocked(mockTransport.loadConversationPage).mockImplementationOnce(
       () => new Promise((r) => { resolveFirst = r; }),
     );
 
     schedulePrefetch("t1");
     vi.advanceTimersByTime(150);
-    expect(mockTransport.getMessages).toHaveBeenCalledTimes(1);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
 
     // Schedule a second prefetch for the same thread while the first is in flight
     schedulePrefetch("t1");
     vi.advanceTimersByTime(150);
     // Should not fire a second RPC
-    expect(mockTransport.getMessages).toHaveBeenCalledTimes(1);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
 
     // Resolve the first to clean up
     resolveFirst({
       messages: [createMockMessage({ id: "m1", thread_id: "t1", sequence: 1 })],
       hasMore: false,
+      narrativeByMessage: {},
     });
     await vi.runAllTimersAsync();
   });
 
   it("does not throw on failed prefetch", async () => {
-    vi.mocked(mockTransport.getMessages).mockRejectedValueOnce(
+    vi.mocked(mockTransport.loadConversationPage).mockRejectedValueOnce(
       new Error("network error"),
     );
 
@@ -138,7 +142,7 @@ describe("prefetch", () => {
 
     // Only the last one should fire after full debounce
     vi.advanceTimersByTime(150);
-    expect(mockTransport.getMessages).toHaveBeenCalledTimes(1);
-    expect(mockTransport.getMessages).toHaveBeenCalledWith("t3", 100);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t3", 100);
   });
 });
