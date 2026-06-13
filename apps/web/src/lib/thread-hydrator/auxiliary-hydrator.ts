@@ -108,11 +108,16 @@ export class AuxiliaryHydrator {
           group: t.group ?? "Tasks",
         }));
         const currentTasks = this.deps.getTasksForThread(threadId);
-        const currentGroups = new Set(currentTasks.map((task) => task.group));
-        const merged = [
-          ...items.filter((item) => !currentGroups.has(item.group)),
-          ...currentTasks,
-        ];
+        const isThreadRunning = this.deps.getState().runningThreadIds.has(threadId);
+        const merged = isThreadRunning
+          ? (() => {
+              const currentGroups = new Set(currentTasks.map((task) => task.group));
+              return [
+                ...items.filter((item) => !currentGroups.has(item.group)),
+                ...currentTasks,
+              ];
+            })()
+          : items;
         if (!shallowEqualBy(merged, currentTasks, ["content", "status", "group"])) {
           this.deps.setTasksForThread(threadId, merged);
         }

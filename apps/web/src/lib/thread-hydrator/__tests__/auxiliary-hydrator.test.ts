@@ -72,6 +72,7 @@ describe("AuxiliaryHydrator", () => {
     overrides?: Partial<{
       getWorkspaceThread: () => { id: string; has_file_changes?: boolean } | undefined;
       getTasksForThread: (threadId: string) => readonly TaskItem[];
+      runningThreadIds: Set<string>;
     }>,
   ): AuxiliaryHydrator {
     return new AuxiliaryHydrator({
@@ -79,7 +80,7 @@ describe("AuxiliaryHydrator", () => {
       getState: () => ({
         records,
         currentThreadId,
-        runningThreadIds: new Set(),
+        runningThreadIds: overrides?.runningThreadIds ?? new Set(),
         toolCallRecordCache: { clear: vi.fn() },
       }),
       setState: applySetState,
@@ -157,7 +158,7 @@ describe("AuxiliaryHydrator", () => {
     });
   });
 
-  it("kept live tasks when task hydration returned no persisted tasks", async () => {
+  it("kept live tasks for a running thread when task hydration returned no persisted tasks", async () => {
     const liveTask: TaskItem = {
       id: "task-live",
       content: "Buy groceries - Pick up milk, eggs, bread",
@@ -168,6 +169,7 @@ describe("AuxiliaryHydrator", () => {
 
     const aux = createAux({
       getTasksForThread: () => [liveTask],
+      runningThreadIds: new Set([THREAD_ID]),
     });
     aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
 
@@ -179,7 +181,7 @@ describe("AuxiliaryHydrator", () => {
     expect(setTasksForThread).not.toHaveBeenCalled();
   });
 
-  it("kept live tasks for a group when hydration returned stale persisted tasks", async () => {
+  it("kept live tasks for a running thread group when hydration returned stale persisted tasks", async () => {
     const liveTask: TaskItem = {
       id: "task-live",
       content: "Clean the kitchen - Dishes, counters, floor",
@@ -196,6 +198,7 @@ describe("AuxiliaryHydrator", () => {
 
     const aux = createAux({
       getTasksForThread: () => [liveTask],
+      runningThreadIds: new Set([THREAD_ID]),
     });
     aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
 
@@ -207,7 +210,7 @@ describe("AuxiliaryHydrator", () => {
     expect(setTasksForThread).not.toHaveBeenCalled();
   });
 
-  it("merged persisted groups that were missing from live tasks", async () => {
+  it("merged persisted groups that were missing from live tasks on a running thread", async () => {
     const liveTask: TaskItem = {
       id: "task-live",
       content: "Clean the kitchen - Dishes, counters, floor",
@@ -224,6 +227,7 @@ describe("AuxiliaryHydrator", () => {
 
     const aux = createAux({
       getTasksForThread: () => [liveTask],
+      runningThreadIds: new Set([THREAD_ID]),
     });
     aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
 
@@ -236,6 +240,38 @@ describe("AuxiliaryHydrator", () => {
           group: "Sub-agent",
         },
         liveTask,
+      ]);
+    });
+  });
+
+  it("replaced stale in-memory tasks with persisted tasks when the thread was idle", async () => {
+    const staleTask: TaskItem = {
+      id: "task-stale",
+      content: "Old task",
+      status: "pending",
+      group: "Tasks",
+    };
+    (mockTransport.getThreadTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        content: "New task",
+        status: "completed",
+        group: "Tasks",
+      },
+    ]);
+
+    const aux = createAux({
+      getTasksForThread: () => [staleTask],
+    });
+    aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
+
+    await vi.waitFor(() => {
+      expect(setTasksForThread).toHaveBeenCalledWith(THREAD_ID, [
+        {
+          id: "0",
+          content: "New task",
+          status: "completed",
+          group: "Tasks",
+        },
       ]);
     });
   });
