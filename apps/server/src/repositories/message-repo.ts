@@ -492,12 +492,14 @@ LIMIT ?`,
     }>,
     truncatedMessages: ThreadHistoryBudget["truncatedMessages"],
   ): { messages: Message[]; retainedBytesDelta: number } {
+    const toolCallCountSql =
+      "(SELECT COUNT(*) FROM tool_call_records WHERE message_id = m.id) AS tool_call_count";
     const fullStmt = this.db.prepare(
       `SELECT
   m.id, m.thread_id, m.role, m.content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
   m.attachments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
-  ${TOOL_CALL_COUNT_SQL}
+  ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,
     );
@@ -506,7 +508,7 @@ WHERE m.id = ?`,
   m.id, m.thread_id, m.role, substr(m.content, 1, ?) AS content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
   m.attachments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
-  ${TOOL_CALL_COUNT_SQL}
+  ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,
     );
