@@ -12,13 +12,11 @@ import {
 import type { ThreadRecord } from "@/stores/thread-record";
 import type {
   HydrateMode,
-  NarrativeBatchResult,
   ThreadHydratorDeps,
   ThreadHydratorOptions,
   ThreadHydratorTransport,
   ThreadHydratorWriteState,
 } from "./types";
-import type { NarrativeEntry } from "@mcode/contracts";
 import { snapshotBuilder } from "./snapshot-builder";
 import { AuxiliaryHydrator } from "./auxiliary-hydrator";
 
@@ -27,9 +25,6 @@ export const MESSAGE_FETCH_SIZE = 100;
 
 /** Auxiliary side-effect refresh TTL (permissions, tasks, plans). */
 export const HYDRATION_TTL_MS = 2000;
-
-/** Assistant messages to eager-prefetch narrative for on cache miss. */
-const NARRATIVE_PREFETCH_BATCH = 20;
 
 /** Background hover prefetch limit (matches legacy prefetch.ts). */
 export const BACKGROUND_PREFETCH_LIMIT = 100;
@@ -40,6 +35,7 @@ export const BACKGROUND_PREFETCH_LIMIT = 100;
  */
 export class ThreadHydrator {
   private readonly auxiliaryHydrator: AuxiliaryHydrator;
+  private readonly activeHydrates = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: ThreadHydratorDeps) {
     this.auxiliaryHydrator = new AuxiliaryHydrator({
@@ -83,8 +79,8 @@ export class ThreadHydrator {
       const workspaceThread = this.deps.getWorkspaceThread(threadId);
       const shouldFetchSnapshots = workspaceThread?.has_file_changes !== false;
 
-      const [messageResult, snapshots] = await Promise.all([
-        this.transport().getMessages(threadId, BACKGROUND_PREFETCH_LIMIT),
+      const [pageResult, snapshots] = await Promise.all([
+        this.transport().loadConversationPage(threadId, BACKGROUND_PREFETCH_LIMIT),
         shouldFetchSnapshots
           ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
           : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>),
@@ -93,15 +89,16 @@ export class ThreadHydrator {
       if (hasCachedRecord(threadId)) return;
 
       const patch = snapshotBuilder.build({
-        messages: messageResult.messages,
-        hasMore: messageResult.hasMore,
-        answeredPlanMessageIds: messageResult.answeredPlanMessageIds,
+        messages: pageResult.messages,
+        hasMore: pageResult.hasMore,
+        answeredPlanMessageIds: pageResult.answeredPlanMessageIds,
         snapshots,
       });
 
       const record: ThreadRecord = {
         ...createEmptyThreadRecord(),
         ...patch,
+        narrativeByMessage: pageResult.narrativeByMessage,
         settings: this.deps.getWorkspaceThreadSettings(threadId),
       };
       cacheRecord(threadId, record);
@@ -127,7 +124,19 @@ export class ThreadHydrator {
       return;
     }
 
-    await this.fetchAndCommit(threadId, opts);
+    const inFlight = this.activeHydrates.get(threadId);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const hydrate = this.fetchAndCommit(threadId, opts).finally(() => {
+      if (this.activeHydrates.get(threadId) === hydrate) {
+        this.activeHydrates.delete(threadId);
+      }
+    });
+    this.activeHydrates.set(threadId, hydrate);
+    await hydrate;
   }
 
   /**
@@ -230,8 +239,8 @@ export class ThreadHydrator {
       const workspaceThread = this.deps.getWorkspaceThread(threadId);
       const shouldFetchSnapshots = workspaceThread?.has_file_changes !== false;
 
-      const [messageResult, snapshots] = await Promise.all([
-        this.transport().getMessages(threadId, MESSAGE_FETCH_SIZE),
+      const [pageResult, snapshots] = await Promise.all([
+        this.transport().loadConversationPage(threadId, MESSAGE_FETCH_SIZE),
         shouldFetchSnapshots
           ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
           : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>),
@@ -240,22 +249,21 @@ export class ThreadHydrator {
       if (getState().currentThreadId !== threadId) return;
 
       const patch = snapshotBuilder.build({
-        messages: messageResult.messages,
-        hasMore: messageResult.hasMore,
-        answeredPlanMessageIds: messageResult.answeredPlanMessageIds,
+        messages: pageResult.messages,
+        hasMore: pageResult.hasMore,
+        answeredPlanMessageIds: pageResult.answeredPlanMessageIds,
         snapshots,
       });
 
       setState((state: ThreadHydratorWriteState) => ({
         records: patchThreadRecord(state.records, threadId, {
           ...patch,
+          narrativeByMessage: pageResult.narrativeByMessage,
           loading: false,
           isLoadingMore: false,
           settings: this.deps.getWorkspaceThreadSettings(threadId),
         }),
       }));
-
-      this.prefetchNarratives(threadId, patch.messages);
 
       this.auxiliaryHydrator.hydrate(threadId, {
         freshnessTtlMs: HYDRATION_TTL_MS,
@@ -288,92 +296,6 @@ export class ThreadHydrator {
     }
   }
 
-  /**
-   * Eager-hydrate persisted narrative for the thread via the single
-   * server-ordered `turn.load` call, then group the flat {@link NarrativeEntry}
-   * list back into the per-message {@link NarrativeBatchResult} shape that
-   * `narrativeByMessage` consumers expect (back-compat is intentional).
-   *
-   * On `turn.load` rejection we leave the lazy per-message
-   * `loadNarrativeForMessage` (`narrative.list`) path to fill in, so hydration
-   * never crashes on a transport failure.
-   */
-  private prefetchNarratives(threadId: string, messages: import("@/transport").Message[]): void {
-    const lastAssistants = messages.filter((m) => m.role === "assistant").slice(-NARRATIVE_PREFETCH_BATCH);
-    const narrativeByMessage = getThreadRecord(this.deps.getState().records, threadId).narrativeByMessage;
-    const idsToFetch = lastAssistants
-      .map((m) => m.id)
-      .filter((id) => !narrativeByMessage[id]);
-
-    if (idsToFetch.length === 0) return;
-
-    void this.transport()
-      .loadTurn(threadId)
-      .then((entries) => {
-        const grouped = groupNarrativeEntriesByMessage(entries);
-        this.deps.setState((state: ThreadHydratorWriteState) => {
-          if (!state.records.has(threadId)) return {};
-          const rec = getThreadRecord(state.records, threadId);
-          // Preserve already-loaded entries: only commit messages we still need.
-          const next = { ...rec.narrativeByMessage };
-          for (const id of idsToFetch) {
-            next[id] = grouped[id] ?? { tools: [], thoughts: [], hooks: [] };
-          }
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              narrativeByMessage: next,
-            }),
-          };
-        });
-      })
-      .catch((err) => {
-        console.warn("[narrative] turn.load failed, falling back to lazy narrative.list", err);
-        for (const m of lastAssistants) {
-          void this.deps.loadNarrativeForMessage(m.id);
-        }
-      });
-  }
-}
-
-/**
- * Group a flat, server-ordered {@link NarrativeEntry} list into the legacy
- * per-message {@link NarrativeBatchResult} shape keyed by `message_id`.
- *
- * `assistantMessage` entries are skipped: their body already lives on the
- * message row, so they do not belong in `narrativeByMessage`. The server
- * already orders entries by (sequence, sortOrder), so per-message arrays
- * preserve that order without re-sorting here.
- */
-export function groupNarrativeEntriesByMessage(
-  entries: NarrativeEntry[],
-): NarrativeBatchResult {
-  const grouped: NarrativeBatchResult = {};
-  const bucket = (messageId: string): NarrativeBatchResult[string] => {
-    let entry = grouped[messageId];
-    if (!entry) {
-      entry = { tools: [], thoughts: [], hooks: [] };
-      grouped[messageId] = entry;
-    }
-    return entry;
-  };
-
-  for (const entry of entries) {
-    switch (entry.kind) {
-      case "toolCall":
-        bucket(entry.record.message_id).tools.push(entry.record);
-        break;
-      case "narrationSegment":
-        bucket(entry.record.message_id).thoughts.push(entry.record);
-        break;
-      case "hook":
-        bucket(entry.record.message_id).hooks.push(entry.record);
-        break;
-      case "assistantMessage":
-        break;
-    }
-  }
-
-  return grouped;
 }
 
 /** Module-scoped hydrator instance registered by threadStore at init. */

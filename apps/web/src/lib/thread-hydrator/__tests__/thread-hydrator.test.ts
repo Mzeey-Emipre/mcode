@@ -89,6 +89,13 @@ function resetStores() {
       hasMore: false,
     }),
   );
+  (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+    async (threadId: string) => ({
+      messages: threadId === THREAD_B ? [msgB] : [msgA],
+      hasMore: false,
+      narrativeByMessage: {},
+    }),
+  );
   (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (mockTransport.listPendingPermissions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (mockTransport.getThreadTasks as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -120,12 +127,13 @@ describe("ThreadHydrator", () => {
     hydrator = createStoreHydrator();
   });
 
-  it("cache hit restores synchronously with loading false and skips getMessages", async () => {
+  it("cache hit restores synchronously with loading false and skips conversation.page", async () => {
     cacheRecord(THREAD_A, makeCachedRecord());
 
     const beforeEpoch = getTestThreadLoadEpoch(THREAD_A);
     await hydrator.hydrate(THREAD_A, "active");
 
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
     expect(mockTransport.getMessages).not.toHaveBeenCalled();
     expect(readActiveThreadField((r) => r.loading)).toBe(false);
     expect(getTestActiveMessages()).toEqual([msgA]);
@@ -133,10 +141,11 @@ describe("ThreadHydrator", () => {
     expect(getTestThreadLoadEpoch(THREAD_A)).toBe(beforeEpoch + 1);
   });
 
-  it("cache miss fetches messages, commits store, and populates cache", async () => {
+  it("cache miss fetches a conversation page, commits store, and populates cache", async () => {
     await hydrator.hydrate(THREAD_A, "active");
 
-    expect(mockTransport.getMessages).toHaveBeenCalledWith(THREAD_A, MESSAGE_FETCH_SIZE);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_A, MESSAGE_FETCH_SIZE);
+    expect(mockTransport.getMessages).not.toHaveBeenCalled();
     expect(getTestActiveMessages()).toEqual([msgA]);
     expect(readActiveThreadField((r) => r.loading)).toBe(false);
     expect(getCachedRecord(THREAD_A)?.messages).toEqual([msgA]);
@@ -222,6 +231,7 @@ describe("ThreadHydrator", () => {
 
     await hydrator.hydrate(THREAD_A, "active");
 
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
     expect(mockTransport.getMessages).not.toHaveBeenCalled();
     expect(getTestThreadStreaming(THREAD_A)).toBe("partial...");
     expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
@@ -229,15 +239,15 @@ describe("ThreadHydrator", () => {
   });
 
   it("does not commit stale RPC results after a cross-thread race", async () => {
-    let resolveA!: (v: { messages: typeof msgA[]; hasMore: boolean }) => void;
-    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockImplementation(
+    let resolveA!: (v: { messages: typeof msgA[]; hasMore: boolean; narrativeByMessage: Record<string, never> }) => void;
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
       (threadId: string) => {
         if (threadId === THREAD_A) {
           return new Promise((r) => {
             resolveA = r;
           });
         }
-        return Promise.resolve({ messages: [msgB], hasMore: false });
+        return Promise.resolve({ messages: [msgB], hasMore: false, narrativeByMessage: {} });
       },
     );
 
@@ -247,7 +257,7 @@ describe("ThreadHydrator", () => {
     expect(useThreadStore.getState().currentThreadId).toBe(THREAD_B);
     expect(getTestActiveMessages()).toEqual([msgB]);
 
-    resolveA({ messages: [msgA], hasMore: false });
+    resolveA({ messages: [msgA], hasMore: false, narrativeByMessage: {} });
     await loadA;
 
     expect(useThreadStore.getState().currentThreadId).toBe(THREAD_B);
@@ -269,26 +279,56 @@ describe("ThreadHydrator", () => {
     expect(getTestActiveMessages()).toEqual([msgB]);
   });
 
-  it("falls back to per-message narrative fetches when turn.load fails", async () => {
+  it("commits messages and narrative from one conversation page fetch", async () => {
     const assistant = createMockMessage({
       id: "asst-1",
       thread_id: THREAD_A,
       role: "assistant",
       sequence: 2,
     });
-    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
       messages: [msgA, assistant],
       hasMore: false,
+      narrativeByMessage: {
+        "asst-1": { tools: [], thoughts: [], hooks: [] },
+      },
     });
-    (mockTransport.loadTurn as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new Error("turn.load unsupported"),
-    );
-    const listNarrativeSpy = vi.spyOn(mockTransport, "listNarrative");
 
     await hydrator.hydrate(THREAD_A, "active");
-    await vi.waitFor(() => {
-      expect(listNarrativeSpy).toHaveBeenCalled();
+
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_A, MESSAGE_FETCH_SIZE);
+    expect(mockTransport.loadTurn).not.toHaveBeenCalled();
+    expect(mockTransport.listNarrative).not.toHaveBeenCalled();
+    expect(readActiveThreadField((r) => r.narrativeByMessage["asst-1"])).toEqual({
+      tools: [],
+      thoughts: [],
+      hooks: [],
     });
+  });
+
+  it("coalesces duplicate active cache-miss hydrates for one thread", async () => {
+    let resolvePage!: (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePage = resolve;
+        }),
+    );
+
+    const first = hydrator.hydrate(THREAD_A, "active");
+    const second = hydrator.hydrate(THREAD_A, "active");
+
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+
+    resolvePage({ messages: [msgA], hasMore: false, narrativeByMessage: {} });
+    await Promise.all([first, second]);
+
+    expect(getTestActiveMessages()).toEqual([msgA]);
+    expect(getCachedRecord(THREAD_A)?.messages).toEqual([msgA]);
   });
 
   it("bumps load epoch on each hydrate so stale pagination is discarded", async () => {

@@ -47,6 +47,15 @@ export { MessageSchema, PaginatedMessagesSchema } from "./models/message.js";
 export type { Message, PaginatedMessages } from "./models/message.js";
 
 export {
+  ConversationPageSchema,
+  ConversationNarrativeBatchSchema,
+} from "./models/conversation-page.js";
+export type {
+  ConversationPage,
+  ConversationNarrativeBatch,
+} from "./models/conversation-page.js";
+
+export {
   ToolCallRecordSchema,
   ToolCallStatusSchema,
 } from "./models/tool-call-record.js";

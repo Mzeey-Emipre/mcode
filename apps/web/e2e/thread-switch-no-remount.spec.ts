@@ -123,15 +123,16 @@ async function mockWebSocketServer(page: Page): Promise<void> {
       let result: unknown = null;
       if (method === "workspace.list") result = [workspace];
       else if (method === "thread.list") result = [threadA, threadB];
-      else if (method === "message.list") {
+      else if (method === "message.list" || method === "conversation.page") {
         // Derive the response from the request payload so reordered or
         // concurrent requests can't cross-contaminate replies.
         const params = msg.params as Record<string, unknown> | undefined;
-        const threadId = params?.thread_id;
+        const threadId = params?.threadId ?? params?.thread_id;
+        let selected: typeof messages;
         if (threadId === "thread-b") {
-          result = messageB;
+          selected = messageB;
         } else if (threadId === "thread-a") {
-          result = messages;
+          selected = messages;
         } else {
           ws.send(
             JSON.stringify({
@@ -141,9 +142,19 @@ async function mockWebSocketServer(page: Page): Promise<void> {
           );
           return;
         }
+        result = method === "conversation.page"
+          ? {
+              messages: selected,
+              hasMore: false,
+              answeredPlanMessageIds: [],
+              narrativeByMessage: {},
+            }
+          : { messages: selected, hasMore: false, answeredPlanMessageIds: [] };
       } else if (method?.endsWith(".list")) result = [];
       else if (method === "git.currentBranch") result = "main";
       else if (method === "agent.activeCount") result = 0;
+      else if (method === "agent.listRunning") result = [];
+      else if (method === "push.subscribeThread" || method === "push.unsubscribeThread") result = undefined;
       else if (method === "app.version") result = "0.0.1-test";
       else if (method === "config.discover") result = {};
       else if (method === "settings.get") result = getDefaultSettings();

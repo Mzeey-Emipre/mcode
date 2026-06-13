@@ -114,6 +114,27 @@ export class ThoughtSegmentRepo {
     return rows.map(rowToRecord);
   }
 
+  /** List thought segments for many messages in one indexed query, grouped by message id. */
+  listByMessages(messageIds: readonly string[]): Map<string, ThoughtSegmentRecord[]> {
+    const grouped = new Map<string, ThoughtSegmentRecord[]>();
+    if (messageIds.length === 0) return grouped;
+
+    const placeholders = messageIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT ${COLUMNS} FROM thought_segments WHERE message_id IN (${placeholders}) ORDER BY message_id ASC, sort_order ASC`,
+      )
+      .all(...messageIds) as ThoughtSegmentRow[];
+
+    for (const row of rows) {
+      const record = rowToRecord(row);
+      const list = grouped.get(record.message_id) ?? [];
+      list.push(record);
+      grouped.set(record.message_id, list);
+    }
+    return grouped;
+  }
+
   /** Count the number of thought segments for a message. */
   countByMessage(messageId: string): number {
     const row = this.stmtCountByMessage.get(messageId) as { count: number };

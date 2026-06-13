@@ -21,6 +21,7 @@ import { SidebarRevealButton } from "@/components/sidebar/SidebarRevealButton";
 import { useUiStore } from "@/stores/uiStore";
 import { preparingStatusLabel, type WorkspaceThread } from "@/lib/workspace-thread";
 import { useReplyStore } from "@/stores/replyStore";
+import { getTransport } from "@/transport";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -324,6 +325,14 @@ export function ChatView() {
   }, [connectionStatus]);
 
   const prevThreadIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!activeThreadId) return;
+    void getTransport().subscribeThread(activeThreadId).catch(() => {});
+    return () => {
+      void getTransport().unsubscribeThread(activeThreadId).catch(() => {});
+    };
+  }, [activeThreadId]);
 
   useEffect(() => {
     if (!activeThreadId) {

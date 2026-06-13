@@ -34,6 +34,11 @@ function resetState() {
     messages: fakeMessages,
     hasMore: false,
   });
+  (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+    messages: fakeMessages,
+    hasMore: false,
+    narrativeByMessage: {},
+  });
   (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
   resetThreadStoreForTests({
@@ -58,8 +63,9 @@ describe("loadMessages - listSnapshots RPC gating", () => {
 
     // Allow any async microtasks to flush
     await vi.waitFor(() => {
-      expect(mockTransport.getMessages).toHaveBeenCalledWith(THREAD_ID, MESSAGE_FETCH_SIZE);
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_ID, MESSAGE_FETCH_SIZE);
     });
+    expect(mockTransport.getMessages).not.toHaveBeenCalled();
 
     expect(mockTransport.listSnapshots).not.toHaveBeenCalled();
   });
@@ -104,7 +110,7 @@ describe("loadMessages (cache-hit) - hydration staleness gate", () => {
     // First load: cache-miss path populates cache AND stamps lastHydratedByThread.
     await useThreadStore.getState().loadMessages(THREAD_ID);
     await vi.waitFor(() => {
-      expect(mockTransport.getMessages).toHaveBeenCalledWith(THREAD_ID, MESSAGE_FETCH_SIZE);
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_ID, MESSAGE_FETCH_SIZE);
     });
 
     // Switch away so the next load is a cache-hit.
@@ -116,6 +122,7 @@ describe("loadMessages (cache-hit) - hydration staleness gate", () => {
     // Give any erroneously-scheduled microtasks a chance to fire.
     await new Promise((r) => setTimeout(r, 20));
 
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
     expect(mockTransport.getMessages).not.toHaveBeenCalled();
     expect(mockTransport.listPendingPermissions).not.toHaveBeenCalled();
     expect(mockTransport.getThreadTasks).not.toHaveBeenCalled();
@@ -127,7 +134,7 @@ describe("loadMessages (cache-hit) - hydration staleness gate", () => {
 
     await useThreadStore.getState().loadMessages(THREAD_ID);
     await vi.waitFor(() => {
-      expect(mockTransport.getMessages).toHaveBeenCalledWith(THREAD_ID, MESSAGE_FETCH_SIZE);
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_ID, MESSAGE_FETCH_SIZE);
     });
 
     // Simulate ">2s ago" by rewinding the hydration timestamp.

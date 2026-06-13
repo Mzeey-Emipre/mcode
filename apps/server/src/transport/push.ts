@@ -6,8 +6,10 @@
 import type { WebSocket } from "ws";
 import { WS_CHANNELS, type WsChannelName, encodeTerminalDataFrame } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
+import { getTransportPayloadValidator } from "./payload-validation.js";
 
 const clients = new Set<WebSocket>();
+const threadSubscriptions = new Map<WebSocket, Set<string>>();
 
 let _sessionCount = 0;
 const sessionChangeListeners: ((count: number) => void)[] = [];
@@ -39,6 +41,7 @@ export function onSessionChange(cb: (count: number) => void): () => void {
 /** Register a WebSocket client for push event delivery. */
 export function addClient(ws: WebSocket): void {
   clients.add(ws);
+  threadSubscriptions.set(ws, new Set());
   _sessionCount++;
   for (let i = 0; i < sessionChangeListeners.length; i++) sessionChangeListeners[i](_sessionCount);
 }
@@ -46,8 +49,22 @@ export function addClient(ws: WebSocket): void {
 /** Remove a disconnected WebSocket client. No-op if already removed. */
 export function removeClient(ws: WebSocket): void {
   if (!clients.delete(ws)) return;
+  threadSubscriptions.delete(ws);
   _sessionCount--;
   for (let i = 0; i < sessionChangeListeners.length; i++) sessionChangeListeners[i](_sessionCount);
+}
+
+/** Subscribe a connected client to push events for one thread. */
+export function subscribeClientToThread(ws: WebSocket, threadId: string): void {
+  if (!clients.has(ws)) return;
+  const subscriptions = threadSubscriptions.get(ws) ?? new Set<string>();
+  subscriptions.add(threadId);
+  threadSubscriptions.set(ws, subscriptions);
+}
+
+/** Remove a connected client's push subscription for one thread. */
+export function unsubscribeClientFromThread(ws: WebSocket, threadId: string): void {
+  threadSubscriptions.get(ws)?.delete(threadId);
 }
 
 /** Get the current number of connected clients. */
@@ -69,6 +86,12 @@ export function maxBufferedAmount(): number {
   return max;
 }
 
+function payloadThreadId(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const threadId = (data as { threadId?: unknown }).threadId;
+  return typeof threadId === "string" && threadId.length > 0 ? threadId : undefined;
+}
+
 /**
  * Broadcast a push event to all connected WebSocket clients.
  * Validates the data against the channel's Zod schema before sending.
@@ -83,23 +106,21 @@ export function broadcast(
     return;
   }
 
-  const parsed = schema.safeParse(data);
-  if (!parsed.success) {
-    logger.warn("Push data validation failed", {
-      channel,
-      error: parsed.error.message,
-    });
+  const validation = getTransportPayloadValidator().validatePush(channel, data, schema);
+  if (!validation.ok) {
     return;
   }
 
   const payload = JSON.stringify({
     type: "push" as const,
     channel,
-    data: parsed.data,
+    data: validation.data,
   });
+  const threadId = payloadThreadId(validation.data);
 
   for (const ws of clients) {
     if (ws.readyState === ws.OPEN) {
+      if (threadId && !threadSubscriptions.get(ws)?.has(threadId)) continue;
       ws.send(payload);
     }
   }
@@ -143,4 +164,5 @@ export function _resetForTest(): void {
   _sessionCount = 0;
   sessionChangeListeners.length = 0;
   clients.clear();
+  threadSubscriptions.clear();
 }

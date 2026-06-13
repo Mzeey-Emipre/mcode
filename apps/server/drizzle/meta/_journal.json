@@ -99,6 +99,13 @@
       "when": 1781296049611,
       "tag": "0012_bound_tool_output",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1781371200000,
+      "tag": "0013_thread_perf_indexes",
+      "breakpoints": true
     }
   ]
 }

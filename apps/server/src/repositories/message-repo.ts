@@ -77,11 +77,28 @@ const MESSAGE_COLUMNS_PREFIXED =
   "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal";
 
 /**
- * Per-row tool call counts via index on `message_id`.
- * Avoids a full-table `GROUP BY` over `tool_call_records` for each list query.
+ * Pre-aggregates tool call counts for the selected page only.
+ * The page CTE prevents a correlated count from running once per message row.
  */
-const TOOL_CALL_COUNT_SQL =
-  "(SELECT COUNT(*) FROM tool_call_records WHERE message_id = m.id) AS tool_call_count";
+function pagedMessageQuery(whereClause: string): string {
+  return `WITH page AS (
+  SELECT ${MESSAGE_COLUMNS_PREFIXED}
+  FROM messages m
+  WHERE ${whereClause}
+  ORDER BY m.sequence DESC
+  LIMIT ?
+),
+tool_counts AS (
+  SELECT message_id, COUNT(*) AS tool_call_count
+  FROM tool_call_records
+  WHERE message_id IN (SELECT id FROM page)
+  GROUP BY message_id
+)
+SELECT page.*, COALESCE(tool_counts.tool_call_count, 0) AS tool_call_count
+FROM page
+LEFT JOIN tool_counts ON tool_counts.message_id = page.id
+ORDER BY page.sequence ASC`;
+}
 
 /** Repository for message creation and retrieval against SQLite. */
 @injectable()
@@ -254,17 +271,7 @@ export class MessageRepo {
       : [threadId, fetchLimit];
 
     let rows = this.db
-      .prepare(
-        `SELECT ${MESSAGE_COLUMNS}, ${TOOL_CALL_COUNT_SQL}
-FROM (
-  SELECT ${MESSAGE_COLUMNS_PREFIXED}
-  FROM messages m
-  WHERE ${whereClause}
-  ORDER BY m.sequence DESC
-  LIMIT ?
-) m
-ORDER BY m.sequence ASC`,
-      )
+      .prepare(pagedMessageQuery(whereClause))
       .all(...queryParams) as MessageRow[];
 
     const hasMore = rows.length > clampedLimit;
@@ -289,12 +296,21 @@ ORDER BY m.sequence ASC`,
   ): Message[] {
     const rows = this.db
       .prepare(
-        `SELECT ${MESSAGE_COLUMNS_PREFIXED}, ${TOOL_CALL_COUNT_SQL}
+        `WITH counts AS (
+  SELECT message_id, COUNT(*) AS tool_call_count
+  FROM tool_call_records
+  WHERE message_id IN (
+    SELECT id FROM messages WHERE thread_id = ? AND sequence <= ? AND is_internal = 0
+  )
+  GROUP BY message_id
+)
+SELECT ${MESSAGE_COLUMNS_PREFIXED}, COALESCE(counts.tool_call_count, 0) AS tool_call_count
 FROM messages m
+LEFT JOIN counts ON counts.message_id = m.id
 WHERE m.thread_id = ? AND m.sequence <= ? AND m.is_internal = 0
 ORDER BY m.sequence ASC`,
       )
-      .all(threadId, maxSequence) as MessageRow[];
+      .all(threadId, maxSequence, threadId, maxSequence) as MessageRow[];
 
     return rows.map(rowToMessage);
   }
@@ -329,12 +345,19 @@ ORDER BY m.sequence ASC`,
   listIncludingInternal(threadId: string): Message[] {
     const rows = this.db
       .prepare(
-        `SELECT ${MESSAGE_COLUMNS_PREFIXED}, ${TOOL_CALL_COUNT_SQL}
+        `WITH counts AS (
+  SELECT message_id, COUNT(*) AS tool_call_count
+  FROM tool_call_records
+  WHERE message_id IN (SELECT id FROM messages WHERE thread_id = ?)
+  GROUP BY message_id
+)
+SELECT ${MESSAGE_COLUMNS_PREFIXED}, COALESCE(counts.tool_call_count, 0) AS tool_call_count
 FROM messages m
+LEFT JOIN counts ON counts.message_id = m.id
 WHERE m.thread_id = ?
 ORDER BY m.sequence ASC`,
       )
-      .all(threadId) as MessageRow[];
+      .all(threadId, threadId) as MessageRow[];
 
     return rows.map(rowToMessage);
   }

@@ -3,6 +3,7 @@ import { WorkspaceSchema, WorkspaceEnrichmentSchema } from "../models/workspace.
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema } from "../models/enums.js";
 import { PaginatedMessagesSchema } from "../models/message.js";
+import { ConversationPageSchema } from "../models/conversation-page.js";
 import { AttachmentMetaSchema } from "../models/attachment.js";
 import { MAX_ATTACHMENTS } from "../models/file-types.js";
 import { ToolCallRecordSchema } from "../models/tool-call-record.js";
@@ -411,6 +412,14 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({}),
     result: z.array(z.string()),
   },
+  "push.subscribeThread": {
+    params: z.object({ threadId: z.string() }),
+    result: z.void(),
+  },
+  "push.unsubscribeThread": {
+    params: z.object({ threadId: z.string() }),
+    result: z.void(),
+  },
   "agent.answerQuestions": {
     params: z.object({
       threadId: z.string(),
@@ -465,6 +474,14 @@ export const WS_METHODS = lazySchema(() => ({
       before: z.number().int().optional(),
     }),
     result: PaginatedMessagesSchema(),
+  },
+  "conversation.page": {
+    params: z.object({
+      threadId: z.string(),
+      limit: z.number().int().min(1).max(1000),
+      before: z.number().int().optional(),
+    }),
+    result: ConversationPageSchema(),
   },
   "file.list": {
     params: z.object({
