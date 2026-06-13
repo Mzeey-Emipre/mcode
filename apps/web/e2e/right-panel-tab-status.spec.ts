@@ -157,6 +157,63 @@ async function addSnapshotWithNewFile(page: Page): Promise<void> {
   }, THREAD.id);
 }
 
+async function emitTaskCreate(page: Page): Promise<void> {
+  await page.evaluate((tid) => {
+    const stores: unknown[] =
+      (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
+    const getState = (s: unknown) => (s as { getState: () => Record<string, unknown> }).getState();
+    const threadStore = stores.find((s) => "handleAgentEvent" in getState(s));
+    if (!threadStore) throw new Error("thread store not found");
+    (
+      threadStore as {
+        getState: () => {
+          handleAgentEvent: (threadId: string, event: unknown) => void;
+        };
+      }
+    ).getState().handleAgentEvent(tid, {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-create-live",
+        toolName: "TaskCreate",
+        toolInput: {
+          subject: "Buy groceries",
+          description: "Pick up milk, eggs, bread",
+        },
+      },
+    });
+  }, THREAD.id);
+}
+
+async function emitUpdatePlan(page: Page): Promise<void> {
+  await page.evaluate((tid) => {
+    const stores: unknown[] =
+      (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
+    const getState = (s: unknown) => (s as { getState: () => Record<string, unknown> }).getState();
+    const threadStore = stores.find((s) => "handleAgentEvent" in getState(s));
+    if (!threadStore) throw new Error("thread store not found");
+    (
+      threadStore as {
+        getState: () => {
+          handleAgentEvent: (threadId: string, event: unknown) => void;
+        };
+      }
+    ).getState().handleAgentEvent(tid, {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "update-plan-live",
+        toolName: "update_plan",
+        toolInput: {
+          plan: [
+            { status: "pending", step: "Test todo item one with CODE-A1 and CODE-B1" },
+            { status: "in_progress", step: "Test todo item two with CODE-A2 and CODE-B2" },
+            { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
+          ],
+        },
+      },
+    });
+  }, THREAD.id);
+}
+
 test.describe("Right panel tab status", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page, {
@@ -207,6 +264,30 @@ test.describe("Right panel tab status", () => {
     await expect(scopeTab).not.toHaveClass(/text-primary/);
 
     await page.screenshot({ path: testInfo.outputPath("changes-active.png") });
+  });
+
+  test("scope renders live TaskCreate tool calls", async ({ page }) => {
+    await seedPanel(page, "tasks");
+    await expect(page.locator('[data-rail-tab="tasks"]')).toContainText("2/5");
+
+    await emitTaskCreate(page);
+
+    await expect(page.getByText("Buy groceries - Pick up milk, eggs, bread")).toBeVisible();
+    await expect(page.locator('[data-rail-tab="tasks"]')).toContainText("2/6");
+    await expect(page.getByText(/nothing on the docket/i)).toHaveCount(0);
+  });
+
+  test("scope renders live Codex update_plan tool calls", async ({ page }) => {
+    await seedPanel(page, "tasks");
+    await expect(page.locator('[data-rail-tab="tasks"]')).toContainText("2/5");
+
+    await emitUpdatePlan(page);
+
+    await expect(page.getByText("Test todo item one with CODE-A1 and CODE-B1")).toBeVisible();
+    await expect(page.getByText("Test todo item two with CODE-A2 and CODE-B2")).toBeVisible();
+    await expect(page.getByText("Test todo item three with CODE-A3 and CODE-B3")).toBeVisible();
+    await expect(page.locator('[data-rail-tab="tasks"]')).toContainText("1/3");
+    await expect(page.getByText(/nothing on the docket/i)).toHaveCount(0);
   });
 
   test("review tab pulses fresh when new files land while viewing another tab", async ({ page }) => {

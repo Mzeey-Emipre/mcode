@@ -43,7 +43,7 @@ export function createCursorTodoSnapshot(): CursorTodoSnapshot {
 export function coercePlanStatus(
   s: unknown,
 ): "pending" | "in_progress" | "completed" | "cancelled" {
-  if (s === "in_progress") return "in_progress";
+  if (s === "in_progress" || s === "inProgress" || s === "in-progress") return "in_progress";
   if (s === "completed") return "completed";
   if (s === "cancelled" || s === "canceled") return "cancelled";
   return "pending";
@@ -116,6 +116,8 @@ export function normalizeCursorTodoEntry(
       stringField(entry, "content") ??
       stringField(entry, "title") ??
       stringField(entry, "text") ??
+      stringField(entry, "step") ??
+      stringField(entry, "description") ??
       "",
     status: coercePlanStatus(entry.status),
   };

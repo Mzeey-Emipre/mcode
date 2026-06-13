@@ -70,6 +70,8 @@ interface Built {
   thoughtBulk: ReturnType<typeof vi.fn>;
   hookBulk: ReturnType<typeof vi.fn>;
   toolBulk: ReturnType<typeof vi.fn>;
+  taskAppend: ReturnType<typeof vi.fn>;
+  taskUpsertGroup: ReturnType<typeof vi.fn>;
 }
 
 function build(): Built {
@@ -129,7 +131,14 @@ function build(): Built {
     assertCanStartTurn: vi.fn(),
     onPressureChange: vi.fn(),
   } as unknown as MemoryPressureService;
-  const taskRepo = { get: vi.fn(() => []), upsert: vi.fn() } as unknown as TaskRepo;
+  const taskAppend = vi.fn();
+  const taskUpsertGroup = vi.fn();
+  const taskRepo = {
+    get: vi.fn(() => []),
+    upsert: vi.fn(),
+    upsertGroup: taskUpsertGroup,
+    appendTask: taskAppend,
+  } as unknown as TaskRepo;
   const settingsService = {
     get: vi.fn(() => ({
       model: { defaults: { fallbackId: undefined } },
@@ -187,12 +196,69 @@ function build(): Built {
   // sendMessage uses (beginTurn + resetTurnCounters).
   narrativeStore.beginTurn(THREAD_ID);
   narrativeStore.resetTurnCounters(THREAD_ID);
-  return { service, providerEmitter, thoughtBulk, hookBulk, toolBulk };
+  return { service, providerEmitter, thoughtBulk, hookBulk, toolBulk, taskAppend, taskUpsertGroup };
 }
 
 describe("AgentService narrative persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("persists TaskCreate tool calls for Scope hydration", () => {
+    const { providerEmitter, taskAppend } = build();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "task-create-1",
+      toolName: "TaskCreate",
+      toolInput: {
+        subject: "Buy groceries",
+        description: "Pick up milk, eggs, bread",
+      },
+    });
+
+    expect(taskAppend).toHaveBeenCalledWith(THREAD_ID, {
+      content: "Buy groceries - Pick up milk, eggs, bread",
+      status: "pending",
+      group: "Tasks",
+    });
+  });
+
+  it("persists Codex update_plan tool calls for Scope hydration", () => {
+    const { providerEmitter, taskUpsertGroup } = build();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "update-plan-1",
+      toolName: "update_plan",
+      toolInput: {
+        plan: [
+          { status: "pending", step: "Test todo item one with CODE-A1 and CODE-B1" },
+          { status: "inProgress", step: "Test todo item two with CODE-A2 and CODE-B2" },
+          { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
+        ],
+      },
+    });
+
+    expect(taskUpsertGroup).toHaveBeenCalledWith(THREAD_ID, "Tasks", [
+      {
+        content: "Test todo item one with CODE-A1 and CODE-B1",
+        status: "pending",
+        group: "Tasks",
+      },
+      {
+        content: "Test todo item two with CODE-A2 and CODE-B2",
+        status: "in_progress",
+        group: "Tasks",
+      },
+      {
+        content: "Test todo item three with CODE-A3 and CODE-B3",
+        status: "completed",
+        group: "Tasks",
+      },
+    ]);
   });
 
   it("segments thoughts split by tool calls with strictly-ordered sortOrder", async () => {

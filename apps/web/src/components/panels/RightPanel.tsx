@@ -114,7 +114,7 @@ export function RightPanel() {
     (s) => (activeThreadId ? s.tasksByThread[activeThreadId] : undefined),
   );
 
-  // Only parent-agent tasks for the header count and task list display
+  // Scope to-do progress and visible list use only parent-agent tasks.
   const parentTasks = useMemo(
     () => (tasks ?? []).filter((t) => t.group === "Tasks"),
     [tasks],

@@ -184,6 +184,15 @@ export interface PlanDeltaPayload {
   delta: string;
 }
 
+/** Payload for `turn/plan/updated`, Codex's structured per-turn plan snapshot. */
+export interface TurnPlanUpdatedPayload {
+  threadId?: string;
+  turnId?: string;
+  explanation?: string;
+  plan?: unknown[];
+  [key: string]: unknown;
+}
+
 // item/completed payload
 
 /**
@@ -287,6 +296,7 @@ export type CodexNotification =
   | (JsonRpcNotification<ReasoningStreamDeltaPayload> & { method: "item/reasoning/summaryTextDelta" })
   | (JsonRpcNotification<LifecyclePayload> & { method: "item/reasoning/summaryPartAdded" })
   | (JsonRpcNotification<PlanDeltaPayload> & { method: "item/plan/delta" })
+  | (JsonRpcNotification<TurnPlanUpdatedPayload> & { method: "turn/plan/updated" })
   | (JsonRpcNotification<ItemCompletedPayload> & { method: "item/completed" })
   | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn/completed" })
   | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" });

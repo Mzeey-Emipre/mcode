@@ -506,6 +506,7 @@ function normalizePlanStatus(
       return "cancelled";
     case "in_progress":
     case "inProgress":
+    case "in-progress":
       return "in_progress";
     default:
       return "pending";

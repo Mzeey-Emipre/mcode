@@ -17,6 +17,7 @@ const VALID_TASK_STATUSES = new Set<string>([
  */
 export function coerceTaskStatus(raw: unknown): TaskStatus {
   const s = String(raw ?? "");
+  if (s === "inProgress" || s === "in-progress") return "in_progress";
   if (s === "canceled") return "cancelled";
   return VALID_TASK_STATUSES.has(s) ? (s as TaskStatus) : "pending";
 }

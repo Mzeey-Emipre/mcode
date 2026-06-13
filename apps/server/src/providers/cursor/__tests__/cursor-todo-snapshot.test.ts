@@ -24,6 +24,8 @@ describe("coercePlanStatus", () => {
   it("returns the canonical status for known values", () => {
     expect(coercePlanStatus("pending")).toBe("pending");
     expect(coercePlanStatus("in_progress")).toBe("in_progress");
+    expect(coercePlanStatus("inProgress")).toBe("in_progress");
+    expect(coercePlanStatus("in-progress")).toBe("in_progress");
     expect(coercePlanStatus("completed")).toBe("completed");
     expect(coercePlanStatus("cancelled")).toBe("cancelled");
   });
@@ -124,10 +126,12 @@ describe("normalizeCursorTodoEntry", () => {
     expect(normalizeCursorTodoEntry({ id: "abc", content: "x", status: "pending" }, 0).id).toBe("abc");
   });
 
-  it("prefers content, then title, then text for the body field", () => {
+  it("prefers content, then title, then text, then step, then description for the body field", () => {
     expect(normalizeCursorTodoEntry({ id: "1", content: "c" }, 0).content).toBe("c");
     expect(normalizeCursorTodoEntry({ id: "1", title: "t" }, 0).content).toBe("t");
     expect(normalizeCursorTodoEntry({ id: "1", text: "x" }, 0).content).toBe("x");
+    expect(normalizeCursorTodoEntry({ id: "1", step: "s" }, 0).content).toBe("s");
+    expect(normalizeCursorTodoEntry({ id: "1", description: "d" }, 0).content).toBe("d");
     expect(normalizeCursorTodoEntry({ id: "1" }, 0).content).toBe("");
   });
 

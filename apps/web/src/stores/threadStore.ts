@@ -315,6 +315,60 @@ function resolveAgentGroupLabel(
   return "Sub-agent";
 }
 
+function taskTextFromToolInput(toolInput: Record<string, unknown>): string | null {
+  const subject =
+    typeof toolInput.subject === "string" && toolInput.subject.trim().length > 0
+      ? toolInput.subject.trim()
+      : typeof toolInput.title === "string" && toolInput.title.trim().length > 0
+        ? toolInput.title.trim()
+        : typeof toolInput.content === "string" && toolInput.content.trim().length > 0
+          ? toolInput.content.trim()
+          : "";
+  const description =
+    typeof toolInput.description === "string" && toolInput.description.trim().length > 0
+      ? toolInput.description.trim()
+      : "";
+
+  if (!subject && !description) return null;
+  if (!subject) return description;
+  if (!description) return subject;
+  return `${subject} - ${description}`;
+}
+
+function updatePlanTasksFromToolInput(toolInput: Record<string, unknown>): TaskItem[] {
+  const entries =
+    Array.isArray(toolInput.plan)
+      ? toolInput.plan
+      : Array.isArray(toolInput.tasks)
+        ? toolInput.tasks
+        : Array.isArray(toolInput.todos)
+          ? toolInput.todos
+          : [];
+
+  return entries.flatMap((entry, i): TaskItem[] => {
+    const item: Record<string, unknown> = typeof entry === "object" && entry !== null
+      ? entry as Record<string, unknown>
+      : { step: entry };
+    const content =
+      typeof item.step === "string" && item.step.trim().length > 0
+        ? item.step.trim()
+        : typeof item.content === "string" && item.content.trim().length > 0
+          ? item.content.trim()
+          : typeof item.title === "string" && item.title.trim().length > 0
+            ? item.title.trim()
+            : typeof item.description === "string" && item.description.trim().length > 0
+              ? item.description.trim()
+              : "";
+    if (!content) return [];
+    return [{
+      id: item.id != null ? String(item.id) : String(i),
+      content,
+      status: coerceTaskStatus(item.status),
+      group: "Tasks",
+    }];
+  });
+}
+
 /**
  * Returns how many Agent (subagent) tool calls are still in flight for status UI.
  */
@@ -1605,13 +1659,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const toolName = (params.toolName as string) || "unknown";
       const incomingInput = (params.toolInput as Record<string, unknown>) || {};
       const parentToolCallId = params.parentToolCallId as string | undefined;
-      const applyTodoWriteTasks = (toolInput: Record<string, unknown>) => {
+      const applyTodoWriteTasks = (
+        toolInput: Record<string, unknown>,
+        resolvedParentToolCallId: string | undefined,
+      ) => {
         if (toolName !== "TodoWrite") return;
         const todos = toolInput.todos as Array<Record<string, unknown>> | undefined;
         if (!todos || !Array.isArray(todos)) return;
 
-        const group = parentToolCallId
-          ? resolveAgentGroupLabel(existingCalls, parentToolCallId)
+        const group = resolvedParentToolCallId
+          ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
           : "Tasks";
 
         const taskItems: TaskItem[] = todos.map((t, i) => ({
@@ -1620,6 +1677,44 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           status: coerceTaskStatus(t.status),
           group,
         }));
+
+        useTaskStore.getState().setTaskGroup(threadId, group, taskItems);
+      };
+      const applyTaskCreate = (
+        toolInput: Record<string, unknown>,
+        resolvedParentToolCallId: string | undefined,
+      ) => {
+        if (toolName !== "TaskCreate") return;
+        const content = taskTextFromToolInput(toolInput);
+        if (!content) return;
+
+        const group = resolvedParentToolCallId
+          ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
+          : "Tasks";
+        const taskItem: TaskItem = {
+          id: toolCallId || String(toolInput.id ?? content),
+          content,
+          status: coerceTaskStatus(toolInput.status ?? "pending"),
+          group,
+        };
+        const existingTasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
+        const groupTasks = existingTasks.filter((task) => task.group === group);
+        useTaskStore.getState().setTaskGroup(
+          threadId,
+          group,
+          [...groupTasks.filter((task) => task.id !== taskItem.id), taskItem],
+        );
+      };
+      const applyUpdatePlanTasks = (
+        toolInput: Record<string, unknown>,
+        resolvedParentToolCallId: string | undefined,
+      ) => {
+        if (toolName !== "update_plan") return;
+        const group = resolvedParentToolCallId
+          ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
+          : "Tasks";
+        const taskItems = updatePlanTasksFromToolInput(toolInput).map((task) => ({ ...task, group }));
+        if (taskItems.length === 0) return;
 
         useTaskStore.getState().setTaskGroup(threadId, group, taskItems);
       };
@@ -1637,6 +1732,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             );
           if (shouldMergeDuplicate) {
             const mergedInput = { ...existing.toolInput, ...incomingInput };
+            const resolvedParentToolCallId = existing.parentToolCallId ?? parentToolCallId;
             set((state) => {
               const calls = getThreadRecord(state.records, threadId).toolCalls;
               const updated = calls.map((tc) =>
@@ -1645,13 +1741,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                       ...tc,
                       toolName,
                       toolInput: mergedInput,
-                      parentToolCallId: tc.parentToolCallId ?? parentToolCallId,
+                      parentToolCallId: tc.parentToolCallId ?? resolvedParentToolCallId,
                     }
                   : tc,
               );
               return { records: patchThreadRecord(state.records, threadId, { toolCalls: updated }) };
             });
-            applyTodoWriteTasks(mergedInput);
+            applyTodoWriteTasks(mergedInput, resolvedParentToolCallId);
+            applyTaskCreate(mergedInput, resolvedParentToolCallId);
+            applyUpdatePlanTasks(mergedInput, resolvedParentToolCallId);
           }
           return;
         }
@@ -1662,10 +1760,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       if (!parentToolCallId) {
         markPriorToolCallsComplete();
       }
-      // Intercept TodoWrite calls to populate the task panel.
+      // Intercept task tool calls to populate the task panel.
       // Sub-agent calls are grouped by their parent Agent's description so
       // multiple sub-agents each get their own collapsible section.
-      applyTodoWriteTasks(incomingInput);
+      applyTodoWriteTasks(incomingInput, parentToolCallId);
+      applyTaskCreate(incomingInput, parentToolCallId);
+      applyUpdatePlanTasks(incomingInput, parentToolCallId);
 
       const toolCall: ToolCall = {
         id: toolCallId || crypto.randomUUID(),

@@ -703,6 +703,84 @@ describe("CodexEventMapper", () => {
     });
   });
 
+  it("emits update_plan toolUse with parsed plan arguments", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "function_call",
+          id: "call-update-plan",
+          name: "update_plan",
+          arguments: JSON.stringify({
+            plan: [
+              { status: "pending", step: "Test todo item one with CODE-A1 and CODE-B1" },
+              { status: "in_progress", step: "Test todo item two with CODE-A2 and CODE-B2" },
+              { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
+            ],
+          }),
+          output: "",
+        },
+      },
+    });
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({
+      type: "toolUse",
+      threadId: "test-thread",
+      toolCallId: "call-update-plan",
+      toolName: "update_plan",
+      toolInput: {
+        plan: [
+          { status: "pending", step: "Test todo item one with CODE-A1 and CODE-B1" },
+          { status: "in_progress", step: "Test todo item two with CODE-A2 and CODE-B2" },
+          { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
+        ],
+      },
+    });
+  });
+
+  it("emits update_plan toolUse from turn plan updates", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/plan/updated",
+      params: {
+        threadId: "codex-thread",
+        turnId: "turn-live",
+        explanation: "Tracking scope work",
+        plan: [
+          { status: "pending", step: "Test todo item one with CODE-A1 and CODE-B1" },
+          { status: "inProgress", step: "Test todo item two with CODE-A2 and CODE-B2" },
+          { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
+        ],
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "toolUse",
+        threadId: "test-thread",
+        toolCallId: "codex-plan-turn-live-1",
+        toolName: "update_plan",
+        toolInput: {
+          explanation: "Tracking scope work",
+          plan: [
+            { status: "pending", step: "Test todo item one with CODE-A1 and CODE-B1" },
+            { status: "inProgress", step: "Test todo item two with CODE-A2 and CODE-B2" },
+            { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
+          ],
+        },
+      },
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "codex-plan-turn-live-1",
+        output: "Plan updated",
+        isError: false,
+      },
+    ]);
+  });
+
   it("handles function_call with invalid JSON arguments gracefully", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",

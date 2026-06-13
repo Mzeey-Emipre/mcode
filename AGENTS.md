@@ -88,3 +88,22 @@ server startup before spawning children.
 ## Agent Development Workflow
 
 @docs/guides/agent-workflow.md
+
+## Verifying Behavior Changes
+
+When a change affects what the app does, verify it in this order. This includes
+UI behavior, IPC handlers, server endpoints, stores, and agent-service behavior.
+
+1. Run it live first. Start the affected app from
+   [docs/agents/runtime.md](docs/agents/runtime.md) with `bun run dev:web`,
+   `bun run dev:server`, or `bun run dev:desktop`. Exercise the changed path as a
+   user or client would. Observe the rendered UI, response body, IPC result, or
+   persisted data. This live run is the main verification step.
+2. Lock it in. Add or update a Playwright spec, desktop e2e spec, or focused test
+   that asserts the observed outcome.
+3. Run the regression floor. Run `bun run verify` and the relevant e2e suite,
+   such as `bun run e2e`, `bun run verify:e2e`, or desktop e2e as needed.
+
+Report all three: the live action and observed outcome, the assertion that
+protects it, and the suite result. If the environment blocks live verification,
+state that explicitly and list the manual check instead.

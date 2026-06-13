@@ -218,7 +218,7 @@ describe("mapCursorAcpSessionNotification", () => {
           sessionUpdate: "plan",
           entries: [
             { content: "Read the file", status: "completed", priority: "high" },
-            { content: "Edit the function", status: "in_progress", priority: "medium" },
+            { content: "Edit the function", status: "in-progress", priority: "medium" },
             { content: "Run tests", status: "pending", priority: "low" },
           ],
         },
