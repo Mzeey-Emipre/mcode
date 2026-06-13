@@ -304,11 +304,22 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       store.beginTurn(THREAD);
       store.resetTurnCounters(THREAD);
       store.openOrExtendThought(THREAD, "Tool-free final answer");
-      // end_turn-style boundary → final response → drop, never persisted.
+      // end_turn-style boundary means final response, so drop it.
       store.dropOpenThought(THREAD);
 
       store.persistNarrative(THREAD, "m1", "Tool-free final answer", "completed");
       expect(new ThoughtSegmentRepo(db).listByMessage("m1")).toHaveLength(0);
+    });
+
+    it("moves an open thought out of the narrative buffer for final-response ownership transfer", () => {
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.openOrExtendThought(THREAD, "Tool-free final answer");
+
+      const text = store.takeOpenThought(THREAD);
+
+      expect(text).toBe("Tool-free final answer");
+      expect(store.hasBufferedNarrative(THREAD)).toBe(false);
     });
 
     it("persists preamble as a thought when the boundary reports tool_use (non-final)", () => {
@@ -316,7 +327,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       store.beginTurn(THREAD);
       store.resetTurnCounters(THREAD);
       store.openOrExtendThought(THREAD, "Let me check that file.");
-      // tool_use stop_reason → close as preamble.
+      // tool_use stop_reason means preamble.
       store.closeOpenThought(THREAD);
       store.bufferToolCall(THREAD, toolUse("tc-read", "Read"));
 

@@ -508,6 +508,70 @@ describe("AgentService narrative persistence", () => {
     expect(thoughtBulk).not.toHaveBeenCalled();
   });
 
+  it("transfers boundary-final text to the assistant body owner when Message is absent", async () => {
+    const { providerEmitter, thoughtBulk, service } = build();
+    const body = "Tool-free final answer";
+    const userMsg: Message = {
+      id: "user-anchor",
+      thread_id: THREAD_ID,
+      role: "user",
+      content: "go",
+      tool_calls: null,
+      files_changed: null,
+      cost_usd: null,
+      tokens_used: null,
+      timestamp: new Date().toISOString(),
+      sequence: 1,
+      attachments: null,
+      is_internal: false,
+    };
+    const assistantMsg: Message = {
+      id: MSG_ID,
+      thread_id: THREAD_ID,
+      role: "assistant",
+      content: body,
+      tool_calls: null,
+      files_changed: null,
+      cost_usd: null,
+      tokens_used: null,
+      timestamp: new Date().toISOString(),
+      sequence: 2,
+      attachments: null,
+      is_internal: false,
+    };
+    const messageRepo = (service as unknown as { messageRepo: MessageRepo }).messageRepo as
+      & MessageRepo
+      & { createAssistantIdempotent: ReturnType<typeof vi.fn> };
+    messageRepo.listByThread = vi.fn(() => ({ messages: [userMsg], hasMore: false }));
+    messageRepo.createAssistantIdempotent = vi.fn(() => assistantMsg);
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TextDelta,
+      threadId: THREAD_ID,
+      delta: body,
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.AssistantMessageBoundary,
+      threadId: THREAD_ID,
+      isFinalResponse: true,
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      tokensIn: 0,
+      tokensOut: 0,
+      contextWindow: 0,
+    });
+
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    expect(messageRepo.createAssistantIdempotent).toHaveBeenCalledWith(
+      expect.objectContaining({ content: body }),
+    );
+    expect(thoughtBulk).not.toHaveBeenCalled();
+  });
+
   it("persists preamble thought when AssistantMessageBoundary reports isFinalResponse=false", async () => {
     const { providerEmitter, thoughtBulk } = build();
 

@@ -1475,12 +1475,14 @@ export class AgentService {
         // cannot submit answers against a still-active session, which would
         // risk overlapping sends on the same thread.
         if (event.type === AgentEventType.TextDelta) {
-          this.turnFinalizer.appendStreamingText(event.threadId, event.delta);
-          // Final-response deltas are the assistant's user-facing reply — they will
-          // be stored as the message body when the Message event arrives. Do not
-          // open a ThoughtSegment for them: that would cause the text to appear
-          // twice (once as a dimmed thought block, once as the assistant message).
-          if (!event.isFinalResponse) {
+          // Final-response deltas belong to TurnFinalizer, which owns the
+          // assistant body fallback when a provider Message never arrives.
+          // Unknown/non-final deltas belong to NarrativeStore until the
+          // authoritative boundary either closes them as thoughts or transfers
+          // them into TurnFinalizer.
+          if (event.isFinalResponse) {
+            this.turnFinalizer.appendStreamingText(event.threadId, event.delta);
+          } else {
             // Open or extend the current thought segment. NarrativeStore allocates
             // the sort order lazily on the first delta so consecutive deltas keep
             // the same slot, taken BEFORE any following tool call's sort order.
@@ -1638,14 +1640,15 @@ export class AgentService {
         if (event.type === AgentEventType.AssistantMessageBoundary) {
           // Authoritative classification of the just-streamed text deltas based
           // on the Anthropic message-level `stop_reason`. When `isFinalResponse`
-          // is true the open thought segment was really the final user-facing
-          // response (the legacy heuristic could not detect this for tool-free
-          // turns) — drop it so it never gets persisted as a thought row, which
-          // would otherwise render alongside the assistant message bubble.
+          // is true, move that text to the assistant body owner so it never
+          // persists as a thought row or lives in two server-side buffers.
           // Otherwise the message ended with a non-finalizing stop_reason such
           // as `tool_use`; close the thought so it persists as preamble.
           if (event.isFinalResponse) {
-            this.narrativeStore.dropOpenThought(event.threadId);
+            const finalText = this.narrativeStore.takeOpenThought(event.threadId);
+            if (finalText) {
+              this.turnFinalizer.appendStreamingText(event.threadId, finalText);
+            }
           } else {
             this.narrativeStore.closeOpenThought(event.threadId);
             this.turnFinalizer.resetStreamingText(event.threadId);
