@@ -35,6 +35,13 @@ describe("buildHandoffPrompt", () => {
     expect(p.toLowerCase()).not.toContain("output mode:");
   });
 
+  it("caps the requested handoff size for Codex inline delivery", () => {
+    const p = buildHandoffPrompt({ ...baseInput, childProviderId: "codex" });
+    expect(p.toLowerCase()).toContain("under 12,000 characters");
+    expect(p.toLowerCase()).toContain("codex receives this handoff inline");
+    expect(p.toLowerCase()).not.toContain("no character cap");
+  });
+
   it("frames user-msg fork as retry, assistant-msg fork as follow-up about assistant reply", () => {
     const userFork = buildHandoffPrompt({ ...baseInput, forkAnchorRole: "user" });
     expect(userFork).toMatch(/retry this question/i);

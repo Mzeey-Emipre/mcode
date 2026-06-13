@@ -57,6 +57,7 @@ export interface BudgetedThreadMessages {
 export interface BudgetedThreadMessageOptions {
   maxBytes: number;
   pageSize?: number;
+  maxRows?: number;
   includeInternal?: boolean;
 }
 
@@ -114,6 +115,8 @@ const TOOL_CALL_COUNT_SQL =
 
 const DEFAULT_HISTORY_PAGE_SIZE = 100;
 const MAX_HISTORY_PAGE_SIZE = 500;
+const DEFAULT_HISTORY_MAX_ROWS = 500;
+const MAX_HISTORY_MAX_ROWS = 2_000;
 
 function clampPositiveInt(value: number, fallback: number, max: number): number {
   if (!Number.isFinite(value)) return fallback;
@@ -364,6 +367,7 @@ ORDER BY m.sequence ASC`,
   ): BudgetedThreadMessages {
     const budgetBytes = clampPositiveInt(options.maxBytes, 1, Number.MAX_SAFE_INTEGER);
     const pageSize = clampPositiveInt(options.pageSize ?? DEFAULT_HISTORY_PAGE_SIZE, DEFAULT_HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE);
+    const maxRows = clampPositiveInt(options.maxRows ?? DEFAULT_HISTORY_MAX_ROWS, DEFAULT_HISTORY_MAX_ROWS, MAX_HISTORY_MAX_ROWS);
     const includeInternal = options.includeInternal === true;
     const internalClause = includeInternal ? "" : "AND m.is_internal = 0";
     const countInternalClause = includeInternal ? "" : "AND is_internal = 0";
@@ -413,6 +417,20 @@ LIMIT ?`,
         const rowCost = Math.max(1, rowBytes);
 
         if (retainedBytes + rowCost <= budgetBytes) {
+          if (selected.length >= maxRows) {
+            const countRow = countAtOrBeforeStmt.get(threadId, row.sequence) as { count: number };
+            omittedBeforeCount = countRow.count;
+            const fetched = this.fetchBudgetedMessages(selected, truncatedMessages);
+            return {
+              messages: fetched.messages,
+              budget: {
+                budgetBytes,
+                retainedBytes: retainedBytes + fetched.retainedBytesDelta,
+                omittedBeforeCount,
+                truncatedMessages,
+              },
+            };
+          }
           selected.push({ id: row.id, sequence: row.sequence, originalBytes: contentBytes });
           retainedBytes += rowCost;
           continue;
@@ -439,12 +457,12 @@ LIMIT ?`,
           omittedBeforeCount = countRow.count;
         }
 
-        const messages = this.fetchBudgetedMessages(selected);
+        const fetched = this.fetchBudgetedMessages(selected, truncatedMessages);
         return {
-          messages,
+          messages: fetched.messages,
           budget: {
             budgetBytes,
-            retainedBytes,
+            retainedBytes: retainedBytes + fetched.retainedBytesDelta,
             omittedBeforeCount,
             truncatedMessages,
           },
@@ -455,7 +473,7 @@ LIMIT ?`,
     }
 
     return {
-      messages: this.fetchBudgetedMessages(selected),
+      messages: this.fetchBudgetedMessages(selected, truncatedMessages).messages,
       budget: {
         budgetBytes,
         retainedBytes,
@@ -472,7 +490,8 @@ LIMIT ?`,
       originalBytes: number;
       truncateContentToBytes?: number;
     }>,
-  ): Message[] {
+    truncatedMessages: ThreadHistoryBudget["truncatedMessages"],
+  ): { messages: Message[]; retainedBytesDelta: number } {
     const fullStmt = this.db.prepare(
       `SELECT
   m.id, m.thread_id, m.role, m.content, NULL AS tool_calls,
@@ -492,7 +511,8 @@ FROM messages m
 WHERE m.id = ?`,
     );
 
-    return selected
+    let retainedBytesDelta = 0;
+    const messages = selected
       .sort((a, b) => a.sequence - b.sequence)
       .map((item) => {
         if (item.truncateContentToBytes === undefined) {
@@ -505,10 +525,14 @@ WHERE m.id = ?`,
         const truncated = rowToMessage(row);
         const tracked = item.truncateContentToBytes;
         if (tracked !== prefix.bytes) {
+          retainedBytesDelta += prefix.bytes - tracked;
+          const budgetEntry = truncatedMessages.find((entry) => entry.id === item.id);
+          if (budgetEntry) budgetEntry.retainedBytes = prefix.bytes;
           truncated.content = prefix.text;
         }
         return truncated;
       });
+    return { messages, retainedBytesDelta };
   }
 
   /** Find a single message by ID within a specific thread. Returns null if not found. */

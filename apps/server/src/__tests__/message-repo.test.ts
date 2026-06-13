@@ -159,6 +159,37 @@ ORDER BY m.sequence ASC`,
         { id: anchor.id, originalBytes: 6, retainedBytes: 3 },
       ]);
     });
+
+    it("caps retained history by row count as well as bytes", () => {
+      for (let i = 1; i <= 10; i++) {
+        repo.create("thread-1", "user", "x", i);
+      }
+
+      const result = repo.listByThreadUpToSequenceBudgeted("thread-1", 10, {
+        maxBytes: 100,
+        maxRows: 3,
+      });
+
+      expect(result.messages.map((m) => m.sequence)).toEqual([8, 9, 10]);
+      expect(result.budget.omittedBeforeCount).toBe(7);
+      expect(result.budget.retainedBytes).toBe(3);
+      expect(result.budget.truncatedMessages).toEqual([]);
+    });
+
+    it("reports retained bytes after trimming to valid utf8 boundaries", () => {
+      const anchor = repo.create("thread-1", "assistant", "ééé", 1);
+
+      const result = repo.listByThreadUpToSequenceBudgeted("thread-1", 1, {
+        maxBytes: 5,
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0].content).toBe("éé");
+      expect(result.budget.retainedBytes).toBe(4);
+      expect(result.budget.truncatedMessages).toEqual([
+        { id: anchor.id, originalBytes: 6, retainedBytes: 4 },
+      ]);
+    });
   });
 
   describe("create with reply fields", () => {

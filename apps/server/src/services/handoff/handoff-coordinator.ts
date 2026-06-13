@@ -82,6 +82,40 @@ function buildOffBandHandoffPrompt(tempPath: string, markdown: string, userMessa
   ].join("\n");
 }
 
+const CODEX_INLINE_HANDOFF_MAX_CHARS = 14_000;
+const CODEX_INLINE_MAX_USER_CHARS = 4_000;
+const CODEX_HANDOFF_TRUNCATION_NOTICE =
+  "\n\n[Inline Codex handoff shortened to fit the first-turn input limit. Full handoff remains stored in mcode.]\n\n";
+const CODEX_USER_TRUNCATION_NOTICE =
+  "\n\n[User message shortened to fit the first-turn input limit.]";
+
+function takeCharsWithNotice(text: string, maxChars: number, notice: string): string {
+  if (maxChars <= 0) return "";
+  if (text.length <= maxChars) return text;
+  if (maxChars <= notice.length) return notice.slice(0, maxChars);
+  return `${text.slice(0, maxChars - notice.length).trimEnd()}${notice}`;
+}
+
+function buildInlineHandoffPrompt(markdown: string, userMessage: string): string {
+  const separator = "\n\n---\n\n";
+  const fullPrompt = `${markdown}${separator}${userMessage}`;
+  if (fullPrompt.length <= CODEX_INLINE_HANDOFF_MAX_CHARS) return fullPrompt;
+
+  const boundedUserMessage = takeCharsWithNotice(
+    userMessage,
+    Math.min(userMessage.length, CODEX_INLINE_MAX_USER_CHARS),
+    CODEX_USER_TRUNCATION_NOTICE,
+  );
+  const markdownBudget =
+    CODEX_INLINE_HANDOFF_MAX_CHARS - separator.length - boundedUserMessage.length;
+  const boundedMarkdown = takeCharsWithNotice(
+    markdown,
+    markdownBudget,
+    CODEX_HANDOFF_TRUNCATION_NOTICE,
+  );
+  return `${boundedMarkdown}${separator}${boundedUserMessage}`;
+}
+
 function formatHistoryBudgetNotice(historyBudget?: ForkHistoryBudget): string | null {
   if (!historyBudget) return null;
   const lines: string[] = [];
@@ -271,7 +305,7 @@ export class HandoffCoordinator {
       if (shouldInlineHandoffArtifact(childProvider)) {
         // Codex does not consume Mcode's Read pre-grant, so a temp-file prompt
         // can stall on tool access. Inline the bounded artifact instead.
-        providerWireOverride = `${artifact.markdown}\n\n---\n\n${userMessage}`;
+        providerWireOverride = buildInlineHandoffPrompt(artifact.markdown, userMessage);
       } else {
         // Off-band delivery (PRD #538): write the FULL handoff doc to a stable OS
         // temp path and shrink the child's inline first-Turn prompt to a small

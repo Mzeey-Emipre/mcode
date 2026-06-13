@@ -681,7 +681,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
       cliPath,
       workingDirectory: cwd,
       sandbox: "read-only",
-      approvalPolicy: "never",
+      // No approvalHandler is registered here, so side-channel tool requests
+      // are denied while the handoff prompt still runs in the parent session.
+      approvalPolicy: "on-request",
       resumeThreadId: parentSdkSessionId || undefined,
       jobObject: this.jobObject,
       getSpawnEnv: () => this.envService.getEnv(),

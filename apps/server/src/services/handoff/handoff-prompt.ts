@@ -8,7 +8,7 @@
  * read the full doc from an OS temp file via a one-shot ScopedPreGrant.
  * Providers without that read path may receive the bounded artifact inline.
  * The prompt therefore asks for a complete, self-contained document with no
- * character cap.
+ * character cap unless the child provider cannot read the off-band artifact.
  */
 
 import type { ForkAnchorRole } from "./handoff-types.js";
@@ -48,6 +48,9 @@ export function buildHandoffPrompt(input: HandoffPromptInput): string {
   const argumentBlock = userFollowUpMessage.trim().length > 0
     ? `The user's follow-up message in the new branched thread (treat this as the skill's "arguments", the description of what the next session will focus on): "${userFollowUpMessage.slice(0, 800)}"`
     : "The user has not provided a follow-up message yet (no skill arguments). Hand off the full context up to the fork point so the next agent is prepared for any direction the user takes.";
+  const deliveryConstraint = childProviderId === "codex"
+    ? "- Write a complete, self-contained document under 12,000 characters because Codex receives this handoff inline. Prefer the details needed for the follow-up over exhaustive history."
+    : "- Write a complete, self-contained document. There is no character cap: mcode delivers the full doc to the next agent off-band (written to a file the agent reads on demand), so prefer completeness over brevity while staying focused on what matters for the follow-up.";
 
   return [
     "You are executing the /handoff skill on the conversation up to the fork point. Below are the skill's instructions verbatim, followed by mcode-specific context.",
@@ -74,7 +77,7 @@ export function buildHandoffPrompt(input: HandoffPromptInput): string {
     argumentBlock,
     "",
     "## Output constraints (mcode-specific)",
-    "- Write a complete, self-contained document. There is no character cap: mcode delivers the full doc to the next agent off-band (written to a file the agent reads on demand), so prefer completeness over brevity while staying focused on what matters for the follow-up.",
+    deliveryConstraint,
     "- Return the complete handoff document as your assistant text response.",
     "- Do NOT call any tools. Do NOT write to disk. mcode handles persistence.",
     "- Do NOT include YAML frontmatter (the pipeline injects that).",

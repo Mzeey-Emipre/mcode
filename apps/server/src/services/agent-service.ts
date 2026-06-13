@@ -88,6 +88,7 @@ function truncateTitle(content: string): string {
 
 const FORK_HISTORY_BUDGET_BYTES = 1_000_000;
 const FORK_HISTORY_PAGE_SIZE = 100;
+const FORK_HISTORY_MAX_MESSAGES = 500;
 
 /** Orchestrates agent sessions, message sending, and event forwarding. */
 @injectable()
@@ -955,6 +956,7 @@ export class AgentService {
       {
         maxBytes: FORK_HISTORY_BUDGET_BYTES,
         pageSize: FORK_HISTORY_PAGE_SIZE,
+        maxRows: FORK_HISTORY_MAX_MESSAGES,
       },
     );
 

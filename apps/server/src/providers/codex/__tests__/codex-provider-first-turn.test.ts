@@ -16,7 +16,7 @@ vi.mock("../codex-version.js", () => ({
 const { sendTurnMock, listSkillsMock, appServers } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue("turn-test-id"),
   listSkillsMock: vi.fn().mockResolvedValue({ data: [] }),
-  appServers: [] as Array<import("events").EventEmitter & { isAlive: boolean }>,
+  appServers: [] as Array<import("events").EventEmitter & { isAlive: boolean; options: unknown }>,
 }));
 
 vi.mock("../codex-app-server.js", async () => {
@@ -25,8 +25,10 @@ vi.mock("../codex-app-server.js", async () => {
     isAlive = true;
     threadId = "sdk-thread-1";
     resumeFailed = false;
-    constructor() {
+    options: unknown;
+    constructor(options: unknown) {
       super();
+      this.options = options;
       appServers.push(this);
     }
     async start(): Promise<void> {}
@@ -301,6 +303,10 @@ describe("CodexProvider first turn on new session", () => {
 
     expect(appServers[0]).toBeDefined();
     const sideChannelServer = appServers[0]!;
+    expect(sideChannelServer.options).toMatchObject({
+      sandbox: "read-only",
+      approvalPolicy: "on-request",
+    });
     sideChannelServer.emit("notification", {
       method: "item/agentMessage/delta",
       params: { delta: "# Handoff" },
