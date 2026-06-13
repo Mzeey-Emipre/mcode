@@ -68,6 +68,8 @@ import {
  */
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 
+type CodexEndedOutcome = "completed" | "errored" | "cancelled";
+
 /** Internal: a newer `sendMessage` aborted this turn wait (not user-facing). */
 class CodexTurnSupersededError extends Error {
   constructor() {
@@ -707,6 +709,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
 
     let serverDied = false;
     let endedEmitted = false;
+    let endedOutcome: CodexEndedOutcome | undefined;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -768,7 +771,13 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
             // Sub-agent receiver threads complete their own turns mid-run;
             // only the main thread's completion settles this wait.
             if (!isMainThreadNotification(server, n.params)) return;
-            const turn = n.params?.turn as { id?: string } | undefined;
+            const turn = n.params?.turn as { id?: string; status?: string } | undefined;
+            endedOutcome =
+              turn?.status === "failed"
+                ? "errored"
+                : turn?.status === "interrupted"
+                  ? "cancelled"
+                  : "completed";
             const tid = turn?.id;
             if (tid && entry.pendingTurnId && tid !== entry.pendingTurnId) {
               logger.debug("Codex turn/completed ignored (stale or unmatched)", {
@@ -809,6 +818,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     } catch (e: unknown) {
       if (e instanceof CodexTurnSupersededError) return;
       if (e instanceof CodexTurnIdleTimeoutError) {
+        endedOutcome = "errored";
         logger.warn("Codex turn idle timeout (suppressed from UI)", {
           sessionId,
           timeoutMs: TURN_TIMEOUT_MS,
@@ -822,6 +832,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
         return;
       }
       if (!serverDied && seq === entry.runTurnSeq) {
+        endedOutcome = "errored";
         const errorMessage = e instanceof Error ? e.message : String(e);
         logger.error("Codex turn failed", { sessionId, error: errorMessage });
         for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
@@ -838,7 +849,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
       }
       if (!serverDied && seq === entry.runTurnSeq && !endedEmitted) {
         endedEmitted = true;
-        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+        this.emit("event", {
+          type: AgentEventType.Ended,
+          threadId,
+          ...(endedOutcome ? { outcome: endedOutcome } : {}),
+        } satisfies AgentEvent);
       }
     }
   }

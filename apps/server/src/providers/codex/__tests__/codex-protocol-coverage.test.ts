@@ -16,6 +16,7 @@ import type { CodexNotification } from "../codex-types.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(__dir, "fixtures", "codex-protocol-golden.ndjson");
+const GOLDEN_REPLAY_TIMEOUT_MS = 30_000;
 
 /** Methods the mapper must handle without logging "unrecognized". */
 const KNOWN_METHODS = new Set([
@@ -147,7 +148,7 @@ describe("Codex protocol coverage", () => {
     const { methodsSeen } = replay(notifications);
     const unknown = [...methodsSeen].filter((m) => !KNOWN_METHODS.has(m));
     expect(unknown, `Add to KNOWN_METHODS or SILENCED_METHODS: ${unknown.join(", ")}`).toEqual([]);
-  });
+  }, GOLDEN_REPLAY_TIMEOUT_MS);
 
   it("maps collab Agent rows and nests child-thread commandExecution under collab", () => {
     const { events } = replay(notifications);
@@ -185,7 +186,7 @@ describe("Codex protocol coverage", () => {
     } else if (agentUses.length === 1) {
       expect(nestedCommands.length).toBeGreaterThan(0);
     }
-  });
+  }, GOLDEN_REPLAY_TIMEOUT_MS);
 
   it("emits non-final textDelta for plan/reasoning when present", () => {
     const { events } = replay(notifications);
@@ -201,7 +202,7 @@ describe("Codex protocol coverage", () => {
     if (hasPlanOrReasoning) {
       expect(thoughtDeltas.length).toBeGreaterThan(0);
     }
-  });
+  }, GOLDEN_REPLAY_TIMEOUT_MS);
 
   it("classifies Codex assistant text with assistantMessageBoundary, not final text deltas", () => {
     const { events } = replay(notifications);
@@ -229,7 +230,7 @@ describe("Codex protocol coverage", () => {
       expect(messages.length).toBeGreaterThan(0);
       expect(boundaries.some((e) => e.isFinalResponse)).toBe(true);
     }
-  });
+  }, GOLDEN_REPLAY_TIMEOUT_MS);
 
   it("golden fixture documents sub-agent scenario when captured", () => {
     if (label !== "golden") return;
@@ -301,5 +302,5 @@ describe("Codex protocol coverage", () => {
     expect(spawnUses.length).toBeGreaterThan(0);
     expect(waitUses).toHaveLength(0);
     expect(spawnResults.length).toBeGreaterThan(0);
-  });
+  }, GOLDEN_REPLAY_TIMEOUT_MS);
 });

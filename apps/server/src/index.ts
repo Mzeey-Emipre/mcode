@@ -660,7 +660,7 @@ async function shutdown(): Promise<void> {
   const activeThreadIds = agentService.activeThreadIds();
 
   // 2. Stop all agent sessions
-  agentService.stopAll();
+  await agentService.stopAll();
 
   // 3. Shutdown provider registry
   providerRegistry.shutdown();

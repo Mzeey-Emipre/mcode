@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { SnapshotService } from "../services/snapshot-service";
 
+const GIT_REPO_SETUP_TIMEOUT_MS = 30_000;
+
 /**
  * Integration tests for SnapshotService using real git repositories.
  * These tests exercise the full git pipeline with no mocks to verify
@@ -46,7 +48,7 @@ describe("SnapshotService integration", () => {
   beforeEach(() => {
     service = new SnapshotService();
     tmpDir = createGitRepo();
-  });
+  }, GIT_REPO_SETUP_TIMEOUT_MS);
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
@@ -161,7 +163,7 @@ describe("SnapshotService integration - unborn repo", () => {
   beforeEach(() => {
     service = new SnapshotService();
     tmpDir = createUnbornRepo();
-  });
+  }, GIT_REPO_SETUP_TIMEOUT_MS);
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
