@@ -540,6 +540,7 @@ const { httpServer, wss } = createWsServer({
   diffSummaryService,
   handoffStorage,
   authToken: AUTH_TOKEN,
+  shutdown: requestShutdown,
 });
 
 /**
@@ -598,7 +599,7 @@ function startServerAndSubscribe(): void {
     graceMs: GRACE_PERIOD_MS,
     sessionCount,
     isBusy,
-    shutdown,
+    shutdown: requestShutdown,
     logger,
   });
 
@@ -749,15 +750,19 @@ async function shutdown(): Promise<void> {
   process.exit(0);
 }
 
-process.once("SIGTERM", () => {
-  shutdown().catch((err) => {
+let shutdownPromise: Promise<void> | null = null;
+
+/** Initiate server shutdown once, regardless of which trigger won the race. */
+function requestShutdown(): void {
+  shutdownPromise ??= shutdown().catch((err) => {
     logger.error("Shutdown error", { error: String(err) });
     process.exit(1);
   });
+}
+
+process.once("SIGTERM", () => {
+  requestShutdown();
 });
 process.once("SIGINT", () => {
-  shutdown().catch((err) => {
-    logger.error("Shutdown error", { error: String(err) });
-    process.exit(1);
-  });
+  requestShutdown();
 });
