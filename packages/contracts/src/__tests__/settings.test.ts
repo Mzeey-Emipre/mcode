@@ -1,11 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { SettingsSchema, getDefaultSettings } from "../models/settings.js";
+import {
+  SettingsSchema,
+  getDefaultSettings,
+  SERVER_HEAP_DEFAULT_MB,
+  SERVER_HEAP_LEGACY_DEFAULT_MB,
+  SERVER_HEAP_MIN_MB,
+} from "../models/settings.js";
 
 describe("SettingsSchema", () => {
   describe("server.memory.heapMb", () => {
-    it("defaults to 96 when parsing an empty object", () => {
+    it("defaults to the supported server heap cap when parsing an empty object", () => {
       const result = SettingsSchema().parse({});
-      expect(result.server.memory.heapMb).toBe(96);
+      expect(result.server.memory.heapMb).toBe(SERVER_HEAP_DEFAULT_MB);
     });
 
     it("accepts a valid heapMb value", () => {
@@ -13,8 +19,17 @@ describe("SettingsSchema", () => {
       expect(result.server.memory.heapMb).toBe(1024);
     });
 
-    it("rejects heapMb below minimum (64)", () => {
-      const result = SettingsSchema().safeParse({ server: { memory: { heapMb: 32 } } });
+    it("migrates the old shipped default to the current default", () => {
+      const result = SettingsSchema().parse({
+        server: { memory: { heapMb: SERVER_HEAP_LEGACY_DEFAULT_MB } },
+      });
+      expect(result.server.memory.heapMb).toBe(SERVER_HEAP_DEFAULT_MB);
+    });
+
+    it("rejects heapMb below the supported floor", () => {
+      const result = SettingsSchema().safeParse({
+        server: { memory: { heapMb: SERVER_HEAP_MIN_MB - 1 } },
+      });
       expect(result.success).toBe(false);
     });
 
@@ -29,7 +44,7 @@ describe("SettingsSchema", () => {
     });
 
     it("includes server.memory.heapMb in getDefaultSettings", () => {
-      expect(getDefaultSettings().server.memory.heapMb).toBe(96);
+      expect(getDefaultSettings().server.memory.heapMb).toBe(SERVER_HEAP_DEFAULT_MB);
     });
   });
 

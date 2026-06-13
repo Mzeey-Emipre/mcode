@@ -83,6 +83,7 @@ vi.mock("node:fs", () => ({
     err.code = "ENOENT";
     throw err;
   }),
+  renameSync: vi.fn(),
   unlinkSync: vi.fn(),
   writeFileSync: vi.fn(),
   // createWriteStream is used in non-dev mode to route stderr to a log file.
@@ -135,8 +136,10 @@ const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
 import { spawn } from "child_process";
-import { existsSync, readFileSync, writeFileSync, createWriteStream } from "fs";
+import { existsSync, readFileSync, writeFileSync, createWriteStream, renameSync } from "fs";
 import { readFile } from "fs/promises";
+import { join } from "path";
+import { SERVER_HEAP_DEFAULT_MB, SERVER_HEAP_LEGACY_DEFAULT_MB } from "@mcode/contracts";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -235,12 +238,12 @@ describe("ServerManager", () => {
   // V8 flags in args array
   // -----------------------------------------------------------------------
 
-  it("passes V8 flags in the args array with default heap (96 MB)", async () => {
+  it("passes V8 flags in the args array with default heap", async () => {
     await manager.start();
 
     const spawnCall = vi.mocked(spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
-    expect(args).toContain("--max-old-space-size=96");
+    expect(args).toContain(`--max-old-space-size=${SERVER_HEAP_DEFAULT_MB}`);
     expect(args).toContain("--max-semi-space-size=2");
     expect(args).toContain("--expose-gc");
   });
@@ -328,6 +331,27 @@ describe("ServerManager", () => {
     expect(args).toContain("--max-old-space-size=1024");
   });
 
+  it("treats the old default heap setting as unset", async () => {
+    vi.mocked(readFileSync).mockReset();
+    const enoent = () => {
+      const err = new Error("ENOENT") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    };
+    vi.mocked(readFileSync)
+      .mockImplementationOnce(enoent)
+      .mockReturnValueOnce(
+        JSON.stringify({ server: { memory: { heapMb: SERVER_HEAP_LEGACY_DEFAULT_MB } } }),
+      );
+    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
+
+    await manager.start();
+
+    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const args = spawnCall[1] as string[];
+    expect(args).toContain(`--max-old-space-size=${SERVER_HEAP_DEFAULT_MB}`);
+  });
+
   it("uses MCODE_SERVER_HEAP_MB env var over settings.json", async () => {
     process.env.MCODE_SERVER_HEAP_MB = "2048";
 
@@ -348,6 +372,27 @@ describe("ServerManager", () => {
     const spawnCall = vi.mocked(spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(args).toContain("--max-old-space-size=2048");
+  });
+
+  it("falls through to settings.json when MCODE_SERVER_HEAP_MB is invalid", async () => {
+    process.env.MCODE_SERVER_HEAP_MB = "invalid";
+
+    vi.mocked(readFileSync).mockReset();
+    const enoent = () => {
+      const err = new Error("ENOENT") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    };
+    vi.mocked(readFileSync)
+      .mockImplementationOnce(enoent)
+      .mockReturnValueOnce(JSON.stringify({ server: { memory: { heapMb: 1024 } } }));
+    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
+
+    await manager.start();
+
+    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const args = spawnCall[1] as string[];
+    expect(args).toContain("--max-old-space-size=1024");
   });
 
   // -----------------------------------------------------------------------
@@ -385,6 +430,23 @@ describe("ServerManager", () => {
     const spawnCall = vi.mocked(spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(args.join(" ")).toContain("server.cjs");
+  });
+
+  it("enables fatal V8 reports in packaged builds", async () => {
+    refs.setIsPackaged(true);
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
+
+    await manager.start();
+
+    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const args = spawnCall[1] as string[];
+    expect(args).toContain("--report-on-fatalerror");
+    expect(args).toContain("--report-directory=/tmp/mcode");
+    expect(args).toContain("--heapsnapshot-near-heap-limit=1");
   });
 
   it("uses process.execPath when packaged but renamed binary is missing", async () => {
@@ -591,6 +653,23 @@ describe("ServerManager", () => {
 
     await expect(manager.start()).rejects.toThrow("spawn ENOENT");
     expect(mockStream.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("rotates the previous stderr log before opening a new one", async () => {
+    vi.mocked(existsSync).mockImplementation((path) =>
+      String(path).endsWith("server-stderr.log"),
+    );
+
+    await manager.start();
+
+    expect(renameSync).toHaveBeenCalledWith(
+      join("/tmp/mcode", "server-stderr.log"),
+      join("/tmp/mcode", "server-stderr.1.log"),
+    );
+    expect(createWriteStream).toHaveBeenCalledWith(
+      join("/tmp/mcode", "server-stderr.log"),
+      { flags: "w" },
+    );
   });
 
   // -----------------------------------------------------------------------

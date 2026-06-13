@@ -13,6 +13,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  Notification,
   powerMonitor,
   powerSaveBlocker,
   protocol,
@@ -32,6 +33,7 @@ const getExtension = globalThis.__v8Snapshot?.contracts?.getExtension ?? bundled
 
 import { openInRegistry } from "./open-in/index.js";
 import { ServerManager } from "./server-manager.js";
+import { ServerCrashRecovery } from "./server-crash-recovery.js";
 import { startIpcRelay } from "./ipc-relay.js";
 import {
   applyReleaseLineSwitch,
@@ -109,6 +111,11 @@ function openIfAllowed(url: string): void {
 
 let mainWindow: BrowserWindow | null = null;
 const serverManager = new ServerManager();
+const serverCrashRecovery = new ServerCrashRecovery({
+  restart: () => serverManager.restart(),
+  notifyRecovered: (code) => showServerRecoveredNotification(code),
+  showError: (code) => showServerCrashDialog(code),
+});
 
 // ---------------------------------------------------------------------------
 // Sleep-resilient server lifecycle (self-healing restart + power save blocker)
@@ -140,6 +147,22 @@ async function showServerCrashDialog(code: number | null): Promise<void> {
   } else {
     app.quit();
   }
+}
+
+/** Notify the user after an automatic backend restart succeeds. */
+function showServerRecoveredNotification(code: number | null): void {
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({
+    title: "Mcode server recovered",
+    body: `The backend crashed (code ${code ?? "unknown"}) and restarted.`,
+  });
+  notification.on("click", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  notification.show();
 }
 
 /**
@@ -659,9 +682,9 @@ app.whenReady().then(async () => {
     // installer does not hit locked files under the install directory.
     setBeforeInstallHook(() => serverManager.forceReplace());
 
-    // Show a Restart / Quit dialog if the server crashes unexpectedly
+    // Recover once the server process exits unexpectedly.
     serverManager.onUnexpectedExit = (code) => {
-      void showServerCrashDialog(code);
+      void serverCrashRecovery.handleUnexpectedExit(code);
     };
 
     // Self-heal after sleep: the server's grace timer or the OS may have

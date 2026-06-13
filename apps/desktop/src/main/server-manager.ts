@@ -9,12 +9,24 @@
 
 import { app } from "electron";
 import { execSync, spawn, type ChildProcess } from "child_process";
-import { createWriteStream, existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import {
+  createWriteStream,
+  existsSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 import { readFile } from "fs/promises";
 import { createServer, type AddressInfo } from "net";
 import { resolve, join, dirname } from "path";
 import { getMcodeDir } from "@mcode/shared";
-import { SettingsSchema as BundledSettingsSchema } from "@mcode/contracts";
+import {
+  SettingsSchema as BundledSettingsSchema,
+  SERVER_HEAP_DEFAULT_MB,
+  SERVER_HEAP_MAX_MB,
+  SERVER_HEAP_MIN_MB,
+} from "@mcode/contracts";
 import { resolveServerBinary } from "./server-binary-resolver.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 
@@ -77,34 +89,43 @@ const STARTUP_TIMEOUT_MS = 30_000;
 
 /** Server stderr log file path. Rotated on each spawn to keep size bounded. */
 const SERVER_LOG_PATH = join(getMcodeDir(), "server-stderr.log");
+/** Previous server stderr log retained across one respawn for crash diagnostics. */
+const SERVER_ROTATED_LOG_PATH = join(getMcodeDir(), "server-stderr.1.log");
 
-/** Default V8 max old space size in MB. Tuned for the < 100MB idle target. */
-const DEFAULT_HEAP_MB = 96;
-
-/** Minimum allowed heap size in MB. */
-const MIN_HEAP_MB = 64;
-
-/** Maximum allowed heap size in MB. */
-const MAX_HEAP_MB = 8192;
+/** Rotate the previous packaged-server stderr log before opening a fresh one. */
+function rotateServerLog(): void {
+  if (!existsSync(SERVER_LOG_PATH)) return;
+  try {
+    if (existsSync(SERVER_ROTATED_LOG_PATH)) {
+      unlinkSync(SERVER_ROTATED_LOG_PATH);
+    }
+    renameSync(SERVER_LOG_PATH, SERVER_ROTATED_LOG_PATH);
+  } catch (err) {
+    console.warn("[server-manager] Failed to rotate previous server stderr log", err);
+  }
+}
 
 /**
  * Determine the V8 max old space size for the server process.
- * Priority: MCODE_SERVER_HEAP_MB env var > settings.json > default (96).
+ * Priority: MCODE_SERVER_HEAP_MB env var > settings.json > default.
  */
 function readServerHeapMb(): number {
   // 1. Environment variable takes highest precedence
   const envVal = process.env.MCODE_SERVER_HEAP_MB;
   if (envVal !== undefined) {
     const parsed = Number(envVal);
-    if (Number.isInteger(parsed) && parsed >= MIN_HEAP_MB && parsed <= MAX_HEAP_MB) {
+    if (
+      Number.isInteger(parsed) &&
+      parsed >= SERVER_HEAP_MIN_MB &&
+      parsed <= SERVER_HEAP_MAX_MB
+    ) {
       return parsed;
     }
     console.warn(
       `[server-manager] MCODE_SERVER_HEAP_MB="${envVal}" is invalid ` +
-        `(parsed: ${parsed}, allowed: ${MIN_HEAP_MB}-${MAX_HEAP_MB} integer). ` +
-        `Falling back to default ${DEFAULT_HEAP_MB} MB.`,
+        `(parsed: ${parsed}, allowed: ${SERVER_HEAP_MIN_MB}-${SERVER_HEAP_MAX_MB} integer). ` +
+        "Falling through to settings.json.",
     );
-    return DEFAULT_HEAP_MB;
   }
 
   // 2. Read from settings.json via the Zod schema
@@ -119,7 +140,7 @@ function readServerHeapMb(): number {
     // File missing or unreadable, fall through to default
   }
 
-  return DEFAULT_HEAP_MB;
+  return SERVER_HEAP_DEFAULT_MB;
 }
 
 /**
@@ -377,11 +398,25 @@ export class ServerManager {
       }
 
       // V8 flags go in the args array for child_process.spawn.
-      const v8Flags = [`--max-old-space-size=${heapMb}`, "--max-semi-space-size=2", "--expose-gc"];
+      const v8Flags = [
+        `--max-old-space-size=${heapMb}`,
+        "--max-semi-space-size=2",
+        "--expose-gc",
+      ];
+      if (app.isPackaged) {
+        v8Flags.push(
+          "--report-on-fatalerror",
+          `--report-directory=${getMcodeDir()}`,
+          "--heapsnapshot-near-heap-limit=1",
+        );
+      }
       const args = [...v8Flags, entry];
 
       // In production, route stderr to a log file so crashes are diagnosable.
       // Dev mode inherits stdio for immediate console visibility.
+      if (!isDesktopDev()) {
+        rotateServerLog();
+      }
       const stderrStream = isDesktopDev()
         ? undefined
         : createWriteStream(SERVER_LOG_PATH, { flags: "w" });
