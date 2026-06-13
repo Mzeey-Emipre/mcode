@@ -48,7 +48,7 @@ const ATTACHMENT_EXT_MIME: Record<string, string> = {
 };
 
 /** Create and configure the HTTP + WebSocket server. */
-export function createWsServer(deps: RouterDeps & { authToken: string }): {
+export function createWsServer(deps: RouterDeps & { authToken: string; shutdown: () => void }): {
   httpServer: Server;
   wss: WebSocketServer;
 } {
@@ -80,8 +80,7 @@ export function createWsServer(deps: RouterDeps & { authToken: string }): {
         return;
       }
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "shutting_down" }));
-      process.kill(process.pid, "SIGTERM");
+      res.end(JSON.stringify({ status: "shutting_down" }), () => deps.shutdown());
       return;
     }
 

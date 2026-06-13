@@ -22,9 +22,10 @@ const AUTH_TOKEN = "test-token-providers";
  */
 function makeMinimalDeps(
   overrides: Partial<RouterDeps> = {},
-): RouterDeps & { authToken: string } {
+): RouterDeps & { authToken: string; shutdown: () => void } {
   return {
     authToken: AUTH_TOKEN,
+    shutdown: () => {},
     agentService: { activeCount: () => 0 } as unknown as RouterDeps["agentService"],
     workspaceService: undefined as unknown as RouterDeps["workspaceService"],
     threadService: undefined as unknown as RouterDeps["threadService"],
@@ -49,7 +50,7 @@ function makeMinimalDeps(
     ciWatcherService: undefined as unknown as RouterDeps["ciWatcherService"],
     providerAvailability: undefined as unknown as RouterDeps["providerAvailability"],
     ...overrides,
-  };
+  } as unknown as RouterDeps & { authToken: string; shutdown: () => void };
 }
 
 /** Build a WebSocket URL with the auth token as a query param. */

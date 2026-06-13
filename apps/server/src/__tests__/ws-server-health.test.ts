@@ -5,15 +5,18 @@
  */
 
 import "reflect-metadata";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import http from "http";
 import { createWsServer } from "../transport/ws-server";
 import type { RouterDeps } from "../transport/ws-router";
 
 /** Minimal RouterDeps stub — only agentService is called by the health handler. */
-function makeMinimalDeps(): RouterDeps & { authToken: string } {
+function makeMinimalDeps(
+  overrides: Partial<RouterDeps & { authToken: string; shutdown: () => void }> = {},
+): RouterDeps & { authToken: string; shutdown: () => void } {
   return {
     authToken: "test-token-abc",
+    shutdown: vi.fn(),
     agentService: { activeCount: () => 2 } as unknown as RouterDeps["agentService"],
     workspaceService: undefined as unknown as RouterDeps["workspaceService"],
     threadService: undefined as unknown as RouterDeps["threadService"],
@@ -35,7 +38,8 @@ function makeMinimalDeps(): RouterDeps & { authToken: string } {
     prDraftService: undefined as unknown as RouterDeps["prDraftService"],
     threadRepo: undefined as unknown as RouterDeps["threadRepo"],
     workspaceRepo: undefined as unknown as RouterDeps["workspaceRepo"],
-  };
+    ...overrides,
+  } as unknown as RouterDeps & { authToken: string; shutdown: () => void };
 }
 
 /** Issue a GET /health request to the given server and return status + parsed body. */
@@ -60,6 +64,41 @@ function getHealth(server: http.Server): Promise<{ status: number; body: unknown
       },
     );
     req.on("error", reject);
+  });
+}
+
+/** Issue a POST /shutdown request to the given server. */
+function postShutdown(
+  server: http.Server,
+  token?: string,
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address();
+    if (!addr || typeof addr === "string") {
+      return reject(new Error("Server not listening on a TCP port"));
+    }
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port: addr.port,
+        path: "/shutdown",
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk: string) => { raw += chunk; });
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) });
+          } catch {
+            resolve({ status: res.statusCode ?? 0, body: raw });
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
   });
 }
 
@@ -109,5 +148,59 @@ describe("/health endpoint", () => {
     const { body } = await getHealth(server);
     expect((body as Record<string, unknown>).status).toBe("ok");
     expect((body as Record<string, unknown>).activeAgents).toBe(2);
+  });
+});
+
+describe("/shutdown endpoint", () => {
+  let server: http.Server;
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("runs the injected shutdown callback after an authorized request", async () => {
+    const shutdown = vi.fn();
+    const deps = makeMinimalDeps({ shutdown });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true as never);
+    ({ httpServer: server } = createWsServer(deps));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const { status, body } = await postShutdown(server, "test-token-abc");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ status: "shutting_down" });
+      expect(shutdown).toHaveBeenCalledOnce();
+      expect(killSpy).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it("rejects unauthenticated shutdown requests", async () => {
+    const shutdown = vi.fn();
+    const deps = makeMinimalDeps({ shutdown });
+    ({ httpServer: server } = createWsServer(deps));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    const { status, body } = await postShutdown(server);
+
+    expect(status).toBe(401);
+    expect(body).toBe("Unauthorized");
+    expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it("rejects shutdown requests with the wrong token", async () => {
+    const shutdown = vi.fn();
+    const deps = makeMinimalDeps({ shutdown });
+    ({ httpServer: server } = createWsServer(deps));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    const { status, body } = await postShutdown(server, "wrong-token");
+
+    expect(status).toBe(401);
+    expect(body).toBe("Unauthorized");
+    expect(shutdown).not.toHaveBeenCalled();
   });
 });
