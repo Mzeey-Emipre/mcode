@@ -15,7 +15,7 @@ import {
 import type { ThreadHydratorWriteState } from "@/lib/thread-hydrator/types";
 import { mockTransport, createMockMessage, createMockThread } from "@/__tests__/mocks/transport";
 import { shallowEqualBy } from "@/lib/shallowEqualBy";
-import { coerceTaskStatus } from "@/stores/taskStore";
+import { coerceTaskStatus, type TaskItem } from "@/stores/taskStore";
 
 const THREAD_ID = "aux-thread";
 
@@ -71,6 +71,7 @@ describe("AuxiliaryHydrator", () => {
   function createAux(
     overrides?: Partial<{
       getWorkspaceThread: () => { id: string; has_file_changes?: boolean } | undefined;
+      getTasksForThread: (threadId: string) => readonly TaskItem[];
     }>,
   ): AuxiliaryHydrator {
     return new AuxiliaryHydrator({
@@ -85,7 +86,7 @@ describe("AuxiliaryHydrator", () => {
       getWorkspaceThread:
         overrides?.getWorkspaceThread ??
         (() => createMockThread({ id: THREAD_ID, has_file_changes: false })),
-      getTasksForThread: () => [],
+      getTasksForThread: overrides?.getTasksForThread ?? (() => []),
       setTasksForThread,
       addPlanForThread: vi.fn(),
       shallowEqualBy,
@@ -153,6 +154,89 @@ describe("AuxiliaryHydrator", () => {
     await vi.waitFor(() => {
       expect(mockTransport.getThreadTasks).toHaveBeenCalledWith(THREAD_ID);
       expect(mockTransport.getThreadPlans).toHaveBeenCalledWith(THREAD_ID);
+    });
+  });
+
+  it("kept live tasks when task hydration returned no persisted tasks", async () => {
+    const liveTask: TaskItem = {
+      id: "task-live",
+      content: "Buy groceries - Pick up milk, eggs, bread",
+      status: "pending",
+      group: "Tasks",
+    };
+    (mockTransport.getThreadTasks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const aux = createAux({
+      getTasksForThread: () => [liveTask],
+    });
+    aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
+
+    await vi.waitFor(() => {
+      expect(mockTransport.getThreadTasks).toHaveBeenCalledWith(THREAD_ID);
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(setTasksForThread).not.toHaveBeenCalled();
+  });
+
+  it("kept live tasks for a group when hydration returned stale persisted tasks", async () => {
+    const liveTask: TaskItem = {
+      id: "task-live",
+      content: "Clean the kitchen - Dishes, counters, floor",
+      status: "pending",
+      group: "Tasks",
+    };
+    (mockTransport.getThreadTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        content: "Buy groceries - Pick up milk, eggs, bread",
+        status: "pending",
+        group: "Tasks",
+      },
+    ]);
+
+    const aux = createAux({
+      getTasksForThread: () => [liveTask],
+    });
+    aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
+
+    await vi.waitFor(() => {
+      expect(mockTransport.getThreadTasks).toHaveBeenCalledWith(THREAD_ID);
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(setTasksForThread).not.toHaveBeenCalled();
+  });
+
+  it("merged persisted groups that were missing from live tasks", async () => {
+    const liveTask: TaskItem = {
+      id: "task-live",
+      content: "Clean the kitchen - Dishes, counters, floor",
+      status: "pending",
+      group: "Tasks",
+    };
+    (mockTransport.getThreadTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        content: "Check child diagnostics",
+        status: "pending",
+        group: "Sub-agent",
+      },
+    ]);
+
+    const aux = createAux({
+      getTasksForThread: () => [liveTask],
+    });
+    aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
+
+    await vi.waitFor(() => {
+      expect(setTasksForThread).toHaveBeenCalledWith(THREAD_ID, [
+        {
+          id: "0",
+          content: "Check child diagnostics",
+          status: "pending",
+          group: "Sub-agent",
+        },
+        liveTask,
+      ]);
     });
   });
 

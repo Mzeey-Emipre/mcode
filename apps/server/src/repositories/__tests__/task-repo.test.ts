@@ -59,6 +59,33 @@ describe("TaskRepo", () => {
     ]);
   });
 
+  it("appendTask preserves existing tasks", () => {
+    const threadId = makeThread("append");
+    repo.upsert(threadId, [{ content: "existing", status: "pending", group: "Tasks" }]);
+    repo.appendTask(threadId, {
+      content: "created later",
+      status: "pending",
+      group: "Sub-agent",
+    });
+    expect(repo.get(threadId)).toEqual([
+      { content: "existing", status: "pending", group: "Tasks" },
+      { content: "created later", status: "pending", group: "Sub-agent" },
+    ]);
+  });
+
+  it("appendTask replaces an existing task with the same content and group", () => {
+    const threadId = makeThread("append-replace");
+    repo.upsert(threadId, [{ content: "same", status: "pending", group: "Tasks" }]);
+    repo.appendTask(threadId, {
+      content: "same",
+      status: "completed",
+      group: "Tasks",
+    });
+    expect(repo.get(threadId)).toEqual([
+      { content: "same", status: "completed", group: "Tasks" },
+    ]);
+  });
+
   it("delete removes the row", () => {
     const threadId = makeThread("3");
     repo.upsert(threadId, [{ content: "x", status: "pending" }]);

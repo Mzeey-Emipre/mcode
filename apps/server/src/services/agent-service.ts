@@ -34,7 +34,7 @@ import { TurnFinalizer } from "./turn-finalizer.js";
 import { PlanQuestionService } from "./plan-question-service.js";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type Database from "better-sqlite3";
-import { TaskRepo } from "../repositories/task-repo";
+import { TaskRepo, type StoredTask } from "../repositories/task-repo";
 import { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo";
 import { GitService } from "./git-service";
 import { AttachmentService } from "./attachment-service";
@@ -1144,6 +1144,74 @@ export class AgentService {
     return "Sub-agent";
   }
 
+  private coerceStoredTaskStatus(raw: unknown): StoredTask["status"] {
+    const status = String(raw ?? "pending");
+    if (
+      status === "pending" ||
+      status === "in_progress" ||
+      status === "completed" ||
+      status === "cancelled"
+    ) {
+      return status;
+    }
+    if (status === "inProgress" || status === "in-progress") return "in_progress";
+    if (status === "canceled") return "cancelled";
+    return "pending";
+  }
+
+  private taskCreateContent(toolInput: Record<string, unknown>): string | null {
+    const subject =
+      typeof toolInput.subject === "string" && toolInput.subject.trim().length > 0
+        ? toolInput.subject.trim()
+        : typeof toolInput.title === "string" && toolInput.title.trim().length > 0
+          ? toolInput.title.trim()
+          : typeof toolInput.content === "string" && toolInput.content.trim().length > 0
+            ? toolInput.content.trim()
+            : "";
+    const description =
+      typeof toolInput.description === "string" && toolInput.description.trim().length > 0
+        ? toolInput.description.trim()
+        : "";
+
+    if (!subject && !description) return null;
+    if (!subject) return description;
+    if (!description) return subject;
+    return `${subject} - ${description}`;
+  }
+
+  private updatePlanTasks(toolInput: Record<string, unknown>, group: string): StoredTask[] {
+    const entries =
+      Array.isArray(toolInput.plan)
+        ? toolInput.plan
+        : Array.isArray(toolInput.tasks)
+          ? toolInput.tasks
+          : Array.isArray(toolInput.todos)
+            ? toolInput.todos
+            : [];
+
+    return entries.flatMap((entry): StoredTask[] => {
+      const item: Record<string, unknown> = typeof entry === "object" && entry !== null
+        ? entry as Record<string, unknown>
+        : { step: entry };
+      const content =
+        typeof item.step === "string" && item.step.trim().length > 0
+          ? item.step.trim()
+          : typeof item.content === "string" && item.content.trim().length > 0
+            ? item.content.trim()
+            : typeof item.title === "string" && item.title.trim().length > 0
+              ? item.title.trim()
+              : typeof item.description === "string" && item.description.trim().length > 0
+                ? item.description.trim()
+                : "";
+      if (!content) return [];
+      return [{
+        content,
+        status: this.coerceStoredTaskStatus(item.status),
+        group,
+      }];
+    });
+  }
+
   /** Number of currently active sessions. */
   activeCount(): number {
     return this.activeSessionIds.size;
@@ -2031,8 +2099,8 @@ ${userMessage}`;
 
   /**
    * Buffer a tool call event into the narrative write seam, then perform the
-   * non-narrative side effect AgentService still owns: persisting TodoWrite
-   * task state for reconnect hydration. The narrative buffer + agentCallStack
+   * non-narrative side effect AgentService still owns: persisting task state
+   * for reconnect hydration. The narrative buffer + agentCallStack
    * push + parent attribution (narrative-pipeline.md Trap 1) live in
    * {@link NarrativeStore.bufferToolCall}, which returns the attributed parent.
    */
@@ -2091,6 +2159,42 @@ ${userMessage}`;
             });
           }
         }
+      }
+    }
+
+    if (event.toolName === "TaskCreate") {
+      const content = this.taskCreateContent(event.toolInput);
+      if (!content) return;
+      const group = parentToolCallId
+        ? this.resolveAgentGroupLabel(threadId, parentToolCallId)
+        : "Tasks";
+      try {
+        this.taskRepo.appendTask(threadId, {
+          content,
+          status: this.coerceStoredTaskStatus(event.toolInput.status),
+          group,
+        });
+      } catch (err) {
+        logger.warn("TaskCreate task not persisted", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (event.toolName === "update_plan") {
+      const group = parentToolCallId
+        ? this.resolveAgentGroupLabel(threadId, parentToolCallId)
+        : "Tasks";
+      const tasks = this.updatePlanTasks(event.toolInput, group);
+      if (tasks.length === 0) return;
+      try {
+        this.taskRepo.upsertGroup(threadId, group, tasks);
+      } catch (err) {
+        logger.warn("update_plan tasks not persisted", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }

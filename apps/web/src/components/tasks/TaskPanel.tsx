@@ -13,7 +13,6 @@ export function TaskPanel() {
 
   const groups = useMemo(() => {
     if (!tasks) return [];
-    // Only show top-level agent tasks; sub-agent groups are noise in the panel
     const parentTasks = tasks.filter((t) => t.group === "Tasks");
     if (parentTasks.length === 0) return [];
     return [["Tasks", parentTasks] as const];

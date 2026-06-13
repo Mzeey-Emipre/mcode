@@ -30,7 +30,7 @@ const KNOWN_METHODS = new Set([
   "item/reasoning/summaryPartAdded",
   "item/plan/delta",
   "error",
-  // Silenced lifecycle (see SILENCED_METHODS in mapper)
+  // Silenced lifecycle plus structured plan snapshots.
   "thread/started",
   "thread/status/changed",
   "mcpServer/startupStatus/updated",

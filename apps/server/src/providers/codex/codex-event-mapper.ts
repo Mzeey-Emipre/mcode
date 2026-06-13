@@ -6,7 +6,7 @@ import type { CodexNotification, CompletedItem } from "./codex-types.js";
 
 /** Notification methods that produce no agent events (module-level to avoid per-call allocation). */
 const SILENCED_METHODS = new Set([
-  "turn/diff/updated", "turn/plan/updated",
+  "turn/diff/updated",
   "skills/changed", "model/rerouted",
   "deprecationNotice", "configWarning",
   "item/fileChange/outputDelta",
@@ -76,6 +76,8 @@ export class CodexEventMapper {
   private pendingAssistantBoundaryItemId: string | undefined;
   /** Dedupes `item/completed` reasoning payloads against streamed reasoning deltas. */
   private lastReasoningText = "";
+  /** Per-turn sequence for synthetic update_plan tool calls from turn/plan/updated. */
+  private planUpdateSeq = 0;
   private readonly threadId: string;
   /** Codex app-server's own main thread id. Distinct from Mcode's persisted thread UUID. */
   private mainCodexThreadId: string | undefined;
@@ -782,6 +784,35 @@ export class CodexEventMapper {
       }];
     }
 
+    if (method === "turn/plan/updated") {
+      const p = notification.params as {
+        turnId?: string;
+        explanation?: string;
+        plan?: unknown;
+      };
+      if (!Array.isArray(p.plan) || p.plan.length === 0) return [];
+      const boundaryEvents = this.drainPendingAssistantBoundary(false);
+      const toolCallId = `codex-plan-${p.turnId ?? "unknown"}-${++this.planUpdateSeq}`;
+      return [...boundaryEvents, {
+        type: AgentEventType.ToolUse,
+        threadId: this.threadId,
+        toolCallId,
+        toolName: "update_plan",
+        toolInput: {
+          ...(typeof p.explanation === "string" && p.explanation.length > 0
+            ? { explanation: p.explanation }
+            : {}),
+          plan: p.plan,
+        },
+      }, {
+        type: AgentEventType.ToolResult,
+        threadId: this.threadId,
+        toolCallId,
+        output: "Plan updated",
+        isError: false,
+      }];
+    }
+
     // Streaming assistant text token. Codex has no stop reason, so every
     // assistant delta streams as narration until a later boundary promotes the
     // last assistant item to the final response at turn completion.
@@ -913,6 +944,7 @@ export class CodexEventMapper {
     this.lastCompletedAssistantText = "";
     this.pendingAssistantBoundaryItemId = undefined;
     this.lastReasoningText = "";
+    this.planUpdateSeq = 0;
     this.commandOutputBuffers.clear();
     this.startedToolUseSignatures.clear();
     this.collabScopeStack = [];

@@ -57,6 +57,18 @@ export class TaskRepo {
     this.stmtUpsert.run(threadId, JSON.stringify(merged));
   }
 
+  /** Append or replace a single task in the persisted task list. */
+  appendTask(threadId: string, task: StoredTask): void {
+    const existing = this.get(threadId) ?? [];
+    const group = task.group ?? "Tasks";
+    const otherTasks = existing.filter(
+      (existingTask) =>
+        existingTask.content !== task.content ||
+        (existingTask.group ?? "Tasks") !== group,
+    );
+    this.stmtUpsert.run(threadId, JSON.stringify([...otherTasks, task]));
+  }
+
   /** Retrieve the persisted task list for a thread, or null if none exists. */
   get(threadId: string): StoredTask[] | null {
     const row = this.stmtGet.get(threadId) as { tasks_json: string } | undefined;

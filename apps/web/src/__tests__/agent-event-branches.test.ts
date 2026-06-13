@@ -196,6 +196,217 @@ describe("handleAgentEvent branches", () => {
     ]);
   });
 
+  it("session.toolUse keeps sub-agent task grouping when duplicate TodoWrite omits parent", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "agent-1",
+        toolName: "Agent",
+        toolInput: { description: "Audit child scope" },
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "todo-child",
+        toolName: "TodoWrite",
+        toolInput: {},
+        parentToolCallId: "agent-1",
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "todo-child",
+        toolName: "TodoWrite",
+        toolInput: {
+          todos: [
+            { id: "child-a", content: "Trace child scope", status: "in_progress" },
+          ],
+        },
+      },
+    });
+
+    const calls = getTestThreadToolCalls("thread-1");
+    expect(calls.find((call) => call.id === "todo-child")?.parentToolCallId).toBe("agent-1");
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      {
+        id: "child-a",
+        content: "Trace child scope",
+        status: "in_progress",
+        group: "Audit child scope",
+      },
+    ]);
+  });
+
+  it("session.toolUse updates tasks from TaskCreate tool calls", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-create-1",
+        toolName: "TaskCreate",
+        toolInput: {
+          subject: "Buy groceries",
+          description: "Pick up milk, eggs, bread",
+        },
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-create-2",
+        toolName: "TaskCreate",
+        toolInput: {
+          subject: "Clean the kitchen",
+          description: "Dishes, counters, floor",
+        },
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      {
+        id: "task-create-1",
+        content: "Buy groceries - Pick up milk, eggs, bread",
+        status: "pending",
+        group: "Tasks",
+      },
+      {
+        id: "task-create-2",
+        content: "Clean the kitchen - Dishes, counters, floor",
+        status: "pending",
+        group: "Tasks",
+      },
+    ]);
+  });
+
+  it("session.toolUse groups sub-agent TaskCreate calls by parent Agent", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "agent-1",
+        toolName: "Agent",
+        toolInput: { description: "Prepare child tasks" },
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-create-child",
+        toolName: "TaskCreate",
+        toolInput: { subject: "Check child output" },
+        parentToolCallId: "agent-1",
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      {
+        id: "task-create-child",
+        content: "Check child output",
+        status: "pending",
+        group: "Prepare child tasks",
+      },
+    ]);
+  });
+
+  it("session.toolUse updates parent scope tasks from Codex update_plan calls", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "update-plan-1",
+        toolName: "update_plan",
+        toolInput: {
+          plan: [
+            { status: "pending", step: "Test todo item one with CODE-A1 and CODE-B1" },
+            { status: "inProgress", step: "Test todo item two with CODE-A2 and CODE-B2" },
+            { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
+          ],
+        },
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      {
+        id: "0",
+        content: "Test todo item one with CODE-A1 and CODE-B1",
+        status: "pending",
+        group: "Tasks",
+      },
+      {
+        id: "1",
+        content: "Test todo item two with CODE-A2 and CODE-B2",
+        status: "in_progress",
+        group: "Tasks",
+      },
+      {
+        id: "2",
+        content: "Test todo item three with CODE-A3 and CODE-B3",
+        status: "completed",
+        group: "Tasks",
+      },
+    ]);
+  });
+
+  it("session.toolUse updates Codex update_plan tasks when duplicate enriches sparse input", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "update-plan-1",
+        toolName: "update_plan",
+        toolInput: {},
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "update-plan-1",
+        toolName: "update_plan",
+        toolInput: {
+          plan: [{ status: "in_progress", step: "Fill plan after completion" }],
+        },
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      {
+        id: "0",
+        content: "Fill plan after completion",
+        status: "in_progress",
+        group: "Tasks",
+      },
+    ]);
+  });
+
+  it("session.toolUse keeps child Codex update_plan tasks out of the parent group", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "agent-1",
+        toolName: "Agent",
+        toolInput: { description: "Child work" },
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "update-plan-child",
+        toolName: "update_plan",
+        toolInput: {
+          plan: [{ status: "pending", step: "Child-only plan item" }],
+        },
+        parentToolCallId: "agent-1",
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      {
+        id: "0",
+        content: "Child-only plan item",
+        status: "pending",
+        group: "Child work",
+      },
+    ]);
+  });
+
   it("toolResult fallback does not mark an Agent call complete when it has active children", () => {
     resetThreadStoreForTests({
       records: new Map<string, ThreadRecord>([

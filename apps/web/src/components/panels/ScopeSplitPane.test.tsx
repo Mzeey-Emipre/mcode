@@ -49,7 +49,8 @@ describe("ScopeSplitPane adaptive dock", () => {
   it("shows the resizable split when a plan and tasks both exist", () => {
     usePlanStore.setState({ plansByThread: { [THREAD]: [makePlan(1)] } });
     useTaskStore.setState({ tasksByThread: { [THREAD]: [makeTask("a")] } });
-    render(<ScopeSplitPane threadId={THREAD} parentTasks={[makeTask("a")]} />);
+    const tasks = [makeTask("a")];
+    render(<ScopeSplitPane threadId={THREAD} parentTasks={tasks} />);
     expect(screen.getByTestId("plan-panel-viewport")).toBeInTheDocument();
     expect(
       screen.getByRole("separator", { name: /resize plan and tasks/i }),
@@ -58,7 +59,8 @@ describe("ScopeSplitPane adaptive dock", () => {
 
   it("fills the pane with tasks (no plan region, no divider) when there is no plan", () => {
     useTaskStore.setState({ tasksByThread: { [THREAD]: [makeTask("a")] } });
-    render(<ScopeSplitPane threadId={THREAD} parentTasks={[makeTask("a")]} />);
+    const tasks = [makeTask("a")];
+    render(<ScopeSplitPane threadId={THREAD} parentTasks={tasks} />);
     expect(screen.queryByTestId("plan-panel-viewport")).not.toBeInTheDocument();
     expect(screen.queryByRole("separator")).not.toBeInTheDocument();
   });
@@ -82,5 +84,21 @@ describe("ScopeSplitPane adaptive dock", () => {
     render(<ScopeSplitPane threadId={THREAD} parentTasks={[]} />);
     expect(screen.getByTestId("plan-skeleton")).toBeInTheDocument();
     expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+  });
+
+  it("shows the empty docket when only child task groups exist", () => {
+    const groupedTask: TaskItem = {
+      id: "subagent",
+      content: "Task subagent",
+      status: "pending",
+      group: "Investigate UI",
+    };
+    useTaskStore.setState({ tasksByThread: { [THREAD]: [groupedTask] } });
+
+    render(<ScopeSplitPane threadId={THREAD} parentTasks={[]} />);
+
+    expect(screen.getByText(/nothing on the docket/i)).toBeInTheDocument();
+    expect(screen.queryByText("Investigate UI")).not.toBeInTheDocument();
+    expect(screen.queryByText("Task subagent")).not.toBeInTheDocument();
   });
 });
