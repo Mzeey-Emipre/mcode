@@ -38,6 +38,9 @@ interface PreviewTabsBridgeLike {
     threadId: string,
     tabId: string,
   ): Promise<{ ok: true; data: BrowserTabSet } | { ok: false; error: string }>;
+  closeScope?(
+    threadId: string,
+  ): Promise<{ ok: true; data: BrowserTabSet } | { ok: false; error: string }>;
 }
 
 function bridgeTabs(): PreviewTabsBridgeLike | undefined {
@@ -93,6 +96,8 @@ interface PreviewTabsState {
    * always-recreated empty fallback.
    */
   closePage: (scopeId: string, tabId: string, opts?: ClosePageOptions) => Promise<void>;
+  /** Close every host-owned browser page for a scope and clear renderer mirrors. */
+  clearScope: (scopeId: string) => Promise<void>;
 }
 
 /** Hooks the store offers callers when a page close empties the browser. */
@@ -164,6 +169,19 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     // rail, so drop the scope's set rather than leave that fallback as a phantom
     // page; reopening Browser re-seeds it via `list`.
     get().setTabSet(scopeId, isLast ? null : r.data);
+  },
+
+  clearScope: async (scopeId) => {
+    const tabs = bridgeTabs();
+    const r = await tabs?.closeScope?.(scopeId);
+    if (r && !r.ok) throw new Error(r.error);
+    set((s) => {
+      const tabSetByScope = { ...s.tabSetByScope };
+      const liveChromeByScope = { ...s.liveChromeByScope };
+      delete tabSetByScope[scopeId];
+      delete liveChromeByScope[scopeId];
+      return { tabSetByScope, liveChromeByScope };
+    });
   },
 }));
 

@@ -7,6 +7,8 @@ import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { ThreadService } from "../services/thread-service";
 import type { GitService } from "../services/git-service";
+import type { AttachmentService } from "../services/attachment-service";
+import type { HandoffStorage } from "../services/handoff/handoff-storage";
 
 describe("ThreadService.delete", () => {
   let db: Database.Database;
@@ -14,6 +16,8 @@ describe("ThreadService.delete", () => {
   let workspaceRepo: WorkspaceRepo;
   let cleanupJobRepo: CleanupJobRepo;
   let mockGitService: GitService;
+  let mockAttachmentService: AttachmentService;
+  let mockHandoffStorage: HandoffStorage;
   let threadService: ThreadService;
 
   beforeEach(() => {
@@ -31,11 +35,17 @@ describe("ThreadService.delete", () => {
       listWorktrees: vi.fn(),
       fetchBranch: vi.fn(),
     } as unknown as GitService;
+    mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
+    mockHandoffStorage = {
+      deleteThreadFiles: vi.fn().mockResolvedValue(undefined),
+    } as unknown as HandoffStorage;
     threadService = new ThreadService(
       threadRepo,
       workspaceRepo,
       mockGitService,
       cleanupJobRepo,
+      mockAttachmentService,
+      mockHandoffStorage,
     );
   });
 
@@ -54,21 +64,21 @@ describe("ThreadService.delete", () => {
     ).run(id, workspaceId, "Test Thread", branch, wtPath, now, now);
   }
 
-  it("soft-deletes the thread immediately", () => {
+  it("soft-deletes the thread while worktree cleanup is queued", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     insertWorktreeThread("t-1", ws.id, "feat/test", "/tmp/wt/my-worktree");
 
-    const result = threadService.delete("t-1", true);
+    const result = await threadService.delete("t-1", true);
 
     expect(result).toBe(true);
     expect(threadRepo.findById("t-1")?.status).toBe("deleted");
   });
 
-  it("enqueues a cleanup job when cleanupWorktree is true and thread has a managed worktree", () => {
+  it("enqueues a cleanup job when cleanupWorktree is true and thread has a managed worktree", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     insertWorktreeThread("t-2", ws.id, "feat/test", "/tmp/wt/my-worktree");
 
-    threadService.delete("t-2", true);
+    await threadService.delete("t-2", true);
 
     expect(cleanupJobRepo.count()).toBe(1);
     const jobs = cleanupJobRepo.findDue(Date.now());
@@ -78,16 +88,19 @@ describe("ThreadService.delete", () => {
     expect(jobs[0].branch).toBe("feat/test");
   });
 
-  it("does not enqueue a cleanup job when cleanupWorktree is false", () => {
+  it("hard-deletes without a cleanup job when cleanupWorktree is false", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     insertWorktreeThread("t-3", ws.id, "feat/test", "/tmp/wt/my-worktree");
 
-    threadService.delete("t-3", false);
+    await threadService.delete("t-3", false);
 
     expect(cleanupJobRepo.count()).toBe(0);
+    expect(threadRepo.findById("t-3")).toBeNull();
+    expect(mockAttachmentService.removeForThread).toHaveBeenCalledWith("t-3");
+    expect(mockHandoffStorage.deleteThreadFiles).toHaveBeenCalledWith("t-3");
   });
 
-  it("does not enqueue a cleanup job for threads without a worktree path", () => {
+  it("hard-deletes threads without a worktree path", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     const now = new Date().toISOString();
     db.prepare(
@@ -96,21 +109,24 @@ describe("ThreadService.delete", () => {
        VALUES (?, ?, ?, ?, 'direct', 'active', 1, ?, ?)`,
     ).run("t-4", ws.id, "Direct thread", "main", now, now);
 
-    threadService.delete("t-4", true);
+    await threadService.delete("t-4", true);
 
     expect(cleanupJobRepo.count()).toBe(0);
+    expect(threadRepo.findById("t-4")).toBeNull();
+    expect(mockAttachmentService.removeForThread).toHaveBeenCalledWith("t-4");
+    expect(mockHandoffStorage.deleteThreadFiles).toHaveBeenCalledWith("t-4");
   });
 
-  it("does not call removeWorktree synchronously", () => {
+  it("does not call removeWorktree synchronously", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     insertWorktreeThread("t-5", ws.id, "feat/sync", "/tmp/wt/sync");
 
-    threadService.delete("t-5", true);
+    await threadService.delete("t-5", true);
 
     expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
   });
 
-  it("does not enqueue a cleanup job when the workspace has been deleted", () => {
+  it("hard-deletes the thread when the workspace has been deleted", async () => {
     // Insert thread with a valid workspace, then delete the workspace row so the
     // lookup inside delete() returns null.
     const ws = workspaceRepo.create("orphan", "/tmp/orphan");
@@ -119,13 +135,14 @@ describe("ThreadService.delete", () => {
     db.prepare("DELETE FROM workspaces WHERE id = ?").run(ws.id);
     db.pragma("foreign_keys = ON");
 
-    const result = threadService.delete("t-6", true);
+    const result = await threadService.delete("t-6", true);
 
     expect(result).toBe(true);
     expect(cleanupJobRepo.count()).toBe(0);
+    expect(threadRepo.findById("t-6")).toBeNull();
   });
 
-  it("enqueues a cleanup job for an attached existing worktree when cleanup is requested", () => {
+  it("enqueues a cleanup job for an attached existing worktree when cleanup is requested", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     const now = new Date().toISOString();
     db.prepare(
@@ -134,7 +151,7 @@ describe("ThreadService.delete", () => {
        VALUES (?, ?, ?, ?, 'worktree', 'active', ?, 0, ?, ?)`,
     ).run("t-existing", ws.id, "Existing Worktree", "feat/existing", "/tmp/existing-wt", now, now);
 
-    const result = threadService.delete("t-existing", true);
+    const result = await threadService.delete("t-existing", true);
 
     expect(result).toBe(true);
     expect(cleanupJobRepo.count()).toBe(1);

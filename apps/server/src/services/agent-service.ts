@@ -1086,11 +1086,22 @@ export class AgentService {
     const sessionId = `mcode-${threadId}`;
     const thread = this.threadRepo.findById(threadId);
     const providerId = (thread?.provider ?? "claude") as ProviderId;
+    let provider: import("@mcode/contracts").IAgentProvider | null = null;
     try {
-      const provider = this.providerRegistry.resolve(providerId);
-      provider.stopSession(sessionId);
+      provider = this.providerRegistry.resolve(providerId);
     } catch {
       // Provider may not be available
+    }
+    if (provider) {
+      try {
+        await provider.stopSession(sessionId);
+      } catch (err) {
+        logger.warn("Provider stopSession failed", {
+          threadId,
+          providerId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     // Tear down any armed transient-retry window so a scheduled stream retry
     // can't re-dispatch after the user stopped, and the suppression flags don't
@@ -1106,6 +1117,35 @@ export class AgentService {
     if (this.activeSessionIds.has(threadId)) {
       this.activeSessionIds.delete(threadId);
       this.memoryPressureService.markIdle(threadId);
+    }
+  }
+
+  /** Stop the active turn and discard any pooled provider session for a deleted thread. */
+  async teardownSession(threadId: string): Promise<void> {
+    const sessionId = `mcode-${threadId}`;
+    const thread = this.threadRepo.findById(threadId);
+    const providerId = (thread?.provider ?? "claude") as ProviderId;
+    const wasActive = this.activeSessionIds.has(threadId);
+
+    if (wasActive) {
+      await this.stopSession(threadId);
+    }
+
+    let provider: import("@mcode/contracts").IAgentProvider;
+    try {
+      provider = this.providerRegistry.resolve(providerId);
+    } catch (err) {
+      logger.warn("Provider unavailable during thread teardown", {
+        threadId,
+        providerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    if (isSessionEvictable(provider)) {
+      await this.evictPooledSession(provider, sessionId);
+    } else if (!wasActive) {
+      await provider.stopSession(sessionId);
     }
   }
 
@@ -1314,12 +1354,12 @@ export class AgentService {
    * Evicts a pooled provider session and waits for its subprocess to unwind so
    * any trailing `Ended` from teardown is emitted while suppression is still armed.
    */
-  private async evictPooledSessionForRetry(
+  private async evictPooledSession(
     provider: import("@mcode/contracts").IAgentProvider,
     sessionName: string,
   ): Promise<void> {
     if (!isSessionEvictable(provider)) return;
-    provider.discardSession(sessionName);
+    await provider.discardSession(sessionName);
     const withWait = provider as import("@mcode/contracts").IAgentProvider & {
       waitForSessionExit?: (sessionId: string, timeoutMs?: number) => Promise<void>;
     };
@@ -1341,7 +1381,7 @@ export class AgentService {
     this.endedSuppressionThreads.add(threadId);
     try {
       try {
-        await this.evictPooledSessionForRetry(dispatch.resolvedProvider, dispatch.sessionName);
+        await this.evictPooledSession(dispatch.resolvedProvider, dispatch.sessionName);
       } catch (evictErr) {
         logger.warn("Failed to discard pooled session before retry", {
           threadId,
@@ -2289,7 +2329,7 @@ ${userMessage}`;
       const providerId = (thread?.provider ?? "claude") as ProviderId;
       try {
         const provider = this.providerRegistry.resolve(providerId);
-        provider.stopSession(sessionId);
+        void Promise.resolve(provider.stopSession(sessionId)).catch(() => {});
       } catch {
         // best-effort
       }

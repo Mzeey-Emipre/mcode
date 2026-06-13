@@ -54,6 +54,7 @@ import { WorkspaceEnricher } from "./services/workspace-enricher";
 import { FilesystemBrowser } from "./services/filesystem-browser";
 import { ModelCacheService } from "./services/model-cache-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
+import { ThreadTeardownService } from "./services/thread-teardown-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage";
 import { WebSocket } from "ws";
 import { resolveGracePeriodMs } from "./grace-period-ms";
@@ -235,6 +236,7 @@ function warmCodexVersionGate(s = settingsService.get()): void {
 }
 
 const cleanupWorker = container.resolve(CleanupWorker);
+const threadTeardownService = container.resolve(ThreadTeardownService);
 const prDraftService = container.resolve(PrDraftService);
 const diffSummaryService = container.resolve(DiffSummaryService);
 const handoffStorage = container.resolve(HandoffStorage);
@@ -539,6 +541,7 @@ const { httpServer, wss } = createWsServer({
   filesystemBrowser,
   diffSummaryService,
   handoffStorage,
+  threadTeardownService,
   authToken: AUTH_TOKEN,
   shutdown: requestShutdown,
 });

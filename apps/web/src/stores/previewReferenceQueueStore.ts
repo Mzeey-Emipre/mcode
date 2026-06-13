@@ -17,6 +17,12 @@ interface PreviewReferenceQueueState {
    * Intended for a single consumer (Composer) per drain call.
    */
   drainPreviewReferences(threadId: string): PendingAttachment[];
+  /** Drop queued preview references for a deleted thread. */
+  clearThread(threadId: string): void;
+}
+
+function releasePreviewUrl(url: string): void {
+  if (url.startsWith("blob:")) URL.revokeObjectURL(url);
 }
 
 /** Zustand store: enqueue preview PNG captures; Composer drains by active thread ID. */
@@ -43,5 +49,18 @@ export const usePreviewReferenceQueueStore = create<PreviewReferenceQueueState>(
       return { queueByThread: next, signal: s.signal + 1 };
     });
     return queued;
+  },
+
+  clearThread(threadId) {
+    const queued = get().queueByThread[threadId] ?? [];
+    for (const attachment of queued) {
+      releasePreviewUrl(attachment.previewUrl);
+    }
+    if (queued.length === 0) return;
+    set((s) => {
+      const next = { ...s.queueByThread };
+      delete next[threadId];
+      return { queueByThread: next, signal: s.signal + 1 };
+    });
   },
 }));

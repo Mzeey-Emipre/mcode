@@ -987,12 +987,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
    * the session has not spawned yet, record the intent so `sendTurn`/`spawn`
    * tear it down on arrival.
    */
-  stopSession(sessionId: string): void {
+  async stopSession(sessionId: string): Promise<void> {
     const exists = this.runtime.get(sessionId) !== undefined;
     if (exists) {
-      void this.runtime.stop(sessionId).catch((err: unknown) => {
-        logger.warn("Codex stopSession failed", { sessionId, error: String(err) });
-      });
+      await this.runtime.stop(sessionId);
     } else {
       // Drain any pending permissions for a session still mid-spawn so cards
       // clear immediately; close() will not run until/unless the session lands.
@@ -1008,11 +1006,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
    * pool eviction via the runtime's `stop` (interrupt → close → hard kill),
    * leaving goals and pending permissions intact for the retry turn.
    */
-  discardSession(sessionId: string): void {
+  async discardSession(sessionId: string): Promise<void> {
     if (this.runtime.get(sessionId) === undefined) return;
-    void this.runtime.stop(sessionId).catch((err: unknown) => {
-      logger.warn("Codex discardSession failed", { sessionId, error: String(err) });
-    });
+    await this.runtime.stop(sessionId);
   }
 
   /** Tears down all sessions, drains pending permissions, and stops the eviction timer. */

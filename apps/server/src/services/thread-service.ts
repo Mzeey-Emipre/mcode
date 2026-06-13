@@ -11,6 +11,8 @@ import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { GitService } from "./git-service";
 import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
+import { AttachmentService } from "./attachment-service";
+import { HandoffStorage } from "./handoff/handoff-storage.js";
 
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
@@ -20,6 +22,8 @@ export class ThreadService {
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(GitService) private readonly gitService: GitService,
     @inject(CleanupJobRepo) private readonly cleanupJobRepo: CleanupJobRepo,
+    @inject(AttachmentService) private readonly attachmentService: AttachmentService,
+    @inject(HandoffStorage) private readonly handoffStorage: HandoffStorage,
   ) {}
 
   /**
@@ -146,10 +150,12 @@ export class ThreadService {
    * exponential backoff retries. The job stores the thread's exact branch so
    * explicit user cleanup deletes the worktree and its associated thread branch.
    */
-  delete(threadId: string, cleanupWorktree: boolean): boolean {
+  async delete(threadId: string, cleanupWorktree: boolean): Promise<boolean> {
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread) return false;
+
     if (cleanupWorktree) {
-      const thread = this.threadRepo.findById(threadId);
-      if (thread?.worktree_path) {
+      if (thread.worktree_path) {
         const workspace = this.workspaceRepo.findById(thread.workspace_id);
         if (workspace) {
           this.cleanupJobRepo.insert({
@@ -162,17 +168,19 @@ export class ThreadService {
             threadId,
             worktreePath: thread.worktree_path,
           });
-        } else {
-          logger.warn("Worktree cleanup skipped - workspace not found, directory will not be removed", {
-            threadId,
-            workspaceId: thread.workspace_id,
-            worktreePath: thread.worktree_path,
-          });
+          return this.threadRepo.softDelete(threadId);
         }
+        logger.warn("Worktree cleanup skipped - workspace not found, directory will not be removed", {
+          threadId,
+          workspaceId: thread.workspace_id,
+          worktreePath: thread.worktree_path,
+        });
       }
     }
 
-    return this.threadRepo.softDelete(threadId);
+    this.attachmentService.removeForThread(threadId);
+    await this.handoffStorage.deleteThreadFiles(threadId);
+    return this.threadRepo.hardDelete(threadId);
   }
 
   /** Update a thread's display title. */

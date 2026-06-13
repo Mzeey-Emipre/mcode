@@ -48,6 +48,7 @@ describe("Cleanup integration", () => {
   let mockTerminalService: TerminalService;
   let mockGitService: GitService;
   let mockAttachmentService: AttachmentService;
+  let mockHandoffStorage: HandoffStorage;
   let mockAgentService: AgentService;
   let workspaceService: WorkspaceService;
 
@@ -72,7 +73,18 @@ describe("Cleanup integration", () => {
       isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
     } as unknown as GitService;
 
-    threadService = new ThreadService(threadRepo, workspaceRepo, mockGitService, cleanupJobRepo);
+    mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
+    mockHandoffStorage = {
+      deleteThreadFiles: vi.fn().mockResolvedValue(undefined),
+    } as unknown as HandoffStorage;
+    threadService = new ThreadService(
+      threadRepo,
+      workspaceRepo,
+      mockGitService,
+      cleanupJobRepo,
+      mockAttachmentService,
+      mockHandoffStorage,
+    );
 
     worker = new CleanupWorker(
       db,
@@ -86,7 +98,6 @@ describe("Cleanup integration", () => {
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
     );
 
-    mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockAgentService = { stopSession: vi.fn().mockResolvedValue(undefined) } as unknown as AgentService;
     workspaceService = new WorkspaceService(
       workspaceRepo,
@@ -118,7 +129,7 @@ describe("Cleanup integration", () => {
     expect(threadBefore!.status).toBe("active");
 
     // Step 1: ThreadService.delete enqueues a cleanup job
-    const deleted = threadService.delete("thread-int-1", true);
+    const deleted = await threadService.delete("thread-int-1", true);
     expect(deleted).toBe(true);
 
     // Thread is soft-deleted (findById still returns it for cleanup, but listByWorkspace filters it)
@@ -160,7 +171,7 @@ describe("Cleanup integration", () => {
     expect(cleanupJobRepo.count()).toBe(0);
   });
 
-  it("delete is synchronous and fast (non-blocking)", () => {
+  it("delete queues cleanup without blocking on filesystem work", async () => {
     const ws = workspaceRepo.create("perf-test", "/test-repo-2");
     const now = new Date().toISOString();
     db.prepare(
@@ -170,7 +181,7 @@ describe("Cleanup integration", () => {
     ).run("thread-perf", ws.id, "Perf Thread", "mcode/perf", join(WT_BASE, "perf-wt"), now, now);
 
     const start = performance.now();
-    const result = threadService.delete("thread-perf", true);
+    const result = await threadService.delete("thread-perf", true);
     const elapsed = performance.now() - start;
 
     expect(result).toBe(true);
@@ -223,7 +234,7 @@ describe("Cleanup integration", () => {
     expect(cleanupJobRepo.count()).toBe(0);
   });
 
-  it("duplicate delete is idempotent (INSERT OR IGNORE)", () => {
+  it("duplicate delete is idempotent (INSERT OR IGNORE)", async () => {
     const ws = workspaceRepo.create("dup-test", "/test-repo-4");
     const now = new Date().toISOString();
     db.prepare(
@@ -233,9 +244,9 @@ describe("Cleanup integration", () => {
     ).run("thread-dup", ws.id, "Dup Thread", "mcode/dup", join(WT_BASE, "dup-wt"), now, now);
 
     // Delete twice - should not throw or create duplicate jobs
-    threadService.delete("thread-dup", true);
+    await threadService.delete("thread-dup", true);
     // Second delete: thread is already soft-deleted, but if called again it's safe
-    threadService.delete("thread-dup", true);
+    await threadService.delete("thread-dup", true);
 
     // Only one cleanup job exists (UNIQUE constraint + INSERT OR IGNORE)
     expect(cleanupJobRepo.count()).toBe(1);

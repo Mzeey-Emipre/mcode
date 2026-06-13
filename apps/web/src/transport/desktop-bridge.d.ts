@@ -197,6 +197,7 @@ interface PreviewTabsBridge {
   create(threadId: string, activate?: boolean): Promise<PreviewTabIpcResult<PreviewTabCreateData>>;
   activate(threadId: string, tabId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   close(threadId: string, tabId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
+  closeScope(threadId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   /** Subscribe to push-style tab set updates emitted on navigation/favicon/close. */
   onUpdated(callback: (payload: BrowserTabSet) => void): () => void;
 }

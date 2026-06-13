@@ -319,6 +319,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       close(threadId: string, tabId: string): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.close", { threadId, tabId });
       },
+      closeScope(threadId: string): Promise<unknown> {
+        return ipcRenderer.invoke("preview:tabs.closeScope", { threadId });
+      },
       onUpdated(callback: (payload: unknown) => void): () => void {
         const listener = (_event: unknown, payload: unknown) => callback(payload);
         ipcRenderer.on("preview:tabs-updated", listener);

@@ -120,8 +120,8 @@ export interface IAgentProvider {
    */
   sendTurn(req: TurnRequest): Promise<void>;
 
-  /** Abort a running session. */
-  stopSession(sessionId: string): void;
+  /** Abort a running session. Returned promise resolves after provider-owned teardown where supported. */
+  stopSession(sessionId: string): void | Promise<void>;
 
   /** Tear down all sessions and release resources. */
   shutdown(): void;
@@ -204,9 +204,9 @@ export function isGoalCapable(provider: IAgentProvider): provider is IGoalCapabl
  * Narrowed view of an agent provider that can force-discard a pooled session.
  * Providers pool a warm CLI session keyed by `sessionId`; `stopSession` is a
  * graceful cancel that may intentionally keep that session warm. `discardSession`
- * is the harder guarantee: it evicts the pooled session so the next `sendTurn`
- * spawns a genuinely fresh subprocess. Use `isSessionEvictable()` to narrow an
- * `IAgentProvider` before calling it.
+ * is the harder guarantee: it evicts the pooled session and may return a
+ * promise that resolves after provider-owned teardown. Use
+ * `isSessionEvictable()` to narrow an `IAgentProvider` before calling it.
  */
 export interface ISessionEvictable extends IAgentProvider {
   /**
@@ -215,7 +215,7 @@ export interface ISessionEvictable extends IAgentProvider {
    * cancel pending permissions, drop goals, or emit an `ended` event — the turn
    * is expected to continue on a new session (e.g. a transient-failure retry).
    */
-  discardSession(sessionId: string): void;
+  discardSession(sessionId: string): void | Promise<void>;
 }
 
 /**

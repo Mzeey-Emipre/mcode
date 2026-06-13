@@ -1132,12 +1132,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    * `close` (both disconnect the SDK session, guarded) → hard kill (a no-op for
    * Copilot, whose PID the SDK hides).
    */
-  stopSession(sessionId: string): void {
+  async stopSession(sessionId: string): Promise<void> {
     this.contextWindowBySession.delete(sessionId);
     if (this.runtime.get(sessionId) !== undefined) {
-      void this.runtime.stop(sessionId).catch((err: unknown) =>
-        logger.warn("CopilotProvider: stopSession failed", { sessionId, error: String(err) }),
-      );
+      await this.runtime.stop(sessionId);
     } else {
       this.pendingStops.add(sessionId);
       this.pendingSpawnTurns.delete(sessionId);
@@ -1150,11 +1148,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    * pool eviction via the runtime's `stop` (interrupt → close → hard kill),
    * leaving goals and pending permissions intact for the retry turn.
    */
-  discardSession(sessionId: string): void {
+  async discardSession(sessionId: string): Promise<void> {
     if (this.runtime.get(sessionId) === undefined) return;
-    void this.runtime.stop(sessionId).catch((err: unknown) =>
-      logger.warn("CopilotProvider: discardSession failed", { sessionId, error: String(err) }),
-    );
+    await this.runtime.stop(sessionId);
   }
 
   /** Tear down all sessions, stop the client, and release resources. */

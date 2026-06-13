@@ -7,6 +7,8 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
+import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import {
   mockTransport,
   createMockWorkspace,
@@ -30,6 +32,8 @@ describe("Workspace Behavior", () => {
       loading: false,
       error: null,
     });
+    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+    usePreviewReferenceQueueStore.setState({ signal: 0, queueByThread: {} });
     vi.clearAllMocks();
   });
 
@@ -394,6 +398,52 @@ describe("Workspace Behavior", () => {
       // Other thread is preserved.
       expect(getTestThreadError("t-keep")).toBe("keep error");
       expect(ts.runningThreadIds.has("t-keep")).toBe(true);
+    });
+
+    it("clears preview browser state and queued preview references for the deleted thread", async () => {
+      const ws = createMockWorkspace();
+      const thread = createMockThread({ workspace_id: ws.id, id: "t-preview" });
+
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: ws.id,
+        threads: [thread],
+        activeThreadId: null,
+      });
+      usePreviewTabsStore.setState({
+        tabSetByScope: {
+          "t-preview": {
+            threadId: "t-preview",
+            activeTabId: "tab-1",
+            tabs: [{
+              id: "tab-1",
+              threadId: "t-preview",
+              title: null,
+              url: "https://example.test",
+              faviconUrl: null,
+              warm: true,
+              active: true,
+            }],
+          },
+        },
+        liveChromeByScope: {
+          "t-preview": { title: "Example", url: "https://example.test", favicon: null },
+        },
+      });
+      usePreviewReferenceQueueStore.getState().enqueuePreviewReference("t-preview", {
+        id: "att-1",
+        name: "capture.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+        previewUrl: "data:image/png;base64,AA==",
+        filePath: null,
+      });
+
+      await useWorkspaceStore.getState().deleteThread("t-preview", false);
+
+      expect(usePreviewTabsStore.getState().tabSetByScope["t-preview"]).toBeUndefined();
+      expect(usePreviewTabsStore.getState().liveChromeByScope["t-preview"]).toBeUndefined();
+      expect(usePreviewReferenceQueueStore.getState().queueByThread["t-preview"]).toBeUndefined();
     });
 
     it("clears all per-thread maps for all threads when deleting a workspace", async () => {
