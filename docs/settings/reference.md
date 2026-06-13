@@ -28,15 +28,15 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `worktree.naming.mode` | enum | `"auto"` | `"auto"` \| `"custom"` \| `"ai"` | - | Naming strategy for new worktree branches |
 | `worktree.naming.aiConfirmation` | boolean | `true` | - | - | Prompt before using AI-generated branch names |
 | `performance.threadCacheSize` | integer | `10` | 1-25 | - | Number of threads to keep in memory for instant switching. Lower values reduce memory use; values ≤ 3 mean most thread switches reload from the server. Takes effect immediately. |
-| `server.memory.heapMb` | integer | `512` | 64-8192 | `MCODE_SERVER_HEAP_MB` | V8 max old space for the server process (MB) |
+| `server.memory.heapMb` | integer | `512` | 256-8192 | `MCODE_SERVER_HEAP_MB` | V8 max old space for the server process (MB). Invalid environment values fall through to `settings.json`. |
 | `preview.memorySaver.maxWarm` | integer | `3` | 1-20 | - | Most-recently-used background preview tabs kept warm while the panel is hidden. Others are discarded (renderer freed) and reload on reopen. |
 | `preview.memorySaver.bgIdleMs` | integer | `300000` | 30000-3600000 | - | Idle time (ms) before a background preview tab is discarded while the panel is visible. |
 | `preview.memorySaver.hiddenIdleMs` | integer | `60000` | 5000-600000 | - | Idle time (ms) after the preview panel hides before the warm set is trimmed to `maxWarm`. A reshow within the window cancels the trim. |
 | `provider.cli.codex` | string | `""` | - | - | Path to the Codex CLI binary. When empty, mcode looks for `codex` on the system PATH. |
 | `provider.cli.claude` | string | `""` | - | - | Path to the Claude Code CLI binary. When empty, mcode looks for `claude` on the system PATH. |
 | `provider.cursor.alwaysSendFullInstructions` | boolean | `false` | - | - | When true, Cursor ACP sends full stitched workspace guidance and the skill catalogue on every turn instead of sticky shortening (largest prompts). |
-| `provider.cursor.fullPreambleEveryNTurns` | integer | `12` | 0–999 | - | With sticky shortening, force a fresh full preamble every N prompts for that subprocess. `0` turns this off. |
-| `provider.cursor.idleSessionTtlMinutes` | integer | `20` | 5–240 | - | Idle minutes before tearing down an unused `cursor-agent` subprocess. |
+| `provider.cursor.fullPreambleEveryNTurns` | integer | `12` | 0-999 | - | With sticky shortening, force a fresh full preamble every N prompts for that subprocess. `0` turns this off. |
+| `provider.cursor.idleSessionTtlMinutes` | integer | `20` | 5-240 | - | Idle minutes before tearing down an unused `cursor-agent` subprocess. |
 | `provider.cursor.retryTransientFailuresOnce` | boolean | `true` | - | - | Retry `session/prompt` once when the failure looks like a transient CLI or HTTP transport flake. |
 | `provider.cursor.verboseFailureLogs` | boolean | `true` | - | - | On Cursor prompt failure, append recent stderr lines to structured logs when available. |
 | `provider.cursor.traceSessionUpdates` | boolean | `false` | - | - | When true, writes sanitized Cursor ACP `session/update` payloads and mapped agent events to daily server logs (skips noisy `agent_message_chunk` streaming). Inspect `$MCODE_DATA_DIR/logs/` for timelines. |

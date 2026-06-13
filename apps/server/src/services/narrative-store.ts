@@ -268,6 +268,19 @@ export class NarrativeStore {
   }
 
   /**
+   * Move the open thought text out of NarrativeStore without persisting it.
+   *
+   * Used when an authoritative boundary retroactively classifies previously
+   * unknown deltas as the final assistant response. Ownership moves to
+   * TurnFinalizer so the same text is not buffered in both stores.
+   */
+  takeOpenThought(threadId: string): string {
+    const open = this.turnOpenThought.get(threadId);
+    this.turnOpenThought.set(threadId, null);
+    return open?.text ?? "";
+  }
+
+  /**
    * Get the current parent tool call ID for a thread's active Agent nesting.
    * This is the fallback consulted by `index.ts` enrichment and
    * {@link bufferToolCall} when the SDK omits `parent_tool_use_id` (Trap 1).

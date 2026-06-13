@@ -93,6 +93,18 @@ export type UpdateReleaseLine = z.infer<typeof UpdateReleaseLineSchema>;
  */
 export const GRACE_PERIOD_DEFAULT_SECONDS = 30;
 
+/** Default V8 max old space size for the desktop-managed server process, in MB. */
+export const SERVER_HEAP_DEFAULT_MB = 512;
+
+/** Lowest supported V8 max old space size for the server process, in MB. */
+export const SERVER_HEAP_MIN_MB = 256;
+
+/** Highest supported V8 max old space size for the server process, in MB. */
+export const SERVER_HEAP_MAX_MB = 8192;
+
+/** Shipped default from older installs, migrated to {@link SERVER_HEAP_DEFAULT_MB}. */
+export const SERVER_HEAP_LEGACY_DEFAULT_MB = 96;
+
 // ---------------------------------------------------------------------------
 // Settings schema
 // ---------------------------------------------------------------------------
@@ -260,8 +272,18 @@ export const SettingsSchema = lazySchema(() =>
         /** Memory settings for the server process. */
         memory: z
           .object({
-            /** V8 max old space size in MB. Valid range: 64-8192. Default tuned for < 100MB idle. */
-            heapMb: z.number().int().min(64).max(8192).default(96),
+            /** V8 max old space size in MB. Valid range: 256-8192. */
+            heapMb: z
+              .preprocess(
+                (value) =>
+                  value === SERVER_HEAP_LEGACY_DEFAULT_MB ? undefined : value,
+                z
+                  .number()
+                  .int()
+                  .min(SERVER_HEAP_MIN_MB)
+                  .max(SERVER_HEAP_MAX_MB)
+                  .default(SERVER_HEAP_DEFAULT_MB),
+              ),
           })
           .default({}),
         /** Grace period before auto-shutdown after all UI sessions disconnect. */
@@ -558,7 +580,12 @@ export const PartialSettingsSchema = lazySchema(() =>
       .object({
         memory: z
           .object({
-            heapMb: z.number().int().min(64).max(8192).optional(),
+            heapMb: z
+              .number()
+              .int()
+              .min(SERVER_HEAP_MIN_MB)
+              .max(SERVER_HEAP_MAX_MB)
+              .optional(),
           })
           .optional(),
         gracePeriod: z

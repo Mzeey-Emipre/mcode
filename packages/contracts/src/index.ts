@@ -80,6 +80,10 @@ export {
   UpdateCheckIntervalSchema,
   UpdateReleaseLineSchema,
   GRACE_PERIOD_DEFAULT_SECONDS,
+  SERVER_HEAP_DEFAULT_MB,
+  SERVER_HEAP_MIN_MB,
+  SERVER_HEAP_MAX_MB,
+  SERVER_HEAP_LEGACY_DEFAULT_MB,
 } from "./models/settings.js";
 export type {
   Settings,

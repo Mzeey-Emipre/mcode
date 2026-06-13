@@ -146,7 +146,7 @@ When adding a new setting, ask these questions in order:
   },
   "server": {
     "memory": {
-      "heapMb": 512                    // 64-8192, V8 max old space (MB)
+      "heapMb": 512                    // 256-8192, V8 max old space (MB)
     }
   },
   "provider": {
