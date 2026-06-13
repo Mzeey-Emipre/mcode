@@ -92,7 +92,7 @@ function toCommand(s: SkillInfo): Command {
   return {
     name: s.name,
     description: s.description || `Run /${s.name}`,
-    namespace: s.name.includes(":") ? "plugin" : "skill",
+    namespace: s.source === "plugin" || s.name.includes(":") ? "plugin" : "skill",
   };
 }
 

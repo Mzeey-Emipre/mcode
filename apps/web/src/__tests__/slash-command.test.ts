@@ -481,4 +481,21 @@ describe("plugin namespace detection", () => {
     expect(pluginCmd?.namespace).toBe("plugin");
     expect(skillCmd?.namespace).toBe("skill");
   });
+
+  it("assigns 'plugin' namespace to native plugin skills without colon in name", async () => {
+    const mockListSkills = vi.fn().mockResolvedValue([
+      { name: "control-in-app-browser", description: "Control browser", source: "plugin" },
+    ]);
+    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, providerId: "codex" })
+    );
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.items.find((i) => i.name === "control-in-app-browser")?.namespace).toBe("plugin");
+  });
 });

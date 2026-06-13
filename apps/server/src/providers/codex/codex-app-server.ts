@@ -25,6 +25,8 @@ import type {
   CodexTurnOptions,
   TurnStartParams,
   TurnStartResult,
+  SkillsListParams,
+  SkillsListResult,
   SandboxMode,
   AskForApproval,
 } from "./codex-types.js";
@@ -708,6 +710,21 @@ export class CodexAppServer extends EventEmitter {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Reads the native Codex skill catalog from an already-running app-server.
+   * Callers own fallback behavior; this method never starts a process.
+   */
+  async listSkills(cwds?: string[], forceReload = false): Promise<SkillsListResult> {
+    if (!this._isAlive || !this.rpc) {
+      throw new Error("listSkills called before codex app-server was ready");
+    }
+    const params: SkillsListParams = {
+      ...(cwds && cwds.length > 0 ? { cwds } : {}),
+      ...(forceReload ? { forceReload } : {}),
+    };
+    return this.rpc.sendRequest<SkillsListParams, SkillsListResult>("skills/list", params, 10000);
   }
 
   /**

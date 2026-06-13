@@ -15,10 +15,16 @@ import type { SkillInfo, SkillSource, SkillDiagnostics } from "@mcode/contracts"
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
 const DESC_RE = /^description:\s*(?:"([^"]*)"|'([^']*)'|(.*))$/m;
+const NAME_RE = /^name:\s*(?:"([^"]*)"|'([^']*)'|(.*))$/m;
 
 interface ScanContext {
   out: SkillInfo[];
   diag: SkillDiagnostics;
+}
+
+interface SkillFileMetadata {
+  name: string | undefined;
+  description: string;
 }
 
 /** Source priority: lower number = higher priority (overrides on duplicate name). */
@@ -30,17 +36,25 @@ const SOURCE_PRIORITY: Record<SkillSource, number> = {
 };
 
 /** Extract `description:` from the leading YAML frontmatter of a markdown file. */
-function readDescription(filePath: string): string {
+function readSkillFileMetadata(filePath: string): SkillFileMetadata {
   try {
     const content = readFileSync(filePath, "utf-8");
     const fm = FRONTMATTER_RE.exec(content);
-    if (!fm) return "";
+    if (!fm) return { name: undefined, description: "" };
+    const name = NAME_RE.exec(fm[1]);
     const desc = DESC_RE.exec(fm[1]);
-    if (!desc) return "";
-    return (desc[1] ?? desc[2] ?? desc[3] ?? "").trim();
+    return {
+      name: name ? (name[1] ?? name[2] ?? name[3] ?? "").trim() : undefined,
+      description: desc ? (desc[1] ?? desc[2] ?? desc[3] ?? "").trim() : "",
+    };
   } catch {
-    return "";
+    return { name: undefined, description: "" };
   }
+}
+
+/** Extract `description:` from the leading YAML frontmatter of a markdown file. */
+function readDescription(filePath: string): string {
+  return readSkillFileMetadata(filePath).description;
 }
 
 /** Read a directory, recording each scan attempt in diagnostics. Never throws. */
@@ -77,13 +91,16 @@ function scanSkillsDir(
     // dirs would otherwise become empty slash-command entries.
     const skillFile = join(dir, entry.name, "SKILL.md");
     if (!existsSync(skillFile)) continue;
+    const metadata = readSkillFileMetadata(skillFile);
     const name = prefix ? `${prefix}:${entry.name}` : entry.name;
     ctx.out.push({
       name,
-      description: readDescription(skillFile),
+      description: metadata.description,
       kind: "skill",
       source,
       providers,
+      nativeName: metadata.name || entry.name,
+      path: skillFile,
     });
     ctx.diag.totalSkills++;
   }
@@ -107,6 +124,8 @@ function scanCommandsDir(
       kind: "command",
       source,
       providers,
+      nativeName: baseName,
+      path: join(dir, entry.name),
     });
     ctx.diag.totalCommands++;
   }
@@ -175,6 +194,80 @@ function scanPluginMarketplaceDir(ctx: ScanContext, marketplacesDir: string, pro
     // Use the marketplace name as the plugin prefix; the dir itself is the version dir.
     scanPluginVersionDir(ctx, mpDir, mp.name, providers);
   }
+}
+
+/**
+ * Scan one Codex plugin install directory. Codex plugins can ship plain
+ * `skills/` trees, and contributor-authored plugins may also carry provider
+ * subtrees used by the Codex CLI.
+ */
+function scanCodexPluginVersionDir(
+  ctx: ScanContext,
+  versionDir: string,
+  pluginName: string,
+  providers: string[],
+): void {
+  for (const sub of ["", ".codex", ".agents"]) {
+    const base = sub ? join(versionDir, sub) : versionDir;
+    scanSkillsDir(ctx, join(base, "skills"), pluginName, "plugin", providers);
+  }
+}
+
+/** Walk Codex plugin cache: cache/<marketplace>/<plugin>/<version>/. */
+function scanCodexPluginCacheDir(ctx: ScanContext, cacheDir: string, providers: string[]): void {
+  for (const mp of scanDir(ctx, cacheDir)) {
+    if (!mp.isDirectory()) continue;
+    const mpDir = join(cacheDir, mp.name);
+    for (const plugin of scanDir(ctx, mpDir)) {
+      if (!plugin.isDirectory()) continue;
+      const pluginDir = join(mpDir, plugin.name);
+      const versions = scanDir(ctx, pluginDir)
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .sort(VERSION_COLLATOR.compare);
+      if (versions.length === 0) continue;
+      scanCodexPluginVersionDir(ctx, join(pluginDir, versions[versions.length - 1]), plugin.name, providers);
+    }
+  }
+}
+
+/** Walk bundled Codex runtime plugins: runtime/plugins/<marketplace>/plugins/<plugin>/. */
+function scanCodexRuntimePluginsDir(ctx: ScanContext, runtimePluginsDir: string, providers: string[]): void {
+  for (const marketplace of scanDir(ctx, runtimePluginsDir)) {
+    if (!marketplace.isDirectory()) continue;
+    const pluginsDir = join(runtimePluginsDir, marketplace.name, "plugins");
+    for (const plugin of scanDir(ctx, pluginsDir)) {
+      if (!plugin.isDirectory()) continue;
+      scanCodexPluginVersionDir(ctx, join(pluginsDir, plugin.name), plugin.name, providers);
+    }
+  }
+}
+
+function pathSegmentsUnder(root: string, filePath: string): string[] | null {
+  const rootNorm = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  const fileNorm = filePath.replace(/\\/g, "/");
+  const rootLower = rootNorm.toLowerCase();
+  const fileLower = fileNorm.toLowerCase();
+  if (fileLower !== rootLower && !fileLower.startsWith(`${rootLower}/`)) return null;
+  return fileNorm.slice(rootNorm.length + 1).split("/").filter(Boolean);
+}
+
+/** Returns the Codex plugin name encoded in a skill path, when the path has one. */
+export function codexPluginNameFromSkillPath(filePath: string, home = homedir()): string | undefined {
+  const cacheSegments = pathSegmentsUnder(join(home, ".codex", "plugins", "cache"), filePath);
+  if (cacheSegments && cacheSegments.length >= 2) return cacheSegments[1];
+
+  const runtimeSegments = pathSegmentsUnder(
+    join(home, ".cache", "codex-runtimes", "codex-primary-runtime", "plugins"),
+    filePath,
+  );
+  if (runtimeSegments) {
+    const pluginsIdx = runtimeSegments.findIndex((segment) => segment.toLowerCase() === "plugins");
+    const pluginName = pluginsIdx >= 0 ? runtimeSegments[pluginsIdx + 1] : undefined;
+    if (pluginName) return pluginName;
+  }
+
+  return undefined;
 }
 
 /**
@@ -329,14 +422,14 @@ export class SkillService {
    * that id are returned. Deduplication by name (higher-priority source wins)
    * is applied per filtered set, so the same name can coexist across providers.
    */
-  list(cwd?: string, providerId?: string): SkillInfo[] {
+  list(cwd?: string, providerId?: string, nativeItems?: SkillInfo[]): SkillInfo[] {
     if (this.cache && this.cachedCwd === cwd) {
-      return this.filterAndDedup(this.cache, providerId);
+      return this.filterAndDedup(this.cache, providerId, nativeItems);
     }
     const result = this.scan(cwd);
     this.cache = result.items;
     this.cachedCwd = cwd;
-    return this.filterAndDedup(result.items, providerId);
+    return this.filterAndDedup(result.items, providerId, nativeItems);
   }
 
   /** Force a full rescan and return per-path diagnostics. Provider-agnostic. */
@@ -375,7 +468,7 @@ export class SkillService {
    * Deduplication is intentionally scoped to the filtered set so that a skill
    * named "deploy" can independently exist for both claude and codex.
    */
-  private filterAndDedup(items: SkillInfo[], providerId?: string): SkillInfo[] {
+  private filterAndDedup(items: SkillInfo[], providerId?: string, nativeItems: SkillInfo[] = []): SkillInfo[] {
     const filtered = providerId
       ? items.filter((s) => s.providers.includes(providerId))
       : items;
@@ -387,12 +480,27 @@ export class SkillService {
         seen.set(item.name, item);
       }
     }
+
+    const nativeFiltered = providerId
+      ? nativeItems.filter((s) => s.providers.includes(providerId))
+      : nativeItems;
+    for (const item of nativeFiltered) {
+      const nativeKeys = new Set([item.name, item.nativeName].filter((key): key is string => !!key));
+      for (const [key, existing] of seen) {
+        if (nativeKeys.has(existing.name) || (existing.nativeName && nativeKeys.has(existing.nativeName))) {
+          seen.delete(key);
+        }
+      }
+      seen.set(item.name, item);
+    }
+
     return Array.from(seen.values());
   }
 
   private scan(cwd?: string): { items: SkillInfo[]; diag: SkillDiagnostics } {
     const home = homedir();
     const claudeDir = join(home, ".claude");
+    const codexDir = join(home, ".codex");
     const cursorDir = join(home, ".cursor");
     const ctx: ScanContext = {
       out: [],
@@ -416,6 +524,10 @@ export class SkillService {
     // Cursor plugin installs (mtime-selected hash dirs under ~/.cursor/plugins)
     scanCursorPluginCacheDir(ctx, join(cursorDir, "plugins", "cache"), ["cursor"]);
     scanCursorPluginCacheDir(ctx, join(cursorDir, "plugins", "local"), ["cursor"]);
+
+    // Codex plugin installs (pre-session fallback only; native catalog wins once a session exists)
+    scanCodexPluginCacheDir(ctx, join(codexDir, "plugins", "cache"), ["codex"]);
+    scanCodexRuntimePluginsDir(ctx, join(home, ".cache", "codex-runtimes", "codex-primary-runtime", "plugins"), ["codex"]);
 
     return { items: ctx.out, diag: ctx.diag };
   }

@@ -73,9 +73,10 @@ export class SkillWatcherService {
     const codexDir = join(home, ".codex");
     const agentsDir = join(home, ".agents");
     const cursorDir = join(home, ".cursor");
+    const codexRuntimeDir = join(home, ".cache", "codex-runtimes", "codex-primary-runtime");
 
     const parentDirs =
-      overrides?.parentDirs ?? [claudeDir, codexDir, agentsDir, cursorDir];
+      overrides?.parentDirs ?? [claudeDir, codexDir, agentsDir, cursorDir, codexRuntimeDir];
     const roots = overrides?.roots ?? [
       // Claude roots
       join(claudeDir, "skills"),
@@ -85,6 +86,8 @@ export class SkillWatcherService {
       // Codex roots
       join(codexDir, "skills"),
       join(codexDir, "commands"),
+      join(codexDir, "plugins"),
+      join(codexRuntimeDir, "plugins"),
       // Cross-provider roots
       join(agentsDir, "skills"),
       join(agentsDir, "commands"),

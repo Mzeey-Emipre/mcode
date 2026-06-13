@@ -1,5 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { homedir } from "os";
+import { join } from "path";
 
 vi.mock("@mcode/shared", () => ({
   getMcodeDir: () => process.env.MCODE_DATA_DIR ?? ".",
@@ -11,8 +13,9 @@ vi.mock("../codex-version.js", () => ({
   meetsMinVersion: () => true,
 }));
 
-const { sendTurnMock } = vi.hoisted(() => ({
+const { sendTurnMock, listSkillsMock } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue("turn-test-id"),
+  listSkillsMock: vi.fn().mockResolvedValue({ data: [] }),
 }));
 
 vi.mock("../codex-app-server.js", async () => {
@@ -22,8 +25,11 @@ vi.mock("../codex-app-server.js", async () => {
     threadId = "sdk-thread-1";
     resumeFailed = false;
     async start(): Promise<void> {}
-    async sendTurn(): Promise<string> {
-      return sendTurnMock();
+    async sendTurn(input: unknown, turnOptions: unknown): Promise<string> {
+      return sendTurnMock(input, turnOptions);
+    }
+    async listSkills(cwds: string[] | undefined): Promise<unknown> {
+      return listSkillsMock(cwds);
     }
     async interruptTurn(): Promise<void> {}
     async kill(): Promise<void> {}
@@ -36,6 +42,16 @@ import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { stubEnvService } from "../../../__tests__/stub-env-service.js";
 
+function makeProvider(skillList: (...args: unknown[]) => unknown[] = vi.fn(() => [])): CodexProvider {
+  return new CodexProvider(
+    { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
+    { assign: vi.fn(), isWindowsJob: false } as never,
+    stubEnvService() as never,
+    { list: skillList } as never,
+    { persistGeneratedImageFromPath: vi.fn() } as never,
+  );
+}
+
 /**
  * Regression: the first turn on a new Codex session must reach `turn/start`.
  * SessionRuntime registers pool state after `spawn` resolves; scheduling the
@@ -47,15 +63,12 @@ describe("CodexProvider first turn on new session", () => {
 
   beforeEach(() => {
     sendTurnMock.mockClear();
+    listSkillsMock.mockReset();
+    listSkillsMock.mockResolvedValue({ data: [] });
   });
 
   it("sent turn/start after spawn when the runtime pool registers on the next tick", async () => {
-    const provider = new CodexProvider(
-      { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
-      { assign: vi.fn(), isWindowsJob: false } as never,
-      stubEnvService() as never,
-      { persistGeneratedImageFromPath: vi.fn() } as never,
-    );
+    const provider = makeProvider();
 
     const ended = new Promise<void>((resolve) => {
       provider.on("event", (e: AgentEvent) => {
@@ -102,12 +115,7 @@ describe("CodexProvider first turn on new session", () => {
     });
     sendTurnMock.mockImplementationOnce(() => sendTurnDeferred);
 
-    const provider = new CodexProvider(
-      { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
-      { assign: vi.fn(), isWindowsJob: false } as never,
-      stubEnvService() as never,
-      { persistGeneratedImageFromPath: vi.fn() } as never,
-    );
+    const provider = makeProvider();
 
     void provider.sendTurn({
       sessionId: supersedeSessionId,
@@ -143,5 +151,124 @@ describe("CodexProvider first turn on new session", () => {
 
     expect(staleSeq).toBeLessThan(entry!.runTurnSeq);
     expect(entry!.pendingTurnId).toBe("superseding-turn");
+  });
+
+  it("sends Codex native skill input for slash skill invocations", async () => {
+    const skillPath = "C:\\Users\\Test\\.codex\\plugins\\cache\\openai-bundled\\browser\\1.0.0\\skills\\control-in-app-browser\\SKILL.md";
+    const provider = makeProvider(vi.fn(() => [{
+      name: "browser:control-in-app-browser",
+      nativeName: "control-in-app-browser",
+      description: "Control browser",
+      kind: "skill",
+      source: "plugin",
+      providers: ["codex"],
+      path: skillPath,
+    }]));
+
+    await provider.sendTurn({
+      sessionId: "mcode-skill-turn",
+      threadId: "skill-turn",
+      message: "/browser:control-in-app-browser inspect localhost",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    expect(sendTurnMock).toHaveBeenCalledWith([
+      { type: "skill", name: "control-in-app-browser", path: skillPath },
+      { type: "text", text: "$control-in-app-browser inspect localhost" },
+    ], expect.anything());
+  });
+
+  it("leaves unknown slash commands unchanged", async () => {
+    const provider = makeProvider();
+
+    await provider.sendTurn({
+      sessionId: "mcode-unknown-slash",
+      threadId: "unknown-slash",
+      message: "/goal clear",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    expect(sendTurnMock.mock.calls[0][0]).toEqual([{ type: "text", text: "/goal clear" }]);
+  });
+
+  it("lists enabled native Codex skills from a live app-server session", async () => {
+    const cwd = process.cwd();
+    const skillPath = join(
+      homedir(),
+      ".codex",
+      "plugins",
+      "cache",
+      "openai-bundled",
+      "browser",
+      "1.0.0",
+      "skills",
+      "control-in-app-browser",
+      "SKILL.md",
+    );
+    listSkillsMock.mockResolvedValueOnce({
+      data: [{
+        cwd,
+        errors: [],
+        skills: [
+          {
+            name: "control-in-app-browser",
+            description: "Long browser description",
+            shortDescription: "Short browser description",
+            enabled: true,
+            path: skillPath,
+            scope: "system",
+            interface: null,
+          },
+          {
+            name: "disabled",
+            description: "Hidden",
+            enabled: false,
+            path: join(cwd, ".codex", "skills", "disabled", "SKILL.md"),
+            scope: "repo",
+          },
+        ],
+      }],
+    });
+    const provider = makeProvider();
+
+    await provider.sendTurn({
+      sessionId: "mcode-native-skills",
+      threadId: "native-skills",
+      message: "hello",
+      cwd,
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    const skills = await provider.listSkills(cwd);
+
+    expect(listSkillsMock).toHaveBeenCalledWith([cwd]);
+    expect(skills).toEqual([{
+      name: "control-in-app-browser",
+      description: "Short browser description",
+      kind: "skill",
+      source: "plugin",
+      providers: ["codex"],
+      nativeName: "control-in-app-browser",
+      path: skillPath,
+    }]);
   });
 });

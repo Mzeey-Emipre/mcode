@@ -73,8 +73,11 @@ export interface ThreadResumeResult {
 // Turn RPCs
 // Source: codex-rs/app-server-protocol/schema/typescript/v2/TurnStartParams.ts
 
-/** A structured text or image input part for turn messages (discriminants match codex app-server JSON). */
-export type TurnInputPart = { type: "text"; text: string } | { type: "localImage"; path: string };
+/** A structured input part for turn messages (discriminants match codex app-server JSON). */
+export type TurnInputPart =
+  | { type: "text"; text: string }
+  | { type: "localImage"; path: string }
+  | { type: "skill"; name: string; path: string };
 
 /** Parameters for the `turn/start` RPC method. */
 export interface TurnStartParams {
@@ -114,6 +117,39 @@ export interface TurnInterruptResult { success: boolean }
 export interface ModelListResult { models: Array<{ id: string; name?: string }> }
 /** Result returned by the `account/read` RPC method. */
 export interface AccountReadResult { id?: string; email?: string; name?: string }
+
+// Skill RPCs
+
+/** Parameters for the `skills/list` RPC method. */
+export interface SkillsListParams {
+  cwds?: string[];
+  forceReload?: boolean;
+}
+
+/** Skill metadata returned by the `skills/list` RPC method. */
+export interface CodexSkillMetadata {
+  name: string;
+  description: string;
+  enabled: boolean;
+  path: string;
+  scope: "user" | "repo" | "system" | "admin" | string;
+  shortDescription?: string | null;
+  interface?: {
+    shortDescription?: string | null;
+    displayName?: string | null;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+}
+
+/** Result returned by the `skills/list` RPC method. */
+export interface SkillsListResult {
+  data: Array<{
+    cwd: string;
+    errors: Array<{ message: string; path: string }>;
+    skills: CodexSkillMetadata[];
+  }>;
+}
 
 // ---------------------------------------------------------------------------
 // Notification payloads

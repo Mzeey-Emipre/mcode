@@ -21,8 +21,10 @@ import { AttachmentService } from "../../services/attachment-service.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import type { MemoryPressureLevel } from "../../services/memory-pressure-service.js";
 import { DeterministicForker } from "../../services/handoff/session-forker.js";
+import { SkillService, codexPluginNameFromSkillPath } from "../../services/skill-service.js";
 import type {
   IAgentProvider,
+  ISkillCatalogCapable,
   ISessionEvictable,
   SessionForker,
   TurnRequest,
@@ -33,6 +35,7 @@ import type {
   PermissionDecision,
   PermissionRequest,
   ProviderModelInfo,
+  SkillInfo,
 } from "@mcode/contracts";
 import { AgentEventType, CODEX_STATIC_MODELS, isVirtualBrowserContextAttachment } from "@mcode/contracts";
 import { checkCodexVersion, meetsMinVersion } from "./codex-version.js";
@@ -40,11 +43,18 @@ import { CodexAppServer } from "./codex-app-server.js";
 import type { CodexApprovalRequest } from "./codex-app-server.js";
 import { CodexEventMapper } from "./codex-event-mapper.js";
 import { traceCodexIngest } from "./codex-trace.js";
+import type {
+  TurnInputPart,
+  CodexNotification,
+  CodexTurnOptions,
+  ReasoningEffort,
+  CodexSkillMetadata,
+  CompletedItem,
+} from "./codex-types.js";
 import {
   mapDecisionToCodexResponse,
   synthesizeCodexPermissionRequest,
 } from "./codex-permission-mapper.js";
-import type { TurnInputPart, CodexNotification, CodexTurnOptions, ReasoningEffort, CompletedItem } from "./codex-types.js";
 
 /**
  * Liveness-probe interval for a silent turn, not a turn deadline. The timer
@@ -88,6 +98,8 @@ interface CodexSessionState {
   sessionId: string;
   /** Thread id derived from the session id; reused for event emission on teardown. */
   threadId: string;
+  /** Working directory used for this app-server session. */
+  cwd: string;
   server: CodexAppServer;
   mapper: CodexEventMapper;
   lastUsedAt: number;
@@ -121,6 +133,7 @@ interface PendingPermissionEntry {
 function buildCodexInput(
   message: string,
   attachments?: AttachmentMeta[],
+  skills: readonly SkillInfo[] = [],
 ): TurnInputPart[] {
   const inputs: TurnInputPart[] = [];
 
@@ -137,8 +150,62 @@ function buildCodexInput(
     }
   }
 
-  inputs.push({ type: "text", text: message });
+  const invocation = resolveCodexSkillInvocation(message, skills);
+  if (invocation.skillItem) inputs.push(invocation.skillItem);
+  inputs.push({ type: "text", text: invocation.text });
   return inputs;
+}
+
+/** Translates an Mcode slash skill invocation into Codex's native skill input. */
+function resolveCodexSkillInvocation(
+  message: string,
+  skills: readonly SkillInfo[],
+): { text: string; skillItem?: TurnInputPart } {
+  const withoutLeadingSpace = message.trimStart();
+  const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(withoutLeadingSpace);
+  if (!match) return { text: message };
+
+  const requestedName = match[1];
+  const skill = skills.find(
+    (item) =>
+      item.kind === "skill" &&
+      (item.name === requestedName || item.nativeName === requestedName),
+  );
+  if (!skill) return { text: message };
+
+  const nativeName = skill.nativeName ?? skill.name.split(":").pop() ?? skill.name;
+  const args = match[2]?.trimStart() ?? "";
+  const text = `$${nativeName}${args ? ` ${args}` : ""}`;
+  return {
+    text,
+    ...(skill.path ? { skillItem: { type: "skill" as const, name: nativeName, path: skill.path } } : {}),
+  };
+}
+
+/** Maps Codex native skill scope into Mcode's source labels. */
+function codexSkillSource(skill: CodexSkillMetadata): SkillInfo["source"] {
+  if (codexPluginNameFromSkillPath(skill.path)) return "plugin";
+  if (skill.scope === "user") return "user";
+  if (skill.scope === "repo") return "project";
+  return "agent";
+}
+
+/** Picks the concise display description from Codex native metadata. */
+function codexSkillDescription(skill: CodexSkillMetadata): string {
+  return skill.interface?.shortDescription ?? skill.shortDescription ?? skill.description ?? "";
+}
+
+/** Converts native Codex skill metadata into the shared slash-menu shape. */
+function mapNativeCodexSkill(skill: CodexSkillMetadata): SkillInfo {
+  return {
+    name: skill.name,
+    description: codexSkillDescription(skill),
+    kind: "skill",
+    source: codexSkillSource(skill),
+    providers: ["codex"],
+    nativeName: skill.name,
+    path: skill.path,
+  };
 }
 
 /** Maps mcode ReasoningLevel to the codex app-server `effort` field value. */
@@ -180,7 +247,7 @@ function isMainThreadNotification(
 
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
 @injectable()
-export class CodexProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CodexSessionState> {
+export class CodexProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ISkillCatalogCapable, ProtocolAdapter<CodexSessionState> {
   readonly id: ProviderId = "codex";
   /** Codex CLI is an agentic tool with no one-shot text completion mode. */
   readonly supportsCompletion = false;
@@ -202,6 +269,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
    * Checked after session creation; if found the session is torn down immediately.
    */
   private pendingStops = new Set<string>();
+  private liveSessionIds = new Set<string>();
   /** Pending host-side permission approvals keyed by requestId. */
   private pendingPermissions = new Map<string, PendingPermissionEntry>();
   /** When true, active mappers spool output chunks to artifacts immediately. */
@@ -220,6 +288,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("JobObject") private readonly jobObject: JobObject,
     @inject(EnvService) private readonly envService: EnvService,
+    @inject(SkillService) private readonly skillService: SkillService,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
   ) {
     super();
@@ -268,7 +337,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     } = req;
     const codexFastMode = req.providerOptions.fastMode;
 
-    const input = buildCodexInput(message, attachments);
+    const nativeSkills = await this.listSkills(cwd);
+    const skillCatalog = this.skillService.list(cwd, "codex", nativeSkills);
+    const input = buildCodexInput(message, attachments, skillCatalog);
     const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
 
     const sandbox = permissionMode === "full" ? "danger-full-access" : "workspace-write";
@@ -425,6 +496,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
 
     server.on("notification", (notification) => {
       const n = notification as { method?: string; params?: Record<string, unknown> };
+      if (n.method === "skills/changed") {
+        this.emit("skills_changed");
+      }
       if (n.method === "turn/started" && isMainThreadNotification(server, n.params)) {
         const turn = n.params?.turn as { id?: string } | undefined;
         const flatTurnId =
@@ -500,6 +574,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     const state: CodexSessionState = {
       sessionId,
       threadId,
+      cwd,
       server,
       mapper,
       lastUsedAt: Date.now(),
@@ -507,6 +582,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
       runTurnSeq: 0,
       pendingTurnId: null,
     };
+    this.liveSessionIds.add(sessionId);
 
     // Run the first turn for the staged payload. `sendTurn` consults
     // `pendingStops` after `acquire` returns; only fire the turn if no stop
@@ -550,15 +626,46 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
       this.emit("event", event);
     }
+    this.liveSessionIds.delete(state.sessionId);
     this.drainPending((e) => e.sessionId === state.sessionId);
     await state.server.kill();
   }
 
-  /** A pooled session must be discarded before reuse if the process died or the sandbox/permission mode changed. */
+  /** A pooled session must be discarded before reuse if process, cwd, or sandbox changed. */
   isStale(state: CodexSessionState, args: { cwd: string; permissionMode: string }): boolean {
     if (!state.server.isAlive) return true;
     const sandbox = args.permissionMode === "full" ? "danger-full-access" : "workspace-write";
-    return state.sandboxMode !== sandbox;
+    return state.sandboxMode !== sandbox || state.cwd !== args.cwd;
+  }
+
+  /** Lists native Codex skills from an already-running app-server session. */
+  async listSkills(cwd?: string): Promise<SkillInfo[]> {
+    for (const sessionId of this.liveSessionIds) {
+      const state = this.runtime.get(sessionId);
+      if (!state?.server.isAlive) continue;
+      if (cwd && state.cwd !== cwd) continue;
+
+      try {
+        const result = await state.server.listSkills(cwd ? [cwd] : undefined);
+        const entry = cwd
+          ? result.data.find((item) => item.cwd === cwd) ?? result.data[0]
+          : result.data[0];
+        return (entry?.skills ?? [])
+          .filter((skill) => skill.enabled)
+          .map(mapNativeCodexSkill);
+      } catch (err) {
+        logger.warn("Codex native skills/list failed; falling back to disk scan", {
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return [];
+  }
+
+  /** Subscribes to native Codex skill catalog invalidations. */
+  onSkillsChanged(handler: () => void): void {
+    this.on("skills_changed", handler);
   }
 
   /**
@@ -919,6 +1026,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     });
     this.sdkSessionIds.clear();
     this.pendingSpawnTurns.clear();
+    this.liveSessionIds.clear();
     logger.info("CodexProvider shutdown complete");
   }
 }
