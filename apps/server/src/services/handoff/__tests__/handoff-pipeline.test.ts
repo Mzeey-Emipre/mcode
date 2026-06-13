@@ -44,6 +44,9 @@ const BASE_REQ = {
   forkAnchorRole: "user" as const,
   childThreadId: "t_child",
   childProviderId: "claude",
+  messagesUpToFork: [
+    { id: "m_1", thread_id: "t_parent", role: "user", content: "hi", sequence: 1, is_internal: false },
+  ] as any,
   userFollowUpMessage: "What should I do next?",
 };
 

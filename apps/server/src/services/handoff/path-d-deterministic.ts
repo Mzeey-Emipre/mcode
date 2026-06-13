@@ -15,7 +15,7 @@
  * `ladderStep: "D"` and `generatedBy: "deterministic"`.
  */
 
-import type { Thread, Message, ToolCallRecord, ThoughtSegmentRecord } from "@mcode/contracts";
+import type { Thread, Message, ToolCallRecord, ThoughtSegmentRecord, ForkHistoryBudget } from "@mcode/contracts";
 import { HANDOFF_MARKER } from "@mcode/contracts";
 import type { HandoffArtifact, HandoffMeta, ForkAnchorRole, ProviderErrorClass } from "./handoff-types.js";
 
@@ -38,10 +38,33 @@ export interface PathDInput {
   thoughtSegments?: ThoughtSegmentRecord[];
   /** De-duplicated files changed across recent parent messages. */
   filesChanged?: string[];
+  /** Byte-budget metadata for the retained parent history window. */
+  historyBudget?: ForkHistoryBudget;
 }
 
 /** Max narration highlights surfaced so reasoning context stays focused. */
 const MAX_NARRATION_HIGHLIGHTS = 8;
+
+function renderHistoryBudget(lines: string[], historyBudget?: ForkHistoryBudget): void {
+  if (!historyBudget) return;
+  const hasOmittedHistory = historyBudget.omittedBeforeCount > 0;
+  const hasTruncation = historyBudget.truncatedMessages.length > 0;
+  if (!hasOmittedHistory && !hasTruncation) return;
+
+  lines.push("");
+  lines.push("## History limit");
+  lines.push("");
+  if (hasOmittedHistory) {
+    const suffix = historyBudget.omittedBeforeCount === 1 ? "" : "s";
+    const verb = historyBudget.omittedBeforeCount === 1 ? "was" : "were";
+    lines.push(`${historyBudget.omittedBeforeCount} earlier message${suffix} ${verb} elided because the fork history budget was reached.`);
+  }
+  if (hasTruncation) {
+    const suffix = historyBudget.truncatedMessages.length === 1 ? "" : "s";
+    const verb = historyBudget.truncatedMessages.length === 1 ? "was" : "were";
+    lines.push(`${historyBudget.truncatedMessages.length} retained message${suffix} ${verb} truncated to keep the handoff within budget.`);
+  }
+}
 
 /**
  * Render the structured Markdown body (everything above the metadata comment).
@@ -58,6 +81,7 @@ function renderBody(input: PathDInput): string {
     toolCallRecords,
     thoughtSegments,
     filesChanged,
+    historyBudget,
   } = input;
 
   const lines: string[] = [];
@@ -66,6 +90,7 @@ function renderBody(input: PathDInput): string {
   lines.push(`You are continuing work from a previous thread titled "${parentThread.title}".`);
   const modelInfo = parentThread.model ? ` ${parentThread.model}` : "";
   lines.push(`The previous thread used${modelInfo} on branch ${parentThread.branch}.`);
+  renderHistoryBudget(lines, historyBudget);
 
   // Goal / summary: prefer the model-generated compact summary, then the
   // fork-anchor body, then the last assistant message. No truncation.
@@ -179,6 +204,7 @@ export async function runPathDDeterministic(input: PathDInput): Promise<HandoffA
     providerErrorOnGenerate: reason,
     regenerationHistory: [],
     attachments: [],
+    ...(input.historyBudget && { historyBudget: input.historyBudget }),
   };
   return { markdown, meta };
 }

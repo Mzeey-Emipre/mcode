@@ -14,7 +14,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { logger, getMcodeDir } from "@mcode/shared";
 import { storedAttachmentSuffix } from "@mcode/contracts";
-import type { Thread, Message, ProviderId } from "@mcode/contracts";
+import type { Thread, Message, ProviderId, ForkHistoryBudget } from "@mcode/contracts";
 import { ThreadRepo } from "../../repositories/thread-repo";
 import { MessageRepo } from "../../repositories/message-repo";
 import { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo";
@@ -82,6 +82,66 @@ function buildOffBandHandoffPrompt(tempPath: string, markdown: string, userMessa
   ].join("\n");
 }
 
+const CODEX_INLINE_HANDOFF_MAX_CHARS = 14_000;
+const CODEX_INLINE_MAX_USER_CHARS = 4_000;
+const CODEX_HANDOFF_TRUNCATION_NOTICE =
+  "\n\n[Inline Codex handoff shortened to fit the first-turn input limit. Full handoff remains stored in mcode.]\n\n";
+const CODEX_USER_TRUNCATION_NOTICE =
+  "\n\n[User message shortened to fit the first-turn input limit.]";
+
+function takeCharsWithNotice(text: string, maxChars: number, notice: string): string {
+  if (maxChars <= 0) return "";
+  if (text.length <= maxChars) return text;
+  if (maxChars <= notice.length) return notice.slice(0, maxChars);
+  return `${text.slice(0, maxChars - notice.length).trimEnd()}${notice}`;
+}
+
+function buildInlineHandoffPrompt(markdown: string, userMessage: string): string {
+  const separator = "\n\n---\n\n";
+  const fullPrompt = `${markdown}${separator}${userMessage}`;
+  if (fullPrompt.length <= CODEX_INLINE_HANDOFF_MAX_CHARS) return fullPrompt;
+
+  const boundedUserMessage = takeCharsWithNotice(
+    userMessage,
+    Math.min(userMessage.length, CODEX_INLINE_MAX_USER_CHARS),
+    CODEX_USER_TRUNCATION_NOTICE,
+  );
+  const markdownBudget =
+    CODEX_INLINE_HANDOFF_MAX_CHARS - separator.length - boundedUserMessage.length;
+  const boundedMarkdown = takeCharsWithNotice(
+    markdown,
+    markdownBudget,
+    CODEX_HANDOFF_TRUNCATION_NOTICE,
+  );
+  return `${boundedMarkdown}${separator}${boundedUserMessage}`;
+}
+
+function formatHistoryBudgetNotice(historyBudget?: ForkHistoryBudget): string | null {
+  if (!historyBudget) return null;
+  const lines: string[] = [];
+  if (historyBudget.omittedBeforeCount > 0) {
+    const suffix = historyBudget.omittedBeforeCount === 1 ? "" : "s";
+    lines.push(
+      `[${historyBudget.omittedBeforeCount} earlier message${suffix} elided because the fork history budget was reached]`,
+    );
+  }
+  if (historyBudget.truncatedMessages.length > 0) {
+    const suffix = historyBudget.truncatedMessages.length === 1 ? "" : "s";
+    lines.push(`[${historyBudget.truncatedMessages.length} retained message${suffix} truncated by the fork history budget]`);
+  }
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
+function prefixHistoryBudgetNotice(text: string, historyBudget?: ForkHistoryBudget): string {
+  const notice = formatHistoryBudgetNotice(historyBudget);
+  if (!notice) return text;
+  return text ? `${notice}\n\n${text}` : notice;
+}
+
+function shouldInlineHandoffArtifact(childProvider: ProviderId): boolean {
+  return childProvider === "codex";
+}
+
 /** Inputs needed to run a branch-thread handoff for one child thread. */
 export interface HandoffDeliveryInput {
   /** The parent thread being forked from. */
@@ -94,6 +154,8 @@ export interface HandoffDeliveryInput {
   forkMessage: Message;
   /** Parent messages up to and including the fork anchor, ascending. */
   forkedMessages: Message[];
+  /** Byte-budget metadata for the retained parent history window. */
+  historyBudget?: ForkHistoryBudget;
   /** The child's first user message. */
   userMessage: string;
   /** The child's model id (sizes the legacy replay budget). */
@@ -155,7 +217,7 @@ export class HandoffCoordinator {
    * thread vanishes mid-handoff, so the caller aborts the branch.
    */
   async deliverHandoff(input: HandoffDeliveryInput): Promise<HandoffDeliveryResult> {
-    const { parentThread, childThreadId, childProvider, forkMessage, forkedMessages, userMessage, model } = input;
+    const { parentThread, childThreadId, childProvider, forkMessage, forkedMessages, historyBudget, userMessage, model } = input;
     const parentThreadId = parentThread.id;
     const resolvedForkMessageId = forkMessage.id;
 
@@ -177,6 +239,8 @@ export class HandoffCoordinator {
         forkAnchorRole,
         childThreadId,
         childProviderId: childProvider,
+        messagesUpToFork: forkedMessages,
+        historyBudget,
         userFollowUpMessage: userMessage,
       });
 
@@ -238,32 +302,38 @@ export class HandoffCoordinator {
         undefined, undefined, undefined, undefined, /* isInternal */ true,
       );
 
-      // Off-band delivery (PRD #538): write the FULL handoff doc to a stable OS
-      // temp path and shrink the child's inline first-Turn prompt to a small
-      // pointer + graceful-degradation summary + the user's message. Issue a
-      // ScopedPreGrant so the child can Read that one file on its first Turn
-      // without prompting, regardless of permissionMode.
-      const handoffTempPath = join(
-        tmpdir(),
-        `mcode-handoff-${childThreadId}-${Date.now()}.md`,
-      );
-      try {
-        await writeFile(handoffTempPath, artifact.markdown, "utf8");
-        this.scopedPreGrant.issue({
-          threadId: childThreadId,
-          toolName: "Read",
-          path: handoffTempPath,
-        });
-        providerWireOverride = buildOffBandHandoffPrompt(handoffTempPath, artifact.markdown, userMessage);
-      } catch (writeErr) {
-        // If the temp write fails we cannot pre-grant a Read, so fall back to
-        // inlining the full doc (legacy behaviour) — the fork still succeeds.
-        logger.warn("Off-band handoff write failed; inlining full doc", {
-          threadId: childThreadId,
-          handoffTempPath,
-          error: writeErr instanceof Error ? writeErr.message : String(writeErr),
-        });
-        providerWireOverride = `${artifact.markdown}\n\n---\n\n${userMessage}`;
+      if (shouldInlineHandoffArtifact(childProvider)) {
+        // Codex does not consume Mcode's Read pre-grant, so a temp-file prompt
+        // can stall on tool access. Inline the bounded artifact instead.
+        providerWireOverride = buildInlineHandoffPrompt(artifact.markdown, userMessage);
+      } else {
+        // Off-band delivery (PRD #538): write the FULL handoff doc to a stable OS
+        // temp path and shrink the child's inline first-Turn prompt to a small
+        // pointer + graceful-degradation summary + the user's message. Issue a
+        // ScopedPreGrant so the child can Read that one file on its first Turn
+        // without prompting, regardless of permissionMode.
+        const handoffTempPath = join(
+          tmpdir(),
+          `mcode-handoff-${childThreadId}-${Date.now()}.md`,
+        );
+        try {
+          await writeFile(handoffTempPath, artifact.markdown, "utf8");
+          this.scopedPreGrant.issue({
+            threadId: childThreadId,
+            toolName: "Read",
+            path: handoffTempPath,
+          });
+          providerWireOverride = buildOffBandHandoffPrompt(handoffTempPath, artifact.markdown, userMessage);
+        } catch (writeErr) {
+          // If the temp write fails we cannot pre-grant a Read, so fall back to
+          // inlining the full doc. The fork still succeeds.
+          logger.warn("Off-band handoff write failed; inlining full doc", {
+            threadId: childThreadId,
+            handoffTempPath,
+            error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+          });
+          providerWireOverride = `${artifact.markdown}\n\n---\n\n${userMessage}`;
+        }
       }
     } catch (pipelineErr) {
       // Re-check child thread existence before writing any fallback artifacts.
@@ -345,7 +415,10 @@ export class HandoffCoordinator {
           }
         }
       }
-      const replay = buildConversationReplay(forkedMessages, budget, compactSummary);
+      const replay = prefixHistoryBudgetNotice(
+        buildConversationReplay(forkedMessages, budget, compactSummary),
+        historyBudget,
+      );
       const replayHeader = `You are continuing work from a previous thread titled "${parentThread.title}". Here is the conversation history up to the fork point:\n\n`;
       providerWireOverride = replay ? `${replayHeader}${replay}\n\n---\n\n${userMessage}` : userMessage;
 
@@ -370,6 +443,7 @@ export class HandoffCoordinator {
           providerErrorOnGenerate: errClass === "clean" ? "fatal" : errClass,
           regenerationHistory: [],
           attachments: [],
+          ...(historyBudget && { historyBudget }),
         },
       };
       try {

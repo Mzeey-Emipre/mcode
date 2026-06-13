@@ -13,9 +13,10 @@ vi.mock("../codex-version.js", () => ({
   meetsMinVersion: () => true,
 }));
 
-const { sendTurnMock, listSkillsMock } = vi.hoisted(() => ({
+const { sendTurnMock, listSkillsMock, appServers } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue("turn-test-id"),
   listSkillsMock: vi.fn().mockResolvedValue({ data: [] }),
+  appServers: [] as Array<import("events").EventEmitter & { isAlive: boolean; options: unknown }>,
 }));
 
 vi.mock("../codex-app-server.js", async () => {
@@ -24,6 +25,12 @@ vi.mock("../codex-app-server.js", async () => {
     isAlive = true;
     threadId = "sdk-thread-1";
     resumeFailed = false;
+    options: unknown;
+    constructor(options: unknown) {
+      super();
+      this.options = options;
+      appServers.push(this);
+    }
     async start(): Promise<void> {}
     async sendTurn(input: unknown, turnOptions: unknown): Promise<string> {
       return sendTurnMock(input, turnOptions);
@@ -32,7 +39,9 @@ vi.mock("../codex-app-server.js", async () => {
       return listSkillsMock(cwds);
     }
     async interruptTurn(): Promise<void> {}
-    async kill(): Promise<void> {}
+    async kill(): Promise<void> {
+      this.isAlive = false;
+    }
   }
   return { CodexAppServer: MockCodexAppServer };
 });
@@ -65,6 +74,7 @@ describe("CodexProvider first turn on new session", () => {
     sendTurnMock.mockClear();
     listSkillsMock.mockReset();
     listSkillsMock.mockResolvedValue({ data: [] });
+    appServers.length = 0;
   });
 
   it("sent turn/start after spawn when the runtime pool registers on the next tick", async () => {
@@ -270,5 +280,42 @@ describe("CodexProvider first turn on new session", () => {
       nativeName: "control-in-app-browser",
       path: skillPath,
     }]);
+  });
+
+  it("runs side-channel handoff turns at low effort", async () => {
+    const provider = makeProvider();
+
+    const result = provider.runSideChannelQuery({
+      parentThreadId: "parent-thread",
+      parentSdkSessionId: "sdk-thread-1",
+      prompt: "Generate the handoff.",
+      cwd: process.cwd(),
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    expect(sendTurnMock).toHaveBeenCalledWith(
+      [{ type: "text", text: "Generate the handoff." }],
+      { effort: "low" },
+    );
+
+    expect(appServers[0]).toBeDefined();
+    const sideChannelServer = appServers[0]!;
+    expect(sideChannelServer.options).toMatchObject({
+      sandbox: "read-only",
+      approvalPolicy: "on-request",
+    });
+    sideChannelServer.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { delta: "# Handoff" },
+    });
+    sideChannelServer.emit("notification", {
+      method: "turn/completed",
+      params: { turn: { status: "completed" } },
+    });
+
+    await expect(result).resolves.toBe("# Handoff");
   });
 });

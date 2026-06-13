@@ -31,6 +31,36 @@ interface MessageRow {
   tool_call_count?: number;
 }
 
+interface MessageBudgetRow {
+  id: string;
+  sequence: number;
+  content_bytes: number;
+  metadata_bytes: number;
+}
+
+export interface ThreadHistoryBudget {
+  budgetBytes: number;
+  retainedBytes: number;
+  omittedBeforeCount: number;
+  truncatedMessages: Array<{
+    id: string;
+    originalBytes: number;
+    retainedBytes: number;
+  }>;
+}
+
+export interface BudgetedThreadMessages {
+  messages: Message[];
+  budget: ThreadHistoryBudget;
+}
+
+export interface BudgetedThreadMessageOptions {
+  maxBytes: number;
+  pageSize?: number;
+  maxRows?: number;
+  includeInternal?: boolean;
+}
+
 function parseJsonField(value: string | null): unknown | null {
   if (value === null) {
     return null;
@@ -98,6 +128,33 @@ SELECT page.*, COALESCE(tool_counts.tool_call_count, 0) AS tool_call_count
 FROM page
 LEFT JOIN tool_counts ON tool_counts.message_id = page.id
 ORDER BY page.sequence ASC`;
+}
+
+const DEFAULT_HISTORY_PAGE_SIZE = 100;
+const MAX_HISTORY_PAGE_SIZE = 500;
+const DEFAULT_HISTORY_MAX_ROWS = 500;
+const MAX_HISTORY_MAX_ROWS = 2_000;
+
+function clampPositiveInt(value: number, fallback: number, max: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(max, Math.floor(value)));
+}
+
+function byteLength(value: string): number {
+  return Buffer.byteLength(value, "utf8");
+}
+
+function takeUtf8Prefix(text: string, maxBytes: number): { text: string; bytes: number } {
+  if (maxBytes <= 0) return { text: "", bytes: 0 };
+  let bytes = 0;
+  let out = "";
+  for (const char of text) {
+    const next = byteLength(char);
+    if (bytes + next > maxBytes) break;
+    out += char;
+    bytes += next;
+  }
+  return { text: out, bytes };
 }
 
 /** Repository for message creation and retrieval against SQLite. */
@@ -313,6 +370,187 @@ ORDER BY m.sequence ASC`,
       .all(threadId, maxSequence, threadId, maxSequence) as MessageRow[];
 
     return rows.map(rowToMessage);
+  }
+
+  /**
+   * Return the newest messages at or before `maxSequence` under a byte budget.
+   * Reads lightweight metadata in reverse pages, then fetches only retained rows.
+   */
+  listByThreadUpToSequenceBudgeted(
+    threadId: string,
+    maxSequence: number,
+    options: BudgetedThreadMessageOptions,
+  ): BudgetedThreadMessages {
+    const budgetBytes = clampPositiveInt(options.maxBytes, 1, Number.MAX_SAFE_INTEGER);
+    const pageSize = clampPositiveInt(options.pageSize ?? DEFAULT_HISTORY_PAGE_SIZE, DEFAULT_HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE);
+    const maxRows = clampPositiveInt(options.maxRows ?? DEFAULT_HISTORY_MAX_ROWS, DEFAULT_HISTORY_MAX_ROWS, MAX_HISTORY_MAX_ROWS);
+    const includeInternal = options.includeInternal === true;
+    const internalClause = includeInternal ? "" : "AND m.is_internal = 0";
+    const countInternalClause = includeInternal ? "" : "AND is_internal = 0";
+
+    const pageStmt = this.db.prepare(
+      `SELECT
+  m.id,
+  m.sequence,
+  length(CAST(m.content AS BLOB)) AS content_bytes,
+  (
+    length(CAST(COALESCE(m.files_changed, '') AS BLOB)) +
+    length(CAST(COALESCE(m.attachments, '') AS BLOB)) +
+    length(CAST(COALESCE(m.quoted_text, '') AS BLOB))
+  ) AS metadata_bytes
+FROM messages m
+WHERE m.thread_id = ? AND m.sequence <= ? AND m.sequence < ? ${internalClause}
+ORDER BY m.sequence DESC
+LIMIT ?`,
+    );
+
+    const countBeforeStmt = this.db.prepare(
+      `SELECT COUNT(*) AS count FROM messages WHERE thread_id = ? AND sequence < ? ${countInternalClause}`,
+    );
+    const countAtOrBeforeStmt = this.db.prepare(
+      `SELECT COUNT(*) AS count FROM messages WHERE thread_id = ? AND sequence <= ? ${countInternalClause}`,
+    );
+
+    const selected: Array<{
+      id: string;
+      sequence: number;
+      originalBytes: number;
+      truncateContentToBytes?: number;
+    }> = [];
+    const truncatedMessages: ThreadHistoryBudget["truncatedMessages"] = [];
+    let retainedBytes = 0;
+    let cursor = maxSequence + 1;
+    let omittedBeforeCount = 0;
+
+    while (true) {
+      const rows = pageStmt.all(threadId, maxSequence, cursor, pageSize) as MessageBudgetRow[];
+      if (rows.length === 0) break;
+
+      for (const row of rows) {
+        const contentBytes = Math.max(0, row.content_bytes ?? 0);
+        const metadataBytes = Math.max(0, row.metadata_bytes ?? 0);
+        const rowBytes = contentBytes + metadataBytes;
+        const rowCost = Math.max(1, rowBytes);
+
+        if (retainedBytes + rowCost <= budgetBytes) {
+          if (selected.length >= maxRows) {
+            const countRow = countAtOrBeforeStmt.get(threadId, row.sequence) as { count: number };
+            omittedBeforeCount = countRow.count;
+            const fetched = this.fetchBudgetedMessages(selected, truncatedMessages);
+            return {
+              messages: fetched.messages,
+              budget: {
+                budgetBytes,
+                retainedBytes: retainedBytes + fetched.retainedBytesDelta,
+                omittedBeforeCount,
+                truncatedMessages,
+              },
+            };
+          }
+          selected.push({ id: row.id, sequence: row.sequence, originalBytes: contentBytes });
+          retainedBytes += rowCost;
+          continue;
+        }
+
+        if (selected.length === 0) {
+          const contentBudget = Math.max(0, budgetBytes - metadataBytes);
+          selected.push({
+            id: row.id,
+            sequence: row.sequence,
+            originalBytes: contentBytes,
+            truncateContentToBytes: contentBudget,
+          });
+          retainedBytes = Math.min(budgetBytes, metadataBytes + contentBudget);
+          truncatedMessages.push({
+            id: row.id,
+            originalBytes: contentBytes,
+            retainedBytes: contentBudget,
+          });
+          const countRow = countBeforeStmt.get(threadId, row.sequence) as { count: number };
+          omittedBeforeCount = countRow.count;
+        } else {
+          const countRow = countAtOrBeforeStmt.get(threadId, row.sequence) as { count: number };
+          omittedBeforeCount = countRow.count;
+        }
+
+        const fetched = this.fetchBudgetedMessages(selected, truncatedMessages);
+        return {
+          messages: fetched.messages,
+          budget: {
+            budgetBytes,
+            retainedBytes: retainedBytes + fetched.retainedBytesDelta,
+            omittedBeforeCount,
+            truncatedMessages,
+          },
+        };
+      }
+
+      cursor = rows[rows.length - 1]!.sequence;
+    }
+
+    return {
+      messages: this.fetchBudgetedMessages(selected, truncatedMessages).messages,
+      budget: {
+        budgetBytes,
+        retainedBytes,
+        omittedBeforeCount,
+        truncatedMessages,
+      },
+    };
+  }
+
+  private fetchBudgetedMessages(
+    selected: Array<{
+      id: string;
+      sequence: number;
+      originalBytes: number;
+      truncateContentToBytes?: number;
+    }>,
+    truncatedMessages: ThreadHistoryBudget["truncatedMessages"],
+  ): { messages: Message[]; retainedBytesDelta: number } {
+    const toolCallCountSql =
+      "(SELECT COUNT(*) FROM tool_call_records WHERE message_id = m.id) AS tool_call_count";
+    const fullStmt = this.db.prepare(
+      `SELECT
+  m.id, m.thread_id, m.role, m.content, NULL AS tool_calls,
+  m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
+  m.attachments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  ${toolCallCountSql}
+FROM messages m
+WHERE m.id = ?`,
+    );
+    const truncatedStmt = this.db.prepare(
+      `SELECT
+  m.id, m.thread_id, m.role, substr(m.content, 1, ?) AS content, NULL AS tool_calls,
+  m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
+  m.attachments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  ${toolCallCountSql}
+FROM messages m
+WHERE m.id = ?`,
+    );
+
+    let retainedBytesDelta = 0;
+    const messages = selected
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((item) => {
+        if (item.truncateContentToBytes === undefined) {
+          return rowToMessage(fullStmt.get(item.id) as MessageRow);
+        }
+
+        const row = truncatedStmt.get(item.truncateContentToBytes, item.id) as MessageRow;
+        const prefix = takeUtf8Prefix(row.content, item.truncateContentToBytes);
+        row.content = prefix.text;
+        const truncated = rowToMessage(row);
+        const tracked = item.truncateContentToBytes;
+        if (tracked !== prefix.bytes) {
+          retainedBytesDelta += prefix.bytes - tracked;
+          const budgetEntry = truncatedMessages.find((entry) => entry.id === item.id);
+          if (budgetEntry) budgetEntry.retainedBytes = prefix.bytes;
+          truncated.content = prefix.text;
+        }
+        return truncated;
+      });
+    return { messages, retainedBytesDelta };
   }
 
   /** Find a single message by ID within a specific thread. Returns null if not found. */

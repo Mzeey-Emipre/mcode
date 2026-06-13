@@ -82,6 +82,23 @@ describe("runPathDDeterministic", () => {
     expect(a.markdown.length).toBeGreaterThan(0);
   });
 
+  it("surfaces history budget elision in the handoff body and metadata", async () => {
+    const a = await runPathDDeterministic({
+      ...BASE,
+      historyBudget: {
+        budgetBytes: 10,
+        retainedBytes: 10,
+        omittedBeforeCount: 2,
+        truncatedMessages: [{ id: "m_2", originalBytes: 20, retainedBytes: 10 }],
+      },
+    });
+
+    expect(a.markdown).toContain("## History limit");
+    expect(a.markdown).toContain("2 earlier messages were elided");
+    expect(a.markdown).toContain("1 retained message was truncated");
+    expect(a.meta.historyBudget?.omittedBeforeCount).toBe(2);
+  });
+
   it("is deterministic for fixed input (modulo generatedAt)", async () => {
     const input: PathDInput = {
       ...BASE,

@@ -392,7 +392,7 @@ typically use a separate SDK process.
 ### Path B (clean side-channel)
 Resumes the parent provider's session in a forked SDK process to generate
 the handoff. The original session is untouched. Used when the provider
-declares `sessionForkOnResume: "clean"` (Claude, Cursor).
+declares `sessionForkOnResume: "clean"` (Claude, Cursor, Codex, Copilot).
 
 ### Path B-prime (sessionless side-channel)
 Variant of path B that runs without `resume:` when the parent's session
@@ -440,9 +440,9 @@ dispatches through (`provider.forker.fork(req)`); this label is used for
 mapped to ladder paths as:
 
 - **clean**: `resume:` spawns a fork without mutating the original (Claude,
-  Cursor)
+  Cursor, Codex, Copilot)
 - **unsupported**: provider can't fork sessions; pipeline goes directly to
-  path D (Codex, Copilot today)
+  path D
 
 ### Per-turn input cap
 The maximum input characters a provider accepts per turn. Declared as

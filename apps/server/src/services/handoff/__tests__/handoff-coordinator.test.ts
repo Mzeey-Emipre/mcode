@@ -14,8 +14,8 @@ const broadcastMock = vi.mocked(broadcast);
 function mkArtifact(
   ladderStep: LadderStep,
   providerErrorOnGenerate: ProviderErrorClass | null = null,
+  markdown = "# Handoff\n\nThis paragraph orients the child on the parent thread's goal.",
 ): HandoffArtifact {
-  const markdown = "# Handoff\n\nThis paragraph orients the child on the parent thread's goal.";
   return {
     markdown,
     meta: {
@@ -74,7 +74,7 @@ const FORKED_MESSAGES = [
   FORK_MESSAGE,
 ] as any;
 
-function mkInput() {
+function mkInput(overrides: Record<string, unknown> = {}) {
   return {
     parentThread: PARENT_THREAD,
     childThreadId: "t_child",
@@ -83,6 +83,7 @@ function mkInput() {
     forkedMessages: FORKED_MESSAGES,
     userMessage: "continue the work please",
     model: "claude-sonnet-4-6",
+    ...overrides,
   };
 }
 
@@ -135,6 +136,32 @@ describe("HandoffCoordinator.deliverHandoff", () => {
     expect(lastHandoffStatus()).toMatchObject({ status: "fallback", ladderStep: "D", providerErrorOnGenerate: "quota" });
     // A pipeline-produced D is NOT the legacy replay: it ships the doc off-band.
     expect(providerWireOverride).toContain("mcode-handoff-t_child-");
+  });
+
+  it("codex child receives the bounded artifact inline instead of a temp-file Read prompt", async () => {
+    const deps = mkDeps();
+    deps.handoffPipeline.orchestrate = vi.fn(async () => mkArtifact("B"));
+    const coordinator = HandoffCoordinator.forTesting(deps);
+
+    const { providerWireOverride } = await coordinator.deliverHandoff(mkInput({ childProvider: "codex" as const }));
+
+    expect(deps.scopedPreGrant.issue).not.toHaveBeenCalled();
+    expect(providerWireOverride).toContain("# Handoff");
+    expect(providerWireOverride).not.toContain("mcode-handoff-t_child-");
+    expect(providerWireOverride).toContain("continue the work please");
+  });
+
+  it("codex inline handoff is capped to the first-turn input limit", async () => {
+    const deps = mkDeps();
+    deps.handoffPipeline.orchestrate = vi.fn(async () => mkArtifact("B", null, `# Handoff\n\n${"x".repeat(20_000)}`));
+    const coordinator = HandoffCoordinator.forTesting(deps);
+
+    const { providerWireOverride } = await coordinator.deliverHandoff(mkInput({ childProvider: "codex" as const }));
+
+    expect(deps.scopedPreGrant.issue).not.toHaveBeenCalled();
+    expect(providerWireOverride.length).toBeLessThanOrEqual(14_000);
+    expect(providerWireOverride).toContain("Inline Codex handoff shortened");
+    expect(providerWireOverride).toContain("continue the work please");
   });
 
   it("legacy-replay fallback: when the pipeline throws, builds a deterministic replay and persists a D artifact", async () => {

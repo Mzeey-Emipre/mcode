@@ -87,6 +87,10 @@ function truncateTitle(content: string): string {
   return truncated.slice(0, cutPoint) + "...";
 }
 
+const FORK_HISTORY_BUDGET_BYTES = 1_000_000;
+const FORK_HISTORY_PAGE_SIZE = 100;
+const FORK_HISTORY_MAX_MESSAGES = 500;
+
 /** Orchestrates agent sessions, message sending, and event forwarding. */
 @injectable()
 export class AgentService {
@@ -949,18 +953,14 @@ export class AgentService {
       throw new Error(`Fork message not found in parent thread: ${resolvedForkMessageId}`);
     }
 
-    /** Guards fork handoff against loading unbounded history into memory. */
-    const FORK_HISTORY_MAX_SEQUENCE = 10_000;
-    if (forkMessage.sequence > FORK_HISTORY_MAX_SEQUENCE) {
-      throw new Error(
-        `Fork point includes too much prior history (sequence ${forkMessage.sequence}; max ${FORK_HISTORY_MAX_SEQUENCE}). Choose an earlier message (lower sequence) to branch from.`,
-      );
-    }
-
-    // Load all messages up to and including the fork point — no row cap.
-    const forkedMessages = this.messageRepo.listByThreadUpToSequence(
+    const { messages: forkedMessages, budget: forkHistoryBudget } = this.messageRepo.listByThreadUpToSequenceBudgeted(
       parentThreadId,
       forkMessage.sequence,
+      {
+        maxBytes: FORK_HISTORY_BUDGET_BYTES,
+        pageSize: FORK_HISTORY_PAGE_SIZE,
+        maxRows: FORK_HISTORY_MAX_MESSAGES,
+      },
     );
 
     // Create child thread with lineage
@@ -1039,6 +1039,7 @@ export class AgentService {
       childProvider: provider,
       forkMessage,
       forkedMessages,
+      historyBudget: forkHistoryBudget,
       userMessage: content,
       model,
     });

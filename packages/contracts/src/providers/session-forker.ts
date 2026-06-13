@@ -18,9 +18,10 @@ export type LadderStep = "B" | "D";
 
 /**
  * Handoff doc mode. Retained as a constant `"full"` for provenance/frontmatter
- * stability after off-band delivery (PRD #538) retired the full-vs-minimal
- * sizing selection. The child receives a small pointer + summary inline and
- * reads the full doc off-band, so doc-body sizing no longer drives a mode.
+ * stability after PRD #538 retired the full-vs-minimal sizing selection.
+ * Most providers receive a small pointer + summary inline and read the full
+ * doc off-band. Providers without that read path may receive the bounded
+ * artifact inline, so doc-body sizing no longer drives a mode.
  */
 export type HandoffMode = "full";
 
@@ -63,6 +64,19 @@ export interface HandoffMeta {
     mime: string;
     parentMessageId: string;
   }>;
+  historyBudget?: ForkHistoryBudget;
+}
+
+/** Describes parent history omitted while building a fork handoff. */
+export interface ForkHistoryBudget {
+  budgetBytes: number;
+  retainedBytes: number;
+  omittedBeforeCount: number;
+  truncatedMessages: Array<{
+    id: string;
+    originalBytes: number;
+    retainedBytes: number;
+  }>;
 }
 
 /** Returned by every forker. The pipeline writes both fields to disk. */
@@ -90,6 +104,8 @@ export interface ForkRequest {
   conversationHistory?: string;
   /** Parent messages up to the fork point, for the deterministic builder. */
   messagesUpToFork: Message[];
+  /** Budget metadata for the retained parent history window. */
+  historyBudget?: ForkHistoryBudget;
   /** Full parent thread row; the deterministic builder needs its metadata. */
   parentThread: Thread;
   /** The forked child thread id, threaded through to the artifact metadata. */

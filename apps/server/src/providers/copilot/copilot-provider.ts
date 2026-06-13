@@ -33,7 +33,7 @@ import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
-import { DeterministicForker } from "../../services/handoff/session-forker.js";
+import { CleanForker } from "../../services/handoff/session-forker.js";
 import type {
   IAgentProvider,
   ISessionEvictable,
@@ -51,6 +51,13 @@ import { AgentEventType } from "@mcode/contracts";
 
 /** Promisified execFile used to retrieve the gh auth token. */
 const execFileAsync = promisify(execFile);
+const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
+
+function transientHandoffError(message: string): Error & { code: string } {
+  const err = new Error(message) as Error & { code: string };
+  err.code = "ETIMEDOUT";
+  return err;
+}
 
 /**
  * Reads user-level Copilot instructions from `~/.copilot/copilot-instructions.md`.
@@ -161,10 +168,10 @@ interface CopilotSessionState {
 export class CopilotProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CopilotSessionState> {
   readonly id: ProviderId = "copilot";
   readonly supportsCompletion = true;
-  readonly sessionForkOnResume = "unsupported" as const;
+  readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 16_000;
-  /** Path D forker; Copilot cannot fork a session, so handoffs are deterministic. */
-  readonly forker: SessionForker = new DeterministicForker();
+  /** Path B forker; calls this provider's throwaway SDK side channel. */
+  readonly forker: SessionForker = new CleanForker(this);
 
   private client: CopilotClient | null = null;
   private lastCliPath: string | undefined;
@@ -291,6 +298,126 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         logger.debug("CopilotProvider: error disconnecting ephemeral session", {
           error: err instanceof Error ? err.message : String(err),
         }),
+      );
+    }
+  }
+
+  /**
+   * Run a handoff prompt in a throwaway Copilot session.
+   * The pooled parent session is left untouched; the SDK session is disconnected.
+   */
+  async runSideChannelQuery(args: {
+    parentThreadId: string;
+    parentSdkSessionId: string;
+    prompt: string;
+    abortSignal?: AbortSignal;
+    conversationHistory?: string;
+    cwd: string;
+  }): Promise<string> {
+    const { parentThreadId, parentSdkSessionId, prompt, abortSignal, conversationHistory, cwd } = args;
+    if (abortSignal?.aborted) throw transientHandoffError("Copilot side-channel query aborted before start");
+
+    await this.refreshClient();
+    const notFoundMessage = this.cliNotFoundMessage();
+    if (notFoundMessage) throw transientHandoffError(notFoundMessage);
+    const client = this.client;
+    if (!client) throw transientHandoffError("Copilot client not available");
+
+    const userInstructions = readUserInstructions();
+    const skillDirs = userSkillDirectories();
+    const sessionBase = {
+      onPermissionRequest: approveAll,
+      workingDirectory: cwd,
+      enableConfigDiscovery: true,
+      ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
+      ...(userInstructions && { systemMessage: { content: userInstructions } }),
+    };
+
+    let session: CopilotSession;
+    let usingSessionlessHistory = false;
+    try {
+      session = parentSdkSessionId
+        ? await client.resumeSession(parentSdkSessionId, sessionBase)
+        : await client.createSession(sessionBase);
+    } catch (err) {
+      if (!conversationHistory) {
+        throw transientHandoffError(
+          `Copilot side-channel could not resume parent thread ${parentThreadId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      usingSessionlessHistory = true;
+      session = await client.createSession(sessionBase);
+    }
+
+    const sideChannelPrompt = usingSessionlessHistory && conversationHistory
+      ? `Conversation history up to the fork point:\n\n${conversationHistory}\n\n---\n\n${prompt}`
+      : prompt;
+
+    const unsubscribers: Array<() => void> = [];
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let messageText = "";
+    let deltaText = "";
+
+    try {
+      const result = await new Promise<string>((resolve, reject) => {
+        const finish = (value: string): void => {
+          abortSignal?.removeEventListener("abort", abortDuringTurn);
+          clearTimeout(timeout);
+          resolve(value);
+        };
+        const rejectTransient = (message: string): void => {
+          abortSignal?.removeEventListener("abort", abortDuringTurn);
+          clearTimeout(timeout);
+          reject(transientHandoffError(message));
+        };
+        const abortDuringTurn = (): void => {
+          void session.disconnect().catch(() => {});
+          rejectTransient("Copilot side-channel query aborted");
+        };
+
+        timeout = setTimeout(
+          () => rejectTransient("Copilot side-channel query timed out"),
+          SIDE_CHANNEL_TIMEOUT_MS,
+        );
+        abortSignal?.addEventListener("abort", abortDuringTurn, { once: true });
+
+        unsubscribers.push(
+          session.on("assistant.message_delta", (event: { data: { deltaContent: string } }) => {
+            deltaText += event.data.deltaContent;
+          }),
+        );
+        unsubscribers.push(
+          session.on("assistant.message", (event: { data: { content: string; phase?: string } }) => {
+            if (event.data.phase === "thinking") return;
+            if (event.data.content) messageText = event.data.content;
+          }),
+        );
+        unsubscribers.push(
+          session.on("session.error", (event: { data: { message: string } }) => {
+            rejectTransient(event.data.message);
+          }),
+        );
+        unsubscribers.push(
+          session.on("session.idle", () => {
+            const text = (messageText || deltaText).trim();
+            if (!text) {
+              rejectTransient("Copilot side-channel query returned empty output");
+              return;
+            }
+            finish(text);
+          }),
+        );
+
+        void session.send({ prompt: sideChannelPrompt })
+          .catch((err: unknown) => rejectTransient(err instanceof Error ? err.message : String(err)));
+      });
+
+      return result;
+    } finally {
+      clearTimeout(timeout);
+      for (const unsub of unsubscribers) unsub();
+      await session.disconnect().catch((err: unknown) =>
+        logger.debug("Copilot side-channel disconnect failed", { parentThreadId, error: String(err) }),
       );
     }
   }
