@@ -117,6 +117,35 @@ function resolveOutboundDisplayContent(
   return (displayInjected ?? rawInput).trim();
 }
 
+/**
+ * Resolve the running-state used by submit handlers from the latest store
+ * snapshot, covering the render gap after reconnect or server push.
+ */
+export function isThreadRunningForSubmit(
+  threadId: string | undefined,
+  renderedIsAgentRunning: boolean,
+): boolean {
+  if (renderedIsAgentRunning) return true;
+  return threadId ? useThreadStore.getState().runningThreadIds.has(threadId) : false;
+}
+
+/** Decide whether an existing-thread submit should queue behind the active turn. */
+export function shouldQueueActiveThreadSubmit(
+  threadId: string | undefined,
+  renderedIsAgentRunning: boolean,
+  branchFromMessageId: string | null | undefined,
+  isNewThread: boolean | undefined,
+  trimmedContent: string,
+): boolean {
+  return Boolean(
+    isThreadRunningForSubmit(threadId, renderedIsAgentRunning) &&
+    threadId &&
+    !branchFromMessageId &&
+    !isNewThread &&
+    !isGoalControlCommand(trimmedContent),
+  );
+}
+
 /** `accept` list for the composer's hidden file input (mirrors {@link isFileSupported}). */
 const ATTACHMENT_INPUT_ACCEPT = attachmentAcceptAttribute();
 
@@ -1752,39 +1781,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       }
     }
 
-    // ---- Queue path: agent is running on THIS thread ----
-    // Skip when composing a branch (`branchFromMessageId`) or a brand-new thread
-    // (`isNewThread`) - both target a *different* thread and must not enqueue
-    // on the parent thread that happens to be currently running.
-    //
-    // Also skip for `/goal` control-form commands (`clear`, `reset`, `show`,
-    // bare `/goal`). When a goal is active the agent's Stop hook blocks the
-    // turn from ending until the goal is met - which means `session.turnComplete`
-    // never fires and the queue never drains. Queueing `/goal clear` here would
-    // deadlock: the only way to clear the goal is to send `/goal clear`, but
-    // that message would sit in the queue waiting for a turn that cannot
-    // complete. The server intercept handles these control forms synchronously
-    // without invoking the provider, so they are safe to send mid-turn.
-    if (
-      isAgentRunning &&
-      threadId &&
-      !branchFromMessageId &&
-      !isNewThread &&
-      !isGoalControlCommand(trimmed)
-    ) {
-      const captureRows = buildAttachedBrowserCaptures(attachments);
-      const { content: injectedContent, display: displayInjected } = await injectFileContent(rawInput);
-      let content: string;
-      try {
-        content =
-          captureRows.length === 0 ? injectedContent : appendBrowserCaptureFence(injectedContent, captureRows);
-        content = content.trim();
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Invalid page preview payload";
-        useToastStore.getState().show("error", "Could not send message", msg);
-        return;
-      }
-      const displayContentResolved = resolveOutboundDisplayContent(rawInput, displayInjected);
+    const enqueueCurrentComposerMessage = (
+      content: string,
+      displayContentResolved: string,
+      captureRows: AttachedBrowserCapture[],
+    ) => {
+      if (!threadId) return;
       const currentAttachments = collectAndClearAttachments();
       const browserCaptureSpillPaths = collectBrowserCaptureSpillPaths(captureRows);
 
@@ -1806,10 +1808,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         browserCaptureSpillPaths:
           browserCaptureSpillPaths.length > 0 ? browserCaptureSpillPaths : undefined,
       };
-      // When saving an edit of a previously queued message, put it back at
-      // the same slot instead of appending to the tail. Show a toast so the
-      // user sees that the save took effect - without it the composer just
-      // clears silently and the queue list looks like nothing changed.
       const enqueued = editingFromQueue
         ? useQueueStore.getState().insertAt(threadId, editingFromQueue.originalIndex, payload)
         : useQueueStore.getState().enqueue(threadId, payload);
@@ -1840,6 +1838,44 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         });
       }
       editorRef.current?.focus();
+    };
+
+    // ---- Queue path: agent is running on THIS thread ----
+    // Skip when composing a branch (`branchFromMessageId`) or a brand-new thread
+    // (`isNewThread`) - both target a *different* thread and must not enqueue
+    // on the parent thread that happens to be currently running.
+    //
+    // Also skip for `/goal` control-form commands (`clear`, `reset`, `show`,
+    // bare `/goal`). When a goal is active the agent's Stop hook blocks the
+    // turn from ending until the goal is met - which means `session.turnComplete`
+    // never fires and the queue never drains. Queueing `/goal clear` here would
+    // deadlock: the only way to clear the goal is to send `/goal clear`, but
+    // that message would sit in the queue waiting for a turn that cannot
+    // complete. The server intercept handles these control forms synchronously
+    // without invoking the provider, so they are safe to send mid-turn.
+    if (
+      shouldQueueActiveThreadSubmit(
+        threadId,
+        isAgentRunning,
+        branchFromMessageId,
+        isNewThread,
+        trimmed,
+      )
+    ) {
+      const captureRows = buildAttachedBrowserCaptures(attachments);
+      const { content: injectedContent, display: displayInjected } = await injectFileContent(rawInput);
+      let content: string;
+      try {
+        content =
+          captureRows.length === 0 ? injectedContent : appendBrowserCaptureFence(injectedContent, captureRows);
+        content = content.trim();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Invalid page preview payload";
+        useToastStore.getState().show("error", "Could not send message", msg);
+        return;
+      }
+      const displayContentResolved = resolveOutboundDisplayContent(rawInput, displayInjected);
+      enqueueCurrentComposerMessage(content, displayContentResolved, captureRows);
       return;
     }
 
@@ -1880,6 +1916,19 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const outboundDisplay = resolveOutboundDisplayContent(rawInput, displayInjected);
 
     // ---- Normal send path ----
+
+    if (
+      shouldQueueActiveThreadSubmit(
+        threadId,
+        isAgentRunning,
+        branchFromMessageId,
+        isNewThread,
+        trimmed,
+      )
+    ) {
+      enqueueCurrentComposerMessage(messageContent, outboundDisplay, captureRows);
+      return;
+    }
 
     setInput("");
     if (editorRef.current) {
@@ -2178,6 +2227,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             }
           }}
           onSendNow={async (msg) => {
+            if (useThreadStore.getState().runningThreadIds.has(threadId)) {
+              useQueueStore.getState().moveMessage(threadId, msg.id, 0);
+              return;
+            }
             const popped = useQueueStore.getState().popMessage(threadId, msg.id);
             if (!popped) return;
             try {

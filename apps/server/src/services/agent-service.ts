@@ -360,36 +360,54 @@ export class AgentService {
       content = commandOutcome.content;
     }
 
-    const cwd = this.gitService.resolveWorkingDir(
-      workspace.path,
-      thread.mode,
-      thread.worktree_path,
-    );
-
-    // Validate cwd before persisting anything
-    if (
-      !isAbsolute(cwd) ||
-      !existsSync(cwd) ||
-      !statSync(cwd).isDirectory()
-    ) {
-      throw new Error(`cwd is not a valid absolute directory: ${cwd}`);
+    if (this.activeSessionIds.has(threadId)) {
+      throw new Error(`Thread ${threadId} already has an active agent session`);
     }
 
-    this.memoryPressureService.assertCanStartTurn();
+    let activeSlotReserved = false;
+    let commandDispatched = false;
+    const releaseReservedSlot = () => {
+      if (!activeSlotReserved) return;
+      activeSlotReserved = false;
+      if (this.activeSessionIds.delete(threadId)) {
+        this.memoryPressureService.markIdle(threadId);
+      }
+    };
 
-    // Compute next sequence number and persist user message
-    const { messages: existingMessages } = this.messageRepo.listByThread(threadId, 1);
-    const nextSeq =
-      existingMessages.length > 0
-        ? existingMessages[existingMessages.length - 1].sequence + 1
-        : 1;
+    try {
+      const cwd = this.gitService.resolveWorkingDir(
+        workspace.path,
+        thread.mode,
+        thread.worktree_path,
+      );
 
-    const persistedUserText = messageDisplayContent ?? content;
+      // Validate cwd before persisting anything
+      if (
+        !isAbsolute(cwd) ||
+        !existsSync(cwd) ||
+        !statSync(cwd).isDirectory()
+      ) {
+        throw new Error(`cwd is not a valid absolute directory: ${cwd}`);
+      }
 
-    const { stored, persisted } = await this.attachmentService.persist(
-      threadId,
-      attachments,
-    );
+      this.memoryPressureService.assertCanStartTurn();
+      this.activeSessionIds.add(threadId);
+      activeSlotReserved = true;
+      this.memoryPressureService.markActive(threadId);
+
+      // Compute next sequence number and persist user message
+      const { messages: existingMessages } = this.messageRepo.listByThread(threadId, 1);
+      const nextSeq =
+        existingMessages.length > 0
+          ? existingMessages[existingMessages.length - 1].sequence + 1
+          : 1;
+
+      const persistedUserText = messageDisplayContent ?? content;
+
+      const { stored, persisted } = await this.attachmentService.persist(
+        threadId,
+        attachments,
+      );
     // Persist the user message and (when answering plan questions) the
     // answered marker in a single transaction. If the marker insert fails
     // (e.g. FK rejects an unknown messageId) the user message is rolled
@@ -556,9 +574,6 @@ export class AgentService {
 
     const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
 
-    this.activeSessionIds.add(threadId);
-    this.memoryPressureService.markActive(threadId);
-
     // Emit the live-session "turn started" signal before any other events so
     // clients can populate runningThreadIds (drives sidebar + composer indicators).
     // Cast to EventEmitter since IAgentProvider only exposes on(); all providers
@@ -576,6 +591,7 @@ export class AgentService {
     // block below runs the rollback so failures don't leave a hidden side
     // effect active. Only set for a rewrite outcome that supplied onDispatch.
     if (pendingDispatch !== null) {
+      commandDispatched = true;
       pendingDispatch();
       logger.info("Command side effect installed; dispatching to provider", {
         threadId,
@@ -659,6 +675,20 @@ export class AgentService {
         await this.giveUpTransientTurnRetry(threadId, err);
         return;
       }
+    }
+    } catch (err) {
+      releaseReservedSlot();
+      if (commandDispatched && pendingRollback !== null) {
+        try {
+          pendingRollback();
+        } catch (rollbackErr) {
+          logger.warn("Failed to roll back command side effect after send setup failure", {
+            threadId,
+            error: rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+          });
+        }
+      }
+      throw err;
     }
   }
 

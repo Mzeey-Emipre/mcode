@@ -3,6 +3,7 @@ import {
   getTestAgentStartTimes,
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
+import type { HookExecution, ToolCall } from "@/transport";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { hydrateRunningThreadsFromServer } from "@/transport/ws-transport";
@@ -30,9 +31,31 @@ describe("hydrateRunningThreadsFromServer", () => {
   });
 
   it("clears runningThreadIds when the server returns an empty array", async () => {
+    resetThreadStoreForTests({
+      runningThreadIds: new Set(["stale"]),
+      records: new Map<string, ThreadRecord>([
+        [
+          "stale",
+          {
+            ...createEmptyThreadRecord(),
+            streaming: "old response",
+            streamingPreview: "old response",
+            currentTurnMessageId: "old-assistant",
+            currentTurnResponseKey: "old-key",
+            thoughtSegments: [{ text: "old narration", startedAt: 1 }],
+          },
+        ],
+      ]),
+    });
     const rpc = vi.fn().mockResolvedValue([]);
     await hydrateRunningThreadsFromServer(rpc);
     expect(useThreadStore.getState().runningThreadIds.size).toBe(0);
+    const rec = useThreadStore.getState().records.get("stale")!;
+    expect(rec.streaming).toBe("");
+    expect(rec.streamingPreview).toBe("");
+    expect(rec.currentTurnMessageId).toBe("");
+    expect(rec.currentTurnResponseKey).toBe("");
+    expect(rec.thoughtSegments).toEqual([]);
   });
 
   it("preserves threadIds added while the RPC is in flight", async () => {
@@ -99,7 +122,19 @@ describe("hydrateRunningThreads (store action)", () => {
   });
 
   it("creates a new Set reference when hydration membership differs", () => {
-    useThreadStore.setState({ runningThreadIds: new Set(["t-1", "t-2"]) });
+    resetThreadStoreForTests({
+      runningThreadIds: new Set(["t-1", "t-2"]),
+      records: new Map<string, ThreadRecord>([
+        [
+          "t-2",
+          {
+            ...createEmptyThreadRecord(),
+            streaming: "old response",
+            thoughtSegments: [{ text: "old narration", startedAt: 1 }],
+          },
+        ],
+      ]),
+    });
     const before = useThreadStore.getState().runningThreadIds;
 
     useThreadStore.getState().hydrateRunningThreads(["t-1", "t-3"]);
@@ -109,6 +144,9 @@ describe("hydrateRunningThreads (store action)", () => {
     expect(after.has("t-1")).toBe(true);
     expect(after.has("t-2")).toBe(false);
     expect(after.has("t-3")).toBe(true);
+    const dropped = useThreadStore.getState().records.get("t-2")!;
+    expect(dropped.streaming).toBe("");
+    expect(dropped.thoughtSegments).toEqual([]);
   });
 
   it("seeds agentStartTimes for newly hydrated ids and preserves existing entries", () => {
@@ -130,5 +168,89 @@ describe("hydrateRunningThreads (store action)", () => {
     expect(times["t-2"]).toBe(200);
 
     vi.restoreAllMocks();
+  });
+
+  it("clears stale volatile turn state for ids newly reported running", () => {
+    const tid = "t-reconnected";
+    const staleTool: ToolCall = {
+      id: "tool-1",
+      toolName: "Read",
+      toolInput: {},
+      output: null,
+      isError: false,
+      isComplete: false,
+    };
+    const staleHook: HookExecution = {
+      hookName: "Stop",
+      hookType: "stop",
+      status: "running",
+      outputLines: ["old"],
+      fullOutput: ["old"],
+      startedAt: 1,
+    };
+    resetThreadStoreForTests({
+      runningThreadIds: new Set(),
+      records: new Map<string, ThreadRecord>([
+        [
+          tid,
+          {
+            ...createEmptyThreadRecord(),
+            streaming: "Implemented logo wiring is in...",
+            streamingPreview: "Implemented logo wiring is in...",
+            currentTurnMessageId: "old-assistant",
+            currentTurnResponseKey: "old-key",
+            toolCalls: [staleTool],
+            thoughtSegments: [{ text: "stale narration", startedAt: 1 }],
+            hooks: [staleHook],
+          },
+        ],
+      ]),
+    });
+    vi.spyOn(Date, "now").mockReturnValue(300);
+
+    useThreadStore.getState().hydrateRunningThreads([tid]);
+
+    const rec = useThreadStore.getState().records.get(tid)!;
+    expect(rec.streaming).toBe("");
+    expect(rec.streamingPreview).toBe("");
+    expect(rec.currentTurnMessageId).toBe("");
+    expect(rec.currentTurnResponseKey).toMatch(/^turn-response:t-reconnected:/);
+    expect(rec.toolCalls).toEqual([]);
+    expect(rec.thoughtSegments).toEqual([]);
+    expect(rec.hooks).toEqual([]);
+    expect(rec.agentStartTime).toBe(300);
+
+    vi.restoreAllMocks();
+  });
+
+  it("preserves live volatile turn state for ids that were already running", () => {
+    const tid = "t-live";
+    resetThreadStoreForTests({
+      runningThreadIds: new Set([tid]),
+      records: new Map<string, ThreadRecord>([
+        [
+          tid,
+          {
+            ...createEmptyThreadRecord(),
+            streaming: "live response",
+            streamingPreview: "live response",
+            currentTurnMessageId: "live-assistant",
+            currentTurnResponseKey: "live-key",
+            thoughtSegments: [{ text: "live narration", startedAt: 1 }],
+            agentStartTime: 100,
+          },
+        ],
+      ]),
+    });
+
+    useThreadStore.getState().hydrateRunningThreads([tid, "t-new"]);
+
+    const rec = useThreadStore.getState().records.get(tid)!;
+    expect(rec.streaming).toBe("live response");
+    expect(rec.streamingPreview).toBe("live response");
+    expect(rec.currentTurnMessageId).toBe("live-assistant");
+    expect(rec.currentTurnResponseKey).toBe("live-key");
+    expect(rec.thoughtSegments).toEqual([{ text: "live narration", startedAt: 1 }]);
+    expect(rec.agentStartTime).toBe(100);
   });
 });
