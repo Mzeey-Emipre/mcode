@@ -214,9 +214,12 @@ export function scheduleDrainAfterEdit(threadId: string): void {
  */
 function resetTurnEphemeral(_rec: ThreadRecord): Partial<ThreadRecord> {
   return {
+    streaming: "",
+    streamingPreview: "",
     toolCalls: [],
     thoughtSegments: [],
     hooks: [],
+    currentTurnMessageId: "",
     currentTurnResponseKey: "",
   };
 }
@@ -550,7 +553,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         const rec = getThreadRecord(records, tid);
         let streaming = rec.streaming;
         let streamingPreview = rec.streamingPreview;
-        let segments = [...rec.thoughtSegments];
+        let segments = rec.thoughtSegments;
+        let segmentsChanged = false;
         for (const chunk of chunks) {
           const acc = chunk.delta;
           if (!acc) continue;
@@ -588,6 +592,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
               },
             ];
+            segmentsChanged = true;
           } else if (last.endedAt !== undefined && shouldReopen) {
             const reopened: typeof last = {
               ...last,
@@ -596,6 +601,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             };
             delete (reopened as { endedAt?: number }).endedAt;
             segments = [...segments.slice(0, -1), reopened];
+            segmentsChanged = true;
           } else {
             segments = [
               ...segments.slice(0, -1),
@@ -605,16 +611,31 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
               },
             ];
+            segmentsChanged = true;
           }
         }
-        records = patchThreadRecord(records, tid, {
+        const patch: Partial<ThreadRecord> = {
           streaming,
           streamingPreview,
-          thoughtSegments: segments,
-        });
+        };
+        if (segmentsChanged) {
+          patch.thoughtSegments = segments;
+        }
+        records = patchThreadRecord(records, tid, patch);
       }
       return { records };
     });
+  };
+
+  const dropPendingTextDeltas = (threadIds: Iterable<string>) => {
+    let dropped = false;
+    for (const threadId of threadIds) {
+      dropped = pendingTextDeltaByThread.delete(threadId) || dropped;
+    }
+    if (dropped && pendingTextDeltaByThread.size === 0 && textDeltaFlushRaf != null) {
+      cancelAnimationFrame(textDeltaFlushRaf);
+      textDeltaFlushRaf = null;
+    }
   };
 
   const messageSequenceFor = (threadId: string) => getRec(threadId).messages.length + 1;
@@ -787,6 +808,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     // failure the rollback below must not clear the running-state of a real
     // turn the control command was issued against mid-flight (#583).
     const isControlCommand = isGoalControlCommand(content);
+    if (!isControlCommand && get().runningThreadIds.has(threadId)) {
+      throw new Error(`Thread ${threadId} already has an active agent session`);
+    }
+    if (!isControlCommand) {
+      dropPendingTextDeltas([threadId]);
+    }
 
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
@@ -883,16 +910,26 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       if (planAction === "revise") {
         usePlanStore.getState().setGenerating(threadId, false);
       }
+      const error = String(e);
+      const activeSessionConflict =
+        !isControlCommand && error.includes("already has an active agent session");
       set((state) => {
         // Control commands never added the thread to running-state, so leave it
         // untouched on rollback - a real turn in flight may own it (#583).
         const next = new Set(state.runningThreadIds);
-        if (!isControlCommand) next.delete(threadId);
+        if (activeSessionConflict) {
+          next.add(threadId);
+        } else if (!isControlCommand) {
+          next.delete(threadId);
+        }
         return {
-          records: patchThreadRecord(state.records, threadId, {
-            error: String(e),
-            agentStartTime: undefined,
-          }),
+          records: patchThreadRecord(state.records, threadId, (rec) => ({
+            error,
+            ...(activeSessionConflict && state.currentThreadId === threadId
+              ? { messages: rec.messages.filter((m) => m.id !== userMessage.id) }
+              : {}),
+            ...(!activeSessionConflict ? { agentStartTime: undefined } : {}),
+          })),
           runningThreadIds: next,
         };
       });
@@ -943,21 +980,38 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
 
   hydrateRunningThreads: (ids) => {
+    const resetPendingIds = new Set<string>();
     set((state) => {
       const current = state.runningThreadIds;
       if (current.size === ids.length && ids.every((id) => current.has(id))) {
         return {};
       }
       const now = Date.now();
+      const nextIds = new Set(ids);
       let records = state.records;
+      for (const id of current) {
+        if (!nextIds.has(id)) {
+          resetPendingIds.add(id);
+          records = patchThreadRecord(records, id, resetTurnEphemeral(getThreadRecord(records, id)));
+        }
+      }
       for (const id of ids) {
         const rec = getThreadRecord(records, id);
-        if (rec.agentStartTime === undefined) {
+        const isNewlyRunning = !current.has(id);
+        if (isNewlyRunning) {
+          resetPendingIds.add(id);
+          records = patchThreadRecord(records, id, {
+            ...resetTurnEphemeral(rec),
+            currentTurnResponseKey: createTurnResponseKey(id),
+            agentStartTime: rec.agentStartTime ?? now,
+          });
+        } else if (rec.agentStartTime === undefined) {
           records = patchThreadRecord(records, id, { agentStartTime: now });
         }
       }
       return { runningThreadIds: new Set(ids), records };
     });
+    dropPendingTextDeltas(resetPendingIds);
   },
 
   /** Append a single message to the current thread's message list. */

@@ -18,8 +18,8 @@ import { PermissionRequestCard } from "./PermissionRequestCard";
 import { HookActivitySection } from "./HookActivitySection";
 import {
   buildStableItems,
-  buildVolatileItems,
-  buildVirtualItems,
+  createVolatileItemsBuilder,
+  createVirtualItemsBuilder,
   estimateItemHeight,
 } from "./virtual-items";
 import type { ChatVirtualItem } from "./virtual-items";
@@ -474,8 +474,22 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     ],
   );
 
+  const volatileItemsBuilderRef = useRef<ReturnType<typeof createVolatileItemsBuilder> | null>(null);
+  if (volatileItemsBuilderRef.current == null) {
+    volatileItemsBuilderRef.current = createVolatileItemsBuilder();
+  }
+  const virtualItemsBuilderRef = useRef<ReturnType<typeof createVirtualItemsBuilder> | null>(null);
+  if (virtualItemsBuilderRef.current == null) {
+    virtualItemsBuilderRef.current = createVirtualItemsBuilder();
+  }
+
   const volatileItems = useMemo(() => {
-    const base = buildVolatileItems(
+    const lastMsg = messages[messages.length - 1];
+    const committedAssistantBody =
+      currentThreadId && !isAgentRunning && lastMsg?.role === "assistant"
+        ? lastMsg.content
+        : undefined;
+    return volatileItemsBuilderRef.current!(
       toolCalls,
       isAgentRunning,
       agentStartTime,
@@ -491,19 +505,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
             responseKeysByMessageId: assistantResponseKeys,
           }
         : undefined,
-    );
-    const lastMsg = messages[messages.length - 1];
-    const committedAssistantBody =
-      currentThreadId && !isAgentRunning && lastMsg?.role === "assistant"
-        ? lastMsg.content
-        : undefined;
-    if (!committedAssistantBody) {
-      return base;
-    }
-    return base.map((item) =>
-      item.type === "narrative-flow"
-        ? { ...item, committedAssistantBody }
-        : item,
+      committedAssistantBody,
     );
   }, [
     toolCalls,
@@ -522,7 +524,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
 
   const hasToolCalls = toolCalls.length > 0;
   const items = useMemo(
-    () => buildVirtualItems(stableItems, volatileItems, hasToolCalls),
+    () => virtualItemsBuilderRef.current!(stableItems, volatileItems, hasToolCalls),
     [stableItems, volatileItems, hasToolCalls],
   );
 

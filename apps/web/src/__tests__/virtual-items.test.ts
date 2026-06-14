@@ -3,6 +3,8 @@ import {
   buildStableItems,
   buildVolatileItems,
   buildVirtualItems,
+  createVolatileItemsBuilder,
+  createVirtualItemsBuilder,
   estimateItemHeight,
   STREAMING_CARD_COLLAPSED_HEIGHT,
   assistantMessageItemKey,
@@ -139,12 +141,14 @@ describe("buildVolatileItems", () => {
     expect(items).toHaveLength(0);
   });
 
-  it("returns narrative-flow with streamingText when agent is running and streaming", () => {
+  it("keeps final-response text in the live assistant item when agent is running", () => {
     const items = buildVolatileItems([], true, 1000, "streaming...");
     const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<(typeof items)[number], { type: "narrative-flow" }> | undefined;
     expect(narrativeItem).toBeDefined();
-    expect(narrativeItem?.streamingText).toBe("streaming...");
+    expect(narrativeItem?.streamingText).toBe("");
     expect(narrativeItem?.isAgentRunning).toBe(true);
+    const liveMessage = items.find((i) => i.type === "message" && i.assistantState?.isStreaming) as Extract<(typeof items)[number], { type: "message" }> | undefined;
+    expect(liveMessage?.message.content).toBe("streaming...");
   });
 
   it("passes thoughtSegments through on narrative-flow items", () => {
@@ -185,9 +189,143 @@ describe("buildVolatileItems", () => {
     >;
     expect(narrativeItem?.thoughtSegments).toEqual(thoughtSegments);
   });
+
+  it("memoized builder returns the same volatile item references for unchanged inputs", () => {
+    const build = createVolatileItemsBuilder();
+    const toolCalls = [makeToolCall({ id: "t1", isComplete: true })];
+    const hooks: HookExecution[] = [];
+    const thoughtSegments: ThoughtSegment[] = [];
+    const currentTurn = {
+      threadId: "thread-1",
+      responseKey: "turn-response:thread-1:stable",
+    };
+
+    const first = build(
+      toolCalls,
+      true,
+      1000,
+      "answer",
+      undefined,
+      hooks,
+      thoughtSegments,
+      currentTurn,
+    );
+    const second = build(
+      toolCalls,
+      true,
+      1000,
+      "answer",
+      undefined,
+      hooks,
+      thoughtSegments,
+      currentTurn,
+    );
+
+    expect(second).toBe(first);
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).toBe(first[1]);
+    expect(second[2]).toBe(first[2]);
+  });
+
+  it("memoized builder changes only the live typing item on final-response text deltas", () => {
+    const build = createVolatileItemsBuilder();
+    const toolCalls = [makeToolCall({ id: "t1", isComplete: true })];
+    const hooks: HookExecution[] = [];
+    const thoughtSegments: ThoughtSegment[] = [];
+    const currentTurn = {
+      threadId: "thread-1",
+      responseKey: "turn-response:thread-1:typing",
+    };
+
+    const first = build(
+      toolCalls,
+      true,
+      1000,
+      "answer one",
+      undefined,
+      hooks,
+      thoughtSegments,
+      currentTurn,
+    );
+    const second = build(
+      toolCalls,
+      true,
+      1000,
+      "answer two",
+      undefined,
+      hooks,
+      thoughtSegments,
+      currentTurn,
+    );
+
+    expect(second).not.toBe(first);
+    expect(second.find((item) => item.type === "narrative-flow")).toBe(
+      first.find((item) => item.type === "narrative-flow"),
+    );
+    expect(second.find((item) => item.type === "narrative-indicator")).toBe(
+      first.find((item) => item.type === "narrative-indicator"),
+    );
+    expect(
+      second.find((item) => item.type === "message" && item.assistantState?.isStreaming),
+    ).not.toBe(
+      first.find((item) => item.type === "message" && item.assistantState?.isStreaming),
+    );
+  });
 });
 
 describe("buildVirtualItems (combined)", () => {
+  it("memoized splicer returns the same array for unchanged stable and volatile inputs", () => {
+    const build = createVirtualItemsBuilder();
+    const stable = buildStableItems([makeMessage({ id: "msg-1" })]);
+    const volatile = buildVolatileItems([], true, 1000, "typing");
+
+    const first = build(stable, volatile, false);
+    const second = build(stable, volatile, false);
+
+    expect(second).toBe(first);
+  });
+
+  it("memoized splicer keeps new order when same-key items reorder", () => {
+    const build = createVirtualItemsBuilder();
+    const firstStable = buildStableItems([
+      makeMessage({ id: "msg-1", role: "user", content: "First", sequence: 1 }),
+      makeMessage({ id: "msg-2", role: "user", content: "Second", sequence: 2 }),
+    ]);
+    const secondStable = buildStableItems([
+      makeMessage({ id: "msg-2", role: "user", content: "Second", sequence: 2 }),
+      makeMessage({ id: "msg-1", role: "user", content: "First", sequence: 1 }),
+    ]);
+
+    build(firstStable, [], false);
+    const second = build(secondStable, [], false);
+
+    expect(second.map((item) => item.key)).toEqual(["msg-2", "msg-1"]);
+  });
+
+  it("memoized splicer does not swallow message metadata-only updates", () => {
+    const build = createVirtualItemsBuilder();
+    const firstStable = buildStableItems([
+      makeMessage({ id: "msg-1", model: "claude-old", tokens_used: 1 }),
+    ]);
+    const secondStable = buildStableItems([
+      makeMessage({ id: "msg-1", model: "claude-new", tokens_used: 2 }),
+    ]);
+
+    const first = build(firstStable, [], false);
+    const second = build(secondStable, [], false);
+    const firstMessage = first.find((item) => item.type === "message") as
+      | Extract<ChatVirtualItem, { type: "message" }>
+      | undefined;
+    const secondMessage = second.find((item) => item.type === "message") as
+      | Extract<ChatVirtualItem, { type: "message" }>
+      | undefined;
+
+    expect(second).not.toBe(first);
+    expect(secondMessage).not.toBe(firstMessage);
+    expect(secondMessage?.message.model).toBe("claude-new");
+    expect(secondMessage?.message.tokens_used).toBe(2);
+  });
+
   it("empty messages returns empty array", () => {
     const result = buildAll([], [], undefined, false, undefined);
     expect(result).toEqual([]);
@@ -250,7 +388,7 @@ describe("buildVirtualItems (combined)", () => {
       | (ChatVirtualItem & { type: "narrative-flow" })
       | undefined;
     expect(narrative).toBeDefined();
-    expect(narrative?.streamingText).toBe("partial response...");
+    expect(narrative?.streamingText).toBe("");
 
     // The streaming text also surfaces as a provisional assistant message so
     // the persisted MessageBubble keeps the same component and key.
@@ -465,7 +603,7 @@ describe("buildVirtualItems (combined)", () => {
     const types = result.map((item) => item.type);
     expect(types).toContain("narrative-flow");
     const narrative = result.find((i) => i.type === "narrative-flow") as (ChatVirtualItem & { type: "narrative-flow" }) | undefined;
-    expect(narrative?.streamingText).toBe("streaming...");
+    expect(narrative?.streamingText).toBe("");
     expect(narrative?.isAgentRunning).toBe(true);
   });
 

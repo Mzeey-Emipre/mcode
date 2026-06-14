@@ -25,6 +25,9 @@ function isPlanQuestionsMessage(content: string): boolean {
 /** Estimated collapsed height (px) for a streaming card virtual item. */
 export const STREAMING_CARD_COLLAPSED_HEIGHT = 56;
 
+const EMPTY_HOOKS: readonly HookExecution[] = [];
+const EMPTY_THOUGHT_SEGMENTS: readonly ThoughtSegment[] = [];
+
 /** State that lets the current turn's live and persisted assistant rows share one React key. */
 export interface CurrentTurnResponseIdentity {
   threadId: string;
@@ -261,8 +264,18 @@ export function buildVolatileItems(
   hooks?: readonly HookExecution[],
   thoughtSegments?: readonly ThoughtSegment[],
   currentTurn?: CurrentTurnResponseIdentity,
+  committedAssistantBody?: string,
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
+  const resolvedHooks = hooks ?? EMPTY_HOOKS;
+  const resolvedThoughtSegments = thoughtSegments ?? EMPTY_THOUGHT_SEGMENTS;
+  const resolvedStreamingText = streamingText ?? "";
+  const liveText = computeLiveStreamingText({
+    thoughtSegments: resolvedThoughtSegments,
+    streamingText: resolvedStreamingText,
+    isAgentRunning,
+    toolCalls,
+  });
 
   // Emit the narrative flow item when agent is running or has tool calls.
   // This replaces the separate "active-tools", "hook-activity", "indicator",
@@ -272,23 +285,18 @@ export function buildVolatileItems(
       key: "narrative-flow",
       type: "narrative-flow",
       toolCalls,
-      hooks: hooks ?? [],
-      thoughtSegments: thoughtSegments ?? [],
-      streamingText: streamingText ?? "",
+      hooks: resolvedHooks,
+      thoughtSegments: resolvedThoughtSegments,
+      streamingText: liveText.length > 0 ? "" : resolvedStreamingText,
       isAgentRunning,
       startTime: agentStartTime,
+      committedAssistantBody,
     });
   }
 
   // Provisional assistant message — fills the slot where the persisted
   // MessageBubble will remain on `session.message`. Keeping the item type and
   // key stable lets React update the same subtree instead of remounting it.
-  const liveText = computeLiveStreamingText({
-    thoughtSegments: thoughtSegments ?? [],
-    streamingText: streamingText ?? "",
-    isAgentRunning,
-    toolCalls,
-  });
   if (liveText.length > 0) {
     const threadId = currentTurn?.threadId ?? "__active_thread__";
     const responseKey = liveFinalResponseItemKey(threadId, currentTurn?.responseKey);
@@ -360,6 +368,183 @@ export function buildVolatileItems(
   }
 
   return items;
+}
+
+function sameArrayItems<T>(
+  left: readonly T[] | undefined,
+  right: readonly T[] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+function sameAssistantState(
+  left: Extract<ChatVirtualItem, { type: "message" }>["assistantState"],
+  right: Extract<ChatVirtualItem, { type: "message" }>["assistantState"],
+): boolean {
+  if (left === right) return true;
+  return (
+    left?.isStreaming === right?.isStreaming &&
+    left?.actionsVisible === right?.actionsVisible
+  );
+}
+
+function sameMessage(left: Message, right: Message): boolean {
+  return (
+    left.id === right.id &&
+    left.thread_id === right.thread_id &&
+    left.role === right.role &&
+    left.content === right.content &&
+    left.tool_calls === right.tool_calls &&
+    left.files_changed === right.files_changed &&
+    left.cost_usd === right.cost_usd &&
+    left.tokens_used === right.tokens_used &&
+    left.timestamp === right.timestamp &&
+    left.sequence === right.sequence &&
+    left.attachments === right.attachments &&
+    left.tool_call_count === right.tool_call_count &&
+    left.reply_to_message_id === right.reply_to_message_id &&
+    left.quoted_text === right.quoted_text &&
+    left.model === right.model &&
+    left.is_internal === right.is_internal
+  );
+}
+
+function sameVirtualItem(
+  left: ChatVirtualItem | undefined,
+  right: ChatVirtualItem,
+): boolean {
+  if (!left || left.key !== right.key || left.type !== right.type) return false;
+  switch (right.type) {
+    case "message":
+      return (
+        left.type === "message" &&
+        sameMessage(left.message, right.message) &&
+        sameAssistantState(left.assistantState, right.assistantState)
+      );
+    case "active-tools":
+      return left.type === "active-tools" && left.toolCalls === right.toolCalls;
+    case "indicator":
+      return (
+        left.type === "indicator" &&
+        left.startTime === right.startTime &&
+        sameArrayItems(left.activeToolCalls, right.activeToolCalls)
+      );
+    case "streaming":
+      return left.type === "streaming" && left.text === right.text;
+    case "turn-changes":
+      return (
+        left.type === "turn-changes" &&
+        left.messageId === right.messageId &&
+        left.filesChanged === right.filesChanged &&
+        left.isLatestTurn === right.isLatestTurn
+      );
+    case "permission-request":
+      return (
+        left.type === "permission-request" &&
+        left.requestId === right.requestId &&
+        left.toolName === right.toolName &&
+        left.input === right.input &&
+        left.title === right.title &&
+        left.settled === right.settled &&
+        left.decision === right.decision
+      );
+    case "hook-activity":
+      return left.type === "hook-activity" && left.hooks === right.hooks;
+    case "narrative-flow":
+      return (
+        left.type === "narrative-flow" &&
+        left.toolCalls === right.toolCalls &&
+        left.hooks === right.hooks &&
+        left.thoughtSegments === right.thoughtSegments &&
+        left.streamingText === right.streamingText &&
+        left.isAgentRunning === right.isAgentRunning &&
+        left.startTime === right.startTime &&
+        left.committedAssistantBody === right.committedAssistantBody
+      );
+    case "persisted-narrative":
+      return (
+        left.type === "persisted-narrative" &&
+        left.messageId === right.messageId &&
+        left.messageContent === right.messageContent
+      );
+    case "persisted-late-hooks":
+      return left.type === "persisted-late-hooks" && left.messageId === right.messageId;
+    case "persisted-turn-footer":
+      return left.type === "persisted-turn-footer" && left.messageId === right.messageId;
+    case "narrative-indicator":
+      return (
+        left.type === "narrative-indicator" &&
+        left.stepCount === right.stepCount &&
+        left.subagentCount === right.subagentCount &&
+        sameArrayItems(left.activeToolCalls, right.activeToolCalls) &&
+        left.startTime === right.startTime &&
+        left.isAgentRunning === right.isAgentRunning
+      );
+    default:
+      return assertNever(right);
+  }
+}
+
+function reuseVirtualItems(
+  previous: readonly ChatVirtualItem[],
+  next: ChatVirtualItem[],
+): ChatVirtualItem[] {
+  if (previous.length === 0) return next;
+  const previousByKey = new Map(previous.map((item) => [item.key, item]));
+  let changed = previous.length !== next.length;
+  const reused = next.map((item, index) => {
+    const prior = previousByKey.get(item.key);
+    if (sameVirtualItem(prior, item)) {
+      if (previous[index]?.key !== item.key) {
+        changed = true;
+      }
+      return prior!;
+    }
+    changed = true;
+    return item;
+  });
+  if (!changed) return previous as ChatVirtualItem[];
+  return reused;
+}
+
+/** Creates a volatile item builder that preserves slot object identity across unchanged inputs. */
+export function createVolatileItemsBuilder(): typeof buildVolatileItems {
+  let previous: readonly ChatVirtualItem[] = [];
+  return (...args) => {
+    const next = buildVolatileItems(...args);
+    previous = reuseVirtualItems(previous, next);
+    return previous as ChatVirtualItem[];
+  };
+}
+
+/** Creates a virtual item splicer that returns the same array when the splice inputs are unchanged. */
+export function createVirtualItemsBuilder(): typeof buildVirtualItems {
+  let previousStable: readonly ChatVirtualItem[] | undefined;
+  let previousVolatile: readonly ChatVirtualItem[] | undefined;
+  let previousHasToolCalls: boolean | undefined;
+  let previousResult: readonly ChatVirtualItem[] = [];
+  return (stableItems, volatileItems, hasToolCalls) => {
+    if (
+      previousStable === stableItems &&
+      previousVolatile === volatileItems &&
+      previousHasToolCalls === hasToolCalls
+    ) {
+      return previousResult as ChatVirtualItem[];
+    }
+    previousStable = stableItems;
+    previousVolatile = volatileItems;
+    previousHasToolCalls = hasToolCalls;
+    previousResult = reuseVirtualItems(
+      previousResult,
+      buildVirtualItems(stableItems, volatileItems, hasToolCalls),
+    );
+    return previousResult as ChatVirtualItem[];
+  };
 }
 
 /**
