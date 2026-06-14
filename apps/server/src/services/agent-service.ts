@@ -810,7 +810,7 @@ export class AgentService {
       // Attach to existing worktree
       const workspace = this.workspaceRepo.findById(workspaceId);
       if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-      const knownWorktrees = this.gitService.listWorktrees(workspaceId);
+      const knownWorktrees = await this.gitService.listWorktrees(workspaceId);
       const normalize = (p: string) =>
         p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
       const normalizedInput = normalize(existingWorktreePath);
@@ -1006,7 +1006,7 @@ export class AgentService {
     if (existingWorktreePath) {
       const workspace = this.workspaceRepo.findById(workspaceId);
       if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-      const knownWorktrees = this.gitService.listWorktrees(workspaceId);
+      const knownWorktrees = await this.gitService.listWorktrees(workspaceId);
       const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
       const normalizedInput = normalize(existingWorktreePath);
       const matched = knownWorktrees.find((wt) => normalize(wt.path) === normalizedInput);

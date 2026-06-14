@@ -12,7 +12,7 @@ import { logger, getMcodeDir } from "@mcode/shared";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
-import { execSync } from "child_process";
+import { RealGitExecutor } from "./services/git-executor/index.js";
 import { killOrphanedServer, reapOrphanedPtys } from "./services/orphan-cleanup";
 import { PtyPidRegistry } from "./services/pty-pid-registry";
 
@@ -129,37 +129,42 @@ if (existsSync(SHUTDOWN_MARKER_PATH)) {
   );
 }
 
-// Standalone dev: detect the checkout branch for branch-specific DB paths.
-// The desktop shell sets MCODE_GIT_BRANCH when it spawns the server.
-if (!process.env.MCODE_GIT_BRANCH && process.env.NODE_ENV !== "production") {
-  try {
-    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
-      encoding: "utf-8",
-      timeout: 3000,
-    }).trim();
-    if (branch && branch !== "HEAD") {
-      process.env.MCODE_GIT_BRANCH = branch;
+/** Standalone dev: populate MCODE_GIT_BRANCH / MCODE_GIT_TOPLEVEL before DB path selection. */
+async function applyDevGitCheckoutEnv(): Promise<void> {
+  if (process.env.NODE_ENV === "production") return;
+  const executor = new RealGitExecutor();
+  const cwd = process.cwd();
+  if (!process.env.MCODE_GIT_BRANCH) {
+    try {
+      const { stdout } = await executor.exec(["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd,
+        timeout: 3000,
+      });
+      const branch = stdout.trim();
+      if (branch && branch !== "HEAD") {
+        process.env.MCODE_GIT_BRANCH = branch;
+      }
+    } catch {
+      // Not a git checkout or git missing; keep shared mcode.db
     }
-  } catch {
-    // Not a git checkout or git missing; keep shared mcode.db
+  }
+  if (!process.env.MCODE_GIT_TOPLEVEL) {
+    try {
+      const { stdout } = await executor.exec(["rev-parse", "--show-toplevel"], {
+        cwd,
+        timeout: 3000,
+      });
+      const top = stdout.trim();
+      if (top) {
+        process.env.MCODE_GIT_TOPLEVEL = top;
+      }
+    } catch {
+      // Not a git checkout or git missing
+    }
   }
 }
 
-// Standalone dev: detect checkout root for `.mcode-local` DB paths in linked worktrees.
-// The desktop shell sets MCODE_GIT_TOPLEVEL when it spawns the server.
-if (!process.env.MCODE_GIT_TOPLEVEL && process.env.NODE_ENV !== "production") {
-  try {
-    const top = execSync("git rev-parse --show-toplevel", {
-      encoding: "utf-8",
-      timeout: 3000,
-    }).trim();
-    if (top) {
-      process.env.MCODE_GIT_TOPLEVEL = top;
-    }
-  } catch {
-    // Not a git checkout or git missing
-  }
-}
+await applyDevGitCheckoutEnv();
 
 // Initialize DI container (PtyPidRegistry needs the data dir path at construction time)
 const container = setupContainer(getMcodeDir());

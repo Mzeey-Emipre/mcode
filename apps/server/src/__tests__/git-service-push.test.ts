@@ -1,19 +1,8 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
-
-const { mockExecFile } = vi.hoisted(() => ({
-  mockExecFile: vi.fn(),
-}));
-
-vi.mock("child_process", () => ({
-  execFileSync: vi.fn(),
-  execFile: vi.fn(),
-}));
-
-vi.mock("util", () => ({
-  promisify: () => mockExecFile,
-}));
+import { GitService } from "../services/git-service";
+import { createMockGitExecutor } from "../services/git-executor/__tests__/mock-git-executor.js";
 
 vi.mock("fs", () => ({
   existsSync: vi.fn(),
@@ -32,33 +21,33 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-import { GitService } from "../services/git-service";
-
 describe("GitService.push", () => {
   let gitService: GitService;
+  let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
   beforeEach(() => {
     vi.clearAllMocks();
+    const mock = createMockGitExecutor();
+    execFn = mock.execFn;
     const mockWorkspaceRepo = {
       findById: vi.fn().mockReturnValue({ path: "/repo" }),
     } as unknown as WorkspaceRepo;
-    gitService = new GitService(mockWorkspaceRepo);
+    gitService = new GitService(mockWorkspaceRepo, mock.executor);
   });
 
   it("pushes branch to origin with --set-upstream", async () => {
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
 
     await gitService.push("/repo", "feat/my-branch");
 
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "git",
+    expect(execFn).toHaveBeenCalledWith(
       ["-C", "/repo", "push", "--set-upstream", "origin", "feat/my-branch"],
       expect.objectContaining({ timeout: 60_000 }),
     );
   });
 
   it("throws when push fails", async () => {
-    mockExecFile.mockRejectedValue(new Error("rejected"));
+    execFn.mockRejectedValue(new Error("rejected"));
 
     await expect(gitService.push("/repo", "feat/my-branch")).rejects.toThrow(
       "rejected",
@@ -68,14 +57,17 @@ describe("GitService.push", () => {
 
 describe("GitService.diffStat", () => {
   let gitService: GitService;
+  let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
   beforeEach(() => {
     vi.clearAllMocks();
-    gitService = new GitService({} as WorkspaceRepo);
+    const mock = createMockGitExecutor();
+    execFn = mock.execFn;
+    gitService = new GitService({} as WorkspaceRepo, mock.executor);
   });
 
   it("returns diff stat between two refs", async () => {
-    mockExecFile.mockResolvedValue({
+    execFn.mockResolvedValue({
       stdout: " 3 files changed, 42 insertions(+), 5 deletions(-)\n",
       stderr: "",
     });
@@ -83,8 +75,7 @@ describe("GitService.diffStat", () => {
     const result = await gitService.diffStat("/repo", "main", "feat/x");
 
     expect(result).toBe("3 files changed, 42 insertions(+), 5 deletions(-)");
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "git",
+    expect(execFn).toHaveBeenCalledWith(
       ["-C", "/repo", "diff", "--stat", "main...feat/x"],
       expect.objectContaining({ timeout: 30_000 }),
     );

@@ -5,12 +5,12 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { execFileSync } from "child_process";
 import { readFileSync, existsSync, statSync, realpathSync } from "fs";
 import { resolve, isAbsolute, sep } from "path";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { GitService } from "./git-service";
+import type { GitExecutor } from "./git-executor/index.js";
 
 /** Handles file listing and content reading for workspaces and threads. */
 @injectable()
@@ -19,6 +19,7 @@ export class FileService {
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(GitService) private readonly gitService: GitService,
+    @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
   ) {}
 
   /**
@@ -26,23 +27,17 @@ export class FileService {
    * Uses `git ls-files --cached --others --exclude-standard` to include
    * untracked files that are not gitignored.
    */
-  list(workspaceId: string, threadId?: string): string[] {
+  async list(workspaceId: string, threadId?: string): Promise<string[]> {
     const cwd = this.resolveWorkingDir(workspaceId, threadId);
 
     try {
-      const output = execFileSync(
-        "git",
+      const { stdout } = await this.gitExecutor.exec(
         ["ls-files", "--cached", "--others", "--exclude-standard"],
-        {
-          cwd,
-          maxBuffer: 10 * 1024 * 1024,
-          windowsHide: true,
-        },
+        { cwd },
       );
-      return output
-        .toString("utf-8")
+      return stdout
         .split("\n")
-        .filter((line) => line.length > 0);
+        .filter((line: string) => line.length > 0);
     } catch (err) {
       throw new Error(
         `Failed to list files: ${err instanceof Error ? err.message : String(err)}`,

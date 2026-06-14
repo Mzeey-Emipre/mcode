@@ -160,7 +160,7 @@ export class CleanupWorker {
 
       const rel = relative(worktreeBase, resolvedWt);
       const isManagedPath = !(rel.startsWith("..") || isAbsolute(rel));
-      if (!isManagedPath && !this.gitService.isRegisteredWorktreePath(resolvedWs, resolvedWt)) {
+      if (!isManagedPath && !(await this.gitService.isRegisteredWorktreePath(resolvedWs, resolvedWt))) {
         throw new Error(`worktree_path is not a registered worktree for repo: ${resolvedWt}`);
       }
 

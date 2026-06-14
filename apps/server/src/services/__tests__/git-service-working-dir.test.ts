@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect } from "vitest";
 import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
+import { FakeGitExecutor } from "../git-executor/fake-git-executor.js";
 import { GitService } from "../git-service.js";
 
 /**
@@ -9,7 +10,7 @@ import { GitService } from "../git-service.js";
  * exercise the worktree-vs-root branch the terminal rebind relies on.
  */
 function makeGitService(): GitService {
-  return new GitService(undefined as unknown as WorkspaceRepo);
+  return new GitService(undefined as unknown as WorkspaceRepo, new FakeGitExecutor());
 }
 
 describe("GitService.resolveWorkingDir", () => {

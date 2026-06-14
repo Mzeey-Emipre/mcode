@@ -6,12 +6,12 @@
 
 import { injectable, inject } from "tsyringe";
 import { watch, existsSync, type FSWatcher } from "fs";
-import { execFileSync } from "child_process";
 import { join, dirname, basename } from "path";
 import { logger } from "@mcode/shared";
 import { broadcast } from "../transport/push";
-import { getCurrentBranchForPath } from "./git-service";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
+import type { GitExecutor } from "./git-executor/index.js";
+import type { GitService } from "./git-service.js";
 
 /** Debounce delay in milliseconds to batch rapid HEAD file writes (e.g., during rebase). */
 const DEBOUNCE_MS = 200;
@@ -34,6 +34,8 @@ export class GitWatcherService {
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
+    @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
+    @inject("GitService") private readonly gitService: GitService,
   ) {}
 
   /**
@@ -41,15 +43,13 @@ export class GitWatcherService {
    * Uses `git rev-parse --git-dir` to handle both main repos and worktrees.
    * Returns null if the path is not a git repository or the HEAD file is missing.
    */
-  private resolveHeadFile(workspacePath: string): string | null {
+  private async resolveHeadFile(workspacePath: string): Promise<string | null> {
     let gitDir: string;
     try {
-      const output = execFileSync(
-        "git",
+      const { stdout } = await this.gitExecutor.exec(
         ["-C", workspacePath, "rev-parse", "--git-dir"],
-        { stdio: "pipe", encoding: "utf-8", windowsHide: true },
       );
-      gitDir = output.trim();
+      gitDir = stdout.trim();
     } catch {
       logger.warn("GitWatcherService: not a git repo, skipping watcher", {
         workspacePath,
@@ -78,12 +78,12 @@ export class GitWatcherService {
    * Start watching the HEAD file for the given workspace.
    * A duplicate call for the same `workspaceId` is a no-op (existing watcher is kept).
    */
-  watchWorkspace(workspaceId: string, workspacePath: string): void {
+  async watchWorkspace(workspaceId: string, workspacePath: string): Promise<void> {
     if (this.watchers.has(workspaceId)) {
       return;
     }
 
-    const headFile = this.resolveHeadFile(workspacePath);
+    const headFile = await this.resolveHeadFile(workspacePath);
     if (!headFile) {
       return;
     }
@@ -109,12 +109,18 @@ export class GitWatcherService {
         }
         entry.timer = setTimeout(() => {
           entry.timer = null;
-          const branch = getCurrentBranchForPath(workspacePath);
-          logger.info("GitWatcherService: branch changed", {
-            workspaceId,
-            branch,
+          void this.gitService.getCurrentBranchAt(workspacePath).then((branch) => {
+            logger.info("GitWatcherService: branch changed", {
+              workspaceId,
+              branch,
+            });
+            broadcast("branch.changed", { workspaceId, branch });
+          }).catch((err) => {
+            logger.warn("GitWatcherService: failed to read branch after HEAD change", {
+              workspaceId,
+              error: err instanceof Error ? err.message : String(err),
+            });
           });
-          broadcast("branch.changed", { workspaceId, branch });
         }, DEBOUNCE_MS);
       });
 
@@ -144,15 +150,15 @@ export class GitWatcherService {
    * Called on thread.list to catch `git init` within a session.
    * Returns true if the workspace is now a git repo and the watcher was started.
    */
-  retryWatch(workspaceId: string, workspacePath: string): boolean {
+  async retryWatch(workspaceId: string, workspacePath: string): Promise<boolean> {
     if (this.watchers.has(workspaceId)) return true;
 
-    const headFile = this.resolveHeadFile(workspacePath);
+    const headFile = await this.resolveHeadFile(workspacePath);
     if (!headFile) return false;
 
     // The folder is now a git repo — update the DB, start watching, notify clients.
     this.workspaceRepo.setIsGitRepo(workspaceId, true);
-    this.watchWorkspace(workspaceId, workspacePath);
+    await this.watchWorkspace(workspaceId, workspacePath);
 
     logger.info("GitWatcherService: non-git workspace became a git repo", {
       workspaceId,

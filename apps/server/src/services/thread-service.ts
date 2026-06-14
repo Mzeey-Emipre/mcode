@@ -66,7 +66,7 @@ export class ThreadService {
         // the 100-character limit enforced by validateWorktreeName.
         const sanitized = sanitizeBranchForFolder(branch).slice(0, 91);
         const worktreeName = `${sanitized}-${shortId}`;
-        const info = this.gitService.createWorktree(
+        const info = await this.gitService.createWorktree(
           workspace.path,
           worktreeName,
           branch,

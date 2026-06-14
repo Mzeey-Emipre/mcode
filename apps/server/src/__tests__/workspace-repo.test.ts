@@ -8,6 +8,7 @@ import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { WorkspaceService } from "../services/workspace-service";
 import { AttachmentService } from "../services/attachment-service";
 import type { AgentService } from "../services/agent-service";
+import { FakeGitExecutor } from "../services/git-executor/fake-git-executor.js";
 
 describe("WorkspaceRepo", () => {
   let db: Database.Database;
@@ -90,22 +91,29 @@ describe("WorkspaceService", () => {
     const threadRepo = new ThreadRepo(db);
     const cleanupJobRepo = new CleanupJobRepo(db);
     const mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
-    service = new WorkspaceService(repo, threadRepo, cleanupJobRepo, mockAttachmentService, { stopSession: vi.fn().mockResolvedValue(undefined) } as unknown as AgentService);
+    service = new WorkspaceService(
+      repo,
+      threadRepo,
+      cleanupJobRepo,
+      mockAttachmentService,
+      { stopSession: vi.fn().mockResolvedValue(undefined) } as unknown as AgentService,
+      new FakeGitExecutor(),
+    );
   });
 
-  it("create() returns existing workspace when path already exists", () => {
-    const ws1 = service.create("project-a", "/tmp/existing");
-    service.create("other", "/tmp/other");
+  it("create() returns existing workspace when path already exists", async () => {
+    const ws1 = await service.create("project-a", "/tmp/existing");
+    await service.create("other", "/tmp/other");
 
-    const ws2 = service.create("project-a-renamed", "/tmp/existing");
+    const ws2 = await service.create("project-a-renamed", "/tmp/existing");
 
     expect(ws2.id).toBe(ws1.id);
     expect(ws2.name).toBe("project-a");
     expect(repo.listAll()[0]!.id).toBe(ws1.id);
   });
 
-  it("create() creates a new workspace when path does not exist", () => {
-    const ws = service.create("new-project", "/tmp/new");
+  it("create() creates a new workspace when path does not exist", async () => {
+    const ws = await service.create("new-project", "/tmp/new");
     expect(ws.name).toBe("new-project");
     expect(ws.path).toBe("/tmp/new");
   });

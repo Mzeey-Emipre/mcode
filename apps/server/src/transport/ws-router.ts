@@ -263,7 +263,7 @@ async function dispatch(
     case "workspace.list":
       return deps.workspaceService.list();
     case "workspace.create": {
-      const workspace = deps.workspaceService.create(params.name, params.path);
+      const workspace = await deps.workspaceService.create(params.name, params.path);
       try {
         deps.gitWatcherService.watchWorkspace(workspace.id, workspace.path);
       } catch (err) {
@@ -424,7 +424,7 @@ async function dispatch(
     case "git.checkout": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return;
-      deps.gitService.checkout(params.workspaceId, params.branch);
+      await deps.gitService.checkout(params.workspaceId, params.branch);
       return;
     }
     case "git.listWorktrees": {
@@ -435,7 +435,7 @@ async function dispatch(
     case "git.fetchBranch": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return;
-      deps.gitService.fetchBranch(
+      await deps.gitService.fetchBranch(
         params.workspaceId,
         params.branch,
         params.prNumber,
