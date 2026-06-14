@@ -9,6 +9,7 @@ import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { GitExecutor } from "./git-executor/index.js";
+import { RealGitExecutor } from "./git-executor/real-git-executor.js";
 
 /** Service for capturing and comparing git working tree snapshots. */
 @injectable()
@@ -26,25 +27,33 @@ export class SnapshotService {
    * so consecutive calls on a clean tree return the same value.
    */
   async captureRef(cwd: string): Promise<string> {
-    const timeout = 10_000;
+    const timeout = RealGitExecutor.DEFAULT_TIMEOUT;
 
-    const { stdout: statusOut } = await this.gitExecutor.exec(
-      ["-C", cwd, "status", "--porcelain"],
-      { timeout },
-    );
-    if (statusOut.trim() === "") {
+    if (await this.isWorkingTreeClean(cwd, timeout)) {
       try {
         const { stdout: treeOut } = await this.gitExecutor.exec(
           ["-C", cwd, "rev-parse", "HEAD^{tree}"],
           { timeout },
         );
-        return treeOut.trim();
+        // Re-check after rev-parse: agent tools can write between status and tree lookup.
+        if (await this.isWorkingTreeClean(cwd, timeout)) {
+          return treeOut.trim();
+        }
       } catch {
         // Unborn repo or missing HEAD: fall through to staged capture path.
       }
     }
 
     return this.captureStagedTreeRef(cwd, timeout);
+  }
+
+  /** Return true when git reports no uncommitted changes in the working tree. */
+  private async isWorkingTreeClean(cwd: string, timeout: number): Promise<boolean> {
+    const { stdout } = await this.gitExecutor.exec(
+      ["-C", cwd, "status", "--porcelain"],
+      { timeout },
+    );
+    return stdout.trim() === "";
   }
 
   /** Get list of files changed between two refs (tree or commit SHAs). */
@@ -56,7 +65,7 @@ export class SnapshotService {
     try {
       const { stdout } = await this.gitExecutor.exec(
         ["-C", cwd, "diff", "--name-only", refBefore, refAfter],
-        { timeout: 10_000 },
+        { timeout: RealGitExecutor.DEFAULT_TIMEOUT },
       );
 
       const output = stdout.trim();
@@ -89,7 +98,9 @@ export class SnapshotService {
     }
 
     try {
-      const { stdout } = await this.gitExecutor.exec(args, { timeout: 10_000 });
+      const { stdout } = await this.gitExecutor.exec(args, {
+        timeout: RealGitExecutor.DEFAULT_TIMEOUT,
+      });
       const result = stdout.trim();
 
       if (maxLines) {
@@ -104,9 +115,12 @@ export class SnapshotService {
 
   /** Validate that a git ref still exists (not garbage collected). */
   async validateRef(cwd: string, ref: string): Promise<boolean> {
+    if (!ref || ref.startsWith("-")) {
+      return false;
+    }
     try {
       await this.gitExecutor.exec(["-C", cwd, "cat-file", "-t", ref], {
-        timeout: 10_000,
+        timeout: RealGitExecutor.DEFAULT_TIMEOUT,
       });
       return true;
     } catch {
@@ -125,7 +139,7 @@ export class SnapshotService {
     try {
       const { stdout } = await this.gitExecutor.exec(
         ["-C", cwd, "diff", "--numstat", "--find-renames", refBefore, refAfter],
-        { timeout: 10_000 },
+        { timeout: RealGitExecutor.DEFAULT_TIMEOUT },
       );
 
       return stdout
