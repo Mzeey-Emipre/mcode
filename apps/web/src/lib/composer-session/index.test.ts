@@ -85,7 +85,7 @@ describe("resolveComposerSession", () => {
 });
 
 describe("snapshotComposerDraft", () => {
-  it("copies attachments without sharing the array reference", () => {
+  it("copies attachments without sharing array or object references", () => {
     const draft: ComposerDraft = {
       input: "x",
       attachments: [{
@@ -101,6 +101,7 @@ describe("snapshotComposerDraft", () => {
     };
     const snap = snapshotComposerDraft(draft);
     expect(snap.attachments).not.toBe(draft.attachments);
+    expect(snap.attachments[0]).not.toBe(draft.attachments[0]);
     expect(snap.attachments).toEqual(draft.attachments);
   });
 });

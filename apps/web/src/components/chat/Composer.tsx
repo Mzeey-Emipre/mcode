@@ -3,7 +3,7 @@ import { useThreadStore, scheduleDrainAfterEdit, getHandoffStatus } from "@/stor
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { getThreadRecord } from "@/stores/thread-record";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useWorkspaceThread } from "@/stores/workspace-selectors";
+import { useWorkspaceThread, readWorkspaceThread } from "@/stores/workspace-selectors";
 import { resolveComposerSession, snapshotComposerDraft } from "@/lib/composer-session";
 import type { PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
 import { PERMISSION_MODES, INTERACTION_MODES, getTransport } from "@/transport";
@@ -822,9 +822,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const session = resolveComposerSession({
       threadId,
       getDraft,
-      threadRow: threadId
-        ? useWorkspaceStore.getState().threads.find((t) => t.id === threadId)
-        : undefined,
+      threadRow: threadId ? readWorkspaceThread(threadId) : undefined,
       threadSettings: threadId
         ? (() => {
             const s = useThreadStore.getState().getThreadSettings(threadId);

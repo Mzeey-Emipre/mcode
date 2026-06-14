@@ -48,7 +48,10 @@ export interface ResolveComposerSessionInput {
 
 /** Snapshot the outgoing thread draft for persistence. */
 export function snapshotComposerDraft(draft: ComposerDraft): ComposerDraft {
-  return { ...draft, attachments: [...draft.attachments] };
+  return {
+    ...draft,
+    attachments: draft.attachments.map((attachment) => ({ ...attachment })),
+  };
 }
 
 /**
@@ -82,7 +85,7 @@ export function resolveComposerSession(input: ResolveComposerSessionInput): Comp
   if (saved) {
     return {
       input: saved.input,
-      attachments: saved.attachments,
+      attachments: saved.attachments.map((attachment) => ({ ...attachment })),
       modelId: saved.modelId,
       provider: saved.provider ?? getDefaultProviderId(),
       reasoning: normalizeReasoningLevelForModel(saved.modelId, saved.reasoning),
@@ -126,21 +129,4 @@ export function resolveComposerSession(input: ResolveComposerSessionInput): Comp
     thinking: threadRow?.thinking ?? null,
     codexFastMode: threadRow?.codex_fast_mode ?? null,
   };
-}
-
-/** Convert live composer draft state into a {@link ComposerSession}. */
-export function composerSessionFromDraft(
-  draft: ComposerDraft,
-  threadSettings: ResolveComposerSessionInput["threadSettings"],
-): ComposerSession {
-  return resolveComposerSession({
-    threadId: "snapshot",
-    getDraft: () => draft,
-    threadRow: undefined,
-    threadSettings,
-    globalDefaults: {
-      interactionMode: threadSettings.interactionMode,
-      permissionMode: threadSettings.permissionMode,
-    },
-  });
 }
