@@ -45,9 +45,6 @@ export class RealGitExecutor implements GitExecutor {
    */
   async exec(args: string[], opts: GitExecOptions = {}): Promise<GitExecResult> {
     const cacheKey = this.getCacheKey(args);
-    const cached = cacheKey ? this.revParseCache.get(cacheKey) : undefined;
-    if (cached) return cached;
-
     const queueKey = this.getQueueKey(args, opts);
 
     return this.enqueue(queueKey, async () => {
@@ -57,7 +54,11 @@ export class RealGitExecutor implements GitExecutor {
       if (cachedNow) return cachedNow;
 
       const result = await this.runGit(args, opts);
-      if (cacheKey) this.revParseCache.set(cacheKey, result);
+      if (cacheKey) {
+        this.revParseCache.set(cacheKey, result);
+      } else {
+        this.invalidateRevParseCacheForCwd(this.getEffectiveCwd(args, opts));
+      }
       return result;
     });
   }
@@ -106,6 +107,18 @@ export class RealGitExecutor implements GitExecutor {
    * `opts.cwd`, used as the serialisation queue key.
    */
   private getQueueKey(args: string[], opts: GitExecOptions): string {
+    return this.getEffectiveCwd(args, opts);
+  }
+
+  /** Drop cached rev-parse probes for a checkout after mutating git commands. */
+  private invalidateRevParseCacheForCwd(cwd: string): void {
+    if (cwd === "__global__") return;
+    this.revParseCache.delete(`git-dir:${cwd}`);
+    this.revParseCache.delete(`show-toplevel:${cwd}`);
+  }
+
+  /** Extract the effective working directory from `-C <path>` or `opts.cwd`. */
+  private getEffectiveCwd(args: string[], opts: GitExecOptions): string {
     const cIdx = args.indexOf("-C");
     if (cIdx !== -1 && cIdx + 1 < args.length) return args[cIdx + 1]!;
     return opts.cwd ?? "__global__";
