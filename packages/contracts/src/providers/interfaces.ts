@@ -1,6 +1,7 @@
 import type { AgentEvent } from "../events/agent-event.js";
 import type { InteractionMode } from "../models/enums.js";
 import type { AttachmentMeta } from "../models/attachment.js";
+import type { GoalState } from "../models/goal.js";
 import type { PermissionDecision, PermissionRequest } from "../models/permission.js";
 import type { ContextWindowMode, ReasoningLevel } from "../models/settings.js";
 import type { SkillInfo } from "../skills.js";
@@ -172,18 +173,17 @@ export function isCompletionCapable(provider: IAgentProvider): provider is IComp
 }
 
 /**
- * Narrowed view of an agent provider that supports session goals. A goal
- * installs a Stop-hook gate that blocks the provider from ending its turn
- * until the goal is cleared. Use `isGoalCapable()` to narrow an
- * `IAgentProvider` to this type before calling the goal methods.
+ * Narrowed view of an agent provider that supports session goals. Providers
+ * may implement this through native thread metadata or a local wrapper, but
+ * callers receive the same normalized goal state.
  */
 export interface IGoalCapable extends IAgentProvider {
-  /** Install a goal condition on a session. */
-  setGoal(sessionId: string, condition: string): void;
-  /** Remove the active goal so the next Stop event is allowed through. */
-  clearGoal(sessionId: string): void;
-  /** Return the active goal condition for a session, or undefined. */
-  getGoal(sessionId: string): string | undefined;
+  /** Install a goal condition on a session and return the active goal state. */
+  setGoal(sessionId: string, condition: string): GoalState | Promise<GoalState>;
+  /** Remove the active goal and report whether anything was cleared. */
+  clearGoal(sessionId: string): boolean | Promise<boolean>;
+  /** Return the active goal state for a session, or undefined. */
+  getGoal(sessionId: string): GoalState | undefined | Promise<GoalState | undefined>;
 }
 
 /**

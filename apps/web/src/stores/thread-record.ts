@@ -6,6 +6,7 @@ import type {
   PlanQuestion,
   PlanAnswer,
   ProviderUsageInfo,
+  GoalState,
 } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
@@ -103,6 +104,7 @@ export interface ThreadRecord {
   settings: ThreadSettings;
   context?: ThreadContextUsage;
   usageByProvider: ThreadUsageByProvider;
+  goal?: GoalState | null;
 
   lastFallback?: { requestedModel: string; actualModel: string };
   rateLimit?: { retryAfterMs?: number; limitType?: string; utilization?: number };
@@ -156,6 +158,7 @@ export function createEmptyThreadRecord(): ThreadRecord {
 
     settings: { ...DEFAULT_THREAD_SETTINGS },
     usageByProvider: {},
+    goal: null,
 
     planQuestions: null,
     planAnswers: new Map(),

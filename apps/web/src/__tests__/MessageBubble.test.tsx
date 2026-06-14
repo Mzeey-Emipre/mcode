@@ -74,6 +74,18 @@ describe("MessageBubble user messages", () => {
     });
   });
 
+  it("renders leading /goal set commands as stripped user bubbles with a receipt", async () => {
+    const { container, getByText, queryByText } = render(
+      <MessageBubble message={makeMessage("/goal ship the release")} />,
+    );
+    await waitFor(() => {
+      expect(getByText("ship the release")).toBeInTheDocument();
+    });
+    expect(queryByText("/goal ship the release")).not.toBeInTheDocument();
+    expect(getByText("Sent as goal")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='goal-pill']")).toBeNull();
+  });
+
   it("opens image preview when user activates an image attachment control", async () => {
     const user = userEvent.setup();
     const threadUuid = "550e8400-e29b-41d4-a716-446655440000";
@@ -151,6 +163,28 @@ describe("MessageBubble assistant plan-questions suppression", () => {
     sequence: 2,
     tool_calls: null,
     files_changed: null,
+  });
+
+  it("renders goal-cleared receipts once", () => {
+    const { container } = render(
+      <MessageBubble message={makeAssistantMessage("Goal cleared.")} />,
+    );
+
+    expect(container.querySelector("[data-testid='goal-pill']")).toBeInTheDocument();
+    expect((container.textContent ?? "").match(/Goal cleared/g)).toHaveLength(1);
+  });
+
+  it("renders Goal achieved as a milestone receipt, not a faint hairline pill", () => {
+    const { container, getByText } = render(
+      <MessageBubble message={makeAssistantMessage("Goal achieved in 42s.")} />,
+    );
+
+    // Same receipt vocabulary as the user-side "Sent as goal" marker.
+    expect(container.querySelector("[data-testid='goal-receipt']")).toBeInTheDocument();
+    expect(getByText("Goal achieved")).toBeInTheDocument();
+    expect(getByText("in 42s")).toBeInTheDocument();
+    // Not the hairline chapter-break used for control acknowledgements.
+    expect(container.querySelector("[data-testid='goal-pill']")).toBeNull();
   });
 
   it("renders nothing when the assistant body is exclusively a plan-questions block", () => {

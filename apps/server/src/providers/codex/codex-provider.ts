@@ -24,6 +24,7 @@ import { CleanForker } from "../../services/handoff/session-forker.js";
 import { SkillService, codexPluginNameFromSkillPath } from "../../services/skill-service.js";
 import type {
   IAgentProvider,
+  IGoalCapable,
   ISkillCatalogCapable,
   ISessionEvictable,
   SessionForker,
@@ -32,6 +33,7 @@ import type {
   ReasoningLevel,
   AgentEvent,
   AttachmentMeta,
+  GoalState,
   PermissionDecision,
   PermissionRequest,
   ProviderModelInfo,
@@ -50,6 +52,7 @@ import type {
   ReasoningEffort,
   CodexSkillMetadata,
   CompletedItem,
+  ThreadGoal,
 } from "./codex-types.js";
 import {
   mapDecisionToCodexResponse,
@@ -265,7 +268,7 @@ function completedAssistantText(item: CompletedItem | undefined): string {
 
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
 @injectable()
-export class CodexProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ISkillCatalogCapable, ProtocolAdapter<CodexSessionState> {
+export class CodexProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ISkillCatalogCapable, ProtocolAdapter<CodexSessionState> {
   readonly id: ProviderId = "codex";
   /** Codex CLI is an agentic tool with no one-shot text completion mode. */
   readonly supportsCompletion = false;
@@ -292,6 +295,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
   private pendingPermissions = new Map<string, PendingPermissionEntry>();
   /** When true, active mappers spool output chunks to artifacts immediately. */
   private outputTruncationMode = false;
+  /** Active goal state mirrored from native Codex goal RPCs and notifications. */
+  private goalsBySession = new Map<string, GoalState>();
+  /** Goal objectives waiting for a Codex app-server thread to exist. */
+  private pendingGoalObjectives = new Map<string, string>();
   /**
    * Turn input + options carried from `sendTurn` to `spawn` so a freshly
    * spawned session can run its first turn. The runtime's `acquire` only hands
@@ -325,6 +332,96 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     }
   }
 
+  /** Convert an Mcode session id into the owning thread id. */
+  private threadIdFromSession(sessionId: string): string {
+    return sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+  }
+
+  /** Convert a native Codex goal into Mcode's provider-neutral goal state. */
+  private mapCodexGoal(sessionId: string, goal: ThreadGoal, turnId?: string | null): GoalState {
+    return {
+      threadId: this.threadIdFromSession(sessionId),
+      objective: goal.objective,
+      status: goal.status,
+      tokenBudget: goal.tokenBudget,
+      tokensUsed: goal.tokensUsed,
+      timeUsedSeconds: goal.timeUsedSeconds,
+      createdAt: goal.createdAt,
+      updatedAt: goal.updatedAt,
+      providerId: "codex",
+      source: "codex",
+      turnId: turnId ?? null,
+      controls: {
+        canInspect: true,
+        canClear: goal.status !== "complete",
+      },
+    };
+  }
+
+  /** Build a provisional Codex goal state before the app-server thread exists. */
+  private provisionalGoalState(sessionId: string, objective: string): GoalState {
+    const now = Date.now();
+    const existing = this.goalsBySession.get(sessionId);
+    return {
+      threadId: this.threadIdFromSession(sessionId),
+      objective,
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: existing
+        ? Math.max(0, Math.floor((now - existing.createdAt) / 1000))
+        : 0,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      providerId: "codex",
+      source: "codex",
+      controls: {
+        canInspect: true,
+        canClear: true,
+      },
+    };
+  }
+
+  /** Mirror goal events from the mapper into the provider cache. */
+  private recordGoalEvent(sessionId: string, event: AgentEvent): void {
+    if (event.type === AgentEventType.GoalUpdated) {
+      this.goalsBySession.set(sessionId, event.goal);
+      if (event.goal.status === "complete") {
+        this.pendingGoalObjectives.delete(sessionId);
+      }
+      return;
+    }
+    if (event.type === AgentEventType.GoalCleared) {
+      this.goalsBySession.delete(sessionId);
+      this.pendingGoalObjectives.delete(sessionId);
+    }
+  }
+
+  /** Emit a goal update and update the local mirror. */
+  private emitGoalUpdated(sessionId: string, goal: GoalState): void {
+    this.goalsBySession.set(sessionId, goal);
+    this.emit("event", {
+      type: AgentEventType.GoalUpdated,
+      threadId: goal.threadId ?? this.threadIdFromSession(sessionId),
+      goal,
+    } satisfies AgentEvent);
+  }
+
+  /** Emit a goal clear and update the local mirror. */
+  private emitGoalCleared(
+    sessionId: string,
+    reason: "cleared" | "rollback" | "completed",
+  ): void {
+    this.goalsBySession.delete(sessionId);
+    this.pendingGoalObjectives.delete(sessionId);
+    this.emit("event", {
+      type: AgentEventType.GoalCleared,
+      threadId: this.threadIdFromSession(sessionId),
+      providerId: "codex",
+      reason,
+    } satisfies AgentEvent);
+  }
+
   /** Evict idle Codex sessions while preserving active turns. */
   async shedMemoryPressure(level: MemoryPressureLevel): Promise<void> {
     const result = await this.runtime.evictNonBusy(`memory-pressure:${level}`);
@@ -334,6 +431,55 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
       after: result.after,
       evicted: result.evicted.length,
     });
+  }
+
+  /**
+   * Set a native Codex thread goal. If the app-server thread has not started
+   * yet, queue the objective and apply it immediately before the first turn.
+   */
+  async setGoal(sessionId: string, condition: string): Promise<GoalState> {
+    this.pendingGoalObjectives.set(sessionId, condition);
+    const provisional = this.provisionalGoalState(sessionId, condition);
+    this.goalsBySession.set(sessionId, provisional);
+
+    const state = this.runtime.get(sessionId);
+    if (!state?.server.isAlive) {
+      return provisional;
+    }
+
+    const nativeGoal = await state.server.setGoal(condition);
+    const goal = this.mapCodexGoal(sessionId, nativeGoal);
+    this.pendingGoalObjectives.delete(sessionId);
+    this.goalsBySession.set(sessionId, goal);
+    return goal;
+  }
+
+  /** Clear a native Codex thread goal or any queued objective. */
+  async clearGoal(sessionId: string): Promise<boolean> {
+    const hadPending = this.pendingGoalObjectives.delete(sessionId);
+    const hadLocal = this.goalsBySession.delete(sessionId);
+    const state = this.runtime.get(sessionId);
+    if (!state?.server.isAlive) {
+      return hadPending || hadLocal;
+    }
+    const cleared = await state.server.clearGoal();
+    return cleared || hadPending || hadLocal;
+  }
+
+  /** Read the active native Codex thread goal, falling back to queued state. */
+  async getGoal(sessionId: string): Promise<GoalState | undefined> {
+    const state = this.runtime.get(sessionId);
+    if (!state?.server.isAlive) {
+      return this.goalsBySession.get(sessionId);
+    }
+    const nativeGoal = await state.server.getGoal();
+    if (!nativeGoal) {
+      this.goalsBySession.delete(sessionId);
+      return undefined;
+    }
+    const goal = this.mapCodexGoal(sessionId, nativeGoal);
+    this.goalsBySession.set(sessionId, goal);
+    return goal;
   }
 
   /**
@@ -464,7 +610,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
     // the staged turn is still pending. Reset the mapper and run it here.
     if (reusable && this.pendingSpawnTurns.delete(sessionId)) {
       state.lastUsedAt = Date.now();
-      void this.runTurn(sessionId, threadId, state.server, input, turnOptions);
+      void this.runTurnAfterGoal(sessionId, threadId, state.server, input, turnOptions);
       return;
     }
   }
@@ -532,6 +678,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
       const events = mapper.mapNotification(notification as CodexNotification);
       traceCodexIngest(threadId, n.method, n.params, [...generatedImageEvents, ...events]);
       for (const event of events) {
+        this.recordGoalEvent(sessionId, event);
         this.emit("event", event);
       }
     });
@@ -615,7 +762,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
       // the first turn on every new session (UI: Thinking forever, turn/start never sent).
       setImmediate(() => {
         if (!this.runtime.get(sessionId)) return;
-        void this.runTurn(sessionId, threadId, server, input, turnOptions);
+        void this.runTurnAfterGoal(sessionId, threadId, server, input, turnOptions);
       });
     }
 
@@ -818,6 +965,37 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, ISess
   /** Subscribes to native Codex skill catalog invalidations. */
   onSkillsChanged(handler: () => void): void {
     this.on("skills_changed", handler);
+  }
+
+  /** Apply a queued native goal to the app-server before dispatching a turn. */
+  private async applyPendingGoal(sessionId: string, server: CodexAppServer): Promise<void> {
+    const objective = this.pendingGoalObjectives.get(sessionId);
+    if (!objective) return;
+    const nativeGoal = await server.setGoal(objective);
+    const goal = this.mapCodexGoal(sessionId, nativeGoal);
+    this.pendingGoalObjectives.delete(sessionId);
+    this.emitGoalUpdated(sessionId, goal);
+  }
+
+  /** Applies any queued goal, then sends the turn. */
+  private async runTurnAfterGoal(
+    sessionId: string,
+    threadId: string,
+    server: CodexAppServer,
+    input: string | TurnInputPart[],
+    turnOptions?: CodexTurnOptions,
+  ): Promise<void> {
+    try {
+      await this.applyPendingGoal(sessionId, server);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      logger.error("Codex goal install failed", { sessionId, error });
+      this.emitGoalCleared(sessionId, "rollback");
+      this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId, outcome: "errored" } satisfies AgentEvent);
+      return;
+    }
+    await this.runTurn(sessionId, threadId, server, input, turnOptions);
   }
 
   /**

@@ -450,14 +450,17 @@ The maximum input characters a provider accepts per turn. Declared as
 delivery went off-band (see `Handoff delivery`); retained as Provider metadata.
 
 ### Goal support
-The ability to set, show, and clear a standing **goal** — a condition the
-agent keeps in view across turns — exposed to the user through `/goal`. Goal
-support is a **capability a provider has**, not a provider it is: a provider
-either implements the goal capability or it does not. On a provider that
-lacks it, `/goal` passes through to the model as plain text so the model
-still sees what the user typed. Claude implements it today; Codex is the
-planned next implementer (matching the `/goal` Multi-provider command entry
-under `Slash command`).
+The ability to set, inspect, and clear a standing **goal**: a thread-scoped
+completion condition exposed through `/goal`. A goal belongs to the thread's
+provider runtime rather than a single chat message. Mcode may render
+transcript receipts for goal events, but the active goal state is provider
+metadata.
+
+Goal support is a **capability a provider has**, not a provider it is: a
+provider either implements Mcode's goal capability, exposes a native goal API
+that Mcode can bridge, or lacks goal support. On a provider that lacks it,
+`/goal` passes through to the model as plain text so the model still sees what
+the user typed.
 
 ## Server runtime
 
@@ -702,11 +705,10 @@ Slash commands sit in one of three availability layers:
   by the active provider before it reaches the client. The composer does
   **not** re-filter these; they arrive already scoped.
 - **Multi-provider command** — offered to an explicit, growing set of
-  providers. `/goal` (Claude today, Codex planned) and `/m:plan` (every
-  provider except Copilot, which has its own native plan mode) are built-ins
-  in this layer. Their availability is declared per command in
-  `useSlashCommand` (`BuiltinCommand.isAvailable`), not scattered as inline
-  conditionals.
+  providers. `/goal` is backed by provider goal support, while `/m:plan`
+  applies to every provider except Copilot, which has its own native plan mode.
+  Built-in availability is declared per command in `useSlashCommand`
+  (`BuiltinCommand.isAvailable`), not scattered as inline conditionals.
 - **Mcode-level command** — app-level, offered for every provider regardless
   of which one is active (e.g. `/compact`).
 

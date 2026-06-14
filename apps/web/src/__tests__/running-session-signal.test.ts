@@ -1,11 +1,13 @@
 import {
   resetThreadStoreForTests,
   getTestThreadAgentStartTime,
+  readThreadField,
 } from "@/stores/thread-store-test-utils";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { createMockThread } from "./mocks/transport";
+import type { GoalState } from "@mcode/contracts";
 
 describe("running-session signal", () => {
   beforeEach(() => {
@@ -60,6 +62,40 @@ describe("running-session signal", () => {
     expect(ids.has("stale")).toBe(false);
     expect(ids.has("t-1")).toBe(true);
     expect(ids.has("t-2")).toBe(true);
+  });
+
+  it("stores and clears active goal state from agent events", () => {
+    const goal: GoalState = {
+      threadId: "t-1",
+      objective: "ship the feature",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 3,
+      createdAt: Date.now() - 3000,
+      updatedAt: Date.now(),
+      providerId: "codex",
+      source: "codex",
+      controls: { canInspect: true, canClear: true },
+    };
+
+    const store = useThreadStore.getState();
+    store.handleAgentEvent("t-1", {
+      method: "session.goalUpdated",
+      type: "goalUpdated",
+      threadId: "t-1",
+      goal,
+    });
+
+    expect(readThreadField("t-1", (r) => r.goal?.objective)).toBe("ship the feature");
+
+    store.handleAgentEvent("t-1", {
+      method: "session.goalCleared",
+      type: "goalCleared",
+      threadId: "t-1",
+    });
+
+    expect(readThreadField("t-1", (r) => r.goal)).toBeNull();
   });
 });
 

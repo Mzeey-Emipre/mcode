@@ -28,6 +28,106 @@ describe("CodexEventMapper", () => {
     expect(events).toEqual([]);
   });
 
+  it("maps native goal updates into goal state events", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "thread/goal/updated",
+      params: {
+        threadId: "codex-thread",
+        turnId: "turn-1",
+        goal: {
+          threadId: "codex-thread",
+          objective: "ship the release",
+          status: "active",
+          tokenBudget: null,
+          tokensUsed: 10,
+          timeUsedSeconds: 5,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "goalUpdated",
+        threadId: "test-thread",
+        goal: expect.objectContaining({
+          threadId: "test-thread",
+          objective: "ship the release",
+          status: "active",
+          providerId: "codex",
+          source: "codex",
+          turnId: "turn-1",
+          controls: { canInspect: true, canClear: true },
+        }),
+      },
+    ]);
+  });
+
+  it("maps native goal completion into state, receipt, and clear events", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "thread/goal/updated",
+      params: {
+        threadId: "codex-thread",
+        turnId: "turn-1",
+        goal: {
+          threadId: "codex-thread",
+          objective: "ship the release",
+          status: "complete",
+          tokenBudget: null,
+          tokensUsed: 25,
+          timeUsedSeconds: 19,
+          createdAt: 1,
+          updatedAt: 20,
+        },
+      },
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "goalUpdated",
+        threadId: "test-thread",
+        goal: expect.objectContaining({ status: "complete" }),
+      }),
+      {
+        type: "message",
+        threadId: "test-thread",
+        content: "Goal achieved in 19s.",
+        tokens: null,
+      },
+      {
+        type: "goalCleared",
+        threadId: "test-thread",
+        providerId: "codex",
+        reason: "completed",
+        turnId: "turn-1",
+      },
+    ]);
+  });
+
+  it("maps native goal clear notifications", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "thread/goal/cleared",
+      params: {
+        threadId: "codex-thread",
+        turnId: "turn-1",
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "goalCleared",
+        threadId: "test-thread",
+        providerId: "codex",
+        reason: "cleared",
+        turnId: "turn-1",
+      },
+    ]);
+  });
+
   it("emits Agent toolUse for item/started collabAgentToolCall", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",

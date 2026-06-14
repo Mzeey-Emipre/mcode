@@ -111,6 +111,44 @@ export interface TurnInterruptParams { threadId: string }
 /** Result returned by the `turn/interrupt` RPC method. */
 export interface TurnInterruptResult { success: boolean }
 
+/** Native lifecycle state for a Codex thread goal. */
+export type ThreadGoalStatus = "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
+
+/** Native goal object returned by Codex app-server thread goal RPCs. */
+export interface ThreadGoal {
+  threadId: string;
+  objective: string;
+  status: ThreadGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Parameters for the `thread/goal/set` RPC method. */
+export interface ThreadGoalSetParams {
+  threadId: string;
+  objective?: string | null;
+  status?: ThreadGoalStatus | null;
+  tokenBudget?: number | null;
+}
+
+/** Result returned by the `thread/goal/set` RPC method. */
+export interface ThreadGoalSetResult { goal: ThreadGoal }
+
+/** Parameters for the `thread/goal/get` RPC method. */
+export interface ThreadGoalGetParams { threadId: string }
+
+/** Result returned by the `thread/goal/get` RPC method. */
+export interface ThreadGoalGetResult { goal: ThreadGoal | null }
+
+/** Parameters for the `thread/goal/clear` RPC method. */
+export interface ThreadGoalClearParams { threadId: string }
+
+/** Result returned by the `thread/goal/clear` RPC method. */
+export interface ThreadGoalClearResult { cleared: boolean }
+
 // Handshake RPCs
 
 /** Result returned by the `model/list` RPC method. */
@@ -277,6 +315,19 @@ export interface ErrorNotificationPayload {
   [key: string]: unknown;
 }
 
+/** Payload for native Codex goal-update notifications. */
+export interface ThreadGoalUpdatedPayload {
+  threadId: string;
+  turnId?: string | null;
+  goal: ThreadGoal;
+}
+
+/** Payload for native Codex goal-cleared notifications. */
+export interface ThreadGoalClearedPayload {
+  threadId: string;
+  turnId?: string | null;
+}
+
 /**
  * Discriminated union of all JSON-RPC notifications from `codex app-server`
  * that reach the mapper (lifecycle notifications are filtered upstream).
@@ -299,4 +350,6 @@ export type CodexNotification =
   | (JsonRpcNotification<TurnPlanUpdatedPayload> & { method: "turn/plan/updated" })
   | (JsonRpcNotification<ItemCompletedPayload> & { method: "item/completed" })
   | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn/completed" })
+  | (JsonRpcNotification<ThreadGoalUpdatedPayload> & { method: "thread/goal/updated" })
+  | (JsonRpcNotification<ThreadGoalClearedPayload> & { method: "thread/goal/cleared" })
   | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" });

@@ -33,42 +33,42 @@ function fakeCommand(opts: {
 }
 
 describe("CommandRouter", () => {
-  it("returns passthrough when no registered command matches", () => {
+  it("returns passthrough when no registered command matches", async () => {
     const cmd = fakeCommand({ pattern: /^\/goal\b/, outcome: { kind: "handled" } });
     const router = new CommandRouter([cmd]);
 
-    const outcome = router.route(ctx("just a normal message"));
+    const outcome = await router.route(ctx("just a normal message"));
 
     expect(outcome.kind).toBe("passthrough");
     expect(cmd.handle).not.toHaveBeenCalled();
   });
 
-  it("dispatches to a matching command and surfaces its handled outcome", () => {
+  it("dispatches to a matching command and surfaces its handled outcome", async () => {
     const cmd = fakeCommand({ pattern: /^\/goal\b/, outcome: { kind: "handled" } });
     const router = new CommandRouter([cmd]);
 
     const routed = ctx("/goal clear");
-    const outcome = router.route(routed);
+    const outcome = await router.route(routed);
 
     expect(outcome.kind).toBe("handled");
     expect(cmd.handle).toHaveBeenCalledWith(routed);
   });
 
-  it("surfaces a command's rewrite outcome with the rewritten content", () => {
+  it("surfaces a command's rewrite outcome with the rewritten content", async () => {
     const cmd = fakeCommand({
       pattern: /^\/goal\b/,
       outcome: { kind: "rewrite", content: "rewritten directive" },
     });
     const router = new CommandRouter([cmd]);
 
-    const outcome = router.route(ctx("/goal ship it"));
+    const outcome = await router.route(ctx("/goal ship it"));
 
     expect(outcome.kind).toBe("rewrite");
     if (outcome.kind !== "rewrite") throw new Error("expected rewrite");
     expect(outcome.content).toBe("rewritten directive");
   });
 
-  it("returns passthrough without handling when the provider lacks the required capability", () => {
+  it("returns passthrough without handling when the provider lacks the required capability", async () => {
     const cmd = fakeCommand({
       pattern: /^\/goal\b/,
       outcome: { kind: "handled" },
@@ -76,13 +76,13 @@ describe("CommandRouter", () => {
     });
     const router = new CommandRouter([cmd]);
 
-    const outcome = router.route(ctx("/goal ship it"));
+    const outcome = await router.route(ctx("/goal ship it"));
 
     expect(outcome.kind).toBe("passthrough");
     expect(cmd.handle).not.toHaveBeenCalled();
   });
 
-  it("handles the command when the provider satisfies the required capability", () => {
+  it("handles the command when the provider satisfies the required capability", async () => {
     const capability = vi.fn(() => true);
     const cmd = fakeCommand({
       pattern: /^\/goal\b/,
@@ -92,19 +92,19 @@ describe("CommandRouter", () => {
     const router = new CommandRouter([cmd]);
 
     const provider = fakeProvider();
-    const outcome = router.route(ctx("/goal ship it", provider));
+    const outcome = await router.route(ctx("/goal ship it", provider));
 
     expect(outcome.kind).toBe("handled");
     expect(capability).toHaveBeenCalledWith(provider);
     expect(cmd.handle).toHaveBeenCalled();
   });
 
-  it("dispatches to the first matching command in registration order", () => {
+  it("dispatches to the first matching command in registration order", async () => {
     const first = fakeCommand({ pattern: /^\/goal\b/, outcome: { kind: "handled" } });
     const second = fakeCommand({ pattern: /^\/goal\b/, outcome: { kind: "rewrite", content: "x" } });
     const router = new CommandRouter([first, second]);
 
-    const outcome = router.route(ctx("/goal show"));
+    const outcome = await router.route(ctx("/goal show"));
 
     expect(outcome.kind).toBe("handled");
     expect(first.handle).toHaveBeenCalled();

@@ -90,6 +90,7 @@ function truncateTitle(content: string): string {
 const FORK_HISTORY_BUDGET_BYTES = 1_000_000;
 const FORK_HISTORY_PAGE_SIZE = 100;
 const FORK_HISTORY_MAX_MESSAGES = 500;
+const GOAL_ACHIEVED_RECEIPT_RE = /^Goal achieved in \d+s\.$/;
 
 /** Orchestrates agent sessions, message sending, and event forwarding. */
 @injectable()
@@ -169,7 +170,7 @@ export class AgentService {
        * a failed send doesn't leave a hidden gate (e.g. a Stop-hook goal) active
        * on the next turn; a transient retry keeps the side effect installed.
        */
-      pendingRollback: (() => void) | null;
+      pendingRollback: (() => void | Promise<void>) | null;
     }
   >();
   /**
@@ -342,9 +343,9 @@ export class AgentService {
     // onDispatch is deferred to immediately before `sendTurn` so a send failure
     // can't leave a stale side effect (e.g. a goal gate) on the provider; the
     // catch block runs onRollback as a belt-and-suspenders guard.
-    let pendingDispatch: (() => void) | null = null;
-    let pendingRollback: (() => void) | null = null;
-    const commandOutcome = this.commandRouter.route({
+    let pendingDispatch: (() => void | Promise<void>) | null = null;
+    let pendingRollback: (() => void | Promise<void>) | null = null;
+    const commandOutcome = await this.commandRouter.route({
       threadId,
       content,
       provider: this.providerRegistry.resolve(effectiveProvider),
@@ -591,8 +592,12 @@ export class AgentService {
     // block below runs the rollback so failures don't leave a hidden side
     // effect active. Only set for a rewrite outcome that supplied onDispatch.
     if (pendingDispatch !== null) {
+      // Flag the attempt before running it so the catch-block rollback fires
+      // even if the (possibly async) side effect itself throws. Awaited because
+      // a command's onDispatch may be async (e.g. installing a goal), and the
+      // install must complete before the provider turn is dispatched.
       commandDispatched = true;
-      pendingDispatch();
+      await pendingDispatch();
       logger.info("Command side effect installed; dispatching to provider", {
         threadId,
       });
@@ -1509,7 +1514,7 @@ export class AgentService {
     // only here, after the retry budget is spent; transient retries keep it.
     if (pendingRollback !== null) {
       try {
-        pendingRollback();
+        await pendingRollback();
       } catch (clearErr) {
         logger.warn("Failed to roll back command side effect after failed send", {
           threadId,
@@ -1615,30 +1620,53 @@ export class AgentService {
             // user later switches model mid-conversation.
             const thread = this.threadRepo.findById(event.threadId);
             const modelForMessage = thread?.model ?? null;
-            // Buffer the body behind the finalize seam instead of writing it
-            // eagerly. TurnFinalizer.finalize materializes the row only when the
-            // TurnSubstance predicate holds, so a turn that produced no tool call,
-            // body, narration, or hook leaves no assistant row (#578).
-            const attachments = this.turnFinalizer.getBufferedAssistantAttachments(event.threadId);
-            const messageId = this.turnFinalizer.bufferAssistantBody(
-              event.threadId,
-              event.content,
-              modelForMessage,
-              attachments,
-            );
-            // Carry the deterministic message ID so the broadcast schema passes it
-            // through to the client. The client uses it for stable message identity
-            // (branching, dedup across Electron's dual MessagePort+WebSocket channels).
-            event.messageId = messageId;
-            // Carry the model too so the client's locally-built Message can
-            // show the model name in the footer immediately — without it the
-            // footer renders without the model until a thread refresh re-fetches
-            // the persisted row from the DB.
-            event.model = modelForMessage;
-            if (attachments.length > 0) {
-              event.attachments = attachments;
+            const isPostTurnGoalReceipt =
+              this.turnCompleteSeenByThread.has(event.threadId) &&
+              GOAL_ACHIEVED_RECEIPT_RE.test(event.content.trim());
+
+            if (isPostTurnGoalReceipt) {
+              const { messages } = this.messageRepo.listByThread(event.threadId, 1);
+              const last = messages[messages.length - 1] ?? null;
+              const receipt = last?.role === "assistant" && last.content === event.content
+                ? last
+                : this.messageRepo.create(
+                  event.threadId,
+                  "assistant",
+                  event.content,
+                  last ? last.sequence + 1 : 1,
+                  undefined,
+                  undefined,
+                  undefined,
+                  modelForMessage,
+                );
+              event.messageId = receipt.id;
+              event.model = modelForMessage;
+            } else {
+              // Buffer the body behind the finalize seam instead of writing it
+              // eagerly. TurnFinalizer.finalize materializes the row only when the
+              // TurnSubstance predicate holds, so a turn that produced no tool call,
+              // body, narration, or hook leaves no assistant row (#578).
+              const attachments = this.turnFinalizer.getBufferedAssistantAttachments(event.threadId);
+              const messageId = this.turnFinalizer.bufferAssistantBody(
+                event.threadId,
+                event.content,
+                modelForMessage,
+                attachments,
+              );
+              // Carry the deterministic message ID so the broadcast schema passes it
+              // through to the client. The client uses it for stable message identity
+              // (branching, dedup across Electron's dual MessagePort+WebSocket channels).
+              event.messageId = messageId;
+              // Carry the model too so the client's locally-built Message can
+              // show the model name in the footer immediately — without it the
+              // footer renders without the model until a thread refresh re-fetches
+              // the persisted row from the DB.
+              event.model = modelForMessage;
+              if (attachments.length > 0) {
+                event.attachments = attachments;
+              }
+              this.turnFinalizer.resetStreamingText(event.threadId);
             }
-            this.turnFinalizer.resetStreamingText(event.threadId);
           } catch (err) {
             logger.error("Failed to persist assistant message", {
               threadId: event.threadId,

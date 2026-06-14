@@ -21,6 +21,7 @@ import type {
   ContextWindowMode,
   AgentEvent,
   AttachmentMeta,
+  GoalState,
   ProviderModelInfo,
   ProviderUsageInfo,
   QuotaCategory,
@@ -73,6 +74,12 @@ function restoreProcessEnv(backup: Record<string, string | undefined>): void {
 
 /** Max queued messages before push() warns and drops. */
 const MAX_QUEUE_DEPTH = 20;
+
+interface ClaudeGoalEntry {
+  readonly objective: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
 
 /**
  * Per-session state owned by the {@link SessionRuntime}. Holds the live SDK
@@ -326,7 +333,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
    * cleared by `/goal clear`. In-memory only — does not persist across
    * server restarts.
    */
-  private goalsBySession = new Map<string, string>();
+  private goalsBySession = new Map<string, ClaudeGoalEntry>();
   /**
    * Session IDs for which a stop was requested before the session was created.
    * Checked by doSendMessage after session creation; if found the session is
@@ -1182,7 +1189,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
             return {
               decision: "block" as const,
               reason:
-                `Goal not yet met: "${goal}". Continue working until the goal is satisfied. ` +
+                `Goal not yet met: "${goal.objective}". Continue working until the goal is satisfied. ` +
                 `If you have satisfied it, ask the user to clear it with "/goal clear".`,
             };
           }],
@@ -2255,23 +2262,51 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   }
 
   /**
-   * Install a goal on a session. The next Stop event from the SDK will be
-   * blocked with a "Goal not yet met" reason until {@link clearGoal} is
-   * called. Storage is in-memory and tied to the sessionId; restarting the
-   * server clears all goals.
+   * Install a Claude-wrapper goal. Claude can enforce a stop gate, but cannot
+   * currently report achieved/paused/blocked lifecycle state back to Mcode.
    */
-  setGoal(sessionId: string, condition: string): void {
-    this.goalsBySession.set(sessionId, condition);
+  setGoal(sessionId: string, condition: string): GoalState {
+    const now = Date.now();
+    const existing = this.goalsBySession.get(sessionId);
+    const entry: ClaudeGoalEntry = {
+      objective: condition,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.goalsBySession.set(sessionId, entry);
+    return this.toGoalState(sessionId, entry);
   }
 
-  /** Remove an active goal so the next Stop event is allowed through. */
-  clearGoal(sessionId: string): void {
-    this.goalsBySession.delete(sessionId);
+  /** Remove an active Claude-wrapper goal. */
+  clearGoal(sessionId: string): boolean {
+    return this.goalsBySession.delete(sessionId);
   }
 
-  /** Return the active goal condition for a session, or undefined. */
-  getGoal(sessionId: string): string | undefined {
-    return this.goalsBySession.get(sessionId);
+  /** Return the active Claude-wrapper goal state for a session, or undefined. */
+  getGoal(sessionId: string): GoalState | undefined {
+    const entry = this.goalsBySession.get(sessionId);
+    return entry ? this.toGoalState(sessionId, entry) : undefined;
+  }
+
+  /** Convert internal Claude goal metadata into the provider-neutral state. */
+  private toGoalState(sessionId: string, entry: ClaudeGoalEntry): GoalState {
+    const now = Date.now();
+    return {
+      threadId: sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId,
+      objective: entry.objective,
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: Math.max(0, Math.floor((now - entry.createdAt) / 1000)),
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt,
+      providerId: "claude",
+      source: "claude",
+      controls: {
+        canInspect: true,
+        canClear: true,
+      },
+    };
   }
 
   /** Abort a running session, or record a pending stop if the session hasn't been created yet. */

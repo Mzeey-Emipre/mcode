@@ -362,15 +362,13 @@ describe("provider-scoped commands", () => {
     expect(names).toContain("compact");
   });
 
-  // /goal is a gradual rollout: shown only for providers that support it
-  // (currently just "claude"), hidden for every other provider and when none
-  // is selected. The cases are deliberately framed as supported/unsupported,
-  // not "claude vs the rest", so adding a provider to GOAL_PROVIDERS is the
-  // only change needed when the rollout widens.
-  it("shows /goal for a supported provider", async () => {
+  // /goal is a gradual rollout: shown only for providers that support it,
+  // hidden for every other provider and when none is selected. The cases are
+  // deliberately framed as supported/unsupported, not "Claude vs the rest".
+  it.each(["claude", "codex"] as const)("shows /goal for supported provider %s", async (providerId) => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ anchorRef: ref, providerId: "claude" })
+      useSlashCommand({ anchorRef: ref, providerId })
     );
 
     await act(async () => { result.current.onInputChange("/"); });
@@ -388,7 +386,7 @@ describe("provider-scoped commands", () => {
   it("hides /goal for an unsupported provider", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
-      useSlashCommand({ anchorRef: ref, providerId: "codex" })
+      useSlashCommand({ anchorRef: ref, providerId: "gemini" })
     );
     await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {});
