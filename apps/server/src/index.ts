@@ -12,7 +12,7 @@ import { logger, getMcodeDir } from "@mcode/shared";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
-import { RealGitExecutor } from "./services/git-executor/index.js";
+import { execFileSync } from "child_process";
 import { killOrphanedServer, reapOrphanedPtys } from "./services/orphan-cleanup";
 import { PtyPidRegistry } from "./services/pty-pid-registry";
 
@@ -130,15 +130,15 @@ if (existsSync(SHUTDOWN_MARKER_PATH)) {
 }
 
 /** Standalone dev: populate MCODE_GIT_BRANCH / MCODE_GIT_TOPLEVEL before DB path selection. */
-async function applyDevGitCheckoutEnv(): Promise<void> {
+function applyDevGitCheckoutEnv(): void {
   if (process.env.NODE_ENV === "production") return;
-  const executor = new RealGitExecutor();
   const cwd = process.cwd();
   if (!process.env.MCODE_GIT_BRANCH) {
     try {
-      const { stdout } = await executor.exec(["rev-parse", "--abbrev-ref", "HEAD"], {
+      const stdout = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
         cwd,
         timeout: 3000,
+        encoding: "utf8",
       });
       const branch = stdout.trim();
       if (branch && branch !== "HEAD") {
@@ -150,9 +150,10 @@ async function applyDevGitCheckoutEnv(): Promise<void> {
   }
   if (!process.env.MCODE_GIT_TOPLEVEL) {
     try {
-      const { stdout } = await executor.exec(["rev-parse", "--show-toplevel"], {
+      const stdout = execFileSync("git", ["rev-parse", "--show-toplevel"], {
         cwd,
         timeout: 3000,
+        encoding: "utf8",
       });
       const top = stdout.trim();
       if (top) {
@@ -164,7 +165,7 @@ async function applyDevGitCheckoutEnv(): Promise<void> {
   }
 }
 
-await applyDevGitCheckoutEnv();
+applyDevGitCheckoutEnv();
 
 // Initialize DI container (PtyPidRegistry needs the data dir path at construction time)
 const container = setupContainer(getMcodeDir());
