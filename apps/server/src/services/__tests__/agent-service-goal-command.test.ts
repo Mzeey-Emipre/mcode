@@ -286,4 +286,96 @@ describe("AgentService.sendMessage — /goal command", () => {
     expect(nonGoalStub.sendTurn).toHaveBeenCalledTimes(1);
     expect(nonGoalStub.sendTurn.mock.calls[0][0].message).toBe("/goal something");
   });
+
+  it("rejects a normal send while the thread already has an active turn", async () => {
+    const { svc, providerStub, messageRepo } = buildService(db);
+
+    await svc.sendMessage(
+      thread.id,
+      "first turn",
+      "default",
+      "claude-sonnet-4-6",
+      [],
+      undefined,
+      "claude",
+    );
+    const beforeMessages = messageRepo.listByThread(thread.id, 100).messages;
+    providerStub.sendTurn.mockClear();
+
+    await expect(
+      svc.sendMessage(
+        thread.id,
+        "duplicate turn",
+        "default",
+        "claude-sonnet-4-6",
+        [],
+        undefined,
+        "claude",
+      ),
+    ).rejects.toThrow("already has an active agent session");
+
+    expect(providerStub.sendTurn).not.toHaveBeenCalled();
+    expect(messageRepo.listByThread(thread.id, 100).messages).toEqual(beforeMessages);
+  });
+
+  it("rejects concurrent normal sends before either can persist a duplicate row", async () => {
+    const { svc, providerStub, messageRepo } = buildService(db);
+
+    const first = svc.sendMessage(
+      thread.id,
+      "first turn",
+      "default",
+      "claude-sonnet-4-6",
+      [],
+      undefined,
+      "claude",
+    );
+    const second = svc.sendMessage(
+      thread.id,
+      "duplicate turn",
+      "default",
+      "claude-sonnet-4-6",
+      [],
+      undefined,
+      "claude",
+    );
+
+    await expect(second).rejects.toThrow("already has an active agent session");
+    await first;
+
+    expect(providerStub.sendTurn).toHaveBeenCalledTimes(1);
+    const contents = messageRepo.listByThread(thread.id, 100).messages.map((m) => m.content);
+    expect(contents).toEqual(["first turn"]);
+  });
+
+  it("still handles /goal clear while the thread already has an active turn", async () => {
+    const { svc, providerStub, messageRepo } = buildService(db);
+
+    await svc.sendMessage(
+      thread.id,
+      "first turn",
+      "default",
+      "claude-sonnet-4-6",
+      [],
+      undefined,
+      "claude",
+    );
+    providerStub.sendTurn.mockClear();
+
+    await svc.sendMessage(
+      thread.id,
+      "/goal clear",
+      "default",
+      "claude-sonnet-4-6",
+      [],
+      undefined,
+      "claude",
+    );
+
+    expect(providerStub.clearGoal).toHaveBeenCalledWith(`mcode-${thread.id}`);
+    expect(providerStub.sendTurn).not.toHaveBeenCalled();
+    const contents = messageRepo.listByThread(thread.id, 100).messages.map((m) => m.content);
+    expect(contents).toContain("/goal clear");
+    expect(contents.some((content) => content.includes("Goal cleared"))).toBe(true);
+  });
 });

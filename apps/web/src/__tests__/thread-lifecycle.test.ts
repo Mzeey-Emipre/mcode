@@ -1,7 +1,10 @@
 import {
   resetThreadStoreForTests,
   getTestActiveMessages,
+  getTestThreadMessages,
   getTestThreadStreaming,
+  getTestThreadStreamingPreview,
+  getTestThreadThoughtSegments,
   getTestThreadError,
   readActiveThreadField,
 } from "@/stores/thread-store-test-utils";
@@ -28,6 +31,87 @@ describe("Thread Lifecycle Behavior", () => {
     await useThreadStore.getState().sendMessage(threadId, "Hello");
 
     expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
+  });
+
+  it("when the user sends a follow-up, stale live turn text is cleared immediately", async () => {
+    const threadId = "thread-1";
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map<string, ThreadRecord>([
+        [
+          threadId,
+          {
+            ...createEmptyThreadRecord(),
+            streaming: "Implemented logo wiring is in...",
+            streamingPreview: "Implemented logo wiring is in...",
+            currentTurnMessageId: "old-assistant",
+            currentTurnResponseKey: "old-key",
+            thoughtSegments: [{ text: "stale narration", startedAt: 1 }],
+          },
+        ],
+      ]),
+    });
+
+    await useThreadStore.getState().sendMessage(threadId, "what happened?");
+
+    expect(getTestThreadStreaming(threadId)).toBeUndefined();
+    expect(getTestThreadStreamingPreview(threadId)).toBeUndefined();
+    expect(readActiveThreadField((rec) => rec.currentTurnMessageId)).toBe("");
+    expect(readActiveThreadField((rec) => rec.currentTurnResponseKey)).toMatch(
+      /^turn-response:thread-1:/,
+    );
+    expect(getTestThreadThoughtSegments(threadId)).toEqual([]);
+  });
+
+  it("when a direct caller sends while running, no optimistic duplicate is appended", async () => {
+    const threadId = "thread-1";
+    const existing = createMockMessage({
+      id: "user-1",
+      thread_id: threadId,
+      content: "first turn",
+      sequence: 1,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      runningThreadIds: new Set([threadId]),
+      records: new Map<string, ThreadRecord>([
+        [threadId, { ...createEmptyThreadRecord(), messages: [existing] }],
+      ]),
+    });
+
+    await expect(
+      useThreadStore.getState().sendMessage(threadId, "duplicate turn"),
+    ).rejects.toThrow("already has an active agent session");
+
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+    expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
+    expect(getTestThreadMessages(threadId)).toEqual([existing]);
+  });
+
+  it("when the server rejects an unknown active turn, the optimistic duplicate is removed", async () => {
+    const threadId = "thread-1";
+    const existing = createMockMessage({
+      id: "user-1",
+      thread_id: threadId,
+      content: "first turn",
+      sequence: 1,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      runningThreadIds: new Set(),
+      records: new Map<string, ThreadRecord>([
+        [threadId, { ...createEmptyThreadRecord(), messages: [existing] }],
+      ]),
+    });
+    (
+      mockTransport.sendMessage as ReturnType<typeof vi.fn>
+    ).mockRejectedValueOnce(new Error("Thread thread-1 already has an active agent session"));
+
+    await useThreadStore.getState().sendMessage(threadId, "duplicate turn");
+
+    expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
+    expect(getTestThreadMessages(threadId)).toEqual([existing]);
+    expect(getTestThreadError(threadId)).toContain("already has an active agent session");
   });
 
   it("when the user stops an agent, the thread is no longer running", async () => {

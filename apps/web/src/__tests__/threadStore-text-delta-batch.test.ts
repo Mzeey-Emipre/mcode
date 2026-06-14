@@ -2,6 +2,7 @@ import {
   resetThreadStoreForTests,
   getTestThreadStreaming,
   getTestThreadThoughtSegments,
+  readThreadField,
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,6 +52,51 @@ describe("threadStore textDelta batching", () => {
     expect(getTestThreadStreaming(tid)).toBe("01234567");
   });
 
+  it("drops pending deltas for threads reset by running-session hydration", () => {
+    const queue: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
+      queue.push(cb);
+      return queue.length;
+    });
+    const cancel = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => undefined);
+    const tid = "thread-stale-reconnect";
+    resetThreadStoreForTests({
+      runningThreadIds: new Set([tid]),
+      records: new Map([
+        [
+          tid,
+          {
+            ...createEmptyThreadRecord(),
+            streaming: "old response",
+            streamingPreview: "old response",
+            thoughtSegments: [{ text: "old narration", startedAt: 1 }],
+          },
+        ],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent(tid, {
+      method: "session.textDelta",
+      params: { delta: " stale delta", isFinalResponse: false },
+    });
+    expect(queue).toHaveLength(1);
+
+    useThreadStore.getState().hydrateRunningThreads([]);
+
+    expect(cancel).toHaveBeenCalledWith(1);
+    expect(readThreadField(tid, (record) => record.streaming)).toBe("");
+    expect(readThreadField(tid, (record) => record.streamingPreview)).toBe("");
+    expect(readThreadField(tid, (record) => record.thoughtSegments)).toEqual([]);
+
+    queue[0]!(0);
+
+    expect(readThreadField(tid, (record) => record.streaming)).toBe("");
+    expect(readThreadField(tid, (record) => record.streamingPreview)).toBe("");
+    expect(readThreadField(tid, (record) => record.thoughtSegments)).toEqual([]);
+  });
+
   it("updates streaming only for isFinalResponse deltas (skips thought segments)", () => {
     const queue: FrameRequestCallback[] = [];
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
@@ -75,6 +121,73 @@ describe("threadStore textDelta batching", () => {
     expect(getTestThreadThoughtSegments(tid)?.length).toBe(1);
     expect(getTestThreadThoughtSegments(tid)?.[0]?.text).toBe("think ");
     expect(getTestThreadThoughtSegments(tid)?.[0]?.isExplicitNonFinal).toBe(true);
+  });
+
+  it("preserves thought segment array reference for final-response-only flushes", () => {
+    const queue: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
+      queue.push(cb);
+      return queue.length;
+    });
+
+    const tid = "thread-final-reference";
+    const thoughtSegments = [{ text: "closed narration", startedAt: 1, endedAt: 2 }];
+    resetThreadStoreForTests({
+      records: new Map([
+        [
+          tid,
+          {
+            ...createEmptyThreadRecord(),
+            thoughtSegments,
+          },
+        ],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent(tid, {
+      method: "session.textDelta",
+      params: { delta: "final response", isFinalResponse: true },
+    });
+    queue[0]!(0);
+
+    expect(getTestThreadStreaming(tid)).toBe("final response");
+    expect(readThreadField(tid, (record) => record.thoughtSegments)).toBe(thoughtSegments);
+  });
+
+  it("replaces thought segment array reference when narration flushes", () => {
+    const queue: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
+      queue.push(cb);
+      return queue.length;
+    });
+
+    const tid = "thread-narration-reference";
+    const closedText = "This closed narration is long enough to stay closed. ";
+    const thoughtSegments = [{ text: closedText, startedAt: 1, endedAt: 2 }];
+    resetThreadStoreForTests({
+      records: new Map([
+        [
+          tid,
+          {
+            ...createEmptyThreadRecord(),
+            thoughtSegments,
+          },
+        ],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent(tid, {
+      method: "session.textDelta",
+      params: { delta: "New narration", isFinalResponse: false },
+    });
+    queue[0]!(0);
+
+    const nextSegments = readThreadField(tid, (record) => record.thoughtSegments);
+    expect(nextSegments).not.toBe(thoughtSegments);
+    expect(nextSegments.map((segment) => segment.text)).toEqual([
+      closedText,
+      "New narration",
+    ]);
   });
 
   it("does not mark omitted isFinalResponse deltas as explicit non-final", () => {

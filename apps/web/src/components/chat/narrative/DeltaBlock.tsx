@@ -105,8 +105,8 @@ const LONG_RESPONSE_LENGTH = 2_000;
  *   behind, the rAF loop keeps catching up instead of snapping to full height.
  *
  * Idle rate: ~6 chars every 32ms. Catch-up closes roughly 1/8 of the gap per
- * paint, with a higher cap for long responses so markdown re-render work stays
- * bounded during large flushes.
+ * paint, with a higher cap for long responses so visible text still catches up
+ * during large flushes.
  *
  * When `target` shrinks (e.g., the parent reset for a new turn), the
  * displayed value resets immediately and the animation cancels.
@@ -188,8 +188,8 @@ function useTypewriter(target: string, isStreaming: boolean): string {
  *
  * Incoming `text` deltas are buffered by `useTypewriter`, which advances the
  * displayed text at a steady rate (≈180 chars/sec when idle, scaling up to
- * close any backlog). The markdown renderer always receives the typewriter
- * output, so users see characters form rather than whole chunks pop in.
+ * close any backlog). Active streams render as plain pre-wrapped text; settled
+ * blocks hand the final text to the markdown renderer.
  *
  * The cursor is anchored at the end of whatever is currently rendered via
  * a layout effect that measures `Range.getClientRects()` and positions the
@@ -212,7 +212,7 @@ export function DeltaBlock({ text, isStreaming = true, showCursor = true }: Delt
   useLayoutEffect(() => {
     const root = rootRef.current;
     const cursor = cursorRef.current;
-    if (!root || !cursor) return;
+    if (!root || !cursor || !renderCursor) return;
 
     // If the markdown DOM is momentarily empty (Suspense in flight, or a
     // re-render between fallback and resolved children), keep the cursor at
@@ -255,19 +255,25 @@ export function DeltaBlock({ text, isStreaming = true, showCursor = true }: Delt
     cursor.style.opacity = "1";
     cursor.style.height = `${h}px`;
     cursor.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-  });
+  }, [displayed, renderCursor]);
 
   return (
     <div ref={rootRef} className="relative">
-      <Suspense
-        fallback={
-          <p className="whitespace-pre-wrap text-[0.9375rem] leading-relaxed">
-            {displayed}
-          </p>
-        }
-      >
-        <LazyMarkdownContent content={displayed} isStreaming={isStreaming} />
-      </Suspense>
+      {isStreaming ? (
+        <p className="whitespace-pre-wrap text-[0.9375rem] leading-relaxed">
+          {displayed}
+        </p>
+      ) : (
+        <Suspense
+          fallback={
+            <p className="whitespace-pre-wrap text-[0.9375rem] leading-relaxed">
+              {displayed}
+            </p>
+          }
+        >
+          <LazyMarkdownContent content={displayed} isStreaming={false} />
+        </Suspense>
+      )}
       {/* Cursor is mounted ONLY when actively streaming AND `showCursor` is
           true. The `.typing-cursor` class runs a CSS blink animation that
           overrides any inline opacity, so an unmounted-but-not-rendered cursor
