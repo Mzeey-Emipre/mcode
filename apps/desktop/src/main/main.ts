@@ -109,6 +109,7 @@ function openIfAllowed(url: string): void {
 // Application state
 // ---------------------------------------------------------------------------
 
+const APP_ID = "com.mzeey.mcode";
 let mainWindow: BrowserWindow | null = null;
 const serverManager = new ServerManager();
 const serverCrashRecovery = new ServerCrashRecovery({
@@ -116,6 +117,15 @@ const serverCrashRecovery = new ServerCrashRecovery({
   notifyRecovered: (code) => showServerRecoveredNotification(code),
   showError: (code) => showServerCrashDialog(code),
 });
+
+/** Returns the app icon path used for dev windows and packaged resources. */
+function getWindowIconPath(): string {
+  const iconFile = process.platform === "win32" ? "icon.ico" : "icon.png";
+  if (app.isPackaged) {
+    return join(process.resourcesPath, iconFile);
+  }
+  return join(app.getAppPath(), "build", iconFile);
+}
 
 // ---------------------------------------------------------------------------
 // Sleep-resilient server lifecycle (self-healing restart + power save blocker)
@@ -229,6 +239,7 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    icon: getWindowIconPath(),
     // Keep window hidden until first paint to eliminate the blank white flash.
     show: false,
     backgroundColor: "#0a0a0f",
@@ -658,11 +669,18 @@ app.commandLine.appendSwitch(
   "--max-old-space-size=2048 --max-semi-space-size=2",
 );
 
+if (process.platform === "win32") {
+  app.setAppUserModelId(APP_ID);
+}
+
 app.whenReady().then(async () => {
   try {
     console.log(`[perf] App ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
     console.log(`[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`);
     console.log(`Mcode v${app.getVersion()} starting`);
+    if (process.platform === "darwin") {
+      app.dock?.setIcon(getWindowIconPath());
+    }
 
     // Boot the Codex browser-use pipe BEFORE the server child spawns so the
     // server inherits MCODE_BROWSER_USE_PIPE_PATH and can pass it to every
