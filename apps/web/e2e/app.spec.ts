@@ -35,11 +35,8 @@ test.describe("App shell", () => {
   });
 
   test("layout has sidebar and main content area", async ({ page }) => {
-    // Sidebar brand — exact match avoids matching "mcode" in the landing wordmark
-    await expect(page.getByText("Mcode", { exact: true })).toBeVisible();
-
-    // When no workspace is active, the landing shows the "mcode" wordmark in main area
-    await expect(page.getByText("mcode", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("sidebar-docked").getByRole("img", { name: "Mcode" })).toBeVisible();
+    await expect(page.locator("main").getByRole("img", { name: "Mcode" })).toBeVisible();
   });
 });
 
@@ -53,8 +50,7 @@ test.describe("Sidebar", () => {
   });
 
   test("displays brand name", async ({ page }) => {
-    // exact: true distinguishes "Mcode" (sidebar) from "mcode" (landing wordmark)
-    await expect(page.getByText("Mcode", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("sidebar-docked").getByRole("img", { name: "Mcode" })).toBeVisible();
   });
 
   test("displays Projects section heading", async ({ page }) => {
@@ -95,19 +91,18 @@ test.describe("Sidebar", () => {
   test("collapses and expands when toggle button is clicked", async ({
     page,
   }) => {
-    // Brand name is visible when sidebar is expanded
-    await expect(page.getByText("Mcode", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("sidebar-docked").getByRole("img", { name: "Mcode" })).toBeVisible();
 
     // Collapse the sidebar
     await page.getByRole("button", { name: "Collapse sidebar" }).click();
 
     // The sidebar unmounts on collapse so brand and project tree are gone
-    await expect(page.getByText("Mcode", { exact: true })).not.toBeVisible();
+    await expect(page.getByTestId("sidebar-docked")).not.toBeVisible();
     await expect(page.getByText("Projects", { exact: true })).not.toBeVisible();
 
     // Reveal button is now inline in the main header — click to re-expand
     await page.getByRole("button", { name: "Expand sidebar" }).click();
-    await expect(page.getByText("Mcode", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("sidebar-docked").getByRole("img", { name: "Mcode" })).toBeVisible();
   });
 });
 
@@ -122,7 +117,7 @@ test.describe("Landing empty state", () => {
 
   test("shows landing when no workspace is active", async ({ page }) => {
     // When no workspace is active the landing replaces the chat view
-    await expect(page.getByText("mcode", { exact: true })).toBeVisible();
+    await expect(page.locator("main").getByRole("img", { name: "Mcode" })).toBeVisible();
     await page.screenshot({
       path: "e2e/screenshots/chat-empty-state.png",
       fullPage: true,

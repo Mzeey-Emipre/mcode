@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Mcode layered route cutout mark</title>
+  <desc id="desc">A transparent Mcode mark with stacked worktree layers and an amber active route.</desc>
+  <defs>
+    <linearGradient id="topLayer" x1="153" y1="145" x2="353" y2="343" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3a414c" />
+      <stop offset="1" stop-color="#2c333e" />
+    </linearGradient>
+    <linearGradient id="midLayer" x1="151" y1="192" x2="354" y2="390" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#303946" />
+      <stop offset="1" stop-color="#242d38" />
+    </linearGradient>
+    <linearGradient id="lowLayer" x1="151" y1="226" x2="354" y2="424" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#28313d" />
+      <stop offset="1" stop-color="#1d2631" />
+    </linearGradient>
+    <linearGradient id="route" x1="249" y1="279" x2="374" y2="219" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff9515" />
+      <stop offset="1" stop-color="#ffad25" />
+    </linearGradient>
+    <path id="slab" d="M256 124c13 0 26 8 41 19l116 83c17 12 17 28 0 40l-116 83c-15 11-28 18-41 18s-26-7-41-18L99 266c-17-12-17-28 0-40l116-83c15-11 28-19 41-19Z" />
+  </defs>
+
+  <g>
+    <use href="#slab" transform="translate(0 82)" fill="url(#lowLayer)" />
+    <use href="#slab" transform="translate(0 48)" fill="url(#midLayer)" />
+    <use href="#slab" fill="url(#topLayer)" />
+  </g>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M181 277h72" stroke="#111822" stroke-width="16" />
+    <path d="M253 277 304 226h54" stroke="url(#route)" stroke-width="16" />
+  </g>
+  <circle cx="181" cy="277" r="17" fill="#111822" />
+  <circle cx="358" cy="226" r="23" fill="#ffa31d" />
+</svg>

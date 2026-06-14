@@ -651,7 +651,7 @@ export function ProjectTree() {
       {/* Search bar */}
       <ThreadSearchBar providers={availableProviders} />
 
-      <div className="flex items-center justify-between px-3 py-2 mb-0.5">
+      <div className="mb-0.5 flex items-center justify-between px-2.5 py-1.5">
         <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/55">
           Projects
         </span>
@@ -670,7 +670,7 @@ export function ProjectTree() {
       </div>
 
       <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
-        <div className="px-1" data-testid="thread-list">
+        <div className="px-1.5" data-testid="thread-list">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -1217,7 +1217,7 @@ function VirtualizedThreadList({
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
                 )}
-                style={{ paddingLeft: `${10 + depth * 14}px` }}
+                style={{ paddingLeft: `${8 + depth * 12}px` }}
               >
                 <div
                   className={cn(
@@ -1437,7 +1437,7 @@ const ProjectNode = memo(function ProjectNode({
         aria-expanded={isExpanded}
         data-testid={`project-row-${workspace.id}`}
         className={cn(
-          "group/ws relative flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] cursor-pointer transition-colors touch-none",
+          "group/ws relative flex items-center gap-1.5 rounded-md px-1.5 py-1.5 text-[12.5px] cursor-pointer transition-colors touch-none",
           isProjectDragging && "cursor-grabbing",
           isActive
             ? "text-foreground"
@@ -1529,7 +1529,7 @@ const ProjectNode = memo(function ProjectNode({
 
       {/* Threads (when expanded) — indented, no guide rail. */}
       {isExpanded && (
-        <div className="pl-3">
+        <div className="pl-2">
           {threads.length === 0 ? (
             <div className="flex items-center gap-2 px-2 py-2">
               <span aria-hidden="true" className="font-mono text-[12px] leading-none text-muted-foreground/25">

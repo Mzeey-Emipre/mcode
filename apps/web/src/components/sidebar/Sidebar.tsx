@@ -7,6 +7,7 @@ import { SidebarUsagePanel } from "./SidebarUsagePanel";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { PanelCollapseIcon } from "./SidebarRevealButton";
 import { useUiStore } from "@/stores/uiStore";
+import { McodeLogo } from "@/components/brand/McodeLogo";
 
 /** True when running inside the Electron shell. */
 const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;
@@ -43,7 +44,7 @@ export function Sidebar({
   return (
     <div className="flex h-full w-72 max-w-[55vw] flex-col bg-sidebar md:max-w-none">
       {/* Header */}
-      <div className="flex h-11 items-center justify-between border-b border-border/40 px-3">
+      <div className="flex h-11 items-center justify-between border-b border-border/40 pl-2 pr-2.5">
         {settingsOpen ? (
           <div className="flex items-center gap-2">
             <Button
@@ -59,7 +60,7 @@ export function Sidebar({
           </div>
         ) : (
           <>
-            <span className="text-sm font-semibold tracking-tight text-foreground">Mcode</span>
+            <McodeLogo />
             <Button
               variant="ghost"
               size="icon-sm"

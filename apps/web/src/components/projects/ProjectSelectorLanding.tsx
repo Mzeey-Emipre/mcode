@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ProjectRow } from "./ProjectRow";
 import { RecentThreadRow } from "./RecentThreadRow";
 import { Kbd } from "../palette/Kbd";
+import { McodeLogo } from "@/components/brand/McodeLogo";
 import type { RecentThread } from "@/transport/types";
 
 /**
@@ -111,11 +112,7 @@ export function ProjectSelectorLanding() {
           wordmark never gets pushed offscreen on short viewports. */}
       <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4">
         <div className="my-auto flex w-full flex-col items-center py-8">
-          {/* Wordmark — generous size + a small caret accent give the cold-start a moment of personality */}
-          <div className="mb-12 flex items-baseline gap-1 select-none font-mono text-[34px] font-semibold leading-none tracking-tight text-foreground">
-            <span>mcode</span>
-            <span aria-hidden className="text-primary/80">_</span>
-          </div>
+          <McodeLogo variant="landing" />
 
           {hasContent ? (
         <div className="w-full max-w-lg">

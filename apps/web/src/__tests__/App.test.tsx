@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { App } from "../app/App";
 
@@ -39,14 +39,19 @@ vi.mock("@/components/ui/scroll-area", () => ({
 }));
 
 describe("App", () => {
-  it("renders the sidebar with app title", async () => {
+  it("renders the sidebar logo", async () => {
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Mcode")).toBeInTheDocument());
+    await waitFor(() => {
+      const sidebar = screen.getByTestId("sidebar-docked");
+      expect(within(sidebar).getByRole("img", { name: "Mcode" })).toBeInTheDocument();
+    });
   });
 
   it("renders the landing screen when no workspace is active", async () => {
     render(<App />);
-    // With no active workspace, the cold-start landing is shown displaying the app wordmark.
-    await waitFor(() => expect(screen.getByText("mcode")).toBeInTheDocument());
+    await waitFor(() => {
+      const main = screen.getByRole("main");
+      expect(within(main).getByRole("img", { name: "Mcode" })).toBeInTheDocument();
+    });
   });
 });
