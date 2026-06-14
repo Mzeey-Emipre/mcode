@@ -75,6 +75,8 @@ const OLDER_COMMITS: GitCommit[] = [
   { sha: "999999999", shortSha: "9999999", message: "fix: older regression", author: "Dev", date: now, filesChanged: 1 },
 ];
 
+let firstPageCommits: GitCommit[] = FIRST_PAGE_COMMITS;
+
 /** Thread-scoped commits come from the thread worktree HEAD, not the workspace root. */
 const THREAD_COMMITS: GitCommit[] = [
   { sha: "dddddddd4", shortSha: "ddddddd", message: "feat: thread worktree head", author: "Dev", date: now, filesChanged: 1 },
@@ -200,6 +202,7 @@ test.describe("Review tab — Commit picker", () => {
 
   test.beforeEach(async ({ page }) => {
     gitLogCalls = [];
+    firstPageCommits = FIRST_PAGE_COMMITS;
     await mockWebSocketServer(page, {
       "workspace.list": [WORKSPACE],
       "thread.list": [THREAD],
@@ -209,7 +212,7 @@ test.describe("Review tab — Commit picker", () => {
         gitLogCalls.push(params);
         const p = params as { threadId?: string; skip?: number } | undefined;
         if (p?.threadId === THREAD.id) return THREAD_COMMITS;
-        return p?.skip ? OLDER_COMMITS : FIRST_PAGE_COMMITS;
+        return p?.skip ? OLDER_COMMITS : firstPageCommits;
       },
       "git.commitFiles": (params) => FILES_BY_SHA[(params as { sha: string }).sha] ?? [],
       "git.commitDiff": (params) => {
@@ -274,6 +277,37 @@ test.describe("Review tab — Commit picker", () => {
     await page.getByPlaceholder("Search commits…").fill("ccccccc");
     await expect(page.getByTestId("commit-picker-item-ccccccc")).toBeVisible();
     await expect(page.getByTestId("commit-picker-item-aaaaaaa")).toHaveCount(0);
+  });
+
+  test("refreshes the commit list when the picker opens", async ({ page }) => {
+    await openCommitView(page);
+
+    const trigger = page.getByTestId("commit-picker-trigger");
+    await expect(trigger).toContainText("aaaaaaa", { timeout: 5_000 });
+    await trigger.click();
+    const search = page.getByPlaceholder("Search commits…");
+    await search.fill("broken seam");
+    await expect(page.getByTestId("commit-picker-item-bbbbbbb")).toBeVisible();
+
+    firstPageCommits = [
+      {
+        sha: "dddddddd4",
+        shortSha: "ddddddd",
+        message: "feat: terminal commit",
+        author: "Dev",
+        date: now,
+        filesChanged: 1,
+      },
+      ...FIRST_PAGE_COMMITS,
+    ];
+
+    await page.keyboard.press("Escape");
+    await trigger.click();
+    await expect(page.getByTestId("commit-picker-item-ddddddd")).toHaveCount(0);
+    await expect(page.getByTestId("commit-picker-item-bbbbbbb")).toBeVisible();
+
+    await search.fill("");
+    await expect(page.getByTestId("commit-picker-item-ddddddd")).toBeVisible();
   });
 
   test("searches older commits on demand", async ({ page }) => {

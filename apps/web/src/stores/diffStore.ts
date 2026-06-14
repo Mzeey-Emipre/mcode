@@ -18,8 +18,7 @@ export type DiffViewMode =
   | "commit"
   | "branch"
   | "last-turn"
-  | "cumulative"
-  | "summary";
+  | "cumulative";
 
 /** Diff rendering mode. */
 export type DiffRenderMode = "unified" | "side-by-side";
@@ -110,6 +109,28 @@ export function createDefaultRightPanelState(): RightPanelState {
     openTabs: [],
     activeTab: "tasks",
   };
+}
+
+/** Stable cache key for one inline diff payload. */
+function inlineDiffCacheKey(
+  threadId: string,
+  source: string,
+  id: string,
+  filePath: string,
+): string {
+  return `${threadId}:${source}:${id}:${filePath}`;
+}
+
+/** Drop inline diff cache entries matching a stable key prefix. */
+function omitInlineDiffCacheByPrefix(
+  cache: Record<string, string>,
+  prefix: string,
+): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const [key, value] of Object.entries(cache)) {
+    if (!key.startsWith(prefix)) next[key] = value;
+  }
+  return next;
 }
 
 /**
@@ -217,11 +238,17 @@ interface DiffState {
   /** Whether commits are currently loading, keyed by thread ID. */
   commitsLoadingByThread: Record<string, boolean>;
   /**
-   * Inline diff cache keyed by `"threadId:source:id:filePath"`. Survives
+   * Inline diff cache keyed by `"threadId:source:id:version:filePath"`. Survives
    * component unmounts (panel close/reopen, tab switches) so diffs aren't
    * re-fetched. Scoped by thread to prevent cross-thread collisions.
    */
   inlineDiffCache: Record<string, string>;
+  /**
+   * Monotonic revision by diff scope (thread id or workspace id). Mutable git
+   * views use this to refetch when a turn or filesystem event changes the
+   * checkout without changing the visible ref names.
+   */
+  diffRevisionByScope: Record<string, number>;
   /** Currently selected file for diff viewing. */
   selectedFile: SelectedFile | null;
   /** Raw unified diff text for the selected file. */
@@ -291,6 +318,8 @@ interface DiffState {
   cacheInlineDiff: (threadId: string, source: string, id: string, filePath: string, data: string) => void;
   /** Retrieve a cached inline diff, or undefined if not cached. */
   getCachedInlineDiff: (threadId: string, source: string, id: string, filePath: string) => string | undefined;
+  /** Bump a mutable diff scope so mounted file rows refetch against the latest checkout. */
+  bumpDiffRevision: (scopeId: string) => void;
   /** Persist the omnibox URL for a thread's embedded preview. */
   setPreviewUrlForThread: (threadId: string, url: string) => void;
   clearThread: (threadId: string) => void;
@@ -315,6 +344,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   commitsByThread: {},
   commitsLoadingByThread: {},
   inlineDiffCache: {},
+  diffRevisionByScope: {},
   selectedFile: null,
   diffContent: null,
   diffLoading: false,
@@ -433,6 +463,10 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       return {
         snapshotsByThread: { ...s.snapshotsByThread, [threadId]: snapshots },
         snapshotsPendingByThread: nextPending,
+        inlineDiffCache: omitInlineDiffCacheByPrefix(
+          s.inlineDiffCache,
+          `${threadId}:cumulative:${threadId}:`,
+        ),
       };
     }),
   setSnapshotsLoading: (threadId, loading) =>
@@ -455,10 +489,18 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   setSummaryLoading: (loading) => set({ summaryLoading: loading }),
   cacheInlineDiff: (threadId, source, id, filePath, data) =>
     set((s) => ({
-      inlineDiffCache: { ...s.inlineDiffCache, [`${threadId}:${source}:${id}:${filePath}`]: data },
+      inlineDiffCache: { ...s.inlineDiffCache, [inlineDiffCacheKey(threadId, source, id, filePath)]: data },
     })),
   getCachedInlineDiff: (threadId, source, id, filePath) =>
-    get().inlineDiffCache[`${threadId}:${source}:${id}:${filePath}`],
+    get().inlineDiffCache[inlineDiffCacheKey(threadId, source, id, filePath)],
+  bumpDiffRevision: (scopeId) =>
+    set((s) => ({
+      diffRevisionByScope: {
+        ...s.diffRevisionByScope,
+        [scopeId]: (s.diffRevisionByScope[scopeId] ?? 0) + 1,
+      },
+      inlineDiffCache: omitInlineDiffCacheByPrefix(s.inlineDiffCache, `${scopeId}:`),
+    })),
   setPreviewUrlForThread: (threadId, url) =>
     set((s) => ({
       previewUrlByThread: { ...s.previewUrlByThread, [threadId]: url },
@@ -481,13 +523,10 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete lineWrapByThread[threadId];
       const rightPanelVisibleByThread = { ...state.rightPanelVisibleByThread };
       delete rightPanelVisibleByThread[threadId];
+      const diffRevisionByScope = { ...state.diffRevisionByScope };
+      delete diffRevisionByScope[threadId];
 
-      // Evict inline diff cache entries scoped to this thread.
-      const prefix = `${threadId}:`;
-      const inlineDiffCache: Record<string, string> = {};
-      for (const [key, value] of Object.entries(state.inlineDiffCache)) {
-        if (!key.startsWith(prefix)) inlineDiffCache[key] = value;
-      }
+      const inlineDiffCache = omitInlineDiffCacheByPrefix(state.inlineDiffCache, `${threadId}:`);
 
       // Only clear the global selection when it belongs to the deleted thread.
       const selectionBelongsToThread = state.selectedFile?.threadId === threadId;
@@ -502,6 +541,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         previewUrlByThread: previewUrls,
         lineWrapByThread,
         rightPanelVisibleByThread,
+        diffRevisionByScope,
         inlineDiffCache,
         ...(selectionBelongsToThread
           ? { selectedFile: null, diffContent: null, diffLoading: false }
@@ -513,9 +553,25 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     }),
   clearWorkspace: (workspaceId) =>
     set((state) => {
-      if (!(workspaceId in state.rightPanelByWorkspace)) return {};
+      const cachePrefix = `${workspaceId}:`;
+      const hasInlineDiffCache = Object.keys(state.inlineDiffCache).some((key) =>
+        key.startsWith(cachePrefix),
+      );
+      if (
+        !(workspaceId in state.rightPanelByWorkspace) &&
+        !(workspaceId in state.diffRevisionByScope) &&
+        !hasInlineDiffCache
+      ) {
+        return {};
+      }
       const rightPanelByWorkspace = { ...state.rightPanelByWorkspace };
       delete rightPanelByWorkspace[workspaceId];
-      return { rightPanelByWorkspace };
+      const diffRevisionByScope = { ...state.diffRevisionByScope };
+      delete diffRevisionByScope[workspaceId];
+      return {
+        rightPanelByWorkspace,
+        diffRevisionByScope,
+        inlineDiffCache: omitInlineDiffCacheByPrefix(state.inlineDiffCache, cachePrefix),
+      };
     }),
 }));

@@ -678,7 +678,8 @@ export class GitService {
    * populate the base/target pickers. Implements the context-dependent default
    * from `docs/adr/0007-branch-comparison-default-and-range.md`:
    *
-   * - **current ≠ detected base** → `base → current` (review the branch's work).
+   * - **current ≠ detected base** → `origin/base → current` when available,
+   *   else `base → current` (review the branch's work).
    * - **current == detected base** (on the base branch) → `current →
    *   origin/current` when an upstream exists, else `base → current` (empty but
    *   valid when the branch has no upstream).
@@ -698,7 +699,8 @@ export class GitService {
       return { base: null, target: null, refs, isUnborn: true };
     }
 
-    const base = await this.detectDefaultBranch(cwd);
+    const defaultBranch = await this.detectDefaultBranch(cwd);
+    const base = (await this.detectDefaultComparisonRef(cwd)) ?? defaultBranch;
     const current = await this.getCurrentBranchForPath(cwd);
 
     if (!base) {
@@ -712,9 +714,9 @@ export class GitService {
       return { base, target: "HEAD", refs, isUnborn: false };
     }
 
-    // On the base branch, `base...current` is empty — fall back to divergence from
-    // the remote when an upstream exists, else the (empty but valid) base→current.
-    if (current === base) {
+    // On the base branch, `base...current` is empty. Use the remote if it exists,
+    // else keep the empty but valid base→current range.
+    if (current === defaultBranch || current === base) {
       const remoteRef = `origin/${current}`;
       const hasUpstream = refs.some((r) => r.type === "remote" && r.name === remoteRef);
       return { base: current, target: hasUpstream ? remoteRef : current, refs, isUnborn: false };

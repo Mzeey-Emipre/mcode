@@ -21,7 +21,6 @@ describe("REVIEW_VIEWS catalog", () => {
       "branch",
       "last-turn",
       "cumulative",
-      "summary",
     ]);
   });
 
@@ -29,18 +28,15 @@ describe("REVIEW_VIEWS catalog", () => {
     const anyScope = REVIEW_VIEWS.filter((v) => !v.threadOnly).map((v) => v.id);
     const threadOnly = REVIEW_VIEWS.filter((v) => v.threadOnly).map((v) => v.id);
     expect(anyScope).toEqual(["unstaged", "staged", "commit", "branch"]);
-    expect(threadOnly).toEqual(["last-turn", "cumulative", "summary"]);
+    expect(threadOnly).toEqual(["last-turn", "cumulative"]);
   });
 
-  it("marks every git view as git-requiring and Summary as summary-gated", () => {
+  it("marks every git view as git-requiring", () => {
     expect(REVIEW_VIEWS.filter((v) => v.requires === "git").map((v) => v.id)).toEqual([
       "unstaged",
       "staged",
       "commit",
       "branch",
-    ]);
-    expect(REVIEW_VIEWS.filter((v) => v.requires === "diffSummary").map((v) => v.id)).toEqual([
-      "summary",
     ]);
   });
 
@@ -51,7 +47,7 @@ describe("REVIEW_VIEWS catalog", () => {
     ]);
     // The fixed-operand views surface no operand control.
     const fixed = REVIEW_VIEWS.filter((v) => !v.operand).map((v) => v.id);
-    expect(fixed).toEqual(["unstaged", "staged", "last-turn", "cumulative", "summary"]);
+    expect(fixed).toEqual(["unstaged", "staged", "last-turn", "cumulative"]);
   });
 });
 
@@ -73,7 +69,6 @@ describe("availableReviewViews — dual-scope selection", () => {
       "branch",
       "last-turn",
       "cumulative",
-      "summary",
     ]);
   });
 
@@ -87,25 +82,25 @@ describe("availableReviewViews — dual-scope selection", () => {
 describe("visibleReviewViews — runtime gates", () => {
   it("drops all threadless views in a non-git workspace", () => {
     expect(
-      ids(visibleReviewViews("threadless", { isGitRepo: false, diffSummaryEnabled: false })),
+      ids(visibleReviewViews("threadless", { isGitRepo: false })),
     ).toEqual([]);
   });
 
   it("keeps the git views in a git workspace", () => {
     expect(
-      ids(visibleReviewViews("threadless", { isGitRepo: true, diffSummaryEnabled: false })),
+      ids(visibleReviewViews("threadless", { isGitRepo: true })),
     ).toEqual(["unstaged", "staged", "commit", "branch"]);
   });
 
-  it("drops Summary in a thread when the diff-summary setting is off", () => {
+  it("does not expose Summary as a switcher view", () => {
     expect(
-      ids(visibleReviewViews("thread", { isGitRepo: true, diffSummaryEnabled: false })),
+      ids(visibleReviewViews("thread", { isGitRepo: true })),
     ).toEqual(["unstaged", "staged", "commit", "branch", "last-turn", "cumulative"]);
   });
 
-  it("keeps Summary in a thread when the diff-summary setting is on", () => {
+  it("keeps Cumulative visible because Summary lives inside it as a lens", () => {
     expect(
-      ids(visibleReviewViews("thread", { isGitRepo: true, diffSummaryEnabled: true })),
+      ids(visibleReviewViews("thread", { isGitRepo: true })),
     ).toEqual([
       "unstaged",
       "staged",
@@ -113,14 +108,13 @@ describe("visibleReviewViews — runtime gates", () => {
       "branch",
       "last-turn",
       "cumulative",
-      "summary",
     ]);
   });
 
   it("leaves the turn views unaffected by git presence (only git views drop)", () => {
     expect(
-      ids(visibleReviewViews("thread", { isGitRepo: false, diffSummaryEnabled: true })),
-    ).toEqual(["last-turn", "cumulative", "summary"]);
+      ids(visibleReviewViews("thread", { isGitRepo: false })),
+    ).toEqual(["last-turn", "cumulative"]);
   });
 });
 
@@ -143,7 +137,7 @@ describe("availableReviewViews / visibleReviewViews — purity and order", () =>
 
   it("does not mutate the catalog", () => {
     const before = ids(REVIEW_VIEWS);
-    visibleReviewViews("thread", { isGitRepo: true, diffSummaryEnabled: true });
+    visibleReviewViews("thread", { isGitRepo: true });
     availableReviewViews("threadless");
     expect(ids(REVIEW_VIEWS)).toEqual(before);
   });

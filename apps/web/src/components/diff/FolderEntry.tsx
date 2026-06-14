@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
 /** Props for FolderEntry. */
 interface FolderEntryProps {
@@ -10,6 +10,8 @@ interface FolderEntryProps {
   depth: number;
   /** Whether the folder starts expanded. */
   defaultExpanded?: boolean;
+  /** Force the folder open when a descendant is the active jump target. */
+  forceExpanded?: boolean;
   /** Rendered child rows (file entries or nested folders). */
   children: ReactNode;
 }
@@ -23,25 +25,31 @@ export function FolderEntry({
   fileCount,
   depth,
   defaultExpanded = true,
+  forceExpanded = false,
   children,
 }: FolderEntryProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const contentId = useId();
+  const open = forceExpanded || expanded;
+
+  useEffect(() => {
+    if (forceExpanded) setExpanded(true);
+  }, [forceExpanded]);
 
   return (
     <div>
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
-        aria-expanded={expanded}
+        aria-expanded={open}
         aria-controls={contentId}
-        className="group flex w-full items-baseline gap-2 py-[5px] pr-3 text-left transition-colors hover:bg-muted/[0.06]"
+        className="group flex w-full items-baseline gap-2 py-[6px] pr-3 text-left transition-colors hover:bg-muted/[0.06]"
         style={{ paddingLeft: `${12 + depth * 14}px` }}
       >
         <span
           aria-hidden="true"
           className={`shrink-0 font-mono text-[11px] leading-none transition-transform duration-150 text-muted-foreground/50 ${
-            expanded ? "rotate-90" : ""
+            open ? "rotate-90" : ""
           }`}
         >
           ›
@@ -56,7 +64,7 @@ export function FolderEntry({
         </span>
       </button>
 
-      {expanded && <div id={contentId}>{children}</div>}
+      {open && <div id={contentId}>{children}</div>}
     </div>
   );
 }

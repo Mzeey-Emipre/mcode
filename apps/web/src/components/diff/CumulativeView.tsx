@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { FileText, RefreshCw } from "lucide-react";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import { useDiffStore } from "@/stores/diffStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { getTransport } from "@/transport";
 import { FileList } from "./FileList";
+import { SummaryView } from "./SummaryView";
 
 /** Props for CumulativeView. */
 interface CumulativeViewProps {
@@ -17,7 +19,9 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
   const pending = useDiffStore((s) => s.snapshotsPendingByThread[threadId] ?? false);
   const setSnapshots = useDiffStore((s) => s.setSnapshots);
   const markSnapshotsPending = useDiffStore((s) => s.markSnapshotsPending);
+  const diffSummaryEnabled = useSettingsStore((s) => s.settings.diffSummary.enabled);
   const [refreshing, setRefreshing] = useState(false);
+  const [summaryLens, setSummaryLens] = useState(false);
 
   const files = useMemo(() => {
     const seen = new Set<string>();
@@ -28,6 +32,11 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
     }
     return [...seen].sort();
   }, [snapshots]);
+
+  const cacheVersion = useMemo(
+    () => snapshots.map((snapshot) => snapshot.id).join("|"),
+    [snapshots],
+  );
 
   const handleRefresh = async () => {
     if (refreshing) return;
@@ -65,23 +74,63 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
         <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground/55">
           file{files.length !== 1 ? "s" : ""} · {snapshots.length} turn{snapshots.length !== 1 ? "s" : ""}
         </span>
-        {pending && (
+        {diffSummaryEnabled && (
           <Button
             type="button"
-            variant="outline"
+            variant={summaryLens ? "secondary" : "ghost"}
             size="xs"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            aria-label="New changes available — click to refresh"
-            data-testid="cumulative-view-refresh"
-            className="ml-auto gap-1.5 rounded border-primary/40 bg-primary/15 px-2.5 py-1 font-mono text-[10.5px] font-medium uppercase tracking-[0.14em] text-primary hover:border-primary/60 hover:bg-primary/25"
+            aria-pressed={summaryLens}
+            onClick={() => setSummaryLens((value) => !value)}
+            data-testid="cumulative-summary-toggle"
+            className="ml-auto gap-1.5 px-2 font-mono text-[10.5px] uppercase tracking-[0.12em]"
           >
-            <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} />
-            New changes
+            <FileText size={11} />
+            {summaryLens ? "Diff" : "Summarize"}
           </Button>
         )}
       </div>
-      <FileList files={files} source="cumulative" id={threadId} threadId={threadId} />
+      {pending && (
+        <div className="border-b border-primary/20 bg-primary/[0.045] px-3 py-2">
+          <div className="flex items-center gap-2 rounded border border-primary/25 bg-background/80 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px_hsl(var(--primary)/0.14)]"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.14em] text-foreground/85">
+                New changes available
+              </p>
+              <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/55">
+                Refresh to review the new files.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              aria-label="Refresh Cumulative diff"
+              data-testid="cumulative-view-refresh"
+              className="h-7 shrink-0 gap-1.5 rounded border-primary/35 bg-primary/10 px-2.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.12em] text-primary hover:border-primary/55 hover:bg-primary/18"
+            >
+              <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} />
+              {refreshing ? "Refreshing" : "Refresh"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {summaryLens && diffSummaryEnabled ? (
+        <SummaryView />
+      ) : (
+        <FileList
+          files={files}
+          source="cumulative"
+          id={threadId}
+          threadId={threadId}
+          cacheVersion={cacheVersion}
+        />
+      )}
     </div>
   );
 }

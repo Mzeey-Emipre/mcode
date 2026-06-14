@@ -103,13 +103,14 @@ describe("GitService.resolveBranchComparison", () => {
       branches: [
         { full: "refs/heads/main", short: "main" },
         { full: "refs/heads/feat/x", short: "feat/x", head: true },
+        { full: "refs/remotes/origin/main", short: "origin/main" },
       ],
     });
 
     const result = await gitService.resolveBranchComparison("ws", REPO);
 
-    expect(result).toMatchObject({ base: "main", target: "feat/x", isUnborn: false });
-    expect(result.refs.length).toBe(2);
+    expect(result).toMatchObject({ base: "origin/main", target: "feat/x", isUnborn: false });
+    expect(result.refs.length).toBe(3);
   });
 
   it("compares current → origin/current on the base branch when an upstream exists", async () => {
@@ -140,12 +141,15 @@ describe("GitService.resolveBranchComparison", () => {
   it("compares base → HEAD on a detached HEAD", async () => {
     setup({
       current: "HEAD",
-      branches: [{ full: "refs/heads/main", short: "main" }],
+      branches: [
+        { full: "refs/heads/main", short: "main" },
+        { full: "refs/remotes/origin/main", short: "origin/main" },
+      ],
     });
 
     const result = await gitService.resolveBranchComparison("ws", REPO);
 
-    expect(result).toMatchObject({ base: "main", target: "HEAD", isUnborn: false });
+    expect(result).toMatchObject({ base: "origin/main", target: "HEAD", isUnborn: false });
   });
 
   it("reports an explicit empty state on an unborn branch", async () => {
@@ -167,12 +171,13 @@ describe("GitService.resolveBranchComparison", () => {
       branches: [
         { full: "refs/heads/develop", short: "develop" },
         { full: "refs/heads/feat/y", short: "feat/y", head: true },
+        { full: "refs/remotes/origin/develop", short: "origin/develop" },
       ],
     });
 
     const result = await gitService.resolveBranchComparison("ws", REPO);
 
-    expect(result).toMatchObject({ base: "develop", target: "feat/y" });
+    expect(result).toMatchObject({ base: "origin/develop", target: "feat/y" });
   });
 
   it("falls back to a local main branch when origin is unavailable", async () => {

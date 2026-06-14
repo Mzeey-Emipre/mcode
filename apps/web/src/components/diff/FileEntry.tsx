@@ -27,6 +27,14 @@ interface FileEntryProps {
   depth?: number;
   /** When true the diff starts expanded on mount and after its diff identity changes. */
   defaultExpanded?: boolean;
+  /** Extra identity for mutable comparisons whose visible id can stay stable. */
+  cacheVersion?: string | number;
+  /** Changes when search/jump asks this row to open and scroll into view. */
+  jumpToken?: number;
+  /** Clears the active jump once this row has scrolled into view. */
+  onJumpSettled?: (token: number) => void;
+  /** Changes when this row should show the jump confirmation highlight. */
+  highlightToken?: number;
 }
 
 /** Extract the basename from a file path. */
@@ -66,11 +74,23 @@ type DiffState = null | { loading: true } | { loading: false; data: string };
  * Diff is loaded lazily on the first expand, or immediately for auto-opened views.
  * Large diffs (>200 lines) are truncated with a "Show all N lines" button.
  */
-export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultExpanded: defaultExpandedProp = false }: FileEntryProps) {
+export function FileEntry({
+  filePath,
+  source,
+  id,
+  threadId,
+  depth = 0,
+  defaultExpanded: defaultExpandedProp = false,
+  cacheVersion = 0,
+  jumpToken,
+  onJumpSettled,
+  highlightToken,
+}: FileEntryProps) {
   const nested = depth > 0;
   const [expanded, setExpanded] = useState(defaultExpandedProp);
   const [showAllLines, setShowAllLines] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
+  const [jumpHighlight, setJumpHighlight] = useState(false);
   const cacheKey = `${threadId}:${source}:${id}:${filePath}`;
   // Initialise from the Zustand cache so diffs survive panel close/reopen.
   const cachedDiff = useDiffStore((s) => s.inlineDiffCache[cacheKey]);
@@ -82,6 +102,7 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
   // Reset in cleanup so React StrictMode's second invocation can start a
   // fresh, non-cancelled fetch (the first is cancelled by cleanup).
   const loadStartedRef = useRef(false);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   // Reset local state when the cache identity changes so a reused component
   // instance doesn't show stale content from a previous identity.
@@ -91,11 +112,32 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
     setShowAllLines(false);
     setPreviewMode(false);
     loadStartedRef.current = false;
-  }, [cacheKey]);
+  }, [cacheKey, cacheVersion]);
 
   useEffect(() => {
     if (defaultExpandedProp) setExpanded(true);
-  }, [cacheKey, defaultExpandedProp]);
+  }, [cacheKey, cacheVersion, defaultExpandedProp]);
+
+  useEffect(() => {
+    if (jumpToken === undefined) return;
+    setExpanded(true);
+    const frame = requestAnimationFrame(() => {
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      rowRef.current?.scrollIntoView({
+        block: "start",
+        behavior: reducedMotion ? "auto" : "smooth",
+      });
+      onJumpSettled?.(jumpToken);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [jumpToken, onJumpSettled]);
+
+  useEffect(() => {
+    if (highlightToken === undefined) return;
+    setJumpHighlight(true);
+    const timeout = setTimeout(() => setJumpHighlight(false), 1500);
+    return () => clearTimeout(timeout);
+  }, [highlightToken]);
 
   const { basename, parent, ext, language, isMarkdown } = useMemo(() => {
     const bn = getFileBasename(filePath);
@@ -136,7 +178,7 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
       cancelled = true;
       loadStartedRef.current = false;
     };
-  }, [expanded, source, id, filePath, threadId, cacheKey]);
+  }, [expanded, source, id, filePath, threadId, cacheKey, cacheVersion]);
 
   const lines = useMemo(
     () =>
@@ -200,20 +242,30 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
   }, [lines, isLargeDiff, showAllLines]);
 
   return (
-    <div className={`border-b border-border/30 ${expanded ? "bg-muted/5" : ""}`}>
+    <div
+      ref={rowRef}
+      data-review-file={filePath}
+      data-jump-highlight={jumpHighlight ? "true" : undefined}
+      className={`border-b border-border/20 transition-colors ${
+        expanded ? "bg-muted/[0.035]" : ""
+      } ${jumpHighlight ? "animate-flash-highlight bg-primary/10" : ""}`}
+    >
       {/* File header row — sticky when expanded so filename stays visible while scrolling the diff */}
       <button
         type="button"
-        onClick={() => setExpanded((prev) => {
-          if (prev) {
-            setShowAllLines(false);
-            setPreviewMode(false);
-          }
-          return !prev;
-        })}
-        className={`group flex w-full items-center gap-2 py-[5px] pr-3 text-left transition-colors hover:bg-muted/20 ${
+        onClick={() => {
+          setExpanded((prev) => {
+            if (prev) {
+              setShowAllLines(false);
+              setPreviewMode(false);
+            }
+            return !prev;
+          });
+        }}
+        data-jump-highlight={jumpHighlight ? "true" : undefined}
+        className={`group flex w-full items-center gap-2 py-[6px] pr-3 text-left transition-colors hover:bg-muted/20 data-[jump-highlight=true]:bg-primary/10 ${
           expanded
-            ? "sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/20"
+            ? "sticky top-[57px] z-10 bg-background/95 backdrop-blur-sm border-b border-border/20"
             : ""
         }`}
         style={{ paddingLeft: nested ? `${12 + depth * 14}px` : "28px" }}
@@ -285,7 +337,7 @@ export function FileEntry({ filePath, source, id, threadId, depth = 0, defaultEx
           ~ 171px) is always fully visible even for tiny diffs. pr-8 reserves
           the collapsed rail's gutter so code never sits behind the icons. */}
       {expanded && (
-        <div className="relative border-t border-border/30 min-h-[180px]">
+        <div className="relative border-t border-border/20 min-h-[180px] bg-background/45">
           <div className="pr-8">
             {!isLoaded ? (
               <div className="flex items-center justify-center gap-1.5 py-3">
