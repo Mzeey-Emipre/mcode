@@ -4,11 +4,9 @@
  * allowing future sources (e.g. BranchDiffSource) without pipeline changes.
  */
 
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
+import type { GitExecutor } from "./git-executor/index.js";
+import { RealGitExecutor } from "./git-executor/real-git-executor.js";
 import type { SnapshotService } from "./snapshot-service.js";
-
-const execFile = promisify(execFileCb);
 
 /** Per-file diff statistics. */
 export interface FileDiffStat {
@@ -65,6 +63,7 @@ export class ThreadDiffSource implements DiffSummarySource {
     private readonly snapshots: TurnSnapshotRow[],
     private readonly cwd: string,
     private readonly snapshotService: SnapshotService,
+    private readonly gitExecutor: GitExecutor,
   ) {}
 
   /** Build the aggregate diff payload from the thread's turn snapshots. */
@@ -140,7 +139,7 @@ export class ThreadDiffSource implements DiffSummarySource {
   }
 
   /**
-   * Retrieve the commit log between two tree refs via git directly.
+   * Retrieve the commit log between two tree refs via git.
    * GitService.log() requires a workspaceId and only supports branch-based ranges,
    * so we invoke git here to support arbitrary tree SHA ranges.
    */
@@ -148,9 +147,12 @@ export class ThreadDiffSource implements DiffSummarySource {
     refBefore: string,
     refAfter: string,
   ): Promise<string> {
+    if (!/^[0-9a-fA-F]{4,40}$/.test(refBefore) || !/^[0-9a-fA-F]{4,40}$/.test(refAfter)) {
+      return "";
+    }
+
     try {
-      const { stdout } = await execFile(
-        "git",
+      const { stdout } = await this.gitExecutor.exec(
         [
           "-C",
           this.cwd,
@@ -158,7 +160,7 @@ export class ThreadDiffSource implements DiffSummarySource {
           "--pretty=format:%h %s",
           `${refBefore}..${refAfter}`,
         ],
-        { timeout: 10_000, windowsHide: true },
+        { timeout: RealGitExecutor.DEFAULT_TIMEOUT },
       );
       return stdout.trim();
     } catch {

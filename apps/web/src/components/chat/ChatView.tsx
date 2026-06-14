@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { GitFork, Loader2 } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import {
+  useActiveWorkspaceThread,
+  useInterruptedThreadIds,
+  useParentThreadExists,
+} from "@/stores/workspace-selectors";
 import { useThreadStore } from "@/stores/threadStore";
 import { useActiveThreadRecord, readThreadRecord } from "@/stores/thread-selectors";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -101,7 +106,7 @@ function ThreadPreparingShell({
   const statusLabel = thread.clientPreparingContext
     ? preparingStatusLabel(thread.clientPreparingContext)
     : "Preparing…";
-  const threads = useWorkspaceStore((s) => s.threads);
+  const parentThreadExists = useParentThreadExists(thread.parent_thread_id);
 
   return (
     <div className="flex h-full flex-col bg-background" data-testid="thread-preparing-shell">
@@ -120,7 +125,7 @@ function ThreadPreparingShell({
           {activeWorkspaceId && (
             <Badge variant="secondary">{workspaceName}</Badge>
           )}
-          {thread.parent_thread_id && threads.some((t) => t.id === thread.parent_thread_id) && (
+          {thread.parent_thread_id && parentThreadExists && (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -170,7 +175,6 @@ export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const pendingNewThread = useWorkspaceStore((s) => s.pendingNewThread);
-  const threads = useWorkspaceStore((s) => s.threads);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
@@ -188,7 +192,9 @@ export function ChatView() {
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
-  const activeThread = threads.find((t) => t.id === activeThreadId);
+  const activeThread = useActiveWorkspaceThread((t) => t);
+  const parentThreadExists = useParentThreadExists(activeThread?.parent_thread_id);
+  const interruptedCandidates = useInterruptedThreadIds();
   const sessionError = useActiveThreadRecord((r) => r.error);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [interruptedThreadIds, setInterruptedThreadIds] = useState<string[]>([]);
@@ -226,17 +232,17 @@ export function ChatView() {
   // Always update so the banner clears when threads recover on their own.
   useEffect(() => {
     if (connectionStatus === "connected" && !bannerDismissed) {
-      const interrupted = threads
-        .filter((t) => t.status === "interrupted")
-        .map((t) => t.id);
-      // Use a functional update and bail out when content is identical to
-      // avoid a new array reference (and re-render) on every streaming token.
       setInterruptedThreadIds((prev) => {
-        if (prev.length === interrupted.length && prev.every((id, i) => id === interrupted[i])) return prev;
-        return interrupted;
+        if (
+          prev.length === interruptedCandidates.length &&
+          prev.every((id, i) => id === interruptedCandidates[i])
+        ) {
+          return prev;
+        }
+        return interruptedCandidates;
       });
     }
-  }, [connectionStatus, threads, bannerDismissed]);
+  }, [connectionStatus, interruptedCandidates, bannerDismissed]);
 
   /** Sends a continuation message to each interrupted thread, then hides the banner. */
   const handleResumeInterrupted = useCallback(
@@ -456,7 +462,7 @@ export function ChatView() {
           <Badge variant="secondary">
             {activeWorkspaceName}
           </Badge>
-          {activeThread.parent_thread_id && threads.some((t) => t.id === activeThread.parent_thread_id) && (
+          {activeThread.parent_thread_id && parentThreadExists && (
             <Tooltip>
               <TooltipTrigger
                 render={

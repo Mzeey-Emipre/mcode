@@ -2,22 +2,12 @@ import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 
-const { mockExecFile, mockRm, mockRename, mockRmdir, mockExistsSync, mockLogger } = vi.hoisted(() => ({
-  mockExecFile: vi.fn(),
+const { mockRm, mockRename, mockRmdir, mockExistsSync, mockLogger } = vi.hoisted(() => ({
   mockRm: vi.fn(),
   mockRename: vi.fn(),
   mockRmdir: vi.fn(),
   mockExistsSync: vi.fn(),
   mockLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
-}));
-
-vi.mock("child_process", () => ({
-  execFileSync: vi.fn(),
-  execFile: vi.fn(),
-}));
-
-vi.mock("util", () => ({
-  promisify: () => mockExecFile,
 }));
 
 vi.mock("fs", () => ({
@@ -39,17 +29,21 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import { GitService } from "../services/git-service";
+import { createMockGitExecutor } from "../services/git-executor/__tests__/mock-git-executor.js";
 
 describe("GitService.removeWorktree", () => {
   let gitService: GitService;
+  let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
   beforeEach(() => {
     vi.resetAllMocks();
-    gitService = new GitService({} as WorkspaceRepo);
+    const mock = createMockGitExecutor();
+    execFn = mock.execFn;
+    gitService = new GitService({} as WorkspaceRepo, mock.executor);
   });
 
   it("removes worktree and branch when git succeeds", async () => {
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
     mockExistsSync.mockReturnValue(false);
 
     const result = await gitService.removeWorktree(
@@ -59,8 +53,7 @@ describe("GitService.removeWorktree", () => {
     );
 
     expect(result).toBe(true);
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "git",
+    expect(execFn).toHaveBeenCalledWith(
       [
         "-C",
         "/repo",
@@ -72,8 +65,7 @@ describe("GitService.removeWorktree", () => {
       ],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "git",
+    expect(execFn).toHaveBeenCalledWith(
       ["-C", "/repo", "branch", "-d", "feat/test"],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
@@ -81,7 +73,7 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("falls back to fs.rm when git remove fails", async () => {
-    mockExecFile
+    execFn
       .mockRejectedValueOnce(new Error("git worktree remove failed"))
       .mockResolvedValueOnce({ stdout: "", stderr: "" }) // prune
       .mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
@@ -99,7 +91,7 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("returns false when directory cannot be removed", async () => {
-    mockExecFile.mockRejectedValue(new Error("git failed"));
+    execFn.mockRejectedValue(new Error("git failed"));
     mockExistsSync.mockReturnValue(true);
     mockRm.mockRejectedValue(new Error("permission denied"));
 
@@ -110,7 +102,7 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("succeeds even when branch deletion fails", async () => {
-    mockExecFile
+    execFn
       .mockResolvedValueOnce({ stdout: "", stderr: "" }) // worktree remove
       .mockResolvedValueOnce({ stdout: "", stderr: "" }) // prune
       .mockRejectedValueOnce(new Error("branch not found")); // branch -d
@@ -127,9 +119,9 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("passes maxRetries and retryDelay to fs.rm", async () => {
-    mockExecFile.mockRejectedValueOnce(new Error("git failed")); // worktree remove
-    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // prune
-    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
+    execFn.mockRejectedValueOnce(new Error("git failed")); // worktree remove
+    execFn.mockResolvedValueOnce({ stdout: "", stderr: "" }); // prune
+    execFn.mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
     mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
     mockRm.mockResolvedValue(undefined);
 
@@ -142,20 +134,19 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("uses double --force for git worktree remove", async () => {
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
     mockExistsSync.mockReturnValue(false);
 
     await gitService.removeWorktree("/repo", "my-worktree", { branchName: "feat/test" });
 
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "git",
+    expect(execFn).toHaveBeenCalledWith(
       ["-C", "/repo", "worktree", "remove", expect.stringContaining("my-worktree"), "--force", "--force"],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
   });
 
   it("skips branch deletion when deleteBranch is false", async () => {
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
     mockExistsSync.mockReturnValue(false);
 
     const result = await gitService.removeWorktree("/repo", "my-worktree", {
@@ -163,18 +154,17 @@ describe("GitService.removeWorktree", () => {
     });
 
     expect(result).toBe(true);
-    expect(mockExecFile).toHaveBeenCalledTimes(2);
-    expect(mockExecFile).not.toHaveBeenCalledWith(
-      "git",
+    expect(execFn).toHaveBeenCalledTimes(2);
+    expect(execFn).not.toHaveBeenCalledWith(
       expect.arrayContaining(["branch", "-d"]),
       expect.anything(),
     );
   });
 
   it("renames directory then deletes when fs.rm fails on first path", async () => {
-    mockExecFile.mockRejectedValueOnce(new Error("git failed")); // worktree remove
-    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // prune
-    mockExecFile.mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
+    execFn.mockRejectedValueOnce(new Error("git failed")); // worktree remove
+    execFn.mockResolvedValueOnce({ stdout: "", stderr: "" }); // prune
+    execFn.mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
     // fs.rm fails on original path
     mockRm.mockRejectedValueOnce(Object.assign(new Error("EBUSY"), { code: "EBUSY" }));
     mockRename.mockResolvedValue(undefined);
@@ -194,7 +184,7 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("returns false when both fs.rm and rename-then-delete fail", async () => {
-    mockExecFile.mockRejectedValue(new Error("git failed"));
+    execFn.mockRejectedValue(new Error("git failed"));
     mockRm.mockRejectedValue(Object.assign(new Error("EBUSY"), { code: "EBUSY" }));
     mockRename.mockRejectedValue(new Error("rename failed"));
     mockExistsSync.mockReturnValue(true);
@@ -205,7 +195,7 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("prunes stale metadata after manual fallback before deleting the branch", async () => {
-    mockExecFile
+    execFn
       .mockRejectedValueOnce(new Error("git failed")) // worktree remove
       .mockResolvedValueOnce({ stdout: "", stderr: "" }) // prune
       .mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
@@ -218,8 +208,8 @@ describe("GitService.removeWorktree", () => {
 
     const pruneIndex = 1;
     const branchIndex = 2;
-    expect(mockExecFile.mock.calls[pruneIndex]?.[1]).toEqual(["-C", "/repo", "worktree", "prune"]);
-    expect(mockExecFile.mock.calls[branchIndex]?.[1]).toEqual([
+    expect(execFn.mock.calls[pruneIndex]?.[0]).toEqual(["-C", "/repo", "worktree", "prune"]);
+    expect(execFn.mock.calls[branchIndex]?.[0]).toEqual([
       "-C",
       "/repo",
       "branch",
@@ -227,15 +217,15 @@ describe("GitService.removeWorktree", () => {
       "mcode/my-worktree",
     ]);
     expect(mockRm.mock.invocationCallOrder[0]).toBeLessThan(
-      mockExecFile.mock.invocationCallOrder[pruneIndex],
+      execFn.mock.invocationCallOrder[pruneIndex],
     );
-    expect(mockExecFile.mock.invocationCallOrder[pruneIndex]).toBeLessThan(
-      mockExecFile.mock.invocationCallOrder[branchIndex],
+    expect(execFn.mock.invocationCallOrder[pruneIndex]).toBeLessThan(
+      execFn.mock.invocationCallOrder[branchIndex],
     );
   });
 
   it("removes an empty managed parent directory after worktree cleanup", async () => {
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
     mockExistsSync.mockReturnValue(false);
     mockRmdir.mockResolvedValue(undefined);
 
@@ -246,7 +236,15 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("does not remove parent directories for external worktrees", async () => {
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockImplementation(async (args: string[]) => {
+      if (args.includes("list") && args.includes("--porcelain")) {
+        return {
+          stdout: "worktree /external/worktrees/my-worktree\nbranch refs/heads/main\n\n",
+          stderr: "",
+        };
+      }
+      return { stdout: "", stderr: "" };
+    });
     mockExistsSync.mockReturnValue(false);
 
     await gitService.removeWorktree("/repo", "my-worktree", {
@@ -257,8 +255,21 @@ describe("GitService.removeWorktree", () => {
     expect(mockRmdir).not.toHaveBeenCalled();
   });
 
+  it("rejects unregistered external worktree paths before filesystem cleanup", async () => {
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    await expect(
+      gitService.removeWorktree("/repo", "my-worktree", {
+        worktreePath: "/external/worktrees/my-worktree",
+        deleteBranch: false,
+      }),
+    ).rejects.toThrow("worktreePath is not a managed or registered worktree");
+    expect(mockRm).not.toHaveBeenCalled();
+  });
+
   it("retries EBUSY on parent dir rmdir and succeeds on later attempt", async () => {
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
     mockExistsSync.mockReturnValue(false);
 
     const ebusyErr = Object.assign(new Error("EBUSY"), { code: "EBUSY" });
@@ -278,7 +289,7 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("gives up parent dir cleanup after exhausting EBUSY retries", async () => {
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
     mockExistsSync.mockReturnValue(false);
 
     const ebusyErr = Object.assign(new Error("EBUSY"), { code: "EBUSY" });
@@ -296,7 +307,7 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("retries EPERM on parent dir rmdir the same as EBUSY", async () => {
-    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
     mockExistsSync.mockReturnValue(false);
 
     const epermErr = Object.assign(new Error("EPERM"), { code: "EPERM" });
@@ -314,16 +325,22 @@ describe("GitService.removeWorktree", () => {
 
 describe("GitService.log", () => {
   let gitService: GitService;
+  let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
   beforeEach(() => {
     vi.resetAllMocks();
-    gitService = new GitService({
-      findById: vi.fn().mockReturnValue({ id: "ws-1", path: "/repo", is_git_repo: true }),
-    } as unknown as WorkspaceRepo);
+    const mock = createMockGitExecutor();
+    execFn = mock.execFn;
+    gitService = new GitService(
+      {
+        findById: vi.fn().mockReturnValue({ id: "ws-1", path: "/repo", is_git_repo: true }),
+      } as unknown as WorkspaceRepo,
+      mock.executor,
+    );
   });
 
   it("compares against origin HEAD instead of requiring a local default branch", async () => {
-    mockExecFile
+    execFn
       .mockResolvedValueOnce({ stdout: "origin/main\n", stderr: "" })
       .mockResolvedValueOnce({
         stdout: [
@@ -337,16 +354,15 @@ describe("GitService.log", () => {
 
     expect(commits).toHaveLength(1);
     expect(commits[0]?.shortSha).toBe("abc1234");
-    expect(mockExecFile).toHaveBeenNthCalledWith(
+    expect(execFn).toHaveBeenNthCalledWith(
       2,
-      "git",
       expect.arrayContaining(["origin/main..feat/-commit-picker"]),
       expect.objectContaining({ timeout: 10_000 }),
     );
   });
 
   it("supports paged lightweight logs without numstat", async () => {
-    mockExecFile
+    execFn
       .mockResolvedValueOnce({ stdout: "origin/main\n", stderr: "" })
       .mockResolvedValueOnce({
         stdout: "MCODE_SEPdef123456789|||def1234|||fix: older commit|||Dev|||2026-06-10T12:00:00.000Z",
@@ -365,7 +381,7 @@ describe("GitService.log", () => {
 
     expect(commits).toHaveLength(1);
     expect(commits[0]?.filesChanged).toBe(0);
-    const args = mockExecFile.mock.calls[1]?.[1] as string[];
+    const args = execFn.mock.calls[1]?.[0] as string[];
     expect(args).toContain("--skip=100");
     expect(args).not.toContain("--numstat");
   });

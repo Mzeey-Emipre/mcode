@@ -68,6 +68,7 @@ import { EnvService } from "./services/env-service";
 import { UtilityCompletionService } from "./services/utility-completion-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
 import { ThreadTeardownService } from "./services/thread-teardown-service";
+import { RealGitExecutor } from "./services/git-executor/index.js";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(mcodeDir: string): typeof container {
@@ -245,6 +246,16 @@ export function setupContainer(mcodeDir: string): typeof container {
   );
   container.register("IProviderRegistry", {
     useFactory: (c) => c.resolve(ProviderRegistry),
+  });
+
+  // GitExecutor — registered before services that depend on it
+  container.register(
+    RealGitExecutor,
+    { useClass: RealGitExecutor },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("GitExecutor", {
+    useFactory: (c) => c.resolve(RealGitExecutor),
   });
 
   // Services (Singleton)

@@ -1,20 +1,11 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
+import { GitService } from "../services/git-service";
+import { createMockGitExecutor } from "../services/git-executor/__tests__/mock-git-executor.js";
 
-const { mockExecFile, mockExecFileSync, mockLogger } = vi.hoisted(() => ({
-  mockExecFile: vi.fn(),
-  mockExecFileSync: vi.fn(),
+const { mockLogger } = vi.hoisted(() => ({
   mockLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
-}));
-
-vi.mock("child_process", () => ({
-  execFileSync: mockExecFileSync,
-  execFile: vi.fn(),
-}));
-
-vi.mock("util", () => ({
-  promisify: () => mockExecFile,
 }));
 
 vi.mock("fs", () => ({
@@ -35,7 +26,8 @@ vi.mock("@mcode/shared", () => ({
   logger: mockLogger,
 }));
 
-import { GitService } from "../services/git-service";
+import type { Mock } from "vitest";
+import type { GitExecOptions, GitExecResult } from "../services/git-executor/types.js";
 
 /**
  * Builds the `git branch -a --format=...` output the standalone ref lister
@@ -54,10 +46,13 @@ const REPO = "/repo";
 
 describe("GitService.resolveBranchComparison", () => {
   let gitService: GitService;
+  let execFn: Mock<(args: string[], opts?: GitExecOptions) => Promise<GitExecResult>>;
 
   beforeEach(() => {
     vi.resetAllMocks();
-    gitService = new GitService({} as WorkspaceRepo);
+    const mock = createMockGitExecutor();
+    execFn = mock.execFn;
+    gitService = new GitService({} as WorkspaceRepo, mock.executor);
   });
 
   /**
@@ -76,13 +71,13 @@ describe("GitService.resolveBranchComparison", () => {
     const defaultBranch = opts.defaultBranch === undefined ? "main" : opts.defaultBranch;
     const localDefaultBranches = opts.localDefaultBranches ?? [];
 
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes("branch")) return branchListOutput(opts.branches);
-      if (args.includes("rev-parse")) return `${opts.current}\n`;
-      return "";
-    });
-
-    mockExecFile.mockImplementation(async (_cmd: string, args: string[]) => {
+    execFn.mockImplementation(async (args: string[]) => {
+      if (args.includes("branch") && args.includes("-a")) {
+        return { stdout: branchListOutput(opts.branches), stderr: "" };
+      }
+      if (args.includes("rev-parse") && args.includes("--abbrev-ref")) {
+        return { stdout: `${opts.current}\n`, stderr: "" };
+      }
       if (args.includes("rev-parse") && args.includes("--verify")) {
         if (!hasCommits) throw new Error("unborn");
         return { stdout: "deadbeef\n", stderr: "" };
@@ -226,19 +221,21 @@ describe("GitService.resolveBranchComparison", () => {
 
 describe("GitService.branchFiles / branchDiff ranges", () => {
   let gitService: GitService;
+  let execFn: Mock<(args: string[], opts?: GitExecOptions) => Promise<GitExecResult>>;
 
   beforeEach(() => {
     vi.resetAllMocks();
-    gitService = new GitService({} as WorkspaceRepo);
-    mockExecFile.mockResolvedValue({ stdout: "a.ts\nb.ts", stderr: "" });
+    const mock = createMockGitExecutor();
+    execFn = mock.execFn;
+    gitService = new GitService({} as WorkspaceRepo, mock.executor);
+    execFn.mockResolvedValue({ stdout: "a.ts\nb.ts", stderr: "" });
   });
 
   it("diffs an explicit pair three-dot for branchFiles", async () => {
     const files = await gitService.branchFiles("ws", "main", "feat/x", REPO);
 
     expect(files).toEqual(["a.ts", "b.ts"]);
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "git",
+    expect(execFn).toHaveBeenCalledWith(
       ["-C", REPO, "diff", "--name-only", "main...feat/x"],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
@@ -247,8 +244,7 @@ describe("GitService.branchFiles / branchDiff ranges", () => {
   it("diffs an explicit pair three-dot for branchDiff with renames", async () => {
     await gitService.branchDiff("ws", "main", "origin/main", "a.ts", undefined, REPO);
 
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "git",
+    expect(execFn).toHaveBeenCalledWith(
       ["-C", REPO, "diff", "--find-renames", "main...origin/main", "--", "a.ts"],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
@@ -261,27 +257,26 @@ describe("GitService.branchFiles / branchDiff ranges", () => {
     await expect(
       gitService.branchDiff("ws", "main", "-rf", undefined, undefined, REPO),
     ).rejects.toThrow(/unsafe git ref/i);
-    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(execFn).not.toHaveBeenCalled();
   });
 
   it("falls back to the detected default base ...HEAD when no pair is given", async () => {
     // symbolic-ref resolves the default branch; the diff call returns the files.
-    mockExecFile.mockImplementation(async (_cmd: string, args: string[]) => {
+    execFn.mockImplementation(async (args: string[]) => {
       if (args.includes("symbolic-ref")) return { stdout: "origin/main\n", stderr: "" };
       return { stdout: "a.ts", stderr: "" };
     });
 
     await gitService.branchFiles("ws", undefined, undefined, REPO);
 
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "git",
+    expect(execFn).toHaveBeenCalledWith(
       ["-C", REPO, "diff", "--name-only", "main...HEAD"],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
   });
 
   it("returns an explicit empty list when no default base is detected", async () => {
-    mockExecFile.mockImplementation(async (_cmd: string, args: string[]) => {
+    execFn.mockImplementation(async (args: string[]) => {
       if (args.includes("symbolic-ref")) throw new Error("no origin head");
       if (args.includes("remote")) throw new Error("no origin");
       if (args.includes("show-ref")) throw new Error("missing local default");
@@ -291,8 +286,7 @@ describe("GitService.branchFiles / branchDiff ranges", () => {
     const files = await gitService.branchFiles("ws", undefined, undefined, REPO);
 
     expect(files).toEqual([]);
-    expect(mockExecFile).not.toHaveBeenCalledWith(
-      "git",
+    expect(execFn).not.toHaveBeenCalledWith(
       expect.arrayContaining(["diff"]),
       expect.anything(),
     );

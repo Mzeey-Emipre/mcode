@@ -3,6 +3,8 @@ import { useThreadStore, scheduleDrainAfterEdit, getHandoffStatus } from "@/stor
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { getThreadRecord } from "@/stores/thread-record";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceThread, readWorkspaceThread } from "@/stores/workspace-selectors";
+import { resolveComposerSession, snapshotComposerDraft } from "@/lib/composer-session";
 import type { PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
 import { PERMISSION_MODES, INTERACTION_MODES, getTransport } from "@/transport";
 import {
@@ -30,7 +32,7 @@ import { cn } from "@/lib/utils";
 import { isWindows } from "@/lib/platform";
 import { isCursorPermissionLockedToFull } from "@/lib/cursor-permission";
 import { isGoalControlCommand } from "@/lib/goal-command";
-import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supportsUltrathink, supports1MContextWindow, supportsThinkingToggle, resolveThreadModelId, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supportsUltrathink, supports1MContextWindow, supportsThinkingToggle, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector, ALL_MODE_OPTIONS } from "./ModeSelector";
 import type { ComposerMode, ModeOption } from "./ModeSelector";
@@ -806,7 +808,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     if (prev && prev !== threadId) {
       const threadStillExists = useWorkspaceStore.getState().threads.some((t) => t.id === prev);
       if (threadStillExists) {
-        saveDraft(prev, draftRef.current);
+        saveDraft(prev, snapshotComposerDraft(draftRef.current));
       } else {
         // Thread was deleted; revoke any attachment blob URLs from the outgoing draft
         for (const att of draftRef.current.attachments) {
@@ -817,112 +819,71 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       }
     }
 
-    // Restore draft for the thread we're entering
-    if (threadId) {
-      const saved = getDraft(threadId);
-      if (saved) {
-        setInput(saved.input);
-        setAttachments(saved.attachments);
-        setModelId(saved.modelId);
-        if (saved.provider) setProvider(saved.provider);
-        setReasoning(normalizeReasoningLevelForModel(saved.modelId, saved.reasoning));
-        // Restore Lexical editor content
-        if (editorRef.current) {
-          const editor = editorRef.current;
-          editor.update(() => {
-            const root = $getRoot();
-            root.clear();
-            if (saved.input) {
-              const para = $createParagraphNode();
-              para.append($createTextNode(saved.input));
-              root.append(para);
-            } else {
-              root.append($createParagraphNode());
-            }
-          });
-        }
-        // Restore mode, permission, and copilot agent from thread settings (drafts don't save these)
-        const threadSettings = useThreadStore.getState().getThreadSettings(threadId);
-        setMode(threadSettings.interactionMode);
-        setAccess(threadSettings.permissionMode);
-        setCopilotAgent(threadSettings.copilotAgent ?? null);
-        setContextWindow(threadSettings.contextWindow ?? null);
-        setThinking(threadSettings.thinking ?? null);
-        setCodexFastMode(
-          saved.codexFastMode !== undefined
-            ? saved.codexFastMode
-            : (threadSettings.codexFastMode ?? null),
-        );
-      } else {
-        // No saved draft: use thread's persisted settings as-is
-        setInput("");
-        setAttachments([]);
-        const nextThread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
-        const resolvedModelId = resolveThreadModelId(nextThread?.model, getDefaultModelId());
-        setModelId(resolvedModelId);
-        setProvider((nextThread?.provider as string) ?? getDefaultProviderId());
-        setReasoning(normalizeReasoningLevelForModel(
-          resolvedModelId,
-          nextThread?.reasoning_level
-            ? (nextThread.reasoning_level as ReasoningLevel)
-            : getDefaultReasoningLevel(),
-        ));
+    const session = resolveComposerSession({
+      threadId,
+      getDraft,
+      threadRow: threadId ? readWorkspaceThread(threadId) : undefined,
+      threadSettings: threadId
+        ? (() => {
+            const s = useThreadStore.getState().getThreadSettings(threadId);
+            return {
+              interactionMode: s.interactionMode,
+              permissionMode: s.permissionMode,
+              copilotAgent: s.copilotAgent ?? null,
+              contextWindow: s.contextWindow ?? null,
+              thinking: s.thinking ?? null,
+              codexFastMode: s.codexFastMode ?? null,
+            };
+          })()
+        : {
+            interactionMode: INTERACTION_MODES.BUILD,
+            permissionMode: PERMISSION_MODES.FULL,
+            copilotAgent: null,
+            contextWindow: null,
+            thinking: null,
+            codexFastMode: null,
+          },
+      globalDefaults: (() => {
+        const { settings } = useSettingsStore.getState();
+        return {
+          interactionMode:
+            settings.agent.defaults.mode === "plan"
+              ? INTERACTION_MODES.PLAN
+              : INTERACTION_MODES.BUILD,
+          permissionMode: settings.agent.defaults.permission,
+        };
+      })(),
+    });
 
-        // Restore mode and permission from thread record
-        const { settings: globalSettings } = useSettingsStore.getState();
-        setMode(
-          nextThread?.interaction_mode === "plan"
-            ? INTERACTION_MODES.PLAN
-            : nextThread?.interaction_mode === "build"
-              ? INTERACTION_MODES.BUILD
-              : globalSettings.agent.defaults.mode === "plan"
-                ? INTERACTION_MODES.PLAN
-                : INTERACTION_MODES.BUILD,
-        );
-        setAccess(
-          nextThread?.permission_mode
-            ? (nextThread.permission_mode as PermissionMode)
-            : globalSettings.agent.defaults.permission,
-        );
-        setCopilotAgent(nextThread?.copilot_agent ?? null);
-        setContextWindow((nextThread?.context_window_mode as ContextWindowMode | null | undefined) ?? null);
-        setThinking(nextThread?.thinking ?? null);
-        setCodexFastMode(nextThread?.codex_fast_mode ?? null);
+    setInput(session.input);
+    setAttachments(session.attachments);
+    setModelId(session.modelId);
+    setProvider(session.provider);
+    setReasoning(session.reasoning);
+    setMode(session.interactionMode);
+    setAccess(session.permissionMode);
+    setCopilotAgent(session.copilotAgent);
+    setContextWindow(session.contextWindow);
+    setThinking(session.thinking);
+    setCodexFastMode(session.codexFastMode);
 
-        // Reset Lexical editor
-        if (editorRef.current) {
-          editorRef.current.update(() => {
-            const root = $getRoot();
-            root.clear();
-            root.append($createParagraphNode());
-          });
-        }
-      }
-    } else {
-      // Entering "new thread" mode: ensure clean slate
-      setInput("");
-      setAttachments([]);
-      setModelId(getDefaultModelId());
-      setProvider(getDefaultProviderId());
-      setReasoning(normalizeReasoningLevelForModel(getDefaultModelId(), getDefaultReasoningLevel()));
-      // Reset mode/access to persisted defaults
-      agentSettingsTouchedRef.current = false;
-      const { settings } = useSettingsStore.getState();
-      setMode(settings.agent.defaults.mode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.BUILD);
-      setAccess(settings.agent.defaults.permission);
-      setCopilotAgent(null);
-      setContextWindow(null);
-      setThinking(null);
-      setCodexFastMode(null);
-      if (editorRef.current) {
-        editorRef.current.update(() => {
-          const root = $getRoot();
-          root.clear();
+    if (editorRef.current) {
+      editorRef.current.update(() => {
+        const root = $getRoot();
+        root.clear();
+        if (session.input) {
+          const para = $createParagraphNode();
+          para.append($createTextNode(session.input));
+          root.append(para);
+        } else {
           root.append($createParagraphNode());
-        });
-      }
+        }
+      });
+    }
+
+    if (!threadId) {
+      agentSettingsTouchedRef.current = false;
       if (isNewThread) {
-        // Focus after the palette closes and Lexical has applied the empty root.
         queueMicrotask(() => {
           editorRef.current?.focus();
         });
@@ -934,9 +895,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   }, [threadId, isNewThread, saveDraft, getDraft]);
 
   const persistedInteractionMode = useThreadRecord(threadId, (r) => r.settings.interactionMode);
-  const threadRecordInteractionMode = useWorkspaceStore((s) => {
-    if (!threadId) return undefined;
-    const mode = s.threads.find((t) => t.id === threadId)?.interaction_mode;
+  const threadRecordInteractionMode = useWorkspaceThread(threadId, (t) => {
+    const mode = t?.interaction_mode;
     return mode === "plan" || mode === "build" ? mode : undefined;
   });
 
@@ -1096,8 +1056,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
 
-  const threads = useWorkspaceStore((s) => s.threads);
-  const activeThread = threadId ? threads.find((t) => t.id === threadId) : undefined;
+  const activeThread = useWorkspaceThread(threadId, (t) => t);
   const isThreadScaffold = !!(
     activeThread?.clientPreparing || activeThread?.clientError
   );

@@ -10,6 +10,7 @@ import type Database from "better-sqlite3";
 import { logger } from "@mcode/shared";
 import { UtilityCompletionService } from "./utility-completion-service.js";
 import { SnapshotService } from "./snapshot-service.js";
+import type { GitExecutor } from "./git-executor/index.js";
 import { ThreadDiffSource } from "./diff-summary-source.js";
 import type { TurnSnapshotRow } from "./diff-summary-source.js";
 import { buildDiffSummaryPrompt } from "./diff-summary-prompt.js";
@@ -62,6 +63,8 @@ export class DiffSummaryService {
     private readonly utilityCompletion: UtilityCompletionService,
     @inject(SnapshotService)
     private readonly snapshotService: SnapshotService,
+    @inject("GitExecutor")
+    private readonly gitExecutor: GitExecutor,
     @inject("Database")
     db: Database.Database,
   ) {
@@ -88,7 +91,12 @@ export class DiffSummaryService {
     snapshots: TurnSnapshotRow[],
     cwd: string,
   ): Promise<DiffSummaryRecord> {
-    const source = new ThreadDiffSource(snapshots, cwd, this.snapshotService);
+    const source = new ThreadDiffSource(
+      snapshots,
+      cwd,
+      this.snapshotService,
+      this.gitExecutor,
+    );
 
     const payload = await source.getDiff();
 

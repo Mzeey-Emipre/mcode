@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { SnapshotService } from "../services/snapshot-service";
+import { RealGitExecutor } from "../services/git-executor/real-git-executor.js";
 
 const GIT_REPO_SETUP_TIMEOUT_MS = 30_000;
 
@@ -46,7 +47,7 @@ describe("SnapshotService integration", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    service = new SnapshotService();
+    service = new SnapshotService(new RealGitExecutor());
     tmpDir = createGitRepo();
   }, GIT_REPO_SETUP_TIMEOUT_MS);
 
@@ -161,7 +162,7 @@ describe("SnapshotService integration - unborn repo", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    service = new SnapshotService();
+    service = new SnapshotService(new RealGitExecutor());
     tmpDir = createUnbornRepo();
   }, GIT_REPO_SETUP_TIMEOUT_MS);
 

@@ -3,7 +3,6 @@
  * Orchestrates two-phase workspace deletion: soft-delete + async cleanup.
  */
 
-import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
 import { injectable, inject } from "tsyringe";
@@ -14,6 +13,7 @@ import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { AttachmentService } from "./attachment-service";
 import { AgentService } from "./agent-service.js";
 import { logger } from "@mcode/shared";
+import type { GitExecutor } from "./git-executor/index.js";
 
 /** Handles workspace creation, listing, and two-phase deletion. */
 @injectable()
@@ -24,6 +24,7 @@ export class WorkspaceService {
     @inject(CleanupJobRepo) private readonly cleanupJobRepo: CleanupJobRepo,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(AgentService) private readonly agentService: AgentService,
+    @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
   ) {}
 
   /**
@@ -33,7 +34,7 @@ export class WorkspaceService {
    * remain), it is evicted automatically. If cleanup is still in progress, force-deletes
    * the stale workspace so the user can re-add immediately.
    */
-  create(name: string, path: string): Workspace {
+  async create(name: string, path: string): Promise<Workspace> {
     const existing = this.workspaceRepo.findByPath(path);
     if (existing) {
       this.workspaceRepo.touch(existing.id);
@@ -49,7 +50,7 @@ export class WorkspaceService {
       this.forceDelete(stale.id);
     }
 
-    const isGitRepo = this.detectGitRepo(path);
+    const isGitRepo = await this.detectGitRepo(path);
     return this.workspaceRepo.create(name, path, isGitRepo);
   }
 
@@ -184,12 +185,9 @@ export class WorkspaceService {
   }
 
   /** Check whether a filesystem path is inside a git repository. */
-  private detectGitRepo(path: string): boolean {
+  private async detectGitRepo(path: string): Promise<boolean> {
     try {
-      execFileSync("git", ["-C", path, "rev-parse", "--git-dir"], {
-        stdio: "pipe",
-        windowsHide: true,
-      });
+      await this.gitExecutor.exec(["-C", path, "rev-parse", "--git-dir"]);
       return true;
     } catch {
       // Fall back to filesystem check when git is unavailable or fails to run

@@ -300,7 +300,7 @@ export const WS_METHODS = lazySchema(() => ({
     result: z.string().nullable(),
   },
   "git.checkout": {
-    params: z.object({ workspaceId: z.string(), branch: z.string() }),
+    params: z.object({ workspaceId: z.string(), branch: GitRefSchema }),
     result: z.void(),
   },
   "git.listWorktrees": {
@@ -318,8 +318,8 @@ export const WS_METHODS = lazySchema(() => ({
   "git.log": {
     params: z.object({
       workspaceId: z.string(),
-      branch: z.string().optional(),
-      baseBranch: z.string().optional(),
+      branch: GitRefSchema.optional(),
+      baseBranch: GitRefSchema.optional(),
       limit: z.number().int().min(1).max(500).optional(),
       skip: z.number().int().min(0).optional(),
       includeStats: z.boolean().optional(),
@@ -513,7 +513,7 @@ export const WS_METHODS = lazySchema(() => ({
   "git.push": {
     params: z.object({
       workspaceId: z.string(),
-      branch: z.string(),
+      branch: GitRefSchema,
     }),
     result: z.object({ success: z.boolean() }),
   },
