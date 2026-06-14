@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { ContextWindowMode, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory } from "@mcode/contracts";
+import type { ContextWindowMode, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, GoalState } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import { PlanQuestionSchema, PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
@@ -1454,6 +1454,19 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
     if (method !== "session.apiRetry" && getRec(threadId).apiRetry) {
       patchRec(threadId, { apiRetry: undefined });
+    }
+
+    if (method === "session.goalUpdated") {
+      const goal = params.goal as GoalState | undefined;
+      if (goal) {
+        patchRec(threadId, { goal });
+      }
+      return;
+    }
+
+    if (method === "session.goalCleared") {
+      patchRec(threadId, { goal: null });
+      return;
     }
 
     if (method === "session.system") {

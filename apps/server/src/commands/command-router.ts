@@ -29,8 +29,8 @@ export type CommandOutcome =
   | {
       readonly kind: "rewrite";
       readonly content: string;
-      readonly onDispatch?: () => void;
-      readonly onRollback?: () => void;
+      readonly onDispatch?: () => void | Promise<void>;
+      readonly onRollback?: () => void | Promise<void>;
     };
 
 /**
@@ -48,7 +48,7 @@ export interface McodeCommand {
    */
   requiredCapability?(provider: IAgentProvider): boolean;
   /** Service a claimed message and describe how the caller should proceed. */
-  handle(ctx: CommandContext): CommandOutcome;
+  handle(ctx: CommandContext): CommandOutcome | Promise<CommandOutcome>;
 }
 
 /**
@@ -61,7 +61,7 @@ export class CommandRouter {
   constructor(private readonly commands: readonly McodeCommand[]) {}
 
   /** Route a message to the first matching command, or passthrough. */
-  route(ctx: CommandContext): CommandOutcome {
+  async route(ctx: CommandContext): Promise<CommandOutcome> {
     for (const command of this.commands) {
       if (!command.matches(ctx.content)) {
         continue;

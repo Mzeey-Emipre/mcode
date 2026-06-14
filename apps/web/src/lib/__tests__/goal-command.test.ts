@@ -22,6 +22,7 @@ describe("isGoalControlCommand", () => {
     ["/goal cleartheworld"], // not a control verb
     ["/goal reset everything"], // SET with leading 'reset'
     ["/goalclear"], // missing word boundary
+    ["please /goal clear"], // only leading /goal is an app command
     ["goal clear"], // missing slash
     [""],
     ["just text"],

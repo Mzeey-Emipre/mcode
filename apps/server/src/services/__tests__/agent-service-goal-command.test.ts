@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { container } from "tsyringe";
 import type Database from "better-sqlite3";
-import type { Thread, IProviderRegistry } from "@mcode/contracts";
+import type { Thread, IProviderRegistry, GoalState } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../store/database.js";
 import { ThreadRepo } from "../../repositories/thread-repo.js";
@@ -51,6 +51,20 @@ function buildService(db: Database.Database) {
     persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
   } as unknown as AttachmentService;
 
+  const makeGoal = (condition: string): GoalState => ({
+    threadId: "test-thread",
+    objective: condition,
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    providerId: "claude",
+    source: "claude",
+    controls: { canInspect: true, canClear: true },
+  });
+
   const providerStub = Object.assign(new EventEmitter(), {
     id: "claude" as const,
     supportsCompletion: true,
@@ -59,14 +73,14 @@ function buildService(db: Database.Database) {
     sendTurn: vi.fn<(params: { message: string; [k: string]: unknown }) => Promise<void>>(
       () => Promise.resolve(),
     ),
-    setGoal: vi.fn<(sid: string, condition: string) => void>(),
-    clearGoal: vi.fn<(sid: string) => void>(),
-    getGoal: vi.fn<(sid: string) => string | undefined>(() => undefined),
+    setGoal: vi.fn<(sid: string, condition: string) => GoalState>((_, condition) => makeGoal(condition)),
+    clearGoal: vi.fn<(sid: string) => boolean>(() => true),
+    getGoal: vi.fn<(sid: string) => GoalState | undefined>(() => undefined),
   });
   // A provider lacking the goal capability (no setGoal/clearGoal/getGoal).
   // `/goal` must pass through to this provider as plain text.
   const nonGoalStub = Object.assign(new EventEmitter(), {
-    id: "codex" as const,
+    id: "gemini" as const,
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,
     maxInputCharactersPerTurn: 16_000,
@@ -76,7 +90,7 @@ function buildService(db: Database.Database) {
   });
   const providerRegistry = {
     resolve: vi.fn((id: string) => (id === "claude" ? providerStub : nonGoalStub)),
-    resolveAll: vi.fn(() => []),
+    resolveAll: vi.fn(() => [providerStub]),
     shutdown: vi.fn(),
   } as unknown as IProviderRegistry;
 
@@ -246,7 +260,19 @@ describe("AgentService.sendMessage — /goal command", () => {
 
   it("/goal (no args) reports active goal without invoking the provider", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
-    providerStub.getGoal.mockReturnValueOnce("ship the feature");
+    providerStub.getGoal.mockReturnValueOnce({
+      threadId: thread.id,
+      objective: "ship the feature",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      providerId: "claude",
+      source: "claude",
+      controls: { canInspect: true, canClear: true },
+    } satisfies GoalState);
 
     await svc.sendMessage(
       thread.id,
@@ -277,7 +303,7 @@ describe("AgentService.sendMessage — /goal command", () => {
       [],
       undefined,
       // A non-goal-capable provider so the capability probe returns passthrough.
-      "codex",
+      "gemini",
     );
 
     // No goal install on the capable provider, and the non-capable provider
@@ -285,5 +311,34 @@ describe("AgentService.sendMessage — /goal command", () => {
     expect(providerStub.setGoal).not.toHaveBeenCalled();
     expect(nonGoalStub.sendTurn).toHaveBeenCalledTimes(1);
     expect(nonGoalStub.sendTurn.mock.calls[0][0].message).toBe("/goal something");
+  });
+
+  it("persists a Codex goal completion receipt that arrives after TurnComplete", async () => {
+    const { svc, providerStub, messageRepo } = buildService(db);
+    svc.init();
+
+    messageRepo.create(thread.id, "user", "/goal ship it", 1);
+
+    providerStub.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: thread.id,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+
+    providerStub.emit("event", {
+      type: AgentEventType.Message,
+      threadId: thread.id,
+      content: "Goal achieved in 19s.",
+      tokens: null,
+    });
+
+    const { messages } = messageRepo.listByThread(thread.id, 100);
+    expect(messages.map((m) => m.content)).toEqual([
+      "/goal ship it",
+      "Goal achieved in 19s.",
+    ]);
   });
 });

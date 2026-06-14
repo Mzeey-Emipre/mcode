@@ -1,13 +1,13 @@
 import { randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
-import type { AgentEvent } from "@mcode/contracts";
+import type { AgentEvent, GoalState } from "@mcode/contracts";
 import {
   BoundedToolOutputBuffer,
   boundToolOutput,
   type BoundedToolOutputResult,
 } from "../../services/bounded-tool-output.js";
-import type { CodexNotification, CompletedItem } from "./codex-types.js";
+import type { CodexNotification, CompletedItem, ThreadGoal } from "./codex-types.js";
 
 /** Notification methods that produce no agent events (module-level to avoid per-call allocation). */
 const SILENCED_METHODS = new Set([
@@ -300,6 +300,27 @@ export class CodexEventMapper {
 
     logger.debug("Codex child thread notification consumed", { method });
     return [];
+  }
+
+  /** Convert a native Codex goal into Mcode's provider-neutral goal state. */
+  private mapThreadGoal(goal: ThreadGoal, turnId?: string | null): GoalState {
+    return {
+      threadId: this.threadId,
+      objective: goal.objective,
+      status: goal.status,
+      tokenBudget: goal.tokenBudget,
+      tokensUsed: goal.tokensUsed,
+      timeUsedSeconds: goal.timeUsedSeconds,
+      createdAt: goal.createdAt,
+      updatedAt: goal.updatedAt,
+      providerId: "codex",
+      source: "codex",
+      turnId: turnId ?? null,
+      controls: {
+        canInspect: true,
+        canClear: goal.status !== "complete",
+      },
+    };
   }
 
   /**
@@ -763,6 +784,41 @@ export class CodexEventMapper {
 
     if (route === "child") {
       return this.mapChildThreadNotification(notification);
+    }
+
+    if (method === "thread/goal/updated") {
+      const goal = this.mapThreadGoal(notification.params.goal, notification.params.turnId ?? null);
+      const events: AgentEvent[] = [{
+        type: AgentEventType.GoalUpdated,
+        threadId: this.threadId,
+        goal,
+      }];
+      if (goal.status === "complete") {
+        events.push({
+          type: AgentEventType.Message,
+          threadId: this.threadId,
+          content: `Goal achieved in ${goal.timeUsedSeconds}s.`,
+          tokens: null,
+        });
+        events.push({
+          type: AgentEventType.GoalCleared,
+          threadId: this.threadId,
+          providerId: "codex",
+          reason: "completed",
+          turnId: goal.turnId ?? null,
+        });
+      }
+      return events;
+    }
+
+    if (method === "thread/goal/cleared") {
+      return [{
+        type: AgentEventType.GoalCleared,
+        threadId: this.threadId,
+        providerId: "codex",
+        reason: "cleared",
+        turnId: notification.params.turnId ?? null,
+      }];
     }
 
     // turn/started: starts a new turn. Clear the suppress flag so we resume

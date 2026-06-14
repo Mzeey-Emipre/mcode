@@ -41,14 +41,16 @@ function isAssistantContentEmpty(content: string): boolean {
 function parseGoalStatus(content: string): {
   label: string;
   condition?: string;
-  hint: string;
+  hint?: string;
 } | null {
   const text = content.trim();
   let m = /^Goal set: "([\s\S]+?)"\./.exec(text);
   if (m) return { label: "Goal set", condition: m[1], hint: "/goal clear to remove" };
   m = /^Active goal: "([\s\S]+?)"\./.exec(text);
   if (m) return { label: "Active goal", condition: m[1], hint: "/goal clear to remove" };
-  if (/^Goal cleared\./.test(text)) return { label: "Goal cleared", hint: "agent may end its turn normally" };
+  m = /^Goal achieved in (\d+)s\./.exec(text);
+  if (m) return { label: "Goal achieved", hint: `${m[1]}s` };
+  if (/^Goal cleared\./.test(text)) return { label: "Goal cleared" };
   if (/^No active goal\./.test(text)) return { label: "No active goal", hint: "/goal <condition> to set one" };
   return null;
 }
@@ -57,9 +59,10 @@ function parseGoalStatus(content: string): {
  * Detect a user-typed /goal SET form (`/goal <condition>` with non-empty,
  * non-control argument). The server rewrites the wire payload into a
  * directive and dispatches it to the agent without emitting a separate
- * assistant "Goal set: ..." status message, so the pill must render off
- * the user's own message. Returns null for control forms (clear, reset,
- * show, empty) — those still get an assistant-side pill from the server.
+ * assistant "Goal set: ..." status message, so the user's bubble shows the
+ * stripped objective with a quiet "Sent as goal" footer. Returns null for
+ * control forms (clear, reset, show, empty) because those get an assistant
+ * receipt from the server.
  */
 function parseUserGoalCommand(content: string): { condition: string } | null {
   const m = /^\s*\/goal\b\s*([\s\S]*)$/.exec(content);
@@ -69,6 +72,51 @@ function parseUserGoalCommand(content: string): { condition: string } | null {
   const lower = arg.toLowerCase();
   if (lower === "clear" || lower === "reset" || lower === "show") return null;
   return { condition: arg };
+}
+
+/**
+ * Compact goal lifecycle receipt: an amber target glyph beside a mono
+ * small-caps label, with an optional muted suffix (e.g. a duration). It marks
+ * the two bookends of a goal's life in one consistent, legible vocabulary —
+ * "Sent as goal" under the user's setting message and "Goal achieved" on the
+ * agent side — so neither reads as a throwaway footnote or a faint hairline.
+ * Amber is the app's single accent and is sanctioned for state indicators, so
+ * the marker catches the glance while staying quiet (no chip, no fill).
+ */
+function GoalReceipt({
+  label,
+  suffix,
+  tone = "accent",
+  className,
+}: {
+  label: string;
+  suffix?: string;
+  /**
+   * `accent` spends the amber lamp on a noteworthy state (goal achieved);
+   * `muted` keeps a routine confirmation (sent as goal) quiet and neutral so
+   * the accent stays rationed per the One-Lamp rule.
+   */
+  tone?: "accent" | "muted";
+  className?: string;
+}) {
+  return (
+    <span
+      data-testid="goal-receipt"
+      className={cn(
+        "inline-flex items-center gap-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.18em]",
+        tone === "muted" ? "text-muted-foreground" : "text-primary",
+        className,
+      )}
+    >
+      <Target size={13} className="shrink-0" aria-hidden="true" />
+      <span>{label}</span>
+      {suffix && (
+        <span className="font-normal normal-case tracking-normal tabular-nums text-muted-foreground/75">
+          {suffix}
+        </span>
+      )}
+    </span>
+  );
 }
 
 /**
@@ -88,7 +136,7 @@ function parseUserGoalCommand(content: string): { condition: string } | null {
  * `[overflow-wrap:anywhere]` allows breaking inside long unbroken tokens
  * (URLs, hashes) that ordinary `break-words` would leave to overflow.
  */
-function GoalPill({ label, condition, hint }: { label: string; condition?: string; hint: string }) {
+function GoalPill({ label, condition, hint }: { label: string; condition?: string; hint?: string }) {
   const [expanded, setExpanded] = useState(false);
 
   const labelEl = (
@@ -96,11 +144,11 @@ function GoalPill({ label, condition, hint }: { label: string; condition?: strin
       {label}
     </span>
   );
-  const hintEl = (
+  const hintEl = hint ? (
     <span className="shrink-0 font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted-foreground/70">
       {hint}
     </span>
-  );
+  ) : null;
   const iconEl = (
     <Target
       data-testid="target-icon"
@@ -468,16 +516,24 @@ export const MessageBubble = memo(function MessageBubble({
   if (message.role === "assistant") {
     const goal = parseGoalStatus(textContent);
     if (goal) {
+      // "Goal achieved" is the agent-side payoff — give it the same legible
+      // receipt vocabulary as the user's "Sent as goal" marker rather than a
+      // faint hairline, so the moment the goal lands is easy to spot. The
+      // remaining control acknowledgements stay quiet hairline chapter-breaks.
+      if (goal.label === "Goal achieved") {
+        return (
+          <div className="flex py-1.5" role="note" aria-label={goal.hint ? `Goal achieved in ${goal.hint}` : "Goal achieved"}>
+            <GoalReceipt label="Goal achieved" suffix={goal.hint ? `in ${goal.hint}` : undefined} />
+          </div>
+        );
+      }
       return <GoalPill label={goal.label} condition={goal.condition} hint={goal.hint} />;
     }
   }
 
-  // User-typed `/goal <condition>` SET form. AgentService rewrites the wire
-  // payload into a directive prompt and dispatches it to the agent without
-  // emitting a separate assistant status message, so the only place we can
-  // anchor the pill is the user's own message. Control forms (clear/show)
-  // still get an assistant-side pill from the server, so they fall through
-  // to the normal user bubble below.
+  // User-typed `/goal <condition>` SET form. AgentService rewrites only the
+  // provider-facing payload; the transcript keeps a normal user bubble with
+  // the command token stripped and a quiet "Sent as goal" footer.
   const userGoal = message.role === "user" ? parseUserGoalCommand(textContent) : null;
   const hasAttachments = imageAttachments.length > 0 || fileAttachments.length > 0;
 
@@ -493,15 +549,8 @@ export const MessageBubble = memo(function MessageBubble({
   ) {
     return null;
   }
-  // Without attachments the pill replaces the whole bubble (chapter-break
-  // full-width). With attachments we keep the user's images/files visible
-  // and render the pill alongside, so the directive is not "stolen" from
-  // the attachments the user intentionally sent with it.
-  if (message.role === "user" && userGoal && !hasAttachments) {
-    return <GoalPill label="Goal set" condition={userGoal.condition} hint="/goal clear to remove" />;
-  }
-
   const isUser = message.role === "user";
+  const userDisplayText = userGoal ? userGoal.condition : textContent;
 
   if (isUser) {
 
@@ -555,10 +604,10 @@ export const MessageBubble = memo(function MessageBubble({
               </div>
             )}
 
-          {textContent.trim() && !userGoal && (
+          {userDisplayText.trim() && (
             <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground shadow-sm shadow-primary/15">
               <Suspense fallback={null}>
-                <LazyMarkdownContent content={textContent} isStreaming={false} variant="user" />
+                <LazyMarkdownContent content={userDisplayText} isStreaming={false} variant="user" />
               </Suspense>
             </div>
           )}
@@ -567,24 +616,24 @@ export const MessageBubble = memo(function MessageBubble({
             <div className="flex items-center gap-1.5">
               {onReply && <ReplyButton onClick={() => {
                 let fallback = "[Attachment]";
-                if (!textContent.trim()) {
+                if (!userDisplayText.trim()) {
                   const firstAtt = message.attachments?.[0];
                   if (firstAtt?.mimeType.startsWith("image/")) fallback = "[Image attachment]";
                   else if (firstAtt?.mimeType === "application/pdf") fallback = "[PDF attachment]";
                   else if (firstAtt) fallback = "[File attachment]";
                 }
-                onReply(message.id, textContent.trim() || fallback, "user");
+                onReply(message.id, userDisplayText.trim() || fallback, "user");
               }} />}
               {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
-              {textContent.trim() && !userGoal && <CopyButton content={textContent} />}
+              {userDisplayText.trim() && <CopyButton content={userDisplayText} />}
             </div>
-            <span className="font-mono text-[10px] tabular-nums text-muted-foreground/55">{formattedTime}</span>
+            <div className="flex items-center gap-2 font-mono text-[10px] tabular-nums text-muted-foreground/55">
+              {userGoal && <GoalReceipt label="Sent as goal" tone="muted" />}
+              <span>{formattedTime}</span>
+            </div>
           </div>
         </div>
         </div>
-        {userGoal && (
-          <GoalPill label="Goal set" condition={userGoal.condition} hint="/goal clear to remove" />
-        )}
         <ImageAttachmentLightbox
           open={imagePreview !== null}
           onOpenChange={(open) => {

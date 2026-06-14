@@ -47,6 +47,13 @@ export { MessageSchema, PaginatedMessagesSchema } from "./models/message.js";
 export type { Message, PaginatedMessages } from "./models/message.js";
 
 export {
+  GoalControlsSchema,
+  GoalStateSchema,
+  GoalStatusSchema,
+} from "./models/goal.js";
+export type { GoalControls, GoalState, GoalStatus } from "./models/goal.js";
+
+export {
   ConversationPageSchema,
   ConversationNarrativeBatchSchema,
 } from "./models/conversation-page.js";

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
 import { QuotaCategorySchema } from "../providers/usage.js";
 import { StoredAttachmentSchema } from "../models/attachment.js";
+import { GoalStateSchema } from "../models/goal.js";
 
 const TurnOutcomeSchema = z.enum(["completed", "errored", "cancelled"]);
 
@@ -38,6 +39,8 @@ export const AgentEventType = {
   HookProgress: "hookProgress",
   HookCompleted: "hookCompleted",
   AssistantMessageBoundary: "assistantMessageBoundary",
+  GoalUpdated: "goalUpdated",
+  GoalCleared: "goalCleared",
 } as const;
 
 /** Union of all valid `AgentEvent` type discriminants. */
@@ -319,6 +322,20 @@ export const AgentEventSchema = lazySchema(() =>
       type: z.literal(AgentEventType.AssistantMessageBoundary),
       threadId: z.string(),
       isFinalResponse: z.boolean(),
+    }),
+    z.object({
+      /** Emitted when a provider reports a new or changed thread goal. */
+      type: z.literal(AgentEventType.GoalUpdated),
+      threadId: z.string(),
+      goal: GoalStateSchema(),
+    }),
+    z.object({
+      /** Emitted when a provider reports that the thread goal is no longer active. */
+      type: z.literal(AgentEventType.GoalCleared),
+      threadId: z.string(),
+      providerId: z.string().optional(),
+      reason: z.enum(["cleared", "rollback", "completed"]).optional(),
+      turnId: z.string().nullable().optional(),
     }),
   ]),
 );

@@ -17,6 +17,9 @@ import {
   ListTodo,
   MoreHorizontal,
   Paperclip,
+  Target,
+  Info,
+  Trash2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -83,6 +86,7 @@ import type {
   ContextWindowMode,
   ReasoningLevel,
   ProviderId,
+  GoalState,
 } from "@mcode/contracts";
 import { getModelContextWindow } from "@mcode/shared/model-context";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
@@ -437,6 +441,120 @@ function InlineComposerOptions({
         </Tooltip>
       )}
     </>
+  );
+}
+
+function goalTimestampMs(value: number): number {
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
+function formatGoalElapsed(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  if (safe < 60) return `${safe}s`;
+  const minutes = Math.floor(safe / 60);
+  const remainingSeconds = safe % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
+}
+
+function goalStatusLabel(status: GoalState["status"]): string {
+  switch (status) {
+    case "paused":
+      return "Goal paused";
+    case "blocked":
+      return "Goal blocked";
+    case "usageLimited":
+      return "Usage limited";
+    case "budgetLimited":
+      return "Budget limited";
+    case "complete":
+      return "Goal complete";
+    case "active":
+    default:
+      return "Pursuing goal";
+  }
+}
+
+function ActiveGoalBar({
+  threadId,
+  goal,
+}: {
+  threadId: string;
+  goal: GoalState | null | undefined;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const sendMessage = useThreadStore((s) => s.sendMessage);
+
+  useEffect(() => {
+    if (!goal || goal.status === "complete") return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [goal?.createdAt, goal?.status]);
+
+  if (!goal || goal.status === "complete") return null;
+
+  const createdAt = goalTimestampMs(goal.createdAt);
+  const elapsed = Math.max(goal.timeUsedSeconds, Math.floor((now - createdAt) / 1000));
+  const canInspect = goal.controls.canInspect === true;
+  const canClear = goal.controls.canClear === true;
+
+  return (
+    <div
+      className="mb-2 flex min-h-9 items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/35 px-3 py-2 text-xs text-muted-foreground shadow-sm"
+      data-testid="active-goal-bar"
+    >
+      <div className="min-w-0 flex items-center gap-2">
+        <Target size={13} className="shrink-0 text-primary" aria-hidden="true" />
+        <span className="shrink-0 font-medium text-foreground">
+          {goalStatusLabel(goal.status)}
+        </span>
+        <span className="shrink-0 text-muted-foreground/80">·</span>
+        <span className="shrink-0 tabular-nums">{formatGoalElapsed(elapsed)}</span>
+        <span className="truncate text-muted-foreground/80">{goal.objective}</span>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        {canInspect && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                  aria-label="Show active goal"
+                  onClick={() => void sendMessage(threadId, "/goal show")}
+                >
+                  <Info size={13} />
+                </Button>
+              }
+            />
+            <TooltipContent>Show active goal</TooltipContent>
+          </Tooltip>
+        )}
+        {canClear && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                  aria-label="Clear active goal"
+                  onClick={() => void sendMessage(threadId, "/goal clear")}
+                >
+                  <Trash2 size={13} />
+                </Button>
+              }
+            />
+            <TooltipContent>Clear active goal</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -944,6 +1062,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     threadId,
     (r) => r.planQuestionsStatus === "pending",
   );
+  const activeGoal = useThreadRecord(threadId, (r) => r.goal ?? null);
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
@@ -2209,6 +2328,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             }
           }}
         />
+      )}
+
+      {threadId && !isNewThread && (
+        <ActiveGoalBar threadId={threadId} goal={activeGoal} />
       )}
 
       {/* Main composer container - dark bg, rounded */}

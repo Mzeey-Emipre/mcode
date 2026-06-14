@@ -49,7 +49,7 @@ interface BuiltinCommand extends Command {
  * adding entries — not a Claude special-case. `/goal` is hidden for any
  * provider not in this set, including when no provider is selected.
  */
-const GOAL_PROVIDERS = new Set<string>(["claude"]);
+const GOAL_PROVIDERS = new Set<string>(["claude", "codex"]);
 
 const BUILTIN_COMMANDS: BuiltinCommand[] = [
   {

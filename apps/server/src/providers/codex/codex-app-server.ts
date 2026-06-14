@@ -25,6 +25,14 @@ import type {
   CodexTurnOptions,
   TurnStartParams,
   TurnStartResult,
+  ThreadGoal,
+  ThreadGoalSetParams,
+  ThreadGoalSetResult,
+  ThreadGoalGetParams,
+  ThreadGoalGetResult,
+  ThreadGoalClearParams,
+  ThreadGoalClearResult,
+  ThreadGoalStatus,
   SkillsListParams,
   SkillsListResult,
   SandboxMode,
@@ -559,7 +567,10 @@ export class CodexAppServer extends EventEmitter {
         return;
       }
 
-      if (LIFECYCLE_NOTIFICATION_PREFIXES.some((p) => method.startsWith(p))) {
+      if (
+        !method.startsWith("thread/goal/") &&
+        LIFECYCLE_NOTIFICATION_PREFIXES.some((p) => method.startsWith(p))
+      ) {
         // Swallowed from the mapper, but still proof of life: thread/status
         // and similar lifecycle traffic must reset turn-level watchdogs.
         this.emit("activity");
@@ -694,6 +705,57 @@ export class CodexAppServer extends EventEmitter {
       logger.debug("Codex turn/start acknowledged", { threadId: this.threadId, turnId });
     }
     return turnId;
+  }
+
+  /** Set or update the native Codex thread goal. */
+  async setGoal(objective: string): Promise<ThreadGoal> {
+    return this.updateGoal({ objective, status: "active" });
+  }
+
+  /** Update native Codex goal metadata on the current thread. */
+  async updateGoal(params: {
+    objective?: string | null;
+    status?: ThreadGoalStatus | null;
+    tokenBudget?: number | null;
+  }): Promise<ThreadGoal> {
+    if (!this.threadId) {
+      throw new Error("updateGoal called before thread was established");
+    }
+    const result = await this.rpc.sendRequest<ThreadGoalSetParams, ThreadGoalSetResult>(
+      "thread/goal/set",
+      {
+        threadId: this.threadId,
+        ...params,
+      },
+      10000,
+    );
+    return result.goal;
+  }
+
+  /** Read the native Codex goal for the current thread. */
+  async getGoal(): Promise<ThreadGoal | null> {
+    if (!this.threadId) {
+      throw new Error("getGoal called before thread was established");
+    }
+    const result = await this.rpc.sendRequest<ThreadGoalGetParams, ThreadGoalGetResult>(
+      "thread/goal/get",
+      { threadId: this.threadId },
+      10000,
+    );
+    return result.goal;
+  }
+
+  /** Clear the native Codex goal for the current thread. */
+  async clearGoal(): Promise<boolean> {
+    if (!this.threadId) {
+      throw new Error("clearGoal called before thread was established");
+    }
+    const result = await this.rpc.sendRequest<ThreadGoalClearParams, ThreadGoalClearResult>(
+      "thread/goal/clear",
+      { threadId: this.threadId },
+      10000,
+    );
+    return result.cleared;
   }
 
   /**

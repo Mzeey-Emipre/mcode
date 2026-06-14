@@ -3,6 +3,7 @@ import {
   type IAgentProvider,
   type AgentEvent,
   AgentEventType,
+  type GoalState,
   isGoalCapable,
 } from "@mcode/contracts";
 import type { MessageRepo } from "../repositories/message-repo.js";
@@ -19,6 +20,7 @@ interface GoalCommandDeps {
 
 /** Matches `/goal`, optionally followed by an argument, across newlines. */
 const GOAL_COMMAND = /^\s*\/goal\b\s*(.*)$/s;
+const MAX_GOAL_OBJECTIVE_CHARS = 4000;
 
 /**
  * The `/goal` app-native command. Holds only server-lifetime deps; the resolved
@@ -55,7 +57,7 @@ export class GoalCommand implements McodeCommand {
    * send failure can't leave a stale goal in the provider; `onRollback` tears it
    * back out.
    */
-  handle(ctx: CommandContext): CommandOutcome {
+  async handle(ctx: CommandContext): Promise<CommandOutcome> {
     const { threadId, content } = ctx;
     const match = GOAL_COMMAND.exec(content);
     const capable = isGoalCapable(ctx.provider) ? ctx.provider : null;
@@ -71,15 +73,25 @@ export class GoalCommand implements McodeCommand {
     if (isControl) {
       let replyText: string;
       if (arg === "" || lower === "show") {
-        const current = capable.getGoal(this.sessionName(threadId));
+        const current = await capable.getGoal(this.sessionName(threadId));
         replyText = current
-          ? `Active goal: "${current}". The agent will not stop until this condition is met. Use \`/goal clear\` to remove it.`
+          ? `Active goal: "${current.objective}". Use \`/goal clear\` to remove it.`
           : `No active goal. Use \`/goal <condition>\` to set one.`;
       } else {
-        capable.clearGoal(this.sessionName(threadId));
-        replyText = `Goal cleared. The agent may now end its turn normally.`;
+        const cleared = await capable.clearGoal(this.sessionName(threadId));
+        this.broadcastGoalCleared(threadId, "cleared");
+        replyText = cleared ? `Goal cleared.` : `No active goal.`;
       }
       this.persistControlReply(threadId, content, replyText);
+      return { kind: "handled" };
+    }
+
+    if (arg.length > MAX_GOAL_OBJECTIVE_CHARS) {
+      this.persistControlReply(
+        threadId,
+        content,
+        `Goal is too long. Keep goals under ${MAX_GOAL_OBJECTIVE_CHARS} characters.`,
+      );
       return { kind: "handled" };
     }
 
@@ -93,11 +105,38 @@ export class GoalCommand implements McodeCommand {
       kind: "rewrite",
       content:
         `A goal has been set for this session: "${arg}". Treat this exactly ` +
-        `as your directive — start working toward it now. The session will not ` +
+        `as your directive: start working toward it now. The session will not ` +
         `stop until the goal is satisfied.`,
-      onDispatch: () => capable.setGoal(session, arg),
-      onRollback: () => capable.clearGoal(session),
+      onDispatch: async () => {
+        const goal = await capable.setGoal(session, arg);
+        this.broadcastGoalUpdated(threadId, goal);
+      },
+      onRollback: async () => {
+        await capable.clearGoal(session);
+        this.broadcastGoalCleared(threadId, "rollback");
+      },
     };
+  }
+
+  /** Broadcast a normalized goal-state update to connected clients. */
+  private broadcastGoalUpdated(threadId: string, goal: GoalState): void {
+    this.broadcast("agent.event", {
+      type: AgentEventType.GoalUpdated,
+      threadId,
+      goal,
+    } satisfies AgentEvent);
+  }
+
+  /** Broadcast that the active goal has been cleared. */
+  private broadcastGoalCleared(
+    threadId: string,
+    reason: "cleared" | "rollback" | "completed",
+  ): void {
+    this.broadcast("agent.event", {
+      type: AgentEventType.GoalCleared,
+      threadId,
+      reason,
+    } satisfies AgentEvent);
   }
 
   /**
