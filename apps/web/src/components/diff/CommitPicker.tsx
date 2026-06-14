@@ -17,6 +17,14 @@ import { useDiffStore } from "@/stores/diffStore";
 /** How many commits to load into the picker. Matches the Commits tab's window. */
 const COMMIT_LIMIT = 100;
 
+function mergeFirstPageCommits(current: GitCommit[], firstPage: GitCommit[]): GitCommit[] {
+  const firstPageShas = new Set(firstPage.map((commit) => commit.sha));
+  return [
+    ...firstPage,
+    ...current.slice(COMMIT_LIMIT).filter((commit) => !firstPageShas.has(commit.sha)),
+  ];
+}
+
 /** Format an ISO date to a compact relative string (mirrors CommitEntry's scale). */
 function relativeTime(isoDate: string): string {
   const then = new Date(isoDate).getTime();
@@ -47,6 +55,9 @@ export function CommitPicker() {
   });
   const selectedSha = useDiffStore((s) => s.selectedCommitSha);
   const setSelectedSha = useDiffStore((s) => s.setSelectedCommitSha);
+  const diffScopeRevision = useDiffStore((s) =>
+    activeWorkspaceId ? (s.diffRevisionByScope[activeThreadId ?? activeWorkspaceId] ?? 0) : 0,
+  );
 
   const [open, setOpen] = useState(false);
   const [commits, setCommits] = useState<GitCommit[]>([]);
@@ -104,6 +115,49 @@ export function CommitPicker() {
     };
   }, [activeWorkspaceId, loadCommits, setSelectedSha]);
 
+  useEffect(() => {
+    if (!activeWorkspaceId || loadingInitial) return;
+    let cancelled = false;
+
+    void loadCommits(0)
+      .then((list) => {
+        if (!cancelled) {
+          setCommits((current) => mergeFirstPageCommits(current, list));
+          setHasMore(list.length === COMMIT_LIMIT);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setHasMore(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, diffScopeRevision, loadCommits, loadingInitial]);
+
+  useEffect(() => {
+    if (!open || !activeWorkspaceId || loadingInitial) return;
+    let cancelled = false;
+
+    void loadCommits(0)
+      .then((list) => {
+        if (!cancelled) {
+          setCommits((current) => mergeFirstPageCommits(current, list));
+          setHasMore(list.length === COMMIT_LIMIT);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCommits([]);
+          setHasMore(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, loadCommits, loadingInitial, open]);
+
   const loadOlder = useCallback(async () => {
     if (loadingInitial || loadingMore || !hasMore) return;
     setLoadingMore(true);
@@ -142,7 +196,7 @@ export function CommitPicker() {
         className="flex h-6 min-w-0 max-w-[220px] items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
       >
         <span className="shrink-0 font-mono text-[11px] tabular-nums text-foreground/55">
-          {selected?.shortSha ?? (loadingInitial ? "…" : "—")}
+          {selected?.shortSha ?? (loadingInitial ? "..." : "-")}
         </span>
         {selected && (
           <span className="min-w-0 truncate text-[11px] text-muted-foreground">

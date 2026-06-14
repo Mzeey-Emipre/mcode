@@ -489,7 +489,7 @@ export function ModelSection() {
         <SettingRow
           label="Context window"
           configKey="model.defaults.contextWindow"
-          hint="200k is the standard window. 1M unlocks the extended beta window on Opus 4.7/4.6 and Sonnet 4.6."
+          hint="200k is the standard window. 1M uses the extended beta window on Opus 4.7/4.6 and Sonnet 4.6."
         >
           <SegControl
             options={[
@@ -578,7 +578,7 @@ export function ModelSection() {
           <SettingRow
             label="Diff summary"
             configKey="diffSummary.enabled"
-            hint="Show an AI-generated Summary tab in the diff panel."
+            hint="Show the Summarize toggle in the Cumulative diff."
           >
             <Switch
               checked={diffSummaryEnabled}

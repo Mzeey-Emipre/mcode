@@ -272,6 +272,7 @@ export function startPushListeners(): void {
         threadId?: string;
       };
       clearFileListCache(workspaceId, threadId);
+      useDiffStore.getState().bumpDiffRevision(threadId ?? workspaceId);
     }),
   );
 
@@ -303,14 +304,13 @@ export function startPushListeners(): void {
       // writes) would otherwise surface a "New changes" affordance with
       // nothing new to show.
       const hasFileChanges = payload.filesChanged.length > 0;
+      if (hasFileChanges) {
+        useDiffStore.getState().bumpDiffRevision(payload.threadId);
+      }
 
       try {
         const transport = getTransport();
         if (hasSnapshots && hasFileChanges) {
-          // If the user is actively viewing the All-changes panel, defer the
-          // refresh and let CumulativeView surface a refresh affordance so
-          // their scroll position isn't yanked. Otherwise refetch silently
-          // so re-entry shows the latest data.
           const wsState = useWorkspaceStore.getState();
           const workspaceId = wsState.threads.find(
             (t) => t.id === payload.threadId,

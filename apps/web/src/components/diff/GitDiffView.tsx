@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getTransport } from "@/transport";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { FileList } from "./FileList";
@@ -26,6 +26,19 @@ interface Resolved {
   source: SelectedFile["source"];
   /** FileList row id: the workspace id for working-tree/branch views, the SHA for commit. */
   id: string;
+}
+
+/** Convert the Branch toolbar's visible current→comparison pair into git's base...target range. */
+function branchRangeForReview(
+  currentBranch: string | null,
+  comparisonRef: string | null,
+): { base: string; target: string; id: string } | null {
+  if (!currentBranch || !comparisonRef) return null;
+  return {
+    base: comparisonRef,
+    target: currentBranch,
+    id: `${comparisonRef}...${currentBranch}`,
+  };
 }
 
 /** The empty-state glyph + label shown for a view with no changes. */
@@ -61,21 +74,28 @@ function LoadingPulse() {
  * Renders one threadless git working-tree view (Unstaged, Staged, Commit, or
  * Branch) as a single navigable diff: a file tree whose rows lazy-load their
  * per-file diff. Reads the workspace root via the git transport. The Commit view
- * resolves to the latest HEAD commit; Branch compares the current branch to its
- * default base. See CONTEXT.md → "Review tab".
+ * resolves to the latest HEAD commit; Branch compares the visible current branch
+ * against the selected comparison ref. See CONTEXT.md → "Review tab".
  */
 export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const [loading, setLoading] = useState(true);
+  const diffScopeId = threadId ?? workspaceId;
+  const diffRevision = useDiffStore((s) => s.diffRevisionByScope[diffScopeId] ?? 0);
+  const mutableDiffRevision = view === "commit" ? 0 : diffRevision;
   // The Commit view's picked operand (see CommitPicker). Null means the picker
   // has not resolved a commit yet, or the current scope has no commits.
   const selectedCommitSha = useDiffStore((s) => s.selectedCommitSha);
 
-  // The Branch view's diff is driven by the current branch plus the selected
-  // comparison ref. Subscribe so picking a new target refetches the file list.
+  // The Branch toolbar stores the pair as current→comparison because that is how
+  // it is shown. Git three-dot review semantics fetch comparison...current.
   const branchBase = useDiffStore((s) => s.branchComparison?.base ?? null);
   const branchTarget = useDiffStore((s) => s.branchComparison?.target ?? null);
   const branchUnborn = useDiffStore((s) => s.branchComparison?.isUnborn ?? false);
+  const branchRange = useMemo(
+    () => branchRangeForReview(branchBase, branchTarget),
+    [branchBase, branchTarget],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -85,7 +105,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     // Branch view waits for the picker to resolve a pair before fetching, unless
     // HEAD is unborn (explicit empty). Holding `loading` avoids a flash of the
     // empty state with a stale/default range during resolution.
-    if (view === "branch" && !branchUnborn && (!branchBase || !branchTarget)) {
+    if (view === "branch" && !branchUnborn && !branchRange) {
       return () => {
         cancelled = true;
       };
@@ -98,13 +118,18 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         return { files, source: view, id: workspaceId };
       }
       if (view === "branch") {
-        if (branchUnborn || !branchBase || !branchTarget) {
+        if (branchUnborn || !branchRange) {
           return { files: [], source: "branch", id: "branch-empty" };
         }
-        const files = await transport.getBranchFiles(workspaceId, branchBase, branchTarget, threadId);
+        const files = await transport.getBranchFiles(
+          workspaceId,
+          branchRange.base,
+          branchRange.target,
+          threadId,
+        );
         // The comparison range is folded into the FileList id so the inline diff
         // cache and per-file fetch vary by pair (git refnames can't contain "..").
-        return { files, source: "branch", id: `${branchBase}...${branchTarget}` };
+        return { files, source: "branch", id: branchRange.id };
       }
       // Commit view: the picker's chosen commit. The picker owns defaulting to
       // the latest HEAD commit, which avoids a duplicate git-log + commit-files
@@ -138,7 +163,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     // inputs for the Branch view: picking a new ref pair refetches its file list.
     // previous scope's stale diff. selectedCommitSha is one too: picking a commit
     // refetches that commit's files (no-op for the non-commit views).
-  }, [view, workspaceId, threadId, branchBase, branchTarget, branchUnborn, selectedCommitSha]);
+  }, [view, workspaceId, threadId, branchRange, branchUnborn, selectedCommitSha, mutableDiffRevision]);
 
   if (loading) return <LoadingPulse />;
   if (!resolved || resolved.files.length === 0) {
@@ -154,6 +179,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         // Cache + per-file fetch scope: the real thread (→ its worktree) when in a
         // thread, else the workspace id (the server reads the workspace root).
         threadId={threadId ?? workspaceId}
+        cacheVersion={mutableDiffRevision}
         // Open each file's diff on arrival so switching between the git views
         // lands on the changes directly, without a click per file (each diff is
         // still fetched lazily on mount and large diffs stay truncated).

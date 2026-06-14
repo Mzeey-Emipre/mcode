@@ -271,7 +271,13 @@ export function RightPanel() {
     <div
       ref={panelRootRef}
       style={
-        maximized
+        !panelVisible
+          ? {
+              width: 0,
+              minWidth: 0,
+              maxWidth: 0,
+            }
+          : maximized
           ? undefined
           : {
               width: panelWidth,
@@ -281,10 +287,12 @@ export function RightPanel() {
       }
       className={cn(
         "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg bg-background shadow-sm focus:outline-none",
-        !panelVisible && "hidden",
+        "transition-[width,min-width,max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        !panelVisible && "pointer-events-none translate-x-2 opacity-0",
+        panelVisible && "translate-x-0 opacity-100",
         // Maximized fills the content area (App hides the chat pane); inline
         // mode is sized by the stored width above.
-        maximized && "flex-1",
+        panelVisible && maximized && "flex-1",
       )}
       // Pair aria-hidden with inert: inert auto-blurs any focused descendant on
       // apply, which avoids Chrome's "Blocked aria-hidden on an element because

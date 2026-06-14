@@ -6,7 +6,6 @@ import { DiffToolbar } from "./DiffToolbar";
 import { LastTurnView } from "./LastTurnView";
 import { CumulativeView } from "./CumulativeView";
 import { GitDiffView, type GitView } from "./GitDiffView";
-import { SummaryView } from "./SummaryView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 /** The threadless git working-tree view ids. */
@@ -21,7 +20,7 @@ function isGitView(mode: string): mode is GitView {
  * The Review (Changes) tab body: toolbar + a single scrollable diff. Dual-scope —
  * with no thread it renders the git working-tree views (Unstaged/Staged/Commit/
  * Branch) against the workspace root; with a thread it renders the turn views
- * (Last turn, Cumulative, Summary). Each view renders exactly one diff.
+ * (Last turn, Cumulative). Each view renders exactly one diff.
  */
 export function DiffPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -102,8 +101,6 @@ export function DiffPanel() {
           // thread's checkout (passed via threadId), alongside the turn views.
           isGitView(viewMode) && activeWorkspaceId ? (
             <GitDiffView view={viewMode} workspaceId={activeWorkspaceId} threadId={activeThreadId} />
-          ) : viewMode === "summary" ? (
-            <SummaryView />
           ) : snapshotsLoading ? (
             <LoadingPulse />
           ) : viewMode === "cumulative" ? (
