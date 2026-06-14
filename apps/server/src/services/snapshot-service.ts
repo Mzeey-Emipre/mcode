@@ -4,74 +4,47 @@
  * for comparing snapshots.
  */
 
-import { injectable } from "tsyringe";
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
+import { injectable, inject } from "tsyringe";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-
-const execFile = promisify(execFileCb);
+import type { GitExecutor } from "./git-executor/index.js";
 
 /** Service for capturing and comparing git working tree snapshots. */
 @injectable()
 export class SnapshotService {
+  constructor(@inject("GitExecutor") private readonly gitExecutor: GitExecutor) {}
+
   /**
    * Capture the current working tree state as a tree object SHA.
    *
-   * Uses a temporary git index (via GIT_INDEX_FILE) to stage all working tree
-   * changes including untracked files without touching the real index. Returns
-   * the tree SHA directly - no commit object is created, so no git identity
-   * configuration is required.
+   * Clean trees resolve from HEAD with a cheap status check. Dirty trees use a
+   * temporary git index (via GIT_INDEX_FILE) to stage all working tree changes
+   * including untracked files without touching the real index.
    *
    * Identical working trees produce identical tree SHAs (content-addressable),
    * so consecutive calls on a clean tree return the same value.
-   *
-   * For unborn repos (no commits yet), read-tree is skipped and the tree is
-   * built from scratch. Throws on non-recoverable failures (disk full,
-   * permissions, not a git repo) so the caller can skip snapshot creation.
    */
   async captureRef(cwd: string): Promise<string> {
     const timeout = 10_000;
-    let tmpIndex = "";
 
-    // Resolve the git dir so the temp index lives on the same volume (Windows compatibility)
-    const { stdout: gitDirOut } = await execFile(
-      "git",
-      ["-C", cwd, "rev-parse", "--git-dir"],
-      { timeout, windowsHide: true },
+    const { stdout: statusOut } = await this.gitExecutor.exec(
+      ["-C", cwd, "status", "--porcelain"],
+      { timeout },
     );
-    const gitDirRaw = gitDirOut.trim();
-    // rev-parse --git-dir may return a relative path on some git versions
-    const gitDir = gitDirRaw.startsWith("/") || /^[A-Za-z]:/.test(gitDirRaw)
-      ? gitDirRaw
-      : join(cwd, gitDirRaw);
-
-    tmpIndex = `${gitDir}/mcode-index-${randomUUID()}`;
-    const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
-
-    try {
-      // Seed from HEAD tree; swallow failure for unborn repos (no commits yet)
+    if (statusOut.trim() === "") {
       try {
-        await execFile("git", ["-C", cwd, "read-tree", "HEAD"], { timeout, env, windowsHide: true });
+        const { stdout: treeOut } = await this.gitExecutor.exec(
+          ["-C", cwd, "rev-parse", "HEAD^{tree}"],
+          { timeout },
+        );
+        return treeOut.trim();
       } catch {
-        // Unborn repo or corrupt HEAD - proceed with empty index
+        // Unborn repo or missing HEAD: fall through to staged capture path.
       }
-
-      // Stage all working tree changes including untracked files
-      await execFile("git", ["-C", cwd, "add", "-A"], { timeout, env, windowsHide: true });
-
-      // Write the staged index as a tree object and return the SHA
-      const { stdout: treeOut } = await execFile(
-        "git",
-        ["-C", cwd, "write-tree"],
-        { timeout, env, windowsHide: true },
-      );
-      return treeOut.trim();
-    } finally {
-      // Fire-and-forget cleanup - no await to prevent hangs on locked files
-      unlink(tmpIndex).catch(() => {});
     }
+
+    return this.captureStagedTreeRef(cwd, timeout);
   }
 
   /** Get list of files changed between two refs (tree or commit SHAs). */
@@ -81,10 +54,9 @@ export class SnapshotService {
     }
 
     try {
-      const { stdout } = await execFile(
-        "git",
+      const { stdout } = await this.gitExecutor.exec(
         ["-C", cwd, "diff", "--name-only", refBefore, refAfter],
-        { timeout: 10_000, windowsHide: true },
+        { timeout: 10_000 },
       );
 
       const output = stdout.trim();
@@ -117,7 +89,7 @@ export class SnapshotService {
     }
 
     try {
-      const { stdout } = await execFile("git", args, { timeout: 10_000, windowsHide: true });
+      const { stdout } = await this.gitExecutor.exec(args, { timeout: 10_000 });
       const result = stdout.trim();
 
       if (maxLines) {
@@ -133,9 +105,8 @@ export class SnapshotService {
   /** Validate that a git ref still exists (not garbage collected). */
   async validateRef(cwd: string, ref: string): Promise<boolean> {
     try {
-      await execFile("git", ["-C", cwd, "cat-file", "-t", ref], {
+      await this.gitExecutor.exec(["-C", cwd, "cat-file", "-t", ref], {
         timeout: 10_000,
-        windowsHide: true,
       });
       return true;
     } catch {
@@ -152,10 +123,9 @@ export class SnapshotService {
     if (refBefore === refAfter) return [];
 
     try {
-      const { stdout } = await execFile(
-        "git",
+      const { stdout } = await this.gitExecutor.exec(
         ["-C", cwd, "diff", "--numstat", "--find-renames", refBefore, refAfter],
-        { timeout: 10_000, windowsHide: true },
+        { timeout: 10_000 },
       );
 
       return stdout
@@ -166,13 +136,50 @@ export class SnapshotService {
           const [addStr, delStr, ...pathParts] = line.split("\t");
           return {
             filePath: pathParts.join("\t"),
-            // Binary files show "-" instead of a number
             additions: addStr === "-" ? 0 : parseInt(addStr ?? "0", 10),
             deletions: delStr === "-" ? 0 : parseInt(delStr ?? "0", 10),
           };
         });
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * Stage the full working tree via a temp index and return its tree SHA.
+   * Used for dirty trees and unborn repos where HEAD^{tree} is unavailable.
+   */
+  private async captureStagedTreeRef(cwd: string, timeout: number): Promise<string> {
+    let tmpIndex = "";
+
+    const { stdout: gitDirOut } = await this.gitExecutor.exec(
+      ["-C", cwd, "rev-parse", "--git-dir"],
+      { timeout },
+    );
+    const gitDirRaw = gitDirOut.trim();
+    const gitDir = gitDirRaw.startsWith("/") || /^[A-Za-z]:/.test(gitDirRaw)
+      ? gitDirRaw
+      : join(cwd, gitDirRaw);
+
+    tmpIndex = `${gitDir}/mcode-index-${randomUUID()}`;
+    const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+
+    try {
+      try {
+        await this.gitExecutor.exec(["-C", cwd, "read-tree", "HEAD"], { timeout, env });
+      } catch {
+        // Unborn repo or corrupt HEAD - proceed with empty index
+      }
+
+      await this.gitExecutor.exec(["-C", cwd, "add", "-A"], { timeout, env });
+
+      const { stdout: treeOut } = await this.gitExecutor.exec(
+        ["-C", cwd, "write-tree"],
+        { timeout, env },
+      );
+      return treeOut.trim();
+    } finally {
+      unlink(tmpIndex).catch(() => {});
     }
   }
 }
