@@ -236,7 +236,15 @@ describe("GitService.removeWorktree", () => {
   });
 
   it("does not remove parent directories for external worktrees", async () => {
-    execFn.mockResolvedValue({ stdout: "", stderr: "" });
+    execFn.mockImplementation(async (args: string[]) => {
+      if (args.includes("list") && args.includes("--porcelain")) {
+        return {
+          stdout: "worktree /external/worktrees/my-worktree\nbranch refs/heads/main\n\n",
+          stderr: "",
+        };
+      }
+      return { stdout: "", stderr: "" };
+    });
     mockExistsSync.mockReturnValue(false);
 
     await gitService.removeWorktree("/repo", "my-worktree", {
@@ -245,6 +253,19 @@ describe("GitService.removeWorktree", () => {
     });
 
     expect(mockRmdir).not.toHaveBeenCalled();
+  });
+
+  it("rejects unregistered external worktree paths before filesystem cleanup", async () => {
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+
+    await expect(
+      gitService.removeWorktree("/repo", "my-worktree", {
+        worktreePath: "/external/worktrees/my-worktree",
+        deleteBranch: false,
+      }),
+    ).rejects.toThrow("worktreePath is not a managed or registered worktree");
+    expect(mockRm).not.toHaveBeenCalled();
   });
 
   it("retries EBUSY on parent dir rmdir and succeeds on later attempt", async () => {

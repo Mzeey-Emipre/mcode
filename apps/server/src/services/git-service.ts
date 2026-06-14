@@ -171,6 +171,7 @@ export class GitService {
 
   /** Checkout an existing branch in the workspace repository. */
   async checkout(workspaceId: string, branch: string): Promise<void> {
+    validateBranchName(branch);
     const workspace = this.requireWorkspace(workspaceId);
     await this.gitExecutor.exec(["-C", workspace.path, "checkout", branch]);
   }
@@ -282,6 +283,8 @@ export class GitService {
       validateBranchName(branch);
     }
 
+    await this.assertRemovableWorktreePath(repoPath, wtPath);
+
     // 1. Try git worktree remove
     try {
       await this.gitExecutor.exec(
@@ -387,6 +390,27 @@ export class GitService {
   }
 
   /**
+   * Reject fallback fs.rm when a caller-supplied worktree path is outside the
+   * managed mcode worktree root and not registered with git for the repo.
+   */
+  private async assertRemovableWorktreePath(
+    repoPath: string,
+    worktreePath: string,
+  ): Promise<void> {
+    const managedRoot = resolve(getMcodeDir(), "worktrees");
+    const rel = relative(managedRoot, resolve(worktreePath));
+    const isManagedPath = !(rel.startsWith("..") || isAbsolute(rel));
+    if (isManagedPath) return;
+
+    const isRegistered = await this.isRegisteredWorktreePath(repoPath, worktreePath);
+    if (!isRegistered) {
+      throw new Error(
+        `worktreePath is not a managed or registered worktree: ${worktreePath}`,
+      );
+    }
+  }
+
+  /**
    * Resolve the working directory for a thread, accounting for worktree mode.
    * Uses the thread's worktree_path when available, otherwise the workspace root.
    */
@@ -413,6 +437,9 @@ export class GitService {
   ): Promise<GitCommit[]> {
     const workspace = this.requireWorkspace(workspaceId);
     const effectivePath = repoPath ?? workspace.path;
+
+    if (branch !== undefined) assertSafeRef(branch);
+    if (baseBranch !== undefined) assertSafeRef(baseBranch);
 
     // Auto-detect default branch when baseBranch is omitted but branch is specified
     const resolvedBase = baseBranch !== undefined
@@ -711,6 +738,7 @@ export class GitService {
 
   /** Push a branch to the origin remote, creating the upstream tracking ref if needed. */
   async push(repoPath: string, branch: string): Promise<void> {
+    validateBranchName(branch);
     await this.gitExecutor.exec(
       ["-C", repoPath, "push", "--set-upstream", "origin", branch],
       { timeout: 60_000 },

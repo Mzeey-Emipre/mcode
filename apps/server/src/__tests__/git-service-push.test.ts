@@ -53,6 +53,18 @@ describe("GitService.push", () => {
       "rejected",
     );
   });
+
+  it("rejects branch names that look like git flags", async () => {
+    const { validateBranchName } = await import("@mcode/shared");
+    vi.mocked(validateBranchName).mockImplementation(() => {
+      throw new Error("Branch name cannot start with '-'");
+    });
+
+    await expect(gitService.push("/repo", "--force")).rejects.toThrow(
+      "Branch name cannot start with '-'",
+    );
+    expect(execFn).not.toHaveBeenCalled();
+  });
 });
 
 describe("GitService.diffStat", () => {
