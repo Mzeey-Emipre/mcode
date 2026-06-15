@@ -89,6 +89,11 @@ export function FileEntry({
     () => (cachedDiff !== undefined ? { loading: false, data: cachedDiff } : null),
   );
   const renderMode = useDiffStore((s) => s.renderMode);
+  // True only on the render where the user toggled unified<->split. The diff
+  // body keys its settle-in off this so the motion fires on the mode swap, never
+  // on first expand or diff load. The ref is committed after each render below.
+  const prevRenderModeRef = useRef(renderMode);
+  const isModeSwap = prevRenderModeRef.current !== renderMode;
   // Tracks whether a load has been kicked off in this effect lifecycle.
   // Reset in cleanup so React StrictMode's second invocation can start a
   // fresh, non-cancelled fetch (the first is cancelled by cleanup).
@@ -126,6 +131,11 @@ export function FileEntry({
       setPreviewMode(false);
     }
   }, [bulkDiffExpand]);
+
+  // Commit the render-mode seen this render so the next swap is detected once.
+  useEffect(() => {
+    prevRenderModeRef.current = renderMode;
+  }, [renderMode]);
 
   useEffect(() => {
     if (jumpToken === undefined) return;
@@ -390,7 +400,13 @@ export function FileEntry({
           ) : previewMode && isMarkdown ? (
             <DiffPreview lines={lines} />
           ) : lines.length > 0 ? (
-            <>
+            // Keyed by render mode so a unified<->split toggle remounts this
+            // block, replaying its settle-in; `isModeSwap` gates the class so the
+            // motion fires only on the swap, not on first expand or diff load.
+            <div
+              key={renderMode}
+              className={cn(isModeSwap && "animate-diff-mode-swap")}
+            >
               {renderMode === "unified" ? (
                 <UnifiedDiff
                   lines={visibleLines}
@@ -417,7 +433,7 @@ export function FileEntry({
                   Show {hiddenLineCount} more lines
                 </Button>
               )}
-            </>
+            </div>
           ) : (
             <div className="flex items-center justify-center py-4">
               <p className="text-[10px] text-muted-foreground">No changes</p>
