@@ -17,55 +17,67 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  lint-desktop:
-    name: Lint Desktop
+  typecheck:
+    name: Typecheck
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.2.14"
-      - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/desktop typecheck
-
-  lint-frontend:
-    name: Lint Frontend
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.2.14"
-      - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/web lint
-      - run: bun run --cwd apps/web typecheck
-
-  test-frontend:
-    name: Test Frontend
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.2.14"
-      - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/web test
-
-  test-server:
-    name: Test Server
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
     env:
-      # Server tests run under Node/vitest; skip Electron binary download and
+      # Typecheck reads Electron's bundled types, not its binary; skip the binary
+      # download and better-sqlite3 Electron prebuild so bun install does not flake
+      # on 504s.
+      SKIP_ELECTRON_REBUILD: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.14"
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+
+  lint:
+    name: Lint
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+    env:
+      # Lint runs ESLint under Node, not Electron; skip the binary download and
       # better-sqlite3 Electron prebuild so bun install does not flake on 504s.
       SKIP_ELECTRON_REBUILD: "1"
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.2.14"
       - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/server test
+      - run: bun run lint
+
+  test:
+    name: Test
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+    env:
+      # Unit tests run under Node/vitest with Electron fully mocked; skip the
+      # binary download and better-sqlite3 Electron prebuild so bun install does
+      # not flake on 504s.
+      SKIP_ELECTRON_REBUILD: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.14"
+      - run: bun install --frozen-lockfile
+      - run: bun run test
 
   build-check:
     name: Build Check

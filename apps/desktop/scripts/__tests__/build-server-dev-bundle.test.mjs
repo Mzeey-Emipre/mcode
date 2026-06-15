@@ -39,15 +39,17 @@ describe("electronArchToNpm", () => {
 
 describe("resolvePackagedServerDir", () => {
   it("resolves Windows and Linux paths under resources/", () => {
+    // Resolve to a host-absolute appOutDir so the assertion holds on every OS:
+    // a bare "C:/..." is absolute on Windows but relative on POSIX, which would
+    // make resolve() prepend the cwd and diverge from join().
+    const appOutDir = path.resolve("/dist/win-unpacked");
     expect(
       resolvePackagedServerDir({
-        appOutDir: "C:/dist/win-unpacked",
+        appOutDir,
         electronPlatformName: "win32",
         productFilename: "Mcode",
       }),
-    ).toBe(
-      path.join("C:/dist/win-unpacked", "resources", "app.asar.unpacked", "dist", "server"),
-    );
+    ).toBe(path.join(appOutDir, "resources", "app.asar.unpacked", "dist", "server"));
   });
 
   it("resolves macOS paths under Contents/Resources/", () => {
