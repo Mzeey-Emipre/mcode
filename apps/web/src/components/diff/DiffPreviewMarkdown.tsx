@@ -1,7 +1,53 @@
-import { useMemo } from "react";
-import ReactMarkdown from "react-markdown";
+import { useMemo, lazy, Suspense } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { makeRemarkDiffMarkers } from "@/lib/remark-diff-markers";
+
+/** Lazy-loaded MermaidBlock - only fetched when a mermaid fence appears in the preview. */
+const LazyMermaidBlock = lazy(() => import("../chat/MermaidBlock"));
+
+/**
+ * react-markdown component overrides for the diff preview. The only behavior
+ * we add over the defaults is mermaid handling: fenced ```mermaid blocks must
+ * render as diagrams, not raw code (the diff preview previously showed them as
+ * plain text). Everything else falls through to react-markdown defaults so the
+ * diff markers and global typography styles keep working.
+ */
+const COMPONENTS: Components = {
+  pre({ node, children, ...props }) {
+    // Unwrap the <pre> wrapper around a mermaid fence so the rendered diagram
+    // isn't boxed inside code-block styling. Non-mermaid code blocks keep their
+    // <pre> (and the data-diff-added marker the remark plugin attaches).
+    const child = node?.children?.[0];
+    const className = child?.type === "element" ? child.properties?.className : undefined;
+    const isMermaid = Array.isArray(className) && className.includes("language-mermaid");
+    if (isMermaid) return <>{children}</>;
+    return <pre {...props}>{children}</pre>;
+  },
+  code({ node: _node, className, children, ...props }) {
+    const langMatch = /language-(\S+)/.exec(className ?? "");
+    if (langMatch?.[1] === "mermaid") {
+      const code = String(children).replace(/\n$/, "");
+      return (
+        <Suspense
+          fallback={
+            <pre className="rounded bg-muted/30 p-3 text-[12px] font-mono overflow-x-auto">
+              <code>{code}</code>
+            </pre>
+          }
+        >
+          {/* Preview reconstructs the final file content, so it is never mid-stream. */}
+          <LazyMermaidBlock code={code} isStreaming={false} />
+        </Suspense>
+      );
+    }
+    return (
+      <code className={className} {...props}>
+        {children}
+      </code>
+    );
+  },
+};
 
 /** Props for the inner Markdown renderer used by DiffPreview. */
 interface DiffPreviewMarkdownProps {
@@ -72,7 +118,9 @@ export default function DiffPreviewMarkdown({
         "[&_td]:border [&_td]:border-border/40 [&_td]:px-2 [&_td]:py-1",
       ].join(" ")}
     >
-      <ReactMarkdown remarkPlugins={remarkPlugins}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={COMPONENTS}>
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }

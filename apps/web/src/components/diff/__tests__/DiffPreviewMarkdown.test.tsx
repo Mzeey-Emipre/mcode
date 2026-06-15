@@ -1,6 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import DiffPreviewMarkdown from "../DiffPreviewMarkdown";
+
+// MermaidBlock is lazy-loaded by DiffPreviewMarkdown; stub it so the test
+// asserts the routing decision (mermaid fence -> MermaidBlock) without pulling
+// in the real mermaid library and its async render lifecycle.
+vi.mock("../../chat/MermaidBlock", () => ({
+  default: ({ code, isStreaming }: { code: string; isStreaming: boolean }) => (
+    <div data-testid="mermaid-block" data-streaming={String(isStreaming)}>
+      {code}
+    </div>
+  ),
+}));
 
 /**
  * End-to-end test of the diff-preview render path. Confirms the remark
@@ -50,6 +61,20 @@ describe("DiffPreviewMarkdown", () => {
     // renders <code> inside <pre>. The data attribute lands on the <code>.
     const code = pre?.querySelector("code");
     expect(code).toHaveAttribute("data-diff-added", "true");
+  });
+
+  it("renders mermaid fences as a diagram instead of raw code", async () => {
+    const content = ["# Diagram", "", "```mermaid", "graph TD; A-->B;", "```"].join("\n");
+    const { container } = render(
+      <DiffPreviewMarkdown content={content} addedLines={new Set()} />,
+    );
+
+    const block = await screen.findByTestId("mermaid-block");
+    expect(block).toHaveTextContent("graph TD; A-->B;");
+    // Preview content is the final reconstructed file, never mid-stream.
+    expect(block).toHaveAttribute("data-streaming", "false");
+    // The raw <pre><code class="language-mermaid"> fallback must not survive.
+    expect(container.querySelector("code.language-mermaid")).toBeNull();
   });
 
   it("renders without any data-diff-added markers when no lines were added", () => {
