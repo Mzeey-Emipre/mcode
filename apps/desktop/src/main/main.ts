@@ -120,7 +120,12 @@ const serverCrashRecovery = new ServerCrashRecovery({
 
 /** Returns the app icon path used for dev windows and packaged resources. */
 function getWindowIconPath(): string {
-  const iconFile = process.platform === "win32" ? "icon.ico" : "icon.png";
+  const iconFile =
+    process.platform === "win32"
+      ? "icon.ico"
+      : process.platform === "darwin"
+        ? "icon.icns"
+        : "icon.png";
   if (app.isPackaged) {
     return join(process.resourcesPath, iconFile);
   }
