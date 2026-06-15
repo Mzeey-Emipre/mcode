@@ -1,9 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileSearch } from "lucide-react";
+import {
+  FileSearch,
+  WrapText,
+  Columns2,
+  MoreHorizontal,
+  RefreshCw,
+  ChevronsDownUp,
+  ChevronsUpDown,
+} from "lucide-react";
 import { FileEntry } from "./FileEntry";
 import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { getTransport } from "@/transport";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import {
   Command,
   CommandEmpty,
@@ -62,6 +80,36 @@ export function FileList({
     return () => setReviewFileCount(null);
   }, [files.length, setReviewFileCount]);
 
+  // Diff-display controls now live on this bar. Line-wrap is keyed by the active
+  // thread (matching the renderers); render mode is global.
+  const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const renderMode = useDiffStore((s) => s.renderMode);
+  const setRenderMode = useDiffStore((s) => s.setRenderMode);
+  const toggleLineWrap = useDiffStore((s) => s.toggleLineWrap);
+  const lineWrap = useDiffStore((s) => (activeThreadId ? s.getLineWrap(activeThreadId) : true));
+  const bumpDiffRevision = useDiffStore((s) => s.bumpDiffRevision);
+  const setSnapshots = useDiffStore((s) => s.setSnapshots);
+  const setBulkDiffExpand = useDiffStore((s) => s.setBulkDiffExpand);
+  const bulkDiffExpand = useDiffStore((s) => s.bulkDiffExpand);
+  // The expand/collapse toggle reflects the last bulk action, falling back to
+  // the view's default expand state when none has run yet.
+  const allExpanded = bulkDiffExpand?.expand ?? defaultFilesExpanded;
+
+  // Refresh re-fetches the view: bump the scope revision (clears the inline diff
+  // cache + reloads git-view file lists); thread views also need a snapshot
+  // refetch. `threadId` here is the diff scope (real thread, else workspace id).
+  const handleRefresh = useCallback(() => {
+    bumpDiffRevision(threadId);
+    if (activeThreadId) {
+      void getTransport()
+        .listSnapshots(activeThreadId)
+        .then((snaps) => setSnapshots(activeThreadId, snaps))
+        .catch(() => {
+          /* non-critical: auto-refresh on file events still applies */
+        });
+    }
+  }, [threadId, activeThreadId, bumpDiffRevision, setSnapshots]);
+
   useEffect(() => {
     return () => {
       if (highlightClearRef.current) clearTimeout(highlightClearRef.current);
@@ -93,10 +141,57 @@ export function FileList({
 
   return (
     <div className="flex flex-col">
-      <div className="sticky top-0 z-20 flex items-center justify-between gap-2 bg-background/95 px-2 py-1.5 shadow-[0_8px_12px_-12px_oklch(0_0_0/0.35)] backdrop-blur-sm">
+      <div className="sticky top-0 z-20 flex items-center gap-0.5 bg-background/95 px-2 py-1.5 shadow-[0_8px_12px_-12px_oklch(0_0_0/0.35)] backdrop-blur-sm">
         <span className="font-mono text-[10px] tabular-nums text-muted-foreground/65">
           {files.length} {files.length === 1 ? "file" : "files"}
         </span>
+
+        {/* Diff-display controls: review-options menu, jump, split toggle.
+            `ml-auto` on the first pushes the group to the right edge. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label="Review options"
+            data-testid="review-options-menu"
+            className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/50 outline-none transition-colors hover:bg-muted/40 hover:text-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <MoreHorizontal size={18} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={6} className="min-w-[190px]">
+            <DropdownMenuItem
+              onClick={handleRefresh}
+              data-testid="review-option-refresh"
+              className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs"
+            >
+              <RefreshCw size={13} className="text-muted-foreground" />
+              Refresh
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!activeThreadId}
+              onClick={() => {
+                if (activeThreadId) toggleLineWrap(activeThreadId);
+              }}
+              data-testid="review-option-word-wrap"
+              className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs data-disabled:cursor-not-allowed"
+            >
+              <WrapText size={13} className="text-muted-foreground" />
+              {lineWrap ? "Disable word wrap" : "Enable word wrap"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => setBulkDiffExpand(!allExpanded)}
+              data-testid="review-option-toggle-all"
+              className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs"
+            >
+              {allExpanded ? (
+                <ChevronsDownUp size={13} className="text-muted-foreground" />
+              ) : (
+                <ChevronsUpDown size={13} className="text-muted-foreground" />
+              )}
+              {allExpanded ? "Collapse all" : "Expand all"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         <Popover open={jumpOpen} onOpenChange={setJumpOpen}>
           {/* Icon-only trigger; the tooltip carries the description on hover. */}
           <Tooltip>
@@ -111,7 +206,7 @@ export function FileList({
                     data-testid="review-file-jump-trigger"
                     className="h-6 w-6 text-muted-foreground/60 hover:bg-foreground/10 hover:text-foreground"
                   >
-                    <FileSearch size={14} aria-hidden="true" />
+                    <FileSearch size={18} aria-hidden="true" />
                   </Button>
                 }
               />
@@ -162,6 +257,32 @@ export function FileList({
             </Command>
           </PopoverContent>
         </Popover>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => setRenderMode(renderMode === "unified" ? "side-by-side" : "unified")}
+                aria-pressed={renderMode === "side-by-side"}
+                aria-label={renderMode === "unified" ? "Switch to split view" : "Switch to unified view"}
+                className={cn(
+                  "h-6 w-6 transition-colors",
+                  renderMode === "side-by-side"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground/50 hover:bg-muted/40 hover:text-foreground/70",
+                )}
+              >
+                <Columns2 size={18} />
+              </Button>
+            }
+          />
+          <TooltipContent side="bottom" className="text-xs">
+            {renderMode === "unified" ? "Switch to split view" : "Switch to unified view"}
+          </TooltipContent>
+        </Tooltip>
       </div>
       <div className={`flex flex-col ${DIFF_FILE_LIST_GAP} ${DIFF_FILE_LIST_PADDING}`}>
         {sortedFiles.map((file) => (

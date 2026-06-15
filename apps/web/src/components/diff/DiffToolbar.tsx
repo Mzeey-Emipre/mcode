@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Columns2, AlignJustify, WrapText, Check, ChevronDown } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Check, ChevronDown, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -17,16 +15,16 @@ import { visibleReviewViews, defaultReviewView } from "@/lib/review-views";
 import { BranchRefPicker } from "./BranchRefPicker";
 import { CommitPicker } from "./CommitPicker";
 import { ReviewActions } from "./ReviewActions";
+import { DiffStat } from "./DiffStat";
 
 type CommitAvailability = "loading" | "available" | "empty";
 
 /** Toolbar for the Review tab: dual-scope view switcher + unified/side-by-side toggle. */
 export function DiffToolbar() {
   const viewMode = useDiffStore((s) => s.viewMode);
-  const renderMode = useDiffStore((s) => s.renderMode);
   const reviewFileCount = useDiffStore((s) => s.reviewFileCount);
+  const reviewDiffStat = useDiffStore((s) => s.reviewDiffStat);
   const setViewMode = useDiffStore((s) => s.setViewMode);
-  const setRenderMode = useDiffStore((s) => s.setRenderMode);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [commitProbeNonce, setCommitProbeNonce] = useState(0);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -41,10 +39,6 @@ export function DiffToolbar() {
   const diffScopeRevision = useDiffStore((s) =>
     activeWorkspaceId ? (s.diffRevisionByScope[activeThreadId ?? activeWorkspaceId] ?? 0) : 0,
   );
-  const lineWrap = useDiffStore((s) =>
-    activeThreadId ? s.getLineWrap(activeThreadId) : true,
-  );
-  const toggleLineWrap = useDiffStore((s) => s.toggleLineWrap);
 
   const isGitRepo = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === s.activeWorkspaceId)?.is_git_repo ?? false,
@@ -84,12 +78,16 @@ export function DiffToolbar() {
     [viewModes, viewMode],
   );
 
+  // The branch picker is wide, so it wraps to its own full-width row below.
+  const branchOnSecondRow = activeView?.operand === "branch" && !!activeWorkspaceId;
+  // Files present but no totalled stat yet → the stat is still loading.
+  const diffStatLoading =
+    reviewDiffStat == null && reviewFileCount != null && reviewFileCount > 0;
+
   return (
-    <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
-      {/* View selection is a dropdown labelled with the active view, with a
-          contextual operand slot beside it for views that carry a picked
-          operand (Branch, Commit). The slot stays empty until the picker
-          slices land. */}
+    <div className="flex flex-wrap items-center justify-between gap-y-1.5 px-3 py-2 border-b border-border/30">
+      {/* View selector + changed-file badge + total +/- stat. The wide branch
+          picker wraps to its own full-width row below; commit stays inline. */}
       <div className="flex min-w-0 items-center gap-2">
         <DropdownMenu
           open={viewMenuOpen}
@@ -150,72 +148,57 @@ export function DiffToolbar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Operand slot: the active view's picked operand. */}
-        {activeView?.operand && (
+        {/* Total +/- for the active view; spinner while the stat loads. */}
+        {diffStatLoading ? (
+          <Loader2
+            size={12}
+            className="shrink-0 animate-spin text-muted-foreground/50"
+            aria-label="Loading diff stats"
+            data-testid="review-diff-stat-loading"
+          />
+        ) : (
+          reviewDiffStat != null &&
+          (reviewDiffStat.additions > 0 || reviewDiffStat.deletions > 0) && (
+            <DiffStat
+              additions={reviewDiffStat.additions}
+              deletions={reviewDiffStat.deletions}
+              className="shrink-0"
+            />
+          )
+        )}
+
+        {/* Commit operand stays inline; the wider branch picker is on row 2. */}
+        {activeView?.operand === "commit" && (
           <div
             className="ml-1 flex min-w-0 items-center border-l border-border/25 pl-2"
             data-testid="review-operand-slot"
-            data-operand={activeView.operand}
+            data-operand="commit"
           >
-            {activeView.operand === "branch" && activeWorkspaceId && (
-              <BranchRefPicker
-                workspaceId={activeWorkspaceId}
-                threadId={activeThreadId ?? undefined}
-              />
-            )}
-            {activeView.operand === "commit" && <CommitPicker />}
+            <CommitPicker />
           </div>
         )}
       </div>
 
+      {/* Commit-or-push + Create-PR (worktree threads only). Wrap / split / jump
+          now live on the file-list bar below. */}
       <div className="flex items-center gap-1">
-        <div className="flex items-center gap-0.5">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => {
-                    if (activeThreadId) toggleLineWrap(activeThreadId);
-                  }}
-                  disabled={!activeThreadId}
-                  className={`h-6 w-6 transition-colors ${lineWrap ? "text-foreground/70" : "text-muted-foreground/40 hover:text-foreground/60"}`}
-                  aria-label={lineWrap ? "Disable line wrap" : "Wrap long lines"}
-                >
-                  <WrapText size={13} />
-                </Button>
-              }
-            />
-            <TooltipContent side="left" className="text-xs">
-              {lineWrap ? "Disable line wrap" : "Wrap long lines"}
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => setRenderMode(renderMode === "unified" ? "side-by-side" : "unified")}
-                  className="h-6 w-6 text-muted-foreground/50 hover:text-foreground/70"
-                  aria-label={`Switch to ${renderMode === "unified" ? "side-by-side" : "unified"} view`}
-                >
-                  {renderMode === "unified" ? <Columns2 size={13} /> : <AlignJustify size={13} />}
-                </Button>
-              }
-            />
-            <TooltipContent side="left" className="text-xs">
-              {renderMode === "unified" ? "Side-by-side view" : "Unified view"}
-            </TooltipContent>
-          </Tooltip>
-        </div>
-
-        {/* Commit-or-push + Create-PR, shown only for a worktree thread (the
-            threadless git working-tree views have no composer / branch to act on). */}
         {activeThread && <ReviewActions thread={activeThread} />}
       </div>
+
+      {/* Branch comparison wraps to its own full-width row; the picker is too
+          wide to sit inline next to the selector. */}
+      {branchOnSecondRow && activeWorkspaceId && (
+        <div
+          className="flex w-full min-w-0 basis-full items-center"
+          data-testid="review-operand-slot"
+          data-operand="branch"
+        >
+          <BranchRefPicker
+            workspaceId={activeWorkspaceId}
+            threadId={activeThreadId ?? undefined}
+          />
+        </div>
+      )}
     </div>
   );
 }

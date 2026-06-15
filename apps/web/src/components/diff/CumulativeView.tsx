@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FileText, RefreshCw } from "lucide-react";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,41 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
     () => snapshots.map((snapshot) => snapshot.id).join("|"),
     [snapshots],
   );
+
+  // Report the cumulative total +/- to the toolbar. Summed across each turn's
+  // per-file stats, so this is total churn (a file edited across turns counts
+  // each time), not the net base-to-head diff. Cleared on unmount.
+  const setReviewDiffStat = useDiffStore((s) => s.setReviewDiffStat);
+  useEffect(() => {
+    let cancelled = false;
+    setReviewDiffStat(null);
+    const ids = snapshots.filter((s) => s.files_changed.length > 0).map((s) => s.id);
+    if (ids.length === 0) {
+      setReviewDiffStat({ additions: 0, deletions: 0 });
+      return () => {
+        cancelled = true;
+        setReviewDiffStat(null);
+      };
+    }
+    void Promise.all(
+      ids.map((id) => getTransport().getSnapshotDiffStats(id).catch(() => [])),
+    ).then((perSnapshot) => {
+      if (cancelled) return;
+      setReviewDiffStat(
+        perSnapshot.flat().reduce(
+          (acc, s) => ({
+            additions: acc.additions + s.additions,
+            deletions: acc.deletions + s.deletions,
+          }),
+          { additions: 0, deletions: 0 },
+        ),
+      );
+    });
+    return () => {
+      cancelled = true;
+      setReviewDiffStat(null);
+    };
+  }, [cacheVersion, snapshots, setReviewDiffStat]);
 
   const handleRefresh = async () => {
     if (refreshing) return;
@@ -110,7 +145,7 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
               size="xs"
               onClick={handleRefresh}
               disabled={refreshing}
-              aria-label="Refresh Cumulative diff"
+              aria-label="Refresh All turns diff"
               data-testid="cumulative-view-refresh"
               className="h-7 shrink-0 gap-1.5 rounded border-primary/35 bg-primary/10 px-2.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.12em] text-primary hover:border-primary/55 hover:bg-primary/18"
             >

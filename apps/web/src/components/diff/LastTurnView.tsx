@@ -1,4 +1,7 @@
+import { useEffect } from "react";
 import type { TurnSnapshot } from "@mcode/contracts";
+import { getTransport } from "@/transport";
+import { useDiffStore } from "@/stores/diffStore";
 import { FileList } from "./FileList";
 
 /** Props for LastTurnView. */
@@ -18,6 +21,42 @@ export function LastTurnView({ snapshots, threadId }: LastTurnViewProps) {
   // files; earlier no-op turns (e.g. plan-only) are skipped so the view always
   // lands on a meaningful diff.
   const latest = [...snapshots].reverse().find((s) => s.files_changed.length > 0);
+
+  // Report this turn's total +/- to the toolbar (summed from per-file stats).
+  const setReviewDiffStat = useDiffStore((s) => s.setReviewDiffStat);
+  const latestId = latest?.id;
+  useEffect(() => {
+    let cancelled = false;
+    setReviewDiffStat(null);
+    if (!latestId) {
+      setReviewDiffStat({ additions: 0, deletions: 0 });
+      return () => {
+        cancelled = true;
+        setReviewDiffStat(null);
+      };
+    }
+    void getTransport()
+      .getSnapshotDiffStats(latestId)
+      .then((stats) => {
+        if (cancelled) return;
+        setReviewDiffStat(
+          stats.reduce(
+            (acc, s) => ({
+              additions: acc.additions + s.additions,
+              deletions: acc.deletions + s.deletions,
+            }),
+            { additions: 0, deletions: 0 },
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setReviewDiffStat({ additions: 0, deletions: 0 });
+      });
+    return () => {
+      cancelled = true;
+      setReviewDiffStat(null);
+    };
+  }, [latestId, setReviewDiffStat]);
 
   if (!latest) {
     return (

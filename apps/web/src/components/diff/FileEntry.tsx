@@ -97,6 +97,10 @@ export function FileEntry({
   // The jump token already scrolled for, so a later diff-load re-render of the
   // same jump doesn't re-trigger the scroll.
   const scrolledJumpRef = useRef<number | undefined>(undefined);
+  // Bulk expand/collapse command from the Review-options menu. The ref tracks the
+  // last nonce we applied so we react only to new commands, never on mount.
+  const bulkDiffExpand = useDiffStore((s) => s.bulkDiffExpand);
+  const appliedBulkRef = useRef(bulkDiffExpand?.nonce);
 
   // Reset local state when the cache identity changes so a reused component
   // instance doesn't show stale content from a previous identity.
@@ -111,6 +115,17 @@ export function FileEntry({
   useEffect(() => {
     if (defaultExpandedProp) setExpanded(true);
   }, [cacheKey, cacheVersion, defaultExpandedProp]);
+
+  // Apply a bulk expand/collapse command once per nonce.
+  useEffect(() => {
+    if (!bulkDiffExpand || appliedBulkRef.current === bulkDiffExpand.nonce) return;
+    appliedBulkRef.current = bulkDiffExpand.nonce;
+    setExpanded(bulkDiffExpand.expand);
+    if (!bulkDiffExpand.expand) {
+      setShowAllLines(false);
+      setPreviewMode(false);
+    }
+  }, [bulkDiffExpand]);
 
   useEffect(() => {
     if (jumpToken === undefined) return;
