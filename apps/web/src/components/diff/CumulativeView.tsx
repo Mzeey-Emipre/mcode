@@ -126,10 +126,10 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
       </div>
       {pending && (
         <div className="border-b border-primary/20 bg-primary/[0.045] px-3 py-2">
-          <div className="flex items-center gap-2 rounded border border-primary/25 bg-background/80 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+          <div className="flex items-center gap-2 rounded border border-primary/25 bg-background/80 px-2.5 py-2 shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground),transparent_94%)]">
             <span
               aria-hidden="true"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px_hsl(var(--primary)/0.14)]"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px_color-mix(in_oklch,var(--primary),transparent_85%)]"
             />
             <div className="min-w-0 flex-1">
               <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.14em] text-foreground/85">
