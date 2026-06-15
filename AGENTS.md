@@ -31,6 +31,18 @@ Always add JSDoc/TSDoc docstrings to all exported functions, components, types, 
 
 Comments explain **why**, not **what**. The code itself shows what it does.
 
+## Defensive Programming and Performance
+
+Validate assumptions at process and trust boundaries: external input, filesystem paths, IPC payloads, provider events, child-process environment, and persisted settings.
+
+Prefer allowlists, typed schemas, bounded values, explicit errors, and exhaustive handling. Fail closed for security-sensitive paths.
+
+Normalize once at the boundary. Avoid repeated defensive checks inside hot paths unless a real invariant can be broken there.
+
+Defensive code should also bound work: cap payload sizes, limit recursion and fan-out, set timeouts, cancel stale work, and avoid unbounded queues.
+
+When a check could be expensive, measure it or move it to the boundary.
+
 ## UI Components
 
 When working on frontend code, follow the component registry and rules in **[docs/guides/ui-components.md](docs/guides/ui-components.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.
