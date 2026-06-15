@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { ParsedDiffLine } from "@/lib/diff-parser";
+import { getFirstHunkHeaderIndex } from "@/lib/diff-parser";
 import { useDiffHighlighter } from "@/hooks/useDiffHighlighter";
 import { useShikiTheme } from "@/hooks/useTheme";
 import { useDiffStore } from "@/stores/diffStore";
@@ -11,6 +12,8 @@ interface SideBySideDiffProps {
   lines: ParsedDiffLine[];
   /** File language for syntax highlighting (e.g. "typescript"). "text" disables highlighting. */
   language?: string;
+  /** When true, the first hunk's hidden-line band is omitted (shown on the file header instead). */
+  skipLeadingHunkSeparator?: boolean;
 }
 
 /** A single paired row in the side-by-side diff layout. */
@@ -112,7 +115,11 @@ const RIGHT_GUTTER: Record<string, string> = {
 };
 
 /** Side-by-side diff renderer with syntax highlighting and hunk separator bars. */
-export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps) {
+export function SideBySideDiff({
+  lines,
+  language = "text",
+  skipLeadingHunkSeparator = false,
+}: SideBySideDiffProps) {
   const rows = useMemo(() => buildRows(lines), [lines]);
   const theme = useShikiTheme();
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -120,6 +127,13 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
     activeThreadId ? s.getLineWrap(activeThreadId) : true,
   );
   const { getLineTokens } = useDiffHighlighter(lines, language, theme, language !== "text");
+  const firstHunkHeaderIndex = skipLeadingHunkSeparator ? getFirstHunkHeaderIndex(lines) : -1;
+
+  const shouldSkipHunkSeparator = (diffIndex: number | null, hiddenLineCount?: number) => {
+    if (!hiddenLineCount || hiddenLineCount <= 0) return true;
+    if (skipLeadingHunkSeparator && diffIndex === firstHunkHeaderIndex) return true;
+    return false;
+  };
 
   return (
     <div className="flex select-text text-[12px] font-mono leading-5">
@@ -129,19 +143,20 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
         {rows.map((row, i) => {
           if (row.left.type === "header") {
             if (!row.left.content.startsWith("@@")) return null;
-            if (!row.left.hiddenLineCount || row.left.hiddenLineCount <= 0) return null;
-            return <HunkSeparator key={i} hiddenLineCount={row.left.hiddenLineCount} />;
+            if (shouldSkipHunkSeparator(row.left.diffIndex, row.left.hiddenLineCount)) return null;
+            return <HunkSeparator key={i} hiddenLineCount={row.left.hiddenLineCount!} />;
           }
 
           const tokens = row.left.diffIndex !== null ? getLineTokens(row.left.diffIndex) : null;
 
           return (
             <div key={i} className={`flex items-stretch ${LEFT_BG[row.left.type]}`}>
-              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/45">
+              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/55">
                 {row.left.lineNo ?? ""}
               </span>
               <span className={`w-[2px] shrink-0 ${LEFT_GUTTER[row.left.type]}`} aria-hidden="true" />
               <span className={`flex-1 pl-3 pr-2 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
+                {row.left.type === "remove" && <span className="sr-only">Removed: </span>}
                 {tokens ? (
                   tokens.map((token, j) => (
                     <span key={j} style={{ color: token.color }}>
@@ -174,19 +189,20 @@ export function SideBySideDiff({ lines, language = "text" }: SideBySideDiffProps
         {rows.map((row, i) => {
           if (row.right.type === "header") {
             if (!row.right.content.startsWith("@@")) return null;
-            if (!row.right.hiddenLineCount || row.right.hiddenLineCount <= 0) return null;
-            return <HunkSeparator key={i} hiddenLineCount={row.right.hiddenLineCount} />;
+            if (shouldSkipHunkSeparator(row.right.diffIndex, row.right.hiddenLineCount)) return null;
+            return <HunkSeparator key={i} hiddenLineCount={row.right.hiddenLineCount!} />;
           }
 
           const tokens = row.right.diffIndex !== null ? getLineTokens(row.right.diffIndex) : null;
 
           return (
             <div key={i} className={`flex items-stretch ${RIGHT_BG[row.right.type]}`}>
-              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/45">
+              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/55">
                 {row.right.lineNo ?? ""}
               </span>
               <span className={`w-[2px] shrink-0 ${RIGHT_GUTTER[row.right.type]}`} aria-hidden="true" />
               <span className={`flex-1 pl-3 pr-2 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
+                {row.right.type === "add" && <span className="sr-only">Added: </span>}
                 {tokens ? (
                   tokens.map((token, j) => (
                     <span key={j} style={{ color: token.color }}>

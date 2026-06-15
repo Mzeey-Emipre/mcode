@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileSearch } from "lucide-react";
 import { FileEntry } from "./FileEntry";
-import { FolderEntry } from "./FolderEntry";
-import { buildFileTree, type TreeNode } from "@/lib/file-tree";
-import type { SelectedFile } from "@/stores/diffStore";
+import { FileTypeIcon } from "@/components/ui/file-type-icon";
+import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -14,6 +13,8 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DIFF_FILE_LIST_GAP, DIFF_FILE_LIST_PADDING } from "./diff-surface";
 
 /** Props for FileList. */
 interface FileListProps {
@@ -29,9 +30,10 @@ interface FileListProps {
 }
 
 /**
- * Renders a list of changed files as a navigable folder tree.
- * Single-child folder chains are compressed (e.g., `src/stores/__tests__/`).
- * Folders sort before files; both alphabetical within their group.
+ * Renders the changed files as a flat list of self-describing cards, one per
+ * file. Each card header carries the file's full path (dimmed parent +
+ * emphasized basename), so no folder-grouping chrome is needed. Sorted
+ * alphabetically by path for a stable, scannable order.
  */
 export function FileList({
   files,
@@ -46,7 +48,19 @@ export function FileList({
   const [highlightTarget, setHighlightTarget] = useState<{ path: string; token: number } | null>(null);
   const jumpTokenRef = useRef(0);
   const highlightClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const tree = useMemo(() => buildFileTree(files), [files]);
+  const sortedFiles = useMemo(
+    () => [...files].sort((a, b) => a.localeCompare(b)),
+    [files],
+  );
+
+  // Report this view's changed-file count so the toolbar can badge it. The
+  // active Review view always renders exactly one FileList, so its count is the
+  // view's count; clear on unmount so a switching view doesn't show a stale badge.
+  const setReviewFileCount = useDiffStore((s) => s.setReviewFileCount);
+  useEffect(() => {
+    setReviewFileCount(files.length);
+    return () => setReviewFileCount(null);
+  }, [files.length, setReviewFileCount]);
 
   useEffect(() => {
     return () => {
@@ -73,32 +87,39 @@ export function FileList({
 
   if (files.length === 0) {
     return (
-      <p className="px-3 py-1 text-[11px] text-muted-foreground/40">No files changed</p>
+      <p className="px-3 py-1 text-[11px] text-muted-foreground/60">No files changed</p>
     );
   }
 
   return (
     <div className="flex flex-col">
-      <div className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-border/20 bg-background/95 px-3 py-2 backdrop-blur-sm">
-        <span className="font-mono text-[10px] tabular-nums text-muted-foreground/50">
+      <div className="sticky top-0 z-20 flex items-center justify-between gap-2 bg-background/95 px-2 py-1.5 shadow-[0_8px_12px_-12px_oklch(0_0_0/0.35)] backdrop-blur-sm">
+        <span className="font-mono text-[10px] tabular-nums text-muted-foreground/65">
           {files.length} {files.length === 1 ? "file" : "files"}
         </span>
         <Popover open={jumpOpen} onOpenChange={setJumpOpen}>
-          <PopoverTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                aria-label="Jump to file"
-                data-testid="review-file-jump-trigger"
-                className="h-6 gap-1.5 border border-border/20 bg-muted/10 px-2 font-mono text-[10.5px] text-muted-foreground/75 hover:border-border/35 hover:bg-muted/25 hover:text-foreground"
-              >
-                <FileSearch size={12} aria-hidden="true" />
-                Jump
-              </Button>
-            }
-          />
+          {/* Icon-only trigger; the tooltip carries the description on hover. */}
+          <Tooltip>
+            <TooltipTrigger render={<span className="inline-flex" />}>
+              <PopoverTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="Jump to file"
+                    data-testid="review-file-jump-trigger"
+                    className="h-6 w-6 text-muted-foreground/60 hover:bg-foreground/10 hover:text-foreground"
+                  >
+                    <FileSearch size={14} aria-hidden="true" />
+                  </Button>
+                }
+              />
+            </TooltipTrigger>
+            <TooltipContent side="left" className="text-xs">
+              Jump to file
+            </TooltipContent>
+          </Tooltip>
           <PopoverContent align="end" sideOffset={6} className="w-[min(360px,calc(100vw-2rem))] p-0">
             <Command className="rounded-lg">
               <CommandInput
@@ -111,7 +132,7 @@ export function FileList({
               <CommandList className="max-h-72">
                 <CommandEmpty>No files found</CommandEmpty>
                 <CommandGroup heading="Changed files">
-                  {files.map((file) => {
+                  {sortedFiles.map((file) => {
                     const basename = getFileBasename(file);
                     const parent = getParentPath(file);
                     return (
@@ -122,17 +143,13 @@ export function FileList({
                         onSelect={() => jumpToFile(file)}
                         className="items-start gap-2 px-2 py-2"
                       >
-                        <FileSearch
-                          size={12}
-                          aria-hidden="true"
-                          className="mt-0.5 text-muted-foreground/45"
-                        />
+                        <FileTypeIcon filePath={file} size={14} className="mt-0.5" />
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate font-mono text-[11.5px] text-foreground/85">
+                          <span className="block truncate font-mono text-[11px] text-foreground/85">
                             {basename}
                           </span>
                           {parent && (
-                            <span className="block truncate font-mono text-[10px] text-muted-foreground/55">
+                            <span className="block truncate font-mono text-[10px] text-muted-foreground/65">
                               {parent}/
                             </span>
                           )}
@@ -146,101 +163,24 @@ export function FileList({
           </PopoverContent>
         </Popover>
       </div>
-      {tree.map((node) => (
-        <TreeNodeRenderer
-          key={nodeKey(node)}
-          node={node}
-          depth={0}
-          source={source}
-          id={id}
-          threadId={threadId}
-          defaultExpanded={defaultFilesExpanded}
-          cacheVersion={cacheVersion}
-          jumpTarget={jumpTarget}
-          highlightTarget={highlightTarget}
-          onJumpSettled={clearJumpTarget}
-        />
-      ))}
+      <div className={`flex flex-col ${DIFF_FILE_LIST_GAP} ${DIFF_FILE_LIST_PADDING}`}>
+        {sortedFiles.map((file) => (
+          <FileEntry
+            key={file}
+            filePath={file}
+            source={source}
+            id={id}
+            threadId={threadId}
+            defaultExpanded={defaultFilesExpanded}
+            cacheVersion={cacheVersion}
+            jumpToken={jumpTarget?.path === file ? jumpTarget.token : undefined}
+            onJumpSettled={clearJumpTarget}
+            highlightToken={highlightTarget?.path === file ? highlightTarget.token : undefined}
+          />
+        ))}
+      </div>
     </div>
   );
-}
-
-/** Stable key for a tree node. Folders use their full path, files use the file path. */
-function nodeKey(node: TreeNode): string {
-  return node.type === "folder" ? `dir:${node.path}` : `file:${node.path}`;
-}
-
-/** Recursively renders a folder or file node with the appropriate depth indent. */
-function TreeNodeRenderer({
-  node,
-  depth,
-  source,
-  id,
-  threadId,
-  defaultExpanded,
-  cacheVersion,
-  jumpTarget,
-  highlightTarget,
-  onJumpSettled,
-}: {
-  node: TreeNode;
-  depth: number;
-  source: SelectedFile["source"];
-  id: string;
-  threadId: string;
-  defaultExpanded?: boolean;
-  cacheVersion: string | number;
-  jumpTarget: { path: string; token: number } | null;
-  highlightTarget: { path: string; token: number } | null;
-  onJumpSettled: (token: number) => void;
-}) {
-  if (node.type === "file") {
-    return (
-      <FileEntry
-        filePath={node.path}
-        source={source}
-        id={id}
-        threadId={threadId}
-        depth={depth}
-        defaultExpanded={defaultExpanded}
-        cacheVersion={cacheVersion}
-        jumpToken={jumpTarget?.path === node.path ? jumpTarget.token : undefined}
-        onJumpSettled={onJumpSettled}
-        highlightToken={highlightTarget?.path === node.path ? highlightTarget.token : undefined}
-      />
-    );
-  }
-
-  return (
-    <FolderEntry
-      name={node.name}
-      fileCount={node.fileCount}
-      depth={depth}
-      forceExpanded={jumpTarget ? treeContainsPath(node, jumpTarget.path) : false}
-    >
-      {node.children.map((child) => (
-        <TreeNodeRenderer
-          key={nodeKey(child)}
-          node={child}
-          depth={depth + 1}
-          source={source}
-          id={id}
-          threadId={threadId}
-          defaultExpanded={defaultExpanded}
-          cacheVersion={cacheVersion}
-          jumpTarget={jumpTarget}
-          highlightTarget={highlightTarget}
-          onJumpSettled={onJumpSettled}
-        />
-      ))}
-    </FolderEntry>
-  );
-}
-
-/** Whether a tree node contains a given file path. */
-function treeContainsPath(node: TreeNode, path: string): boolean {
-  if (node.type === "file") return node.path === path;
-  return node.children.some((child) => treeContainsPath(child, path));
 }
 
 /** Extract the basename from a file path for jump result labels. */

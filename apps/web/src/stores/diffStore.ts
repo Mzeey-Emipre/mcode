@@ -220,6 +220,8 @@ interface DiffState {
   selectedCommitSha: string | null;
   /** Diff rendering mode. */
   renderMode: DiffRenderMode;
+  /** Changed-file count for the active Review view, shown as a toolbar badge. Null when unknown. */
+  reviewFileCount: number | null;
   /** Per-thread line-wrap preference keyed by thread ID. */
   readonly lineWrapByThread: Record<string, boolean>;
   /** Turn snapshots keyed by thread ID. */
@@ -299,6 +301,8 @@ interface DiffState {
   /** Set the Commit view's picked operand by SHA, or `null` to fall back to the latest commit. */
   setSelectedCommitSha: (sha: string | null) => void;
   setRenderMode: (mode: DiffRenderMode) => void;
+  /** Report the active Review view's changed-file count (set by FileList). */
+  setReviewFileCount: (count: number | null) => void;
   getLineWrap: (threadId: string) => boolean;
   toggleLineWrap: (threadId: string) => void;
   setSnapshots: (threadId: string, snapshots: TurnSnapshot[]) => void;
@@ -337,6 +341,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   branchComparisonKey: null,
   selectedCommitSha: null,
   renderMode: "unified",
+  reviewFileCount: null,
   lineWrapByThread: {},
   snapshotsByThread: {},
   snapshotsLoadingByThread: {},
@@ -445,6 +450,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     ),
   setSelectedCommitSha: (sha) => set({ selectedCommitSha: sha }),
   setRenderMode: (mode) => set({ renderMode: mode }),
+  setReviewFileCount: (count) => set({ reviewFileCount: count }),
   getLineWrap: (threadId) => get().lineWrapByThread[threadId] ?? DEFAULT_LINE_WRAP,
   toggleLineWrap: (threadId) =>
     set((state) => {

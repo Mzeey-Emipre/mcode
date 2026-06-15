@@ -16,6 +16,7 @@ import type { PanelScope } from "@/lib/panel-tabs";
 import { visibleReviewViews, defaultReviewView } from "@/lib/review-views";
 import { BranchRefPicker } from "./BranchRefPicker";
 import { CommitPicker } from "./CommitPicker";
+import { ReviewActions } from "./ReviewActions";
 
 type CommitAvailability = "loading" | "available" | "empty";
 
@@ -23,12 +24,16 @@ type CommitAvailability = "loading" | "available" | "empty";
 export function DiffToolbar() {
   const viewMode = useDiffStore((s) => s.viewMode);
   const renderMode = useDiffStore((s) => s.renderMode);
+  const reviewFileCount = useDiffStore((s) => s.reviewFileCount);
   const setViewMode = useDiffStore((s) => s.setViewMode);
   const setRenderMode = useDiffStore((s) => s.setRenderMode);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [commitProbeNonce, setCommitProbeNonce] = useState(0);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const activeThread = useWorkspaceStore(
+    (s) => s.threads.find((t) => t.id === s.activeThreadId) ?? null,
+  );
   const threadBranch = useWorkspaceStore((s) => {
     const thread = s.threads.find((t) => t.id === s.activeThreadId);
     return thread?.branch ?? undefined;
@@ -100,6 +105,14 @@ export function DiffToolbar() {
             className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium tracking-tight text-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
           >
             {activeView?.label ?? "-"}
+            {reviewFileCount != null && reviewFileCount > 0 && (
+              <span
+                className="rounded-full bg-muted-foreground/15 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground/90"
+                data-testid="review-file-count"
+              >
+                {reviewFileCount}
+              </span>
+            )}
             <ChevronDown size={11} className="text-muted-foreground/60" />
           </DropdownMenuTrigger>
 
@@ -155,47 +168,53 @@ export function DiffToolbar() {
         )}
       </div>
 
-      <div className="flex items-center gap-0.5">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => {
-                  if (activeThreadId) toggleLineWrap(activeThreadId);
-                }}
-                disabled={!activeThreadId}
-                className={`h-6 w-6 transition-colors ${lineWrap ? "text-foreground/70" : "text-muted-foreground/40 hover:text-foreground/60"}`}
-                aria-label={lineWrap ? "Disable line wrap" : "Wrap long lines"}
-              >
-                <WrapText size={13} />
-              </Button>
-            }
-          />
-          <TooltipContent side="left" className="text-xs">
-            {lineWrap ? "Disable line wrap" : "Wrap long lines"}
-          </TooltipContent>
-        </Tooltip>
+      <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => {
+                    if (activeThreadId) toggleLineWrap(activeThreadId);
+                  }}
+                  disabled={!activeThreadId}
+                  className={`h-6 w-6 transition-colors ${lineWrap ? "text-foreground/70" : "text-muted-foreground/40 hover:text-foreground/60"}`}
+                  aria-label={lineWrap ? "Disable line wrap" : "Wrap long lines"}
+                >
+                  <WrapText size={13} />
+                </Button>
+              }
+            />
+            <TooltipContent side="left" className="text-xs">
+              {lineWrap ? "Disable line wrap" : "Wrap long lines"}
+            </TooltipContent>
+          </Tooltip>
 
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => setRenderMode(renderMode === "unified" ? "side-by-side" : "unified")}
-                className="h-6 w-6 text-muted-foreground/50 hover:text-foreground/70"
-                aria-label={`Switch to ${renderMode === "unified" ? "side-by-side" : "unified"} view`}
-              >
-                {renderMode === "unified" ? <Columns2 size={13} /> : <AlignJustify size={13} />}
-              </Button>
-            }
-          />
-          <TooltipContent side="left" className="text-xs">
-            {renderMode === "unified" ? "Side-by-side view" : "Unified view"}
-          </TooltipContent>
-        </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => setRenderMode(renderMode === "unified" ? "side-by-side" : "unified")}
+                  className="h-6 w-6 text-muted-foreground/50 hover:text-foreground/70"
+                  aria-label={`Switch to ${renderMode === "unified" ? "side-by-side" : "unified"} view`}
+                >
+                  {renderMode === "unified" ? <Columns2 size={13} /> : <AlignJustify size={13} />}
+                </Button>
+              }
+            />
+            <TooltipContent side="left" className="text-xs">
+              {renderMode === "unified" ? "Side-by-side view" : "Unified view"}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        {/* Commit-or-push + Create-PR, shown only for a worktree thread (the
+            threadless git working-tree views have no composer / branch to act on). */}
+        {activeThread && <ReviewActions thread={activeThread} />}
       </div>
     </div>
   );

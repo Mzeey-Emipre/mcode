@@ -59,6 +59,7 @@ describe("FileList jump to file", () => {
 
     expect(screen.getByText("alpha.ts")).toBeInTheDocument();
     expect(screen.getByText("beta.ts")).toBeInTheDocument();
+    expect(screen.getAllByTestId("diff-file-card")).toHaveLength(2);
     expect(screen.queryByTestId("review-file-filter")).not.toBeInTheDocument();
 
     await waitFor(() =>
