@@ -31,17 +31,30 @@ Always add JSDoc/TSDoc docstrings to all exported functions, components, types, 
 
 Comments explain **why**, not **what**. The code itself shows what it does.
 
-## Defensive Programming and Performance
+## Defensive Programming
 
-Validate assumptions at process and trust boundaries: external input, filesystem paths, IPC payloads, provider events, child-process environment, and persisted settings.
+Default to defensive code. Treat missing validation as a bug, not a shortcut.
+Assume inputs, timing, and process state can be wrong unless proven at a boundary.
 
-Prefer allowlists, typed schemas, bounded values, explicit errors, and exhaustive handling. Fail closed for security-sensitive paths.
+**Where to validate:** process and trust boundaries only. External input, filesystem
+paths, IPC and WebSocket payloads, provider events, child-process environment,
+persisted settings, and anything crossing a package or thread boundary.
 
-Normalize once at the boundary. Avoid repeated defensive checks inside hot paths unless a real invariant can be broken there.
+**How to validate:** allowlists over blocklists; typed schemas (Zod in
+`packages/contracts`); bounded values; explicit errors; exhaustive `switch` on
+discriminated unions. Fail closed on security-sensitive paths.
 
-Defensive code should also bound work: cap payload sizes, limit recursion and fan-out, set timeouts, cancel stale work, and avoid unbounded queues.
+**Where not to validate:** hot paths and inner loops. Normalize and validate once
+at the boundary, then trust invariants inside. Do not re-parse, re-check, or
+re-clamp the same value on every iteration.
 
-When a check could be expensive, measure it or move it to the boundary.
+**Bound all work:** cap payload and buffer sizes; limit recursion, fan-out, and
+queue depth; set timeouts; cancel stale async work; evict oldest when a ring
+buffer fills. Unbounded retention is never acceptable, even "temporarily."
+
+**Performance:** defensive checks that could be expensive belong at the boundary
+or behind a cheap guard. Measure before adding validation inside a hot path. When
+in doubt, bound the work first, optimize second.
 
 ## UI Components
 
