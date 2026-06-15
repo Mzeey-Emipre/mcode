@@ -692,7 +692,7 @@ input[type="range"].settings-range::-moz-range-thumb {
   }
 }
 
-/* Stacked-layers icon shimmer used by AgentStatusBar when sub-agents are running.
+/* Stacked-layers icon shimmer used by NarrativeIndicator when a turn is active.
    Combines a gentle vertical float with a per-layer opacity ripple — each
    diamond pulses brighter in sequence (top, middle, bottom) on a 200ms phase
    delay, reading as "depth cycling through work." */
