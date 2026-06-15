@@ -17,6 +17,7 @@
     "rebuild": "electron-rebuild -f",
     "dist": "bun run build && bun scripts/generate-snapshot.mjs && electron-builder --publish never",
     "dist:no-snapshot": "bun run build && electron-builder --publish never",
+    "generate:icons": "bun scripts/generate-icons.mjs",
     "test": "bunx vitest run",
     "e2e": "playwright test"
   },
@@ -33,6 +34,7 @@
   "devDependencies": {
     "@electron/fuses": "^2.1.1",
     "@playwright/test": "^1.58.2",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/uuid": "^10.0.0",
     "@types/which": "^3.0.4",
     "@vitest/coverage-v8": "^4.1.0",
@@ -40,6 +42,8 @@
     "electron-builder": "^25.1.0",
     "electron-mksnapshot": "35.7.5",
     "esbuild": "^0.27.0",
+    "png-to-ico": "^3.0.1",
+    "png2icons": "^2.0.1",
     "resedit": "^3.0.2",
     "typescript": "^5.8.0",
     "vitest": "^4.1.0"
@@ -66,6 +70,10 @@
       {
         "from": "build/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "build/icon.icns",
+        "to": "icon.icns"
       }
     ],
     "asarUnpack": [
