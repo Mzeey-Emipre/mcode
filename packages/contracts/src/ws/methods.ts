@@ -392,6 +392,26 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: BranchComparisonSchema,
   },
+  /**
+   * Return total additions and deletions for a Review-panel git view.
+   * Ref semantics match the corresponding file-list methods so the stat
+   * total always agrees with the file list shown in the panel.
+   */
+  "git.reviewDiffStats": {
+    params: z.object({
+      workspaceId: z.string(),
+      view: z.enum(["unstaged", "staged", "branch", "commit"]),
+      /** Branch view: base ref (already resolved client-side; omit to auto-detect). */
+      base: z.string().optional(),
+      /** Branch view: target ref (omit to use HEAD). */
+      target: z.string().optional(),
+      /** Commit view: commit SHA. */
+      sha: z.string().optional(),
+      /** Worktree thread — resolves the right cwd when the review is for a thread's worktree. */
+      threadId: z.string().optional(),
+    }),
+    result: z.object({ additions: z.number(), deletions: z.number() }),
+  },
   "agent.send": {
     params: SendMessageSchema(),
     result: z.void(),
