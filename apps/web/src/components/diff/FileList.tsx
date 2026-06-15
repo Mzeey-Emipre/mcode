@@ -135,14 +135,14 @@ export function FileList({
 
   if (files.length === 0) {
     return (
-      <p className="px-3 py-1 text-[11px] text-muted-foreground/60">No files changed</p>
+      <p className="px-3 py-1 text-[11px] text-muted-foreground">No files changed</p>
     );
   }
 
   return (
     <div className="flex flex-col">
       <div className="sticky top-0 z-20 flex items-center gap-0.5 bg-background/95 px-2 py-1.5 shadow-[0_8px_12px_-12px_oklch(0_0_0/0.35)] backdrop-blur-sm">
-        <span className="font-mono text-[10px] tabular-nums text-muted-foreground/65">
+        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
           {files.length} {files.length === 1 ? "file" : "files"}
         </span>
 

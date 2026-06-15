@@ -77,7 +77,7 @@ export function LastTurnView({ snapshots, threadId }: LastTurnViewProps) {
         <span className="font-mono text-[11px] tabular-nums text-foreground/70">
           {latest.files_changed.length}
         </span>
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground/55">
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
           file{latest.files_changed.length !== 1 ? "s" : ""} · last turn
         </span>
       </div>

@@ -105,7 +105,7 @@ export function DiffToolbar() {
             {activeView?.label ?? "-"}
             {reviewFileCount != null && reviewFileCount > 0 && (
               <span
-                className="rounded-full bg-muted-foreground/15 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground/90"
+                className="rounded-full bg-muted-foreground/15 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground"
                 data-testid="review-file-count"
               >
                 {reviewFileCount}

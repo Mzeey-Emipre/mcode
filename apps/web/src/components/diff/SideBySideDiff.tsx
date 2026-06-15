@@ -151,7 +151,7 @@ export function SideBySideDiff({
 
           return (
             <div key={i} className={`flex items-stretch ${LEFT_BG[row.left.type]}`}>
-              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/55">
+              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground">
                 {row.left.lineNo ?? ""}
               </span>
               <span className={`w-[2px] shrink-0 ${LEFT_GUTTER[row.left.type]}`} aria-hidden="true" />
@@ -197,7 +197,7 @@ export function SideBySideDiff({
 
           return (
             <div key={i} className={`flex items-stretch ${RIGHT_BG[row.right.type]}`}>
-              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/55">
+              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground">
                 {row.right.lineNo ?? ""}
               </span>
               <span className={`w-[2px] shrink-0 ${RIGHT_GUTTER[row.right.type]}`} aria-hidden="true" />

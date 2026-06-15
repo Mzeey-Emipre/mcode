@@ -345,7 +345,7 @@ export function FileEntry({
               very long name on a very narrow panel. Neither side hard-clips. */}
           <span className="flex min-w-0 flex-1 items-baseline gap-0.5 overflow-hidden font-mono text-xs">
             {parentPath && (
-              <span className="min-w-0 shrink-[100] truncate text-muted-foreground/60">
+              <span className="min-w-0 shrink-[100] truncate text-muted-foreground">
                 {parentPath}
               </span>
             )}

@@ -11,7 +11,7 @@ interface HunkSeparatorProps {
  */
 export function HunkSeparator({ hiddenLineCount }: HunkSeparatorProps) {
   return (
-    <div className="flex select-none items-center gap-3 px-3 py-1.5 text-[10px] text-muted-foreground/70">
+    <div className="flex select-none items-center gap-3 px-3 py-1.5 text-[10px] text-muted-foreground">
       <Separator className="flex-1 bg-border/40" />
       <span className="font-mono tabular-nums tracking-tight">
         {hiddenLineCount} unchanged line{hiddenLineCount !== 1 ? "s" : ""}

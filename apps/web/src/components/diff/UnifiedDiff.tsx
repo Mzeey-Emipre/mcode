@@ -64,10 +64,10 @@ export function UnifiedDiff({
 
         return (
           <div key={i} className={`flex items-stretch ${rowBg}`}>
-            <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/55">
+            <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground">
               {line.oldLineNo ?? ""}
             </span>
-            <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground/55">
+            <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground">
               {line.newLineNo ?? ""}
             </span>
             <span className={`w-[2px] shrink-0 ${gutterAccent}`} aria-hidden="true" />

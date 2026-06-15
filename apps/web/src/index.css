@@ -240,6 +240,16 @@
   }
 }
 
+/* Tailwind's looping utilities (loading dots, spinners) are not covered by the
+   named-animation blocks above, so reduced-motion must settle them explicitly.
+   Freezing leaves a static-but-visible loading affordance. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse,
+  .animate-spin {
+    animation: none;
+  }
+}
+
 /* Changes-tab freshness ring: a short amber pulse that fires when new changed
  * files land while the user is on another tab, then settles to the steady
  * amber count. Two iterations so it registers without nagging. */

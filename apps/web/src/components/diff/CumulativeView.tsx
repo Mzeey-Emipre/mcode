@@ -106,7 +106,7 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
         <span className="font-mono text-[11px] tabular-nums text-foreground/70">
           {files.length}
         </span>
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground/55">
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
           file{files.length !== 1 ? "s" : ""} · {snapshots.length} turn{snapshots.length !== 1 ? "s" : ""}
         </span>
         {diffSummaryEnabled && (
