@@ -5,7 +5,7 @@ import { getTransport } from "@/transport";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 import { ClientTerminalFlowControl } from "./terminalFlowControl";
-import { onPtyData, onPtyExit, onPtyReconnectGap } from "./ptyDataRegistry";
+import { onPtyData, onPtyExit, onPtyReconnectGap, type PtyDataPayload } from "./ptyDataRegistry";
 import { isSafeTerminalDimensions, safeFit } from "./safeFit";
 import { terminalScroll } from "./terminalScrollController";
 import { TERMINAL_POOL_REFIT } from "./terminalPoolRefit";
@@ -348,29 +348,61 @@ export const TerminalView = memo(function TerminalView({
       const onWheel = onUserScroll;
       el.addEventListener("wheel", onWheel, { passive: true });
 
-      // Listen for PTY output via the direct callback registry.
-      // Attached BEFORE awaiting the renderer so initial PTY output that arrives
-      // during renderer initialization is buffered into the xterm write queue
-      // (term.write is renderer-independent) and painted as soon as a renderer
-      // is attached — never dropped.
-      const unsubPtyData = onPtyData(ptyId, (detail) => {
+      // #748 reattach gate: a freshly mounted view replays the server's
+      // retained scrollback via terminal.reattach (below), then follows the
+      // tail. Because the shell keeps streaming while no view is mounted, live
+      // frames (higher seq) can arrive while the reattach RPC is still in
+      // flight, ahead of the replayed frames (lower seq). Buffer everything
+      // until the replay completes, then write in seq order so the viewport
+      // shows scrollback-then-tail, not a garbled tail-then-scrollback.
+      let replaying = true;
+      const replayPending: PtyDataPayload[] = [];
+      // Highest seq actually written. seq is monotonic per PTY, so anything not
+      // strictly newer has already been painted. Guards against double delivery:
+      // a newly created PTY's first prompt is both retained in the replay buffer
+      // (sent by reattach) and queued in the flow-control pause buffer (re-sent
+      // when resume drains it), and the resume drain lands after the gate closes.
+      let lastWrittenSeq = Number.NEGATIVE_INFINITY;
+
+      const writeChunk = (detail: PtyDataPayload) => {
+        if (detail.seq <= lastWrittenSeq) return;
+        lastWrittenSeq = detail.seq;
         transport.ptySetLastSeq(ptyId, detail.seq);
         const n = detail.payload.length;
         fc.written(n);
-        // Hidden or dormant terminals keep xterm mounted but must not write —
-        // that corrupts scrollback and can yank the viewport to the cursor.
-        if (!shownRef.current || !threadActiveRef.current) {
-          fc.acked(n);
-          return;
-        }
-        // Use xterm's callback form so acked() fires only after the bytes
-        // are committed to the terminal buffer — not just queued.
+        // xterm's callback form fires acked() only after bytes are committed to
+        // the buffer, so client flow control reflects real write progress.
         term.write(detail.payload, () => {
           fc.acked(n);
-          if (terminalScroll.restoreAnchor(ptyId)) {
-            terminalScroll.restore(ptyId, term);
-          }
         });
+      };
+
+      const flushReplayGate = () => {
+        replaying = false;
+        // Replayed frames (lower seq) and any live frames buffered during the
+        // reattach (higher seq) are merged here; sort restores wire order and
+        // writeChunk drops anything already painted.
+        replayPending.sort((a, b) => a.seq - b.seq);
+        for (const detail of replayPending) {
+          writeChunk(detail);
+        }
+        replayPending.length = 0;
+        // Follow the tail once all replayed bytes have been committed.
+        term.write("", () => {
+          term.scrollToBottom();
+        });
+      };
+
+      // Listen for PTY output via the direct callback registry. Attached BEFORE
+      // awaiting the renderer so output that arrives during renderer init is
+      // queued into the xterm buffer (term.write is renderer-independent) and
+      // painted as soon as a renderer attaches — never dropped.
+      const unsubPtyData = onPtyData(ptyId, (detail) => {
+        if (replaying) {
+          replayPending.push(detail);
+          return;
+        }
+        writeChunk(detail);
       });
 
       // Show a reconnect banner when the server signals that the replay window
@@ -495,14 +527,34 @@ export const TerminalView = memo(function TerminalView({
         return;
       }
 
-      // New PTYs are created paused server-side so their initial shell prompt
-      // is buffered until this view is ready to consume it. Resume only after
-      // the PTY listeners above are attached; term.write queues bytes even
-      // before the renderer addon finishes loading. Guard with the current
-      // visibility state so a late init doesn't race with pause-on-hide.
-      if (shownRef.current && threadActiveRef.current) {
-        transport.terminalResume(ptyId).catch(() => {});
-      }
+      // #748: replay retained scrollback into this fresh xterm, then follow the
+      // tail. The reattach resolves after all replay frames have been sent (WS
+      // ordering puts the data frames ahead of the RPC response), at which point
+      // the gate flushes. lastSeq = -1 requests the full retained window.
+      transport
+        .terminalReattach(ptyId, -1)
+        .then(({ gapped }) => {
+          if (disposed) return;
+          if (gapped) {
+            // The shell exceeded the scrollback budget, so the oldest output
+            // was evicted server-side. Flag the trim at the top of the replay.
+            term.write(
+              "\r\n\x1b[90m[Earlier output beyond the scrollback limit was trimmed]\x1b[0m\r\n",
+            );
+          }
+          flushReplayGate();
+        })
+        .catch(() => {
+          // Reattach failed (e.g. the PTY already exited); release the gate so
+          // any buffered live frames still paint.
+          if (disposed) return;
+          flushReplayGate();
+        });
+
+      // Newly created PTYs are paused server-side so their first prompt waits
+      // for a consumer. Release now that the listeners above are attached; for
+      // an already-running session this is a harmless no-op.
+      transport.terminalResume(ptyId).catch(() => {});
 
       // DOM renderer only at init; WebGL loads when this terminal becomes shown
       // (see shown effect) so the pool never holds multiple GL contexts.

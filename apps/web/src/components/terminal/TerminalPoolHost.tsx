@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useMemo } from "react";
+import { useLayoutEffect, useMemo } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore, createDefaultRightPanelState } from "@/stores/diffStore";
 import {
@@ -7,21 +7,24 @@ import {
   useTerminalStore,
 } from "@/stores/terminalStore";
 import { TerminalView } from "./TerminalView";
-import { selectTerminalPool } from "./terminalPool";
 import { useTerminalPoolSlot } from "./TerminalPoolSlotContext";
-import { useTerminalPtyLifecycle } from "./useTerminalPtyLifecycle";
 import { isContainerReadyForFit } from "./safeFit";
 import { dispatchTerminalPoolRefit } from "./terminalPoolRefit";
 import { resolveActiveTerminalId } from "./resolveActiveTerminalId";
 
 /**
- * App-level persistent pool for all xterm instances. Portals into the right-panel
- * slot when it is mounted; otherwise uses the provider's off-screen host. The slot
- * is kept as the portal target even when the panel is `hidden` so xterm DOM is not
- * moved between hosts on thread switch.
+ * Mounts at most one terminal view (ADR-0010): the active shell on the active
+ * scope, portaled into the right-panel slot while the Terminal tab is open.
+ *
+ * Background shells — other tabs, other threads — keep running server-side with
+ * their output draining into the server scrollback buffer; their views are
+ * disposed and remounted via `terminal.reattach` (see {@link TerminalView}).
+ * This replaces the former persistent pool that kept every shell's xterm
+ * mounted and hidden, which scaled memory and main-thread cost with every
+ * long-running shell.
  */
 export function TerminalPoolHost() {
-  const { slotEl, offScreenEl } = useTerminalPoolSlot();
+  const { slotEl } = useTerminalPoolSlot();
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   // The terminal binds to the active thread, or to the workspace itself in the
@@ -62,16 +65,8 @@ export function TerminalPoolHost() {
     [terminalScopeId, storedActiveTerminalId, terminals],
   );
 
-  const pool = useTerminalStore(selectTerminalPool);
-
-  useTerminalPtyLifecycle(terminalScopeId, terminalTabVisible);
-
-  // Prefer the in-panel slot whenever it exists so pool DOM never hops to off-screen
-  // on thread switch (that hop blanks xterm until a full re-open).
-  const portalTarget = slotEl ?? offScreenEl;
-
-  const slotSized = !!slotEl && isContainerReadyForFit(slotEl);
-
+  // Persist the resolved active terminal so the selection survives reloads and
+  // matches what the tab list highlights.
   useLayoutEffect(() => {
     if (!terminalScopeId || !activeTerminalId) return;
     if (storedActiveTerminalId !== activeTerminalId) {
@@ -79,54 +74,34 @@ export function TerminalPoolHost() {
     }
   }, [terminalScopeId, activeTerminalId, storedActiveTerminalId]);
 
+  // Nudge the active view to refit once the slot has real layout size or when
+  // the mounted target changes. The view also self-fits via its own
+  // ResizeObserver; this covers the first paint after the slot appears.
   useLayoutEffect(() => {
-    if (!portalTarget) return;
-    dispatchTerminalPoolRefit();
-  }, [terminalScopeId, activeTerminalId, terminalTabVisible, portalTarget, slotSized]);
+    if (slotEl && isContainerReadyForFit(slotEl)) {
+      dispatchTerminalPoolRefit();
+    }
+  }, [terminalScopeId, activeTerminalId, terminalTabVisible, slotEl]);
 
-  useEffect(() => {
-    if (!slotEl) return;
-    const ro = new ResizeObserver(() => {
-      if (isContainerReadyForFit(slotEl)) {
-        dispatchTerminalPoolRefit();
-      }
-    });
-    ro.observe(slotEl);
-    return () => ro.disconnect();
-  }, [slotEl]);
+  // The single shell whose view should be mounted right now, or undefined when
+  // the terminal tab is hidden or the scope has no terminals.
+  const activeTerm =
+    terminalTabVisible && terminalScopeId && activeTerminalId
+      ? terminals[terminalScopeId]?.find((t) => t.id === activeTerminalId)
+      : undefined;
 
-  const poolContent = (
-    <>
-      {pool.map(({ term, ownerThreadId }) => {
-        const isActiveThread = ownerThreadId === terminalScopeId;
-        const isShown =
-          terminalTabVisible &&
-          isActiveThread &&
-          term.id === activeTerminalId;
-        return (
-          <div
-            key={term.id}
-            className={`absolute inset-0 flex min-h-0 flex-col ${
-              isShown ? "z-10" : "pointer-events-none z-0 opacity-0"
-            }`}
-          >
-            <TerminalView
-              ptyId={term.id}
-              visible={isShown}
-              threadActive={isActiveThread}
-            />
-          </div>
-        );
-      })}
-    </>
-  );
-
-  if (!portalTarget) return null;
+  // Mount only into the in-panel slot. When it is absent (panel closed/tab
+  // hidden) the view stays unmounted and the shell keeps draining server-side.
+  if (!slotEl || !activeTerm) return null;
 
   return createPortal(
     <div className="relative h-full min-h-0 w-full overflow-hidden">
-      {poolContent}
+      <div className="absolute inset-0 flex min-h-0 flex-col">
+        {/* key by ptyId so switching shell/thread disposes the old view and
+            mounts a fresh one that reattaches at the latest output. */}
+        <TerminalView key={activeTerm.id} ptyId={activeTerm.id} visible threadActive />
+      </div>
     </div>,
-    portalTarget,
+    slotEl,
   );
 }

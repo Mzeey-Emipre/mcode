@@ -13,9 +13,9 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   } as typeof ResizeObserver;
 }
 
-// Shared xterm term instance observable from the tests. We focus on the
-// .focus() call because that's the one that can steal input from the
-// composer — fit and refresh are idempotent repaints.
+// Shared xterm term instance observable from the tests. write() invokes its
+// completion callback synchronously so the follow-the-tail scrollToBottom (which
+// runs in a trailing write callback) is exercised.
 const bufferActive = { viewportY: 42, length: 100 };
 
 const term = {
@@ -29,12 +29,13 @@ const term = {
   getSelection: vi.fn(() => ""),
   onData: vi.fn(() => ({ dispose: vi.fn() })),
   onScroll: vi.fn(() => ({ dispose: vi.fn() })),
-  write: vi.fn(),
+  write: vi.fn((_data: string | Uint8Array, cb?: () => void) => cb?.()),
   paste: vi.fn(),
   clear: vi.fn(),
   refresh: vi.fn(),
   focus: vi.fn(),
   scrollToLine: vi.fn(),
+  scrollToBottom: vi.fn(),
   dispose: vi.fn(),
 };
 
@@ -42,6 +43,7 @@ const transport = {
   terminalWrite: vi.fn(() => Promise.resolve()),
   terminalResize: vi.fn(() => Promise.resolve()),
   terminalResume: vi.fn(() => Promise.resolve()),
+  terminalReattach: vi.fn(() => Promise.resolve({ gapped: false })),
   ptySetLastSeq: vi.fn(),
   ptyDeleteLastSeq: vi.fn(),
 };
@@ -73,32 +75,37 @@ vi.mock("@/transport", async (importOriginal) => {
 
 import { TerminalView } from "@/components/terminal/TerminalView";
 
-describe("TerminalView focus behaviour (regression)", () => {
+/** Flushes init's dynamic imports and the reattach microtask chain. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
+
+describe("TerminalView lifecycle (ADR-0010)", () => {
   beforeEach(() => {
     bufferActive.viewportY = 42;
-    term.focus.mockClear();
-    term.refresh.mockClear();
-    term.scrollToLine.mockClear();
-    transport.terminalResume.mockClear();
+    bufferActive.length = 100;
+    vi.clearAllMocks();
+    // clearAllMocks resets call history but keeps implementations.
+    transport.terminalReattach.mockResolvedValue({ gapped: false });
   });
 
-  // Regression guard: term.focus() must NOT fire when the window/tab
-  // regains visibility. The user may be typing in the composer when the
-  // app returns to the foreground — stealing focus into xterm would
-  // contradict commit 09e0a3e (Ctrl+J from composer).
+  // Regression guard: term.focus() must NOT fire when the window/tab regains
+  // visibility. The user may be typing in the composer when the app returns to
+  // the foreground — stealing focus into xterm would contradict the Ctrl+J
+  // composer behaviour.
   it("does not call term.focus() on document visibilitychange", async () => {
     await act(async () => {
       render(<TerminalView ptyId="pty-1" visible={true} threadActive={true} />);
     });
-    // Let the async dynamic imports in init() settle.
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await settle();
 
     const focusCallsBefore = term.focus.mock.calls.length;
+    term.refresh.mockClear();
 
-    // Simulate return-from-background.
     await act(async () => {
       Object.defineProperty(document, "visibilityState", {
         value: "visible",
@@ -113,63 +120,68 @@ describe("TerminalView focus behaviour (regression)", () => {
     expect(term.refresh).toHaveBeenCalled();
   });
 
-  it("resumes a newly-created PTY after the view mounts", async () => {
+  // #748: a freshly mounted view replays the full retained scrollback window.
+  it("reattaches at the latest output (lastSeq -1) on mount", async () => {
     await act(async () => {
       render(<TerminalView ptyId="pty-1" visible={true} threadActive={true} />);
     });
+    await settle();
+
+    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-1", -1);
+  });
+
+  // Newly created PTYs are paused server-side; the view releases them on mount.
+  it("resumes the PTY after the view mounts", async () => {
     await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
+      render(<TerminalView ptyId="pty-1" visible={true} threadActive={true} />);
     });
+    await settle();
 
     expect(transport.terminalResume).toHaveBeenCalledWith("pty-1");
   });
 
-  it("restores viewport and does not focus when becoming visible again", async () => {
-    const { rerender } = render(<TerminalView ptyId="pty-1" visible={true} threadActive={true} />);
+  // #748: viewport opens at the tail after replay completes.
+  it("follows the tail (scrollToBottom) once replay completes", async () => {
     await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      render(<TerminalView ptyId="pty-1" visible={true} threadActive={true} />);
     });
+    await settle();
 
-    term.focus.mockClear();
-    term.scrollToLine.mockClear();
-
-    await act(async () => {
-      rerender(<TerminalView ptyId="pty-1" visible={false} threadActive={false} />);
-    });
-
-    term.focus.mockClear();
-    term.scrollToLine.mockClear();
-
-    await act(async () => {
-      rerender(<TerminalView ptyId="pty-1" visible={true} threadActive={true} />);
-    });
-
-    await act(async () => {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => resolve());
-          });
-        });
-      });
-    });
-
-    expect(term.scrollToLine).toHaveBeenCalledWith(42);
-    expect(term.focus).not.toHaveBeenCalled();
+    expect(term.scrollToBottom).toHaveBeenCalled();
   });
 
-  it("does NOT resume when mounted hidden", async () => {
-    await act(async () => {
-      render(<TerminalView ptyId="pty-1" visible={false} threadActive={true} />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+  // #746/#748: a gap in the retained window surfaces a trim banner at the top.
+  it("writes a trim banner when the replay reports a gap", async () => {
+    transport.terminalReattach.mockResolvedValueOnce({ gapped: true });
 
-    expect(transport.terminalResume).not.toHaveBeenCalled();
+    await act(async () => {
+      render(<TerminalView ptyId="pty-2" visible={true} threadActive={true} />);
+    });
+    await settle();
+
+    const wroteBanner = term.write.mock.calls.some(
+      ([data]) => typeof data === "string" && data.includes("scrollback limit"),
+    );
+    expect(wroteBanner).toBe(true);
+  });
+
+  // Remount path (shell-tab / thread switch): changing ptyId disposes the old
+  // view and mounts a fresh one that reattaches independently.
+  it("disposes and reattaches a fresh view when ptyId changes", async () => {
+    const { rerender } = render(
+      <TerminalView ptyId="pty-a" visible={true} threadActive={true} />,
+    );
+    await settle();
+    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-a", -1);
+
+    await act(async () => {
+      rerender(<TerminalView ptyId="pty-b" visible={true} threadActive={true} />);
+    });
+    await settle();
+
+    // Old view torn down (its per-pty seq tracking is cleared)...
+    expect(transport.ptyDeleteLastSeq).toHaveBeenCalledWith("pty-a");
+    // ...and the new pty reattaches at its own latest output.
+    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-b", -1);
   });
 });
