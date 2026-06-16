@@ -1,12 +1,12 @@
 import { createPortal } from "react-dom";
-import { useLayoutEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore, createDefaultRightPanelState } from "@/stores/diffStore";
 import {
   TERMINAL_PANEL_DEFAULTS,
   useTerminalStore,
 } from "@/stores/terminalStore";
-import { TerminalView } from "./TerminalView";
+import { TerminalView, loadXtermModules } from "./TerminalView";
 import { useTerminalPoolSlot } from "./TerminalPoolSlotContext";
 import { isContainerReadyForFit } from "./safeFit";
 import { dispatchTerminalPoolRefit } from "./terminalPoolRefit";
@@ -46,6 +46,12 @@ export function TerminalPoolHost() {
   );
   const terminalTabVisible =
     panelVisible && panelState.activeTab === "terminal";
+
+  // #749: warm the xterm module cache as soon as the terminal tab opens so the
+  // first view mounts without paying the cold dynamic-import cost.
+  useEffect(() => {
+    if (terminalTabVisible) void loadXtermModules();
+  }, [terminalTabVisible]);
 
   const terminals = useTerminalStore((s) => s.terminals);
   const storedActiveTerminalId = useTerminalStore((s) =>

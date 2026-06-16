@@ -17,6 +17,58 @@ import {
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
 
+/** Cached xterm core + fit addon constructors. */
+type XtermModules = {
+  readonly Terminal: typeof import("@xterm/xterm").Terminal;
+  readonly FitAddon: typeof import("@xterm/addon-fit").FitAddon;
+};
+
+let xtermModulesPromise: Promise<XtermModules> | null = null;
+
+/**
+ * Loads the xterm core and fit addon once and caches the result so view
+ * remounts (shell-tab / thread switch) skip the cold dynamic-import cost — the
+ * single biggest async gap on the remount path. Safe to call eagerly (e.g. when
+ * the terminal tab becomes visible) to warm the cache before the first mount.
+ */
+export function loadXtermModules(): Promise<XtermModules> {
+  xtermModulesPromise ??= Promise.all([
+    import("@xterm/xterm"),
+    import("@xterm/addon-fit"),
+  ]).then(([core, fit]) => ({
+    Terminal: core.Terminal,
+    FitAddon: fit.FitAddon,
+  }));
+  return xtermModulesPromise;
+}
+
+/**
+ * Perceptual budget for a terminal view remount (mount → first replay paint),
+ * in milliseconds. The dev-only timing hook records the actual value on
+ * `window.__mcodeTerminalMountMs` so the E2E suite can assert it stays within
+ * this threshold.
+ */
+export const TERMINAL_REMOUNT_BUDGET_MS = 150;
+
+type MountTimingWindow = Window & { __mcodeTerminalMountMs?: number };
+
+/** Dev-only: record mount→first-paint latency for the remount-speed assertion. */
+function recordMountTiming(ms: number): void {
+  if (!import.meta.env.DEV) return;
+  (window as MountTimingWindow).__mcodeTerminalMountMs = ms;
+}
+
+/** Concatenate byte chunks into one buffer for a single batched term.write. */
+function concatChunks(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
 /**
  * Dev-only live-terminal counter. Exposed on `window.__mcodeLiveTerminals`
  * so Playwright can assert that every terminal is disposed after close/
@@ -260,13 +312,11 @@ export const TerminalView = memo(function TerminalView({
     if (!container) return;
 
     let disposed = false;
+    const mountStart = performance.now();
 
     async function init(el: HTMLElement) {
-      const [{ Terminal: XTerminal }, { FitAddon: XFitAddon }] =
-        await Promise.all([
-          import("@xterm/xterm"),
-          import("@xterm/addon-fit"),
-        ]);
+      // Cached after the first mount, so remounts skip the cold import cost.
+      const { Terminal: XTerminal, FitAddon: XFitAddon } = await loadXtermModules();
 
       if (disposed || !containerRef.current) return;
 
@@ -381,15 +431,35 @@ export const TerminalView = memo(function TerminalView({
         replaying = false;
         // Replayed frames (lower seq) and any live frames buffered during the
         // reattach (higher seq) are merged here; sort restores wire order and
-        // writeChunk drops anything already painted.
+        // the lastWrittenSeq guard drops anything already painted.
         replayPending.sort((a, b) => a.seq - b.seq);
+        const frames: Uint8Array[] = [];
+        let totalBytes = 0;
         for (const detail of replayPending) {
-          writeChunk(detail);
+          if (detail.seq <= lastWrittenSeq) continue;
+          lastWrittenSeq = detail.seq;
+          frames.push(detail.payload);
+          totalBytes += detail.payload.length;
         }
         replayPending.length = 0;
-        // Follow the tail once all replayed bytes have been committed.
-        term.write("", () => {
+
+        // Follow the tail and record the remount latency once the replay paints.
+        const follow = () => {
           term.scrollToBottom();
+          recordMountTiming(performance.now() - mountStart);
+        };
+
+        if (frames.length === 0) {
+          follow();
+          return;
+        }
+        // #749: write the whole replay in one pass instead of one main-thread
+        // task per chunk, so a large scrollback replay paints quickly.
+        transport.ptySetLastSeq(ptyId, lastWrittenSeq);
+        fc.written(totalBytes);
+        term.write(concatChunks(frames, totalBytes), () => {
+          fc.acked(totalBytes);
+          follow();
         });
       };
 

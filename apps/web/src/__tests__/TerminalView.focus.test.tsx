@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
 import { act } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { emitPtyData } from "@/components/terminal/ptyDataRegistry";
 
 // jsdom doesn't implement ResizeObserver; TerminalView instantiates one in
 // its mount effect. A no-op stub is enough — fit is exercised via the
@@ -183,5 +184,38 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     expect(transport.ptyDeleteLastSeq).toHaveBeenCalledWith("pty-a");
     // ...and the new pty reattaches at its own latest output.
     expect(transport.terminalReattach).toHaveBeenCalledWith("pty-b", -1);
+  });
+
+  // #749: the replay burst is written in a single batched term.write rather
+  // than one main-thread task per chunk.
+  it("batches replayed frames into a single term.write", async () => {
+    let resolveReattach: (v: { gapped: boolean }) => void = () => {};
+    transport.terminalReattach.mockReturnValueOnce(
+      new Promise((r) => {
+        resolveReattach = r;
+      }),
+    );
+
+    await act(async () => {
+      render(<TerminalView ptyId="pty-batch" visible={true} threadActive={true} />);
+    });
+    await settle(); // mounted with listeners attached; reattach still pending
+
+    // Two replayed frames arrive while the gate is open.
+    await act(async () => {
+      emitPtyData({ ptyId: "pty-batch", seq: 0, payload: new Uint8Array([65]) });
+      emitPtyData({ ptyId: "pty-batch", seq: 1, payload: new Uint8Array([66]) });
+    });
+
+    await act(async () => {
+      resolveReattach({ gapped: false });
+    });
+    await settle();
+
+    const dataWrites = term.write.mock.calls.filter(
+      ([data]) => data instanceof Uint8Array,
+    );
+    expect(dataWrites.length).toBe(1);
+    expect(Array.from(dataWrites[0][0] as Uint8Array)).toEqual([65, 66]);
   });
 });
