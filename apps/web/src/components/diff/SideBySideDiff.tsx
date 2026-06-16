@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { ParsedDiffLine } from "@/lib/diff-parser";
 import { getFirstHunkHeaderIndex } from "@/lib/diff-parser";
 import { useDiffHighlighter } from "@/hooks/useDiffHighlighter";
@@ -115,7 +115,7 @@ const RIGHT_GUTTER: Record<string, string> = {
 };
 
 /** Side-by-side diff renderer with syntax highlighting and hunk separator bars. */
-export function SideBySideDiff({
+export const SideBySideDiff = memo(function SideBySideDiff({
   lines,
   language = "text",
   skipLeadingHunkSeparator = false,
@@ -230,4 +230,4 @@ export function SideBySideDiff({
       </div>
     </div>
   );
-}
+});

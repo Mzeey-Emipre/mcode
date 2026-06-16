@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useId } from "react";
+import { memo, useState, useEffect, useRef, useMemo, useId } from "react";
 import { ChevronsDownUp, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
@@ -66,7 +66,7 @@ type DiffState = null | { loading: true } | { loading: false; data: string };
  * Diff is loaded lazily on the first expand, or immediately for auto-opened views.
  * Large diffs (>200 lines) are truncated with a "Show all N lines" button.
  */
-export function FileEntry({
+export const FileEntry = memo(function FileEntry({
   filePath,
   source,
   id,
@@ -443,7 +443,7 @@ export function FileEntry({
       )}
     </div>
   );
-}
+});
 
 /**
  * Tiny path joiner that picks the right separator without dragging in node:path.

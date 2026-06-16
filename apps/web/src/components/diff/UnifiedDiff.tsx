@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { ParsedDiffLine } from "@/lib/diff-parser";
 import { getFirstHunkHeaderIndex } from "@/lib/diff-parser";
 import { useDiffHighlighter } from "@/hooks/useDiffHighlighter";
@@ -20,7 +21,7 @@ interface UnifiedDiffProps {
  * Status is communicated by background tint and a tinted gutter rule on the new-line-number
  * column — no redundant +/- character column. Syntax highlighting layered on top.
  */
-export function UnifiedDiff({
+export const UnifiedDiff = memo(function UnifiedDiff({
   lines,
   language = "text",
   skipLeadingHunkSeparator = false,
@@ -101,4 +102,4 @@ export function UnifiedDiff({
       </div>
     </div>
   );
-}
+});
