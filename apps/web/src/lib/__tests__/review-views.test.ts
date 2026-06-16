@@ -118,13 +118,39 @@ describe("visibleReviewViews — runtime gates", () => {
   });
 });
 
-describe("defaultReviewView", () => {
-  it("defaults a thread to the last-turn diff", () => {
-    expect(defaultReviewView("thread")).toBe("last-turn");
+describe("defaultReviewView — 3-way change-state default (ADR-0011)", () => {
+  it("defaults threadless to the unstaged working-tree diff regardless of change state", () => {
+    expect(defaultReviewView("threadless")).toBe("unstaged");
+    expect(defaultReviewView("threadless", { hasTurnChanges: true, isDirty: false })).toBe(
+      "unstaged",
+    );
+    expect(defaultReviewView("threadless", { hasTurnChanges: false, isDirty: false })).toBe(
+      "unstaged",
+    );
   });
 
-  it("defaults threadless to the unstaged working-tree diff", () => {
-    expect(defaultReviewView("threadless")).toBe("unstaged");
+  it("defaults a thread with turn-registered changes to Last turn", () => {
+    expect(defaultReviewView("thread", { hasTurnChanges: true, isDirty: false })).toBe(
+      "last-turn",
+    );
+    // Turn changes win even when the working tree is also dirty.
+    expect(defaultReviewView("thread", { hasTurnChanges: true, isDirty: true })).toBe(
+      "last-turn",
+    );
+  });
+
+  it("defaults a thread with only a dirty working tree (no turn) to Unstaged", () => {
+    expect(defaultReviewView("thread", { hasTurnChanges: false, isDirty: true })).toBe(
+      "unstaged",
+    );
+  });
+
+  it("defaults a clean thread (no turn, no dirt) to Branch", () => {
+    expect(defaultReviewView("thread", { hasTurnChanges: false, isDirty: false })).toBe("branch");
+  });
+
+  it("defaults a thread to Branch when no change state is supplied (conservative)", () => {
+    expect(defaultReviewView("thread")).toBe("branch");
   });
 });
 

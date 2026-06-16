@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { TurnSnapshot, GitCommit, BranchComparison } from "@mcode/contracts";
+import { defaultReviewView, type ReviewChangeState } from "@/lib/review-views";
 
 export type { GitCommit, BranchComparison };
 
@@ -194,8 +195,21 @@ interface DiffState {
    * Absent entry means closed. See ADR-0004.
    */
   readonly rightPanelVisibleByThread: Record<string, boolean>;
-  /** View mode within the Changes tab. */
+  /** View mode within the Changes tab (the single rendered view). */
   viewMode: DiffViewMode;
+  /**
+   * Per-thread remembered Review view, keyed by thread ID. Written when the user
+   * picks a view for a thread; read back to restore that pick when returning to
+   * the thread. In-memory only; dropped by {@link clearThread}. See ADR-0011.
+   */
+  readonly reviewViewByThread: Record<string, DiffViewMode>;
+  /**
+   * Per-thread "the user picked a view" override flag, keyed by thread ID. While
+   * unset, the Review default re-evaluates live from the thread's change state;
+   * once set, the pick sticks and auto-defaulting stops for that thread. Mirrors
+   * the `branchManuallySelected` guard in workspaceStore. See ADR-0011.
+   */
+  readonly reviewViewManuallySelectedByThread: Record<string, boolean>;
   /**
    * The Branch view's current→selected comparison for the current scope, or null
    * until the picker resolves it. Drives both the ref picker and the rendered
@@ -296,6 +310,18 @@ interface DiffState {
    */
   closeRightPanelTab: (workspaceId: string, tab: RightPanelTab) => void;
   setViewMode: (mode: DiffViewMode) => void;
+  /**
+   * Resolve the Review view a thread should show: the user's sticky pick when
+   * they have chosen one, otherwise the change-state default (re-evaluated live
+   * from `changeState`). See ADR-0011.
+   */
+  getReviewView: (threadId: string, changeState: ReviewChangeState) => DiffViewMode;
+  /**
+   * Record a manual Review view pick for a thread: stores the view, sets the
+   * sticky per-thread override, and makes it the rendered view. Stops live
+   * auto-defaulting for that thread. See ADR-0011.
+   */
+  setReviewViewForThread: (threadId: string, mode: DiffViewMode) => void;
   /** Store a resolved Branch comparison for a scope, keyed for staleness tracking. */
   setBranchComparison: (comparison: BranchComparison | null, key: string | null) => void;
   /** Override the base ref of the active Branch comparison (no-op if none resolved). */
@@ -345,6 +371,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   rightPanelByWorkspace: {},
   rightPanelVisibleByThread: {},
   viewMode: "last-turn",
+  reviewViewByThread: {},
+  reviewViewManuallySelectedByThread: {},
   branchComparison: null,
   branchComparisonKey: null,
   selectedCommitSha: null,
@@ -435,6 +463,26 @@ export const useDiffStore = create<DiffState>((set, get) => ({
 
   setViewMode: (mode) =>
     set({ viewMode: mode, selectedFile: null, diffContent: null, selectedCommitSha: null }),
+  getReviewView: (threadId, changeState) => {
+    const state = get();
+    if (state.reviewViewManuallySelectedByThread[threadId]) {
+      return state.reviewViewByThread[threadId] ?? defaultReviewView("thread", changeState);
+    }
+    return defaultReviewView("thread", changeState);
+  },
+  setReviewViewForThread: (threadId, mode) =>
+    set((s) => ({
+      viewMode: mode,
+      reviewViewByThread: { ...s.reviewViewByThread, [threadId]: mode },
+      reviewViewManuallySelectedByThread: {
+        ...s.reviewViewManuallySelectedByThread,
+        [threadId]: true,
+      },
+      // Match setViewMode's resets so a fresh pick clears stale selection/operand.
+      selectedFile: null,
+      diffContent: null,
+      selectedCommitSha: null,
+    })),
   setBranchComparison: (comparison, key) =>
     set({ branchComparison: comparison, branchComparisonKey: key }),
   setBranchBase: (ref) =>
@@ -542,6 +590,10 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete lineWrapByThread[threadId];
       const rightPanelVisibleByThread = { ...state.rightPanelVisibleByThread };
       delete rightPanelVisibleByThread[threadId];
+      const reviewViewByThread = { ...state.reviewViewByThread };
+      delete reviewViewByThread[threadId];
+      const reviewViewManuallySelectedByThread = { ...state.reviewViewManuallySelectedByThread };
+      delete reviewViewManuallySelectedByThread[threadId];
       const diffRevisionByScope = { ...state.diffRevisionByScope };
       delete diffRevisionByScope[threadId];
 
@@ -560,6 +612,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         previewUrlByThread: previewUrls,
         lineWrapByThread,
         rightPanelVisibleByThread,
+        reviewViewByThread,
+        reviewViewManuallySelectedByThread,
         diffRevisionByScope,
         inlineDiffCache,
         ...(selectionBelongsToThread

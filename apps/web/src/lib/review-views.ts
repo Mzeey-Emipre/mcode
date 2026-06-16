@@ -94,11 +94,33 @@ export function visibleReviewViews(
 }
 
 /**
- * The default view for a scope: the most recent turn's diff in a thread
- * (`"last-turn"`, the default glance), and the unstaged working-tree diff when
- * threadless. Used to seed the toolbar and to recover when the active view falls
- * out of scope.
+ * The thread change-state inputs that pick a thread's default Review view, per
+ * ADR-0011. Both are cheap, reactive signals the panel already has: turn changes
+ * from the loaded turn snapshots (the same signal the header's changed-file count
+ * uses) and working-tree dirtiness from the git status probe.
  */
-export function defaultReviewView(scope: PanelScope): DiffViewMode {
-  return scope === "thread" ? "last-turn" : "unstaged";
+export interface ReviewChangeState {
+  /** The thread has at least one turn snapshot with changed files. */
+  readonly hasTurnChanges: boolean;
+  /** The thread's working tree has uncommitted changes (manual edits). */
+  readonly isDirty: boolean;
+}
+
+/**
+ * The default Review view for a scope. Threadless has no turns, so it always
+ * defaults to the unstaged working-tree diff. A thread picks from its change
+ * state (ADR-0011): turn-registered changes -> Last turn; else a dirty working
+ * tree -> Unstaged (Branch's committed-only three-dot range would hide manual
+ * edits); else the clean tree -> Branch. Passing no change state yields the
+ * conservative Branch default for a thread. Used to seed the toolbar and to
+ * recover when the active view falls out of scope.
+ */
+export function defaultReviewView(
+  scope: PanelScope,
+  changeState?: ReviewChangeState,
+): DiffViewMode {
+  if (scope === "threadless") return "unstaged";
+  if (changeState?.hasTurnChanges) return "last-turn";
+  if (changeState?.isDirty) return "unstaged";
+  return "branch";
 }
