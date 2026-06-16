@@ -5,9 +5,14 @@ import { getTransport } from "@/transport";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 import { ClientTerminalFlowControl } from "./terminalFlowControl";
-import { onPtyData, onPtyExit, onPtyReconnectGap } from "./ptyDataRegistry";
+import { onPtyData, onPtyExit, onPtyReconnectGap, type PtyDataPayload } from "./ptyDataRegistry";
 import { isSafeTerminalDimensions, safeFit } from "./safeFit";
 import { terminalScroll } from "./terminalScrollController";
+import {
+  applyRemountAnchor,
+  captureRemountAnchor,
+  dropRemountAnchor,
+} from "./terminalRemountScroll";
 import { TERMINAL_POOL_REFIT } from "./terminalPoolRefit";
 import { claimWebglSlot, clearWebglSlot, releaseWebglSlot } from "./terminalWebglSlot";
 import {
@@ -16,6 +21,58 @@ import {
 } from "./terminalScrollHarness";
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
+
+/** Cached xterm core + fit addon constructors. */
+type XtermModules = {
+  readonly Terminal: typeof import("@xterm/xterm").Terminal;
+  readonly FitAddon: typeof import("@xterm/addon-fit").FitAddon;
+};
+
+let xtermModulesPromise: Promise<XtermModules> | null = null;
+
+/**
+ * Loads the xterm core and fit addon once and caches the result so view
+ * remounts (shell-tab / thread switch) skip the cold dynamic-import cost — the
+ * single biggest async gap on the remount path. Safe to call eagerly (e.g. when
+ * the terminal tab becomes visible) to warm the cache before the first mount.
+ */
+export function loadXtermModules(): Promise<XtermModules> {
+  xtermModulesPromise ??= Promise.all([
+    import("@xterm/xterm"),
+    import("@xterm/addon-fit"),
+  ]).then(([core, fit]) => ({
+    Terminal: core.Terminal,
+    FitAddon: fit.FitAddon,
+  }));
+  return xtermModulesPromise;
+}
+
+/**
+ * Perceptual budget for a terminal view remount (mount → first replay paint),
+ * in milliseconds. The dev-only timing hook records the actual value on
+ * `window.__mcodeTerminalMountMs` so the E2E suite can assert it stays within
+ * this threshold.
+ */
+export const TERMINAL_REMOUNT_BUDGET_MS = 150;
+
+type MountTimingWindow = Window & { __mcodeTerminalMountMs?: number };
+
+/** Dev-only: record mount→first-paint latency for the remount-speed assertion. */
+function recordMountTiming(ms: number): void {
+  if (!import.meta.env.DEV) return;
+  (window as MountTimingWindow).__mcodeTerminalMountMs = ms;
+}
+
+/** Concatenate byte chunks into one buffer for a single batched term.write. */
+function concatChunks(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
 
 /**
  * Dev-only live-terminal counter. Exposed on `window.__mcodeLiveTerminals`
@@ -260,13 +317,11 @@ export const TerminalView = memo(function TerminalView({
     if (!container) return;
 
     let disposed = false;
+    const mountStart = performance.now();
 
     async function init(el: HTMLElement) {
-      const [{ Terminal: XTerminal }, { FitAddon: XFitAddon }] =
-        await Promise.all([
-          import("@xterm/xterm"),
-          import("@xterm/addon-fit"),
-        ]);
+      // Cached after the first mount, so remounts skip the cold import cost.
+      const { Terminal: XTerminal, FitAddon: XFitAddon } = await loadXtermModules();
 
       if (disposed || !containerRef.current) return;
 
@@ -348,29 +403,83 @@ export const TerminalView = memo(function TerminalView({
       const onWheel = onUserScroll;
       el.addEventListener("wheel", onWheel, { passive: true });
 
-      // Listen for PTY output via the direct callback registry.
-      // Attached BEFORE awaiting the renderer so initial PTY output that arrives
-      // during renderer initialization is buffered into the xterm write queue
-      // (term.write is renderer-independent) and painted as soon as a renderer
-      // is attached — never dropped.
-      const unsubPtyData = onPtyData(ptyId, (detail) => {
+      // #748 reattach gate: a freshly mounted view replays the server's
+      // retained scrollback via terminal.reattach (below), then follows the
+      // tail. Because the shell keeps streaming while no view is mounted, live
+      // frames (higher seq) can arrive while the reattach RPC is still in
+      // flight, ahead of the replayed frames (lower seq). Buffer everything
+      // until the replay completes, then write in seq order so the viewport
+      // shows scrollback-then-tail, not a garbled tail-then-scrollback.
+      let replaying = true;
+      const replayPending: PtyDataPayload[] = [];
+      // Highest seq actually written. seq is monotonic per PTY, so anything not
+      // strictly newer has already been painted. Guards against double delivery:
+      // a newly created PTY's first prompt is both retained in the replay buffer
+      // (sent by reattach) and queued in the flow-control pause buffer (re-sent
+      // when resume drains it), and the resume drain lands after the gate closes.
+      let lastWrittenSeq = Number.NEGATIVE_INFINITY;
+
+      const writeChunk = (detail: PtyDataPayload) => {
+        if (detail.seq <= lastWrittenSeq) return;
+        lastWrittenSeq = detail.seq;
         transport.ptySetLastSeq(ptyId, detail.seq);
         const n = detail.payload.length;
         fc.written(n);
-        // Hidden or dormant terminals keep xterm mounted but must not write —
-        // that corrupts scrollback and can yank the viewport to the cursor.
-        if (!shownRef.current || !threadActiveRef.current) {
-          fc.acked(n);
-          return;
-        }
-        // Use xterm's callback form so acked() fires only after the bytes
-        // are committed to the terminal buffer — not just queued.
+        // xterm's callback form fires acked() only after bytes are committed to
+        // the buffer, so client flow control reflects real write progress.
         term.write(detail.payload, () => {
           fc.acked(n);
-          if (terminalScroll.restoreAnchor(ptyId)) {
-            terminalScroll.restore(ptyId, term);
-          }
         });
+      };
+
+      const flushReplayGate = () => {
+        replaying = false;
+        // Replayed frames (lower seq) and any live frames buffered during the
+        // reattach (higher seq) are merged here; sort restores wire order and
+        // the lastWrittenSeq guard drops anything already painted.
+        replayPending.sort((a, b) => a.seq - b.seq);
+        const frames: Uint8Array[] = [];
+        let totalBytes = 0;
+        for (const detail of replayPending) {
+          if (detail.seq <= lastWrittenSeq) continue;
+          lastWrittenSeq = detail.seq;
+          frames.push(detail.payload);
+          totalBytes += detail.payload.length;
+        }
+        replayPending.length = 0;
+
+        // #751: restore the prior scroll region if the user had scrolled up
+        // before unmount; otherwise follow the tail. Record remount latency once
+        // the replay paints.
+        const follow = () => {
+          applyRemountAnchor(ptyId, term);
+          recordMountTiming(performance.now() - mountStart);
+        };
+
+        if (frames.length === 0) {
+          follow();
+          return;
+        }
+        // #749: write the whole replay in one pass instead of one main-thread
+        // task per chunk, so a large scrollback replay paints quickly.
+        transport.ptySetLastSeq(ptyId, lastWrittenSeq);
+        fc.written(totalBytes);
+        term.write(concatChunks(frames, totalBytes), () => {
+          fc.acked(totalBytes);
+          follow();
+        });
+      };
+
+      // Listen for PTY output via the direct callback registry. Attached BEFORE
+      // awaiting the renderer so output that arrives during renderer init is
+      // queued into the xterm buffer (term.write is renderer-independent) and
+      // painted as soon as a renderer attaches — never dropped.
+      const unsubPtyData = onPtyData(ptyId, (detail) => {
+        if (replaying) {
+          replayPending.push(detail);
+          return;
+        }
+        writeChunk(detail);
       });
 
       // Show a reconnect banner when the server signals that the replay window
@@ -386,6 +495,8 @@ export const TerminalView = memo(function TerminalView({
         term.write(
           `\r\n\x1b[90m[Process exited with code ${detail.code}]\x1b[0m\r\n`,
         );
+        // The PTY is gone and cannot remount; drop any saved scroll anchor.
+        dropRemountAnchor(ptyId);
       });
 
       // Resize handling:
@@ -478,6 +589,9 @@ export const TerminalView = memo(function TerminalView({
         clearWebglSlot(ptyId);
         clearActiveRenderer();
         unregisterTerminalScrollHarness(ptyId);
+        // #751: remember where the user was before this view goes away so the
+        // next remount can restore it (no-op when they were following the tail).
+        captureRemountAnchor(ptyId, term);
         term.dispose();
         decrementLiveTerminalCount();
       };
@@ -495,14 +609,34 @@ export const TerminalView = memo(function TerminalView({
         return;
       }
 
-      // New PTYs are created paused server-side so their initial shell prompt
-      // is buffered until this view is ready to consume it. Resume only after
-      // the PTY listeners above are attached; term.write queues bytes even
-      // before the renderer addon finishes loading. Guard with the current
-      // visibility state so a late init doesn't race with pause-on-hide.
-      if (shownRef.current && threadActiveRef.current) {
-        transport.terminalResume(ptyId).catch(() => {});
-      }
+      // #748: replay retained scrollback into this fresh xterm, then follow the
+      // tail. The reattach resolves after all replay frames have been sent (WS
+      // ordering puts the data frames ahead of the RPC response), at which point
+      // the gate flushes. lastSeq = -1 requests the full retained window.
+      transport
+        .terminalReattach(ptyId, -1)
+        .then(({ gapped }) => {
+          if (disposed) return;
+          if (gapped) {
+            // The shell exceeded the scrollback budget, so the oldest output
+            // was evicted server-side. Flag the trim at the top of the replay.
+            term.write(
+              "\r\n\x1b[90m[Earlier output beyond the scrollback limit was trimmed]\x1b[0m\r\n",
+            );
+          }
+          flushReplayGate();
+        })
+        .catch(() => {
+          // Reattach failed (e.g. the PTY already exited); release the gate so
+          // any buffered live frames still paint.
+          if (disposed) return;
+          flushReplayGate();
+        });
+
+      // Newly created PTYs are paused server-side so their first prompt waits
+      // for a consumer. Release now that the listeners above are attached; for
+      // an already-running session this is a harmless no-op.
+      transport.terminalResume(ptyId).catch(() => {});
 
       // DOM renderer only at init; WebGL loads when this terminal becomes shown
       // (see shown effect) so the pool never holds multiple GL contexts.

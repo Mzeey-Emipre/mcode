@@ -159,6 +159,17 @@ export async function mockWebSocketServer(
       // Using getDefaultSettings() ensures this stays in sync with schema changes.
       else if (method === "settings.get") result = getDefaultSettings();
       else if (method === "workspace.reorder") result = { ok: true };
+      // ADR-0010: TerminalView calls terminal.reattach on every mount to replay
+      // the server's retained scrollback into a fresh xterm. Without a default
+      // response the new mount path hangs forever, causing every terminal spec
+      // to time out. Return { gapped: false } — no replay gap, nothing trimmed —
+      // so the reattach gate flushes immediately and the view finishes mounting.
+      else if (method === "terminal.reattach") result = { gapped: false };
+      // terminal.resume is called after reattach to release the server-side
+      // pause buffer so the first prompt reaches the client.
+      else if (method === "terminal.resume") result = null;
+      // terminal.pause is used only for client backpressure; default to success.
+      else if (method === "terminal.pause") result = null;
       else {
         ws.send(
           JSON.stringify({
