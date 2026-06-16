@@ -39,6 +39,7 @@ export function DiffToolbar() {
   const diffScopeRevision = useDiffStore((s) =>
     activeWorkspaceId ? (s.diffRevisionByScope[activeThreadId ?? activeWorkspaceId] ?? 0) : 0,
   );
+  const [branchProbeNonce, setBranchProbeNonce] = useState(0);
 
   const isGitRepo = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === s.activeWorkspaceId)?.is_git_repo ?? false,
@@ -60,18 +61,26 @@ export function DiffToolbar() {
     diffScopeRevision,
     commitProbeNonce,
   });
+  const branchAvailability = useBranchAvailability({
+    activeWorkspaceId,
+    activeThreadId,
+    isGitRepo,
+    diffScopeRevision,
+    branchProbeNonce,
+  });
 
   // Recover when the active view falls out of the current scope or gating.
   useEffect(() => {
     if (viewModes.length === 0) return;
     if (
       !viewModes.some((m) => m.id === viewMode) ||
-      (viewMode === "commit" && commitAvailability === "empty")
+      (viewMode === "commit" && commitAvailability === "empty") ||
+      (viewMode === "branch" && branchAvailability === "empty")
     ) {
       const fallback = defaultReviewView(scope);
       setViewMode(viewModes.some((m) => m.id === fallback) ? fallback : viewModes[0].id);
     }
-  }, [commitAvailability, viewMode, viewModes, scope, setViewMode]);
+  }, [branchAvailability, commitAvailability, viewMode, viewModes, scope, setViewMode]);
 
   const activeView = useMemo(
     () => viewModes.find((m) => m.id === viewMode),
@@ -93,7 +102,10 @@ export function DiffToolbar() {
           open={viewMenuOpen}
           onOpenChange={(open) => {
             setViewMenuOpen(open);
-            if (open) setCommitProbeNonce((nonce) => nonce + 1);
+            if (open) {
+              setCommitProbeNonce((nonce) => nonce + 1);
+              setBranchProbeNonce((nonce) => nonce + 1);
+            }
           }}
         >
           <DropdownMenuTrigger
@@ -117,7 +129,9 @@ export function DiffToolbar() {
           <DropdownMenuContent align="start" sideOffset={4} className="min-w-[150px]">
             {viewModes.map((mode) => {
               const active = viewMode === mode.id;
-              const disabled = mode.id === "commit" && commitAvailability !== "available";
+              const disabled =
+                (mode.id === "commit" && commitAvailability === "empty") ||
+                (mode.id === "branch" && branchAvailability === "empty");
               return (
                 <DropdownMenuItem
                   key={mode.id}
@@ -196,6 +210,7 @@ export function DiffToolbar() {
           <BranchRefPicker
             workspaceId={activeWorkspaceId}
             threadId={activeThreadId ?? undefined}
+            diffScopeRevision={diffScopeRevision}
           />
         </div>
       )}
@@ -260,6 +275,54 @@ function useCommitAvailability({
     diffScopeRevision,
     commitProbeNonce,
   ]);
+
+  return availability;
+}
+
+type BranchAvailability = "loading" | "available" | "empty";
+
+/** Probe whether the Branch view has a resolvable comparison for the active scope. */
+function useBranchAvailability({
+  activeWorkspaceId,
+  activeThreadId,
+  isGitRepo,
+  diffScopeRevision,
+  branchProbeNonce,
+}: {
+  activeWorkspaceId: string | null;
+  activeThreadId: string | null;
+  isGitRepo: boolean;
+  diffScopeRevision: number;
+  branchProbeNonce: number;
+}): BranchAvailability {
+  const [availability, setAvailability] = useState<BranchAvailability>("loading");
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !isGitRepo) {
+      setAvailability("empty");
+      return;
+    }
+
+    let cancelled = false;
+    setAvailability("loading");
+
+    void getTransport()
+      .getBranchComparison(activeWorkspaceId, activeThreadId ?? undefined)
+      .then((result) => {
+        if (cancelled) return;
+        // Treat a missing flag as available for older servers; only explicit false
+        // disables the view (local-only default branch, unborn repo, etc.).
+        const available = !result.isUnborn && result.isComparisonAvailable !== false;
+        setAvailability(available ? "available" : "empty");
+      })
+      .catch(() => {
+        if (!cancelled) setAvailability("empty");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, activeThreadId, isGitRepo, diffScopeRevision, branchProbeNonce]);
 
   return availability;
 }

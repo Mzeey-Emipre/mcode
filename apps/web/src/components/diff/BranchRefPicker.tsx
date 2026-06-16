@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Check, ChevronDown } from "lucide-react";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
@@ -30,22 +30,28 @@ function scopeKey(workspaceId: string, threadId?: string): string {
  */
 function useResolveBranchComparison(
   workspaceId: string,
-  threadId?: string,
+  threadId: string | undefined,
+  diffScopeRevision: number,
 ): { comparison: BranchComparison | null; loading: boolean } {
   const comparison = useDiffStore((s) => s.branchComparison);
   const setBranchComparison = useDiffStore((s) => s.setBranchComparison);
   const [loading, setLoading] = useState(false);
   const key = scopeKey(workspaceId, threadId);
+  const resolvedRevisionRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // Keep the pair the user already resolved/picked for this exact scope.
     const state = useDiffStore.getState();
-    if (state.branchComparisonKey === key && state.branchComparison) {
+    if (
+      state.branchComparisonKey === key &&
+      state.branchComparison &&
+      resolvedRevisionRef.current === diffScopeRevision
+    ) {
       setLoading(false);
       return;
     }
 
     let cancelled = false;
+    resolvedRevisionRef.current = diffScopeRevision;
     setLoading(true);
     void getTransport()
       .getBranchComparison(workspaceId, threadId)
@@ -56,14 +62,17 @@ function useResolveBranchComparison(
       })
       .catch(() => {
         if (cancelled) return;
-        setBranchComparison({ base: null, target: null, refs: [], isUnborn: false }, key);
+        setBranchComparison(
+          { base: null, target: null, refs: [], isUnborn: false, isComparisonAvailable: false },
+          key,
+        );
         setLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [key, workspaceId, threadId, setBranchComparison]);
+  }, [key, workspaceId, threadId, diffScopeRevision, setBranchComparison]);
 
   return { comparison, loading };
 }
@@ -272,6 +281,8 @@ interface BranchRefPickerProps {
   workspaceId: string;
   /** Active thread id; makes "current branch" the thread's worktree branch. */
   threadId?: string;
+  /** Bumps when git state changes in this scope; triggers comparison re-resolution. */
+  diffScopeRevision: number;
 }
 
 /**
@@ -279,8 +290,16 @@ interface BranchRefPickerProps {
  * and one selected comparison ref on the right. The stored pair is always
  * `current...selected`, and the right side is the only picker.
  */
-export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps) {
-  const { comparison, loading } = useResolveBranchComparison(workspaceId, threadId);
+export function BranchRefPicker({
+  workspaceId,
+  threadId,
+  diffScopeRevision,
+}: BranchRefPickerProps) {
+  const { comparison, loading } = useResolveBranchComparison(
+    workspaceId,
+    threadId,
+    diffScopeRevision,
+  );
   const setBranchTarget = useDiffStore((s) => s.setBranchTarget);
 
   if (loading && !comparison) {

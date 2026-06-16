@@ -768,18 +768,18 @@ export class GitService {
 
   /**
    * Resolve the default Branch comparison for a checkout, plus the refs that
-   * populate the base/target pickers. Implements the context-dependent default
-   * from `docs/adr/0007-branch-comparison-default-and-range.md`:
+   * populate the base/target pickers. Implements the priority ladder from
+   * `docs/adr/0007-branch-comparison-default-and-range.md`:
    *
-   * - **current ≠ detected base** → `origin/base → current` when available,
-   *   else `base → current` (review the branch's work).
-   * - **current == detected base** (on the base branch) → `current →
-   *   origin/current` when an upstream exists, else `base → current` (empty but
-   *   valid when the branch has no upstream).
-   * - **detached HEAD** → `base → HEAD` (three-dot already takes the merge-base).
-   * - **unborn branch** (no commits) → explicit empty state (`isUnborn`).
-   * - **no detectable base** → no base is selected; the picker waits for the
-   *   user to choose one.
+   * 1. Tracked upstream (`@{upstream}`) when set.
+   * 2. Remote default ref (`origin/<repo-default>`) when `origin` exists.
+   * 3. Local default branch for feature branches in repos with no remote.
+   * 4. On the local-only default branch with no upstream — no comparison
+   *    (`isComparisonAvailable: false`; Branch view disabled).
+   *
+   * Detached HEAD compares the best available base to `HEAD`. Unborn branches
+   * return `isUnborn: true`. When no base can be detected on a feature branch,
+   * `base` is null and the user picks one in the ref picker.
    *
    * Reads the workspace root by default; pass `repoPath` to resolve against a
    * thread's worktree so "current branch" is the thread's branch.
@@ -789,33 +789,122 @@ export class GitService {
     const refs = await this.listBranchesForPath(cwd);
 
     if (!(await this.hasCommits(cwd))) {
-      return { base: null, target: null, refs, isUnborn: true };
+      return { base: null, target: null, refs, isUnborn: true, isComparisonAvailable: false };
     }
 
     const defaultBranch = await this.detectDefaultBranch(cwd);
-    const base = (await this.detectDefaultComparisonRef(cwd)) ?? defaultBranch;
+    const originDefaultRef = await this.detectOriginDefaultRef(cwd);
     const current = await this.getCurrentBranchForPath(cwd);
+    const upstream =
+      current && current !== "HEAD" ? await this.getUpstreamRef(cwd) : null;
+    const onDefaultBranch = defaultBranch !== null && current === defaultBranch;
 
-    if (!base) {
-      const target = current && current !== "HEAD" ? current : "HEAD";
-      return { base: null, target, refs, isUnborn: false };
-    }
+    const unavailable = (
+      comparison: Omit<BranchComparison, "isComparisonAvailable">,
+    ): BranchComparison => ({ ...comparison, isComparisonAvailable: false });
 
-    // Detached HEAD (no branch name): compare the detected base to HEAD. Three-dot
+    const available = (
+      comparison: Omit<BranchComparison, "isComparisonAvailable">,
+    ): BranchComparison => ({ ...comparison, isComparisonAvailable: true });
+
+    // Detached HEAD (no branch name): compare the best base to HEAD. Three-dot
     // semantics resolve the merge-base internally, so an explicit base is enough.
     if (!current || current === "HEAD") {
-      return { base, target: "HEAD", refs, isUnborn: false };
+      const base = upstream ?? originDefaultRef ?? defaultBranch;
+      if (!base) {
+        return unavailable({ base: null, target: "HEAD", refs, isUnborn: false });
+      }
+      return available({ base, target: "HEAD", refs, isUnborn: false });
     }
 
-    // On the base branch, `base...current` is empty. Use the remote if it exists,
-    // else keep the empty but valid base→current range.
-    if (current === defaultBranch || current === base) {
-      const remoteRef = `origin/${current}`;
-      const hasUpstream = refs.some((r) => r.type === "remote" && r.name === remoteRef);
-      return { base: current, target: hasUpstream ? remoteRef : current, refs, isUnborn: false };
+    // 1. Tracked upstream — most accurate when the branch has a remote tracking ref.
+    if (upstream) {
+      if (onDefaultBranch) {
+        return available({ base: current, target: upstream, refs, isUnborn: false });
+      }
+      return available({ base: upstream, target: current, refs, isUnborn: false });
     }
 
-    return { base, target: current, refs, isUnborn: false };
+    // 2. Remote default ref when origin exists but this branch has no upstream.
+    if (originDefaultRef) {
+      if (onDefaultBranch) {
+        return available({ base: current, target: originDefaultRef, refs, isUnborn: false });
+      }
+      return available({ base: originDefaultRef, target: current, refs, isUnborn: false });
+    }
+
+    // 3. Local-only feature branch: compare against the detected local default.
+    if (!onDefaultBranch && defaultBranch) {
+      return available({ base: defaultBranch, target: current, refs, isUnborn: false });
+    }
+
+    // 4. Local-only default branch — nothing meaningful to compare.
+    if (onDefaultBranch) {
+      return unavailable({ base: current, target: current, refs, isUnborn: false });
+    }
+
+    // Feature branch with no detectable base — user must pick in the ref picker.
+    return available({ base: null, target: current, refs, isUnborn: false });
+  }
+
+  /** Return the abbreviated upstream ref for the current branch, or null when unset. */
+  private async getUpstreamRef(repoPath: string): Promise<string | null> {
+    try {
+      const { stdout } = await this.gitExecutor.exec(
+        ["-C", repoPath, "rev-parse", "--abbrev-ref", "@{upstream}"],
+        { timeout: 5_000 },
+      );
+      const ref = stdout.trim();
+      if (!ref || ref === "@{upstream}") return null;
+      return ref;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolve the remote-qualified default ref (`origin/main`, etc.) without
+   * falling back to a local branch name.
+   */
+  private async detectOriginDefaultRef(repoPath: string): Promise<string | null> {
+    const cached = this.originDefaultRefCache.get(repoPath);
+    if (cached !== undefined) return cached;
+
+    const result = await this.resolveOriginDefaultRef(repoPath);
+    this.originDefaultRefCache.set(repoPath, result);
+    return result;
+  }
+
+  /** Resolve `origin/<repo-default>` via origin/HEAD; null when no origin remote. */
+  private async resolveOriginDefaultRef(repoPath: string): Promise<string | null> {
+    try {
+      const { stdout } = await this.gitExecutor.exec(
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000 },
+      );
+      return stdout.trim();
+    } catch (err) {
+      logger.debug("[detectOriginDefaultRef] origin/HEAD not set, trying set-head", {
+        repoPath,
+        err,
+      });
+    }
+
+    try {
+      await this.gitExecutor.exec(
+        ["-C", repoPath, "remote", "set-head", "origin", "--auto"],
+        { timeout: 1_500 },
+      );
+      const { stdout } = await this.gitExecutor.exec(
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000 },
+      );
+      return stdout.trim();
+    } catch (err) {
+      logger.debug("[detectOriginDefaultRef] set-head failed", { repoPath, err });
+    }
+
+    return null;
   }
 
   /** Whether HEAD resolves to a commit (false on an unborn branch / empty repo). */
@@ -1081,6 +1170,7 @@ export class GitService {
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */
   private readonly defaultBranchCache = new Map<string, string | null>();
   private readonly defaultComparisonRefCache = new Map<string, string | null>();
+  private readonly originDefaultRefCache = new Map<string, string | null>();
 
   /** Detect the default comparison ref for commit ranges, preferring the remote-qualified ref. */
   private async detectDefaultComparisonRef(repoPath: string): Promise<string | null> {

@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# The Branch comparison defaults context-dependently and always uses three-dot range semantics
+# The Branch comparison defaults upstream-first and always uses three-dot range semantics
 
 ## Context
 
@@ -15,9 +15,10 @@ a casual reader would otherwise assume the opposite of:
 1. **What does Branch compare by default?** The obvious answer — "the current
    branch against its remote" (`current → origin/current`) — answers *"what
    haven't I pushed,"* a pre-push check. But the panel's job is reviewing an
-   agent thread's work, where the question is almost always *"everything this
-   branch changed since it forked."* Those are different diffs, and on a freshly
-   created agent branch with no upstream the remote-based default is empty.
+   agent thread's work, where the question is often *"everything this branch
+   changed since it forked."* Those are different diffs. The default must pick
+   the most useful ref for each checkout without always falling back to
+   `origin/main`.
 
 2. **Two-dot or three-dot range?** `base..HEAD` (two-dot) shows every commit
    reachable from HEAD but not base — which includes commits that landed on
@@ -26,22 +27,33 @@ a casual reader would otherwise assume the opposite of:
    HEAD's side *since the two branches diverged*, which is what a reviewer means
    by "this branch's changes."
 
-The branch is frequently a thread's worktree branch, which is rarely pushed, so
-any origin-based default would fall back constantly in the common case.
+The branch is frequently a thread's worktree branch. When it has a tracked
+upstream, the unpushed diff is the most actionable default. When it does not,
+fall back to the repo's remote default branch so the user still sees the branch's
+work since fork.
 
 ## Decision
 
-**Default is context-dependent:**
+**Default comparison ref priority** (resolved server-side via
+`GitService.resolveBranchComparison`):
 
-- **Current branch ≠ detected base** → `base → current` (e.g. `main...feat/x`).
-  Review the whole branch's work. (This is the pre-existing `branchDiff`
-  behavior.)
-- **Current branch == detected base** (you are *on* `main`) → `current →
-  origin/current`. `base...HEAD` is empty there, so the only meaningful default
-  is divergence from the remote.
+1. **Tracked upstream** (`git rev-parse --abbrev-ref @{upstream}`) when set.
+   On a feature branch this yields `upstream...current` (e.g.
+   `origin/feat/x...feat/x`). On the repo default branch this yields
+   `current...upstream` (e.g. `main...origin/main`).
+2. **Remote default ref** (`origin/<repo-default>` from `origin/HEAD`) when the
+   branch has no upstream but `origin` exists. On a feature branch this yields
+   `origin/main...feat/x` (or `origin/develop...feat/y`, etc.).
+3. **Local default branch** for feature branches in repos with no `origin`
+   remote (e.g. `main...feat/x`).
+4. **No comparison** on the local-only default branch with no upstream and no
+   `origin` remote. The Branch view is **disabled** (`isComparisonAvailable:
+   false`) until git state changes (first commit on a feature branch, `origin`
+   added, upstream set, etc.). The client re-probes on `diffRevision` bumps and
+   when the view menu opens, matching Commit view gating.
 
-`current → origin/current` remains available as a **manual preset** in the ref
-picker for the non-default-branch case; it is just not the default there.
+`origin/main...feat/x` and other fork-based comparisons remain available as
+**manual presets** in the ref picker.
 
 **Range semantics are always three-dot** (`base...target`). The picker never
 issues a two-dot range.
@@ -49,38 +61,39 @@ issues a two-dot range.
 **Edge-case fallbacks** (each resolves to a sensible non-empty or explicit-empty
 state, never an error):
 
-- **No `origin` remote** → `base → current`.
-- **No upstream for the branch** (never pushed) → `base → current`.
-- **Detached HEAD** (no branch name) → merge-base(base, HEAD) → HEAD.
-- **Unborn branch / zero commits** → explicit empty state.
+- **No `origin` remote, feature branch** → local default → current (rule 3).
+- **No upstream for the branch** (never pushed) → remote default → current
+  (rule 2) when `origin` exists.
+- **Detached HEAD** (no branch name) → best available base → HEAD.
+- **Unborn branch / zero commits** → explicit empty state; Branch view disabled.
 - **`detectDefaultBranch` finds no `main`/`master`** (e.g. `develop`, `trunk`) →
   use the detected default; if none, the picker opens with no base and the user
   selects one.
-- **In-thread scope** → "current branch" is the thread's worktree branch; the
-  default is `base → thread-branch`, not the origin-based variant.
+- **In-thread scope** → "current branch" is the thread's worktree branch.
+- **Non-`origin` upstream** (fork remotes, renamed tracking branches) → resolved
+  via `@{upstream}`, not by assuming `origin/<branch>`.
 
 ## Considered Options
 
-- **Default `current → origin/current` (rejected as the default).** Answers
-  "what's unpushed," not "what did this branch change." Empty on unpushed agent
-  branches, which is the common case. Kept as a selectable preset.
-- **Default `base → current` everywhere, including on the base branch
-  (rejected).** Clean single rule, but on `main` it yields an empty diff and the
-  user has nothing to look at — the one place the remote comparison is the only
-  useful one.
-- **Two-dot range (rejected).** Simpler mental model for some, but pulls in
-  post-fork commits on the base side and misrepresents "this branch's changes."
-- **Context-dependent default + three-dot (chosen).** Matches what a reviewer
-  means in each situation at the cost of a branching rule a reader must not
-  "simplify" into one case.
+- **Default `origin/<repo-default> → current` for all feature branches
+  (rejected).** Always compares against `main` even when the branch tracks its
+  own remote ref; hides unpushed work on pushed branches.
+- **Default `current → origin/current` via ref-name guess only (rejected).** Breaks
+  when upstream is on a non-`origin` remote or the tracking branch name differs.
+- **Keep Branch view enabled on local-only default branch with empty diff
+  (rejected).** Shows a meaningless empty panel; disabling with recovery on git
+  events is clearer.
+- **Upstream-first priority + three-dot (chosen).** Matches reviewer intent in
+  each situation; `@{upstream}` is the accurate upstream signal.
 
 ## Consequences
 
 - Server `branchFiles`/`branchDiff` generalize from an implicit `base...HEAD` to
-  an explicit `(base, target)` pair; the context-dependent default is resolved
-  before the call, not buried in the git command.
-- The default rule has two arms and several fallbacks; a future reader should not
-  collapse it to a single comparison "for simplicity" — each arm exists because
-  the other produces an empty or misleading diff in its case.
+  an explicit `(base, target)` pair; the priority ladder is resolved before the
+  call, not buried in the git command.
+- `BranchComparison` carries `isComparisonAvailable` so the client can disable
+  the Branch view without guessing from an empty ref pair.
+- The default rule has four priority steps and several fallbacks; a future reader
+  should not collapse it to a single comparison "for simplicity."
 - Three-dot is a deliberate, load-bearing choice; switching to two-dot would
   silently change what every Branch review shows.

@@ -66,16 +66,23 @@ describe("GitService.resolveBranchComparison", () => {
     hasCommits?: boolean;
     defaultBranch?: string | null;
     localDefaultBranches?: string[];
+    /** Tracked upstream ref from `@{upstream}`; omit to simulate no upstream. */
+    upstream?: string | null;
   }) {
     const hasCommits = opts.hasCommits ?? true;
     const defaultBranch = opts.defaultBranch === undefined ? "main" : opts.defaultBranch;
     const localDefaultBranches = opts.localDefaultBranches ?? [];
+    const upstream = opts.upstream === undefined ? null : opts.upstream;
 
     execFn.mockImplementation(async (args: string[]) => {
       if (args.includes("branch") && args.includes("-a")) {
         return { stdout: branchListOutput(opts.branches), stderr: "" };
       }
       if (args.includes("rev-parse") && args.includes("--abbrev-ref")) {
+        if (args.includes("@{upstream}")) {
+          if (!upstream) throw new Error("no upstream");
+          return { stdout: `${upstream}\n`, stderr: "" };
+        }
         return { stdout: `${opts.current}\n`, stderr: "" };
       }
       if (args.includes("rev-parse") && args.includes("--verify")) {
@@ -97,7 +104,29 @@ describe("GitService.resolveBranchComparison", () => {
     });
   }
 
-  it("compares base → current when current differs from the detected base", async () => {
+  it("prefers upstream over origin default when the branch tracks a remote", async () => {
+    setup({
+      current: "feat/x",
+      upstream: "origin/feat/x",
+      branches: [
+        { full: "refs/heads/main", short: "main" },
+        { full: "refs/heads/feat/x", short: "feat/x", head: true },
+        { full: "refs/remotes/origin/main", short: "origin/main" },
+        { full: "refs/remotes/origin/feat/x", short: "origin/feat/x" },
+      ],
+    });
+
+    const result = await gitService.resolveBranchComparison("ws", REPO);
+
+    expect(result).toMatchObject({
+      base: "origin/feat/x",
+      target: "feat/x",
+      isUnborn: false,
+      isComparisonAvailable: true,
+    });
+  });
+
+  it("compares origin default → current when the branch has no upstream", async () => {
     setup({
       current: "feat/x",
       branches: [
@@ -109,11 +138,36 @@ describe("GitService.resolveBranchComparison", () => {
 
     const result = await gitService.resolveBranchComparison("ws", REPO);
 
-    expect(result).toMatchObject({ base: "origin/main", target: "feat/x", isUnborn: false });
+    expect(result).toMatchObject({
+      base: "origin/main",
+      target: "feat/x",
+      isUnborn: false,
+      isComparisonAvailable: true,
+    });
     expect(result.refs.length).toBe(3);
   });
 
-  it("compares current → origin/current on the base branch when an upstream exists", async () => {
+  it("compares current → upstream on the default branch when upstream is set", async () => {
+    setup({
+      current: "main",
+      upstream: "origin/main",
+      branches: [
+        { full: "refs/heads/main", short: "main", head: true },
+        { full: "refs/remotes/origin/main", short: "origin/main" },
+      ],
+    });
+
+    const result = await gitService.resolveBranchComparison("ws", REPO);
+
+    expect(result).toMatchObject({
+      base: "main",
+      target: "origin/main",
+      isUnborn: false,
+      isComparisonAvailable: true,
+    });
+  });
+
+  it("compares current → origin default on the default branch when origin exists but upstream is unset", async () => {
     setup({
       current: "main",
       branches: [
@@ -122,20 +176,32 @@ describe("GitService.resolveBranchComparison", () => {
       ],
     });
 
-    const result = await gitService.resolveBranchComparison("ws", "/repo-no-base");
+    const result = await gitService.resolveBranchComparison("ws", REPO);
 
-    expect(result).toMatchObject({ base: "main", target: "origin/main", isUnborn: false });
+    expect(result).toMatchObject({
+      base: "main",
+      target: "origin/main",
+      isUnborn: false,
+      isComparisonAvailable: true,
+    });
   });
 
-  it("falls back to base → current on the base branch with no upstream", async () => {
+  it("marks comparison unavailable on a local-only default branch", async () => {
     setup({
       current: "main",
+      defaultBranch: null,
+      localDefaultBranches: ["main"],
       branches: [{ full: "refs/heads/main", short: "main", head: true }],
     });
 
     const result = await gitService.resolveBranchComparison("ws", REPO);
 
-    expect(result).toMatchObject({ base: "main", target: "main", isUnborn: false });
+    expect(result).toMatchObject({
+      base: "main",
+      target: "main",
+      isUnborn: false,
+      isComparisonAvailable: false,
+    });
   });
 
   it("compares base → HEAD on a detached HEAD", async () => {
@@ -149,7 +215,12 @@ describe("GitService.resolveBranchComparison", () => {
 
     const result = await gitService.resolveBranchComparison("ws", REPO);
 
-    expect(result).toMatchObject({ base: "origin/main", target: "HEAD", isUnborn: false });
+    expect(result).toMatchObject({
+      base: "origin/main",
+      target: "HEAD",
+      isUnborn: false,
+      isComparisonAvailable: true,
+    });
   });
 
   it("reports an explicit empty state on an unborn branch", async () => {
@@ -161,10 +232,16 @@ describe("GitService.resolveBranchComparison", () => {
 
     const result = await gitService.resolveBranchComparison("ws", REPO);
 
-    expect(result).toEqual({ base: null, target: null, refs: [], isUnborn: true });
+    expect(result).toEqual({
+      base: null,
+      target: null,
+      refs: [],
+      isUnborn: true,
+      isComparisonAvailable: false,
+    });
   });
 
-  it("uses a non-main detected default branch", async () => {
+  it("uses a non-main origin default branch", async () => {
     setup({
       current: "feat/y",
       defaultBranch: "develop",
@@ -177,7 +254,11 @@ describe("GitService.resolveBranchComparison", () => {
 
     const result = await gitService.resolveBranchComparison("ws", REPO);
 
-    expect(result).toMatchObject({ base: "origin/develop", target: "feat/y" });
+    expect(result).toMatchObject({
+      base: "origin/develop",
+      target: "feat/y",
+      isComparisonAvailable: true,
+    });
   });
 
   it("falls back to a local main branch when origin is unavailable", async () => {
@@ -197,6 +278,7 @@ describe("GitService.resolveBranchComparison", () => {
       base: "main",
       target: "feat/local-only",
       isUnborn: false,
+      isComparisonAvailable: true,
     });
   });
 
@@ -209,12 +291,13 @@ describe("GitService.resolveBranchComparison", () => {
       ],
     });
 
-    const result = await gitService.resolveBranchComparison("ws", "/repo-no-base");
+    const result = await gitService.resolveBranchComparison("ws", REPO);
 
     expect(result).toMatchObject({
       base: null,
       target: "feat/unknown-base",
       isUnborn: false,
+      isComparisonAvailable: true,
     });
   });
 });

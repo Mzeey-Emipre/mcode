@@ -37,6 +37,11 @@ export const BranchComparisonSchema = z.object({
   refs: z.array(GitBranchSchema),
   /** True when HEAD has no commits yet — the diff is an explicit empty state. */
   isUnborn: z.boolean(),
+  /**
+   * False when no meaningful Branch comparison exists (local-only default branch
+   * with no upstream). The Branch view is disabled until git state changes.
+   */
+  isComparisonAvailable: z.boolean(),
 });
 /** Resolved Branch comparison record. */
 export type BranchComparison = z.infer<typeof BranchComparisonSchema>;
