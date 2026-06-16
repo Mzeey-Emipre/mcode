@@ -13,7 +13,7 @@ import { v4 as uuid } from "uuid";
 import { logger } from "@mcode/shared";
 import { killProcessTree, gracefulKillProcessTree, listDirectChildren } from "./process-kill.js";
 import { TerminalFlowControl } from "./terminal-flow-control.js";
-import { TerminalReplayBuffer, REPLAY_BUFFER_DEFAULT_CAP_BYTES } from "./terminal-replay-buffer.js";
+import { TerminalReplayBuffer, replayCapBytesForScrollback } from "./terminal-replay-buffer.js";
 import type { PtyPidRegistry } from "./pty-pid-registry.js";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -96,6 +96,10 @@ export class TerminalService {
   private replayBuffers = new Map<string, TerminalReplayBuffer>();
   /** When true, app-quit destroyPty uses graceful signal ladder instead of force-kill. */
   private useGracefulKill = false;
+  /** Last applied terminal.scrollback, used to skip redundant buffer resizes. */
+  private lastScrollback: number;
+  /** Unsubscribe handle for the settings-change listener. */
+  private readonly unsubscribeSettings: () => void;
 
   constructor(
     @inject("ThreadRepo") private readonly threadRepo: ThreadRepo,
@@ -105,7 +109,28 @@ export class TerminalService {
     @inject(EnvService) private readonly envService: EnvService,
     @inject("PtyPidRegistry") private readonly pidRegistry: PtyPidRegistry,
     @inject("JobObject") private readonly jobObject: import("./job-object.js").JobObject,
-  ) {}
+  ) {
+    // Keep server-side scrollback retention in sync with the terminal.scrollback
+    // setting: when the user changes it, resize all live replay buffers so
+    // running sessions honour the new retention window.
+    this.lastScrollback = this.settingsService.get().terminal.scrollback;
+    this.unsubscribeSettings = this.settingsService.on("change", (next) => {
+      this.applyScrollbackToReplayBuffers(next.terminal.scrollback);
+    });
+  }
+
+  /**
+   * Resize all live replay buffers to match a new terminal.scrollback value.
+   * No-op when the value is unchanged so unrelated settings edits are cheap.
+   */
+  private applyScrollbackToReplayBuffers(scrollback: number): void {
+    if (scrollback === this.lastScrollback) return;
+    this.lastScrollback = scrollback;
+    const cap = replayCapBytesForScrollback(scrollback);
+    for (const buffer of this.replayBuffers.values()) {
+      buffer.setCap(cap);
+    }
+  }
 
   /** Set the sender used to stream PTY data to connected clients. */
   setSender(sender: PtySender): void {
@@ -179,7 +204,8 @@ export class TerminalService {
 
     let seq = 0;
 
-    const fcSettings = this.settingsService.get().terminal.flowControl;
+    const terminalSettings = this.settingsService.get().terminal;
+    const fcSettings = terminalSettings.flowControl;
     const fc = new TerminalFlowControl({
       sink: (s, bytes) => this.sender?.data(id, s, bytes),
       highBytes: fcSettings.serverHighBytes,
@@ -192,7 +218,12 @@ export class TerminalService {
     fc.pause("client-request");
     this.flowControls.set(id, fc);
 
-    const replayBuffer = new TerminalReplayBuffer(REPLAY_BUFFER_DEFAULT_CAP_BYTES);
+    // Size server-side retention from terminal.scrollback (the same knob that
+    // drives the client xterm buffer) so reattach can replay roughly the
+    // user's configured scrollback window, not a fixed 512 KB.
+    const replayBuffer = new TerminalReplayBuffer(
+      replayCapBytesForScrollback(terminalSettings.scrollback),
+    );
     this.replayBuffers.set(id, replayBuffer);
 
     this.pidRegistry.register(id, pty.pid, shell);
@@ -307,6 +338,7 @@ export class TerminalService {
 
   /** Kill all PTY sessions across all threads. */
   async shutdown(): Promise<void> {
+    this.unsubscribeSettings();
     await Promise.all([...this.sessions.keys()].map((ptyId) => this.kill(ptyId)));
     this.pidRegistry.clear();
   }

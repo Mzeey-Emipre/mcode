@@ -14,6 +14,50 @@
 /** Default replay buffer capacity: 512 KB. */
 export const REPLAY_BUFFER_DEFAULT_CAP_BYTES = 512 * 1024;
 
+/**
+ * Byte budget allotted per scrollback line when converting the
+ * `terminal.scrollback` line count into a replay buffer byte cap.
+ *
+ * Chosen so the default 1000-line scrollback yields ~512 KB, matching the
+ * historical fixed cap. Escape-heavy or very wide lines can exceed this, in
+ * which case fewer than `scrollback` lines are retained server-side and the
+ * replay `gapped` flag (→ reconnect banner) correctly signals the shortfall.
+ */
+export const REPLAY_BYTES_PER_LINE = 512;
+
+/**
+ * Lower bound on the derived cap so even a tiny `terminal.scrollback` still
+ * retains enough to cover a WebSocket reconnect replay.
+ */
+export const REPLAY_BUFFER_MIN_CAP_BYTES = 64 * 1024;
+
+/**
+ * Upper bound on the derived cap. Also the cap used when `terminal.scrollback`
+ * is 0 ("unlimited"): the client xterm buffer may grow without bound, but
+ * server-side retention stays bounded to protect process memory.
+ */
+export const REPLAY_BUFFER_MAX_CAP_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Convert a `terminal.scrollback` line count into a replay buffer byte cap.
+ *
+ * Uses {@link REPLAY_BYTES_PER_LINE} as the per-line budget, clamped between
+ * {@link REPLAY_BUFFER_MIN_CAP_BYTES} and {@link REPLAY_BUFFER_MAX_CAP_BYTES}.
+ * A scrollback of 0 means "unlimited" on the client; server retention is
+ * capped at the maximum rather than growing without bound.
+ *
+ * @param scrollbackLines - The `terminal.scrollback` setting (lines).
+ * @returns The byte cap to size a {@link TerminalReplayBuffer} with.
+ */
+export function replayCapBytesForScrollback(scrollbackLines: number): number {
+  if (scrollbackLines <= 0) return REPLAY_BUFFER_MAX_CAP_BYTES;
+  const raw = scrollbackLines * REPLAY_BYTES_PER_LINE;
+  return Math.min(
+    REPLAY_BUFFER_MAX_CAP_BYTES,
+    Math.max(REPLAY_BUFFER_MIN_CAP_BYTES, raw),
+  );
+}
+
 /** A single (seq, bytes) entry stored in the replay buffer. */
 interface ReplayChunk {
   seq: number;
@@ -47,7 +91,7 @@ export class TerminalReplayBuffer {
   public bufferedBytes = 0;
   /** Running total of bytes dropped via cap eviction. */
   public droppedBytes = 0;
-  private readonly capBytes: number;
+  private capBytes: number;
 
   /**
    * Creates a new replay buffer.
@@ -65,6 +109,40 @@ export class TerminalReplayBuffer {
    */
   get bufferLength(): number {
     return this.buffer.length;
+  }
+
+  /** Current retention cap in bytes. Exposed for assertions and diagnostics. */
+  get cap(): number {
+    return this.capBytes;
+  }
+
+  /**
+   * Adjust the retention cap at runtime, e.g. when `terminal.scrollback`
+   * changes for live sessions.
+   *
+   * Lowering the cap immediately evicts the oldest chunks down to the new
+   * limit (accumulating `droppedBytes`), so a subsequent {@link replay} for a
+   * position that fell into the evicted range correctly reports `gapped: true`.
+   * Raising the cap retains more going forward; it cannot recover chunks that
+   * were already evicted.
+   *
+   * @param capBytes - New maximum bytes to retain.
+   */
+  setCap(capBytes: number): void {
+    this.capBytes = capBytes;
+
+    while (this.bufferedBytes > this.capBytes && this.head < this.buffer.length) {
+      const evicted = this.buffer[this.head++]!;
+      this.bufferedBytes -= evicted.bytes.length;
+      this.droppedBytes += evicted.bytes.length;
+    }
+
+    // Compact the backing array if the ghost-head prefix is large, mirroring
+    // the threshold used in record().
+    if (this.head > 1024 && this.head * 2 >= this.buffer.length) {
+      this.buffer = this.buffer.slice(this.head);
+      this.head = 0;
+    }
   }
 
   /**
