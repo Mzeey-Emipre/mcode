@@ -95,6 +95,12 @@ export interface ThreadRecord {
   toolCalls: ToolCall[];
   agentStartTime?: number;
   currentTurnMessageId: string;
+  /**
+   * Local assistant message id for a turn whose `turn.persisted` event has not
+   * arrived yet. Survives `resetTurnEphemeral` so auto-dequeue cannot steal
+   * file-change attribution from the prior turn.
+   */
+  pendingTurnPersistLocalMessageId: string;
   currentTurnResponseKey: string;
   assistantResponseKeys: Record<string, string>;
   thoughtSegments: ThoughtSegment[];
@@ -150,6 +156,7 @@ export function createEmptyThreadRecord(): ThreadRecord {
     streamingPreview: "",
     toolCalls: [],
     currentTurnMessageId: "",
+    pendingTurnPersistLocalMessageId: "",
     currentTurnResponseKey: "",
     assistantResponseKeys: {},
     thoughtSegments: [],
