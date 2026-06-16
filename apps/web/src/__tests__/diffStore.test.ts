@@ -53,15 +53,11 @@ describe("diffStore", () => {
     });
   });
 
-  // The Review default is per-thread and sticky: it re-evaluates from the
-  // thread's change state until the user picks a view, after which the pick
-  // sticks for that thread only. See ADR-0011.
   describe("per-thread Review view default + sticky override", () => {
     const clean = { hasTurnChanges: false, isDirty: false } as const;
 
     it("resolves the change-state default until the user picks a view", () => {
       const { getReviewView } = useDiffStore.getState();
-      // Turn changes -> Last turn; dirty-only -> Unstaged; clean -> Branch.
       expect(getReviewView("thread-1", { hasTurnChanges: true, isDirty: false })).toBe("last-turn");
       expect(getReviewView("thread-1", { hasTurnChanges: false, isDirty: true })).toBe("unstaged");
       expect(getReviewView("thread-1", clean)).toBe("branch");
@@ -69,9 +65,7 @@ describe("diffStore", () => {
 
     it("re-evaluates live as change state changes while no pick is made", () => {
       const { getReviewView } = useDiffStore.getState();
-      // A thread opened clean shows Branch...
       expect(getReviewView("thread-1", clean)).toBe("branch");
-      // ...then the first turn's changes flip it to Last turn, with no pick.
       expect(getReviewView("thread-1", { hasTurnChanges: true, isDirty: false })).toBe("last-turn");
     });
 
@@ -79,7 +73,6 @@ describe("diffStore", () => {
       const { setReviewViewForThread, getReviewView } = useDiffStore.getState();
       setReviewViewForThread("thread-1", "cumulative");
       expect(useDiffStore.getState().viewMode).toBe("cumulative");
-      // Even when turn changes arrive, the pinned view wins.
       expect(getReviewView("thread-1", { hasTurnChanges: true, isDirty: true })).toBe("cumulative");
     });
 
@@ -87,7 +80,6 @@ describe("diffStore", () => {
       const { setReviewViewForThread, getReviewView } = useDiffStore.getState();
       setReviewViewForThread("thread-1", "staged");
       expect(getReviewView("thread-1", { hasTurnChanges: true, isDirty: false })).toBe("staged");
-      // thread-2 never picked, so it still follows the live default.
       expect(getReviewView("thread-2", { hasTurnChanges: true, isDirty: false })).toBe("last-turn");
     });
 
@@ -98,7 +90,6 @@ describe("diffStore", () => {
       const state = useDiffStore.getState();
       expect(state.reviewViewByThread["thread-1"]).toBeUndefined();
       expect(state.reviewViewManuallySelectedByThread["thread-1"]).toBeUndefined();
-      // Back to the live change-state default after cleanup.
       expect(getReviewView("thread-1", clean)).toBe("branch");
     });
 

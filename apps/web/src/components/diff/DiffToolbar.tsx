@@ -46,10 +46,7 @@ export function DiffToolbar() {
     s.workspaces.find((w) => w.id === s.activeWorkspaceId)?.is_git_repo ?? false,
   );
 
-  // Change-state signals that pick the per-thread default (ADR-0011). Turn
-  // changes come free from the loaded snapshots (the same signal the header's
-  // changed-file count uses); working-tree dirtiness is probed below. The
-  // per-thread override flag re-renders the effect when the user pins a view.
+  // Change-state signals for the per-thread default (ADR-0011).
   const reviewViewManuallySelected = useDiffStore((s) =>
     activeThreadId ? (s.reviewViewManuallySelectedByThread[activeThreadId] ?? false) : false,
   );
@@ -85,11 +82,8 @@ export function DiffToolbar() {
     diffScopeRevision,
   });
 
-  // In a thread, drive the rendered view from the per-thread resolver: it
-  // re-evaluates the change-state default live until the user pins a view, after
-  // which it returns the sticky pick (ADR-0011). Threadless keeps the original
-  // scope-recovery behavior — it has no per-thread override. Both clamp to a
-  // visible, non-blocked view.
+  // A thread follows the per-thread resolver (live default until pinned);
+  // threadless keeps the scope-recovery fallback. See ADR-0011.
   useEffect(() => {
     if (viewModes.length === 0) return;
     if (activeThreadId) {
@@ -172,8 +166,7 @@ export function DiffToolbar() {
                   disabled={disabled}
                   onClick={() => {
                     if (disabled) return;
-                    // A pick in a thread sets the sticky per-thread override; the
-                    // threadless shell has no override and just swaps the view.
+                    // A pick in a thread sets the sticky per-thread override.
                     if (activeThreadId) setReviewViewForThread(activeThreadId, mode.id);
                     else setViewMode(mode.id);
                   }}
@@ -317,11 +310,9 @@ function useCommitAvailability({
 }
 
 /**
- * Probes whether the active scope's working tree has uncommitted changes, the
- * `isDirty` signal for the per-thread Review default (ADR-0011). Reads the
- * unstaged working-tree file list (the thread's checkout when threaded, the
- * workspace root otherwise) and refetches when `diffScopeRevision` bumps on a
- * filesystem or turn event. Returns false while loading, off-git, or on error.
+ * Probes whether the active scope's working tree has uncommitted changes — the
+ * `isDirty` signal for the per-thread Review default (ADR-0011). Refetches on
+ * `diffScopeRevision` bumps; returns false while loading, off-git, or on error.
  */
 function useWorkingTreeDirty({
   activeWorkspaceId,
