@@ -2732,7 +2732,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         }
       }
 
-      let localMsgId = resolveTurnPersistLocalMessageId(rec, payload.messageId);
+      const localMsgId = resolveTurnPersistLocalMessageId(rec, payload.messageId);
       const ensuredMessages =
         payload.filesChanged.length > 0 || payload.toolCallCount > 0
           ? ensureAssistantMessageForTurnPersist(rec, payload.threadId, localMsgId)

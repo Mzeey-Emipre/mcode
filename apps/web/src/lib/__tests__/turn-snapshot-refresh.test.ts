@@ -58,7 +58,7 @@ describe("refreshTurnSnapshotsAfterPersist", () => {
     useDiffStore.setState({
       snapshotsByThread: { [THREAD_ID]: [] },
       rightPanelByWorkspace: {
-        "ws-1": { activeTab: "changes", openTabs: ["changes"], width: 400 },
+        "ws-1": { visible: true, activeTab: "changes", openTabs: ["changes"], width: 400 },
       },
       rightPanelVisibleByThread: { [THREAD_ID]: true },
       viewMode: "cumulative",
