@@ -2,6 +2,8 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   mockWebSocketServer,
   interceptZustandStores,
+  waitForActiveThreadLoaded,
+  setActiveThreadMessages,
 } from "./helpers/e2e-helpers";
 
 /**
@@ -212,70 +214,13 @@ async function setupWorkspaceState(
   );
 }
 
-/**
- * Wait for the thread store's loadMessages cycle to complete.
- *
- * The store starts with `loading: false`, so a naive check resolves
- * immediately before `loadMessages` (triggered by activeThreadId change)
- * fires. This helper first waits for `loading` to become `true` (the start
- * of loadMessages), then waits for it to return to `false` (completion).
- */
-async function waitForThreadStoreReady(page: Page): Promise<void> {
-  // Wait for loadMessages to start (loading becomes true).
-  // It may have already completed before we start watching, so swallow the timeout.
-  await page
-    .waitForFunction(
-      () => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const stores: any[] = (window as any).__mcodeStores ?? [];
-        const ts = stores.find(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (s: any) =>
-            "messages" in s.getState() && "loadMessages" in s.getState(),
-        );
-        return ts?.getState().loading === true;
-      },
-      { timeout: 2000 },
-    )
-    .catch(() => {
-      // loading may have already transitioned back to false before we polled
-    });
-
-  // Wait for loadMessages to finish (loading: false).
-  await page.waitForFunction(
-    () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stores: any[] = (window as any).__mcodeStores ?? [];
-      const ts = stores.find(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (s: any) =>
-          "messages" in s.getState() && "loadMessages" in s.getState(),
-      );
-      return ts && ts.getState().loading === false;
-    },
-    { timeout: 5000 },
-  );
-}
-
-/** Inject messages into the thread store after loadMessages completes. */
+/** Inject messages into the active thread's record after loadMessages completes. */
 async function injectMessages(
   page: Page,
   messages: ReturnType<typeof makeMessage>[],
 ): Promise<void> {
-  await waitForThreadStoreReady(page);
-  await page.evaluate(
-    ({ msgs }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stores: any[] = (window as any).__mcodeStores ?? [];
-      const threadStore = stores.find(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (s: any) => "messages" in s.getState() && "loadMessages" in s.getState(),
-      );
-      if (!threadStore) throw new Error("[E2E] thread store not found");
-      threadStore.setState({ messages: msgs, loading: false, error: null });
-    },
-    { msgs: messages },
-  );
+  await waitForActiveThreadLoaded(page);
+  await setActiveThreadMessages(page, messages);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -325,7 +270,7 @@ test.describe("Architecture: Workspace management", () => {
     expect(hasWorkspaceStore).toBe(true);
 
     const hasThreadStore = await findStore(page, [
-      "messages",
+      "records",
       "loadMessages",
       "handleAgentEvent",
     ]);
@@ -333,8 +278,8 @@ test.describe("Architecture: Workspace management", () => {
 
     const hasTerminalStore = await findStore(page, [
       "terminals",
-      "panelVisible",
-      "togglePanel",
+      "terminalPanelByThread",
+      "toggleTerminalPanel",
     ]);
     expect(hasTerminalStore).toBe(true);
   });
@@ -606,7 +551,7 @@ test.describe("Architecture: Push events via PushEmitter", () => {
       activeThreadId: THREAD_DIRECT.id,
     });
 
-    await waitForThreadStoreReady(page);
+    await waitForActiveThreadLoaded(page);
 
     // Simulate an agent message event via the handleAgentEvent function
     await page.evaluate(
@@ -616,7 +561,7 @@ test.describe("Architecture: Push events via PushEmitter", () => {
         const threadStore = stores.find(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (s: any) =>
-            "handleAgentEvent" in s.getState() && "messages" in s.getState(),
+            "handleAgentEvent" in s.getState() && "records" in s.getState(),
         );
         if (!threadStore) throw new Error("Thread store not found");
 
@@ -851,30 +796,32 @@ test.describe("Architecture: Terminal panel", () => {
       activeThreadId: THREAD_DIRECT.id,
     });
 
-    // Toggle panel visibility via store
-    await page.evaluate(() => {
+    // The terminal panel is keyed per thread: toggleTerminalPanel(threadId)
+    // flips terminalPanelByThread[threadId].visible (defaults to false).
+    await page.evaluate((threadId) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stores: any[] = (window as any).__mcodeStores ?? [];
       const termStore = stores.find(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (s: any) => "panelVisible" in s.getState() && "togglePanel" in s.getState(),
+        (s: any) =>
+          "terminalPanelByThread" in s.getState() &&
+          "toggleTerminalPanel" in s.getState(),
       );
       if (!termStore) throw new Error("Terminal store not found");
-      termStore.getState().togglePanel();
-    });
+      termStore.getState().toggleTerminalPanel(threadId);
+    }, THREAD_DIRECT.id);
 
-    // Panel should now be visible (it renders the terminal container div)
-    // Even without a real PTY, the panel chrome should appear
+    // Panel should now be visible for the active thread.
     await page.waitForTimeout(200);
-    const isPanelVisible = await page.evaluate(() => {
+    const isPanelVisible = await page.evaluate((threadId) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stores: any[] = (window as any).__mcodeStores ?? [];
       const termStore = stores.find(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (s: any) => "panelVisible" in s.getState(),
+        (s: any) => "terminalPanelByThread" in s.getState(),
       );
-      return termStore?.getState().panelVisible;
-    });
+      return termStore?.getState().getTerminalPanel(threadId).visible;
+    }, THREAD_DIRECT.id);
     expect(isPanelVisible).toBe(true);
   });
 });
@@ -913,35 +860,51 @@ test.describe("Architecture: Desktop bridge graceful degradation", () => {
   });
 });
 
-test.describe("Architecture: Settings dialog", () => {
+test.describe("Architecture: Settings", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
   });
 
-  test("opens and shows all controls", async ({ page }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
+  test("opens as a full-page view exposing each section's controls", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
 
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog.locator("text=Theme")).toBeVisible();
+    // Settings is a full-page sectioned view, not a modal dialog. A "Back to
+    // projects" affordance replaces the sidebar; there is no [role="dialog"].
     await expect(
-      dialog.locator("text=Max Concurrent Agents"),
+      page.getByRole("button", { name: "Back to projects" }),
     ).toBeVisible();
-    await expect(dialog.locator("text=Notifications")).toBeVisible();
+
+    // Appearance section exposes the Theme radio group.
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    await expect(page.getByRole("radio", { name: "Dark" })).toBeVisible();
+
+    // Agent section exposes the concurrency limit.
+    await page.getByRole("button", { name: "Agent", exact: true }).click();
+    await expect(page.getByText("Max concurrent agents")).toBeVisible();
+
+    // Notifications section exposes the desktop-notifications toggle.
+    await page
+      .getByRole("button", { name: "Notifications", exact: true })
+      .click();
+    await expect(
+      page.getByText("Show desktop notifications for agent events."),
+    ).toBeVisible();
   });
 
   test("theme switching works without errors", async ({ page }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
-
-    const dialog = page.locator('[role="dialog"]');
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
 
     // Switch to light
-    await dialog.locator("button", { hasText: "light" }).click();
+    await page.getByRole("radio", { name: "Light" }).click();
     await expect(page.locator("html")).not.toHaveClass(/dark/);
 
     // Switch back to dark
-    await dialog.locator("button", { hasText: "dark" }).click();
+    await page.getByRole("radio", { name: "Dark" }).click();
     await expect(page.locator("html")).toHaveClass(/dark/);
   });
 });
@@ -966,10 +929,26 @@ test.describe("Architecture: Keyboard shortcuts", () => {
     // Press Escape to deselect
     await page.keyboard.press("Escape");
 
-    // Should return to empty state
-    await expect(
-      page.locator("h2", { hasText: "Select a thread" }),
-    ).toBeVisible();
+    // Deselecting clears activeThreadId, which swaps the chat view for the
+    // project landing. Assert the composer is gone and the store is cleared
+    // (the successful evaluate also proves no crash tore down the app).
+    await expect(page.locator('[contenteditable="true"]')).toBeHidden();
+    const result = await page.evaluate(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stores: any[] = (window as any).__mcodeStores ?? [];
+      const wsStore = stores.find(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (s: any) => "activeThreadId" in s.getState(),
+      );
+      // Distinguish "store missing" from a legitimate null activeThreadId —
+      // `?? sentinel` would collapse the success case (null) into the sentinel.
+      return {
+        found: Boolean(wsStore),
+        activeThreadId: wsStore ? wsStore.getState().activeThreadId : "STORE_MISSING",
+      };
+    });
+    expect(result.found).toBe(true);
+    expect(result.activeThreadId).toBeNull();
   });
 });
 

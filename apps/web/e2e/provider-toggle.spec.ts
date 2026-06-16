@@ -90,12 +90,14 @@ const THREAD_CLAUDE = {
 // ── Shared helper: navigate to Settings → Provider ───────────────────────────
 
 /**
- * Click the Settings button then click the "Provider" nav item.
- * Assumes the app is already loaded and at networkidle.
+ * Click the Settings button then open the Model section, where the provider
+ * controls now live. Assumes the app is already loaded and at networkidle.
  */
 async function openProviderSettings(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("button", { name: "Provider", exact: true }).click();
+  // Provider controls are embedded in the Model section — there is no longer a
+  // separate "Provider" nav entry.
+  await page.getByRole("button", { name: "Model", exact: true }).click();
   // Wait for the ProviderSection heading to confirm the section rendered.
   await expect(page.getByRole("heading", { name: "Provider" })).toBeVisible();
 }

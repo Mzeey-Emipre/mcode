@@ -168,6 +168,8 @@ test.describe("Right panel threadless preview", () => {
     // because no thread is active. The chrome path (not the desktop-only empty
     // state) proves the panel mounted threadless.
     await expect(page.getByTestId("preview-panel")).toBeVisible({ timeout: 5_000 });
-    await expect(page.getByLabel("Reload")).toBeVisible();
+    // The URL field is always part of the chrome (the Reload button is only
+    // present once a page has loaded), so it is the reliable chrome signal.
+    await expect(page.getByRole("textbox", { name: "Preview URL" })).toBeVisible();
   });
 });

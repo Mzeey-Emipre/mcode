@@ -88,7 +88,7 @@ async function setupChat(page: Page, running: boolean): Promise<void> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const threadStore = stores.find((s: any) => {
         const st = s.getState();
-        return "runningThreadIds" in st && "contextByThread" in st;
+        return "runningThreadIds" in st && "records" in st;
       });
       if (threadStore && run) {
         threadStore.setState({

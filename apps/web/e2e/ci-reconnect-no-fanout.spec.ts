@@ -56,7 +56,7 @@ async function mockCiServer(page: Page): Promise<CiMockController> {
   const methodCalls = new Map<string, number>();
   let activeWs: WebSocketRoute | null = null;
 
-  await page.routeWebSocket(/ws:\/\/localhost:\d+/, (ws) => {
+  await page.routeWebSocket(/ws:\/\/localhost:\d{5}/, (ws) => {
     activeWs = ws;
     ws.onMessage((data) => {
       let msg: Record<string, unknown>;
@@ -72,9 +72,9 @@ async function mockCiServer(page: Page): Promise<CiMockController> {
       if (method === "workspace.list") result = [workspace];
       else if (method === "thread.list") result = [thread];
       else if (method === "settings.get") result = getDefaultSettings();
-      else if (method === "provider.listAvailable") {
-        // Minimal provider availability structure for sidebar to not crash
-        result = [{ id: "claude", enabled: true, cli: { status: "ok" } }];
+      else if (method === "providers.listAvailability") {
+        // Empty availability list keeps the sidebar from crashing on a null result.
+        result = [];
       }
       else if (method?.endsWith(".list") || method === "provider.listModels") result = [];
       else if (method === "git.currentBranch") result = "main";

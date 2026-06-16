@@ -70,7 +70,7 @@ async function setupChat(page: Page, opts?: { running?: boolean }): Promise<void
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const threadStore = stores.find((s: any) => {
         const st = s.getState();
-        return "runningThreadIds" in st && "contextByThread" in st;
+        return "runningThreadIds" in st && "records" in st;
       });
       if (threadStore && running) {
         threadStore.setState({
@@ -188,7 +188,7 @@ test.describe("Composer queue list (inline)", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const threadStore = stores.find((s: any) => {
         const st = s.getState();
-        return "runningThreadIds" in st && "contextByThread" in st;
+        return "runningThreadIds" in st && "records" in st;
       });
       if (threadStore) {
         threadStore.setState({ runningThreadIds: new Set<string>() });
