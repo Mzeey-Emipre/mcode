@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { getDefaultSettings } from "@mcode/contracts";
 
 /**
  * Mock the WebSocket server with optional pending permission injection.
@@ -55,20 +56,11 @@ async function mockWebSocketServer(
     last_compact_summary: null,
   };
 
-  // Minimal valid settings object matching the server's SettingsSchema defaults.
-  // Required because App.tsx reads settings.appearance.theme on first render;
-  // returning null from settings.get causes an immediate crash.
-  const defaultSettings = {
-    appearance: { theme: "system" },
-    agent: { maxConcurrent: 5, defaults: { mode: "build", permission: "full" }, guardrails: { maxBudgetUsd: 0, maxTurns: 0 } },
-    model: { defaults: { provider: "claude", id: "claude-opus-4-7", reasoning: "high", fallbackId: "claude-sonnet-4-6" } },
-    terminal: { scrollback: 250 },
-    notifications: { enabled: true },
-    worktree: { naming: { mode: "auto", aiConfirmation: true } },
-    server: { memory: { heapMb: 96 } },
-    provider: { cli: { codex: "", claude: "", copilot: "" } },
-    prDraft: { provider: "", model: "" },
-  };
+  // Use the contract's full default settings. App.tsx reads nested keys on first
+  // render (e.g. settings.appearance.theme and settings.performance.threadCacheSize),
+  // so a hand-rolled partial object crashes the app the moment a new required key
+  // is added to the schema. Sourcing defaults from the contract keeps this in sync.
+  const defaultSettings = getDefaultSettings();
 
   // Match 5-digit ports (mcode range) to avoid intercepting Vite's HMR socket.
   await page.routeWebSocket(/ws:\/\/localhost:\d{5}/, (ws) => {

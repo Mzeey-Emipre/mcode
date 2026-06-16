@@ -5,6 +5,7 @@ import { getDefaultSettings } from "@mcode/contracts";
 import {
   mockWebSocketServer,
   interceptZustandStores,
+  seedActiveThread,
 } from "./helpers/e2e-helpers";
 
 /**
@@ -88,8 +89,8 @@ const FAKE_MESSAGE = {
 };
 
 /**
- * Inject store-finder helpers into the page so evaluate/waitForFunction calls
- * share a single predicate definition instead of duplicating it.
+ * Inject a workspace-store finder onto the page so evaluate/waitForFunction
+ * calls share one predicate definition instead of duplicating it.
  *
  * Must be called before page.goto() so addInitScript registers before load.
  */
@@ -102,13 +103,6 @@ async function injectStoreHelpers(page: Page): Promise<void> {
         const st = s.getState();
         return "activeThreadId" in st && "threads" in st && "workspaces" in st;
       });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (window as any).__findThreadStore = () =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ((window as any).__mcodeStores ?? []).find(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (s: any) => "messages" in s.getState() && "loadMessages" in s.getState()
-      );
   });
 }
 
@@ -118,41 +112,7 @@ async function activateThreadAndInjectMessages(
   thread: Thread,
   messages: typeof FAKE_MESSAGE[]
 ): Promise<void> {
-  await page.evaluate(
-    ({ workspace, thread, threadId }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const wsStore = (window as any).__findWorkspaceStore?.();
-      if (!wsStore) { console.error("[E2E] workspace store not found"); return; }
-      wsStore.setState({
-        workspaces: [workspace],
-        activeWorkspaceId: workspace.id,
-        threads: [thread],
-        activeThreadId: threadId,
-      });
-    },
-    { workspace: FAKE_WORKSPACE, thread, threadId: thread.id }
-  );
-
-  // Wait for loadMessages to complete
-  await page.waitForFunction(
-    () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ts = (window as any).__findThreadStore?.();
-      return ts && ts.getState().loading === false && ts.getState().currentThreadId !== null;
-    },
-    { timeout: 5000 }
-  );
-
-  // Inject messages after load
-  await page.evaluate(
-    ({ messages }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ts = (window as any).__findThreadStore?.();
-      if (!ts) { console.error("[E2E] thread store not found"); return; }
-      ts.setState({ messages, loading: false, error: null });
-    },
-    { messages }
-  );
+  await seedActiveThread(page, FAKE_WORKSPACE, thread, messages);
 }
 
 /** Read the workspaceStore state from the injected registry. */
@@ -217,7 +177,7 @@ test.describe("Branch-from-chat naming fix (#339)", () => {
     );
 
     // Trigger branch mode via the branch button on the message
-    const branchBtn = page.getByRole("button", { name: "Branch from this message" });
+    const branchBtn = page.getByRole("button", { name: "Fork from this message" });
     await expect(branchBtn).toBeVisible({ timeout: 5000 });
     await branchBtn.click();
 
@@ -256,7 +216,7 @@ test.describe("Branch-from-chat naming fix (#339)", () => {
       { timeout: 5000 }
     );
 
-    const branchBtn = page.getByRole("button", { name: "Branch from this message" });
+    const branchBtn = page.getByRole("button", { name: "Fork from this message" });
     await expect(branchBtn).toBeVisible({ timeout: 5000 });
     await branchBtn.click();
 
@@ -299,7 +259,7 @@ test.describe("Branch-from-chat naming fix (#339)", () => {
     );
 
     // Enter branch mode
-    const branchBtn = page.getByRole("button", { name: "Branch from this message" });
+    const branchBtn = page.getByRole("button", { name: "Fork from this message" });
     await expect(branchBtn).toBeVisible({ timeout: 5000 });
     await branchBtn.click();
 
@@ -343,7 +303,7 @@ test.describe("Branch-from-chat naming fix (#339)", () => {
       { timeout: 5000 }
     );
 
-    const branchBtn = page.getByRole("button", { name: "Branch from this message" });
+    const branchBtn = page.getByRole("button", { name: "Fork from this message" });
     await expect(branchBtn).toBeVisible({ timeout: 5000 });
     await branchBtn.click();
 

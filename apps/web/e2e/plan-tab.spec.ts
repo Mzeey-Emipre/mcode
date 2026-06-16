@@ -114,7 +114,7 @@ test.describe("Plan view in Scope tab", () => {
   test("scope tab button exists in the right panel header", async ({ page }) => {
     await showRightPanel(page, WORKSPACE.id, THREAD.id);
 
-    const scopeTab = page.getByRole("button", { name: "Scope" });
+    const scopeTab = page.getByRole("button", { name: "Scope", exact: true });
     await expect(scopeTab).toBeVisible({ timeout: 3000 });
   });
 

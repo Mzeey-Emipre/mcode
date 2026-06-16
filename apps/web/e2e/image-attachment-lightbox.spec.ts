@@ -3,6 +3,7 @@ import type { Thread } from "@mcode/contracts";
 import {
   mockWebSocketServer,
   interceptZustandStores,
+  seedActiveThread,
 } from "./helpers/e2e-helpers";
 import { getDefaultSettings } from "@mcode/contracts";
 
@@ -77,65 +78,14 @@ function makeMessageWithImages() {
 }
 
 /**
- * Activate a thread and inject messages after `loadMessages` finishes, matching
- * {@link session-restart-divider.spec.ts}.
+ * Activate a thread and inject messages after `loadMessages` finishes, via the
+ * shared {@link seedActiveThread} helper.
  */
 async function activateThreadAndInjectMessages(
   page: import("@playwright/test").Page,
   messages: ReturnType<typeof makeMessageWithImages>[],
 ): Promise<void> {
-  await page.evaluate(
-    ({ workspace, thread, threadId }) => {
-      const stores: unknown[] = (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
-      const wsStore = stores.find((s: unknown) => {
-        const st = (s as { getState: () => Record<string, unknown> }).getState();
-        return "activeThreadId" in st && "threads" in st && "workspaces" in st;
-      });
-      if (!wsStore) return;
-      (wsStore as { setState: (p: unknown) => void }).setState({
-        workspaces: [workspace],
-        activeWorkspaceId: workspace.id,
-        threads: [thread],
-        activeThreadId: threadId,
-      });
-    },
-    { workspace: FAKE_WORKSPACE, thread: FAKE_THREAD, threadId: THREAD_ID },
-  );
-
-  await page.waitForFunction(
-    () => {
-      const stores: unknown[] = (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
-      const threadStore = stores.find((s: unknown) => {
-        const st = (s as { getState: () => Record<string, unknown> }).getState();
-        return "messages" in st && "loadMessages" in st;
-      });
-      if (!threadStore) return false;
-      const state = (threadStore as { getState: () => { currentThreadId: string | null; loading: boolean } }).getState();
-      return state.currentThreadId !== null && state.loading === false;
-    },
-    { timeout: 8000 },
-  );
-
-  await page.evaluate(
-    ({ messages: msgs, wsUrl }) => {
-      (
-        window as unknown as { __mcodeE2EAttachmentTransportWsUrl?: string }
-      ).__mcodeE2EAttachmentTransportWsUrl = wsUrl;
-
-      const stores: unknown[] = (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
-      const threadStore = stores.find((s: unknown) => {
-        const st = (s as { getState: () => Record<string, unknown> }).getState();
-        return "messages" in st && "loadMessages" in st;
-      });
-      if (!threadStore) return;
-      (threadStore as { setState: (p: unknown) => void }).setState({
-        messages: msgs,
-        loading: false,
-        error: null,
-      });
-    },
-    { messages, wsUrl: E2E_WS_FOR_ATTACHMENTS },
-  );
+  await seedActiveThread(page, FAKE_WORKSPACE, FAKE_THREAD, messages);
 }
 
 test.describe("Image attachment lightbox", () => {

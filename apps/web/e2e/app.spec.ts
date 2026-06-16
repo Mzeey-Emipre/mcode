@@ -143,70 +143,80 @@ test.describe("Landing empty state", () => {
 // Settings dialog
 // ---------------------------------------------------------------------------
 
-test.describe("Settings dialog", () => {
+test.describe("Settings", () => {
   test.beforeEach(async ({ page }) => {
     await setup(page);
   });
 
-  test("opens when Settings button is clicked", async ({ page }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
+  test("opens as a full-page view with a back affordance", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
 
-    // Dialog title should appear
+    // Settings is a full-page sectioned view, not a modal — a "Back to projects"
+    // control replaces the sidebar and there is no [role="dialog"].
     await expect(
-      page.locator('[role="dialog"]').locator("text=Settings")
+      page.getByRole("button", { name: "Back to projects" }),
     ).toBeVisible();
-
-    await page.screenshot({
-      path: "e2e/screenshots/settings-dialog-open.png",
-      fullPage: true,
-    });
   });
 
-  test("displays Theme, Max Concurrent Agents, and Notifications controls", async ({
+  test("exposes Theme, Max concurrent agents, and Notifications controls", async ({
     page,
   }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
 
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog.locator("text=Theme")).toBeVisible();
-    await expect(dialog.locator("text=Max Concurrent Agents")).toBeVisible();
-    await expect(dialog.locator("text=Notifications")).toBeVisible();
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    await expect(page.getByRole("radio", { name: "Dark" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Agent", exact: true }).click();
+    await expect(page.getByText("Max concurrent agents")).toBeVisible();
+
+    await page
+      .getByRole("button", { name: "Notifications", exact: true })
+      .click();
+    await expect(
+      page.getByText("Show desktop notifications for agent events."),
+    ).toBeVisible();
   });
 
-  test("theme buttons are rendered for system, dark, and light", async ({
+  test("renders the theme radios for system, dark, and light", async ({
     page,
   }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
 
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog.locator("button", { hasText: "system" })).toBeVisible();
-    await expect(dialog.locator("button", { hasText: "dark" })).toBeVisible();
-    await expect(dialog.locator("button", { hasText: "light" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "System" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "Dark" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "Light" })).toBeVisible();
   });
 
-  test("clicking a theme option does not crash the app", async ({ page }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
+  test("switching theme toggles the document dark class", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
 
-    const dialog = page.locator('[role="dialog"]');
-    await dialog.locator("button", { hasText: "light" }).click();
+    await page.getByRole("radio", { name: "Light" }).click();
+    await expect(page.locator("html")).not.toHaveClass(/dark/);
 
-    // Dialog should remain open; no error state
-    await expect(dialog.locator("text=Settings")).toBeVisible();
+    await page.getByRole("radio", { name: "Dark" }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
   });
 
-  test("notifications toggle is rendered as a switch", async ({ page }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
+  test("renders the notifications toggle as a switch", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Notifications", exact: true })
+      .click();
 
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog.locator('[role="switch"]')).toBeVisible();
+    await expect(page.getByRole("switch").first()).toBeVisible();
   });
 
-  test("notifications toggle changes state on click", async ({ page }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
+  test("toggling the notifications switch changes its state", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Notifications", exact: true })
+      .click();
 
-    const dialog = page.locator('[role="dialog"]');
-    const toggle = dialog.locator('[role="switch"]');
-
+    const toggle = page.getByRole("switch").first();
     const initialState = await toggle.getAttribute("aria-checked");
     await toggle.click();
     const newState = await toggle.getAttribute("aria-checked");
@@ -214,31 +224,20 @@ test.describe("Settings dialog", () => {
     expect(newState).not.toBe(initialState);
   });
 
-  test("max concurrent agents slider is present and interactive", async ({
-    page,
-  }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
+  test("exposes the max concurrent agents control", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Agent", exact: true }).click();
 
-    const dialog = page.locator('[role="dialog"]');
-    const slider = dialog.locator("#max-agents");
-    await expect(slider).toBeVisible();
-
-    // Verify the slider has numeric value within allowed range
-    const value = await slider.inputValue();
-    const numValue = Number(value);
-    expect(numValue).toBeGreaterThanOrEqual(1);
-    expect(numValue).toBeLessThanOrEqual(10);
+    await expect(page.getByText("Max concurrent agents")).toBeVisible();
   });
 
-  test("closes when Escape is pressed", async ({ page }) => {
-    await page.locator("button", { hasText: "Settings" }).click();
+  test("returns to projects via the back affordance", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const back = page.getByRole("button", { name: "Back to projects" });
+    await expect(back).toBeVisible();
 
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog).toBeVisible();
-
-    await page.keyboard.press("Escape");
-
-    await expect(dialog).not.toBeVisible();
+    await back.click();
+    await expect(back).not.toBeVisible();
   });
 });
 

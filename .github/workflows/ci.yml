@@ -79,6 +79,80 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run test
 
+  test-web-e2e:
+    name: Test Web E2E (shard ${{ matrix.shard }}/4)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+    # GitHub Actions sets CI=true, so playwright.config.ts switches to
+    # single-worker mode with retries automatically (no env wiring needed).
+    # The suite mocks the WebSocket transport, so no backend server is required;
+    # Playwright boots its own Vite dev server via the config's webServer block.
+    # Sharded across runners to keep wall-clock low while preserving the config's
+    # single-worker-per-process reproducibility (no in-machine contention).
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      # The web e2e suite never launches Electron; skip the binary download and
+      # better-sqlite3 Electron prebuild so bun install does not flake on 504s.
+      SKIP_ELECTRON_REBUILD: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.14"
+      - run: bun install --frozen-lockfile
+
+      # Read the resolved version straight from the lockfile (the source of truth
+      # for --frozen-lockfile) rather than `playwright --version`, which can
+      # re-resolve within the semver range and key the cache on a version CI
+      # never installs.
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: |
+          version=$(node -e 'const s=require("fs").readFileSync("bun.lock","utf8");const m=s.match(/"@playwright\/test@([0-9][^"]+)"/);if(!m){console.error("playwright not found in bun.lock");process.exit(1)}console.log(m[1])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Resolved Playwright version: $version"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright Chromium (with system deps)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: apps/web
+        run: bunx playwright install --with-deps chromium
+
+      # System libraries live outside the cached browser directory, so a warm
+      # cache still needs them installed before Chromium can launch.
+      - name: Install Playwright system deps
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: apps/web
+        run: bunx playwright install-deps chromium
+
+      - name: Run web e2e suite (shard ${{ matrix.shard }}/4)
+        working-directory: apps/web
+        run: bunx playwright test --shard=${{ matrix.shard }}/4
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-shard-${{ matrix.shard }}
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          retention-days: 7
+
   build-check:
     name: Build Check
     runs-on: blacksmith-4vcpu-ubuntu-2404

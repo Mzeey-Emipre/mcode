@@ -3,6 +3,10 @@ import type { Thread } from "@mcode/contracts";
 import {
   mockWebSocketServer,
   interceptZustandStores,
+  seedActiveThread,
+  activateThread,
+  waitForActiveThreadLoaded,
+  dispatchAgentEvent,
 } from "./helpers/e2e-helpers";
 
 /**
@@ -81,74 +85,15 @@ function makeMessage(
 }
 
 /**
- * Activate a thread and wait for the mock loadMessages() to complete (sets
- * loading: false), then inject the desired messages into the thread store.
- * This prevents the loadMessages useEffect from overwriting our injected state.
+ * Activate a thread, wait for the app's `loadMessages` to settle, then inject
+ * the desired messages via the shared {@link seedActiveThread} helper. Waiting
+ * for the load to complete first prevents it from overwriting the injection.
  */
 async function activateThreadAndInjectMessages(
   page: import("@playwright/test").Page,
   messages: ReturnType<typeof makeMessage>[]
 ): Promise<void> {
-  // Step 1: inject workspace/thread into workspace store to trigger ChatView mount
-  await page.evaluate(
-    ({ workspace, thread, threadId }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stores: any[] = (window as any).__mcodeStores ?? [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const wsStore = stores.find((s: any) => {
-        const st = s.getState();
-        return "activeThreadId" in st && "threads" in st && "workspaces" in st;
-      });
-      if (!wsStore) {
-        console.error("[E2E] workspace store not found");
-        return;
-      }
-      wsStore.setState({
-        workspaces: [workspace],
-        activeWorkspaceId: workspace.id,
-        threads: [thread],
-        activeThreadId: threadId,
-      });
-    },
-    { workspace: FAKE_WORKSPACE, thread: FAKE_THREAD, threadId: THREAD_ID }
-  );
-
-  // Step 2: wait for ChatView to mount and loadMessages to complete
-  // loadMessages sets loading: false after the mock transport returns []
-  await page.waitForFunction(
-    () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stores: any[] = (window as any).__mcodeStores ?? [];
-      const threadStore = stores.find(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (s: any) => "messages" in s.getState() && "loadMessages" in s.getState()
-      );
-      if (!threadStore) return false;
-      const state = threadStore.getState();
-      // Wait for the thread to be active and loading to be done
-      return state.currentThreadId !== null && state.loading === false;
-    },
-    { timeout: 5000 }
-  );
-
-  // Step 3: now inject our messages - loadMessages is done so it won't overwrite
-  await page.evaluate(
-    ({ threadId: _threadId, messages }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stores: any[] = (window as any).__mcodeStores ?? [];
-      const threadStore = stores.find(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (s: any) => "messages" in s.getState() && "loadMessages" in s.getState()
-      );
-      if (!threadStore) {
-        console.error("[E2E] thread store not found for message injection");
-        return;
-      }
-      threadStore.setState({ messages, loading: false, error: null });
-      console.log("[E2E] injected", messages.length, "messages");
-    },
-    { threadId: THREAD_ID, messages }
-  );
+  await seedActiveThread(page, FAKE_WORKSPACE, FAKE_THREAD, messages);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -269,53 +214,14 @@ test.describe("Session Restart Divider", () => {
   test("handleAgentEvent session_restarted creates exactly one divider", async ({
     page,
   }) => {
-    // Activate thread first (no messages)
-    await page.evaluate(
-      ({ workspace, thread, threadId }) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const stores: any[] = (window as any).__mcodeStores ?? [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const wsStore = stores.find((s: any) => "activeThreadId" in s.getState() && "threads" in s.getState());
-        if (!wsStore) return;
-        wsStore.setState({
-          workspaces: [workspace],
-          activeWorkspaceId: workspace.id,
-          threads: [thread],
-          activeThreadId: threadId,
-        });
-      },
-      { workspace: FAKE_WORKSPACE, thread: FAKE_THREAD, threadId: THREAD_ID }
-    );
+    await activateThread(page, FAKE_WORKSPACE, FAKE_THREAD);
+    await waitForActiveThreadLoaded(page);
 
-    // Wait for loadMessages to complete
-    await page.waitForFunction(
-      () => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const stores: any[] = (window as any).__mcodeStores ?? [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ts = stores.find((s: any) => "messages" in s.getState() && "loadMessages" in s.getState());
-        return ts && ts.getState().loading === false && ts.getState().currentThreadId !== null;
-      },
-      { timeout: 5000 }
-    );
-
-    // Now trigger the event via the production handleAgentEvent code path
-    await page.evaluate(({ threadId }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stores: any[] = (window as any).__mcodeStores ?? [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const threadStore = stores.find((s: any) => "messages" in s.getState() && "loadMessages" in s.getState());
-      if (!threadStore) {
-        console.error("[E2E] thread store not found");
-        return;
-      }
-      const handleAgentEvent = threadStore.getState().handleAgentEvent;
-      handleAgentEvent(threadId, {
-        method: "session.system",
-        params: { subtype: "session_restarted" },
-      });
-      console.log("[E2E] handleAgentEvent called, messages:", threadStore.getState().messages.length);
-    }, { threadId: THREAD_ID });
+    // Trigger the event via the production handleAgentEvent code path
+    await dispatchAgentEvent(page, THREAD_ID, {
+      method: "session.system",
+      params: { subtype: "session_restarted" },
+    });
 
     await page.waitForFunction(
       () => document.body.innerText.includes("Session restarted"),
@@ -338,46 +244,18 @@ test.describe("Session Restart Divider", () => {
   test("multiple session restarts each render a separate divider", async ({
     page,
   }) => {
-    // Activate thread first
-    await page.evaluate(
-      ({ workspace, thread, threadId }) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const stores: any[] = (window as any).__mcodeStores ?? [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const wsStore = stores.find((s: any) => "activeThreadId" in s.getState() && "threads" in s.getState());
-        if (!wsStore) return;
-        wsStore.setState({
-          workspaces: [workspace],
-          activeWorkspaceId: workspace.id,
-          threads: [thread],
-          activeThreadId: threadId,
-        });
-      },
-      { workspace: FAKE_WORKSPACE, thread: FAKE_THREAD, threadId: THREAD_ID }
-    );
+    await activateThread(page, FAKE_WORKSPACE, FAKE_THREAD);
+    await waitForActiveThreadLoaded(page);
 
-    await page.waitForFunction(
-      () => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const stores: any[] = (window as any).__mcodeStores ?? [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ts = stores.find((s: any) => "messages" in s.getState() && "loadMessages" in s.getState());
-        return ts && ts.getState().loading === false && ts.getState().currentThreadId !== null;
-      },
-      { timeout: 5000 }
-    );
-
-    // Fire two session.system events
-    await page.evaluate(({ threadId }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stores: any[] = (window as any).__mcodeStores ?? [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const threadStore = stores.find((s: any) => "messages" in s.getState() && "loadMessages" in s.getState());
-      if (!threadStore) return;
-      const handleAgentEvent = threadStore.getState().handleAgentEvent;
-      handleAgentEvent(threadId, { method: "session.system", params: { subtype: "session_restarted" } });
-      handleAgentEvent(threadId, { method: "session.system", params: { subtype: "session_restarted" } });
-    }, { threadId: THREAD_ID });
+    // Fire two session.system events through the production reducer
+    await dispatchAgentEvent(page, THREAD_ID, {
+      method: "session.system",
+      params: { subtype: "session_restarted" },
+    });
+    await dispatchAgentEvent(page, THREAD_ID, {
+      method: "session.system",
+      params: { subtype: "session_restarted" },
+    });
 
     await page.waitForFunction(
       () => document.body.innerText.includes("Session restarted"),

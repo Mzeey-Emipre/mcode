@@ -116,8 +116,9 @@ test.describe("Consolidated chat header", () => {
 
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-pressed", "true");
-    // The panel's tab rail becomes visible once the panel opens.
-    await expect(page.getByText("Changes", { exact: true })).toBeVisible();
+    // The panel's tab rail becomes visible once the panel opens. The changes
+    // tab is labelled "Review" (see panel-tabs.ts).
+    await expect(page.getByText("Review", { exact: true })).toBeVisible();
 
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-pressed", "false");

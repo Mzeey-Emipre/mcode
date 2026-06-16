@@ -105,7 +105,7 @@ async function injectPlanQuestions(
       const stores: any[] = (window as any).__mcodeStores ?? [];
       const threadStore = stores.find((s) => {
         const st = s.getState();
-        return "planQuestionsByThread" in st && "setPlanQuestions" in st;
+        return "records" in st && "setPlanQuestions" in st;
       });
       if (!threadStore) throw new Error("[E2E] thread store not found");
       threadStore.getState().setPlanQuestions(tid, qs);
@@ -126,7 +126,7 @@ async function setThreadRunning(
       const stores: any[] = (window as any).__mcodeStores ?? [];
       const threadStore = stores.find((s) => {
         const st = s.getState();
-        return "runningThreadIds" in st && "planQuestionsByThread" in st;
+        return "runningThreadIds" in st && "records" in st;
       });
       if (!threadStore) throw new Error("[E2E] thread store not found");
       threadStore.setState((s: { runningThreadIds: Set<string> }) => {

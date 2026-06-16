@@ -37,7 +37,10 @@ export const useRecentThreadsStore = create<State>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const threads = await getTransport().listRecentThreads(limit);
-      set({ threads, loading: false });
+      // Coerce a null/undefined RPC result to [] so the store never violates its
+      // own `threads: RecentThread[]` invariant. A null here would crash the
+      // landing's `recentThreads.slice(...)` on a partial or legacy server reply.
+      set({ threads: threads ?? [], loading: false });
     } catch (err) {
       set({
         loading: false,
