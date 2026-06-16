@@ -90,13 +90,6 @@ jobs:
     # Playwright boots its own Vite dev server via the config's webServer block.
     # Sharded across runners to keep wall-clock low while preserving the config's
     # single-worker-per-process reproducibility (no in-machine contention).
-    #
-    # Non-blocking for now. The suite is broadly red on main (84/306 fail on a
-    # clean single-worker run) from pre-existing rot that no CI ever caught,
-    # tracked in #740. This job runs and reports e2e on every PR so the red count
-    # stays visible during the repair, but it does not fail the run. Once #740
-    # lands, remove continue-on-error and add this job to required checks.
-    continue-on-error: true
     timeout-minutes: 15
     strategy:
       fail-fast: false
