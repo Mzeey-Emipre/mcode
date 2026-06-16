@@ -555,6 +555,48 @@ type is creatable, the add affordance opens it directly instead of showing
 a menu; when none are, the add affordance is hidden. The empty panel and
 the add menu present this same creatable-types set.
 
+### Terminal tab
+The right-panel tab that hosts one or more **shell sessions** against the
+active **terminal scope** (a thread when one is active, otherwise the
+workspace root). Singleton at the panel level; multiplicity is internal
+(one tab, many shells).
+
+### Terminal scope
+The thread or workspace a shell session runs against. When a thread is
+active, shells open in that thread's working directory (worktree or
+workspace root per composer mode). With no thread, the scope is the
+workspace and shells open at the workspace root.
+_Avoid_: Using "thread id" alone when the scope may be a workspace.
+
+### Shell session
+A running shell process (e.g. PowerShell, bash) tied to one terminal scope.
+Survives thread switches and terminal-tab hides; the process keeps running
+until the user kills it or closes the shell. Output keeps draining into
+server-side scrollback even when no terminal view is mounted.
+_Avoid_: PTY (implementation term), terminal instance (ambiguous with the view).
+
+### Active shell
+The one shell session whose terminal view is mounted. At most one terminal
+view exists in the app: the active shell on the active terminal scope, while
+the Terminal tab and right panel are open.
+_Avoid_: Mounting a view for every open shell (background shells stay
+server-side only).
+
+### Terminal view
+The in-app rendering of one shell session's output in the Terminal tab.
+Only the **active shell** has a view; others keep running without one.
+Remounting replays retained scrollback and opens at the latest output
+(follow). Restoring the prior scroll position within scrollback is a
+planned follow-up, not v1.
+_Avoid_: xterm (implementation term), conflating with shell session.
+
+### Scrollback
+How many lines of shell output are retained for a shell session, set by
+`terminal.scrollback`. The same limit applies on the server (for replay when
+the terminal view remounts) and in the mounted terminal view. Output beyond
+the limit is dropped oldest-first.
+_Avoid_: Treating scrollback as a client-only display setting.
+
 ### Review tab
 The right-panel tab that shows code changes. **Dual-scope**: its
 git-working-tree views (Unstaged, Staged, Commit, Branch) read the
