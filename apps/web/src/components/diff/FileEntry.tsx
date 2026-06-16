@@ -1,17 +1,20 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { ChevronsDownUp } from "lucide-react";
+import { memo, useState, useEffect, useRef, useMemo, useId } from "react";
+import { ChevronsDownUp, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { getTransport } from "@/transport";
-import { parseDiffLines, isMarkdownFile } from "@/lib/diff-parser";
+import { parseDiffLines, isMarkdownFile, getLeadingHiddenLineCount } from "@/lib/diff-parser";
 import { loadFileDiff } from "@/lib/load-file-diff";
 import { parseFirstHunkLine } from "@/lib/parse-first-hunk-line";
 import { langFromPath } from "@/lib/lang-from-path";
+import { cn } from "@/lib/utils";
+import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { UnifiedDiff } from "./UnifiedDiff";
 import { SideBySideDiff } from "./SideBySideDiff";
 import { DiffPreview } from "./DiffPreview";
-import { SideRail } from "./SideRail";
+import { FileActionBar } from "./FileActionBar";
+import { DiffStat } from "./DiffStat";
 
 /** Props for FileEntry. */
 interface FileEntryProps {
@@ -20,11 +23,6 @@ interface FileEntryProps {
   id: string;
   /** Thread that owns this file, used to scope the inline diff cache. */
   threadId: string;
-  /**
-   * Indentation depth when rendered inside a folder tree. When > 0, the
-   * parent-path suffix is suppressed (the folder header above carries it).
-   */
-  depth?: number;
   /** When true the diff starts expanded on mount and after its diff identity changes. */
   defaultExpanded?: boolean;
   /** Extra identity for mutable comparisons whose visible id can stay stable. */
@@ -42,25 +40,19 @@ function getFileBasename(filePath: string): string {
   return filePath.split("/").pop() ?? filePath;
 }
 
-/** Extract the immediate parent directory name from a file path. */
-function getParentDir(filePath: string): string {
-  const parts = filePath.split("/");
-  return parts.length > 1 ? parts[parts.length - 2] : "";
-}
-
-/** Get the file extension (lowercase, no dot). */
-function getExtension(filePath: string): string {
-  const basename = getFileBasename(filePath);
-  const dot = basename.lastIndexOf(".");
-  return dot >= 0 ? basename.slice(dot + 1).toLowerCase() : "";
-}
-
 /**
  * Number of lines shown initially for large diffs before truncation.
  * Diffs with more than LARGE_DIFF_THRESHOLD lines start truncated.
  */
 const LARGE_DIFF_THRESHOLD = 200;
 const INITIAL_LINES_SHOWN = 100;
+
+/**
+ * Pixels reserved above a jumped-to file so it lands just below the sticky
+ * FileList jump bar (and the file's own sticky header) rather than tucked
+ * underneath it. Matches the `top-10` sticky offset used on the headers.
+ */
+const JUMP_STICKY_OFFSET = 40;
 
 /**
  * Diff loading state.
@@ -74,19 +66,18 @@ type DiffState = null | { loading: true } | { loading: false; data: string };
  * Diff is loaded lazily on the first expand, or immediately for auto-opened views.
  * Large diffs (>200 lines) are truncated with a "Show all N lines" button.
  */
-export function FileEntry({
+export const FileEntry = memo(function FileEntry({
   filePath,
   source,
   id,
   threadId,
-  depth = 0,
   defaultExpanded: defaultExpandedProp = false,
   cacheVersion = 0,
   jumpToken,
   onJumpSettled,
   highlightToken,
 }: FileEntryProps) {
-  const nested = depth > 0;
+  const contentId = useId();
   const [expanded, setExpanded] = useState(defaultExpandedProp);
   const [showAllLines, setShowAllLines] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
@@ -98,11 +89,23 @@ export function FileEntry({
     () => (cachedDiff !== undefined ? { loading: false, data: cachedDiff } : null),
   );
   const renderMode = useDiffStore((s) => s.renderMode);
+  // True only on the render where the user toggled unified<->split. The diff
+  // body keys its settle-in off this so the motion fires on the mode swap, never
+  // on first expand or diff load. The ref is committed after each render below.
+  const prevRenderModeRef = useRef(renderMode);
+  const isModeSwap = prevRenderModeRef.current !== renderMode;
   // Tracks whether a load has been kicked off in this effect lifecycle.
   // Reset in cleanup so React StrictMode's second invocation can start a
   // fresh, non-cancelled fetch (the first is cancelled by cleanup).
   const loadStartedRef = useRef(false);
   const rowRef = useRef<HTMLDivElement>(null);
+  // The jump token already scrolled for, so a later diff-load re-render of the
+  // same jump doesn't re-trigger the scroll.
+  const scrolledJumpRef = useRef<number | undefined>(undefined);
+  // Bulk expand/collapse command from the Review-options menu. The ref tracks the
+  // last nonce we applied so we react only to new commands, never on mount.
+  const bulkDiffExpand = useDiffStore((s) => s.bulkDiffExpand);
+  const appliedBulkRef = useRef(bulkDiffExpand?.nonce);
 
   // Reset local state when the cache identity changes so a reused component
   // instance doesn't show stale content from a previous identity.
@@ -118,19 +121,54 @@ export function FileEntry({
     if (defaultExpandedProp) setExpanded(true);
   }, [cacheKey, cacheVersion, defaultExpandedProp]);
 
+  // Apply a bulk expand/collapse command once per nonce.
+  useEffect(() => {
+    if (!bulkDiffExpand || appliedBulkRef.current === bulkDiffExpand.nonce) return;
+    appliedBulkRef.current = bulkDiffExpand.nonce;
+    setExpanded(bulkDiffExpand.expand);
+    if (!bulkDiffExpand.expand) {
+      setShowAllLines(false);
+      setPreviewMode(false);
+    }
+  }, [bulkDiffExpand]);
+
+  // Commit the render-mode seen this render so the next swap is detected once.
+  useEffect(() => {
+    prevRenderModeRef.current = renderMode;
+  }, [renderMode]);
+
   useEffect(() => {
     if (jumpToken === undefined) return;
+    // Expand first, but defer the scroll until the diff has loaded and laid out.
     setExpanded(true);
+    // Scrolling before the async diff loads measures the file at its pre-load
+    // (short) height, which lands a file near the bottom of the list at the
+    // wrong offset and reads as "the scroll broke". Wait for the content, and
+    // only scroll once per jump token (diff-load re-renders must not re-fire).
+    if (diffState === null || diffState.loading) return;
+    if (scrolledJumpRef.current === jumpToken) return;
+    scrolledJumpRef.current = jumpToken;
     const frame = requestAnimationFrame(() => {
-      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      rowRef.current?.scrollIntoView({
-        block: "start",
-        behavior: reducedMotion ? "auto" : "smooth",
-      });
+      const target = rowRef.current;
+      if (target) {
+        const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const behavior: ScrollBehavior = reducedMotion ? "auto" : "smooth";
+        // Scroll only the diff's own viewport, not every scroll ancestor the way
+        // scrollIntoView does. The browser clamps scrollTop, so a short file at
+        // the very bottom settles gracefully instead of fighting the max scroll.
+        const viewport = target.closest<HTMLElement>("[data-slot='scroll-area-viewport']");
+        if (viewport) {
+          const delta =
+            target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+          viewport.scrollTo({ top: viewport.scrollTop + delta - JUMP_STICKY_OFFSET, behavior });
+        } else {
+          target.scrollIntoView({ block: "nearest", behavior });
+        }
+      }
       onJumpSettled?.(jumpToken);
     });
     return () => cancelAnimationFrame(frame);
-  }, [jumpToken, onJumpSettled]);
+  }, [jumpToken, diffState, onJumpSettled]);
 
   useEffect(() => {
     if (highlightToken === undefined) return;
@@ -139,11 +177,14 @@ export function FileEntry({
     return () => clearTimeout(timeout);
   }, [highlightToken]);
 
-  const { basename, parent, ext, language, isMarkdown } = useMemo(() => {
-    const bn = getFileBasename(filePath);
-    const pr = getParentDir(filePath);
-    const ex = getExtension(filePath);
-    return { basename: bn, parent: pr, ext: ex, language: langFromPath(filePath), isMarkdown: isMarkdownFile(filePath) };
+  const { language, isMarkdown, parentPath, basename } = useMemo(() => {
+    const slash = filePath.lastIndexOf("/");
+    return {
+      language: langFromPath(filePath),
+      isMarkdown: isMarkdownFile(filePath),
+      parentPath: slash >= 0 ? filePath.slice(0, slash + 1) : "",
+      basename: getFileBasename(filePath),
+    };
   }, [filePath]);
 
   // Load diff lazily on first expand. Reads the cache at effect time so a reused
@@ -231,155 +272,106 @@ export function FileEntry({
 
   const isLoaded = diffState !== null && !diffState.loading;
   const isLargeDiff = lines.length > LARGE_DIFF_THRESHOLD;
-  const { visibleLines, hiddenLineCount } = useMemo(() => {
+  const { visibleLines, hiddenLineCount, leadingHiddenLines } = useMemo(() => {
     if (isLargeDiff && !showAllLines) {
+      const sliced = lines.slice(0, INITIAL_LINES_SHOWN);
       return {
-        visibleLines: lines.slice(0, INITIAL_LINES_SHOWN),
+        visibleLines: sliced,
         hiddenLineCount: lines.length - INITIAL_LINES_SHOWN,
+        leadingHiddenLines: getLeadingHiddenLineCount(sliced),
       };
     }
-    return { visibleLines: lines, hiddenLineCount: 0 };
+    return {
+      visibleLines: lines,
+      hiddenLineCount: 0,
+      leadingHiddenLines: getLeadingHiddenLineCount(lines),
+    };
   }, [lines, isLargeDiff, showAllLines]);
 
   return (
     <div
       ref={rowRef}
       data-review-file={filePath}
+      data-testid="diff-file-card"
       data-jump-highlight={jumpHighlight ? "true" : undefined}
-      className={`border-b border-border/20 transition-colors ${
-        expanded ? "bg-muted/[0.035]" : ""
-      } ${jumpHighlight ? "animate-flash-highlight bg-primary/10" : ""}`}
+      className={cn(
+        "flex scroll-mt-10 flex-col",
+        jumpHighlight && "animate-flash-highlight",
+      )}
     >
-      {/* File header row — sticky when expanded so filename stays visible while scrolling the diff */}
-      <button
-        type="button"
-        onClick={() => {
-          setExpanded((prev) => {
-            if (prev) {
-              setShowAllLines(false);
-              setPreviewMode(false);
-            }
-            return !prev;
-          });
-        }}
+      {/* Flat file header bar (no card): path on the left, stat + actions on
+          the right. Sticks below the FileList jump bar while its diff scrolls.
+          Opaque so scrolling code never ghosts through the stuck bar. */}
+      <div
         data-jump-highlight={jumpHighlight ? "true" : undefined}
-        className={`group flex w-full items-center gap-2 py-[6px] pr-3 text-left transition-colors hover:bg-muted/20 data-[jump-highlight=true]:bg-primary/10 ${
-          expanded
-            ? "sticky top-[57px] z-10 bg-background/95 backdrop-blur-sm border-b border-border/20"
-            : ""
-        }`}
-        style={{ paddingLeft: nested ? `${12 + depth * 14}px` : "28px" }}
-        title={filePath}
+        className={cn(
+          "sticky top-10 z-10 flex items-center gap-1",
+          // Bottom border separates the bar from its diff body and reads as a
+          // clean cut while the bar sticks; the list gap handles section
+          // separation, so a top border would just double up.
+          "border-b border-border/30 bg-muted",
+          "data-[jump-highlight=true]:bg-primary/10",
+        )}
       >
-        <span
-          aria-hidden="true"
-          className={`shrink-0 font-mono text-[11px] leading-none transition-transform duration-150 text-muted-foreground/45 ${
-            expanded ? "rotate-90" : ""
-          }`}
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={expanded ? contentId : undefined}
+          onClick={() => {
+            setExpanded((prev) => {
+              if (prev) {
+                setShowAllLines(false);
+                setPreviewMode(false);
+              }
+              return !prev;
+            });
+          }}
+          className={cn(
+            "group flex min-h-9 min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left transition-colors",
+            // Hover/focus tint via a foreground overlay, not a muted tint: a
+            // muted/xx layer over the opaque muted bar resolves back to muted
+            // (no visible change). Inset focus ring for keyboard navigation.
+            "hover:bg-foreground/[0.05]",
+            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring/55",
+          )}
+          title={filePath}
         >
-          ›
-        </span>
+          <ChevronRight
+            aria-hidden="true"
+            size={14}
+            className={cn(
+              "shrink-0 text-muted-foreground/55 transition-transform duration-150",
+              expanded && "rotate-90",
+            )}
+          />
 
-        {/* Filename + path. Inside a tree, the folder header above carries the
-            directory context, so we drop the redundant parent-path suffix. */}
-        <span className="flex-1 min-w-0">
-          <span className="block truncate font-mono text-[11.5px] text-foreground/85">
-            {basename}
+          <FileTypeIcon filePath={filePath} size={16} />
+
+          {/* Full path: dimmed parent, emphasized basename — self-describing
+              now that the list is flat (no folder headers). Truncates gracefully
+              across the panel's whole width range (384px floor → wide): the
+              parent dir absorbs the deficit first (shrink-[100]) so the basename
+              stays fully visible, and only ellipsizes in the extreme case of a
+              very long name on a very narrow panel. Neither side hard-clips. */}
+          <span className="flex min-w-0 flex-1 items-baseline gap-0.5 overflow-hidden font-mono text-xs">
+            {parentPath && (
+              <span className="min-w-0 shrink-[100] truncate text-muted-foreground">
+                {parentPath}
+              </span>
+            )}
+            <span className="min-w-0 truncate font-medium text-foreground/90">{basename}</span>
           </span>
-          {expanded && !nested && (
-            <span className="block break-all font-mono text-[10px] text-muted-foreground/55">
-              {filePath}
-            </span>
+
+          {isLoaded && (stats.additions > 0 || stats.deletions > 0) && (
+            <DiffStat additions={stats.additions} deletions={stats.deletions} />
           )}
-          {!expanded && !nested && parent && (
-            <span className="block truncate font-mono text-[10px] text-muted-foreground/55">
-              {parent}/
-            </span>
-          )}
-        </span>
+        </button>
 
-        {/* Stats: proportion bar + counts. Shown after the diff loads. */}
-        {isLoaded && (stats.additions > 0 || stats.deletions > 0) && (
-          <span className="flex shrink-0 items-center gap-2 font-mono text-[10px] tabular-nums">
-            <span className="flex h-[3px] w-12 items-stretch overflow-hidden rounded-full bg-border/40">
-              <span
-                className="block bg-[var(--diff-add-strong)]"
-                style={{
-                  width: `${(stats.additions / (stats.additions + stats.deletions)) * 100}%`,
-                }}
-              />
-              <span
-                className="block bg-[var(--diff-remove-strong)]"
-                style={{
-                  width: `${(stats.deletions / (stats.additions + stats.deletions)) * 100}%`,
-                }}
-              />
-            </span>
-            {stats.additions > 0 && (
-              <span className="text-[var(--diff-add-strong)]">+{stats.additions}</span>
-            )}
-            {stats.deletions > 0 && (
-              <span className="text-[var(--diff-remove-strong)]">−{stats.deletions}</span>
-            )}
-          </span>
-        )}
-
-        {/* Extension marker — single-color, monospace; lives quietly at the row's edge when collapsed */}
-        {!expanded && ext && (
-          <span className="shrink-0 font-mono text-[9.5px] uppercase tracking-[0.12em] text-muted-foreground/45">
-            {ext}
-          </span>
-        )}
-      </button>
-
-      {/* Inline diff — no height cap; outer ScrollArea owns vertical scroll.
-          `relative` anchors the SideRail. min-h ensures the rail (5 buttons
-          ~ 171px) is always fully visible even for tiny diffs. pr-8 reserves
-          the collapsed rail's gutter so code never sits behind the icons. */}
-      {expanded && (
-        <div className="relative border-t border-border/20 min-h-[180px] bg-background/45">
-          <div className="pr-8">
-            {!isLoaded ? (
-              <div className="flex items-center justify-center gap-1.5 py-3">
-                {[0, 150, 300].map((delay) => (
-                  <div
-                    key={delay}
-                    className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse"
-                    style={{ animationDelay: `${delay}ms` }}
-                  />
-                ))}
-              </div>
-            ) : previewMode && isMarkdown ? (
-              <DiffPreview lines={lines} />
-            ) : lines.length > 0 ? (
-              <>
-                {renderMode === "unified" ? (
-                  <UnifiedDiff lines={visibleLines} language={language} />
-                ) : (
-                  <SideBySideDiff lines={visibleLines} language={language} />
-                )}
-
-                {/* Large diff expansion button */}
-                {hiddenLineCount > 0 && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setShowAllLines(true)}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-none border-t border-border/20 py-2 text-[10px] text-muted-foreground/70 hover:text-foreground/70"
-                  >
-                    <ChevronsDownUp size={11} />
-                    Show {hiddenLineCount} more lines
-                  </Button>
-                )}
-              </>
-            ) : (
-              <div className="flex items-center justify-center py-4">
-                <p className="text-[10px] text-muted-foreground">No changes</p>
-              </div>
-            )}
-          </div>
-
-          <SideRail
+        {/* Inline file actions live in the header bar, not an overlay rail.
+            Shown once the diff is open, sibling to the disclosure button so
+            the two never nest. */}
+        {expanded && (
+          <FileActionBar
             filePath={filePath}
             absolutePath={absolutePath}
             absoluteDir={absoluteDir}
@@ -388,11 +380,70 @@ export function FileEntry({
             previewMode={previewMode}
             onTogglePreview={() => setPreviewMode((p) => !p)}
           />
+        )}
+      </div>
+
+      {/* Diff body — flush beneath the header bar, full width. Outer ScrollArea
+          owns vertical scroll. */}
+      {expanded && (
+        <div id={contentId} className="bg-background/40">
+          {!isLoaded ? (
+            <div className="flex items-center justify-center gap-1.5 py-3">
+              {[0, 150, 300].map((delay) => (
+                <div
+                  key={delay}
+                  className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse"
+                  style={{ animationDelay: `${delay}ms` }}
+                />
+              ))}
+            </div>
+          ) : previewMode && isMarkdown ? (
+            <DiffPreview lines={lines} />
+          ) : lines.length > 0 ? (
+            // Keyed by render mode so a unified<->split toggle remounts this
+            // block, replaying its settle-in; `isModeSwap` gates the class so the
+            // motion fires only on the swap, not on first expand or diff load.
+            <div
+              key={renderMode}
+              className={cn(isModeSwap && "animate-diff-mode-swap")}
+            >
+              {renderMode === "unified" ? (
+                <UnifiedDiff
+                  lines={visibleLines}
+                  language={language}
+                  skipLeadingHunkSeparator={leadingHiddenLines > 0}
+                />
+              ) : (
+                <SideBySideDiff
+                  lines={visibleLines}
+                  language={language}
+                  skipLeadingHunkSeparator={leadingHiddenLines > 0}
+                />
+              )}
+
+              {/* Large diff expansion button */}
+              {hiddenLineCount > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setShowAllLines(true)}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-none bg-muted/25 py-2 text-[10px] text-muted-foreground/70 hover:bg-muted/40 hover:text-foreground/70"
+                >
+                  <ChevronsDownUp size={11} />
+                  Show {hiddenLineCount} more lines
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-4">
+              <p className="text-[10px] text-muted-foreground">No changes</p>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
-}
+});
 
 /**
  * Tiny path joiner that picks the right separator without dragging in node:path.

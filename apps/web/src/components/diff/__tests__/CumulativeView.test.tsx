@@ -13,6 +13,13 @@ vi.mock("@/hooks/useOpenInApps", () => ({
   useOpenInApps: () => [],
 }));
 
+vi.mock("@/transport", () => ({
+  getTransport: () => ({
+    getSnapshotDiffStats: vi.fn().mockResolvedValue([]),
+    listSnapshots: vi.fn().mockResolvedValue([]),
+  }),
+}));
+
 describe("CumulativeView summary lens", () => {
   beforeEach(() => {
     useSettingsStore.setState({

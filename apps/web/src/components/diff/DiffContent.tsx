@@ -4,6 +4,7 @@ import { getTransport } from "@/transport";
 import { parseDiffLines } from "@/lib/diff-parser";
 import { loadFileDiff } from "@/lib/load-file-diff";
 import { langFromPath } from "@/lib/lang-from-path";
+import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { UnifiedDiff } from "./UnifiedDiff";
 import { SideBySideDiff } from "./SideBySideDiff";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -76,24 +77,14 @@ export function DiffContent() {
     );
   }
 
-  // Build breadcrumb parts
-  const pathParts = selectedFile.filePath.split("/");
-  const filename = pathParts.pop() ?? "";
-  const dirParts = pathParts;
-
   return (
     <div className="flex flex-1 flex-col overflow-hidden border-t border-border/20 min-h-0">
       {/* File path header */}
       <div className="flex flex-none items-center gap-2 border-b border-border/15 bg-muted/[0.04] px-3 py-2">
-        <div className="flex flex-1 min-w-0 items-baseline gap-0.5 font-mono text-[10.5px]">
-          {dirParts.map((part, i) => (
-            <span key={i} className="flex shrink-0 items-baseline gap-0.5 text-muted-foreground/55">
-              {part}
-              <span className="text-muted-foreground/30">/</span>
-            </span>
-          ))}
-          <span className="truncate text-[11.5px] font-medium text-foreground/85">{filename}</span>
-        </div>
+        <FileTypeIcon filePath={selectedFile.filePath} size={16} />
+        <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground/90">
+          {selectedFile.filePath}
+        </span>
         {!diffLoading && lines.length > 0 && (
           <div className="flex shrink-0 items-center gap-2 font-mono text-[10px] tabular-nums">
             {stats.additions > 0 && (

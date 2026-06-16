@@ -7,7 +7,14 @@ const analyze = process.env.ANALYZE === "true" || process.env.ANALYZE === "1";
 
 export default defineConfig({
   plugins: [
-    react(),
+    // React Compiler auto-memoizes components and hooks at build time, so manual
+    // React.memo / useMemo / useCallback become redundant. Runs as a Babel pass
+    // inside @vitejs/plugin-react; React 19 ships the runtime it emits against.
+    react({
+      babel: {
+        plugins: [["babel-plugin-react-compiler", {}]],
+      },
+    }),
     tailwindcss(),
     ...(analyze
       ? [(await import("rollup-plugin-visualizer")).visualizer({ open: true, gzipSize: true, filename: "dist/bundle-stats.html" })]

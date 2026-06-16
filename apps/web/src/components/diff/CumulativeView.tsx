@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FileText, RefreshCw } from "lucide-react";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,41 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
     [snapshots],
   );
 
+  // Report the cumulative total +/- to the toolbar. Summed across each turn's
+  // per-file stats, so this is total churn (a file edited across turns counts
+  // each time), not the net base-to-head diff. Cleared on unmount.
+  const setReviewDiffStat = useDiffStore((s) => s.setReviewDiffStat);
+  useEffect(() => {
+    let cancelled = false;
+    setReviewDiffStat(null);
+    const ids = snapshots.filter((s) => s.files_changed.length > 0).map((s) => s.id);
+    if (ids.length === 0) {
+      setReviewDiffStat({ additions: 0, deletions: 0 });
+      return () => {
+        cancelled = true;
+        setReviewDiffStat(null);
+      };
+    }
+    void Promise.all(
+      ids.map((id) => getTransport().getSnapshotDiffStats(id).catch(() => [])),
+    ).then((perSnapshot) => {
+      if (cancelled) return;
+      setReviewDiffStat(
+        perSnapshot.flat().reduce(
+          (acc, s) => ({
+            additions: acc.additions + s.additions,
+            deletions: acc.deletions + s.deletions,
+          }),
+          { additions: 0, deletions: 0 },
+        ),
+      );
+    });
+    return () => {
+      cancelled = true;
+      setReviewDiffStat(null);
+    };
+  }, [cacheVersion, snapshots, setReviewDiffStat]);
+
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -71,7 +106,7 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
         <span className="font-mono text-[11px] tabular-nums text-foreground/70">
           {files.length}
         </span>
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground/55">
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
           file{files.length !== 1 ? "s" : ""} · {snapshots.length} turn{snapshots.length !== 1 ? "s" : ""}
         </span>
         {diffSummaryEnabled && (
@@ -91,10 +126,10 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
       </div>
       {pending && (
         <div className="border-b border-primary/20 bg-primary/[0.045] px-3 py-2">
-          <div className="flex items-center gap-2 rounded border border-primary/25 bg-background/80 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+          <div className="flex items-center gap-2 rounded border border-primary/25 bg-background/80 px-2.5 py-2 shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground),transparent_94%)]">
             <span
               aria-hidden="true"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px_hsl(var(--primary)/0.14)]"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px_color-mix(in_oklch,var(--primary),transparent_85%)]"
             />
             <div className="min-w-0 flex-1">
               <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.14em] text-foreground/85">
@@ -110,7 +145,7 @@ export function CumulativeView({ snapshots, threadId }: CumulativeViewProps) {
               size="xs"
               onClick={handleRefresh}
               disabled={refreshing}
-              aria-label="Refresh Cumulative diff"
+              aria-label="Refresh All turns diff"
               data-testid="cumulative-view-refresh"
               className="h-7 shrink-0 gap-1.5 rounded border-primary/35 bg-primary/10 px-2.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.12em] text-primary hover:border-primary/55 hover:bg-primary/18"
             >

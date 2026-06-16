@@ -47,7 +47,6 @@ import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
-import { AgentStatusBar } from "./AgentStatusBar";
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
 import { useTaskStore } from "@/stores/taskStore";
 import { useDiffStore } from "@/stores/diffStore";
@@ -2904,7 +2903,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           />
         )}
         <div className="flex items-center gap-3">
-          <AgentStatusBar />
           <TerminalStatusIndicator />
         </div>
         <div className="ml-auto flex items-center gap-1">

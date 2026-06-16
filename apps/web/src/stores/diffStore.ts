@@ -220,6 +220,12 @@ interface DiffState {
   selectedCommitSha: string | null;
   /** Diff rendering mode. */
   renderMode: DiffRenderMode;
+  /** Changed-file count for the active Review view, shown as a toolbar badge. Null when unknown. */
+  reviewFileCount: number | null;
+  /** Total added/removed lines for the active Review view. Null while loading or unknown. */
+  reviewDiffStat: { additions: number; deletions: number } | null;
+  /** Bulk expand/collapse command for the Review view's file cards; each FileEntry applies it on nonce change. */
+  bulkDiffExpand: { expand: boolean; nonce: number } | null;
   /** Per-thread line-wrap preference keyed by thread ID. */
   readonly lineWrapByThread: Record<string, boolean>;
   /** Turn snapshots keyed by thread ID. */
@@ -299,6 +305,12 @@ interface DiffState {
   /** Set the Commit view's picked operand by SHA, or `null` to fall back to the latest commit. */
   setSelectedCommitSha: (sha: string | null) => void;
   setRenderMode: (mode: DiffRenderMode) => void;
+  /** Report the active Review view's changed-file count (set by FileList). */
+  setReviewFileCount: (count: number | null) => void;
+  /** Report the active Review view's total added/removed lines (set by the view). */
+  setReviewDiffStat: (stat: { additions: number; deletions: number } | null) => void;
+  /** Expand or collapse every file card in the active Review view. */
+  setBulkDiffExpand: (expand: boolean) => void;
   getLineWrap: (threadId: string) => boolean;
   toggleLineWrap: (threadId: string) => void;
   setSnapshots: (threadId: string, snapshots: TurnSnapshot[]) => void;
@@ -337,6 +349,9 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   branchComparisonKey: null,
   selectedCommitSha: null,
   renderMode: "unified",
+  reviewFileCount: null,
+  reviewDiffStat: null,
+  bulkDiffExpand: null,
   lineWrapByThread: {},
   snapshotsByThread: {},
   snapshotsLoadingByThread: {},
@@ -445,6 +460,10 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     ),
   setSelectedCommitSha: (sha) => set({ selectedCommitSha: sha }),
   setRenderMode: (mode) => set({ renderMode: mode }),
+  setReviewFileCount: (count) => set({ reviewFileCount: count }),
+  setReviewDiffStat: (stat) => set({ reviewDiffStat: stat }),
+  setBulkDiffExpand: (expand) =>
+    set((s) => ({ bulkDiffExpand: { expand, nonce: (s.bulkDiffExpand?.nonce ?? 0) + 1 } })),
   getLineWrap: (threadId) => get().lineWrapByThread[threadId] ?? DEFAULT_LINE_WRAP,
   toggleLineWrap: (threadId) =>
     set((state) => {

@@ -498,6 +498,16 @@ async function dispatch(
       if (!ws?.is_git_repo) return { base: null, target: null, refs: [], isUnborn: false };
       return deps.gitService.resolveBranchComparison(params.workspaceId, resolveThreadRepoPath(deps, params.threadId));
     }
+    case "git.reviewDiffStats": {
+      const ws = deps.workspaceService.findById(params.workspaceId);
+      if (!ws?.is_git_repo) return { additions: 0, deletions: 0 };
+      return deps.gitService.reviewDiffStats(
+        params.workspaceId,
+        params.view,
+        { base: params.base, target: params.target, sha: params.sha },
+        resolveThreadRepoPath(deps, params.threadId),
+      );
+    }
 
     // Agent
     case "agent.send":

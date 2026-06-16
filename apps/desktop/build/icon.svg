@@ -21,16 +21,19 @@
     <path id="slab" d="M256 124c13 0 26 8 41 19l116 83c17 12 17 28 0 40l-116 83c-15 11-28 18-41 18s-26-7-41-18L99 266c-17-12-17-28 0-40l116-83c15-11 28-19 41-19Z" />
   </defs>
 
-  <g>
-    <use href="#slab" transform="translate(0 82)" fill="url(#lowLayer)" />
-    <use href="#slab" transform="translate(0 48)" fill="url(#midLayer)" />
-    <use href="#slab" fill="url(#topLayer)" />
-  </g>
+  <!-- Scale mark up for dock/taskbar parity; UI uses the unscaled web SVG. -->
+  <g transform="translate(256 286) scale(1.3) translate(-256 -286)">
+    <g>
+      <use href="#slab" transform="translate(0 82)" fill="url(#lowLayer)" />
+      <use href="#slab" transform="translate(0 48)" fill="url(#midLayer)" />
+      <use href="#slab" fill="url(#topLayer)" />
+    </g>
 
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M181 277h72" stroke="#111822" stroke-width="16" />
-    <path d="M253 277 304 226h54" stroke="url(#route)" stroke-width="16" />
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M181 277h72" stroke="#111822" stroke-width="16" />
+      <path d="M253 277 304 226h54" stroke="url(#route)" stroke-width="16" />
+    </g>
+    <circle cx="181" cy="277" r="17" fill="#111822" />
+    <circle cx="358" cy="226" r="23" fill="#ffa31d" />
   </g>
-  <circle cx="181" cy="277" r="17" fill="#111822" />
-  <circle cx="358" cy="226" r="23" fill="#ffa31d" />
 </svg>

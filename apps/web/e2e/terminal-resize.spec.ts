@@ -46,6 +46,14 @@ async function mockWebSocketServerWithResizeCounter(
         method === "terminal.killByThread"
       ) {
         result = true;
+      // ADR-0010: TerminalView calls terminal.reattach on every mount to replay
+      // scrollback into the fresh xterm. Return { gapped: false } so the
+      // reattach gate flushes and the view finishes mounting.
+      } else if (method === "terminal.reattach") {
+        result = { gapped: false };
+      // terminal.resume releases the server-side pause buffer after reattach.
+      } else if (method === "terminal.resume" || method === "terminal.pause") {
+        result = null;
       }
       ws.send(JSON.stringify({ id: msg.id, result }));
     });

@@ -172,6 +172,7 @@ export const mockTransport: McodeTransport = {
   getBranchComparison: vi
     .fn()
     .mockResolvedValue({ base: null, target: null, refs: [], isUnborn: false }),
+  getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
   push: vi.fn().mockResolvedValue({ success: true }),
   generatePrDraft: vi.fn().mockResolvedValue({ title: "", body: "" }),
   createPr: vi.fn().mockResolvedValue({ number: 1, url: "" }),

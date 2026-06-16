@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { TerminalReplayBuffer } from "../terminal-replay-buffer.js";
+import {
+  TerminalReplayBuffer,
+  replayCapBytesForScrollback,
+  REPLAY_BYTES_PER_LINE,
+  REPLAY_BUFFER_MIN_CAP_BYTES,
+  REPLAY_BUFFER_MAX_CAP_BYTES,
+} from "../terminal-replay-buffer.js";
 
 describe("TerminalReplayBuffer", () => {
   it("starts empty", () => {
@@ -119,5 +125,122 @@ describe("TerminalReplayBuffer", () => {
     expect(result.chunks.length).toBe(1);
     expect(result.chunks[0]!.seq).toBe(0);
     expect(result.chunks[0]!.bytes).toEqual(bytes);
+  });
+
+  describe("setCap", () => {
+    it("cap getter reflects the constructor value and setCap updates it", () => {
+      const buf = new TerminalReplayBuffer(1024);
+      expect(buf.cap).toBe(1024);
+      buf.setCap(2048);
+      expect(buf.cap).toBe(2048);
+    });
+
+    it("lowering the cap evicts oldest chunks down to the new limit", () => {
+      const buf = new TerminalReplayBuffer(100);
+      buf.record(1, new Uint8Array(20));
+      buf.record(2, new Uint8Array(20));
+      buf.record(3, new Uint8Array(20)); // 60 bytes, within cap=100
+      expect(buf.bufferedBytes).toBe(60);
+
+      buf.setCap(40); // must evict down to <= 40 → drops seq=1 then seq=2? 60>40 drop seq1→40, 40>40 false
+      // seq=1 (20) evicted → 40 remaining (seq=2,3), 40 is not > 40 so stop.
+      expect(buf.bufferedBytes).toBeLessThanOrEqual(40);
+      const result = buf.replay(0);
+      expect(result.chunks.map((c) => c.seq)).toEqual([2, 3]);
+    });
+
+    it("lowering the cap accumulates droppedBytes and marks replay gapped", () => {
+      const buf = new TerminalReplayBuffer(100);
+      buf.record(1, new Uint8Array(30));
+      buf.record(2, new Uint8Array(30));
+      expect(buf.droppedBytes).toBe(0);
+
+      buf.setCap(30); // evict seq=1 (30 bytes)
+      expect(buf.droppedBytes).toBe(30);
+      // Asking for everything (incl. seq=1) now reports a gap.
+      const result = buf.replay(0);
+      expect(result.gapped).toBe(true);
+      expect(result.chunks.map((c) => c.seq)).toEqual([2]);
+    });
+
+    it("raising the cap retains more output going forward", () => {
+      const buf = new TerminalReplayBuffer(20);
+      buf.record(1, new Uint8Array(10));
+      buf.record(2, new Uint8Array(10)); // 20, at cap
+      buf.setCap(60);
+      buf.record(3, new Uint8Array(10));
+      buf.record(4, new Uint8Array(10)); // 40 total, all retained under new cap
+      const result = buf.replay(0);
+      expect(result.gapped).toBe(false);
+      expect(result.chunks.map((c) => c.seq)).toEqual([1, 2, 3, 4]);
+    });
+
+    it("is a no-op for retention when the cap is unchanged", () => {
+      const buf = new TerminalReplayBuffer(100);
+      buf.record(1, new Uint8Array(30));
+      buf.setCap(100);
+      expect(buf.droppedBytes).toBe(0);
+      expect(buf.replay(0).chunks.length).toBe(1);
+    });
+  });
+
+  describe("reattach replay within the scrollback budget", () => {
+    it("retains roughly the scrollback window and replays its tail", () => {
+      // A 200-line scrollback → a byte cap; record well beyond it.
+      const cap = replayCapBytesForScrollback(200);
+      const buf = new TerminalReplayBuffer(cap);
+      const lineBytes = 80; // typical line width
+      const totalLines = 5000;
+      for (let i = 0; i < totalLines; i++) {
+        buf.record(i, new Uint8Array(lineBytes).fill(i & 0xff));
+      }
+      // Never exceeds its cap.
+      expect(buf.bufferedBytes).toBeLessThanOrEqual(cap);
+      // A fresh reattach (lastSeq before everything) gets a gap banner because
+      // older output was evicted, plus the retained recent tail.
+      const result = buf.replay(-1);
+      expect(result.gapped).toBe(true);
+      expect(result.chunks.length).toBeGreaterThan(0);
+      // The most recent line is always retained.
+      expect(result.chunks[result.chunks.length - 1]!.seq).toBe(totalLines - 1);
+    });
+
+    it("replays without a gap when output stays within the budget", () => {
+      const cap = replayCapBytesForScrollback(1000);
+      const buf = new TerminalReplayBuffer(cap);
+      // 100 lines × 80 bytes = 8 KB, well within the ~500 KB budget.
+      for (let i = 0; i < 100; i++) {
+        buf.record(i, new Uint8Array(80).fill(i & 0xff));
+      }
+      const result = buf.replay(-1);
+      expect(result.gapped).toBe(false);
+      expect(result.chunks.length).toBe(100);
+    });
+  });
+});
+
+describe("replayCapBytesForScrollback", () => {
+  it("derives the default 1000-line scrollback from the per-line budget", () => {
+    expect(replayCapBytesForScrollback(1000)).toBe(1000 * REPLAY_BYTES_PER_LINE);
+  });
+
+  it("treats 0 (unlimited client buffer) as the bounded server maximum", () => {
+    expect(replayCapBytesForScrollback(0)).toBe(REPLAY_BUFFER_MAX_CAP_BYTES);
+  });
+
+  it("treats negative values as the bounded server maximum", () => {
+    expect(replayCapBytesForScrollback(-1)).toBe(REPLAY_BUFFER_MAX_CAP_BYTES);
+  });
+
+  it("floors tiny scrollback values at the minimum cap", () => {
+    // 10 × 512 = 5120 < 64 KB floor.
+    expect(replayCapBytesForScrollback(10)).toBe(REPLAY_BUFFER_MIN_CAP_BYTES);
+  });
+
+  it("clamps very large scrollback values at the maximum cap", () => {
+    // 5000 (the settings max) × 512 = 2.56 MB, under the 8 MB ceiling.
+    expect(replayCapBytesForScrollback(5000)).toBe(5000 * REPLAY_BYTES_PER_LINE);
+    // A value beyond what settings allows still saturates at the ceiling.
+    expect(replayCapBytesForScrollback(1_000_000)).toBe(REPLAY_BUFFER_MAX_CAP_BYTES);
   });
 });
