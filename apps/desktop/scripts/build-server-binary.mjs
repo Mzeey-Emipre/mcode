@@ -54,10 +54,12 @@ export function resolveBinaryPaths({ appOutDir, electronPlatformName, productFil
  * @param {string} info.fileVersion - dotted quad e.g. "1.2.3.0"
  * @param {string} info.productVersion - dotted quad
  * @param {string} info.originalFilename
+ * @param {string} [info.iconPath] - absolute path to a .ico; when set, its icons
+ *   replace the binary's icon group so the server shows the app favicon.
  * @returns {Promise<void>}
  */
 export async function stampWindowsVersionInfo(exePath, info) {
-  const { NtExecutable, NtExecutableResource, Resource } = await import("resedit");
+  const { NtExecutable, NtExecutableResource, Resource, Data } = await import("resedit");
   const buf = await readFile(exePath);
   const exe = NtExecutable.from(buf);
   const res = NtExecutableResource.from(exe);
@@ -82,6 +84,23 @@ export async function stampWindowsVersionInfo(exePath, info) {
     },
   );
   versionInfo.outputToResourceEntries(res.entries);
+
+  // The renamed copy inherits no usable icon, so Task Manager falls back to a
+  // generic glyph. Stamp the app favicon onto the binary's icon group, reusing
+  // the existing group id so Windows treats it as the executable icon.
+  if (info.iconPath) {
+    const iconBuf = await readFile(info.iconPath);
+    const iconFile = Data.IconFile.from(iconBuf);
+    const existingGroups = Resource.IconGroupEntry.fromEntries(res.entries);
+    const iconGroupId = existingGroups.length > 0 ? existingGroups[0].id : 1;
+    Resource.IconGroupEntry.replaceIconsForResource(
+      res.entries,
+      iconGroupId,
+      1033,
+      iconFile.icons.map((icon) => icon.data),
+    );
+  }
+
   res.outputResource(exe);
 
   await writeFile(exePath, Buffer.from(exe.generate()));
@@ -100,6 +119,8 @@ export async function stampWindowsVersionInfo(exePath, info) {
  * @param {string} [args.executableName] - Linux executable name (defaults to productFilename).
  * @param {string} [args.appVersion] - dotted quad like "1.2.3.0"; required on win32
  * @param {string} [args.companyName] - default "Mcode"
+ * @param {string} [args.iconPath] - absolute path to a .ico stamped onto the
+ *   win32 binary so it shows the app favicon instead of a generic icon.
  */
 export async function buildServerBinary({
   appOutDir,
@@ -108,6 +129,7 @@ export async function buildServerBinary({
   executableName,
   appVersion,
   companyName = "Mcode",
+  iconPath,
 }) {
   const { srcBinary, dstBinary } = resolveBinaryPaths({
     appOutDir,
@@ -225,6 +247,7 @@ export async function buildServerBinary({
       fileVersion: appVersion,
       productVersion: appVersion,
       originalFilename: "mcode-server.exe",
+      iconPath,
     });
   }
 }
