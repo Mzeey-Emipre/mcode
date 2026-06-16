@@ -4,6 +4,11 @@ status: accepted
 
 # The right panel splits its state: open/closed is per-thread, width and tab are workspace-global; singleton tabs keep their own scope
 
+> **Proposed revision:** ADR-0012 moves *all* panel container state (including
+> width and active tab) to per-thread, with a workspace-level fallback. If
+> accepted, it supersedes the state-split decision below; the singleton-tabs and
+> per-tab-scope decisions here still stand.
+
 ## Context
 
 The right panel was entirely thread-scoped: `RightPanel.tsx` returns `null`
