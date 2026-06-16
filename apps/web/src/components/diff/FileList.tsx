@@ -142,12 +142,9 @@ export function FileList({
   return (
     <div className="flex flex-col">
       <div className="sticky top-0 z-20 flex items-center gap-0.5 bg-background/95 px-2 py-1.5 shadow-[0_8px_12px_-12px_oklch(0_0_0/0.35)] backdrop-blur-sm">
-        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-          {files.length} {files.length === 1 ? "file" : "files"}
-        </span>
-
-        {/* Diff-display controls: review-options menu, jump, split toggle.
-            `ml-auto` on the first pushes the group to the right edge. */}
+        {/* Diff-display controls: review-options menu, jump, split toggle. The
+            changed-file count lives on the toolbar's view switcher, so this bar
+            carries only the controls; `ml-auto` keeps the group at the right. */}
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label="Review options"
