@@ -154,7 +154,7 @@ export function FileList({
             data-testid="review-options-menu"
             className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/50 outline-none transition-colors hover:bg-muted/40 hover:text-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
           >
-            <MoreHorizontal size={18} />
+            <MoreHorizontal size={13} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={6} className="min-w-[190px]">
             <DropdownMenuItem
@@ -206,7 +206,7 @@ export function FileList({
                     data-testid="review-file-jump-trigger"
                     className="h-6 w-6 text-muted-foreground/60 hover:bg-foreground/10 hover:text-foreground"
                   >
-                    <FileSearch size={18} aria-hidden="true" />
+                    <FileSearch size={13} aria-hidden="true" />
                   </Button>
                 }
               />
@@ -275,7 +275,7 @@ export function FileList({
                     : "text-muted-foreground/50 hover:bg-muted/40 hover:text-foreground/70",
                 )}
               >
-                <Columns2 size={18} />
+                <Columns2 size={13} />
               </Button>
             }
           />
