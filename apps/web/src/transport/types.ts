@@ -417,6 +417,23 @@ export interface McodeTransport {
   getBranchDiff(workspaceId: string, base?: string, target?: string, filePath?: string, maxLines?: number, threadId?: string): Promise<string>;
   /** Resolve the default Branch comparison (base→target per ADR 0007) plus the refs that populate the pickers. Pass threadId so "current branch" is the thread's worktree branch. */
   getBranchComparison(workspaceId: string, threadId?: string): Promise<BranchComparison>;
+  /**
+   * Return total additions and deletions for a Review-panel git view.
+   * Ref semantics match the file-list methods so the stat total matches the
+   * panel's file list. Pass threadId to resolve the thread's worktree cwd.
+   */
+  getReviewDiffStats(params: {
+    workspaceId: string;
+    view: "unstaged" | "staged" | "branch" | "commit";
+    /** Branch view: base ref (already resolved client-side; omit to auto-detect). */
+    base?: string;
+    /** Branch view: target ref (omit to use HEAD). */
+    target?: string;
+    /** Commit view: commit SHA. */
+    sha?: string;
+    /** Worktree thread — resolves the right cwd. */
+    threadId?: string;
+  }): Promise<{ additions: number; deletions: number }>;
 
   // GitHub PR (advanced)
   /** Push a branch to the remote. */

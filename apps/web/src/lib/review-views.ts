@@ -58,7 +58,7 @@ export const REVIEW_VIEWS: readonly ReviewView[] = [
   { id: "commit", label: "Commit", threadOnly: false, requires: "git", operand: "commit" },
   { id: "branch", label: "Branch", threadOnly: false, requires: "git", operand: "branch" },
   { id: "last-turn", label: "Last turn", threadOnly: true },
-  { id: "cumulative", label: "Cumulative", threadOnly: true },
+  { id: "cumulative", label: "All turns", threadOnly: true },
 ];
 
 /**

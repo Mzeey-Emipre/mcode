@@ -674,6 +674,99 @@ export class GitService {
   }
 
   /**
+   * Parse a `git diff --numstat` stdout block into a totalled { additions, deletions } pair.
+   * Binary files emit "-\t-\t<path>" — those lines count as 0 for both columns, matching
+   * the behaviour of the file-list methods which still include the file in their output.
+   */
+  private parseNumstatTotal(stdout: string): { additions: number; deletions: number } {
+    let additions = 0;
+    let deletions = 0;
+    for (const line of stdout.trim().split("\n")) {
+      if (!line.includes("\t")) continue;
+      const [addStr, delStr] = line.split("\t");
+      additions += addStr === "-" ? 0 : parseInt(addStr ?? "0", 10);
+      deletions += delStr === "-" ? 0 : parseInt(delStr ?? "0", 10);
+    }
+    return { additions, deletions };
+  }
+
+  /**
+   * Return total additions and deletions for a Review-panel git view.
+   * Ref semantics match the corresponding file-list methods so the stat
+   * total always agrees with the file list the panel shows:
+   *
+   * - `unstaged` → working tree vs index (`git diff --numstat`)
+   * - `staged`   → index vs HEAD (`git diff --numstat --cached`)
+   * - `branch`   → three-dot symmetric diff (`git diff --numstat base...target`)
+   * - `commit`   → parent vs commit (`git diff --numstat sha~1 sha`), with the
+   *   standard empty-tree fallback for root commits
+   *
+   * Pass `repoPath` to read a thread's worktree instead of the workspace root.
+   */
+  async reviewDiffStats(
+    workspaceId: string,
+    view: "unstaged" | "staged" | "branch" | "commit",
+    opts: { base?: string; target?: string; sha?: string },
+    repoPath?: string,
+  ): Promise<{ additions: number; deletions: number }> {
+    const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
+    const empty = { additions: 0, deletions: 0 };
+
+    if (view === "unstaged" || view === "staged") {
+      const args = ["-C", cwd, "diff", "--numstat"];
+      if (view === "staged") args.push("--cached");
+      try {
+        const { stdout } = await this.gitExecutor.exec(args, { timeout: 10_000 });
+        return this.parseNumstatTotal(stdout);
+      } catch {
+        return empty;
+      }
+    }
+
+    if (view === "branch") {
+      const resolvedBase = opts.base ?? (await this.detectDefaultBranch(cwd));
+      if (!resolvedBase) return empty;
+      const resolvedTarget = opts.target ?? "HEAD";
+      assertSafeRef(resolvedBase);
+      assertSafeRef(resolvedTarget);
+      try {
+        const { stdout } = await this.gitExecutor.exec(
+          ["-C", cwd, "diff", "--numstat", `${resolvedBase}...${resolvedTarget}`],
+          { timeout: 10_000 },
+        );
+        return this.parseNumstatTotal(stdout);
+      } catch {
+        return empty;
+      }
+    }
+
+    // commit view
+    const sha = opts.sha;
+    if (!sha || !/^[0-9a-fA-F]{4,40}$/.test(sha)) {
+      throw new Error(`Invalid or missing git SHA for commit view: ${sha}`);
+    }
+    try {
+      const { stdout } = await this.gitExecutor.exec(
+        ["-C", cwd, "diff", "--numstat", `${sha}~1`, sha],
+        { timeout: 10_000 },
+      );
+      return this.parseNumstatTotal(stdout);
+    } catch {
+      // Root commit — diff against the empty tree
+      const emptyTree = "4b825dc642cb6eb9a060e54bf899d69f82049264";
+      try {
+        const { stdout } = await this.gitExecutor.exec(
+          ["-C", cwd, "diff", "--numstat", emptyTree, sha],
+          { timeout: 10_000 },
+        );
+        return this.parseNumstatTotal(stdout);
+      } catch {
+        return empty;
+      }
+    }
+  }
+
+  /**
    * Resolve the default Branch comparison for a checkout, plus the refs that
    * populate the base/target pickers. Implements the context-dependent default
    * from `docs/adr/0007-branch-comparison-default-and-range.md`:

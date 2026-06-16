@@ -123,3 +123,19 @@ export function parseDiffLines(diff: string): ParsedDiffLine[] {
 
   return result;
 }
+
+/** Index of the first `@@` hunk header in parsed lines, or -1 when none. */
+export function getFirstHunkHeaderIndex(lines: readonly ParsedDiffLine[]): number {
+  return lines.findIndex((line) => line.type === "header" && line.content.startsWith("@@"));
+}
+
+/**
+ * Hidden line count before the first hunk (lines skipped above the first change).
+ * Returns 0 when the diff starts at line 1 or has no hunks.
+ */
+export function getLeadingHiddenLineCount(lines: readonly ParsedDiffLine[]): number {
+  const index = getFirstHunkHeaderIndex(lines);
+  if (index < 0) return 0;
+  const count = lines[index]?.hiddenLineCount ?? 0;
+  return count > 0 ? count : 0;
+}

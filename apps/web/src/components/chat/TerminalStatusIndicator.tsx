@@ -19,7 +19,7 @@ export function TerminalStatusIndicator() {
   if (count <= 0) return null;
 
   return (
-    // button, not div — this element is interactive; AgentStatusBar uses div because it is display-only
+    // button, not div — this element is interactive
     <button
       type="button"
       aria-label="Toggle terminal"

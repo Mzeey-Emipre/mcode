@@ -578,7 +578,7 @@ export function ModelSection() {
           <SettingRow
             label="Diff summary"
             configKey="diffSummary.enabled"
-            hint="Show the Summarize toggle in the Cumulative diff."
+            hint="Show the Summarize toggle in the All turns diff."
           >
             <Switch
               checked={diffSummaryEnabled}

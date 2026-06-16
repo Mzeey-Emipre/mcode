@@ -240,6 +240,38 @@
   }
 }
 
+/* Tailwind's looping utilities (loading dots, spinners) are not covered by the
+   named-animation blocks above, so reduced-motion must settle them explicitly.
+   Freezing leaves a static-but-visible loading affordance. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse,
+  .animate-spin {
+    animation: none;
+  }
+}
+
+@keyframes diff-mode-swap {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* Unified <-> split diff swap: the newly shown layout settles in on toggle. The
+   resting layout is the base state (no keyframe applied), so a headless or
+   hidden render shows the diff fully without depending on the animation firing. */
+.animate-diff-mode-swap {
+  animation: diff-mode-swap 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-diff-mode-swap {
+    animation: none;
+  }
+}
+
 /* Changes-tab freshness ring: a short amber pulse that fires when new changed
  * files land while the user is on another tab, then settles to the steady
  * amber count. Two iterations so it registers without nagging. */
@@ -692,7 +724,7 @@ input[type="range"].settings-range::-moz-range-thumb {
   }
 }
 
-/* Stacked-layers icon shimmer used by AgentStatusBar when sub-agents are running.
+/* Stacked-layers icon shimmer used by NarrativeIndicator when a turn is active.
    Combines a gentle vertical float with a per-layer opacity ripple — each
    diamond pulses brighter in sequence (top, middle, bottom) on a 200ms phase
    delay, reading as "depth cycling through work." */

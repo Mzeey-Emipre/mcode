@@ -1,16 +1,12 @@
-import { useEffect, useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import { Menu, PanelRight, Diff, GitBranch, Upload, Check, GitPullRequest } from "lucide-react";
 import { OpenInAppButton } from "./OpenInAppButton";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { PrSplitButton } from "./PrSplitButton";
-import { useBranchPr } from "@/hooks/useBranchPr";
-import { useHasCommitsAhead } from "@/hooks/useHasCommitsAhead";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { useDiffStore } from "@/stores/diffStore";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
-import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { executeCommand } from "@/lib/command-registry";
-import { isPrable } from "@/lib/is-prable";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,11 +20,6 @@ import { Kbd } from "@/components/palette/Kbd";
 import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";
 import { isMac } from "@/lib/platform";
 import type { Thread } from "@/transport";
-import { openGitHubUrl } from "@/lib/open-url-in-preview";
-
-/** Composer prefill used by the consolidated menu's "Commit or push" item. */
-const COMMIT_PREFILL = "Commit and push the current changes.";
-
 /** Props for {@link HeaderActions}. */
 interface HeaderActionsProps {
   thread: Thread;
@@ -41,72 +32,21 @@ interface HeaderActionsProps {
  * thread's PR and syncs state changes back to the workspace store.
  */
 export function HeaderActions({ thread }: HeaderActionsProps) {
-  const [createPrOpen, setCreatePrOpen] = useState(false);
   const [branchCopied, setBranchCopied] = useState(false);
 
-  const workspace = useWorkspaceStore((s) =>
-    s.workspaces.find((w) => w.id === thread.workspace_id),
-  );
-
-  // Determine the path to open: worktree path if available, otherwise workspace root
-  const dirPath = thread.worktree_path ?? workspace?.path ?? null;
-
-  // PR affordances only apply to PR-able (worktree) threads. A direct-mode
-  // thread runs against the main checkout and can never have a PR through this
-  // app, so we render no PR UI and skip all GitHub polling for it.
-  const cwd = workspace?.path ?? null;
-  const prable = isPrable(thread);
-  const polledPr = useBranchPr(prable ? thread.branch : null, cwd);
-
-  // polledPr is the live source of truth for state (OPEN / MERGED / CLOSED).
-  // The store-backed entry fills the window right after creation, before the first
-  // poll resolves. Only use it when cachedPrUrl is present — otherwise we'd produce
-  // a PR object with url: "" which breaks the Open-in-browser action.
-  const cachedPrUrl = useWorkspaceStore((s) => s.prUrlsByThreadId[thread.id]);
-  const checks = useWorkspaceStore((s) => s.checksById[thread.id]) ?? null;
-
-  // Pull PR metadata (title/author) from the openPrs cache for the popover header.
-  // polledPr and storePr only carry {number, url, state}; listOpenPrs has the rest.
-  // openPrs is scoped to the active workspace, so no extra key is needed.
-  const openPrDetail = useWorkspaceStore((s) => {
-    if (thread.pr_number == null) return null;
-    return s.openPrs.find((p) => p.number === thread.pr_number) ?? null;
-  });
-  const storePr = thread.pr_number != null && cachedPrUrl
-    ? { number: thread.pr_number, url: cachedPrUrl, state: thread.pr_status ?? "OPEN" }
-    : null;
-  // When polledPr and storePr have different numbers, storePr is the freshly
-  // created PR and polledPr is stale (not yet caught up). Prefer storePr.
-  const pr = (storePr != null && polledPr?.url && polledPr.number !== storePr.number)
-    ? storePr
-    : (polledPr?.url ? polledPr : null) ?? storePr;
-
-  // Check if the branch has commits ahead of main (disable Create PR when it doesn't)
-  const hasCommitsAhead = useHasCommitsAhead(
-    prable ? thread.workspace_id : "",
-    prable ? thread.branch : null,
-    prable ? thread.id : undefined,
-  );
-
-  // Sync polled PR state back to the workspace store so the project tree
-  // icon reflects state changes (e.g. OPEN -> MERGED) in realtime.
-  useEffect(() => {
-    if (!pr) return;
-    useWorkspaceStore.setState((ws) => {
-      const stored = ws.threads.find((t) => t.id === thread.id);
-      if (!stored) return ws;
-      const stateChanged = stored.pr_status?.toLowerCase() !== pr.state.toLowerCase();
-      const numberChanged = stored.pr_number !== pr.number;
-      if (!stateChanged && !numberChanged) return ws;
-      return {
-        threads: ws.threads.map((t) =>
-          t.id === thread.id
-            ? { ...t, pr_number: pr.number, pr_status: pr.state }
-            : t,
-        ),
-      };
-    });
-  }, [pr, thread.id]);
+  // Commit-or-push + Create-PR orchestration is shared with the Review toolbar.
+  const {
+    prable,
+    pr,
+    hasCommitsAhead,
+    checks,
+    openPrDetail,
+    dirPath,
+    createPrOpen,
+    setCreatePrOpen,
+    handleCommitOrPush,
+    handleOpenPr,
+  } = useThreadGitActions(thread);
 
   // Deduplicated count of files touched across the thread's loaded turn snapshots.
   // Cheap, reactive, and always correct; the precise per-file +/- lives one click
@@ -154,18 +94,6 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
     setBranchCopied(true);
     setTimeout(() => setBranchCopied(false), 1500);
   }, [thread.branch]);
-
-  const setPendingPrefill = useComposerDraftStore((s) => s.setPendingPrefill);
-  const handleCommitOrPush = useCallback(() => {
-    setPendingPrefill(COMMIT_PREFILL);
-  }, [setPendingPrefill]);
-
-  const handleOpenPr = useCallback(
-    (url: string, event?: React.MouseEvent) => {
-      openGitHubUrl(url, thread.id, event);
-    },
-    [thread.id],
-  );
 
   return (
     <div className="flex items-center justify-end gap-1">

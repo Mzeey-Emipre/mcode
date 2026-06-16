@@ -633,6 +633,11 @@ measured between git refs and shows committed history only. The two coincide
 only when the thread committed everything and its base has not moved.
 _Avoid_: "net diff versus base" (that phrasing collides with Branch).
 
+**All turns** is the user-facing label for this view; the toolbar switcher
+says _All turns_, while the code, the view id (`cumulative`), and this
+glossary keep the name _Cumulative_, mirroring the _Project_ (UI) /
+_Workspace_ (code) split.
+
 ## Open-in app
 
 ### Open-in app

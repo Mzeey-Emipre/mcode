@@ -758,6 +758,8 @@ export function createWsTransport(
       rpc<string>("git.branchDiff", { workspaceId, base, target, filePath, maxLines, threadId }),
     getBranchComparison: (workspaceId, threadId?) =>
       rpc<BranchComparison>("git.branchComparison", { workspaceId, threadId }),
+    getReviewDiffStats: (params) =>
+      rpc<{ additions: number; deletions: number }>("git.reviewDiffStats", params),
 
     // GitHub PR (advanced)
     push: (workspaceId, branch) =>

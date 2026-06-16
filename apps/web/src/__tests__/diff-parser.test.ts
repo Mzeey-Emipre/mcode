@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDiffLines, isMarkdownFile, reconstructNewContent } from "../lib/diff-parser";
+import { parseDiffLines, isMarkdownFile, reconstructNewContent, getLeadingHiddenLineCount } from "../lib/diff-parser";
 
 describe("parseDiffLines", () => {
   describe("hiddenLineCount on hunk headers", () => {
@@ -111,6 +111,25 @@ diff --git a/b.ts b/b.ts
       );
       expect(hunkHeaders[0]?.hiddenLineCount).toBe(4); // first file: 5-1=4
       expect(hunkHeaders[1]?.hiddenLineCount).toBe(2); // second file: reset, 3-1=2
+    });
+  });
+
+  describe("getLeadingHiddenLineCount", () => {
+    it("returns lines before the first hunk", () => {
+      const diff = `@@ -51,3 +51,3 @@
+ context
+-old
++new`;
+      const lines = parseDiffLines(diff);
+      expect(getLeadingHiddenLineCount(lines)).toBe(50);
+    });
+
+    it("returns 0 when the first hunk starts at line 1", () => {
+      const diff = `@@ -1,3 +1,3 @@
+-old
++new`;
+      const lines = parseDiffLines(diff);
+      expect(getLeadingHiddenLineCount(lines)).toBe(0);
     });
   });
 

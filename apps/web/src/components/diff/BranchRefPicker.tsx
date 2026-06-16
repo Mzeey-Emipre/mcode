@@ -301,7 +301,7 @@ export function BranchRefPicker({ workspaceId, threadId }: BranchRefPickerProps)
   const refs = comparison?.refs ?? [];
   return (
     <div
-      className="flex h-7 min-w-0 max-w-[min(46vw,390px)] items-center gap-1 overflow-hidden rounded-lg border border-border/30 bg-muted/25 px-1 shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground),transparent_94%)]"
+      className="flex min-w-0 max-w-[min(46vw,390px)] items-center gap-1 overflow-hidden"
       data-testid="branch-ref-picker"
       role="group"
       aria-label="Branch comparison range"

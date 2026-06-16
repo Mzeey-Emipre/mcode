@@ -12,6 +12,7 @@ const transport = vi.hoisted(() => ({
   getCommitFiles: vi.fn(),
   getWorkingTreeFiles: vi.fn(),
   getBranchFiles: vi.fn(),
+  getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
 }));
 
 vi.mock("@/transport", () => ({

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useId } from "react";
 import { ChevronRight, FileText, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore } from "@/stores/diffStore";
@@ -6,6 +6,8 @@ import { readThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { getTransport } from "@/transport";
+import { diffCardSurfaceClass } from "@/components/diff/diff-surface";
+import { DiffStat } from "@/components/diff/DiffStat";
 
 /** Props for TurnChangeSummary. */
 interface TurnChangeSummaryProps {
@@ -35,11 +37,12 @@ const MAX_DISPLAYED_FILES = 50;
 /**
  * Inline banner showing files changed in an agent turn.
  * Collapsed: single-line bar with file count and expand chevron.
- * Expanded: file list with per-file "Diff" button and a "View All Diffs" button.
+ * Expanded: file list with per-file "Diff" button and a "View all diffs" button.
  */
 export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manualExpandRef }: TurnChangeSummaryProps) {
   // Restore manual override from ref if the virtualizer remounted this component
   const manualOverride = manualExpandRef?.current?.get(messageId);
+  const contentId = useId();
   const [expanded, setExpanded] = useState(manualOverride ?? isLatestTurn);
   const [diffStats, setDiffStats] = useState<Map<string, { additions: number; deletions: number }> | null>(null);
   const fileCount = filesChanged.length;
@@ -118,14 +121,15 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
 
   return (
     <div className="my-1">
-      <div className="rounded-lg border border-border/40 bg-muted/30 overflow-hidden">
+      <div className={diffCardSurfaceClass()}>
         {/* Header row: toggle and "View All Diffs" are siblings to avoid nested buttons */}
-        <div className="flex w-full items-center justify-between px-3 py-1.5 text-xs text-muted-foreground">
+        <div className="flex w-full items-center justify-between px-2.5 py-1 text-xs text-muted-foreground">
           <Button
             variant="ghost"
             size="xs"
             onClick={handleToggle}
             aria-expanded={expanded}
+            aria-controls={expanded ? contentId : undefined}
             className="gap-2 px-1.5 hover:bg-transparent text-muted-foreground hover:text-foreground/80"
           >
             <FileText size={13} className="shrink-0 text-muted-foreground/60" />
@@ -133,8 +137,9 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
               {fileCount} file{fileCount !== 1 ? "s" : ""} changed
             </span>
             <ChevronRight
+              aria-hidden="true"
               size={12}
-              className={`shrink-0 text-muted-foreground/40 transition-transform ${expanded ? "rotate-90" : ""}`}
+              className={`shrink-0 text-muted-foreground/55 transition-transform ${expanded ? "rotate-90" : ""}`}
             />
           </Button>
           <Button
@@ -144,13 +149,13 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
             className="gap-1 text-muted-foreground/70"
           >
             <ExternalLink size={10} />
-            View All Diffs
+            View all diffs
           </Button>
         </div>
 
         {/* File list — only rendered when expanded */}
         {expanded && (
-          <div className="border-t border-border/30 px-1 py-1">
+          <div id={contentId} className="px-1 pb-1 pt-0.5">
             {displayedFiles.map((filePath) => {
               const name = fileName(filePath);
               const dir = parentDir(filePath);
@@ -158,23 +163,17 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
               return (
                 <div
                   key={filePath}
-                  className="flex items-center justify-between rounded-md px-2.5 py-1 text-xs hover:bg-muted/40 transition-colors"
+                  className="flex items-center justify-between rounded-md px-2 py-0.5 text-xs hover:bg-muted/40 transition-colors"
                 >
                   <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
                     <span className="font-medium text-foreground/80 truncate">{name}</span>
                     {dir && (
-                      <span className="text-muted-foreground/40 truncate font-mono text-xs">
+                      <span className="text-muted-foreground/60 truncate font-mono text-xs">
                         {dir}
                       </span>
                     )}
                   </div>
-                  {stat && (
-                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground/40 shrink-0">
-                      <span className="text-green-500/60">+{stat.additions}</span>
-                      <span className="text-muted-foreground/30"> / </span>
-                      <span className="text-red-500/60">-{stat.deletions}</span>
-                    </span>
-                  )}
+                  {stat && <DiffStat additions={stat.additions} deletions={stat.deletions} />}
                 </div>
               );
             })}
@@ -185,7 +184,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
                 onClick={handleViewAllDiffs}
                 className="w-full justify-center text-muted-foreground/60 hover:text-foreground/80 mt-0.5"
               >
-                +{hiddenCount} more file{hiddenCount !== 1 ? "s" : ""} — View All Diffs
+                +{hiddenCount} more file{hiddenCount !== 1 ? "s" : ""} — View all diffs
               </Button>
             )}
           </div>

@@ -86,6 +86,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
   // The Commit view's picked operand (see CommitPicker). Null means the picker
   // has not resolved a commit yet, or the current scope has no commits.
   const selectedCommitSha = useDiffStore((s) => s.selectedCommitSha);
+  const setReviewDiffStat = useDiffStore((s) => s.setReviewDiffStat);
 
   // The Branch toolbar stores the pair as current→comparison because that is how
   // it is shown. Git three-dot review semantics fetch comparison...current.
@@ -164,6 +165,48 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     // previous scope's stale diff. selectedCommitSha is one too: picking a commit
     // refetches that commit's files (no-op for the non-commit views).
   }, [view, workspaceId, threadId, branchRange, branchUnborn, selectedCommitSha, mutableDiffRevision]);
+
+  // Report the view's total +/- to the toolbar. Null while the count loads so
+  // the toolbar shows its spinner; cleared on unmount so a switching view never
+  // shows a stale total.
+  useEffect(() => {
+    let cancelled = false;
+    setReviewDiffStat(null);
+
+    const params =
+      view === "unstaged" || view === "staged"
+        ? { workspaceId, view, threadId }
+        : view === "branch"
+          ? branchUnborn || !branchRange
+            ? null
+            : { workspaceId, view, base: branchRange.base, target: branchRange.target, threadId }
+          : selectedCommitSha
+            ? { workspaceId, view, sha: selectedCommitSha, threadId }
+            : null;
+
+    if (!params) {
+      // Nothing to compare (unresolved picker / unborn branch) → zero, no spinner.
+      setReviewDiffStat({ additions: 0, deletions: 0 });
+      return () => {
+        cancelled = true;
+        setReviewDiffStat(null);
+      };
+    }
+
+    void getTransport()
+      .getReviewDiffStats(params)
+      .then((stat) => {
+        if (!cancelled) setReviewDiffStat(stat);
+      })
+      .catch(() => {
+        if (!cancelled) setReviewDiffStat({ additions: 0, deletions: 0 });
+      });
+
+    return () => {
+      cancelled = true;
+      setReviewDiffStat(null);
+    };
+  }, [view, workspaceId, threadId, branchRange, branchUnborn, selectedCommitSha, mutableDiffRevision, setReviewDiffStat]);
 
   if (loading) return <LoadingPulse />;
   if (!resolved || resolved.files.length === 0) {

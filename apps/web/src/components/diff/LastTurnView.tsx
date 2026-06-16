@@ -1,4 +1,7 @@
+import { useEffect } from "react";
 import type { TurnSnapshot } from "@mcode/contracts";
+import { getTransport } from "@/transport";
+import { useDiffStore } from "@/stores/diffStore";
 import { FileList } from "./FileList";
 
 /** Props for LastTurnView. */
@@ -19,6 +22,42 @@ export function LastTurnView({ snapshots, threadId }: LastTurnViewProps) {
   // lands on a meaningful diff.
   const latest = [...snapshots].reverse().find((s) => s.files_changed.length > 0);
 
+  // Report this turn's total +/- to the toolbar (summed from per-file stats).
+  const setReviewDiffStat = useDiffStore((s) => s.setReviewDiffStat);
+  const latestId = latest?.id;
+  useEffect(() => {
+    let cancelled = false;
+    setReviewDiffStat(null);
+    if (!latestId) {
+      setReviewDiffStat({ additions: 0, deletions: 0 });
+      return () => {
+        cancelled = true;
+        setReviewDiffStat(null);
+      };
+    }
+    void getTransport()
+      .getSnapshotDiffStats(latestId)
+      .then((stats) => {
+        if (cancelled) return;
+        setReviewDiffStat(
+          stats.reduce(
+            (acc, s) => ({
+              additions: acc.additions + s.additions,
+              deletions: acc.deletions + s.deletions,
+            }),
+            { additions: 0, deletions: 0 },
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setReviewDiffStat({ additions: 0, deletions: 0 });
+      });
+    return () => {
+      cancelled = true;
+      setReviewDiffStat(null);
+    };
+  }, [latestId, setReviewDiffStat]);
+
   if (!latest) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 py-14">
@@ -38,7 +77,7 @@ export function LastTurnView({ snapshots, threadId }: LastTurnViewProps) {
         <span className="font-mono text-[11px] tabular-nums text-foreground/70">
           {latest.files_changed.length}
         </span>
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground/55">
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
           file{latest.files_changed.length !== 1 ? "s" : ""} · last turn
         </span>
       </div>

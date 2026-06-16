@@ -9,28 +9,6 @@ vi.mock("@/stores/workspaceStore", () => ({
   ),
 }));
 
-vi.mock("@/stores/threadStore", () => ({
-  useThreadStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({
-      runningThreadIds: new Set(),
-    }),
-  ),
-  countActiveSubagentCalls: (
-    calls: Array<{ toolName: string; isComplete?: boolean }> | undefined,
-  ) =>
-    (calls ?? []).filter((c) => c.toolName === "Agent" && !c.isComplete).length,
-}));
-
-vi.mock("@/stores/thread-selectors", () => ({
-  useThreadRecord: (_threadId: string, selector: (r: { toolCalls: Array<{ id: string; toolName: string; isComplete: boolean }> }) => unknown) =>
-    selector({
-      toolCalls: [
-        { id: "sa1", toolName: "Agent", isComplete: false },
-        { id: "sa2", toolName: "Agent", isComplete: false },
-      ],
-    }),
-}));
-
 vi.mock("@/stores/terminalStore", () => ({
   useTerminalStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector({
@@ -40,27 +18,8 @@ vi.mock("@/stores/terminalStore", () => ({
   ),
 }));
 
-import { AgentStatusBar } from "../AgentStatusBar";
 import { StreamingIndicator } from "../StreamingIndicator";
 import { TerminalStatusIndicator } from "../TerminalStatusIndicator";
-
-describe("AgentStatusBar", () => {
-  it("renders a pulse dot when subagents are active", () => {
-    render(<AgentStatusBar />);
-    const dot = document.querySelector(".animate-pulse");
-    expect(dot).toBeInTheDocument();
-  });
-
-  it("does not use animate-shimmer-text", () => {
-    render(<AgentStatusBar />);
-    expect(document.querySelector(".animate-shimmer-text")).not.toBeInTheDocument();
-  });
-
-  it("shows the subagent count label", () => {
-    render(<AgentStatusBar />);
-    expect(screen.getByText(/2 subagents running/)).toBeInTheDocument();
-  });
-});
 
 describe("StreamingIndicator", () => {
   it("renders a pulse dot while streaming", () => {
