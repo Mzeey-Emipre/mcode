@@ -322,7 +322,7 @@ test.describe("Review tab: dual-scope view selection", () => {
     await expect(switcher).toBeVisible({ timeout: 5_000 });
     await switcher.click();
     await page.getByTestId("review-view-cumulative").click();
-    await expect(switcher).toContainText("Cumulative");
+    await expect(switcher).toContainText("All turns");
     await expect(page.getByTestId("cumulative-summary-toggle")).toBeVisible();
 
     await expect(page.getByTestId("review-file-filter")).toHaveCount(0);
@@ -350,7 +350,7 @@ test.describe("Review tab: dual-scope view selection", () => {
     const switcher = page.getByTestId("review-view-switcher");
     await switcher.click();
     await page.getByTestId("review-view-cumulative").click();
-    await expect(switcher).toContainText("Cumulative");
+    await expect(switcher).toContainText("All turns");
     await expect(page.locator('[data-review-file="src/new.ts"]')).toHaveCount(0);
 
     snapshotsForList = [

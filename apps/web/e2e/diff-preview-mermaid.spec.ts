@@ -158,7 +158,7 @@ test.describe("Diff preview: mermaid fences render as diagrams", () => {
     await expect(switcher).toBeVisible({ timeout: 5_000 });
     await switcher.click();
     await page.getByTestId("review-view-cumulative").click();
-    await expect(switcher).toContainText("Cumulative");
+    await expect(switcher).toContainText("All turns");
 
     const fileRow = page.locator(`[data-review-file="${MD_FILE}"]`);
     await expect(fileRow).toBeVisible();
@@ -166,11 +166,10 @@ test.describe("Diff preview: mermaid fences render as diagrams", () => {
     // Expand the file to load and show its diff.
     await fileRow.locator("button").first().click();
 
-    // Toggle the markdown Preview. The rail collapses to an icon strip; hover
-    // expands it so the labelled action is reliably clickable.
-    const rail = fileRow.locator('nav[aria-label="File actions"]');
-    await expect(rail).toBeVisible();
-    await rail.hover();
+    // Toggle the markdown Preview. Once the file is expanded its actions render as
+    // an always-visible inline toolbar (FileActionBar), so no hover is needed.
+    const actions = fileRow.locator('[role="group"][aria-label="File actions"]');
+    await expect(actions).toBeVisible();
     await fileRow.getByRole("button", { name: "Show rendered preview" }).click();
 
     // The fix routes the fence to MermaidBlock. Wait for the lazy preview chunk
@@ -181,8 +180,8 @@ test.describe("Diff preview: mermaid fences render as diagrams", () => {
     });
 
     // mermaid.render sets the diagram <svg> id to "mermaid-...". Scoping by that
-    // id avoids matching the SideRail's lucide icon <svg>s — the real proof the
-    // diagram drew rather than falling back to an error banner or raw code.
+    // id avoids matching the FileActionBar's lucide icon <svg>s. It is the real
+    // proof the diagram drew rather than falling back to an error banner or raw code.
     await expect(fileRow.locator('svg[id^="mermaid-"]')).toBeVisible({
       timeout: 20_000,
     });
