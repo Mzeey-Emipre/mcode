@@ -209,6 +209,23 @@ The specific message in the parent thread that a fork is created from. Has a
 or `assistant` (forking from the agent's reply; intent is "follow up about
 what was just said"). The role shapes how the handoff is framed.
 
+### Create branch
+An [[Overview]] action that runs `git checkout -b <name>` in the active thread's
+own working directory: it creates a branch at the current HEAD and switches the
+thread onto it. **Same thread, same worktree, new branch** - no child thread, no
+handoff; the thread's `branch` updates in place. Backed by a net-new
+`git.createBranch` RPC (create + checkout); the app otherwise only checks out
+*existing* branches.
+
+Not to be confused with [[Fork]]. The two share one git primitive (a branch
+pointer) in exactly one case, which is why they are easy to collapse, but they
+are different actions: Create branch moves *this* thread onto a new branch right
+here, whereas Fork spawns a *new* thread - and only its new-worktree variant
+also creates a branch (in a *separate* worktree; existing-worktree reuses that
+worktree's branch, and new-local does no branch op at all). One line each:
+Create branch = "this thread, new branch, here"; Fork = "a new thread, possibly
+elsewhere."
+
 ## Chat lifecycle
 
 ### Turn
@@ -517,11 +534,22 @@ error (if any). Used by the View doc dialog and by the fallback banner copy.
 
 ## Related but distinct
 
-### Cross-provider switch (deferred)
-Swapping a thread's provider mid-conversation. Uses the same handoff
-primitive as a fork but with the implicit anchor being the thread's last
-message, and the same thread continues with the new provider. Not yet
-implemented; was a deferred item in the chat-fork handoff feature (PR #499).
+### Cross-provider switch
+Swapping a thread's provider mid-conversation. The **same thread continues**:
+its id, message history, and worktree are unchanged; only the active provider
+swaps. The outgoing provider generates a handoff (B/D ladder, anchored at the
+thread's last message), and the incoming provider reads that doc to pick up
+context. The thread's persisted messages stay intact; only the new provider's
+in-memory context comes from the handoff.
+
+Swap-back (A → B → A) is the same process repeated: each direction is one
+handoff. The outgoing session is abandoned and eventually evicted by the
+session runtime's idle timer; swap-back spawns a fresh session on the
+returning provider with a new handoff, not a resumed session.
+
+Surfaced in the [[Overview]] as the **Switch provider** action, kept distinct
+from the Overview's Fork actions (which spawn a new thread). Was a deferred item
+in the chat-fork handoff feature (PR #499); un-deferred for the Overview epic.
 
 ### Compaction
 A separate mechanism that summarizes a thread's older turns into a single
@@ -529,6 +557,57 @@ compact summary stored on the thread itself, used to keep long threads
 within their own provider's context window. Distinct from a fork handoff,
 though the orchestrator does consult `last_compact_summary` when building a
 deterministic path-D handoff.
+
+## Thread overview
+
+### Overview
+The chat-header popover that recaps the active thread's working context (its
+changes, current branch, and pull-request state) and hosts the git actions for
+that thread (Commit-or-push, Create PR). An enrichment of the former plain
+header menu (`header-workspace-menu`) into a live status surface, modelled on
+Codex's "Environment" panel. Code symbol: `ThreadOverview`.
+
+**Thread-scoped.** The Overview lives in the chat header, which renders only
+when a thread is active. With no thread open there is no Overview; the
+workspace-root view of changes and branches stays the Review tab's job.
+
+The Overview offers two ways to take the thread further, split by what each does
+to *this* thread. Both anchor at the thread tail (not a picked message):
+
+**[[Fork]]** - spawns a *new* child thread; this thread stays untouched. Three
+targets:
+
+- **New worktree** - child thread in New-worktree mode + handoff.
+- **Existing worktree** - child thread in Existing-worktree mode + handoff.
+- **New local thread** - child thread in Direct mode + handoff.
+
+**Switch provider** - a [[cross-provider switch]]: *this same thread* continues
+(id, history, worktree unchanged) and only the provider driving it swaps, with a
+handoff generated from the outgoing provider. Swap-back is the same process.
+
+Handoff is always-on for both - it is the mechanism, not a standalone menu item.
+The split keeps "spawn a copy" (Fork) visually distinct from "change this
+thread's driver" (Switch provider); the two can re-merge into one list later if
+the distinction does not earn its place.
+
+_Avoid_: calling this surface "Summary." [[Summary]] is the AI prose lens of
+the Cumulative diff (a diff-to-prose toggle inside the Review tab), a different
+surface. The Overview is a status-and-actions menu, not a diff lens.
+
+### Recap
+A short AI-generated one-line "what you're working on" for the active thread,
+shown at the top of the [[Overview]]. Produced by a stateless server RPC (our
+utility model) and cached **in memory per thread, never persisted** (resets on
+restart). Generation is deliberately frugal: panel-gated (runs only while the
+Overview is open), idle-debounced (fires after the thread goes quiet, ~12s
+first / ~35s refresh, never mid-turn), and signature-gated (regenerates only
+when user/assistant messages materially change, feeding just the new messages
+plus the previous recap). See ADR-0013.
+
+_Avoid_: confusing the Recap with [[Summary]] or [[Overview]]. [[Summary]]
+summarizes the **code diff** (a Review-tab lens); the Recap summarizes
+**conversational intent**. [[Overview]] is the **surface** that hosts the Recap,
+not the recap text itself.
 
 ## Right panel
 
