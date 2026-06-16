@@ -68,8 +68,11 @@ import type { JobObject } from "./services/job-object.js";
 // process.title affects `ps`/`top`/`htop` output on Unix and the console window
 // title. On Windows, Task Manager pulls the display name from the binary's
 // VERSIONINFO instead — that's set at packaging time by the build-server-binary
-// helper, so process.title has no effect there but is harmless to set.
-process.title = "Mcode Server";
+// helper, so process.title has no effect there but is harmless to set. The
+// "(dev)" suffix tags the standalone dev server so it is distinguishable from a
+// packaged instance in `ps` and the console window title.
+process.title =
+  process.env.NODE_ENV === "production" ? "Mcode Server" : "Mcode Server (dev)";
 
 const PREFERRED_PORT = parseInt(process.env.MCODE_PORT ?? "19400", 10);
 const MAX_PORT_ATTEMPTS = 10;

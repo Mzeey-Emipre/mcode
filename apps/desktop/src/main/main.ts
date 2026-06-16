@@ -678,6 +678,12 @@ if (process.platform === "win32") {
   app.setAppUserModelId(APP_ID);
 }
 
+// Tag the dev main process so `ps`/console output distinguishes it from a
+// packaged instance. process.title does not change app.getName() or the
+// userData path, so dev and prod still share data-dir resolution. On packaged
+// Windows the Task Manager name comes from the exe VERSIONINFO, not this.
+process.title = isDesktopDev() ? "Mcode Desktop (dev)" : "Mcode Desktop";
+
 app.whenReady().then(async () => {
   try {
     console.log(`[perf] App ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
