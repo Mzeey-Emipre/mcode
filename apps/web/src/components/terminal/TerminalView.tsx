@@ -8,6 +8,11 @@ import { ClientTerminalFlowControl } from "./terminalFlowControl";
 import { onPtyData, onPtyExit, onPtyReconnectGap, type PtyDataPayload } from "./ptyDataRegistry";
 import { isSafeTerminalDimensions, safeFit } from "./safeFit";
 import { terminalScroll } from "./terminalScrollController";
+import {
+  applyRemountAnchor,
+  captureRemountAnchor,
+  dropRemountAnchor,
+} from "./terminalRemountScroll";
 import { TERMINAL_POOL_REFIT } from "./terminalPoolRefit";
 import { claimWebglSlot, clearWebglSlot, releaseWebglSlot } from "./terminalWebglSlot";
 import {
@@ -443,9 +448,11 @@ export const TerminalView = memo(function TerminalView({
         }
         replayPending.length = 0;
 
-        // Follow the tail and record the remount latency once the replay paints.
+        // #751: restore the prior scroll region if the user had scrolled up
+        // before unmount; otherwise follow the tail. Record remount latency once
+        // the replay paints.
         const follow = () => {
-          term.scrollToBottom();
+          applyRemountAnchor(ptyId, term);
           recordMountTiming(performance.now() - mountStart);
         };
 
@@ -488,6 +495,8 @@ export const TerminalView = memo(function TerminalView({
         term.write(
           `\r\n\x1b[90m[Process exited with code ${detail.code}]\x1b[0m\r\n`,
         );
+        // The PTY is gone and cannot remount; drop any saved scroll anchor.
+        dropRemountAnchor(ptyId);
       });
 
       // Resize handling:
@@ -580,6 +589,9 @@ export const TerminalView = memo(function TerminalView({
         clearWebglSlot(ptyId);
         clearActiveRenderer();
         unregisterTerminalScrollHarness(ptyId);
+        // #751: remember where the user was before this view goes away so the
+        // next remount can restore it (no-op when they were following the tail).
+        captureRemountAnchor(ptyId, term);
         term.dispose();
         decrementLiveTerminalCount();
       };

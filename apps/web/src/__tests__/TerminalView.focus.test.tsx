@@ -2,6 +2,7 @@ import { render } from "@testing-library/react";
 import { act } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { emitPtyData } from "@/components/terminal/ptyDataRegistry";
+import { dropRemountAnchor } from "@/components/terminal/terminalRemountScroll";
 
 // jsdom doesn't implement ResizeObserver; TerminalView instantiates one in
 // its mount effect. A no-op stub is enough — fit is exercised via the
@@ -92,6 +93,11 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     vi.clearAllMocks();
     // clearAllMocks resets call history but keeps implementations.
     transport.terminalReattach.mockResolvedValue({ gapped: false });
+    // The remount-scroll anchor store is module-global; React Testing Library's
+    // per-test unmount captures one, so clear it for deterministic mounts.
+    for (const id of ["pty-1", "pty-2", "pty-a", "pty-b", "pty-batch"]) {
+      dropRemountAnchor(id);
+    }
   });
 
   // Regression guard: term.focus() must NOT fire when the window/tab regains
