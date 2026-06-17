@@ -104,7 +104,7 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
 
     const store = useDiffStore.getState();
     showRightPanelAdaptive(workspaceId, threadId);
-    store.setRightPanelTab(workspaceId, "changes");
+    store.setRightPanelTab(workspaceId, threadId, "changes");
     // Pin cumulative as the per-thread override so the live default cannot revert
     // this deliberate pick (ADR-0011).
     store.setReviewViewForThread(threadId, "cumulative");

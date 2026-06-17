@@ -40,7 +40,7 @@ vi.mock("@/stores/diffStore", () => {
   };
   const store = Object.assign(
     vi.fn((selector: (s: unknown) => unknown) =>
-      selector({ rightPanelByWorkspace: {}, snapshotsByThread: {}, ...actions }),
+      selector({ rightPanelByThread: {}, snapshotsByThread: {}, ...actions }),
     ),
     { getState: vi.fn().mockReturnValue(actions) },
   );

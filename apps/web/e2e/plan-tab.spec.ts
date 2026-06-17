@@ -71,12 +71,12 @@ async function showRightPanel(page: Page, workspaceId: string, threadId: string)
       const stores: any[] = (window as any).__mcodeStores ?? [];
       const diffStore = stores.find((s) => {
         const st = s.getState();
-        return "rightPanelByWorkspace" in st && "showRightPanel" in st;
+        return "rightPanelByThread" in st && "showRightPanel" in st;
       });
       if (!diffStore) throw new Error("[E2E] diff store not found");
-      // Open/closed is per-thread; width/tab stay workspace-global.
+      // The whole panel record is per-thread (ADR-0012).
       diffStore.getState().showRightPanel(wid, tid);
-      diffStore.getState().setRightPanelTab(wid, "tasks");
+      diffStore.getState().setRightPanelTab(wid, tid, "tasks");
     },
     { wid: workspaceId, tid: threadId },
   );

@@ -14,8 +14,8 @@ describe("diffStore", () => {
   beforeEach(() => {
     useDiffStore.setState({
       previewUrlByThread: {},
-      rightPanelByWorkspace: {},
-      rightPanelVisibleByThread: {},
+      rightPanelByThread: {},
+      rightPanelFallbackByWorkspace: {},
       snapshotsByThread: {},
       snapshotsLoadingByThread: {},
       snapshotsPendingByThread: {},
@@ -197,7 +197,7 @@ describe("diffStore", () => {
   describe("showRightPanel / hideRightPanel", () => {
     it("showRightPanel sets visible true without affecting width", () => {
       const { showRightPanel, setRightPanelWidth, getRightPanel } = useDiffStore.getState();
-      setRightPanelWidth("ws-1", 500);
+      setRightPanelWidth("ws-1", null, 500);
       showRightPanel("ws-1");
       const panel = getRightPanel("ws-1");
       expect(panel.visible).toBe(true);
@@ -207,7 +207,7 @@ describe("diffStore", () => {
     it("hideRightPanel sets visible false without affecting tab", () => {
       const { showRightPanel, hideRightPanel, setRightPanelTab, getRightPanel } = useDiffStore.getState();
       showRightPanel("ws-1");
-      setRightPanelTab("ws-1", "changes");
+      setRightPanelTab("ws-1", null, "changes");
       hideRightPanel("ws-1");
       const panel = getRightPanel("ws-1");
       expect(panel.visible).toBe(false);
@@ -218,14 +218,14 @@ describe("diffStore", () => {
   describe("setRightPanelWidth", () => {
     it("should update width for one workspace", () => {
       const { setRightPanelWidth, getRightPanel } = useDiffStore.getState();
-      setRightPanelWidth("ws-1", 500);
+      setRightPanelWidth("ws-1", null, 500);
       expect(getRightPanel("ws-1").width).toBe(500);
       expect(getRightPanel("ws-2").width).toBe(getDefaultPanelWidthPx());
     });
 
     it("should clamp width to PANEL_MIN_WIDTH", () => {
       const { setRightPanelWidth, getRightPanel } = useDiffStore.getState();
-      setRightPanelWidth("ws-1", 100);
+      setRightPanelWidth("ws-1", null, 100);
       expect(getRightPanel("ws-1").width).toBe(PANEL_MIN_WIDTH);
     });
   });
@@ -246,14 +246,14 @@ describe("diffStore", () => {
   describe("setRightPanelTab", () => {
     it("should update active tab for one workspace only", () => {
       const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "changes");
+      setRightPanelTab("ws-1", null, "changes");
       expect(getRightPanel("ws-1").activeTab).toBe("changes");
       expect(getRightPanel("ws-2").activeTab).toBe("tasks");
     });
 
     it("should support preview tab", () => {
       const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", null, "preview");
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
     });
 
@@ -264,16 +264,16 @@ describe("diffStore", () => {
 
     it("opens a tab (adds it to openTabs) when first activated", () => {
       const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", null, "preview");
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
     });
 
     it("accumulates open tabs in open order without duplicating", () => {
       const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "preview");
-      setRightPanelTab("ws-1", "terminal");
-      setRightPanelTab("ws-1", "preview"); // refocus, not reopen
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview"); // refocus, not reopen
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview", "terminal"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
     });
@@ -282,79 +282,88 @@ describe("diffStore", () => {
   describe("closeRightPanelTab", () => {
     it("removes a tab from the open set", () => {
       const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "preview");
-      setRightPanelTab("ws-1", "terminal");
-      closeRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "terminal");
+      closeRightPanelTab("ws-1", null, "preview");
       expect(getRightPanel("ws-1").openTabs).toEqual(["terminal"]);
     });
 
     it("moves focus to the most-recently-opened survivor when the active tab closes", () => {
       const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "preview");
-      setRightPanelTab("ws-1", "terminal"); // terminal is active
-      closeRightPanelTab("ws-1", "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "terminal"); // terminal is active
+      closeRightPanelTab("ws-1", null, "terminal");
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
     });
 
     it("leaves the active tab unchanged when closing an inactive tab", () => {
       const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "preview");
-      setRightPanelTab("ws-1", "terminal"); // terminal is active
-      closeRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "terminal"); // terminal is active
+      closeRightPanelTab("ws-1", null, "preview");
       expect(getRightPanel("ws-1").activeTab).toBe("terminal");
     });
 
     it("empties the open set when the last tab closes (returns to card grid)", () => {
       const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "preview");
-      closeRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", null, "preview");
+      closeRightPanelTab("ws-1", null, "preview");
       expect(getRightPanel("ws-1").openTabs).toEqual([]);
     });
 
     it("is a no-op when the tab is not open", () => {
       const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "preview");
-      closeRightPanelTab("ws-1", "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      closeRightPanelTab("ws-1", null, "terminal");
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
     });
 
     it("affects only the target workspace", () => {
       const { setRightPanelTab, closeRightPanelTab, getRightPanel } = useDiffStore.getState();
-      setRightPanelTab("ws-1", "preview");
-      setRightPanelTab("ws-2", "preview");
-      closeRightPanelTab("ws-1", "preview");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-2", null, "preview");
+      closeRightPanelTab("ws-1", null, "preview");
       expect(getRightPanel("ws-1").openTabs).toEqual([]);
       expect(getRightPanel("ws-2").openTabs).toEqual(["preview"]);
     });
   });
 
-  // The panel is workspace-global: its open state must survive having no thread
-  // active (e.g. the threadless workspace shell) and persist across navigation.
-  describe("workspace-global persistence", () => {
+  // The threadless Browser/Terminal shell writes to one workspace-level fallback
+  // record, which must survive having no thread active and persist across
+  // navigation. See ADR-0012.
+  describe("workspace fallback (threadless shell)", () => {
     it("retains visibility, width, and tab with no active thread", () => {
       const { showRightPanel, setRightPanelWidth, setRightPanelTab, getRightPanel } =
         useDiffStore.getState();
       showRightPanel("ws-1");
-      setRightPanelWidth("ws-1", 460);
-      setRightPanelTab("ws-1", "preview");
+      setRightPanelWidth("ws-1", null, 460);
+      setRightPanelTab("ws-1", null, "preview");
 
-      // No thread keying is involved, so re-reading the workspace slice returns
-      // the same state regardless of which (or no) thread is active.
       const panel = getRightPanel("ws-1");
       expect(panel.visible).toBe(true);
       expect(panel.width).toBe(460);
       expect(panel.activeTab).toBe("preview");
     });
 
-    it("keeps panel state when threads are cleared", () => {
+    it("writes threadless changes to the workspace fallback, never a thread record", () => {
+      const { showRightPanel, setRightPanelTab } = useDiffStore.getState();
+      showRightPanel("ws-1");
+      setRightPanelTab("ws-1", null, "preview");
+
+      const state = useDiffStore.getState();
+      expect(state.rightPanelFallbackByWorkspace["ws-1"].visible).toBe(true);
+      expect(state.rightPanelByThread).toEqual({});
+    });
+
+    it("keeps the fallback record when a thread is cleared", () => {
       const { showRightPanel, setRightPanelTab, clearThread, getRightPanel } =
         useDiffStore.getState();
       showRightPanel("ws-1");
-      setRightPanelTab("ws-1", "changes");
+      setRightPanelTab("ws-1", null, "changes");
 
-      // Clearing a thread must not touch the workspace-global panel slice.
+      // Clearing a thread drops only that thread's record, not the fallback.
       clearThread("thread-1");
 
       const panel = getRightPanel("ws-1");
@@ -363,10 +372,10 @@ describe("diffStore", () => {
     });
   });
 
-  // Open/closed is per-thread within a workspace: opening the panel on one
-  // thread must not open it on a sibling thread, while width and active tab
-  // remain shared workspace-global state. See ADR-0004.
-  describe("per-thread visibility", () => {
+  // The whole panel record is per-thread, read copy-on-write: a thread inherits
+  // the workspace fallback until it writes its own entry, then diverges. See
+  // ADR-0012.
+  describe("per-thread panel state with workspace fallback (ADR-0012)", () => {
     it("getRightPanelVisible defaults to closed for an unknown thread", () => {
       const { getRightPanelVisible } = useDiffStore.getState();
       expect(getRightPanelVisible("ws-1", "thread-1")).toBe(false);
@@ -376,6 +385,7 @@ describe("diffStore", () => {
       const { showRightPanel, getRightPanelVisible } = useDiffStore.getState();
       showRightPanel("ws-1", "thread-1");
       expect(getRightPanelVisible("ws-1", "thread-1")).toBe(true);
+      // thread-2 has no record and the fallback is closed, so it stays closed.
       expect(getRightPanelVisible("ws-1", "thread-2")).toBe(false);
     });
 
@@ -396,49 +406,137 @@ describe("diffStore", () => {
       expect(getRightPanelVisible("ws-1", "thread-1")).toBe(false);
     });
 
-    it("shares width and active tab across threads in the same workspace", () => {
+    it("an uncustomized thread inherits the workspace fallback record", () => {
       const { showRightPanel, setRightPanelWidth, setRightPanelTab, getRightPanel } =
         useDiffStore.getState();
-      showRightPanel("ws-1", "thread-1");
-      setRightPanelWidth("ws-1", 540);
-      setRightPanelTab("ws-1", "preview");
+      // Seed the fallback through the threadless shell.
+      showRightPanel("ws-1");
+      setRightPanelWidth("ws-1", null, 540);
+      setRightPanelTab("ws-1", null, "preview");
 
-      // Width and tab live on the workspace slice, so a sibling thread sees them.
-      const panel = getRightPanel("ws-1");
+      // A thread that has never written reads the fallback verbatim.
+      const panel = getRightPanel("ws-1", "thread-untouched");
+      expect(panel.visible).toBe(true);
       expect(panel.width).toBe(540);
       expect(panel.activeTab).toBe("preview");
     });
 
-    it("threadless visibility is independent of per-thread visibility", () => {
-      const { showRightPanel, getRightPanelVisible } = useDiffStore.getState();
-      showRightPanel("ws-1", "thread-1");
-      // No thread → reads the workspace threadless slice, still closed.
-      expect(getRightPanelVisible("ws-1")).toBe(false);
-      showRightPanel("ws-1");
-      expect(getRightPanelVisible("ws-1")).toBe(true);
-      // Opening threadless must not retroactively open a different thread.
-      expect(getRightPanelVisible("ws-1", "thread-2")).toBe(false);
+    it("a thread diverges into its own record on first write, leaving the fallback intact", () => {
+      const { setRightPanelWidth, getRightPanel } = useDiffStore.getState();
+      setRightPanelWidth("ws-1", null, 540); // seed the fallback
+      setRightPanelWidth("ws-1", "thread-1", 700); // thread-1 diverges
+
+      expect(getRightPanel("ws-1", "thread-1").width).toBe(700);
+      // The fallback is untouched, so the threadless shell and a sibling thread
+      // both still read 540.
+      expect(getRightPanel("ws-1").width).toBe(540);
+      expect(getRightPanel("ws-1", "thread-2").width).toBe(540);
     });
 
-    it("clearThread drops the thread's visibility entry", () => {
-      const { showRightPanel, clearThread, getRightPanelVisible } = useDiffStore.getState();
+    it("keeps per-thread records independent across threads", () => {
+      const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "thread-1", "preview");
+      setRightPanelTab("ws-1", "thread-2", "changes");
+      expect(getRightPanel("ws-1", "thread-1").activeTab).toBe("preview");
+      expect(getRightPanel("ws-1", "thread-2").activeTab).toBe("changes");
+    });
+
+    it("opening a thread does not open the threadless shell", () => {
+      const { showRightPanel, getRightPanelVisible } = useDiffStore.getState();
       showRightPanel("ws-1", "thread-1");
+      // The threadless shell reads the fallback, which is still closed.
+      expect(getRightPanelVisible("ws-1")).toBe(false);
+    });
+
+    it("clearThread drops the thread's whole panel record", () => {
+      const { showRightPanel, setRightPanelTab, clearThread, getRightPanelVisible } =
+        useDiffStore.getState();
+      showRightPanel("ws-1", "thread-1");
+      setRightPanelTab("ws-1", "thread-1", "preview");
       clearThread("thread-1");
       expect(getRightPanelVisible("ws-1", "thread-1")).toBe(false);
-      expect(useDiffStore.getState().rightPanelVisibleByThread["thread-1"]).toBeUndefined();
+      expect(useDiffStore.getState().rightPanelByThread["thread-1"]).toBeUndefined();
+    });
+  });
+
+  // Copy-on-write divergence timing: a thread inherits the fallback *live* until
+  // its first write, then snapshots and stops tracking it. See ADR-0012.
+  describe("copy-on-write divergence timing (ADR-0012)", () => {
+    it("an undiverged thread tracks later fallback edits", () => {
+      const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "preview");
+      expect(getRightPanel("ws-1", "thread-1").activeTab).toBe("preview");
+
+      // The thread has still not written, so a later fallback edit is reflected.
+      setRightPanelTab("ws-1", null, "terminal");
+      expect(getRightPanel("ws-1", "thread-1").activeTab).toBe("terminal");
+      expect(useDiffStore.getState().rightPanelByThread["thread-1"]).toBeUndefined();
+    });
+
+    it("a diverged thread is frozen from later fallback edits", () => {
+      const { setRightPanelTab, setRightPanelWidth, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "preview");
+      // The first write diverges thread-1, snapshotting the fallback's tab.
+      setRightPanelWidth("ws-1", "thread-1", 650);
+
+      // A later fallback edit must not leak into the now-independent thread.
+      setRightPanelTab("ws-1", null, "changes");
+      const panel = getRightPanel("ws-1", "thread-1");
+      expect(panel.activeTab).toBe("preview");
+      expect(panel.width).toBe(650);
+      expect(getRightPanel("ws-1").activeTab).toBe("changes");
+    });
+
+    it("opening a thread copies the whole fallback record at that instant", () => {
+      const { setRightPanelWidth, setRightPanelTab, showRightPanel, getRightPanel } =
+        useDiffStore.getState();
+      setRightPanelWidth("ws-1", null, 520);
+      setRightPanelTab("ws-1", null, "terminal");
+
+      // Diverging via visibility inherits the fallback's width and tab.
+      showRightPanel("ws-1", "thread-1");
+      const panel = getRightPanel("ws-1", "thread-1");
+      expect(panel.visible).toBe(true);
+      expect(panel.width).toBe(520);
+      expect(panel.activeTab).toBe("terminal");
+      // The fallback itself stays hidden.
+      expect(getRightPanel("ws-1").visible).toBe(false);
+    });
+
+    it("treats threadId undefined and null alike as the threadless fallback", () => {
+      const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", undefined, "preview");
+      expect(getRightPanel("ws-1").activeTab).toBe("preview");
+      setRightPanelTab("ws-1", null, "terminal");
+      expect(getRightPanel("ws-1").activeTab).toBe("terminal");
+      expect(useDiffStore.getState().rightPanelByThread).toEqual({});
     });
   });
 
   describe("clearWorkspace", () => {
-    it("removes the panel slice for the given workspace", () => {
-      const { showRightPanel, setRightPanelTab, clearWorkspace, getRightPanel } =
-        useDiffStore.getState();
-      showRightPanel("ws-1");
-      setRightPanelTab("ws-1", "preview");
+    it("drops the fallback but keeps a diverged thread's record", () => {
+      const { setRightPanelTab, clearWorkspace, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "preview"); // fallback
+      setRightPanelTab("ws-1", "thread-1", "changes"); // thread-1 diverged
 
       clearWorkspace("ws-1");
 
-      expect(useDiffStore.getState().rightPanelByWorkspace["ws-1"]).toBeUndefined();
+      // The fallback is gone, but the thread keeps its own record; an
+      // uncustomized thread reverts to defaults.
+      expect(useDiffStore.getState().rightPanelFallbackByWorkspace["ws-1"]).toBeUndefined();
+      expect(getRightPanel("ws-1", "thread-1").activeTab).toBe("changes");
+      expect(getRightPanel("ws-1", "thread-2")).toEqual(createDefaultRightPanelState());
+    });
+
+    it("removes the fallback record for the given workspace", () => {
+      const { showRightPanel, setRightPanelTab, clearWorkspace, getRightPanel } =
+        useDiffStore.getState();
+      showRightPanel("ws-1");
+      setRightPanelTab("ws-1", null, "preview");
+
+      clearWorkspace("ws-1");
+
+      expect(useDiffStore.getState().rightPanelFallbackByWorkspace["ws-1"]).toBeUndefined();
       expect(getRightPanel("ws-1")).toEqual(createDefaultRightPanelState());
     });
 
@@ -455,7 +553,7 @@ describe("diffStore", () => {
     it("is a no-op for an unknown workspace", () => {
       const { clearWorkspace } = useDiffStore.getState();
       expect(() => clearWorkspace("nope")).not.toThrow();
-      expect(useDiffStore.getState().rightPanelByWorkspace["nope"]).toBeUndefined();
+      expect(useDiffStore.getState().rightPanelFallbackByWorkspace["nope"]).toBeUndefined();
     });
   });
 

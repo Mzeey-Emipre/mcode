@@ -35,10 +35,14 @@ export function DiffPanel() {
   const snapshotsPending = useDiffStore((s) =>
     activeThreadId ? (s.snapshotsPendingByThread[activeThreadId] ?? false) : false,
   );
+  // The whole panel record is per-thread, falling back to the workspace record
+  // for uncustomized threads (ADR-0012).
   const panelState = useDiffStore((s) =>
-    activeWorkspaceId ? s.rightPanelByWorkspace[activeWorkspaceId] : undefined,
+    activeWorkspaceId
+      ? (activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined) ??
+        s.rightPanelFallbackByWorkspace[activeWorkspaceId]
+      : undefined,
   );
-  // Open/closed is per-thread; the active tab is workspace-global.
   const panelVisible = useDiffStore((s) =>
     activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId) : false,
   );

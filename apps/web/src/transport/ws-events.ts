@@ -315,14 +315,15 @@ export function startPushListeners(): void {
           const workspaceId = wsState.threads.find(
             (t) => t.id === payload.threadId,
           )?.workspace_id;
+          // The whole panel record is per-thread (ADR-0012). Only defer when this
+          // thread is on screen with its panel open on the Changes tab.
           const panel = workspaceId
-            ? snap.rightPanelByWorkspace[workspaceId]
+            ? snap.getRightPanel(workspaceId, payload.threadId)
             : undefined;
-          // Open/closed is per-thread; width and tab are workspace-global. Only
-          // defer when this thread is on screen with its panel open on Changes.
           const isViewingAllChanges =
             wsState.activeThreadId === payload.threadId &&
-            snap.rightPanelVisibleByThread[payload.threadId] === true &&
+            workspaceId !== undefined &&
+            snap.getRightPanelVisible(workspaceId, payload.threadId) &&
             panel?.activeTab === "changes" &&
             snap.viewMode === "cumulative";
 

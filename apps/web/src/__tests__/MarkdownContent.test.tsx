@@ -167,7 +167,7 @@ describe("MarkdownContent workspace preview navigation", () => {
       await vi.runAllTimersAsync();
     });
     expect(showRightPanel).toHaveBeenCalledWith("ws-prev", "thread-prev");
-    expect(setRightPanelTab).toHaveBeenCalledWith("ws-prev", "preview");
+    expect(setRightPanelTab).toHaveBeenCalledWith("ws-prev", "thread-prev", "preview");
     expect(mockCreate).toHaveBeenCalledWith("thread-prev", true);
     expect(mockNavigate).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",

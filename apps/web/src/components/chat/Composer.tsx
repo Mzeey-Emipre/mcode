@@ -220,13 +220,13 @@ function ComposerOptionsMenu({
   );
 
   const toggleTasksPanel = () => {
-    // Scope is thread-only; open/closed is per-thread, width/tab workspace-keyed.
+    // Scope is thread-only; the whole panel record is per-thread (ADR-0012).
     if (!threadId || !activeWorkspaceId) return;
     if (panelVisible) {
       hideRightPanelAdaptive(activeWorkspaceId, threadId);
     } else {
       showRightPanelAdaptive(activeWorkspaceId, threadId);
-      useDiffStore.getState().setRightPanelTab(activeWorkspaceId, "tasks");
+      useDiffStore.getState().setRightPanelTab(activeWorkspaceId, threadId, "tasks");
     }
   };
 
@@ -381,13 +381,13 @@ function InlineComposerOptions({
   );
 
   const toggleTasksPanel = () => {
-    // Scope is thread-only; open/closed is per-thread, width/tab workspace-keyed.
+    // Scope is thread-only; the whole panel record is per-thread (ADR-0012).
     if (!threadId || !activeWorkspaceId) return;
     if (panelVisible) {
       hideRightPanelAdaptive(activeWorkspaceId, threadId);
     } else {
       showRightPanelAdaptive(activeWorkspaceId, threadId);
-      useDiffStore.getState().setRightPanelTab(activeWorkspaceId, "tasks");
+      useDiffStore.getState().setRightPanelTab(activeWorkspaceId, threadId, "tasks");
     }
   };
 

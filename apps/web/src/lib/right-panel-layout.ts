@@ -9,10 +9,14 @@ import {
 /**
  * After opening the right panel, maximize it when the content row cannot fit
  * composer and panel side by side. Composer-first: inline mode only when there
- * is room; otherwise the panel owns the content row.
+ * is room; otherwise the panel owns the content row. The width is read from the
+ * scope's effective panel record (the thread's own, or the workspace fallback).
  */
-export function applyMaximizeIfCramped(workspaceId: string): void {
-  const panelWidth = useDiffStore.getState().getRightPanel(workspaceId).width;
+export function applyMaximizeIfCramped(
+  workspaceId: string,
+  threadId?: string | null,
+): void {
+  const panelWidth = useDiffStore.getState().getRightPanel(workspaceId, threadId).width;
   if (canFitSideBySidePanel(getContentRowWidth(), panelWidth)) return;
   useUiStore.getState().setRightPanelMaximized(true);
 }
@@ -25,7 +29,7 @@ export function showRightPanelAdaptive(
   threadId?: string | null,
 ): void {
   useDiffStore.getState().showRightPanel(workspaceId, threadId);
-  applyMaximizeIfCramped(workspaceId);
+  applyMaximizeIfCramped(workspaceId, threadId);
 }
 
 /**
@@ -43,7 +47,7 @@ export function toggleRightPanelAdaptive(
     useUiStore.getState().setRightPanelMaximized(false);
     return;
   }
-  applyMaximizeIfCramped(workspaceId);
+  applyMaximizeIfCramped(workspaceId, threadId);
 }
 
 /**

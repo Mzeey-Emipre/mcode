@@ -109,17 +109,18 @@ export function openUrlInPreview({
 
   const wsPath = resolveWorkspacePath(workspacePath);
   const { setRightPanelTab, setPreviewUrlForThread } = useDiffStore.getState();
-  // Width and tab are workspace-global; open/closed is per-thread. The scope is
-  // a thread id, or a workspace id for the threadless new-thread preview, so
-  // resolve the owning workspace from either and open the panel for that scope.
+  // The panel scope is the thread (per-thread record), or the workspace fallback
+  // for the threadless new-thread preview. The incoming id may be either a thread
+  // or a workspace id, so resolve the owning workspace from both.
   const ws = useWorkspaceStore.getState();
   const thread = ws.threads.find((t) => t.id === threadId);
   const workspaceId = thread
     ? thread.workspace_id
     : ws.workspaces.find((w) => w.id === threadId)?.id;
   if (workspaceId) {
-    showRightPanelAdaptive(workspaceId, thread ? threadId : undefined);
-    setRightPanelTab(workspaceId, "preview");
+    const panelThreadId = thread ? threadId : undefined;
+    showRightPanelAdaptive(workspaceId, panelThreadId);
+    setRightPanelTab(workspaceId, panelThreadId, "preview");
   }
 
   const run = async (): Promise<void> => {

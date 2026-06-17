@@ -52,7 +52,9 @@ function contentNeedForSidebarDock(rightPanelMaximized: boolean): number {
   const panelInline = panelVisible && !rightPanelMaximized;
   if (!panelInline) return COMPOSER_MIN_WIDTH;
 
-  return minContentWidthForSideBySidePanel(diff.getRightPanel(activeWorkspaceId).width);
+  return minContentWidthForSideBySidePanel(
+    diff.getRightPanel(activeWorkspaceId, activeThreadId).width,
+  );
 }
 
 /** Zustand store for global UI toggle state. Command palette state lives in commandPaletteStore. */

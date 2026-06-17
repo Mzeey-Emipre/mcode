@@ -6,21 +6,22 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 const WID = "ws-1";
 const TID = "thread-1";
 
-/** Read the effective panel state for the test workspace. */
+/** Read the effective panel state for the active scope. */
 function panel() {
   const s = useDiffStore.getState();
+  const tid = useWorkspaceStore.getState().activeThreadId;
   return {
-    visible: s.getRightPanelVisible(WID, useWorkspaceStore.getState().activeThreadId),
-    activeTab: s.getRightPanel(WID).activeTab,
-    openTabs: s.getRightPanel(WID).openTabs,
+    visible: s.getRightPanelVisible(WID, tid),
+    activeTab: s.getRightPanel(WID, tid).activeTab,
+    openTabs: s.getRightPanel(WID, tid).openTabs,
   };
 }
 
 describe("summonTab", () => {
   beforeEach(() => {
     useDiffStore.setState({
-      rightPanelByWorkspace: {},
-      rightPanelVisibleByThread: {},
+      rightPanelByThread: {},
+      rightPanelFallbackByWorkspace: {},
     });
     useWorkspaceStore.setState({ activeWorkspaceId: WID, activeThreadId: TID });
   });
@@ -120,7 +121,8 @@ describe("summonTab", () => {
 
       summonTab("preview");
 
-      expect(useDiffStore.getState().rightPanelByWorkspace).toEqual({});
+      expect(useDiffStore.getState().rightPanelByThread).toEqual({});
+      expect(useDiffStore.getState().rightPanelFallbackByWorkspace).toEqual({});
     });
 
     it("runs onFocus on open and refocus, but not on hide", () => {
