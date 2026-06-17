@@ -80,6 +80,9 @@ import { buildCursorAskQuestionExtResponse } from "./cursor-acp-ask-question.js"
 import {
   buildCursorAcpContinueAfterDisconnectPrompt,
   looksLikeAcpConnectionClosed,
+  looksLikeCursorRateLimit,
+  computeCursorRateLimitBackoffMs,
+  interruptibleDelay,
   isLikelyTransientCursorPromptFailure,
   shouldSuppressCursorPromptError,
 } from "./cursor-acp-transient-retry.js";
@@ -1061,6 +1064,24 @@ export class CursorProvider
             promptMessage = buildCursorAcpContinueAfterDisconnectPrompt(originalUserMessage);
             promptAttachments = originalAttachments;
             isContinueRetry = true;
+            continue;
+          }
+          // Rate limit (`resource_exhausted`): the backend rejected the request
+          // before doing any work, so resend the SAME prompt after a jittered
+          // backoff. The wait stays invisible in the thread — runTurn emits no
+          // Error/Ended while it sleeps, so the turn reads as ordinary latency.
+          if (looksLikeCursorRateLimit(raw)) {
+            const backoffMs = computeCursorRateLimitBackoffMs(cursorCfg.rateLimitRetryBackoffMs);
+            logger.warn("Cursor ACP prompt rate-limited; backing off before one retry", {
+              threadId: currentEntry.threadId,
+              attempt,
+              backoffMs,
+              error: raw,
+            });
+            await interruptibleDelay(backoffMs, () => currentEntry.pendingUserStopAbort);
+            if (currentEntry.pendingUserStopAbort) {
+              throw attemptErr;
+            }
             continue;
           }
           logger.warn("Cursor ACP prompt retry after transient CLI failure", {
