@@ -15,6 +15,21 @@ function cursorUpstreamPreamble(original: string): string {
   ].join("\n");
 }
 
+/** Matches the Connect/gRPC `resource_exhausted` status (code 8) in any casing. */
+const CURSOR_RATE_LIMIT_RE = /\bresource_exhausted\b/i;
+
+function cursorRateLimitMessage(original: string): string {
+  return [
+    `Cursor's servers are rate-limiting requests for this model (resource_exhausted).`,
+    `This is almost always short-term burst throttling from too many requests at once, not a usage cap.`,
+    ``,
+    `Wait a few seconds and resend, switch to a Fast model, or run fewer agents at the same time.`,
+    ``,
+    `Original:`,
+    original,
+  ].join("\n");
+}
+
 /**
  * Applies provider-specific substitutions for repetitive failure patterns.
  *
@@ -22,6 +37,14 @@ function cursorUpstreamPreamble(original: string): string {
  * @param message - Raw error string from a provider or subprocess.
  */
 export function normalizeAgentProviderError(providerId: string, message: string): string {
+  if (
+    providerId === "cursor" &&
+    !message.startsWith("Cursor's servers are rate-limiting") &&
+    CURSOR_RATE_LIMIT_RE.test(message)
+  ) {
+    return cursorRateLimitMessage(message);
+  }
+
   const cursorPreambleAlready =
     message.startsWith("The Cursor CLI reported an upstream error");
   if (

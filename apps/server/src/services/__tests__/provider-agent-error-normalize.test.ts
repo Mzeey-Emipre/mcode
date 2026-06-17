@@ -32,4 +32,22 @@ describe("normalizeAgentProviderError", () => {
     const once = normalizeAgentProviderError("cursor", "Internal Server Error");
     expect(normalizeAgentProviderError("cursor", once)).toEqual(once);
   });
+
+  it("rewrites the minified resource_exhausted rate limit for Cursor", () => {
+    const raw = "v: [resource_exhausted] Error";
+    const out = normalizeAgentProviderError("cursor", raw);
+    expect(out).toContain("rate-limiting");
+    expect(out).toContain("switch to a Fast model");
+    expect(out).toContain(raw);
+  });
+
+  it("does not wrap resource_exhausted wording for non-Cursor providers", () => {
+    const raw = "v: [resource_exhausted] Error";
+    expect(normalizeAgentProviderError("claude", raw)).toBe(raw);
+  });
+
+  it("does not recursively wrap the Cursor rate-limit message", () => {
+    const once = normalizeAgentProviderError("cursor", "v: [resource_exhausted] Error");
+    expect(normalizeAgentProviderError("cursor", once)).toEqual(once);
+  });
 });

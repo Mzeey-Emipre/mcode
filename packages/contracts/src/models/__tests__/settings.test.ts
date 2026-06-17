@@ -47,6 +47,7 @@ describe("settings.provider.cursor", () => {
       fullPreambleEveryNTurns: 12,
       idleSessionTtlMinutes: 20,
       retryTransientFailuresOnce: true,
+      rateLimitRetryBackoffMs: 3000,
       verboseFailureLogs: true,
       traceSessionUpdates: false,
       autoAnswerAskQuestions: true,
