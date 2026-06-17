@@ -120,7 +120,16 @@ export class AuxiliaryHydrator {
               ];
             })()
           : items;
-        if (!shallowEqualBy(merged, currentTasks, ["content", "status", "group"])) {
+        if (
+          !shallowEqualBy(merged, currentTasks, [
+            "id",
+            "harnessTaskId",
+            "content",
+            "activeForm",
+            "status",
+            "group",
+          ])
+        ) {
           this.deps.setTasksForThread(threadId, merged);
         }
       })

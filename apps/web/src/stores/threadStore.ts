@@ -1868,12 +1868,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
           : "Tasks";
         const allTasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
-        // Prefer a task scoped to this group; fall back to a global harnessTaskId
-        // match so an update still lands when the group cannot be resolved (e.g.
-        // the create's parent Agent call has been evicted from the buffer).
-        const target =
-          allTasks.find((t) => t.group === group && t.harnessTaskId === harnessTaskId)
-          ?? allTasks.find((t) => t.harnessTaskId === harnessTaskId);
+        // Prefer a task scoped to this group. Fall back to a global harnessTaskId
+        // match only when exactly one task carries the id, so an update still
+        // lands when the group cannot be resolved (e.g. the create's parent Agent
+        // call has been evicted from the buffer) without updating the wrong task
+        // on an ambiguous sub-agent collision.
+        const scoped = allTasks.find(
+          (t) => t.group === group && t.harnessTaskId === harnessTaskId,
+        );
+        const globalMatches = allTasks.filter((t) => t.harnessTaskId === harnessTaskId);
+        const target = scoped ?? (globalMatches.length === 1 ? globalMatches[0] : undefined);
         if (!target) return;
 
         const groupTasks = allTasks.filter((t) => t.group === target.group);

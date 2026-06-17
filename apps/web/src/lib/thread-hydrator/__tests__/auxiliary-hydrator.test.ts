@@ -304,6 +304,41 @@ describe("AuxiliaryHydrator", () => {
     });
   });
 
+  it("committed persisted tasks that differ only in identity fields so harnessTaskId reaches the store", async () => {
+    // The live task matches on content/status/group but lacks the harness id, so
+    // a gate that ignored identity fields would skip the write and later
+    // TaskUpdate correlation by harnessTaskId would never land.
+    const liveTask: TaskItem = {
+      id: "task-live",
+      content: "Run tests",
+      status: "in_progress",
+      group: "Tasks",
+    };
+    (mockTransport.getThreadTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "1",
+        content: "Run tests",
+        status: "in_progress",
+        group: "Tasks",
+      },
+    ]);
+
+    const aux = createAux({ getTasksForThread: () => [liveTask] });
+    aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
+
+    await vi.waitFor(() => {
+      expect(setTasksForThread).toHaveBeenCalledWith(THREAD_ID, [
+        {
+          id: "1",
+          harnessTaskId: "1",
+          content: "Run tests",
+          status: "in_progress",
+          group: "Tasks",
+        },
+      ]);
+    });
+  });
+
   it("backfilled file-change snapshots for thin cache entries on threads with changes", async () => {
     (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockResolvedValue([
       {

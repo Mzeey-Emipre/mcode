@@ -86,24 +86,27 @@ export class TaskRepo {
   }
 
   /**
-   * Locate the index of the task with the given harness id. Prefers a match
-   * scoped to `group` (harness ids collide across sub-agents) and falls back to
-   * a global id match so an update still lands when the group is unknown (e.g.
-   * the creating sub-agent call has been evicted from the buffer). Returns -1
-   * when no task matches.
+   * Locate the index of the task with the given harness id. A match scoped to
+   * `group` always wins (harness ids collide across sub-agents). Without a scoped
+   * hit, it falls back to a global id match only when exactly one task carries
+   * that id, so an update still lands when the group is unknown (e.g. the
+   * creating sub-agent call has been evicted from the buffer) without ever
+   * mutating the wrong task on an ambiguous collision. Returns -1 when no
+   * unambiguous match exists.
    */
   private findTaskIndex(
     tasks: readonly StoredTask[],
     id: string,
     group?: string,
   ): number {
-    if (group != null) {
-      const scoped = tasks.findIndex(
-        (task) => (task.group ?? "Tasks") === group && task.id === id,
-      );
-      if (scoped >= 0) return scoped;
+    const globalMatches: number[] = [];
+    for (let i = 0; i < tasks.length; i += 1) {
+      const task = tasks[i];
+      if (task.id !== id) continue;
+      if (group != null && (task.group ?? "Tasks") === group) return i;
+      globalMatches.push(i);
     }
-    return tasks.findIndex((task) => task.id === id);
+    return globalMatches.length === 1 ? globalMatches[0] : -1;
   }
 
   /**

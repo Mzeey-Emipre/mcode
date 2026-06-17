@@ -410,6 +410,33 @@ describe("handleAgentEvent branches", () => {
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toBeUndefined();
   });
 
+  it("leaves both tasks untouched when a TaskUpdate id collides across groups and the resolved group matches neither", () => {
+    // Two sub-agents each number their own list, so harness id "1" exists in two
+    // groups. An update whose group resolves to "Tasks" (no parent Agent call)
+    // matches neither sub-agent group, so the ambiguous collision must be a no-op
+    // rather than silently mutating an arbitrary one of the two.
+    useTaskStore.getState().setTaskGroup("thread-1", "Sub-agent A", [
+      { id: "sa-1", harnessTaskId: "1", content: "child A", status: "pending", group: "Sub-agent A" },
+    ]);
+    useTaskStore.getState().setTaskGroup("thread-1", "Sub-agent B", [
+      { id: "sb-1", harnessTaskId: "1", content: "child B", status: "pending", group: "Sub-agent B" },
+    ]);
+
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-update-collide",
+        toolName: "TaskUpdate",
+        toolInput: { taskId: "1", status: "completed" },
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      { id: "sa-1", harnessTaskId: "1", content: "child A", status: "pending", group: "Sub-agent A" },
+      { id: "sb-1", harnessTaskId: "1", content: "child B", status: "pending", group: "Sub-agent B" },
+    ]);
+  });
+
   it("session.toolUse updates parent scope tasks from Codex update_plan calls", () => {
     useThreadStore.getState().handleAgentEvent("thread-1", {
       method: "session.toolUse",

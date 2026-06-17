@@ -126,6 +126,26 @@ describe("TaskRepo", () => {
     ]);
   });
 
+  it("updateTask leaves every task untouched when an id collides across groups and the group matches none", () => {
+    const threadId = makeThread("update-ambiguous");
+    repo.appendTask(threadId, { id: "1", content: "main one", status: "pending", group: "Tasks" });
+    repo.appendTask(threadId, { id: "1", content: "sub one", status: "pending", group: "Sub-agent" });
+    expect(repo.updateTask(threadId, "1", { status: "completed" }, "Unknown")).toBe(false);
+    expect(repo.get(threadId)).toEqual([
+      { id: "1", content: "main one", status: "pending", group: "Tasks" },
+      { id: "1", content: "sub one", status: "pending", group: "Sub-agent" },
+    ]);
+  });
+
+  it("updateTask falls back to the sole global match when the group is unknown", () => {
+    const threadId = makeThread("update-global-recover");
+    repo.appendTask(threadId, { id: "1", content: "only one", status: "pending", group: "Tasks" });
+    expect(repo.updateTask(threadId, "1", { status: "completed" }, "Unresolved")).toBe(true);
+    expect(repo.get(threadId)).toEqual([
+      { id: "1", content: "only one", status: "completed", group: "Tasks" },
+    ]);
+  });
+
   it("removeTask deletes the task with the given harness id scoped to its group", () => {
     const threadId = makeThread("remove");
     repo.appendTask(threadId, { id: "1", content: "main one", status: "pending", group: "Tasks" });
