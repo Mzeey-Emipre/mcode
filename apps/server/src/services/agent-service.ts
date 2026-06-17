@@ -92,6 +92,15 @@ const FORK_HISTORY_PAGE_SIZE = 100;
 const FORK_HISTORY_MAX_MESSAGES = 500;
 const GOAL_ACHIEVED_RECEIPT_RE = /^Goal achieved in \d+s\.$/;
 
+/**
+ * Extract the harness-assigned task id from a `TaskCreate` result line such as
+ * "Task #1 created successfully: ...". Returns null when no id is present.
+ */
+function parseHarnessTaskId(output: string): string | null {
+  const match = /#(\d+)/.exec(output);
+  return match ? match[1] : null;
+}
+
 /** Orchestrates agent sessions, message sending, and event forwarding. */
 @injectable()
 export class AgentService {
@@ -1286,6 +1295,94 @@ export class AgentService {
     });
   }
 
+  /**
+   * Persist a `TaskCreate` once its result arrives. The harness assigns the task
+   * id (returned only in the result, e.g. "Task #1 created successfully: ...")
+   * and that id is what later `TaskUpdate` calls reference, so the task can only
+   * be stored with a stable identity here, not at tool-use time. Input fields
+   * (subject/description/activeForm) are read back from the buffered tool call.
+   */
+  private handleTaskCreateResult(
+    threadId: string,
+    toolCallId: string,
+    output: string,
+    isError: boolean,
+  ): void {
+    if (isError) return;
+    const buffered = this.narrativeStore
+      .getBufferedToolCalls(threadId)
+      .find((tc) => tc.toolCallId === toolCallId);
+    if (!buffered || buffered.toolName !== "TaskCreate") return;
+    const harnessId = parseHarnessTaskId(output);
+    if (!harnessId) return;
+    const input = buffered._rawToolInput ?? {};
+    const content = this.taskCreateContent(input);
+    if (!content) return;
+    const group = buffered.parentToolCallId
+      ? this.resolveAgentGroupLabel(threadId, buffered.parentToolCallId)
+      : "Tasks";
+    const activeForm =
+      typeof input.activeForm === "string" && input.activeForm.trim().length > 0
+        ? input.activeForm.trim()
+        : undefined;
+    try {
+      this.taskRepo.appendTask(threadId, {
+        id: harnessId,
+        content,
+        status: "pending",
+        ...(activeForm ? { activeForm } : {}),
+        group,
+      });
+    } catch (err) {
+      logger.warn("TaskCreate task not persisted", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Apply a `TaskUpdate` to the persisted task list so the Scope view reflects
+   * status transitions, deletions, and subject/activeForm edits after reload.
+   * Matches the task by its harness id scoped to `group` (ids collide across
+   * sub-agents); `deleted` removes it.
+   */
+  private applyTaskUpdate(
+    threadId: string,
+    toolInput: Record<string, unknown>,
+    group: string,
+  ): void {
+    const taskId =
+      toolInput.taskId != null && String(toolInput.taskId).length > 0
+        ? String(toolInput.taskId)
+        : "";
+    if (!taskId) return;
+    try {
+      if (toolInput.status === "deleted") {
+        this.taskRepo.removeTask(threadId, taskId, group);
+        return;
+      }
+      const patch: Partial<Pick<StoredTask, "status" | "content" | "activeForm">> = {};
+      if (toolInput.status !== undefined) {
+        patch.status = this.coerceStoredTaskStatus(toolInput.status);
+      }
+      if (typeof toolInput.subject === "string" && toolInput.subject.trim().length > 0) {
+        patch.content = toolInput.subject.trim();
+      }
+      if (typeof toolInput.activeForm === "string" && toolInput.activeForm.trim().length > 0) {
+        patch.activeForm = toolInput.activeForm.trim();
+      }
+      if (Object.keys(patch).length > 0) {
+        this.taskRepo.updateTask(threadId, taskId, patch, group);
+      }
+    } catch (err) {
+      logger.warn("TaskUpdate not persisted", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   /** Number of currently active sessions. */
   activeCount(): number {
     return this.activeSessionIds.size;
@@ -1859,6 +1956,13 @@ export class AgentService {
               ...(event.outputArtifactPath ? { outputArtifactPath: event.outputArtifactPath } : {}),
             },
           );
+          // Persist a just-created task now that the harness has assigned its id.
+          this.handleTaskCreateResult(
+            event.threadId,
+            event.toolCallId,
+            event.output,
+            event.isError,
+          );
         }
 
         if (event.type === AgentEventType.TurnStarted) {
@@ -2317,24 +2421,15 @@ ${userMessage}`;
       }
     }
 
-    if (event.toolName === "TaskCreate") {
-      const content = this.taskCreateContent(event.toolInput);
-      if (!content) return;
+    // TaskCreate is persisted at result time (see handleTaskCreateResult): the
+    // harness-assigned task id needed to correlate later TaskUpdate calls only
+    // appears in the TaskCreate result, never in its input.
+
+    if (event.toolName === "TaskUpdate") {
       const group = parentToolCallId
         ? this.resolveAgentGroupLabel(threadId, parentToolCallId)
         : "Tasks";
-      try {
-        this.taskRepo.appendTask(threadId, {
-          content,
-          status: this.coerceStoredTaskStatus(event.toolInput.status),
-          group,
-        });
-      } catch (err) {
-        logger.warn("TaskCreate task not persisted", {
-          threadId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      this.applyTaskUpdate(threadId, event.toolInput, group);
     }
 
     if (event.toolName === "update_plan") {

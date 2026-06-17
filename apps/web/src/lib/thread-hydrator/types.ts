@@ -40,7 +40,7 @@ export interface ThreadHydratorTransport {
   listPendingPermissions(threadId: string): Promise<PermissionRequest[]>;
   getThreadTasks(
     threadId: string,
-  ): Promise<Array<{ content: string; status: string; group?: string }> | null>;
+  ): Promise<Array<{ id?: string; content: string; status: string; activeForm?: string; group?: string }> | null>;
   getThreadPlans(threadId: string): Promise<PlanRecord[]>;
 }
 

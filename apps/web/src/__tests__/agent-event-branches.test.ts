@@ -308,6 +308,135 @@ describe("handleAgentEvent branches", () => {
     ]);
   });
 
+  it("captures the harness task id from a TaskCreate result", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-create-1",
+        toolName: "TaskCreate",
+        toolInput: { subject: "Buy groceries", description: "milk, eggs", activeForm: "Buying groceries" },
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolResult",
+      params: {
+        toolCallId: "task-create-1",
+        output: "Task #1 created successfully: Buy groceries",
+        isError: false,
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      {
+        id: "task-create-1",
+        harnessTaskId: "1",
+        content: "Buy groceries - milk, eggs",
+        status: "pending",
+        activeForm: "Buying groceries",
+        group: "Tasks",
+      },
+    ]);
+  });
+
+  it("applies a TaskUpdate status transition by harness task id", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-create-1",
+        toolName: "TaskCreate",
+        toolInput: { subject: "Buy groceries", description: "milk, eggs" },
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolResult",
+      params: { toolCallId: "task-create-1", output: "Task #1 created successfully", isError: false },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-update-1",
+        toolName: "TaskUpdate",
+        toolInput: { taskId: "1", status: "in_progress", activeForm: "Buying groceries" },
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      {
+        id: "task-create-1",
+        harnessTaskId: "1",
+        content: "Buy groceries - milk, eggs",
+        status: "in_progress",
+        activeForm: "Buying groceries",
+        group: "Tasks",
+      },
+    ]);
+  });
+
+  it("removes a task when a TaskUpdate sets status deleted", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-create-1",
+        toolName: "TaskCreate",
+        toolInput: { subject: "Buy groceries" },
+      },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolResult",
+      params: { toolCallId: "task-create-1", output: "Task #1 created successfully", isError: false },
+    });
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-update-1",
+        toolName: "TaskUpdate",
+        toolInput: { taskId: "1", status: "deleted" },
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([]);
+  });
+
+  it("ignores a TaskUpdate that matches no known task", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-update-orphan",
+        toolName: "TaskUpdate",
+        toolInput: { taskId: "99", status: "completed" },
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toBeUndefined();
+  });
+
+  it("leaves both tasks untouched when a TaskUpdate id collides across groups and the resolved group matches neither", () => {
+    // Two sub-agents each number their own list, so harness id "1" exists in two
+    // groups. An update whose group resolves to "Tasks" (no parent Agent call)
+    // matches neither sub-agent group, so the ambiguous collision must be a no-op
+    // rather than silently mutating an arbitrary one of the two.
+    useTaskStore.getState().setTaskGroup("thread-1", "Sub-agent A", [
+      { id: "sa-1", harnessTaskId: "1", content: "child A", status: "pending", group: "Sub-agent A" },
+    ]);
+    useTaskStore.getState().setTaskGroup("thread-1", "Sub-agent B", [
+      { id: "sb-1", harnessTaskId: "1", content: "child B", status: "pending", group: "Sub-agent B" },
+    ]);
+
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: {
+        toolCallId: "task-update-collide",
+        toolName: "TaskUpdate",
+        toolInput: { taskId: "1", status: "completed" },
+      },
+    });
+
+    expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
+      { id: "sa-1", harnessTaskId: "1", content: "child A", status: "pending", group: "Sub-agent A" },
+      { id: "sb-1", harnessTaskId: "1", content: "child B", status: "pending", group: "Sub-agent B" },
+    ]);
+  });
+
   it("session.toolUse updates parent scope tasks from Codex update_plan calls", () => {
     useThreadStore.getState().handleAgentEvent("thread-1", {
       method: "session.toolUse",

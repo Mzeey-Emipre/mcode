@@ -102,8 +102,10 @@ export class AuxiliaryHydrator {
       .getThreadTasks(threadId)
       .then((tasks) => {
         const items = (tasks ?? []).map((t, i) => ({
-          id: String(i),
+          id: t.id ?? String(i),
+          harnessTaskId: t.id,
           content: t.content,
+          activeForm: t.activeForm,
           status: coerceTaskStatus(t.status),
           group: t.group ?? "Tasks",
         }));
@@ -118,7 +120,16 @@ export class AuxiliaryHydrator {
               ];
             })()
           : items;
-        if (!shallowEqualBy(merged, currentTasks, ["content", "status", "group"])) {
+        if (
+          !shallowEqualBy(merged, currentTasks, [
+            "id",
+            "harnessTaskId",
+            "content",
+            "activeForm",
+            "status",
+            "group",
+          ])
+        ) {
           this.deps.setTasksForThread(threadId, merged);
         }
       })

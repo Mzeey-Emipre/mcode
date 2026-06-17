@@ -377,8 +377,8 @@ export interface McodeTransport {
   /** Fetch a thread's full server-ordered narrative as a flat, chronological list. */
   loadTurn(threadId: string): Promise<import("@mcode/contracts").NarrativeEntry[]>;
 
-  /** Fetch persisted task list for a thread (from last TodoWrite). */
-  getThreadTasks(threadId: string): Promise<Array<{ content: string; status: "pending" | "in_progress" | "completed" | "cancelled"; group?: string }> | null>;
+  /** Fetch persisted task list for a thread (TodoWrite / Task* tool family). */
+  getThreadTasks(threadId: string): Promise<Array<{ id?: string; content: string; status: "pending" | "in_progress" | "completed" | "cancelled"; activeForm?: string; group?: string }> | null>;
 
   /** Fetch persisted plans for a thread (hydration on page load). */
   getThreadPlans(threadId: string): Promise<import("@mcode/contracts").PlanRecord[]>;
