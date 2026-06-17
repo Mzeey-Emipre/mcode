@@ -16,9 +16,9 @@
  * Prints an instructions block at the end so an agent knows where artifacts
  * landed.
  */
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, mkdtempSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 
 const KEEP_OPEN = process.argv.includes("--keep-open");
@@ -123,11 +123,26 @@ async function screenshotStep(page, filename) {
   console.log(`[demo-desktop] screenshot: ${path}`);
 }
 
+// Isolate the demo from your real profile by default: the launched app gets a
+// fresh, empty `MCODE_DATA_DIR` so the tour can never read or mutate `~/.mcode`.
+// The embedded server also picks its own free port within the desktop range, so
+// we never collide with — or attach to — another running instance. Opt back
+// into the real profile with `MCODE_DEMO_USE_REAL_DATA=1` when you specifically
+// need to demo against existing workspaces.
+const USE_REAL_DATA = process.env.MCODE_DEMO_USE_REAL_DATA === "1";
+const demoDataDir = USE_REAL_DATA ? null : mkdtempSync(join(tmpdir(), "mcode-demo-desktop-"));
+if (demoDataDir) {
+  console.log(`[demo-desktop] isolated data dir: ${demoDataDir}`);
+} else {
+  console.log("[demo-desktop] MCODE_DEMO_USE_REAL_DATA=1 — using your real ~/.mcode profile");
+}
+
 console.log(`[demo-desktop] launching Electron from ${DESKTOP_DIR}`);
 const app = await electron.launch({
   args: ["."],
   cwd: DESKTOP_DIR,
   timeout: TIMEOUT_MS,
+  env: demoDataDir ? { ...process.env, MCODE_DATA_DIR: demoDataDir } : process.env,
 });
 
 const mainConsole = [];
@@ -221,8 +236,12 @@ console.log(
 
 if (KEEP_OPEN) {
   console.log("[demo-desktop] --keep-open set; leaving Electron running");
+  if (demoDataDir) {
+    console.log(`[demo-desktop] isolated data dir left in place for inspection: ${demoDataDir}`);
+  }
   console.log("[demo-desktop] close the window or Ctrl-C to exit");
   await new Promise(() => {});
 } else {
   await app.close();
+  if (demoDataDir) rmSync(demoDataDir, { recursive: true, force: true });
 }
