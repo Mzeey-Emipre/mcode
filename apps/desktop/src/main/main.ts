@@ -780,23 +780,23 @@ app.on("window-all-closed", () => {
   }
 });
 
-// When autoInstallOnAppQuit is true, electron-updater runs the installer
-// during the quit sequence. Stop the server first so the installer can
-// replace files without hitting locks from the detached process.
-let isQuittingForUpdate = false;
+// The server is a detached child that outlives Electron, so it will not exit
+// when we do. Stop it explicitly on quit rather than leaving it to the idle
+// grace period (which re-arms while terminals or agent turns persist). This
+// also releases file locks before electron-updater runs the installer when an
+// update is pending. We must defer the actual quit until the stop completes,
+// since Electron does not await async before-quit handlers.
+let isStoppingServerForQuit = false;
 app.on("before-quit", async (e) => {
-  if (isQuittingForUpdate) return; // re-entrant guard after we call app.quit()
-  const status = getUpdateStatus();
-  if (status.state === "downloaded") {
-    e.preventDefault();
-    isQuittingForUpdate = true;
-    try {
-      await serverManager.forceReplace();
-    } catch (err) {
-      console.error("[main] Failed to stop server before update install:", err);
-    }
-    app.quit();
+  if (isStoppingServerForQuit) return; // re-entrant guard after we call app.quit()
+  e.preventDefault();
+  isStoppingServerForQuit = true;
+  try {
+    await serverManager.stopServerHeldByLock();
+  } catch (err) {
+    console.error("[main] Failed to stop server during quit:", err);
   }
+  app.quit();
 });
 
 app.on("will-quit", () => {
