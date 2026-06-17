@@ -13,6 +13,18 @@ export interface GraceLogger {
   warn(msg: string, meta?: Record<string, unknown>): void;
 }
 
+/**
+ * Breakdown of in-flight work that must not be interrupted by an idle shutdown.
+ * Reported in the re-arm log so a lingering server names its actual culprit
+ * (agent turns vs. terminal commands) instead of a generic "busy".
+ */
+export interface BusyStatus {
+  /** Number of in-flight agent turns. */
+  agents: number;
+  /** Number of terminal sessions running a non-shell child process. */
+  terminals: number;
+}
+
 /** Dependencies injected by the caller so the controller stays unit-testable. */
 export interface GraceDeps {
   /** Grace period length in milliseconds. */
@@ -20,10 +32,11 @@ export interface GraceDeps {
   /** Returns the current number of active WebSocket sessions. */
   sessionCount(): number;
   /**
-   * Returns true when the server has in-flight work that must not be
-   * interrupted (active agent turns or running terminal sessions).
+   * Returns the current in-flight work breakdown. The terminal probe inspects
+   * the OS process tree, so this may be async. An idle shell at a prompt does
+   * not count as busy (ADR-0010 PTYs persist after their view disconnects).
    */
-  isBusy(): boolean;
+  isBusy(): BusyStatus | Promise<BusyStatus>;
   /** Initiates a graceful server shutdown. */
   shutdown(): void;
   /** Logger for lifecycle events. */
@@ -73,7 +86,7 @@ export function createGraceController(deps: GraceDeps): GraceController {
   function arm(): void {
     if (timer !== null) return; // already armed
     armedAt = now();
-    timer = setTimeout(onFire, graceMs);
+    timer = setTimeout(() => void onFire(), graceMs);
     logger.info("Grace period armed", { graceMs });
   }
 
@@ -92,11 +105,11 @@ export function createGraceController(deps: GraceDeps): GraceController {
       timer = null;
     }
     armedAt = now();
-    timer = setTimeout(onFire, graceMs);
+    timer = setTimeout(() => void onFire(), graceMs);
     logger.info("Grace period re-armed", { reason, graceMs });
   }
 
-  function onFire(): void {
+  async function onFire(): Promise<void> {
     timer = null;
 
     // A session reconnected between the arm and the fire.
@@ -115,9 +128,18 @@ export function createGraceController(deps: GraceDeps): GraceController {
       return;
     }
 
-    // An agent or terminal is still running. Re-arm and wait.
-    if (isBusy()) {
-      reArm("server is busy (active agents or terminals)");
+    // An agent turn or a terminal command is still running. Re-arm and wait.
+    // The busy probe inspects the process tree, so it may reject; on failure
+    // re-arm rather than risk interrupting work we could not confirm is idle.
+    let busy: BusyStatus;
+    try {
+      busy = await isBusy();
+    } catch {
+      reArm("busy check failed — re-arming to avoid interrupting work");
+      return;
+    }
+    if (busy.agents > 0 || busy.terminals > 0) {
+      reArm(`server is busy (agents=${busy.agents}, terminals=${busy.terminals})`);
       return;
     }
 

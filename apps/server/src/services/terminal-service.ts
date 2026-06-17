@@ -395,20 +395,40 @@ export class TerminalService {
   async hasChildren(ptyId: string): Promise<{ hasChildren: boolean }> {
     const session = this.sessions.get(ptyId);
     if (!session) throw new Error(`PTY not found: ${ptyId}`);
+    return { hasChildren: await this.ptyHasNonShellChildren(session) };
+  }
 
+  /**
+   * Count terminal sessions that are running a non-shell child process.
+   *
+   * The server's grace-period busy check uses this instead of a raw session
+   * count: under ADR-0010 a PTY persists after its view disconnects, so an
+   * idle shell sitting at a prompt must not block shutdown — only a session
+   * with real work (a running command) should.
+   */
+  async countBusySessions(): Promise<number> {
+    let busy = 0;
+    for (const session of this.sessions.values()) {
+      if (await this.ptyHasNonShellChildren(session)) busy++;
+    }
+    return busy;
+  }
+
+  /**
+   * Whether a PTY's shell has spawned a non-shell child (a running command).
+   * Returns false if the process tree cannot be inspected.
+   */
+  private async ptyHasNonShellChildren(session: PtySession): Promise<boolean> {
     let children: Array<{ name: string; pid: number }>;
     try {
       children = await listDirectChildren(session.pty.pid);
     } catch {
-      return { hasChildren: false };
+      return false;
     }
-
-    const nonShellChildren = children.filter((child) => {
+    return children.some((child) => {
       const basename = child.name.toLowerCase().split(/[\\/]/).pop() ?? child.name.toLowerCase();
       return !SHELL_BASENAMES.has(basename);
     });
-
-    return { hasChildren: nonShellChildren.length > 0 };
   }
 
   private async destroyPty(session: PtySession): Promise<void> {

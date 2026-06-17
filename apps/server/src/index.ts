@@ -598,11 +598,14 @@ let graceController: ReturnType<typeof createGraceController> | null = null;
 function startServerAndSubscribe(): void {
   listen(PREFERRED_PORT);
 
-  // isBusy guards against shutting down mid-turn or mid-terminal session.
-  // Both services are resolved from the container before this function is called.
-  const isBusy = () =>
-    agentService.activeCount() > 0 ||
-    terminalService.listActiveSessions().length > 0;
+  // isBusy guards against shutting down mid-turn or while a terminal command
+  // runs. A persisted-but-idle PTY (ADR-0010) does not count — only sessions
+  // with a live child process do — so closing the app no longer keeps the
+  // server alive forever. Both services are resolved before this is called.
+  const isBusy = async () => ({
+    agents: agentService.activeCount(),
+    terminals: await terminalService.countBusySessions(),
+  });
 
   graceController = createGraceController({
     graceMs: GRACE_PERIOD_MS,
