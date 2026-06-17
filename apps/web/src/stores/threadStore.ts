@@ -224,6 +224,70 @@ function resetTurnEphemeral(_rec: ThreadRecord): Partial<ThreadRecord> {
   };
 }
 
+/**
+ * Resolve the client-side message id that should receive a `turn.persisted`
+ * payload. Never uses {@link ThreadRecord.currentTurnMessageId} alone because
+ * auto-dequeue can advance it before the prior turn's async snapshot finishes.
+ */
+function resolveTurnPersistLocalMessageId(
+  rec: ThreadRecord,
+  serverMessageId: string,
+): string {
+  if (rec.pendingTurnPersistLocalMessageId) {
+    return rec.pendingTurnPersistLocalMessageId;
+  }
+  for (const [localId, mappedServerId] of Object.entries(rec.serverMessageIds)) {
+    if (mappedServerId === serverMessageId) {
+      return localId;
+    }
+  }
+  if (rec.messages.some((m) => m.id === serverMessageId)) {
+    return serverMessageId;
+  }
+  return serverMessageId;
+}
+
+/** Queue the local assistant id until matching `turn.persisted` clears it. */
+function queuePendingTurnPersistLocalMessageId(
+  rec: ThreadRecord,
+  localMessageId: string,
+): string {
+  if (rec.pendingTurnPersistLocalMessageId) {
+    return rec.pendingTurnPersistLocalMessageId;
+  }
+  return localMessageId;
+}
+
+/**
+ * Ensure the transcript contains an assistant row for persisted turn metadata.
+ * Tools-only turns may materialize on the server without a client `session.message`.
+ */
+function ensureAssistantMessageForTurnPersist(
+  rec: ThreadRecord,
+  threadId: string,
+  localMessageId: string,
+): Message[] | undefined {
+  if (rec.messages.some((m) => m.id === localMessageId)) {
+    return undefined;
+  }
+  const placeholder: Message = {
+    id: localMessageId,
+    thread_id: threadId,
+    role: "assistant",
+    content: "",
+    tool_calls: null,
+    files_changed: null,
+    cost_usd: null,
+    tokens_used: null,
+    timestamp: new Date().toISOString(),
+    sequence: rec.messages.length + 1,
+    attachments: null,
+    model: null,
+  };
+  const { messages } = capMessages([...rec.messages, placeholder]);
+  return messages;
+}
+
 /** Returns a React key shared by the live and just-persisted final response. */
 function createTurnResponseKey(threadId: string): string {
   return `turn-response:${threadId}:${crypto.randomUUID()}`;
@@ -1046,6 +1110,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingPreview: "",
           toolCalls: [],
           currentTurnMessageId: "",
+          pendingTurnPersistLocalMessageId: "",
           currentTurnResponseKey: "",
           assistantResponseKeys: {},
           oldestLoadedSequence: 0,
@@ -1597,7 +1662,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       markPriorToolCallsComplete();
       const content = (params.content as string) || "";
       const attachments = parseStoredAttachments(params.attachments);
-      if (content || attachments.length > 0) {
+      if (content || attachments.length > 0 || params.messageId) {
         const message: Message = {
           id: (params.messageId as string) || crypto.randomUUID(),
           thread_id: threadId,
@@ -2207,6 +2272,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             streaming: "",
             streamingPreview: "",
             currentTurnMessageId: message.id,
+            pendingTurnPersistLocalMessageId: queuePendingTurnPersistLocalMessageId(
+              rec,
+              message.id,
+            ),
             currentTurnResponseKey: nextLiveKey,
             assistantResponseKeys: {
               ...rec.assistantResponseKeys,
@@ -2262,6 +2331,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             toolCalls: completedCalls,
             permissions: [] as StoredPermission[],
             rateLimit: undefined,
+            ...(rec.currentTurnMessageId
+              ? {
+                  pendingTurnPersistLocalMessageId: queuePendingTurnPersistLocalMessageId(
+                    rec,
+                    rec.currentTurnMessageId,
+                  ),
+                }
+              : {}),
           };
 
           if (dedupedGuardrail && state.currentThreadId === threadId) {
@@ -2655,21 +2732,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         }
       }
 
-      let localMsgId = payload.messageId;
-      const trackedMsgId = rec.currentTurnMessageId;
-      if (trackedMsgId) {
-        localMsgId = trackedMsgId;
-      } else if (state.currentThreadId === payload.threadId) {
-        for (let i = rec.messages.length - 1; i >= 0; i--) {
-          if (rec.messages[i].role === "assistant") {
-            localMsgId = rec.messages[i].id;
-            break;
-          }
-        }
-      }
+      const localMsgId = resolveTurnPersistLocalMessageId(rec, payload.messageId);
+      const ensuredMessages =
+        payload.filesChanged.length > 0 || payload.toolCallCount > 0
+          ? ensureAssistantMessageForTurnPersist(rec, payload.threadId, localMsgId)
+          : undefined;
 
       return {
         records: patchThreadRecord(state.records, payload.threadId, {
+          ...(ensuredMessages ? { messages: ensuredMessages } : {}),
           persistedToolCallCounts: {
             ...rec.persistedToolCallCounts,
             [localMsgId]: payload.toolCallCount,
@@ -2686,6 +2757,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             ...rec.serverMessageIds,
             [localMsgId]: payload.messageId,
           },
+          pendingTurnPersistLocalMessageId:
+            rec.pendingTurnPersistLocalMessageId === localMsgId
+              ? ""
+              : rec.pendingTurnPersistLocalMessageId,
           interruptStopFileNotice,
           awaitingUserStopPersist,
         }),

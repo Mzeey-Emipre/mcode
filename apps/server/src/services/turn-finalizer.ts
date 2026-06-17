@@ -75,6 +75,8 @@ export class TurnFinalizer {
   private readonly bufferedAttachmentsByThread = new Map<string, StoredAttachment[]>();
   /** Threads whose assistant row was already materialized this turn (e.g. eagerly for a plan FK). */
   private readonly materializedThreads = new Set<string>();
+  /** Serializes finalize calls per thread so a slow git snapshot cannot drop a later turn. */
+  private readonly finalizeChainByThread = new Map<string, Promise<void>>();
 
   constructor(
     private readonly messageRepo: MessageRepo,
@@ -190,6 +192,20 @@ export class TurnFinalizer {
    * against it.
    */
   async finalize(threadId: string, outcome: TurnOutcome): Promise<void> {
+    const tail = this.finalizeChainByThread.get(threadId) ?? Promise.resolve();
+    const next = tail.then(() => this.runFinalizeOnce(threadId, outcome));
+    this.finalizeChainByThread.set(threadId, next);
+    try {
+      await next;
+    } finally {
+      if (this.finalizeChainByThread.get(threadId) === next) {
+        this.finalizeChainByThread.delete(threadId);
+      }
+    }
+  }
+
+  /** Runs one finalize pass; concurrent calls for the same thread are queued by {@link finalize}. */
+  private async runFinalizeOnce(threadId: string, outcome: TurnOutcome): Promise<void> {
     if (this.persistingThreads.has(threadId)) return;
     this.persistingThreads.add(threadId);
     try {
