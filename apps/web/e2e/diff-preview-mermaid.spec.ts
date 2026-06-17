@@ -115,13 +115,13 @@ async function openThreadChanges(page: Page): Promise<void> {
           getState: () => {
             setSnapshots: (id: string, snaps: unknown) => void;
             showRightPanel: (id: string, threadId?: string) => void;
-            setRightPanelTab: (id: string, t: string) => void;
+            setRightPanelTab: (id: string, threadId: string | null, t: string) => void;
           };
         }
       ).getState();
       api.setSnapshots(tid, [snapshot]);
       api.showRightPanel(wid, tid);
-      api.setRightPanelTab(wid, "changes");
+      api.setRightPanelTab(wid, tid, "changes");
     },
     { workspace: WORKSPACE, thread: THREAD, wid: WORKSPACE.id, tid: THREAD.id, snapshot: SNAPSHOT },
   );

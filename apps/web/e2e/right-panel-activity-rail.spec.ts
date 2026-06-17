@@ -82,12 +82,12 @@ async function seed(
           diffStore as {
             getState: () => {
               showRightPanel: (id: string, threadId?: string) => void;
-              setRightPanelTab: (id: string, t: string) => void;
+              setRightPanelTab: (id: string, threadId: string | null, t: string) => void;
             };
           }
         ).getState();
         api.showRightPanel(wid, withThread ? tid : undefined);
-        for (const t of tabs) api.setRightPanelTab(wid, t);
+        for (const t of tabs) api.setRightPanelTab(wid, withThread ? tid : null, t);
       }
     },
     {
