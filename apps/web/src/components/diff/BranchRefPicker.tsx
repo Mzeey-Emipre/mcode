@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Check, ChevronDown } from "lucide-react";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
@@ -34,37 +34,38 @@ function useResolveBranchComparison(
   diffScopeRevision: number,
 ): { comparison: BranchComparison | null; loading: boolean } {
   const comparison = useDiffStore((s) => s.branchComparison);
-  const setBranchComparison = useDiffStore((s) => s.setBranchComparison);
+  const resolveBranchComparison = useDiffStore((s) => s.resolveBranchComparison);
   const [loading, setLoading] = useState(false);
   const key = scopeKey(workspaceId, threadId);
-  const resolvedRevisionRef = useRef<number | null>(null);
 
   useEffect(() => {
     const state = useDiffStore.getState();
+    // The "already resolved for this scope+revision" guard is store-backed (not a
+    // component ref) so it survives a remount and skips a redundant re-fetch.
     if (
       state.branchComparisonKey === key &&
       state.branchComparison &&
-      resolvedRevisionRef.current === diffScopeRevision
+      state.branchResolvedRevisionByScope[key] === diffScopeRevision
     ) {
       setLoading(false);
       return;
     }
 
     let cancelled = false;
-    resolvedRevisionRef.current = diffScopeRevision;
     setLoading(true);
     void getTransport()
       .getBranchComparison(workspaceId, threadId)
       .then((result) => {
         if (cancelled) return;
-        setBranchComparison(normalizeToCurrentComparison(result), key);
+        resolveBranchComparison(normalizeToCurrentComparison(result), key, diffScopeRevision);
         setLoading(false);
       })
       .catch(() => {
         if (cancelled) return;
-        setBranchComparison(
+        resolveBranchComparison(
           { base: null, target: null, refs: [], isUnborn: false, isComparisonAvailable: false },
           key,
+          diffScopeRevision,
         );
         setLoading(false);
       });
@@ -72,7 +73,7 @@ function useResolveBranchComparison(
     return () => {
       cancelled = true;
     };
-  }, [key, workspaceId, threadId, diffScopeRevision, setBranchComparison]);
+  }, [key, workspaceId, threadId, diffScopeRevision, resolveBranchComparison]);
 
   return { comparison, loading };
 }
