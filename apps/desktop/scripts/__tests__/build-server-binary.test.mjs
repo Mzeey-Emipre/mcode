@@ -20,7 +20,13 @@ vi.mock("resedit", () => {
   };
 
   const VersionInfo = { createEmpty: vi.fn(() => versionInstance) };
-  const Resource = { VersionInfo };
+  const fromEntries = vi.fn(() => []);
+  const replaceIconsForResource = vi.fn();
+  const IconGroupEntry = { fromEntries, replaceIconsForResource };
+  const Resource = { VersionInfo, IconGroupEntry };
+
+  const iconFileInstance = { icons: [{ data: new ArrayBuffer(4) }] };
+  const Data = { IconFile: { from: vi.fn(() => iconFileInstance) } };
 
   const exeInstance = { generate: vi.fn(() => new ArrayBuffer(8)) };
   const NtExecutable = { from: vi.fn(() => exeInstance) };
@@ -32,11 +38,15 @@ vi.mock("resedit", () => {
     NtExecutable,
     NtExecutableResource,
     Resource,
+    Data,
     __mocks: {
       setFileVersion,
       setProductVersion,
       setStringValues,
       outputToResourceEntries,
+      fromEntries,
+      replaceIconsForResource,
+      iconFileInstance,
       exeInstance,
       resInstance,
       versionInstance,
@@ -255,6 +265,55 @@ describe("stampWindowsVersionInfo", () => {
       expect.any(Object),
       expect.objectContaining({ CompanyName: "Acme Corp" }),
     );
+  });
+
+  it("stamps the favicon icon group when iconPath is provided", async () => {
+    const { stampWindowsVersionInfo } = await import("../build-server-binary.mjs");
+    const { __mocks: { fromEntries, replaceIconsForResource }, Data } = await import("resedit");
+
+    const exePath = path.join(tmpDir, "mcode-server.exe");
+    await writeFile(exePath, Buffer.from([0x4d, 0x5a]));
+    const iconPath = path.join(tmpDir, "icon.ico");
+    await writeFile(iconPath, Buffer.from([0x00, 0x00, 0x01, 0x00]));
+
+    await stampWindowsVersionInfo(exePath, {
+      fileDescription: "Mcode Server",
+      productName: "Mcode Server",
+      companyName: "Mcode",
+      fileVersion: "1.0.0.0",
+      productVersion: "1.0.0.0",
+      originalFilename: "mcode-server.exe",
+      iconPath,
+    });
+
+    expect(Data.IconFile.from).toHaveBeenCalledTimes(1);
+    // No pre-existing groups in the mock → falls back to icon group id 1.
+    expect(replaceIconsForResource).toHaveBeenCalledWith(
+      expect.any(Array),
+      1,
+      1033,
+      expect.any(Array),
+    );
+    expect(fromEntries).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips icon stamping when iconPath is omitted", async () => {
+    const { stampWindowsVersionInfo } = await import("../build-server-binary.mjs");
+    const { __mocks: { replaceIconsForResource } } = await import("resedit");
+
+    const exePath = path.join(tmpDir, "mcode-server.exe");
+    await writeFile(exePath, Buffer.from([0x4d, 0x5a]));
+
+    await stampWindowsVersionInfo(exePath, {
+      fileDescription: "Mcode Server",
+      productName: "Mcode Server",
+      companyName: "Mcode",
+      fileVersion: "1.0.0.0",
+      productVersion: "1.0.0.0",
+      originalFilename: "mcode-server.exe",
+    });
+
+    expect(replaceIconsForResource).not.toHaveBeenCalled();
   });
 });
 

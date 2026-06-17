@@ -61,6 +61,9 @@ export default async function afterPack(context) {
     : "0";
   const appVersion = `${major}.${minor}.${patch}.${fourth}`;
   const companyName = context.packager.appInfo.companyName ?? "Mcode";
+  // Stamp the app favicon onto the win32 server binary so Task Manager shows it
+  // instead of a generic icon. resedit ignores this on non-win32 platforms.
+  const winIconPath = resolve(desktopRoot, "build", "icon.ico");
 
   // The renamed copy at Contents/Resources/bin/mcode-server is co-signed by
   // electron-builder via the `mac.binaries` entry in package.json, so it
@@ -72,6 +75,7 @@ export default async function afterPack(context) {
     executableName: context.packager.executableName,
     appVersion,
     companyName,
+    iconPath: existsSync(winIconPath) ? winIconPath : undefined,
   });
 
   console.log("[after-pack] Built renamed server binary");
