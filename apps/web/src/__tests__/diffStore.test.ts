@@ -25,6 +25,8 @@ describe("diffStore", () => {
       diffContent: null,
       diffLoading: false,
       viewMode: "last-turn",
+      reviewViewByThread: {},
+      reviewViewManuallySelectedByThread: {},
       selectedCommitSha: null,
       renderMode: "unified",
       lineWrapByThread: {},
@@ -48,6 +50,55 @@ describe("diffStore", () => {
       setSelectedCommitSha("abc1234");
       setViewMode("commit");
       expect(useDiffStore.getState().selectedCommitSha).toBeNull();
+    });
+  });
+
+  describe("per-thread Review view default + sticky override", () => {
+    const clean = { hasTurnChanges: false, isDirty: false } as const;
+
+    it("resolves the change-state default until the user picks a view", () => {
+      const { getReviewView } = useDiffStore.getState();
+      expect(getReviewView("thread-1", { hasTurnChanges: true, isDirty: false })).toBe("last-turn");
+      expect(getReviewView("thread-1", { hasTurnChanges: false, isDirty: true })).toBe("unstaged");
+      expect(getReviewView("thread-1", clean)).toBe("branch");
+    });
+
+    it("re-evaluates live as change state changes while no pick is made", () => {
+      const { getReviewView } = useDiffStore.getState();
+      expect(getReviewView("thread-1", clean)).toBe("branch");
+      expect(getReviewView("thread-1", { hasTurnChanges: true, isDirty: false })).toBe("last-turn");
+    });
+
+    it("sticks to the user's pick and stops re-evaluating change state", () => {
+      const { setReviewViewForThread, getReviewView } = useDiffStore.getState();
+      setReviewViewForThread("thread-1", "cumulative");
+      expect(useDiffStore.getState().viewMode).toBe("cumulative");
+      expect(getReviewView("thread-1", { hasTurnChanges: true, isDirty: true })).toBe("cumulative");
+    });
+
+    it("keeps the override per thread — a sibling keeps its own default", () => {
+      const { setReviewViewForThread, getReviewView } = useDiffStore.getState();
+      setReviewViewForThread("thread-1", "staged");
+      expect(getReviewView("thread-1", { hasTurnChanges: true, isDirty: false })).toBe("staged");
+      expect(getReviewView("thread-2", { hasTurnChanges: true, isDirty: false })).toBe("last-turn");
+    });
+
+    it("drops both the picked view and the override flag on clearThread", () => {
+      const { setReviewViewForThread, clearThread, getReviewView } = useDiffStore.getState();
+      setReviewViewForThread("thread-1", "staged");
+      clearThread("thread-1");
+      const state = useDiffStore.getState();
+      expect(state.reviewViewByThread["thread-1"]).toBeUndefined();
+      expect(state.reviewViewManuallySelectedByThread["thread-1"]).toBeUndefined();
+      expect(getReviewView("thread-1", clean)).toBe("branch");
+    });
+
+    it("clearThread leaves a sibling thread's override intact", () => {
+      const { setReviewViewForThread, clearThread, getReviewView } = useDiffStore.getState();
+      setReviewViewForThread("thread-1", "staged");
+      setReviewViewForThread("thread-2", "branch");
+      clearThread("thread-1");
+      expect(getReviewView("thread-2", { hasTurnChanges: true, isDirty: false })).toBe("branch");
     });
   });
 
