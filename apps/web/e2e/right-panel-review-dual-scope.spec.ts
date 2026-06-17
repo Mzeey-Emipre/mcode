@@ -202,6 +202,7 @@ test.describe("Review tab: dual-scope view selection", () => {
           { name: "origin/main", shortSha: "aaaaaaa", type: "remote", isCurrent: false },
         ],
         isUnborn: false,
+        isComparisonAvailable: true,
       },
       "git.log": () => commitsForLog,
       "git.commitFiles": [],

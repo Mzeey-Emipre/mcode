@@ -80,6 +80,7 @@ describe("GitDiffView mutable branch reloads", () => {
         target: "origin/main",
         refs: [],
         isUnborn: false,
+        isComparisonAvailable: true,
       },
       branchComparisonKey: "ws-1:thread-1",
       diffRevisionByScope: {},

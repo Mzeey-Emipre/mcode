@@ -495,7 +495,9 @@ async function dispatch(
     }
     case "git.branchComparison": {
       const ws = deps.workspaceService.findById(params.workspaceId);
-      if (!ws?.is_git_repo) return { base: null, target: null, refs: [], isUnborn: false };
+      if (!ws?.is_git_repo) {
+        return { base: null, target: null, refs: [], isUnborn: false, isComparisonAvailable: false };
+      }
       return deps.gitService.resolveBranchComparison(params.workspaceId, resolveThreadRepoPath(deps, params.threadId));
     }
     case "git.reviewDiffStats": {
