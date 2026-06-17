@@ -139,6 +139,24 @@ function omitInlineDiffCacheByPrefix(
   return next;
 }
 
+/** Copy a record, dropping entries whose key ends with `suffix`. */
+function omitByKeySuffix<V>(record: Record<string, V>, suffix: string): Record<string, V> {
+  const next: Record<string, V> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (!key.endsWith(suffix)) next[key] = value;
+  }
+  return next;
+}
+
+/** Copy a record, dropping entries whose key starts with `prefix`. */
+function omitByKeyPrefix<V>(record: Record<string, V>, prefix: string): Record<string, V> {
+  const next: Record<string, V> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (!key.startsWith(prefix)) next[key] = value;
+  }
+  return next;
+}
+
 /**
  * Resolves the effective panel record for a scope (ADR-0012 copy-on-write read).
  * A thread with its own record uses it; otherwise it falls through to the
@@ -259,6 +277,22 @@ interface DiffState {
    */
   branchComparisonKey: string | null;
   /**
+   * Per-scope "the user manually picked a Branch comparison operand" flag, keyed
+   * by the same `workspaceId:threadId` scope as {@link branchComparisonKey}. While
+   * set, re-resolution preserves the user's picked ref (when it still exists)
+   * instead of reverting to the server default - so a turn-driven `diffRevision`
+   * bump or a picker remount no longer clobbers the selection. Mirrors
+   * `reviewViewManuallySelectedByThread` (ADR-0011).
+   */
+  branchManuallySelectedByScope: Record<string, boolean>;
+  /**
+   * The `diffRevision` each scope's {@link branchComparison} was last resolved at,
+   * keyed by scope. Store-backed (not a component ref) so the "already resolved for
+   * this scope+revision" guard survives a picker remount and skips a redundant
+   * re-fetch.
+   */
+  branchResolvedRevisionByScope: Record<string, number>;
+  /**
    * The commit the Commit view's picker has resolved to, by SHA. `null` means
    * the picker has not resolved the current scope yet, or the scope has no
    * commits. This is the Commit comparison's picked operand: the Review toolbar's
@@ -357,8 +391,16 @@ interface DiffState {
    * auto-defaulting for that thread. See ADR-0011.
    */
   setReviewViewForThread: (threadId: string, mode: DiffViewMode) => void;
-  /** Store a resolved Branch comparison for a scope, keyed for staleness tracking. */
-  setBranchComparison: (comparison: BranchComparison | null, key: string | null) => void;
+  /**
+   * Apply a freshly resolved Branch comparison for a scope, recording the revision
+   * it was resolved at and preserving the user's manually picked target when that
+   * scope is flagged and the picked ref still exists.
+   */
+  resolveBranchComparison: (
+    comparison: BranchComparison,
+    key: string,
+    revision: number,
+  ) => void;
   /** Override the base ref of the active Branch comparison (no-op if none resolved). */
   setBranchBase: (ref: string) => void;
   /** Override the target ref of the active Branch comparison (no-op if none resolved). */
@@ -410,6 +452,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   reviewViewManuallySelectedByThread: {},
   branchComparison: null,
   branchComparisonKey: null,
+  branchManuallySelectedByScope: {},
+  branchResolvedRevisionByScope: {},
   selectedCommitSha: null,
   renderMode: "unified",
   reviewFileCount: null,
@@ -511,13 +555,36 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       diffContent: null,
       selectedCommitSha: null,
     })),
-  setBranchComparison: (comparison, key) =>
-    set({ branchComparison: comparison, branchComparisonKey: key }),
+  resolveBranchComparison: (comparison, key, revision) =>
+    set((s) => {
+      const sameScope = s.branchComparisonKey === key;
+      const priorTarget = sameScope ? s.branchComparison?.target ?? null : null;
+      // Preserve a manual pick across re-resolution, but only when the chosen ref
+      // still exists in the freshly resolved set (a deleted branch must fall back).
+      const keepTarget =
+        s.branchManuallySelectedByScope[key] === true &&
+        priorTarget !== null &&
+        comparison.refs.some((ref) => ref.name === priorTarget);
+      return {
+        branchComparison: keepTarget
+          ? { ...comparison, target: priorTarget }
+          : comparison,
+        branchComparisonKey: key,
+        branchResolvedRevisionByScope: {
+          ...s.branchResolvedRevisionByScope,
+          [key]: revision,
+        },
+      };
+    }),
   setBranchBase: (ref) =>
     set((s) =>
-      s.branchComparison
+      s.branchComparison && s.branchComparisonKey
         ? {
             branchComparison: { ...s.branchComparison, base: ref },
+            branchManuallySelectedByScope: {
+              ...s.branchManuallySelectedByScope,
+              [s.branchComparisonKey]: true,
+            },
             // Changing an operand invalidates the selected file's diff.
             selectedFile: null,
             diffContent: null,
@@ -526,9 +593,13 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     ),
   setBranchTarget: (ref) =>
     set((s) =>
-      s.branchComparison
+      s.branchComparison && s.branchComparisonKey
         ? {
             branchComparison: { ...s.branchComparison, target: ref },
+            branchManuallySelectedByScope: {
+              ...s.branchManuallySelectedByScope,
+              [s.branchComparisonKey]: true,
+            },
             selectedFile: null,
             diffContent: null,
           }
@@ -624,6 +695,14 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete reviewViewManuallySelectedByThread[threadId];
       const diffRevisionByScope = { ...state.diffRevisionByScope };
       delete diffRevisionByScope[threadId];
+      const branchManuallySelectedByScope = omitByKeySuffix(
+        state.branchManuallySelectedByScope,
+        `:${threadId}`,
+      );
+      const branchResolvedRevisionByScope = omitByKeySuffix(
+        state.branchResolvedRevisionByScope,
+        `:${threadId}`,
+      );
 
       const inlineDiffCache = omitInlineDiffCacheByPrefix(state.inlineDiffCache, `${threadId}:`);
 
@@ -643,6 +722,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         reviewViewByThread,
         reviewViewManuallySelectedByThread,
         diffRevisionByScope,
+        branchManuallySelectedByScope,
+        branchResolvedRevisionByScope,
         inlineDiffCache,
         ...(selectionBelongsToThread
           ? { selectedFile: null, diffContent: null, diffLoading: false }
@@ -658,10 +739,18 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       const hasInlineDiffCache = Object.keys(state.inlineDiffCache).some((key) =>
         key.startsWith(cachePrefix),
       );
+      const hasBranchScope =
+        Object.keys(state.branchManuallySelectedByScope).some((key) =>
+          key.startsWith(cachePrefix),
+        ) ||
+        Object.keys(state.branchResolvedRevisionByScope).some((key) =>
+          key.startsWith(cachePrefix),
+        );
       if (
         !(workspaceId in state.rightPanelFallbackByWorkspace) &&
         !(workspaceId in state.diffRevisionByScope) &&
-        !hasInlineDiffCache
+        !hasInlineDiffCache &&
+        !hasBranchScope
       ) {
         return {};
       }
@@ -672,6 +761,14 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       return {
         rightPanelFallbackByWorkspace,
         diffRevisionByScope,
+        branchManuallySelectedByScope: omitByKeyPrefix(
+          state.branchManuallySelectedByScope,
+          cachePrefix,
+        ),
+        branchResolvedRevisionByScope: omitByKeyPrefix(
+          state.branchResolvedRevisionByScope,
+          cachePrefix,
+        ),
         inlineDiffCache: omitInlineDiffCacheByPrefix(state.inlineDiffCache, cachePrefix),
       };
     }),
