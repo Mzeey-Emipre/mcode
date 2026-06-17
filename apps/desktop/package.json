@@ -70,10 +70,6 @@
       {
         "from": "build/icon.ico",
         "to": "icon.ico"
-      },
-      {
-        "from": "build/icon.icns",
-        "to": "icon.icns"
       }
     ],
     "asarUnpack": [
