@@ -72,6 +72,8 @@ interface Built {
   toolBulk: ReturnType<typeof vi.fn>;
   taskAppend: ReturnType<typeof vi.fn>;
   taskUpsertGroup: ReturnType<typeof vi.fn>;
+  taskUpdate: ReturnType<typeof vi.fn>;
+  taskRemove: ReturnType<typeof vi.fn>;
 }
 
 function build(): Built {
@@ -133,11 +135,15 @@ function build(): Built {
   } as unknown as MemoryPressureService;
   const taskAppend = vi.fn();
   const taskUpsertGroup = vi.fn();
+  const taskUpdate = vi.fn(() => true);
+  const taskRemove = vi.fn();
   const taskRepo = {
     get: vi.fn(() => []),
     upsert: vi.fn(),
     upsertGroup: taskUpsertGroup,
     appendTask: taskAppend,
+    updateTask: taskUpdate,
+    removeTask: taskRemove,
   } as unknown as TaskRepo;
   const settingsService = {
     get: vi.fn(() => ({
@@ -196,7 +202,7 @@ function build(): Built {
   // sendMessage uses (beginTurn + resetTurnCounters).
   narrativeStore.beginTurn(THREAD_ID);
   narrativeStore.resetTurnCounters(THREAD_ID);
-  return { service, providerEmitter, thoughtBulk, hookBulk, toolBulk, taskAppend, taskUpsertGroup };
+  return { service, providerEmitter, thoughtBulk, hookBulk, toolBulk, taskAppend, taskUpsertGroup, taskUpdate, taskRemove };
 }
 
 describe("AgentService narrative persistence", () => {
@@ -204,9 +210,11 @@ describe("AgentService narrative persistence", () => {
     vi.clearAllMocks();
   });
 
-  it("persists TaskCreate tool calls for Scope hydration", () => {
+  it("persists TaskCreate at result time keyed by the harness-assigned id", () => {
     const { providerEmitter, taskAppend } = build();
 
+    // The harness assigns the task id only in the result, so the create must be
+    // buffered on ToolUse and persisted on ToolResult.
     providerEmitter.emit("event", {
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
@@ -215,14 +223,100 @@ describe("AgentService narrative persistence", () => {
       toolInput: {
         subject: "Buy groceries",
         description: "Pick up milk, eggs, bread",
+        activeForm: "Buying groceries",
       },
+    });
+    expect(taskAppend).not.toHaveBeenCalled();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolResult,
+      threadId: THREAD_ID,
+      toolCallId: "task-create-1",
+      output: "Task #1 created successfully: Buy groceries",
+      isError: false,
     });
 
     expect(taskAppend).toHaveBeenCalledWith(THREAD_ID, {
+      id: "1",
       content: "Buy groceries - Pick up milk, eggs, bread",
       status: "pending",
+      activeForm: "Buying groceries",
       group: "Tasks",
     });
+  });
+
+  it("does not persist a TaskCreate whose result errored", () => {
+    const { providerEmitter, taskAppend } = build();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "task-create-err",
+      toolName: "TaskCreate",
+      toolInput: { subject: "Doomed", description: "never lands" },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolResult,
+      threadId: THREAD_ID,
+      toolCallId: "task-create-err",
+      output: "Task #2 created successfully",
+      isError: true,
+    });
+
+    expect(taskAppend).not.toHaveBeenCalled();
+  });
+
+  it("applies a TaskUpdate status transition to the persisted task by harness id", () => {
+    const { providerEmitter, taskUpdate } = build();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "task-update-1",
+      toolName: "TaskUpdate",
+      toolInput: { taskId: "1", status: "in_progress" },
+    });
+
+    expect(taskUpdate).toHaveBeenCalledWith(
+      THREAD_ID,
+      "1",
+      { status: "in_progress" },
+      "Tasks",
+    );
+  });
+
+  it("removes the persisted task when a TaskUpdate sets status deleted", () => {
+    const { providerEmitter, taskRemove, taskUpdate } = build();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "task-update-del",
+      toolName: "TaskUpdate",
+      toolInput: { taskId: "3", status: "deleted" },
+    });
+
+    expect(taskRemove).toHaveBeenCalledWith(THREAD_ID, "3", "Tasks");
+    expect(taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("patches subject and activeForm via TaskUpdate without a status change", () => {
+    const { providerEmitter, taskUpdate } = build();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "task-update-edit",
+      toolName: "TaskUpdate",
+      toolInput: { taskId: "1", subject: "Run unit tests", activeForm: "Running unit tests" },
+    });
+
+    expect(taskUpdate).toHaveBeenCalledWith(
+      THREAD_ID,
+      "1",
+      { content: "Run unit tests", activeForm: "Running unit tests" },
+      "Tasks",
+    );
   });
 
   it("persists Codex update_plan tool calls for Scope hydration", () => {

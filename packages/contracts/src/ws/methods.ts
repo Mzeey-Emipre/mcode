@@ -685,8 +685,13 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ threadId: z.string() }),
     result: z
       .array(z.object({
+        // Harness-assigned task id (Task* tool family). Optional so legacy
+        // TodoWrite/update_plan tasks without an id still round-trip.
+        id: z.string().optional(),
         content: z.string(),
         status: z.enum(["pending", "in_progress", "completed", "cancelled"]),
+        // Present-continuous label shown while the task is in_progress.
+        activeForm: z.string().optional(),
         group: z.string().optional(),
       }))
       .nullable(),

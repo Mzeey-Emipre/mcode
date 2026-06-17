@@ -276,6 +276,34 @@ describe("AuxiliaryHydrator", () => {
     });
   });
 
+  it("carried the harness task id and activeForm from persisted Task* tasks", async () => {
+    (mockTransport.getThreadTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "1",
+        content: "Run tests",
+        status: "in_progress",
+        activeForm: "Running tests",
+        group: "Tasks",
+      },
+    ]);
+
+    const aux = createAux({ getTasksForThread: () => [] });
+    aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
+
+    await vi.waitFor(() => {
+      expect(setTasksForThread).toHaveBeenCalledWith(THREAD_ID, [
+        {
+          id: "1",
+          harnessTaskId: "1",
+          content: "Run tests",
+          activeForm: "Running tests",
+          status: "in_progress",
+          group: "Tasks",
+        },
+      ]);
+    });
+  });
+
   it("backfilled file-change snapshots for thin cache entries on threads with changes", async () => {
     (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockResolvedValue([
       {

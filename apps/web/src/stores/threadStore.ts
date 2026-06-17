@@ -402,6 +402,15 @@ function taskTextFromToolInput(toolInput: Record<string, unknown>): string | nul
   return `${subject} - ${description}`;
 }
 
+/**
+ * Extract the harness-assigned task id from a `TaskCreate` result line such as
+ * "Task #1 created successfully: ...". Returns null when no id is present.
+ */
+function parseHarnessTaskId(output: string): string | null {
+  const match = /#(\d+)/.exec(output);
+  return match ? match[1] : null;
+}
+
 function updatePlanTasksFromToolInput(toolInput: Record<string, unknown>): TaskItem[] {
   const entries =
     Array.isArray(toolInput.plan)
@@ -1828,11 +1837,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         const group = resolvedParentToolCallId
           ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
           : "Tasks";
+        const activeForm =
+          typeof toolInput.activeForm === "string" && toolInput.activeForm.trim().length > 0
+            ? toolInput.activeForm.trim()
+            : undefined;
         const taskItem: TaskItem = {
           id: toolCallId || String(toolInput.id ?? content),
           content,
           status: coerceTaskStatus(toolInput.status ?? "pending"),
           group,
+          ...(activeForm !== undefined ? { activeForm } : {}),
         };
         const existingTasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
         const groupTasks = existingTasks.filter((task) => task.group === group);
@@ -1840,6 +1854,58 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           threadId,
           group,
           [...groupTasks.filter((task) => task.id !== taskItem.id), taskItem],
+        );
+      };
+      const applyTaskUpdate = (
+        toolInput: Record<string, unknown>,
+        resolvedParentToolCallId: string | undefined,
+      ) => {
+        if (toolName !== "TaskUpdate") return;
+        const harnessTaskId = toolInput.taskId != null ? String(toolInput.taskId) : "";
+        if (!harnessTaskId) return;
+
+        const group = resolvedParentToolCallId
+          ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
+          : "Tasks";
+        const allTasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
+        // Prefer a task scoped to this group; fall back to a global harnessTaskId
+        // match so an update still lands when the group cannot be resolved (e.g.
+        // the create's parent Agent call has been evicted from the buffer).
+        const target =
+          allTasks.find((t) => t.group === group && t.harnessTaskId === harnessTaskId)
+          ?? allTasks.find((t) => t.harnessTaskId === harnessTaskId);
+        if (!target) return;
+
+        const groupTasks = allTasks.filter((t) => t.group === target.group);
+        if (toolInput.status === "deleted") {
+          useTaskStore.getState().setTaskGroup(
+            threadId,
+            target.group,
+            groupTasks.filter((t) => t !== target),
+          );
+          return;
+        }
+
+        // Only `subject` maps to the displayed content. A description-only edit
+        // does not rewrite content, matching the server's persisted behavior.
+        const nextSubject =
+          typeof toolInput.subject === "string" && toolInput.subject.trim().length > 0
+            ? toolInput.subject.trim()
+            : undefined;
+        const nextActiveForm =
+          typeof toolInput.activeForm === "string" && toolInput.activeForm.trim().length > 0
+            ? toolInput.activeForm.trim()
+            : undefined;
+        const patched: TaskItem = {
+          ...target,
+          ...(toolInput.status !== undefined ? { status: coerceTaskStatus(toolInput.status) } : {}),
+          ...(nextSubject ? { content: nextSubject } : {}),
+          ...(nextActiveForm !== undefined ? { activeForm: nextActiveForm } : {}),
+        };
+        useTaskStore.getState().setTaskGroup(
+          threadId,
+          target.group,
+          groupTasks.map((t) => (t === target ? patched : t)),
         );
       };
       const applyUpdatePlanTasks = (
@@ -1886,6 +1952,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             });
             applyTodoWriteTasks(mergedInput, resolvedParentToolCallId);
             applyTaskCreate(mergedInput, resolvedParentToolCallId);
+            applyTaskUpdate(mergedInput, resolvedParentToolCallId);
             applyUpdatePlanTasks(mergedInput, resolvedParentToolCallId);
           }
           return;
@@ -1902,6 +1969,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // multiple sub-agents each get their own collapsible section.
       applyTodoWriteTasks(incomingInput, parentToolCallId);
       applyTaskCreate(incomingInput, parentToolCallId);
+      applyTaskUpdate(incomingInput, parentToolCallId);
       applyUpdatePlanTasks(incomingInput, parentToolCallId);
 
       const toolCall: ToolCall = {
@@ -1950,6 +2018,28 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         rawToolInput && typeof rawToolInput === "object" && !Array.isArray(rawToolInput)
           ? rawToolInput as Record<string, unknown>
           : {};
+      // The harness only reveals its task id in the TaskCreate result, so capture
+      // it here onto the task the create produced. Later TaskUpdate calls correlate
+      // by this id; without it status transitions and deletions never land.
+      const resultCall = toolCallId
+        ? getRec(threadId).toolCalls.find((tc) => tc.id === toolCallId)
+        : undefined;
+      if (resultCall?.toolName === "TaskCreate" && !isError) {
+        const harnessTaskId = parseHarnessTaskId(output);
+        if (harnessTaskId) {
+          const allTasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
+          const target = allTasks.find((t) => t.id === toolCallId);
+          if (target && target.harnessTaskId !== harnessTaskId) {
+            useTaskStore.getState().setTaskGroup(
+              threadId,
+              target.group,
+              allTasks
+                .filter((t) => t.group === target.group)
+                .map((t) => (t.id === toolCallId ? { ...t, harnessTaskId } : t)),
+            );
+          }
+        }
+      }
       set((state) => {
         const calls = getThreadRecord(state.records, threadId).toolCalls;
         // Try matching by ID first; fall back to the first incomplete tool call

@@ -25,6 +25,12 @@ export function coerceTaskStatus(raw: unknown): TaskStatus {
 /** A single task item within a group. */
 export interface TaskItem {
   readonly id: string;
+  /**
+   * Harness-assigned task id from the Task* tool family (e.g. "1"), captured
+   * from the TaskCreate result. Used to correlate later TaskUpdate calls to the
+   * task they mutate. Absent for legacy TodoWrite/update_plan tasks.
+   */
+  readonly harnessTaskId?: string;
   /** Imperative form shown when not active (e.g. "Run tests"). */
   readonly content: string;
   /** Present continuous form shown when active (e.g. "Running tests"). Falls back to content if not provided. */
