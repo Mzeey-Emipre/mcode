@@ -25,6 +25,8 @@ export function DiffToolbar() {
   const reviewFileCount = useDiffStore((s) => s.reviewFileCount);
   const reviewDiffStat = useDiffStore((s) => s.reviewDiffStat);
   const setViewMode = useDiffStore((s) => s.setViewMode);
+  const setReviewViewForThread = useDiffStore((s) => s.setReviewViewForThread);
+  const getReviewView = useDiffStore((s) => s.getReviewView);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [commitProbeNonce, setCommitProbeNonce] = useState(0);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -44,6 +46,19 @@ export function DiffToolbar() {
   const isGitRepo = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === s.activeWorkspaceId)?.is_git_repo ?? false,
   );
+
+  // Change-state signals for the per-thread default (ADR-0011).
+  const reviewViewManuallySelected = useDiffStore((s) =>
+    activeThreadId ? (s.reviewViewManuallySelectedByThread[activeThreadId] ?? false) : false,
+  );
+  const pinnedReviewView = useDiffStore((s) =>
+    activeThreadId ? s.reviewViewByThread[activeThreadId] : undefined,
+  );
+  const hasTurnChanges = useDiffStore((s) => {
+    if (!activeThreadId) return false;
+    const snaps = s.snapshotsByThread[activeThreadId];
+    return !!snaps && snaps.some((snap) => snap.files_changed.length > 0);
+  });
 
   // The Review tab is dual-scope: threadless yields the git working-tree views,
   // a thread yields the turn views. Runtime gates drop the git views in a
@@ -68,10 +83,25 @@ export function DiffToolbar() {
     diffScopeRevision,
     branchProbeNonce,
   });
+  const workingTreeDirty = useWorkingTreeDirty({
+    activeWorkspaceId,
+    activeThreadId,
+    isGitRepo,
+    diffScopeRevision,
+  });
 
-  // Recover when the active view falls out of the current scope or gating.
+  // A thread follows the per-thread resolver (live default until pinned);
+  // threadless keeps the scope-recovery fallback. See ADR-0011.
   useEffect(() => {
     if (viewModes.length === 0) return;
+    if (activeThreadId) {
+      const want = getReviewView(activeThreadId, { hasTurnChanges, isDirty: workingTreeDirty });
+      const blockedCommit = want === "commit" && commitAvailability === "empty";
+      const target =
+        viewModes.some((m) => m.id === want) && !blockedCommit ? want : viewModes[0].id;
+      if (viewMode !== target) setViewMode(target);
+      return;
+    }
     if (
       !viewModes.some((m) => m.id === viewMode) ||
       (viewMode === "commit" && commitAvailability === "empty") ||
@@ -80,7 +110,20 @@ export function DiffToolbar() {
       const fallback = defaultReviewView(scope);
       setViewMode(viewModes.some((m) => m.id === fallback) ? fallback : viewModes[0].id);
     }
-  }, [branchAvailability, commitAvailability, viewMode, viewModes, scope, setViewMode]);
+  }, [
+    activeThreadId,
+    getReviewView,
+    reviewViewManuallySelected,
+    pinnedReviewView,
+    hasTurnChanges,
+    workingTreeDirty,
+    branchAvailability,
+    commitAvailability,
+    viewMode,
+    viewModes,
+    scope,
+    setViewMode,
+  ]);
 
   const activeView = useMemo(
     () => viewModes.find((m) => m.id === viewMode),
@@ -137,7 +180,10 @@ export function DiffToolbar() {
                   key={mode.id}
                   disabled={disabled}
                   onClick={() => {
-                    if (!disabled) setViewMode(mode.id);
+                    if (disabled) return;
+                    // A pick in a thread sets the sticky per-thread override.
+                    if (activeThreadId) setReviewViewForThread(activeThreadId, mode.id);
+                    else setViewMode(mode.id);
                   }}
                   data-testid={`review-view-${mode.id}`}
                   data-active={active ? "true" : undefined}
@@ -325,4 +371,50 @@ function useBranchAvailability({
   }, [activeWorkspaceId, activeThreadId, isGitRepo, diffScopeRevision, branchProbeNonce]);
 
   return availability;
+}
+
+/**
+ * Probes whether the active scope's working tree has uncommitted changes — the
+ * `isDirty` signal for the per-thread Review default (ADR-0011). Refetches on
+ * `diffScopeRevision` bumps; returns false while loading, off-git, or on error.
+ */
+function useWorkingTreeDirty({
+  activeWorkspaceId,
+  activeThreadId,
+  isGitRepo,
+  diffScopeRevision,
+}: {
+  activeWorkspaceId: string | null;
+  activeThreadId: string | null;
+  isGitRepo: boolean;
+  diffScopeRevision: number;
+}): boolean {
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !isGitRepo) {
+      setDirty(false);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const files = await getTransport().getWorkingTreeFiles(
+          activeWorkspaceId,
+          false,
+          activeThreadId ?? undefined,
+        );
+        if (!cancelled) setDirty(files.length > 0);
+      } catch {
+        if (!cancelled) setDirty(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, activeThreadId, isGitRepo, diffScopeRevision]);
+
+  return dirty;
 }

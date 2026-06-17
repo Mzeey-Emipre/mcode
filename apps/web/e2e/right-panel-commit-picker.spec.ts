@@ -185,13 +185,15 @@ async function openThreadCommitView(page: Page): Promise<void> {
           getState: () => {
             showRightPanel: (id: string, threadId?: string) => void;
             setRightPanelTab: (id: string, t: string) => void;
-            setViewMode: (m: string) => void;
+            setReviewViewForThread: (threadId: string, m: string) => void;
           };
         }
       ).getState();
       api.showRightPanel(wid, tid);
       api.setRightPanelTab(wid, "changes");
-      api.setViewMode("commit");
+      // In a thread, selecting a view is a sticky per-thread pick (ADR-0011);
+      // a bare setViewMode would be reverted by the live default effect.
+      api.setReviewViewForThread(tid, "commit");
     },
     { workspace: WORKSPACE, thread: THREAD, wid: WORKSPACE.id, tid: THREAD.id },
   );

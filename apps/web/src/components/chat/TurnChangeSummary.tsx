@@ -105,8 +105,9 @@ export function TurnChangeSummary({ messageId, filesChanged, isLatestTurn, manua
     const store = useDiffStore.getState();
     showRightPanelAdaptive(workspaceId, threadId);
     store.setRightPanelTab(workspaceId, "changes");
-    // "View all diffs" lands on the thread's cumulative diff across every turn.
-    store.setViewMode("cumulative");
+    // Pin cumulative as the per-thread override so the live default cannot revert
+    // this deliberate pick (ADR-0011).
+    store.setReviewViewForThread(threadId, "cumulative");
 
     // Ensure snapshots are loaded so the panel can display this turn
     if (!store.snapshotsByThread[threadId]) {
