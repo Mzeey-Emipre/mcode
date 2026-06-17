@@ -70,8 +70,14 @@ export function RightPanel() {
   const maximized = useUiStore((s) => s.rightPanelMaximized);
   const toggleMaximized = useUiStore((s) => s.toggleRightPanelMaximized);
 
+  // Read the scope's effective panel record: the active thread's own once it has
+  // diverged, otherwise the workspace fallback (ADR-0012 copy-on-write). Both
+  // branches return a stable store reference, so the selector does not allocate.
   const storedPanel = useDiffStore((s) =>
-    activeWorkspaceId ? s.rightPanelByWorkspace[activeWorkspaceId] : undefined,
+    activeWorkspaceId
+      ? (activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined) ??
+        s.rightPanelFallbackByWorkspace[activeWorkspaceId]
+      : undefined,
   );
   /** Avoid a Zustand selector that allocates a fresh default object every evaluation. */
   const panelState = useMemo(
@@ -86,8 +92,9 @@ export function RightPanel() {
   // Review and Scope are creatable only in a thread; threadless the panel runs
   // against the workspace root and offers just Browser/Terminal/Files.
   const panelScope: PanelScope = activeThreadId ? "thread" : "threadless";
-  // Open/closed is per-thread (falling back to the workspace threadless shell);
-  // width and active tab stay workspace-global. See ADR-0004.
+  // The whole panel record (visibility included) is per-thread, falling back to
+  // the workspace record for the threadless shell and uncustomized threads. See
+  // ADR-0012.
   const panelVisible = useDiffStore((s) =>
     activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId) : false,
   );
@@ -198,7 +205,7 @@ export function RightPanel() {
 
     const clampToSplit = () => {
       const max = maxPanelWidthInSplit(split.clientWidth);
-      if (panelWidthRef.current > max) setRightPanelWidth(activeWorkspaceId, max);
+      if (panelWidthRef.current > max) setRightPanelWidth(activeWorkspaceId, activeThreadId, max);
     };
 
     clampToSplit();
@@ -216,7 +223,7 @@ export function RightPanel() {
       ro.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [activeWorkspaceId, panelVisible, maximized]);
+  }, [activeWorkspaceId, activeThreadId, panelVisible, maximized]);
 
   const onDragStart = useCallback(
     (e: ReactMouseEvent) => {
@@ -231,6 +238,7 @@ export function RightPanel() {
         const maxWidth = getMaxPanelWidth();
         setRightPanelWidth(
           activeWorkspaceId!,
+          activeThreadId,
           Math.max(PANEL_MIN_WIDTH, Math.min(startWidth + delta, maxWidth)),
         );
       };
@@ -246,7 +254,7 @@ export function RightPanel() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [panelWidth, activeWorkspaceId, getMaxPanelWidth],
+    [panelWidth, activeWorkspaceId, activeThreadId, getMaxPanelWidth],
   );
 
   useEffect(() => {
@@ -261,10 +269,10 @@ export function RightPanel() {
   }, []);
 
   // Keep the panel (and terminal pool) mounted when hidden so xterm instances
-  // and scroll anchors survive workspace thread switches. Workspace-global
-  // visibility uses Tailwind `hidden` so layout width stays zero. The panel is
-  // workspace-scoped, not thread-scoped: it renders with no thread (an empty
-  // shell) and only bails when there is no workspace to anchor it to.
+  // and scroll anchors survive thread switches; a hidden panel collapses to zero
+  // width rather than unmounting. The panel still renders with no thread (the
+  // threadless shell against the workspace fallback) and only bails when there is
+  // no workspace to anchor it to.
   if (!activeWorkspaceId) return null;
 
   return (
@@ -320,7 +328,7 @@ export function RightPanel() {
             panelWidth >= PANEL_WIDE_WIDTH
               ? narrow
               : Math.min(PANEL_WIDE_WIDTH, maxWidth);
-          setRightPanelWidth(activeWorkspaceId!, Math.max(PANEL_MIN_WIDTH, target));
+          setRightPanelWidth(activeWorkspaceId!, activeThreadId, Math.max(PANEL_MIN_WIDTH, target));
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -331,7 +339,7 @@ export function RightPanel() {
               panelWidth >= PANEL_WIDE_WIDTH
                 ? narrow
                 : Math.min(PANEL_WIDE_WIDTH, maxWidth);
-            setRightPanelWidth(activeWorkspaceId!, Math.max(PANEL_MIN_WIDTH, target));
+            setRightPanelWidth(activeWorkspaceId!, activeThreadId, Math.max(PANEL_MIN_WIDTH, target));
           }
         }}
       >
@@ -361,12 +369,12 @@ export function RightPanel() {
           browserTabSet={browserTabSet}
           maximized={maximized}
           onToggleMaximized={toggleMaximized}
-          onSelect={(id) => setRightPanelTab(activeWorkspaceId!, id)}
-          onClose={(id) => closeRightPanelTab(activeWorkspaceId!, id)}
-          onCreate={(id) => setRightPanelTab(activeWorkspaceId!, id)}
+          onSelect={(id) => setRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
+          onClose={(id) => closeRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
+          onCreate={(id) => setRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
           onSelectBrowserPage={(pageId) => {
             // Focus the Browser tab and switch the guest to that page.
-            setRightPanelTab(activeWorkspaceId!, "preview");
+            setRightPanelTab(activeWorkspaceId!, activeThreadId, "preview");
             if (panelScopeId) {
               void usePreviewTabsStore.getState().activatePage(panelScopeId, pageId);
             }
@@ -376,7 +384,7 @@ export function RightPanel() {
             // Closing the last page closes the Browser tab entirely (the rail is
             // the page switcher, so an empty browser has nothing to show).
             void usePreviewTabsStore.getState().closePage(panelScopeId, pageId, {
-              onLastClose: () => closeRightPanelTab(activeWorkspaceId!, "preview"),
+              onLastClose: () => closeRightPanelTab(activeWorkspaceId!, activeThreadId, "preview"),
             });
           }}
         />
@@ -390,7 +398,7 @@ export function RightPanel() {
             <PanelEmptyState
               scope={panelScope}
               openTabs={openTabs}
-              onOpen={(id) => setRightPanelTab(activeWorkspaceId!, id)}
+              onOpen={(id) => setRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
             />
           )}
           {activeTab === "tasks" && openTabs.includes("tasks") && activeThreadId && (

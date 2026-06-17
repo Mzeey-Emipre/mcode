@@ -30,14 +30,14 @@ export function summonTab(tab: RightPanelTab, onFocus?: () => void): void {
   if (tabNeedsThread(tab) && !tid) return;
 
   const { getRightPanel, getRightPanelVisible, setRightPanelTab } = useDiffStore.getState();
-  const panel = getRightPanel(wid);
+  const panel = getRightPanel(wid, tid);
 
   if (!getRightPanelVisible(wid, tid)) {
     showRightPanelAdaptive(wid, tid);
-    setRightPanelTab(wid, tab);
+    setRightPanelTab(wid, tid, tab);
     onFocus?.();
   } else if (panel.activeTab !== tab) {
-    setRightPanelTab(wid, tab);
+    setRightPanelTab(wid, tid, tab);
     onFocus?.();
   } else {
     hideRightPanelAdaptive(wid, tid);

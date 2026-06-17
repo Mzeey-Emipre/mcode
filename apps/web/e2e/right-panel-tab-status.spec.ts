@@ -109,7 +109,7 @@ async function seedPanel(page: Page, tab: "tasks" | "changes"): Promise<void> {
             getState: () => {
               setSnapshots: (id: string, snaps: unknown) => void;
               showRightPanel: (id: string, threadId?: string) => void;
-              setRightPanelTab: (id: string, t: string) => void;
+              setRightPanelTab: (id: string, threadId: string | null, t: string) => void;
             };
           }
         ).getState();
@@ -117,9 +117,9 @@ async function seedPanel(page: Page, tab: "tasks" | "changes"): Promise<void> {
         api.showRightPanel(wid, tid);
         // Open both rail tabs so switching can be exercised; the requested tab
         // is activated last.
-        api.setRightPanelTab(wid, "tasks");
-        api.setRightPanelTab(wid, "changes");
-        api.setRightPanelTab(wid, tab);
+        api.setRightPanelTab(wid, tid, "tasks");
+        api.setRightPanelTab(wid, tid, "changes");
+        api.setRightPanelTab(wid, tid, tab);
       }
     },
     { workspace: WORKSPACE, thread: THREAD, tid: THREAD.id, wid: WORKSPACE.id, snapshots: SNAPSHOTS, tab },

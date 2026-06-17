@@ -32,7 +32,7 @@ export function PlanCard({ messageId }: PlanCardProps) {
 
   const handleClick = () => {
     showRightPanelAdaptive(activeWorkspaceId, activeThreadId);
-    useDiffStore.getState().setRightPanelTab(activeWorkspaceId, "tasks");
+    useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "tasks");
     usePlanStore.getState().setActiveVersion(activeThreadId, plan.version);
   };
 

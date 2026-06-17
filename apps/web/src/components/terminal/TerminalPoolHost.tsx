@@ -30,15 +30,18 @@ export function TerminalPoolHost() {
   // The terminal binds to the active thread, or to the workspace itself in the
   // threadless new-thread view. The store keys this as an opaque scope id.
   const terminalScopeId = activeThreadId ?? activeWorkspaceId;
+  // The whole panel record is per-thread, falling back to the workspace record
+  // for the threadless shell and uncustomized threads (ADR-0012).
   const storedPanel = useDiffStore((s) =>
-    activeWorkspaceId ? s.rightPanelByWorkspace[activeWorkspaceId] : undefined,
+    activeWorkspaceId
+      ? (activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined) ??
+        s.rightPanelFallbackByWorkspace[activeWorkspaceId]
+      : undefined,
   );
   const panelState = useMemo(
     () => storedPanel ?? createDefaultRightPanelState(),
     [storedPanel],
   );
-  // Open/closed is per-thread, falling back to the workspace threadless shell.
-  // The active tab stays workspace-global.
   const panelVisible = useDiffStore((s) =>
     activeWorkspaceId
       ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId)

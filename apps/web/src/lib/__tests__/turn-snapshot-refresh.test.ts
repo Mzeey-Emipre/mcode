@@ -18,8 +18,8 @@ describe("refreshTurnSnapshotsAfterPersist", () => {
       snapshotsByThread: {},
       snapshotsPendingByThread: {},
       diffRevisionByScope: {},
-      rightPanelByWorkspace: {},
-      rightPanelVisibleByThread: {},
+      rightPanelByThread: {},
+      rightPanelFallbackByWorkspace: {},
       viewMode: "last-turn",
     });
     useWorkspaceStore.setState({
@@ -57,10 +57,9 @@ describe("refreshTurnSnapshotsAfterPersist", () => {
   it("skipped refetch while the cumulative view is open on the active thread", () => {
     useDiffStore.setState({
       snapshotsByThread: { [THREAD_ID]: [] },
-      rightPanelByWorkspace: {
-        "ws-1": { visible: true, activeTab: "changes", openTabs: ["changes"], width: 400 },
+      rightPanelByThread: {
+        [THREAD_ID]: { visible: true, activeTab: "changes", openTabs: ["changes"], width: 400 },
       },
-      rightPanelVisibleByThread: { [THREAD_ID]: true },
       viewMode: "cumulative",
     });
 

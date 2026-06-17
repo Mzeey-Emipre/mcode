@@ -20,10 +20,13 @@ export function refreshTurnSnapshotsAfterPersist(
     const snap = useDiffStore.getState();
     const wsState = useWorkspaceStore.getState();
     const workspaceId = wsState.threads.find((t) => t.id === threadId)?.workspace_id;
-    const panel = workspaceId ? snap.rightPanelByWorkspace[workspaceId] : undefined;
+    // The whole panel record is per-thread (ADR-0012). Only defer when this
+    // thread is on screen with its panel open on the Changes tab.
+    const panel = workspaceId ? snap.getRightPanel(workspaceId, threadId) : undefined;
     const isViewingAllChanges =
       wsState.activeThreadId === threadId &&
-      snap.rightPanelVisibleByThread[threadId] === true &&
+      workspaceId !== undefined &&
+      snap.getRightPanelVisible(workspaceId, threadId) &&
       panel?.activeTab === "changes" &&
       snap.viewMode === "cumulative";
 

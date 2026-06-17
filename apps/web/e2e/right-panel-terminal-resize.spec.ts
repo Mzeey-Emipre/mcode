@@ -49,22 +49,34 @@ function makeThread(id: string, title: string): Thread {
 
 const THREAD = makeThread("thread-resize", "Resize Thread");
 
-/** Reads the stored right-panel width for a workspace from diffStore. */
-async function getRightPanelWidth(page: Page, workspaceId: string): Promise<number> {
-  return page.evaluate((wid) => {
-    const stores: unknown[] = (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
-    const diffStore = stores.find((s: unknown) => {
-      const st = (s as { getState: () => Record<string, unknown> }).getState();
-      return "getRightPanel" in st;
-    });
-    if (!diffStore) return 0;
-    const panel = (
-      diffStore as { getState: () => { getRightPanel: (id: string) => { width: number } } }
-    )
-      .getState()
-      .getRightPanel(wid);
-    return panel.width;
-  }, workspaceId);
+/**
+ * Reads the stored right-panel width for the active thread from diffStore.
+ * Resize writes the per-thread record (ADR-0012), so the read is thread-scoped.
+ */
+async function getRightPanelWidth(
+  page: Page,
+  workspaceId: string,
+  threadId: string,
+): Promise<number> {
+  return page.evaluate(
+    ({ wid, tid }) => {
+      const stores: unknown[] = (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
+      const diffStore = stores.find((s: unknown) => {
+        const st = (s as { getState: () => Record<string, unknown> }).getState();
+        return "getRightPanel" in st;
+      });
+      if (!diffStore) return 0;
+      const panel = (
+        diffStore as {
+          getState: () => { getRightPanel: (id: string, threadId?: string) => { width: number } };
+        }
+      )
+        .getState()
+        .getRightPanel(wid, tid);
+      return panel.width;
+    },
+    { wid: workspaceId, tid: threadId },
+  );
 }
 
 /** Opens the right-panel terminal tab and mounts a PTY for the thread. */
@@ -94,12 +106,12 @@ async function openTerminalWithPty(page: Page, threadId: string): Promise<void> 
           diffStore as {
             getState: () => {
               showRightPanel: (id: string, threadId?: string) => void;
-              setRightPanelTab: (id: string, tab: string) => void;
+              setRightPanelTab: (id: string, threadId: string | null, tab: string) => void;
             };
           }
         ).getState();
         api.showRightPanel(wid, tid);
-        api.setRightPanelTab(wid, "terminal");
+        api.setRightPanelTab(wid, tid, "terminal");
       }
 
       const termStore = stores.find((s: unknown) => {
@@ -153,7 +165,7 @@ test.describe("Right panel resize with terminal tab", () => {
     const box = await handle.boundingBox();
     expect(box, "vertical resize handle must be visible").not.toBeNull();
 
-    const widthBefore = await getRightPanelWidth(page, WORKSPACE.id);
+    const widthBefore = await getRightPanelWidth(page, WORKSPACE.id, THREAD.id);
     expect(widthBefore).toBeGreaterThan(0);
 
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
@@ -162,7 +174,7 @@ test.describe("Right panel resize with terminal tab", () => {
     await page.mouse.up();
 
     await expect
-      .poll(() => getRightPanelWidth(page, WORKSPACE.id), { timeout: 3_000 })
+      .poll(() => getRightPanelWidth(page, WORKSPACE.id, THREAD.id), { timeout: 3_000 })
       .not.toBe(widthBefore);
   });
 });

@@ -109,11 +109,11 @@ async function openTerminalTab(
       const api = (diffStore as {
         getState: () => {
           showRightPanel: (id: string, threadId?: string) => void;
-          setRightPanelTab: (id: string, tab: string) => void;
+          setRightPanelTab: (id: string, threadId: string | null, tab: string) => void;
         };
       }).getState();
       api.showRightPanel(wid, tid);
-      api.setRightPanelTab(wid, "terminal");
+      api.setRightPanelTab(wid, tid, "terminal");
     },
     { wid: workspaceId, tid: threadId },
   );

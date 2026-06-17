@@ -84,7 +84,11 @@ export interface SelectedFile {
   threadId: string;
 }
 
-/** Workspace-global right panel state (visibility, width, open tabs, active tab). */
+/**
+ * Right panel container state (visibility, width, open tabs, active tab). Stored
+ * per thread, with one workspace-level fallback for the threadless and
+ * not-yet-customized cases (ADR-0012).
+ */
 export type RightPanelState = {
   readonly visible: boolean;
   readonly width: number;
@@ -101,7 +105,8 @@ export type RightPanelState = {
 export const DEFAULT_LINE_WRAP = true;
 
 /**
- * Baseline right-panel state for a workspace that has no persisted row (default width).
+ * Baseline right-panel state used when neither the thread nor its workspace
+ * fallback has a stored record yet (default width, closed, no open tabs).
  */
 export function createDefaultRightPanelState(): RightPanelState {
   return {
@@ -135,10 +140,52 @@ function omitInlineDiffCacheByPrefix(
 }
 
 /**
- * Computes the next state slice for a panel visibility change. With a thread,
- * writes the per-thread visibility map; without a thread, writes the workspace
- * threadless `visible` field. Pass `next` to set an explicit value, or
- * `undefined` to toggle the current effective value.
+ * Resolves the effective panel record for a scope (ADR-0012 copy-on-write read).
+ * A thread with its own record uses it; otherwise it falls through to the
+ * workspace fallback, which also serves the threadless shell. Defaults when
+ * neither exists yet.
+ */
+function effectiveRightPanel(
+  state: DiffState,
+  workspaceId: string,
+  threadId: string | null | undefined,
+): RightPanelState {
+  if (threadId) {
+    const own = state.rightPanelByThread[threadId];
+    if (own) return own;
+  }
+  return state.rightPanelFallbackByWorkspace[workspaceId] ?? createDefaultRightPanelState();
+}
+
+/**
+ * Computes the next state slice that writes `next` to a scope's panel record. A
+ * thread writes (and so diverges into) its own per-thread record; without a
+ * thread, the write lands on the workspace fallback. This is the copy-on-write
+ * write path that pairs with {@link effectiveRightPanel}.
+ */
+function writeRightPanel(
+  state: DiffState,
+  workspaceId: string,
+  threadId: string | null | undefined,
+  next: RightPanelState,
+): Partial<DiffState> {
+  if (threadId) {
+    return {
+      rightPanelByThread: { ...state.rightPanelByThread, [threadId]: next },
+    };
+  }
+  return {
+    rightPanelFallbackByWorkspace: {
+      ...state.rightPanelFallbackByWorkspace,
+      [workspaceId]: next,
+    },
+  };
+}
+
+/**
+ * Computes the next state slice for a panel visibility change. Reads the scope's
+ * effective record and writes it back through copy-on-write. Pass `next` to set
+ * an explicit value, or `undefined` to toggle the current effective value.
  */
 function setPanelVisible(
   state: DiffState,
@@ -146,22 +193,11 @@ function setPanelVisible(
   threadId: string | null | undefined,
   next: boolean | undefined,
 ): Partial<DiffState> {
-  if (threadId) {
-    const current = state.rightPanelVisibleByThread[threadId] ?? false;
-    return {
-      rightPanelVisibleByThread: {
-        ...state.rightPanelVisibleByThread,
-        [threadId]: next ?? !current,
-      },
-    };
-  }
-  const current = state.rightPanelByWorkspace[workspaceId] ?? createDefaultRightPanelState();
-  return {
-    rightPanelByWorkspace: {
-      ...state.rightPanelByWorkspace,
-      [workspaceId]: { ...current, visible: next ?? !current.visible },
-    },
-  };
+  const current = effectiveRightPanel(state, workspaceId, threadId);
+  return writeRightPanel(state, workspaceId, threadId, {
+    ...current,
+    visible: next ?? !current.visible,
+  });
 }
 
 /**
@@ -180,21 +216,20 @@ interface DiffState {
   /** Last preview URL typed or loaded per thread (in-memory only). */
   readonly previewUrlByThread: Record<string, string>;
   /**
-   * Workspace-scoped right panel shell keyed by workspace ID. Width and active
-   * tab belong to the workspace and persist across thread navigation and with no
-   * thread open. The `visible` field here is the *threadless* open/closed state
-   * (used when no thread is selected); per-thread open/closed lives in
-   * {@link rightPanelVisibleByThread}. Tab *contents* keep their own (thread or
-   * workspace-root) scope; see ADR-0004.
+   * Per-thread right panel container state keyed by thread ID — the full record
+   * (visibility, width, open tabs, active tab). A thread has no entry until it
+   * writes one (copy-on-write divergence from the workspace fallback), after
+   * which its own record is authoritative. Dropped by {@link clearThread}. Tab
+   * *contents* keep their own (thread or workspace-root) scope; see ADR-0012.
    */
-  readonly rightPanelByWorkspace: Record<string, RightPanelState>;
+  readonly rightPanelByThread: Record<string, RightPanelState>;
   /**
-   * Per-thread right panel open/closed state keyed by thread ID. Opening the
-   * panel on one thread does not open it on a sibling thread in the same
-   * workspace; width and active tab remain shared via {@link rightPanelByWorkspace}.
-   * Absent entry means closed. See ADR-0004.
+   * One workspace-level fallback panel record keyed by workspace ID. Serves the
+   * threadless Browser/Terminal shell and seeds a not-yet-customized thread's
+   * first read, until that thread diverges into its own
+   * {@link rightPanelByThread} entry. See ADR-0012.
    */
-  readonly rightPanelVisibleByThread: Record<string, boolean>;
+  readonly rightPanelFallbackByWorkspace: Record<string, RightPanelState>;
   /** View mode within the Changes tab (the single rendered view). */
   viewMode: DiffViewMode;
   /**
@@ -287,12 +322,12 @@ interface DiffState {
   } | null;
   /** Whether a summary is currently being generated. */
   summaryLoading: boolean;
-  getRightPanel: (workspaceId: string) => RightPanelState;
   /**
-   * Effective open/closed state for the panel. With a thread, reads the
-   * per-thread map (default closed); without a thread, reads the workspace
-   * threadless `visible` field.
+   * Effective panel record for a scope: the thread's own record when it has
+   * diverged, otherwise the workspace fallback (ADR-0012 copy-on-write read).
    */
+  getRightPanel: (workspaceId: string, threadId?: string | null) => RightPanelState;
+  /** Effective open/closed state for the panel scope ({@link getRightPanel}). */
   getRightPanelVisible: (workspaceId: string, threadId?: string | null) => boolean;
   /** Toggle the panel for a thread (per-thread) or the threadless shell (workspace). */
   toggleRightPanel: (workspaceId: string, threadId?: string | null) => void;
@@ -300,15 +335,15 @@ interface DiffState {
   showRightPanel: (workspaceId: string, threadId?: string | null) => void;
   /** Close the panel for a thread (per-thread) or the threadless shell (workspace). */
   hideRightPanel: (workspaceId: string, threadId?: string | null) => void;
-  setRightPanelWidth: (workspaceId: string, width: number) => void;
-  setRightPanelTab: (workspaceId: string, tab: RightPanelTab) => void;
+  setRightPanelWidth: (workspaceId: string, threadId: string | null | undefined, width: number) => void;
+  setRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
   /**
    * Close (remove) a singleton tab from the open set. When the closed tab was
    * active, focus falls back to the most-recently-opened remaining tab; with
    * none left the panel returns to the card-grid empty state. No-op when the tab
    * is not open. See ADR-0004.
    */
-  closeRightPanelTab: (workspaceId: string, tab: RightPanelTab) => void;
+  closeRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
   setViewMode: (mode: DiffViewMode) => void;
   /**
    * Resolve the Review view a thread should show: the user's sticky pick when
@@ -368,8 +403,8 @@ interface DiffState {
 /** Zustand store for diff panel and right panel tab state. */
 export const useDiffStore = create<DiffState>((set, get) => ({
   previewUrlByThread: {},
-  rightPanelByWorkspace: {},
-  rightPanelVisibleByThread: {},
+  rightPanelByThread: {},
+  rightPanelFallbackByWorkspace: {},
   viewMode: "last-turn",
   reviewViewByThread: {},
   reviewViewManuallySelectedByThread: {},
@@ -394,14 +429,11 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   summaryRecord: null,
   summaryLoading: false,
 
-  getRightPanel: (workspaceId) =>
-    get().rightPanelByWorkspace[workspaceId] ?? createDefaultRightPanelState(),
+  getRightPanel: (workspaceId, threadId) =>
+    effectiveRightPanel(get(), workspaceId, threadId),
 
-  getRightPanelVisible: (workspaceId, threadId) => {
-    const state = get();
-    if (threadId) return state.rightPanelVisibleByThread[threadId] ?? false;
-    return state.rightPanelByWorkspace[workspaceId]?.visible ?? false;
-  },
+  getRightPanelVisible: (workspaceId, threadId) =>
+    effectiveRightPanel(get(), workspaceId, threadId).visible,
 
   toggleRightPanel: (workspaceId, threadId) =>
     set((state) => setPanelVisible(state, workspaceId, threadId, undefined)),
@@ -412,37 +444,34 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   hideRightPanel: (workspaceId, threadId) =>
     set((state) => setPanelVisible(state, workspaceId, threadId, false)),
 
-  setRightPanelWidth: (workspaceId, width) =>
+  setRightPanelWidth: (workspaceId, threadId, width) =>
     set((state) => {
-      const current = state.rightPanelByWorkspace[workspaceId] ?? createDefaultRightPanelState();
-      return {
-        rightPanelByWorkspace: {
-          ...state.rightPanelByWorkspace,
-          [workspaceId]: { ...current, width: clampWidth(width) },
-        },
-      };
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        width: clampWidth(width),
+      });
     }),
 
-  setRightPanelTab: (workspaceId, tab) =>
+  setRightPanelTab: (workspaceId, threadId, tab) =>
     set((state) => {
-      const current = state.rightPanelByWorkspace[workspaceId] ?? createDefaultRightPanelState();
+      const current = effectiveRightPanel(state, workspaceId, threadId);
       // Activating a tab opens it: tabs are singletons created on demand, so
       // focusing one that is not yet open adds it to the open set (the card grid
       // is the create surface). Already-open tabs are just refocused.
       const openTabs = current.openTabs.includes(tab)
         ? current.openTabs
         : [...current.openTabs, tab];
-      return {
-        rightPanelByWorkspace: {
-          ...state.rightPanelByWorkspace,
-          [workspaceId]: { ...current, openTabs, activeTab: tab },
-        },
-      };
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        openTabs,
+        activeTab: tab,
+      });
     }),
 
-  closeRightPanelTab: (workspaceId, tab) =>
+  closeRightPanelTab: (workspaceId, threadId, tab) =>
     set((state) => {
-      const current = state.rightPanelByWorkspace[workspaceId] ?? createDefaultRightPanelState();
+      const current = effectiveRightPanel(state, workspaceId, threadId);
       if (!current.openTabs.includes(tab)) return {};
       const openTabs = current.openTabs.filter((t) => t !== tab);
       // Closing the active tab hands focus to the most-recently-opened survivor
@@ -453,12 +482,11 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         current.activeTab === tab
           ? (openTabs[openTabs.length - 1] ?? current.activeTab)
           : current.activeTab;
-      return {
-        rightPanelByWorkspace: {
-          ...state.rightPanelByWorkspace,
-          [workspaceId]: { ...current, openTabs, activeTab },
-        },
-      };
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        openTabs,
+        activeTab,
+      });
     }),
 
   setViewMode: (mode) =>
@@ -588,8 +616,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete previewUrls[threadId];
       const lineWrapByThread = { ...state.lineWrapByThread };
       delete lineWrapByThread[threadId];
-      const rightPanelVisibleByThread = { ...state.rightPanelVisibleByThread };
-      delete rightPanelVisibleByThread[threadId];
+      const rightPanelByThread = { ...state.rightPanelByThread };
+      delete rightPanelByThread[threadId];
       const reviewViewByThread = { ...state.reviewViewByThread };
       delete reviewViewByThread[threadId];
       const reviewViewManuallySelectedByThread = { ...state.reviewViewManuallySelectedByThread };
@@ -611,7 +639,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         commitsLoadingByThread: commitsLoading,
         previewUrlByThread: previewUrls,
         lineWrapByThread,
-        rightPanelVisibleByThread,
+        rightPanelByThread,
         reviewViewByThread,
         reviewViewManuallySelectedByThread,
         diffRevisionByScope,
@@ -631,18 +659,18 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         key.startsWith(cachePrefix),
       );
       if (
-        !(workspaceId in state.rightPanelByWorkspace) &&
+        !(workspaceId in state.rightPanelFallbackByWorkspace) &&
         !(workspaceId in state.diffRevisionByScope) &&
         !hasInlineDiffCache
       ) {
         return {};
       }
-      const rightPanelByWorkspace = { ...state.rightPanelByWorkspace };
-      delete rightPanelByWorkspace[workspaceId];
+      const rightPanelFallbackByWorkspace = { ...state.rightPanelFallbackByWorkspace };
+      delete rightPanelFallbackByWorkspace[workspaceId];
       const diffRevisionByScope = { ...state.diffRevisionByScope };
       delete diffRevisionByScope[workspaceId];
       return {
-        rightPanelByWorkspace,
+        rightPanelFallbackByWorkspace,
         diffRevisionByScope,
         inlineDiffCache: omitInlineDiffCacheByPrefix(state.inlineDiffCache, cachePrefix),
       };

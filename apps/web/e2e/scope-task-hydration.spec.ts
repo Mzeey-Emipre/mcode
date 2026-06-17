@@ -78,12 +78,12 @@ async function seedScopeThread(page: Page): Promise<void> {
           diffStore as {
             getState: () => {
               showRightPanel: (workspaceId: string, threadId?: string) => void;
-              setRightPanelTab: (workspaceId: string, tab: string) => void;
+              setRightPanelTab: (workspaceId: string, threadId: string | null, tab: string) => void;
             };
           }
         ).getState();
         api.showRightPanel(workspace.id, thread.id);
-        api.setRightPanelTab(workspace.id, "tasks");
+        api.setRightPanelTab(workspace.id, thread.id, "tasks");
       }
     },
     { workspace: WORKSPACE, thread: THREAD },

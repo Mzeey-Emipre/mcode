@@ -52,14 +52,17 @@ export function ensureTerminalForScope(scopeId: string): void {
       .terminalCreate(scopeId)
       .then(({ ptyId, shell }) => {
         creationInFlight.delete(scopeId);
-        // Width/tab are workspace-global; open/closed is per-thread (or the
-        // workspace threadless shell). Resolve the owning workspace to read
-        // panel state, passing the thread id only when the scope is a thread.
+        // The panel record is per-thread (or the workspace fallback for the
+        // threadless shell). Resolve the owning workspace, then read the scope's
+        // effective record, passing the thread id only when the scope is a thread.
         const { workspaceId, isThread } = resolveScopeWorkspace(scopeId);
+        const panelThreadId = isThread ? scopeId : undefined;
         const diff = useDiffStore.getState();
-        const panel = workspaceId ? diff.getRightPanel(workspaceId) : undefined;
+        const panel = workspaceId
+          ? diff.getRightPanel(workspaceId, panelThreadId)
+          : undefined;
         const panelVisible = workspaceId
-          ? diff.getRightPanelVisible(workspaceId, isThread ? scopeId : undefined)
+          ? diff.getRightPanelVisible(workspaceId, panelThreadId)
           : false;
         // Panel closed or tab switched while creation was in flight — dispose
         // the orphaned PTY instead of adding a terminal nobody asked to see.

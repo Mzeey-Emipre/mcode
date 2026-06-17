@@ -51,7 +51,7 @@ export function useComposerLayoutGuard(
       if (!activeWorkspaceId) return;
 
       const panelVisible = diff.getRightPanelVisible(activeWorkspaceId, activeThreadId);
-      const panelWidth = diff.getRightPanel(activeWorkspaceId).width;
+      const panelWidth = diff.getRightPanel(activeWorkspaceId, activeThreadId).width;
       const panelInline = panelVisible && !ui.rightPanelMaximized;
       const sidebarDocked = !ui.sidebarCollapsed && !ui.sidebarFloating;
 

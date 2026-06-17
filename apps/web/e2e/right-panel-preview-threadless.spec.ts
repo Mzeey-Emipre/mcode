@@ -128,13 +128,13 @@ async function openThreadlessPreview(page: Page): Promise<void> {
           diffStore as {
             getState: () => {
               showRightPanel: (id: string, threadId?: string) => void;
-              setRightPanelTab: (id: string, t: string) => void;
+              setRightPanelTab: (id: string, threadId: string | null, t: string) => void;
             };
           }
         ).getState();
         // No thread id → threadless workspace visibility.
         api.showRightPanel(wid);
-        api.setRightPanelTab(wid, "preview");
+        api.setRightPanelTab(wid, null, "preview");
       }
     },
     { workspace: WORKSPACE, wid: WORKSPACE.id },

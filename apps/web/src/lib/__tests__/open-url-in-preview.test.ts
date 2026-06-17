@@ -123,7 +123,7 @@ describe("openUrlInPreview", () => {
     await vi.runAllTimersAsync();
 
     expect(showRightPanel).toHaveBeenCalledWith("ws-1", "thread-1");
-    expect(setRightPanelTab).toHaveBeenCalledWith("ws-1", "preview");
+    expect(setRightPanelTab).toHaveBeenCalledWith("ws-1", "thread-1", "preview");
     expect(mockCreate).toHaveBeenCalledWith("thread-1", true);
     expect(mockNavigate).toHaveBeenCalledWith("https://example.com/pr/1", "/tmp/workspace");
     expect(setPreviewUrlForThread).not.toHaveBeenCalled();
