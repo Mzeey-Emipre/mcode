@@ -4,6 +4,7 @@ import { pushEmitter } from "./ws-transport";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
+import { refreshTurnSnapshotsAfterPersist } from "@/lib/turn-snapshot-refresh";
 import { useThreadStore } from "@/stores/threadStore";
 import { getThreadRecord, patchThreadRecord } from "@/stores/thread-record";
 import { useTerminalStore } from "@/stores/terminalStore";
@@ -294,50 +295,15 @@ export function startPushListeners(): void {
       };
       useThreadStore.getState().handleTurnPersisted(payload);
 
-      const snap = useDiffStore.getState();
-      const hasSnapshots = snap.snapshotsByThread[payload.threadId] !== undefined;
-      const hasCommits = snap.commitsByThread[payload.threadId] !== undefined;
-      if (!hasSnapshots && !hasCommits) return;
+      refreshTurnSnapshotsAfterPersist(payload.threadId, payload.filesChanged);
 
-      // Only refetch snapshots / mark the cumulative view pending when the
-      // persisted turn actually touched files. Chat-only turns (no tool
-      // writes) would otherwise surface a "New changes" affordance with
-      // nothing new to show.
       const hasFileChanges = payload.filesChanged.length > 0;
-      if (hasFileChanges) {
-        useDiffStore.getState().bumpDiffRevision(payload.threadId);
-      }
+      if (!hasFileChanges) return;
 
       try {
         const transport = getTransport();
-        if (hasSnapshots && hasFileChanges) {
-          const wsState = useWorkspaceStore.getState();
-          const workspaceId = wsState.threads.find(
-            (t) => t.id === payload.threadId,
-          )?.workspace_id;
-          // The whole panel record is per-thread (ADR-0012). Only defer when this
-          // thread is on screen with its panel open on the Changes tab.
-          const panel = workspaceId
-            ? snap.getRightPanel(workspaceId, payload.threadId)
-            : undefined;
-          const isViewingAllChanges =
-            wsState.activeThreadId === payload.threadId &&
-            workspaceId !== undefined &&
-            snap.getRightPanelVisible(workspaceId, payload.threadId) &&
-            panel?.activeTab === "changes" &&
-            snap.viewMode === "cumulative";
-
-          if (isViewingAllChanges) {
-            useDiffStore.getState().markSnapshotsPending(payload.threadId, true);
-          } else {
-            transport
-              .listSnapshots(payload.threadId)
-              .then((snapshots) =>
-                useDiffStore.getState().setSnapshots(payload.threadId, snapshots),
-              )
-              .catch(() => { /* non-critical */ });
-          }
-        }
+        const snap = useDiffStore.getState();
+        const hasCommits = snap.commitsByThread[payload.threadId] !== undefined;
 
         if (hasCommits) {
           const thread = useWorkspaceStore

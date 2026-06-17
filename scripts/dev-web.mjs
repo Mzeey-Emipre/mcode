@@ -139,9 +139,25 @@ try {
   }
 }
 
-console.log(`\x1b[36m[dev:web]\x1b[0m Starting Vite dev server...`);
+// `MCODE_WEB_PORT` lets a caller (e.g. scripts/agent/demo.mjs) pin Vite to a
+// port it has already confirmed is free, so the demo drives a known URL instead
+// of guessing 5173. With it set we use `--strictPort` so Vite fails loudly
+// rather than silently drifting to another port the caller isn't watching.
+// Unset (the human `bun run dev:web` path) keeps Vite's default 5173 +
+// auto-increment behaviour.
+const webPort = process.env.MCODE_WEB_PORT
+  ? Number.parseInt(process.env.MCODE_WEB_PORT, 10)
+  : null;
+const viteArgs = ["run", "dev"];
+if (Number.isInteger(webPort) && webPort > 0) {
+  viteArgs.push("--port", String(webPort), "--strictPort");
+}
 
-const vite = spawn("bun", ["run", "dev"], {
+console.log(
+  `\x1b[36m[dev:web]\x1b[0m Starting Vite dev server${webPort ? ` on http://localhost:${webPort}` : ""}...`,
+);
+
+const vite = spawn("bun", viteArgs, {
   cwd: resolve(rootDir, "apps", "web"),
   env: {
     ...process.env,

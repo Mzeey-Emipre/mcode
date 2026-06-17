@@ -361,6 +361,13 @@ export const SettingsSchema = lazySchema(() =>
              * (timeouts, opaque 502/503, etc.).
              */
             retryTransientFailuresOnce: z.boolean().default(true),
+            /**
+             * Base backoff (ms) before the single retry of a rate-limited prompt
+             * (`resource_exhausted`). A random jitter up to 2s is added on top so
+             * concurrent rate-limited turns don't all retry at the same instant and
+             * re-trip Cursor's burst limit. Zero retries immediately.
+             */
+            rateLimitRetryBackoffMs: z.number().int().min(0).max(60_000).default(3000),
             /** Attach stderr tail excerpts to Cursor failure logs (debugging only). */
             verboseFailureLogs: z.boolean().default(true),
             /**
@@ -621,6 +628,7 @@ export const PartialSettingsSchema = lazySchema(() =>
             fullPreambleEveryNTurns: z.number().int().min(0).max(999).optional(),
             idleSessionTtlMinutes: z.number().int().min(5).max(240).optional(),
             retryTransientFailuresOnce: z.boolean().optional(),
+            rateLimitRetryBackoffMs: z.number().int().min(0).max(60_000).optional(),
             verboseFailureLogs: z.boolean().optional(),
             traceSessionUpdates: z.boolean().optional(),
             autoAnswerAskQuestions: z.boolean().optional(),

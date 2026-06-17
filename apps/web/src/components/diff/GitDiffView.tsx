@@ -93,6 +93,9 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
   const branchBase = useDiffStore((s) => s.branchComparison?.base ?? null);
   const branchTarget = useDiffStore((s) => s.branchComparison?.target ?? null);
   const branchUnborn = useDiffStore((s) => s.branchComparison?.isUnborn ?? false);
+  const branchComparisonAvailable = useDiffStore(
+    (s) => s.branchComparison?.isComparisonAvailable !== false,
+  );
   const branchRange = useMemo(
     () => branchRangeForReview(branchBase, branchTarget),
     [branchBase, branchTarget],
@@ -106,7 +109,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     // Branch view waits for the picker to resolve a pair before fetching, unless
     // HEAD is unborn (explicit empty). Holding `loading` avoids a flash of the
     // empty state with a stale/default range during resolution.
-    if (view === "branch" && !branchUnborn && !branchRange) {
+    if (view === "branch" && !branchUnborn && branchComparisonAvailable && !branchRange) {
       return () => {
         cancelled = true;
       };
@@ -119,7 +122,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
         return { files, source: view, id: workspaceId };
       }
       if (view === "branch") {
-        if (branchUnborn || !branchRange) {
+        if (branchUnborn || !branchComparisonAvailable || !branchRange) {
           return { files: [], source: "branch", id: "branch-empty" };
         }
         const files = await transport.getBranchFiles(
@@ -164,7 +167,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
     // inputs for the Branch view: picking a new ref pair refetches its file list.
     // previous scope's stale diff. selectedCommitSha is one too: picking a commit
     // refetches that commit's files (no-op for the non-commit views).
-  }, [view, workspaceId, threadId, branchRange, branchUnborn, selectedCommitSha, mutableDiffRevision]);
+  }, [view, workspaceId, threadId, branchRange, branchUnborn, branchComparisonAvailable, selectedCommitSha, mutableDiffRevision]);
 
   // Report the view's total +/- to the toolbar. Null while the count loads so
   // the toolbar shows its spinner; cleared on unmount so a switching view never
@@ -177,7 +180,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
       view === "unstaged" || view === "staged"
         ? { workspaceId, view, threadId }
         : view === "branch"
-          ? branchUnborn || !branchRange
+          ? branchUnborn || !branchComparisonAvailable || !branchRange
             ? null
             : { workspaceId, view, base: branchRange.base, target: branchRange.target, threadId }
           : selectedCommitSha
@@ -206,7 +209,7 @@ export function GitDiffView({ view, workspaceId, threadId }: GitDiffViewProps) {
       cancelled = true;
       setReviewDiffStat(null);
     };
-  }, [view, workspaceId, threadId, branchRange, branchUnborn, selectedCommitSha, mutableDiffRevision, setReviewDiffStat]);
+  }, [view, workspaceId, threadId, branchRange, branchUnborn, branchComparisonAvailable, selectedCommitSha, mutableDiffRevision, setReviewDiffStat]);
 
   if (loading) return <LoadingPulse />;
   if (!resolved || resolved.files.length === 0) {

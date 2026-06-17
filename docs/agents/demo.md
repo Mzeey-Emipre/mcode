@@ -20,11 +20,20 @@ Playwright MCP must be connected (configured in `.mcp.json`, `.cursor/mcp.json`,
 
 Both ultimately run `scripts/agent/demo.mjs`, which:
 
-1. Checks whether `http://localhost:5173` already responds
-2. If not, spawns `bun run dev:web` detached and polls (default 60s timeout)
-3. Prints the URL, the screenshot directory, and a copy-pasteable Playwright MCP entry point
+1. Assumes the default port (5173) may be in use and claims the first free port
+2. Boots an isolated `bun run dev:web` on that port — its own backend pinned to a unique temp data dir and database (`MCODE_DATA_DIR` + `MCODE_DB_PATH`), pinned to the browser via `VITE_SERVER_URL`, never your real `~/.mcode` and never the shared dev/worktree DB — and polls until ready (default 60s timeout). A private DB also means the backend always boots clean instead of failing on SQLite lock contention with another dev server.
+3. Prints the exact URL, the screenshot directory, and a copy-pasteable Playwright MCP entry point
+
+Drive the URL the script prints. Never hardcode `http://localhost:5173`: a stale page on that port may be wired to a different (even production) server, and driving it can seed or mutate real data. This isolation exists because a demo once attached to a running production app and wrote to the real database.
 
 Override defaults with env vars:
+
+| Var | Effect |
+|-----|--------|
+| `MCODE_DEMO_URL` | Reuse an existing server you already trust instead of booting a fresh isolated one. |
+| `MCODE_DEMO_USE_REAL_DATA` | Set to `1` to point the fresh stack at your real `~/.mcode` profile instead of an isolated temp DB. Rarely wanted — it can mutate real data. |
+| `MCODE_DEMO_TIMEOUT_MS` | Readiness poll timeout (default 60000). |
+| `MCODE_WEB_PORT` | Pin the Vite port (passed through to `dev:web` with `--strictPort`); `demo.mjs` sets this to the free port it picked. |
 
 ```sh
 MCODE_DEMO_URL=http://localhost:5174 MCODE_DEMO_TIMEOUT_MS=120000 node scripts/agent/demo.mjs
@@ -32,10 +41,10 @@ MCODE_DEMO_URL=http://localhost:5174 MCODE_DEMO_TIMEOUT_MS=120000 node scripts/a
 
 ## Driving the app
 
-Once the script exits 0, drive the app via Playwright MCP tools:
+Once the script exits 0, drive the app via Playwright MCP tools — using the exact URL the script printed (shown below as `<printed-url>`), not a hardcoded port:
 
 ```ts
-mcp__playwright__browser_navigate({ url: "http://localhost:5173" })
+mcp__playwright__browser_navigate({ url: "<printed-url>" })
 mcp__playwright__browser_snapshot()       // a11y tree — readable state
 mcp__playwright__browser_click({ ref: "<from-snapshot>" })
 mcp__playwright__browser_take_screenshot({ filename: "apps/web/e2e/screenshots/demo/<step>.png" })
@@ -63,7 +72,7 @@ Report back:
 
 ## Cleanup
 
-The dev server stays running after `demo.mjs` exits — `dev:web` is intentionally detached so a follow-up `/demo` call is instant. To shut it down:
+The dev server stays running after `demo.mjs` exits — `dev:web` is detached. Each run claims its own free port and its own temp data dir under the OS temp folder (`mcode-demo-web-*`), so repeated demos spawn fresh isolated stacks rather than reusing one; shut down stragglers when you're done. The temp dirs are left behind for the still-running server and are reclaimed by the OS temp sweep. To shut a server down:
 
 ```sh
 # unix-ish
@@ -99,8 +108,10 @@ The web demo above covers ~95% of features because the React tree is identical u
 Both:
 
 1. Require `cd apps/desktop && bun run build` to have produced `dist/main/main.cjs` (and `dist/server/server.cjs` for the spawned child).
-2. Launch Electron via Playwright's `_electron.launch()` (not the Playwright MCP — the MCP does not support Electron).
+2. Launch Electron via Playwright's `_electron.launch()` (not the Playwright MCP — the MCP does not support Electron) against an **isolated, empty `MCODE_DATA_DIR`** by default, so the demo never reads or mutates your real `~/.mcode` profile. The embedded server claims its own free port within the desktop range, so it never attaches to another running instance. Set `MCODE_DEMO_USE_REAL_DATA=1` to use the real profile.
 3. Wait for the first window, screenshot it to `apps/web/e2e/screenshots/demo-desktop/`, dump renderer console errors.
+
+> **Custom desktop demos that seed data.** If you script your own Electron demo that creates workspaces or threads over RPC (as `scripts/agent/demo-desktop-branch-view.mjs` does), launch with an isolated `MCODE_DATA_DIR` and read the launched server's `server.lock` from that dir for its port + auth token. Never scan a port range for a `/health` endpoint — a blind scan can attach to another app sharing the range and write to the wrong database.
 4. (**Optional**) Pass `--tour` to record `tour-*.png` snapshots (`tour-02b-active-chat.png` opens a sidebar or Recent thread row when present, then captures Changes / Terminal / Preview hotkeys plus `tour-06-changes-header-button.png`).
 5. Exit and close the window by default. Pass `--keep-open` to leave Electron running for further interactive driving.
 

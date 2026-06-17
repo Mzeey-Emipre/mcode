@@ -38,6 +38,7 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `provider.cursor.fullPreambleEveryNTurns` | integer | `12` | 0-999 | - | With sticky shortening, force a fresh full preamble every N prompts for that subprocess. `0` turns this off. |
 | `provider.cursor.idleSessionTtlMinutes` | integer | `20` | 5-240 | - | Idle minutes before tearing down an unused `cursor-agent` subprocess. |
 | `provider.cursor.retryTransientFailuresOnce` | boolean | `true` | - | - | Retry `session/prompt` once when the failure looks like a transient CLI or HTTP transport flake. |
+| `provider.cursor.rateLimitRetryBackoffMs` | integer | `3000` | 0-60000 | - | Base delay before the single retry of a `resource_exhausted` rate-limited prompt. A random jitter of 0-2000ms is added so concurrent turns do not retry in lockstep. The wait is invisible in the thread (reads as normal model latency); a Stop ends it early. |
 | `provider.cursor.verboseFailureLogs` | boolean | `true` | - | - | On Cursor prompt failure, append recent stderr lines to structured logs when available. |
 | `provider.cursor.traceSessionUpdates` | boolean | `false` | - | - | When true, writes sanitized Cursor ACP `session/update` payloads and mapped agent events to daily server logs (skips noisy `agent_message_chunk` streaming). Inspect `$MCODE_DATA_DIR/logs/` for timelines. |
 | `provider.cursor.autoAnswerAskQuestions` | boolean | `true` | - | - | For blocking `cursor/ask_question`, auto-select recommended or first selectable options. When false, answer as skipped only. |

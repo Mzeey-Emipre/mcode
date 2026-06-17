@@ -15,6 +15,56 @@ export { pushEmitter } from "./ws-transport";
 /** Default server URL when running standalone (no Electron shell). */
 const DEFAULT_SERVER_URL = "ws://localhost:19400";
 
+/** Inclusive-min / exclusive-max port window scanned when no backend is pinned. */
+const SERVER_SCAN_MIN = 19400;
+const SERVER_SCAN_MAX = 19800;
+
+/**
+ * Parse an explicit port out of a server URL, or null when the URL is empty,
+ * has no explicit port, or is unparseable. Pure (no env access) so it is unit
+ * testable; `getPinnedServerPort` supplies the env value.
+ */
+export function parseServerPort(url: string | undefined): number | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url, "http://localhost");
+    const port = Number.parseInt(parsed.port, 10);
+    return Number.isInteger(port) && port > 0 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the port pinned by `VITE_SERVER_URL`, or null when it is unset.
+ *
+ * When a backend is pinned (dev / demo / standalone-against-a-known-server),
+ * reconnect must target only that port. A full-range scan here once let a dev
+ * page whose pinned backend had dropped silently reattach to a different server
+ * on the range — including a production app — and mutate its database. Returning
+ * the pinned port lets `discoverServerUrl` fail visibly instead of wandering.
+ */
+export function getPinnedServerPort(): number | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const envUrl = (import.meta as any).env?.VITE_SERVER_URL as string | undefined;
+  return parseServerPort(envUrl);
+}
+
+/**
+ * Decide which `[min, max)` port window a browser-mode reconnect should scan.
+ *
+ * When a backend is pinned, the window is exactly that one port so reconnect can
+ * never latch onto a different server. When nothing is pinned (standalone /
+ * production build, where `VITE_SERVER_URL` is unset), it falls back to the full
+ * range — preserving the original behavior. Pure so the branch is unit testable.
+ */
+export function getReconnectScanRange(pinnedPort: number | null): { min: number; max: number } {
+  if (pinnedPort !== null) {
+    return { min: pinnedPort, max: pinnedPort + 1 };
+  }
+  return { min: SERVER_SCAN_MIN, max: SERVER_SCAN_MAX };
+}
+
 /** How long to wait for the WebSocket to connect before giving up. */
 const CONNECT_TIMEOUT_MS = 5000;
 
@@ -79,12 +129,19 @@ export async function initTransport(): Promise<McodeTransport> {
           const info = await window.desktopBridge.getServerUrl();
           return info.url;
         }
-        // In browser, scan the port range. Use the last-known token from
-        // localStorage so the reconnect URL includes valid auth.
+        // In browser, reconnect using the last-known token from localStorage so
+        // the URL carries valid auth.
         const savedToken = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) ?? "";
-        const found = await scanPortRange(19400, 19800, savedToken);
+        // When a backend is pinned (dev / demo), only ever reattach to that one
+        // port. Never fall back to a range scan that could latch onto a
+        // different (production) server and write to the wrong database.
+        const pinnedPort = getPinnedServerPort();
+        const { min, max } = getReconnectScanRange(pinnedPort);
+        const found = await scanPortRange(min, max, savedToken);
         if (found) return found;
-        throw new Error("Server not found");
+        throw new Error(
+          pinnedPort !== null ? `Pinned server on port ${pinnedPort} not reachable` : "Server not found",
+        );
       },
     });
 
