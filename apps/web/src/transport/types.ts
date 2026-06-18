@@ -33,6 +33,7 @@ import type {
   CreatePrResult,
   ChecksStatus,
   CopilotSubagent,
+  GitRemoteUrl,
   PermissionDecision,
   PermissionRequest,
   CreateAndSendResult,
@@ -50,6 +51,7 @@ export type {
   StoredAttachment,
   GitBranch,
   BranchComparison,
+  GitRemoteUrl,
   WorktreeInfo,
   PrInfo,
   PrDetail,
@@ -417,6 +419,8 @@ export interface McodeTransport {
   getBranchDiff(workspaceId: string, base?: string, target?: string, filePath?: string, maxLines?: number, threadId?: string): Promise<string>;
   /** Resolve the default Branch comparison (base→target per ADR 0007) plus the refs that populate the pickers. Pass threadId so "current branch" is the thread's worktree branch. */
   getBranchComparison(workspaceId: string, threadId?: string): Promise<BranchComparison>;
+  /** Resolve a workspace or thread checkout's origin remote into a normalized web URL and repository label. */
+  getRemoteUrl(workspaceId: string, threadId?: string): Promise<GitRemoteUrl>;
   /**
    * Return total additions and deletions for a Review-panel git view.
    * Ref semantics match the file-list methods so the stat total matches the

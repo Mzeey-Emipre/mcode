@@ -20,6 +20,18 @@ export const GitRefSchema = z
   .string()
   .regex(/^(?!-)[A-Za-z0-9._/-]+$/, "invalid git ref");
 
+/** Remote repository metadata resolved from a checkout's origin remote. */
+export const GitRemoteUrlSchema = z.object({
+  /** Normalized https web URL, or null when no usable remote exists. */
+  webUrl: z.string().url().refine((value) => value.startsWith("https://"), {
+    message: "webUrl must be an https URL",
+  }).nullable(),
+  /** Repository label shown in the UI, usually "org/repo". */
+  label: z.string().min(1),
+});
+/** Remote repository metadata resolved from git config. */
+export type GitRemoteUrl = z.infer<typeof GitRemoteUrlSchema>;
+
 /**
  * A resolved Branch comparison: the base→target ref pair the Review tab's Branch
  * view diffs (always three-dot, `base...target`), plus the refs available to

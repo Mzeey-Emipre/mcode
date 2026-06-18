@@ -19,6 +19,7 @@ import type {
   GitCommit,
   ProviderModelInfo,
   CopilotSubagent,
+  GitRemoteUrl,
 } from "./types";
 import type { CreateAndSendResult } from "@mcode/contracts";
 import { emitPtyReconnectGap } from "@/components/terminal/ptyDataRegistry";
@@ -758,6 +759,8 @@ export function createWsTransport(
       rpc<string>("git.branchDiff", { workspaceId, base, target, filePath, maxLines, threadId }),
     getBranchComparison: (workspaceId, threadId?) =>
       rpc<BranchComparison>("git.branchComparison", { workspaceId, threadId }),
+    getRemoteUrl: (workspaceId, threadId?) =>
+      rpc<GitRemoteUrl>("git.getRemoteUrl", { workspaceId, threadId }),
     getReviewDiffStats: (params) =>
       rpc<{ additions: number; deletions: number }>("git.reviewDiffStats", params),
 
