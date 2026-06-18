@@ -53,6 +53,68 @@ const gitCommit = {
   date: now,
 };
 
+const snapshot = {
+  id: "snapshot-1",
+  message_id: "message-1",
+  thread_id: thread.id,
+  ref_before: "before",
+  ref_after: "after",
+  files_changed: ["apps/web/src/components/chat/HeaderActions.tsx"],
+  worktree_path: thread.worktree_path,
+  created_at: now,
+};
+
+const branches = [
+  {
+    name: "feat/consolidated-header",
+    shortSha: "abc1234",
+    type: "local" as const,
+    isCurrent: true,
+  },
+  {
+    name: "main",
+    shortSha: "def5678",
+    type: "local" as const,
+    isCurrent: false,
+  },
+  {
+    name: "feat/git-create-branch",
+    shortSha: "fed1234",
+    type: "local" as const,
+    isCurrent: false,
+  },
+  {
+    name: "feat/review-panel",
+    shortSha: "a1b2c3d",
+    type: "local" as const,
+    isCurrent: false,
+  },
+  {
+    name: "feat/settings-sync",
+    shortSha: "b2c3d4e",
+    type: "local" as const,
+    isCurrent: false,
+  },
+  {
+    name: "fix/thread-switching",
+    shortSha: "c3d4e5f",
+    type: "local" as const,
+    isCurrent: false,
+  },
+  {
+    name: "chore/e2e-fixtures",
+    shortSha: "d4e5f6a",
+    type: "local" as const,
+    isCurrent: false,
+  },
+  {
+    name: "docs/runtime-guide",
+    shortSha: "e5f6a7b",
+    type: "local" as const,
+    isCurrent: false,
+  },
+];
+
 test.describe("Consolidated chat header", () => {
   // Dock the right panel inline (not as a modal overlay) so the header toggle
   // stays clickable for the show/hide assertions. The default panel width is 50%
@@ -67,6 +129,16 @@ test.describe("Consolidated chat header", () => {
         JSON.stringify({ [wsId]: true }),
       );
     }, WS_ID);
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (text: string) => {
+            (window as unknown as { __mcodeCopiedText?: string }).__mcodeCopiedText = text;
+          },
+        },
+      });
+    });
 
     await mockWebSocketServer(page, {
       "workspace.list": [workspace],
@@ -78,6 +150,28 @@ test.describe("Consolidated chat header", () => {
       // Create PR affordance renders enabled.
       "github.branchPr": null,
       "git.log": [gitCommit],
+      "snapshot.listByThread": [snapshot],
+      "snapshot.getDiffStats": async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return [
+          {
+            filePath: "apps/web/src/components/chat/HeaderActions.tsx",
+            additions: 233,
+            deletions: 0,
+          },
+        ];
+      },
+      "git.listBranches": async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return branches;
+      },
+      "git.workingTreeFiles": (params) =>
+        (params as { staged?: boolean } | undefined)?.staged
+          ? ["apps/web/src/components/chat/HeaderActions.tsx"]
+          : [
+              "apps/web/src/components/chat/ThreadOverview.tsx",
+              "apps/web/e2e/chat-header-consolidated.spec.ts",
+            ],
     });
     await page.goto("/");
     await page.waitForSelector("[data-testid='thread-item']");
@@ -85,29 +179,75 @@ test.describe("Consolidated chat header", () => {
     await page.waitForSelector("[data-testid='chat-header-title']");
   });
 
-  test("keeps Open and the consolidated controls visible; Create PR lives in the menu", async ({ page }) => {
+  test("keeps Open and the Overview controls visible; Create PR lives in the popover", async ({ page }) => {
     await expect(page.getByRole("button", { name: /^open in /i })).toBeVisible();
     await expect(page.getByTestId("header-workspace-menu")).toBeVisible();
     await expect(page.getByTestId("header-panel-toggle")).toBeVisible();
-    // No standalone Create PR button in the header chrome — it lives in the menu
+    // No standalone Create PR button in the header chrome. It lives in Overview
     // (no PR exists yet for this thread, so the PR-status badge is absent too).
     await expect(page.getByRole("button", { name: /create pr/i })).toHaveCount(0);
   });
 
-  test("consolidated menu holds Changes / Branch / Commit or push / Create PR", async ({ page }) => {
+  test("Overview popover holds changes, local, branch, commit, and PR actions", async ({ page }) => {
     await page.getByTestId("header-workspace-menu").click();
 
+    await expect(page.locator('[data-slot="popover-content"]').first()).toBeVisible();
+    await expect(page.getByText("Environment", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("workspace-menu-changes")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-local")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);
+    await expect(page.locator(".animate-popover-enter").first()).toBeVisible();
 
-    // The branch item surfaces the current branch name.
+    await expect(page.getByTestId("thread-overview-local")).toContainText("Local");
     await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/consolidated-header");
-    // Changes shows its keyboard shortcut hint (Ctrl+D on non-Mac, ⌘D on Mac).
-    await expect(page.getByTestId("workspace-menu-changes")).toContainText(/ctrl\+d|⌘d/i);
-    // Items present a pointer cursor to signal they're clickable.
+    await expect(page.getByTestId("thread-overview-change-loading")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-change-loading")).toHaveClass(
+      /animate-thread-overview-loading/,
+    );
+    await expect(page.getByTestId("thread-overview-change-summary")).toContainText("+233");
+    await expect(page.getByTestId("thread-overview-change-summary")).toContainText("-0");
     await expect(page.getByTestId("workspace-menu-changes")).toHaveCSS("cursor", "pointer");
+    await expect(page.getByTestId("thread-overview-local-popover")).toHaveCount(0);
+
+    await page.getByTestId("thread-overview-local").click();
+    await expect(page.getByTestId("thread-overview-local-popover")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-local-path")).toContainText(
+      "/test/path/.worktrees/feat-x",
+    );
+    await expect(page.getByTestId("thread-overview-local-branch")).toContainText(
+      "feat/consolidated-header",
+    );
+    await page.getByRole("button", { name: "Copy worktree path" }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as { __mcodeCopiedText?: string }).__mcodeCopiedText),
+      )
+      .toBe("/test/path/.worktrees/feat-x");
+    await page.getByRole("button", { name: "Copy branch" }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as { __mcodeCopiedText?: string }).__mcodeCopiedText),
+      )
+      .toBe("feat/consolidated-header");
+
+    await page.getByTestId("workspace-menu-branch").click();
+    await expect(page.getByTestId("thread-overview-branch-popover")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-branch-list")).not.toHaveClass(/h-60/);
+    await expect(page.getByRole("textbox", { name: "Search branches" })).toBeVisible();
+    await expect(page.getByTestId("thread-overview-current-branch")).toContainText(
+      "feat/consolidated-header",
+    );
+    await expect(page.getByTestId("thread-overview-branch-list")).toHaveClass(/h-60/);
+    await expect(page.getByTestId("thread-overview-branch-list")).toHaveJSProperty(
+      "clientHeight",
+      240,
+    );
+    await expect(page.getByTestId("thread-overview-current-branch")).toContainText(
+      "Uncommitted: 3 files",
+    );
   });
 
   test("panel toggle shows and hides the workspace-global right panel", async ({ page }) => {
@@ -124,7 +264,7 @@ test.describe("Consolidated chat header", () => {
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 
-  test("Changes menu item opens the right panel", async ({ page }) => {
+  test("Changes row opens the right panel", async ({ page }) => {
     const toggle = page.getByTestId("header-panel-toggle");
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
 
