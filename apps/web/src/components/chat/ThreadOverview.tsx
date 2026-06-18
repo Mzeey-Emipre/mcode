@@ -4,8 +4,10 @@ import {
   ChevronDown,
   Copy,
   Diff,
+  ExternalLink,
   GitBranch,
   GitPullRequest,
+  Globe,
   Laptop,
   Menu,
   Plus,
@@ -13,6 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Favicon } from "@/components/ui/favicon";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -50,6 +53,7 @@ type ThreadOverviewChangeSummaryTransport = Pick<
   | "getBranchFiles"
   | "getReviewDiffStats"
 >;
+type ThreadOverviewRepositoryTransport = Pick<McodeTransport, "getRemoteUrl">;
 
 type LoadedBranchState =
   | { status: "idle"; branches: GitBranchRecord[]; uncommittedFiles: number | null }
@@ -58,6 +62,16 @@ type LoadedBranchState =
   | { status: "error"; branches: GitBranchRecord[]; uncommittedFiles: number | null };
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 type LocalCopyTarget = "path" | "branch";
+
+/** Repository metadata rendered by the Overview Repository row. */
+export interface ThreadOverviewRepository {
+  /** Label shown in the row, usually "org/repo". */
+  label: string;
+  /** Safe HTTPS web URL opened from the row, or null for local-only repos. */
+  webUrl: string | null;
+  /** HTTPS favicon URL for the remote host, or null when unavailable. */
+  faviconUrl: string | null;
+}
 
 /** Aggregate change totals shown in the Overview popover. */
 export interface ThreadOverviewChangeSummary {
@@ -80,6 +94,12 @@ const EMPTY_REVIEW_DIFF_STAT: ReviewDiffStat = {
   deletions: 0,
 };
 
+const EMPTY_REPOSITORY: ThreadOverviewRepository = {
+  label: "Repository",
+  webUrl: null,
+  faviconUrl: null,
+};
+
 /**
  * Derives the active thread's compact CI signal for the Overview trigger.
  */
@@ -100,6 +120,29 @@ function changedFilesLabel(count: number): string {
 
 function uncommittedFilesLabel(count: number): string {
   return `Uncommitted: ${count} ${count === 1 ? "file" : "files"}`;
+}
+
+/**
+ * Returns a repository URL only when it is safe for an external open action.
+ */
+export function getSafeRepositoryWebUrl(webUrl: string | null): string | null {
+  if (!webUrl) return null;
+  try {
+    const parsed = new URL(webUrl);
+    if (parsed.protocol !== "https:") return null;
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Derives the favicon URL for a safe repository web URL.
+ */
+export function getRepositoryFaviconUrl(webUrl: string | null): string | null {
+  const safeUrl = getSafeRepositoryWebUrl(webUrl);
+  if (!safeUrl) return null;
+  return `${new URL(safeUrl).origin}/favicon.ico`;
 }
 
 function snapshotKey(snapshots: readonly Pick<TurnSnapshot, "id">[] | undefined): string {
@@ -238,6 +281,25 @@ export async function resolveThreadOverviewChangeSummary({
   };
 }
 
+/**
+ * Resolves the active thread checkout's repository label, safe URL, and favicon.
+ */
+export async function resolveThreadOverviewRepository({
+  thread,
+  transport,
+}: {
+  thread: Pick<Thread, "id" | "workspace_id">;
+  transport: ThreadOverviewRepositoryTransport;
+}): Promise<ThreadOverviewRepository> {
+  const remote = await transport.getRemoteUrl(thread.workspace_id, thread.id);
+  const webUrl = getSafeRepositoryWebUrl(remote.webUrl);
+  return {
+    label: remote.label,
+    webUrl,
+    faviconUrl: getRepositoryFaviconUrl(webUrl),
+  };
+}
+
 function branchRows(branches: readonly GitBranchRecord[], currentBranch: string): GitBranchRecord[] {
   const localBranches = new Map<string, GitBranchRecord>();
   for (const branch of branches) {
@@ -259,6 +321,101 @@ function branchRows(branches: readonly GitBranchRecord[], currentBranch: string)
     if (b.name === currentBranch) return 1;
     return a.name.localeCompare(b.name);
   });
+}
+
+interface RepositoryFaviconProps {
+  faviconUrl: string | null;
+  hasRemote: boolean;
+}
+
+function RepositoryFavicon({ faviconUrl, hasRemote }: RepositoryFaviconProps) {
+  return (
+    <Favicon
+      src={faviconUrl}
+      frameTestId="thread-overview-repository-favicon-frame"
+      imageTestId="thread-overview-repository-favicon"
+      fallback={hasRemote ? null : <GitBranch size={14} className="shrink-0 text-muted-foreground" />}
+    />
+  );
+}
+
+interface ThreadOverviewRepositoryRowProps {
+  repository: ThreadOverviewRepository;
+  status: LoadStatus;
+  onOpen: () => void;
+}
+
+function ThreadOverviewRepositoryRow({
+  repository,
+  status,
+  onOpen,
+}: ThreadOverviewRepositoryRowProps) {
+  const isLoading = status === "loading";
+  const canOpen = status === "ready" && !!repository.webUrl;
+  const label = isLoading ? "Repository" : repository.label;
+  const valueIcon =
+    isLoading ? null : (
+      <RepositoryFavicon
+        faviconUrl={repository.faviconUrl}
+        hasRemote={canOpen}
+      />
+    );
+  const content = (
+    <>
+      <span className="flex min-w-0 items-center gap-2">
+        <Globe size={14} className="shrink-0 text-muted-foreground" />
+        <span className="truncate text-xs font-medium text-foreground">
+          Repository
+        </span>
+      </span>
+      {isLoading ? (
+        <span
+          data-testid="thread-overview-repository-loading"
+          aria-label="Loading repository"
+          className="animate-thread-overview-loading h-3 w-16 shrink-0 overflow-hidden rounded-sm bg-muted/45"
+        />
+      ) : canOpen ? (
+        <span className="flex min-w-0 max-w-[11rem] items-center justify-end gap-1.5">
+          {valueIcon}
+          <span className="truncate text-xs font-medium text-primary">{label}</span>
+          <ExternalLink size={13} aria-hidden className="shrink-0 text-muted-foreground" />
+        </span>
+      ) : (
+        <span className="flex min-w-0 max-w-[11rem] items-center justify-end gap-1.5">
+          {valueIcon}
+          <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
+        </span>
+      )}
+    </>
+  );
+
+  if (canOpen) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        type="button"
+        onClick={onOpen}
+        data-testid="thread-overview-repository"
+        aria-label={`Repository, ${label}, open remote`}
+        title={repository.webUrl ?? label}
+        className="h-8 w-full cursor-pointer justify-between gap-3 px-2 text-left"
+      >
+        {content}
+      </Button>
+    );
+  }
+
+  return (
+    <div
+      data-testid="thread-overview-repository"
+      aria-label={`Repository, ${label}`}
+      title={label}
+      className="flex h-8 w-full items-center justify-between gap-3 rounded-[min(var(--radius-md),12px)] px-2 text-left"
+    >
+      {content}
+    </div>
+  );
 }
 
 interface ThreadOverviewLocalMenuProps {
@@ -514,6 +671,11 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     revision: number;
     summary: ThreadOverviewChangeSummary;
   } | null>(null);
+  const [loadedRepository, setLoadedRepository] = useState<{
+    threadId: string;
+    status: LoadStatus;
+    repository: ThreadOverviewRepository;
+  } | null>(null);
   const [changeSummaryStatus, setChangeSummaryStatus] = useState<LoadStatus>("idle");
 
   const {
@@ -548,6 +710,10 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
       : fallbackChangeSummary;
   const showChangeSummary = hasVisibleThreadOverviewChangeSummary(changeSummary);
   const isChangeSummaryLoading = open && changeSummaryStatus === "loading";
+  const loadedRepositoryForThread =
+    loadedRepository?.threadId === thread.id ? loadedRepository : null;
+  const repository = loadedRepositoryForThread?.repository ?? EMPTY_REPOSITORY;
+  const repositoryStatus = loadedRepositoryForThread?.status ?? "idle";
 
   useEffect(() => {
     if (!open) return;
@@ -584,9 +750,54 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     };
   }, [cachedSnapshotKey, cachedSnapshots, diffRevision, open, setSnapshots, thread.id, thread.workspace_id]);
 
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+    setLoadedRepository({
+      threadId: thread.id,
+      status: "loading",
+      repository: EMPTY_REPOSITORY,
+    });
+
+    const loadRepository = async () => {
+      try {
+        const repository = await resolveThreadOverviewRepository({
+          thread: { id: thread.id, workspace_id: thread.workspace_id },
+          transport: getTransport(),
+        });
+        if (cancelled) return;
+        setLoadedRepository({ threadId: thread.id, status: "ready", repository });
+      } catch {
+        if (!cancelled) {
+          setLoadedRepository({
+            threadId: thread.id,
+            status: "error",
+            repository: { label: "Unavailable", webUrl: null, faviconUrl: null },
+          });
+        }
+      }
+    };
+
+    void loadRepository();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, thread.id, thread.workspace_id]);
+
   const openChanges = useCallback(() => {
     executeCommand("changes.toggle");
   }, []);
+
+  const openRepository = useCallback(() => {
+    if (!repository.webUrl) return;
+    if (window.desktopBridge?.openExternalUrl) {
+      void window.desktopBridge.openExternalUrl(repository.webUrl);
+      return;
+    }
+    window.open(repository.webUrl, "_blank", "noopener,noreferrer");
+  }, [repository.webUrl]);
 
   const ciDot = useMemo(() => getThreadOverviewCiDot(pr, checks), [pr, checks]);
   const modeLabel = thread.mode === "worktree" ? "Worktree" : "Direct";
@@ -654,6 +865,12 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 </span>
               ) : null}
             </Button>
+
+            <ThreadOverviewRepositoryRow
+              repository={repository}
+              status={repositoryStatus}
+              onOpen={openRepository}
+            />
 
             <Popover open={localOpen} onOpenChange={setLocalOpen}>
               <PopoverTrigger

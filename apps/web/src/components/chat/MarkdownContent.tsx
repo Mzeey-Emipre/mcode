@@ -2,15 +2,18 @@ import { memo, useMemo, lazy, Suspense } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { ExternalLink } from "lucide-react";
 import {
   isMcodeWorkspacePreviewUrl,
   mcodeWorkspacePreviewHref,
   looksLikeWorkspaceRelativeFileRef,
 } from "@mcode/contracts";
 import { CodeBlock } from "./CodeBlock";
+import { Favicon } from "@/components/ui/favicon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { resolveCodeBlockLanguage } from "@/lib/resolve-code-block-language";
 import { isMac } from "@/lib/platform";
+import { cn } from "@/lib/utils";
 import {
   isModifierClick,
   isPreviewableUrl,
@@ -93,6 +96,108 @@ function handleLinkClick(e: React.MouseEvent | React.KeyboardEvent, url: string)
   }
 }
 
+function resolveMarkdownHref(href: string | undefined, workspacePath: string | null): string | undefined {
+  if (!href) return undefined;
+  const raw = href.trim();
+  if (isMcodeWorkspacePreviewUrl(raw)) return raw;
+  if (workspacePath && looksLikeWorkspaceRelativeFileRef(raw)) {
+    return mcodeWorkspacePreviewHref(raw);
+  }
+
+  try {
+    const { protocol } = new URL(raw);
+    if (protocol === "https:" || protocol === "http:" || protocol === "mailto:") {
+      return raw;
+    }
+  } catch {
+    /* invalid URL */
+  }
+  return undefined;
+}
+
+function getLinkFaviconUrl(href: string | undefined): string | null {
+  if (!href) return null;
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "https:") return null;
+    return `${url.origin}/favicon.ico`;
+  } catch {
+    return null;
+  }
+}
+
+interface MarkdownLinkProps {
+  href?: string;
+  children?: React.ReactNode;
+  variant: "assistant" | "user";
+  workspacePath: string | null;
+}
+
+function MarkdownLink({
+  href,
+  children,
+  variant,
+  workspacePath,
+}: MarkdownLinkProps) {
+  const isUser = variant === "user";
+  const safeHref = resolveMarkdownHref(href, workspacePath);
+  const isPreviewable = !!safeHref && isPreviewableUrl(safeHref);
+  const showHint = isPreviewable && hasPreview();
+  const faviconUrl = getLinkFaviconUrl(safeHref);
+  const anchor = (
+    <a
+      href={safeHref}
+      className={cn(
+        "inline-flex max-w-full items-center gap-1 rounded-[min(var(--radius-md),10px)] px-1.5 py-0.5 align-baseline no-underline ring-1 transition-colors",
+        isUser
+          ? "bg-primary-foreground/10 text-primary-foreground ring-primary-foreground/20 hover:bg-primary-foreground/15 hover:text-primary-foreground"
+          : "bg-muted/45 text-primary ring-border/60 hover:bg-muted hover:text-primary",
+      )}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="markdown-link"
+      title={safeHref}
+      onClick={(e) => {
+        if (!safeHref) return;
+        if (isPreviewable) return handleLinkClick(e, safeHref);
+        e.preventDefault();
+        if (window.desktopBridge?.openExternalUrl) {
+          void window.desktopBridge.openExternalUrl(safeHref);
+        } else {
+          window.open(safeHref, "_blank", "noopener,noreferrer");
+        }
+      }}
+    >
+      <Favicon
+        src={faviconUrl}
+        frameTestId="markdown-link-favicon-frame"
+        imageTestId="markdown-link-favicon"
+        className="size-3.5 rounded-[3px]"
+        imageClassName="size-3 rounded-[2px]"
+      />
+      <span className="min-w-0 truncate">{children}</span>
+      {safeHref ? (
+        <ExternalLink
+          size={12}
+          aria-hidden
+          className={cn(
+            "shrink-0",
+            isUser ? "text-primary-foreground/75" : "text-muted-foreground",
+          )}
+        />
+      ) : null}
+    </a>
+  );
+
+  if (!showHint) return anchor;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={anchor} />
+      <TooltipContent side="top" className="text-xs">{previewHint}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /**
  * Builds the static component overrides that depend on `variant` and workspace context.
  * Elements whose colors differ between assistant and user bubble are variant-conditional.
@@ -110,56 +215,11 @@ function makeStaticComponents(variant: "assistant" | "user", workspacePath: stri
     li: ({ children }: { children?: React.ReactNode }) => <li className="leading-relaxed">{children}</li>,
     strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold">{children}</strong>,
     em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
-    a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
-      let safeHref: string | undefined;
-      if (href) {
-        const raw = href.trim();
-        if (isMcodeWorkspacePreviewUrl(raw)) {
-          safeHref = raw;
-        } else if (workspacePath && looksLikeWorkspaceRelativeFileRef(raw)) {
-          safeHref = mcodeWorkspacePreviewHref(raw);
-        } else try {
-          const { protocol } = new URL(href);
-          if (protocol === "https:" || protocol === "http:" || protocol === "mailto:") {
-            safeHref = href;
-          }
-        } catch {
-          /* invalid URL */
-        }
-      }
-      const linkClass = isUser
-        ? "text-primary-foreground underline hover:opacity-80"
-        : "text-primary underline hover:text-primary";
-      const isPreviewable = !!safeHref && isPreviewableUrl(safeHref);
-      const showHint = isPreviewable && hasPreview();
-      const anchor = (
-        <a
-          href={safeHref}
-          className={linkClass}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => {
-            if (!safeHref) return;
-            if (isPreviewable) return handleLinkClick(e, safeHref);
-            e.preventDefault();
-            if (window.desktopBridge?.openExternalUrl) {
-              void window.desktopBridge.openExternalUrl(safeHref);
-            } else {
-              window.open(safeHref, "_blank", "noopener,noreferrer");
-            }
-          }}
-        >
-          {children}
-        </a>
-      );
-      if (!showHint) return anchor;
-      return (
-        <Tooltip>
-          <TooltipTrigger render={anchor} />
-          <TooltipContent side="top" className="text-xs">{previewHint}</TooltipContent>
-        </Tooltip>
-      );
-    },
+    a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+      <MarkdownLink href={href} variant={variant} workspacePath={workspacePath}>
+        {children}
+      </MarkdownLink>
+    ),
     blockquote: ({ children }: { children?: React.ReactNode }) => (
       <blockquote
         className={

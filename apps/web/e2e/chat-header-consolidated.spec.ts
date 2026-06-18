@@ -122,7 +122,10 @@ test.describe("Consolidated chat header", () => {
   // modal that intercepts the toggle click) on a wide desktop viewport.
   test.use({ viewport: { width: 1920, height: 1080 } });
 
+  let remoteUrlCalls: unknown[] = [];
+
   test.beforeEach(async ({ page }) => {
+    remoteUrlCalls = [];
     await page.addInitScript((wsId: string) => {
       localStorage.setItem(
         "mcode-expanded-projects",
@@ -138,6 +141,15 @@ test.describe("Consolidated chat header", () => {
           },
         },
       });
+    });
+    await page.addInitScript(() => {
+      const openedUrls: string[] = [];
+      (window as unknown as { __mcodeOpenedExternalUrls?: string[] })
+        .__mcodeOpenedExternalUrls = openedUrls;
+      window.open = ((url?: string | URL) => {
+        openedUrls.push(String(url ?? ""));
+        return null;
+      }) as typeof window.open;
     });
 
     await mockWebSocketServer(page, {
@@ -164,6 +176,13 @@ test.describe("Consolidated chat header", () => {
       "git.listBranches": async () => {
         await new Promise((resolve) => setTimeout(resolve, 250));
         return branches;
+      },
+      "git.getRemoteUrl": (params) => {
+        remoteUrlCalls.push(params);
+        return {
+          label: "Mzeey-Empire/mcode",
+          webUrl: "https://github.com/Mzeey-Empire/mcode",
+        };
       },
       "git.workingTreeFiles": (params) =>
         (params as { staged?: boolean } | undefined)?.staged
@@ -194,6 +213,7 @@ test.describe("Consolidated chat header", () => {
     await expect(page.locator('[data-slot="popover-content"]').first()).toBeVisible();
     await expect(page.getByText("Environment", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("workspace-menu-changes")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-repository")).toBeVisible();
     await expect(page.getByTestId("thread-overview-local")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toBeVisible();
@@ -202,6 +222,31 @@ test.describe("Consolidated chat header", () => {
     await expect(page.locator(".animate-popover-enter").first()).toBeVisible();
 
     await expect(page.getByTestId("thread-overview-local")).toContainText("Local");
+    await expect(page.getByTestId("thread-overview-repository")).toContainText(
+      "Repository",
+    );
+    await expect(page.getByTestId("thread-overview-repository")).toContainText(
+      "Mzeey-Empire/mcode",
+    );
+    await expect(page.getByTestId("thread-overview-repository-favicon-frame")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-repository-favicon")).toHaveAttribute(
+      "src",
+      "https://github.com/favicon.ico",
+    );
+    await expect(page.getByTestId("thread-overview-repository-favicon")).toHaveCSS(
+      "filter",
+      /drop-shadow/,
+    );
+    expect(remoteUrlCalls).toContainEqual({ workspaceId: WS_ID, threadId: thread.id });
+    await page.getByTestId("thread-overview-repository").click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as unknown as { __mcodeOpenedExternalUrls?: string[] })
+            .__mcodeOpenedExternalUrls?.at(-1),
+        ),
+      )
+      .toBe("https://github.com/Mzeey-Empire/mcode");
     await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/consolidated-header");
     await expect(page.getByTestId("thread-overview-change-loading")).toBeVisible();
     await expect(page.getByTestId("thread-overview-change-loading")).toHaveClass(

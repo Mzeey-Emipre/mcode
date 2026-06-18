@@ -57,6 +57,17 @@ describe("MarkdownContent link handling", () => {
     expect(mockOpenExternalUrl).toHaveBeenCalledWith("https://example.com");
   });
 
+  it("renders assistant https links with a contrast-safe favicon", () => {
+    const { container } = render(<MarkdownContent content="[click me](https://example.com/path)" />);
+    const link = container.querySelector("a");
+    const favicon = screen.getByTestId("markdown-link-favicon");
+
+    expect(link).toHaveClass("text-primary");
+    expect(screen.getByTestId("markdown-link-favicon-frame")).toBeInTheDocument();
+    expect(favicon).toHaveAttribute("src", "https://example.com/favicon.ico");
+    expect(favicon.getAttribute("style")).toContain("drop-shadow");
+  });
+
   it("calls desktopBridge.openExternalUrl for http links", () => {
     render(<MarkdownContent content="[click](http://example.com)" />);
     const link = screen.getByText("click");
@@ -346,6 +357,15 @@ describe("MarkdownContent variant styling", () => {
       );
       const link = container.querySelector("a");
       expect(link?.className).toContain("text-primary-foreground");
+    });
+
+    it("renders user links with the same favicon treatment", () => {
+      render(<MarkdownContent content="[link](https://example.com)" variant="user" />);
+      expect(screen.getByTestId("markdown-link-favicon-frame")).toBeInTheDocument();
+      expect(screen.getByTestId("markdown-link-favicon")).toHaveAttribute(
+        "src",
+        "https://example.com/favicon.ico",
+      );
     });
 
     it("renders blockquote with border-primary-foreground/40", () => {

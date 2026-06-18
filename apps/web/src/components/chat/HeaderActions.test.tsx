@@ -93,9 +93,12 @@ vi.mock("@/hooks/useHasCommitsAhead", () => ({
 
 import { HeaderActions } from "./HeaderActions";
 import {
+  getRepositoryFaviconUrl,
+  getSafeRepositoryWebUrl,
   getThreadOverviewCiDot,
   hasVisibleThreadOverviewChangeSummary,
   resolveThreadOverviewChangeSummary,
+  resolveThreadOverviewRepository,
   summarizeThreadChangeStats,
 } from "./ThreadOverview";
 
@@ -293,6 +296,7 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.queryByText("Environment")).not.toBeInTheDocument();
     expect(screen.getByTestId("workspace-menu-changes")).toHaveTextContent("Changes");
     expect(screen.queryByTestId("thread-overview-change-summary")).not.toBeInTheDocument();
+    expect(screen.getByTestId("thread-overview-repository")).toHaveTextContent("Repository");
     expect(screen.getByTestId("thread-overview-local")).toHaveTextContent("Local");
     expect(screen.getByTestId("thread-overview-local")).toHaveAttribute(
       "aria-label",
@@ -325,6 +329,62 @@ describe("HeaderActions - consolidated header", () => {
     render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
     expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
     expect(screen.getByTestId("header-panel-toggle")).toBeInTheDocument();
+  });
+});
+
+describe("Thread Overview repository helpers", () => {
+  it("keeps only HTTPS repository URLs for external open actions", () => {
+    expect(getSafeRepositoryWebUrl("https://github.com/Mzeey-Empire/mcode")).toBe(
+      "https://github.com/Mzeey-Empire/mcode",
+    );
+    expect(getSafeRepositoryWebUrl("http://github.com/Mzeey-Empire/mcode")).toBeNull();
+    expect(getSafeRepositoryWebUrl("javascript:alert(1)")).toBeNull();
+    expect(getSafeRepositoryWebUrl("not a url")).toBeNull();
+    expect(getSafeRepositoryWebUrl(null)).toBeNull();
+  });
+
+  it("derives a favicon URL from the safe repository origin", () => {
+    expect(getRepositoryFaviconUrl("https://github.com/Mzeey-Empire/mcode")).toBe(
+      "https://github.com/favicon.ico",
+    );
+    expect(getRepositoryFaviconUrl("http://github.com/Mzeey-Empire/mcode")).toBeNull();
+  });
+
+  it("resolves repository metadata for the active thread checkout", async () => {
+    const getRemoteUrl = vi.fn().mockResolvedValue({
+      label: "Mzeey-Empire/mcode",
+      webUrl: "https://github.com/Mzeey-Empire/mcode",
+    });
+
+    await expect(
+      resolveThreadOverviewRepository({
+        thread: { id: "thread-1", workspace_id: "ws-1" },
+        transport: { getRemoteUrl },
+      }),
+    ).resolves.toEqual({
+      label: "Mzeey-Empire/mcode",
+      webUrl: "https://github.com/Mzeey-Empire/mcode",
+      faviconUrl: "https://github.com/favicon.ico",
+    });
+    expect(getRemoteUrl).toHaveBeenCalledWith("ws-1", "thread-1");
+  });
+
+  it("keeps local-only repository metadata non-clickable", async () => {
+    await expect(
+      resolveThreadOverviewRepository({
+        thread: { id: "thread-1", workspace_id: "ws-1" },
+        transport: {
+          getRemoteUrl: vi.fn().mockResolvedValue({
+            label: "local-only",
+            webUrl: null,
+          }),
+        },
+      }),
+    ).resolves.toEqual({
+      label: "local-only",
+      webUrl: null,
+      faviconUrl: null,
+    });
   });
 });
 
