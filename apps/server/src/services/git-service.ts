@@ -140,6 +140,13 @@ function assertSafeRef(ref: string): void {
   }
 }
 
+function assertSafeBranchCreationName(name: string): void {
+  validateBranchName(name);
+  if (!/^(?!-)[A-Za-z0-9._/-]+$/.test(name) || name.includes("..") || name === "HEAD") {
+    throw new Error(`Branch name contains invalid characters: ${name}`);
+  }
+}
+
 function fallbackRemoteUrl(repoPath: string): GitRemoteUrl {
   return {
     webUrl: null,
@@ -237,6 +244,13 @@ export class GitService {
     validateBranchName(branch);
     const workspace = this.requireWorkspace(workspaceId);
     await this.gitExecutor.exec(["-C", workspace.path, "checkout", branch]);
+  }
+
+  /** Create and checkout a new branch in the repository at the given path. */
+  async createBranch(path: string, name: string): Promise<string> {
+    assertSafeBranchCreationName(name);
+    await this.gitExecutor.exec(["-C", path, "checkout", "-b", name]);
+    return name;
   }
 
   /** List all git worktrees registered for a workspace. */

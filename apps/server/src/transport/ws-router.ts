@@ -448,6 +448,11 @@ async function dispatch(
       await deps.gitService.checkout(params.workspaceId, params.branch);
       return;
     }
+    case "git.createBranch": {
+      const path = resolveWorkspaceRepoPath(deps, params.workspaceId, params.threadId);
+      const branch = await deps.gitService.createBranch(path, params.name);
+      return { branch };
+    }
     case "git.listWorktrees": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return [];

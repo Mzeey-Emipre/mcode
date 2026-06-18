@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { validateBranchName } from "@mcode/shared";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import { GitService } from "../services/git-service";
 import { createMockGitExecutor } from "../services/git-executor/__tests__/mock-git-executor.js";
@@ -67,12 +68,55 @@ describe("GitService.push", () => {
   });
 });
 
+describe("GitService.createBranch", () => {
+  let gitService: GitService;
+  let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(validateBranchName).mockImplementation(() => undefined);
+    const mock = createMockGitExecutor();
+    execFn = mock.execFn;
+    gitService = new GitService({} as WorkspaceRepo, mock.executor);
+  });
+
+  it("creates and checks out the branch with argv-safe git args", async () => {
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
+
+    await expect(gitService.createBranch("/repo", "feat/create-branch")).resolves.toBe(
+      "feat/create-branch",
+    );
+
+    expect(execFn).toHaveBeenCalledWith([
+      "-C",
+      "/repo",
+      "checkout",
+      "-b",
+      "feat/create-branch",
+    ]);
+  });
+
+  it.each([
+    "",
+    "--force",
+    "feat/has space",
+    "feat/../escape",
+    "feat;rm",
+    "feat$(whoami)",
+    "HEAD",
+  ])("rejects unsafe branch name %j before exec", async (name) => {
+    await expect(gitService.createBranch("/repo", name)).rejects.toThrow();
+    expect(execFn).not.toHaveBeenCalled();
+  });
+});
+
 describe("GitService.diffStat", () => {
   let gitService: GitService;
   let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(validateBranchName).mockImplementation(() => undefined);
     const mock = createMockGitExecutor();
     execFn = mock.execFn;
     gitService = new GitService({} as WorkspaceRepo, mock.executor);

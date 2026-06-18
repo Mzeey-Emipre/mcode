@@ -180,6 +180,7 @@ export interface McodeTransport {
   listBranches(workspaceId: string): Promise<GitBranch[]>;
   getCurrentBranch(workspaceId: string): Promise<string | null>;
   checkoutBranch(workspaceId: string, branch: string): Promise<void>;
+  createBranch(workspaceId: string, name: string, threadId?: string): Promise<{ branch: string }>;
   listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands

@@ -115,3 +115,103 @@ describe("routeMessage git.getRemoteUrl", () => {
     expect(getRemoteUrl).not.toHaveBeenCalled();
   });
 });
+
+describe("routeMessage git.createBranch", () => {
+  it("resolves the git path from a workspace thread before creating the branch", async () => {
+    const createBranch = vi.fn().mockResolvedValue("feat/from-thread");
+    const resolveWorkingDir = vi.fn().mockReturnValue("C:/repo-worktree");
+    const deps = {
+      workspaceService: {
+        findById: vi.fn().mockReturnValue({ id: "ws-1", path: "C:/repo" }),
+      },
+      threadRepo: {
+        findById: vi.fn().mockReturnValue({
+          id: "thread-1",
+          workspace_id: "ws-1",
+          mode: "worktree",
+          worktree_path: "C:/repo-worktree",
+        }),
+      },
+      gitService: {
+        createBranch,
+        resolveWorkingDir,
+      },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-create",
+        method: "git.createBranch",
+        params: { workspaceId: "ws-1", threadId: "thread-1", name: "feat/from-thread" },
+      }),
+      deps,
+    );
+
+    expect(response.result).toEqual({ branch: "feat/from-thread" });
+    expect(resolveWorkingDir).toHaveBeenCalledWith(
+      "C:/repo",
+      "worktree",
+      "C:/repo-worktree",
+    );
+    expect(createBranch).toHaveBeenCalledWith("C:/repo-worktree", "feat/from-thread");
+  });
+
+  it("rejects a thread from another workspace before creating a branch", async () => {
+    const createBranch = vi.fn();
+    const deps = {
+      workspaceService: {
+        findById: vi.fn().mockReturnValue({ id: "ws-1", path: "C:/repo" }),
+      },
+      threadRepo: {
+        findById: vi.fn().mockReturnValue({
+          id: "thread-1",
+          workspace_id: "ws-2",
+          mode: "worktree",
+          worktree_path: "C:/repo-worktree",
+        }),
+      },
+      gitService: {
+        createBranch,
+        resolveWorkingDir: vi.fn(),
+      },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-create",
+        method: "git.createBranch",
+        params: { workspaceId: "ws-1", threadId: "thread-1", name: "feat/from-thread" },
+      }),
+      deps,
+    );
+
+    expect(response.error?.message).toContain(
+      "Thread thread-1 does not belong to workspace ws-1",
+    );
+    expect(createBranch).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid branch names before dispatch", async () => {
+    const createBranch = vi.fn();
+    const deps = {
+      workspaceService: {
+        findById: vi.fn().mockReturnValue({ id: "ws-1", path: "C:/repo" }),
+      },
+      gitService: {
+        createBranch,
+      },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-create",
+        method: "git.createBranch",
+        params: { workspaceId: "ws-1", name: "bad;name" },
+      }),
+      deps,
+    );
+
+    expect(response.error?.code).toBe("INVALID_PARAMS");
+    expect(createBranch).not.toHaveBeenCalled();
+  });
+});
