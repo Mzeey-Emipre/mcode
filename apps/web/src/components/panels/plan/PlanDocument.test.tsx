@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlanRecord } from "@mcode/contracts";
 import { PlanDocument, type PlanComment } from "./PlanDocument";
 
@@ -19,6 +19,11 @@ const makePlan = (contentMd: string): PlanRecord => ({
 const PLACEHOLDER = "What should change in this section?";
 
 describe("PlanDocument annotation", () => {
+  beforeAll(async () => {
+    // Keep the full parallel suite from spending this test's timeout budget on the lazy import.
+    await import("@/components/chat/MarkdownContent");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
