@@ -93,3 +93,64 @@ describe("GitService.diffStat", () => {
     );
   });
 });
+
+describe("GitService.getRemoteUrl", () => {
+  let gitService: GitService;
+  let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const mock = createMockGitExecutor();
+    execFn = mock.execFn;
+    gitService = new GitService({} as WorkspaceRepo, mock.executor);
+  });
+
+  it("normalizes SSH origin remotes to https web URLs", async () => {
+    execFn.mockResolvedValue({
+      stdout: "git@github.com:Mzeey-Empire/mcode.git\n",
+      stderr: "",
+    });
+
+    await expect(gitService.getRemoteUrl("/repo/mcode")).resolves.toEqual({
+      webUrl: "https://github.com/Mzeey-Empire/mcode",
+      label: "Mzeey-Empire/mcode",
+    });
+    expect(execFn).toHaveBeenCalledWith(
+      ["-C", "/repo/mcode", "remote", "get-url", "origin"],
+      expect.objectContaining({ timeout: 5_000 }),
+    );
+  });
+
+  it("falls back to the folder name when origin is missing", async () => {
+    execFn.mockRejectedValue(new Error("No such remote 'origin'"));
+
+    await expect(gitService.getRemoteUrl("/repo/local-only")).resolves.toEqual({
+      webUrl: null,
+      label: "local-only",
+    });
+  });
+
+  it("falls back to the folder name when origin is malformed", async () => {
+    execFn.mockResolvedValue({
+      stdout: "not-a-remote\n",
+      stderr: "",
+    });
+
+    await expect(gitService.getRemoteUrl("/repo/local-only")).resolves.toEqual({
+      webUrl: null,
+      label: "local-only",
+    });
+  });
+
+  it("falls back to the folder name when an SCP-like origin has an invalid host", async () => {
+    execFn.mockResolvedValue({
+      stdout: "git@github.com?x:Mzeey-Empire/mcode.git\n",
+      stderr: "",
+    });
+
+    await expect(gitService.getRemoteUrl("/repo/local-only")).resolves.toEqual({
+      webUrl: null,
+      label: "local-only",
+    });
+  });
+});

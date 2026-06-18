@@ -11,7 +11,7 @@ import { rm, rename, rmdir } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
-import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison } from "@mcode/contracts";
+import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index.js";
 
@@ -140,6 +140,69 @@ function assertSafeRef(ref: string): void {
   }
 }
 
+function fallbackRemoteUrl(repoPath: string): GitRemoteUrl {
+  return {
+    webUrl: null,
+    label: basename(repoPath) || repoPath,
+  };
+}
+
+function normalizeRemotePath(pathname: string): string | null {
+  const trimmed = pathname.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  const withoutGitSuffix = trimmed.replace(/\.git$/i, "");
+  if (!withoutGitSuffix || /[\s\\?#]/.test(withoutGitSuffix)) {
+    return null;
+  }
+  const segments = withoutGitSuffix.split("/").filter(Boolean);
+  if (segments.length < 2 || segments.some((segment) => segment === "." || segment === "..")) {
+    return null;
+  }
+  return segments.join("/");
+}
+
+function isSafeRemoteHost(host: string): boolean {
+  const match = /^(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?::(?<port>\d{1,5}))?$/.exec(host);
+  if (!match) return false;
+  const port = match.groups?.port;
+  return port === undefined || Number(port) <= 65_535;
+}
+
+function buildHttpsRemote(host: string, remotePath: string): GitRemoteUrl | null {
+  const normalizedPath = normalizeRemotePath(remotePath);
+  if (!host || !isSafeRemoteHost(host) || !normalizedPath) return null;
+  try {
+    const parsed = new URL(`https://${host}/${normalizedPath}`);
+    if (parsed.username || parsed.password) return null;
+    return {
+      webUrl: parsed.toString().replace(/\/$/, ""),
+      label: normalizedPath,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRemoteUrl(remote: string): GitRemoteUrl | null {
+  const trimmed = remote.trim();
+  if (!trimmed) return null;
+
+  const scpLike = /^(?<user>[^@\s]+)@(?<host>[^@:\s/]+):(?<path>.+)$/.exec(trimmed);
+  if (scpLike?.groups) {
+    return buildHttpsRemote(scpLike.groups.host ?? "", scpLike.groups.path ?? "");
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:" && parsed.protocol !== "ssh:") {
+      return null;
+    }
+    const host = parsed.protocol === "ssh:" ? parsed.hostname : parsed.host;
+    return buildHttpsRemote(host, parsed.pathname);
+  } catch {
+    return null;
+  }
+}
+
 /** Handles all git branch, worktree, checkout, and fetch operations. */
 @injectable()
 export class GitService {
@@ -180,6 +243,19 @@ export class GitService {
   async listWorktrees(workspaceId: string): Promise<WorktreeInfo[]> {
     const workspace = this.requireWorkspace(workspaceId);
     return this.listWorktreesForPath(workspace.path);
+  }
+
+  /** Resolve the origin remote as a normalized https URL and UI label. */
+  async getRemoteUrl(repoPath: string): Promise<GitRemoteUrl> {
+    try {
+      const { stdout } = await this.gitExecutor.exec(
+        ["-C", repoPath, "remote", "get-url", "origin"],
+        { timeout: 5_000 },
+      );
+      return normalizeRemoteUrl(stdout) ?? fallbackRemoteUrl(repoPath);
+    } catch {
+      return fallbackRemoteUrl(repoPath);
+    }
   }
 
   /** Check whether a filesystem path is a git-registered worktree for a repository. */

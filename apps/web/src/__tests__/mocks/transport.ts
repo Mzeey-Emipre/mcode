@@ -178,6 +178,7 @@ export const mockTransport: McodeTransport = {
       isUnborn: false,
       isComparisonAvailable: false,
     }),
+  getRemoteUrl: vi.fn().mockResolvedValue({ webUrl: null, label: "test-project" }),
   getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
   push: vi.fn().mockResolvedValue({ success: true }),
   generatePrDraft: vi.fn().mockResolvedValue({ title: "", body: "" }),

@@ -226,6 +226,27 @@ function resolveThreadRepoPath(deps: RouterDeps, threadId?: string): string | un
   return deps.gitService.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
 }
 
+function resolveWorkspaceRepoPath(
+  deps: RouterDeps,
+  workspaceId: string,
+  threadId?: string,
+): string {
+  const workspace = deps.workspaceService.findById(workspaceId);
+  if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+  if (!threadId) return workspace.path;
+
+  const thread = deps.threadRepo.findById(threadId);
+  if (!thread) throw new Error(`Thread not found: ${threadId}`);
+  if (thread.workspace_id !== workspaceId) {
+    throw new Error(`Thread ${threadId} does not belong to workspace ${workspaceId}`);
+  }
+  return deps.gitService.resolveWorkingDir(
+    workspace.path,
+    thread.mode,
+    thread.worktree_path,
+  );
+}
+
 async function teardownWorkspaceThreads(deps: RouterDeps, workspaceId: string): Promise<void> {
   const threads = deps.threadRepo.listAllByWorkspace(workspaceId);
   const results = await Promise.allSettled(
@@ -432,6 +453,10 @@ async function dispatch(
       if (!ws?.is_git_repo) return [];
       return deps.gitService.listWorktrees(params.workspaceId);
     }
+    case "git.getRemoteUrl":
+      return deps.gitService.getRemoteUrl(
+        resolveWorkspaceRepoPath(deps, params.workspaceId, params.threadId),
+      );
     case "git.fetchBranch": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return;

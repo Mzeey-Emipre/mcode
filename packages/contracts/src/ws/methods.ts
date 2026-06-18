@@ -10,7 +10,7 @@ import { ToolCallRecordSchema } from "../models/tool-call-record.js";
 import { ThoughtSegmentRecordSchema } from "../models/thought-segment.js";
 import { HookExecutionRecordSchema } from "../models/hook-execution.js";
 import { NarrativeEntrySchema, TurnRangeSchema } from "../models/narrative-entry.js";
-import { GitBranchSchema, WorktreeSchema, BranchComparisonSchema, GitRefSchema } from "../git.js";
+import { GitBranchSchema, WorktreeSchema, BranchComparisonSchema, GitRefSchema, GitRemoteUrlSchema } from "../git.js";
 import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
 import { SkillInfoSchema, SkillDiagnosticsSchema } from "../skills.js";
@@ -306,6 +306,13 @@ export const WS_METHODS = lazySchema(() => ({
   "git.listWorktrees": {
     params: z.object({ workspaceId: z.string() }),
     result: z.array(WorktreeSchema),
+  },
+  "git.getRemoteUrl": {
+    params: z.object({
+      workspaceId: z.string(),
+      threadId: z.string().optional(),
+    }),
+    result: GitRemoteUrlSchema,
   },
   "git.fetchBranch": {
     params: z.object({
