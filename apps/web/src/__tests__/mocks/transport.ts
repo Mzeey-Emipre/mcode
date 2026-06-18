@@ -106,6 +106,7 @@ export const mockTransport: McodeTransport = {
   listBranches: vi.fn().mockResolvedValue([]),
   getCurrentBranch: vi.fn().mockResolvedValue("main"),
   checkoutBranch: vi.fn().mockResolvedValue(undefined),
+  createBranch: vi.fn().mockResolvedValue({ branch: "feat/test" }),
   listWorktrees: vi.fn().mockResolvedValue([]),
   sendMessage: vi.fn().mockResolvedValue(1),
   stopAgent: vi.fn().mockResolvedValue(undefined),

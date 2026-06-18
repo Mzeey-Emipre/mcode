@@ -532,6 +532,12 @@ export function createWsTransport(
     getCurrentBranch: (workspaceId) => rpc<string | null>("git.currentBranch", { workspaceId }),
     checkoutBranch: (workspaceId, branch) =>
       rpc<void>("git.checkout", { workspaceId, branch }),
+    createBranch: (workspaceId, name, threadId) =>
+      rpc<{ branch: string }>("git.createBranch", {
+        workspaceId,
+        name,
+        ...(threadId ? { threadId } : {}),
+      }),
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent

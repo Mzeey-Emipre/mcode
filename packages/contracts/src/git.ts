@@ -20,6 +20,19 @@ export const GitRefSchema = z
   .string()
   .regex(/^(?!-)[A-Za-z0-9._/-]+$/, "invalid git ref");
 
+/**
+ * A user-supplied branch name safe for creating a new branch. This is stricter
+ * than a generic ref because it rejects reserved names and traversal-like
+ * sequences before they cross into a mutating git command.
+ */
+export const GitBranchNameSchema = z
+  .string()
+  .min(1)
+  .max(250)
+  .regex(/^(?!-)[A-Za-z0-9._/-]+$/, "invalid git branch name")
+  .refine((name) => !name.includes(".."), "invalid git branch name")
+  .refine((name) => name !== "HEAD", "invalid git branch name");
+
 /** Remote repository metadata resolved from a checkout's origin remote. */
 export const GitRemoteUrlSchema = z.object({
   /** Normalized https web URL, or null when no usable remote exists. */
