@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode, ReactElement } from "react";
 import type { Thread } from "@/transport/types";
+import type { TurnSnapshot } from "@mcode/contracts";
 
 // vi.hoisted runs before vi.mock hoisting, so these are available in mock factories.
 const {
@@ -37,10 +38,16 @@ vi.mock("@/stores/diffStore", () => {
     hideRightPanel: vi.fn(),
     toggleRightPanel: vi.fn(),
     setRightPanelTab: vi.fn(),
+    setSnapshots: vi.fn(),
   };
   const store = Object.assign(
     vi.fn((selector: (s: unknown) => unknown) =>
-      selector({ rightPanelByThread: {}, snapshotsByThread: {}, ...actions }),
+      selector({
+        rightPanelByThread: {},
+        snapshotsByThread: {},
+        diffRevisionByScope: {},
+        ...actions,
+      }),
     ),
     { getState: vi.fn().mockReturnValue(actions) },
   );
@@ -66,6 +73,16 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuSeparator: () => <hr />,
 }));
 
+vi.mock("@/components/ui/popover", () => ({
+  Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PopoverTrigger: ({ render, children }: { render?: ReactElement; children?: ReactNode }) => (
+    <>{render ?? children}</>
+  ),
+  PopoverContent: ({ children }: { children: ReactNode }) => (
+    <div data-slot="popover-content">{children}</div>
+  ),
+}));
+
 vi.mock("@/hooks/useBranchPr", () => ({
   useBranchPr: (...args: unknown[]) => mockUseBranchPr(...args),
 }));
@@ -75,6 +92,12 @@ vi.mock("@/hooks/useHasCommitsAhead", () => ({
 }));
 
 import { HeaderActions } from "./HeaderActions";
+import {
+  getThreadOverviewCiDot,
+  hasVisibleThreadOverviewChangeSummary,
+  resolveThreadOverviewChangeSummary,
+  summarizeThreadChangeStats,
+} from "./ThreadOverview";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -265,6 +288,25 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
   });
 
+  it("renders the thread overview rows", () => {
+    render(<HeaderActions thread={makeThread({ worktree_path: "/repo/worktrees/feat-x" })} />);
+    expect(screen.queryByText("Environment")).not.toBeInTheDocument();
+    expect(screen.getByTestId("workspace-menu-changes")).toHaveTextContent("Changes");
+    expect(screen.queryByTestId("thread-overview-change-summary")).not.toBeInTheDocument();
+    expect(screen.getByTestId("thread-overview-local")).toHaveTextContent("Local");
+    expect(screen.getByTestId("thread-overview-local")).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("/repo/worktrees/feat-x"),
+    );
+    expect(screen.getByTestId("thread-overview-local-popover")).toBeInTheDocument();
+    expect(screen.getByTestId("thread-overview-local-path")).toHaveTextContent(
+      "/repo/worktrees/feat-x",
+    );
+    expect(screen.getByTestId("thread-overview-local-branch")).toHaveTextContent("feat/my-feature");
+    expect(screen.getByTestId("workspace-menu-branch")).toHaveTextContent("feat/my-feature");
+    expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
+  });
+
   it("renders a single dedicated right-panel toggle", () => {
     render(<HeaderActions thread={makeThread()} />);
     const toggle = screen.getByTestId("header-panel-toggle");
@@ -283,5 +325,187 @@ describe("HeaderActions - consolidated header", () => {
     render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
     expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
     expect(screen.getByTestId("header-panel-toggle")).toBeInTheDocument();
+  });
+});
+
+describe("summarizeThreadChangeStats", () => {
+  it("sums additions and deletions across turn snapshots", () => {
+    expect(
+      summarizeThreadChangeStats(
+        [
+          { files_changed: ["src/a.ts", "src/b.ts"] },
+          { files_changed: ["src/b.ts", "src/c.ts"] },
+        ],
+        [
+          [
+            { filePath: "src/a.ts", additions: 12, deletions: 1 },
+            { filePath: "src/b.ts", additions: 5, deletions: 0 },
+          ],
+          [{ filePath: "src/c.ts", additions: 7, deletions: 3 }],
+        ],
+      ),
+    ).toEqual({ files: 3, additions: 24, deletions: 4 });
+  });
+});
+
+function makeSummaryTransport(
+  overrides: Partial<Parameters<typeof resolveThreadOverviewChangeSummary>[0]["transport"]> = {},
+): Parameters<typeof resolveThreadOverviewChangeSummary>[0]["transport"] {
+  return {
+    listSnapshots: vi.fn().mockResolvedValue([]),
+    getSnapshotDiffStats: vi.fn().mockResolvedValue([]),
+    getWorkingTreeFiles: vi.fn().mockResolvedValue([]),
+    getBranchComparison: vi.fn().mockResolvedValue({
+      base: null,
+      target: null,
+      refs: [],
+      isUnborn: false,
+      isComparisonAvailable: false,
+    }),
+    getBranchFiles: vi.fn().mockResolvedValue([]),
+    getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
+    ...overrides,
+  };
+}
+
+function makeSnapshot(overrides: Partial<TurnSnapshot>): TurnSnapshot {
+  return {
+    id: "snapshot-1",
+    message_id: "message-1",
+    thread_id: "thread-1",
+    ref_before: "before",
+    ref_after: "after",
+    files_changed: [],
+    worktree_path: "/repo",
+    created_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+describe("resolveThreadOverviewChangeSummary", () => {
+  it("uses the latest turn snapshot before git views", async () => {
+    const transport = makeSummaryTransport({
+      getSnapshotDiffStats: vi.fn().mockResolvedValue([
+        { filePath: "src/latest.ts", additions: 8, deletions: 2 },
+      ]),
+      getWorkingTreeFiles: vi.fn().mockResolvedValue(["src/manual.ts"]),
+    });
+
+    const result = await resolveThreadOverviewChangeSummary({
+      thread: { id: "thread-1", workspace_id: "ws-1" },
+      snapshots: [
+        makeSnapshot({ id: "old", files_changed: ["src/old.ts"] }),
+        makeSnapshot({ id: "noop", files_changed: [] }),
+        makeSnapshot({ id: "latest", files_changed: ["src/latest.ts"] }),
+      ],
+      transport,
+    });
+
+    expect(result.summary).toEqual({ files: 1, additions: 8, deletions: 2 });
+    expect(transport.getSnapshotDiffStats).toHaveBeenCalledWith("latest");
+    expect(transport.getWorkingTreeFiles).not.toHaveBeenCalled();
+  });
+
+  it("falls back to unstaged worktree changes before branch comparison", async () => {
+    const transport = makeSummaryTransport({
+      getWorkingTreeFiles: vi.fn().mockResolvedValue(["src/manual.ts"]),
+      getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 5, deletions: 1 }),
+      getBranchComparison: vi.fn().mockResolvedValue({
+        base: "origin/main",
+        target: "feat/x",
+        refs: [],
+        isUnborn: false,
+        isComparisonAvailable: true,
+      }),
+    });
+
+    const result = await resolveThreadOverviewChangeSummary({
+      thread: { id: "thread-1", workspace_id: "ws-1" },
+      snapshots: [],
+      transport,
+    });
+
+    expect(result.summary).toEqual({ files: 1, additions: 5, deletions: 1 });
+    expect(transport.getReviewDiffStats).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      view: "unstaged",
+      threadId: "thread-1",
+    });
+    expect(transport.getBranchComparison).not.toHaveBeenCalled();
+  });
+
+  it("uses the default branch comparison when the thread has no turn or unstaged changes", async () => {
+    const transport = makeSummaryTransport({
+      getBranchComparison: vi.fn().mockResolvedValue({
+        base: "origin/main",
+        target: "feat/x",
+        refs: [],
+        isUnborn: false,
+        isComparisonAvailable: true,
+      }),
+      getBranchFiles: vi.fn().mockResolvedValue(["src/branch.ts"]),
+      getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 13, deletions: 3 }),
+    });
+
+    const result = await resolveThreadOverviewChangeSummary({
+      thread: { id: "thread-1", workspace_id: "ws-1" },
+      snapshots: [],
+      transport,
+    });
+
+    expect(result.summary).toEqual({ files: 1, additions: 13, deletions: 3 });
+    expect(transport.getBranchFiles).toHaveBeenCalledWith(
+      "ws-1",
+      "origin/main",
+      "feat/x",
+      "thread-1",
+    );
+  });
+
+  it("hides the visible +/- summary when the resolved diff has no line delta", () => {
+    expect(
+      hasVisibleThreadOverviewChangeSummary({ files: 0, additions: 0, deletions: 0 }),
+    ).toBe(false);
+    expect(
+      hasVisibleThreadOverviewChangeSummary({ files: 1, additions: 0, deletions: 0 }),
+    ).toBe(false);
+    expect(
+      hasVisibleThreadOverviewChangeSummary({ files: 1, additions: 1, deletions: 0 }),
+    ).toBe(true);
+  });
+});
+
+describe("getThreadOverviewCiDot", () => {
+  const baseChecks = {
+    fetchedAt: 1,
+    runs: [],
+  };
+
+  it("shows red when an open PR has failing checks", () => {
+    expect(
+      getThreadOverviewCiDot(
+        { state: "OPEN" },
+        { ...baseChecks, aggregate: "failing" },
+      ),
+    ).toBe("red");
+  });
+
+  it("shows green when an open PR has passing checks", () => {
+    expect(
+      getThreadOverviewCiDot(
+        { state: "OPEN" },
+        { ...baseChecks, aggregate: "passing" },
+      ),
+    ).toBe("green");
+  });
+
+  it("hides the dot while checks are pending or absent", () => {
+    expect(
+      getThreadOverviewCiDot(
+        { state: "OPEN" },
+        { ...baseChecks, aggregate: "pending" },
+      ),
+    ).toBeNull();
+    expect(getThreadOverviewCiDot(null, { ...baseChecks, aggregate: "passing" })).toBeNull();
   });
 });
