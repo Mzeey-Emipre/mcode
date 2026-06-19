@@ -208,13 +208,14 @@ export class TurnFinalizer {
   private async runFinalizeOnce(threadId: string, outcome: TurnOutcome): Promise<void> {
     if (this.persistingThreads.has(threadId)) return;
     this.persistingThreads.add(threadId);
+    const turnRef = this.turnRefBefore.get(threadId);
     try {
       // TurnSubstance guard: nothing worth keeping → leave no assistant row.
       if (!this.hasRecordableActivity(threadId)) {
         // This turn persisted no row, so a late hook for it must be discarded
         // rather than mis-attached to the previous turn's still-cached id.
         this.lastPersistedMessageIdByThread.delete(threadId);
-        this.clearTurn(threadId);
+        this.clearTurn(threadId, turnRef);
         return;
       }
 
@@ -224,7 +225,7 @@ export class TurnFinalizer {
         // the wrong (preceding) message id. Drop the prior id for the same
         // reason as the empty-turn branch: a late hook has no row to attach to.
         this.lastPersistedMessageIdByThread.delete(threadId);
-        this.clearTurn(threadId);
+        this.clearTurn(threadId, turnRef);
         return;
       }
 
@@ -240,7 +241,7 @@ export class TurnFinalizer {
         outcome,
       );
 
-      const filesChanged = await this.captureSnapshot(threadId, messageId);
+      const filesChanged = await this.captureSnapshot(threadId, messageId, turnRef);
 
       broadcast("turn.persisted", {
         threadId,
@@ -249,7 +250,7 @@ export class TurnFinalizer {
         filesChanged,
       });
 
-      this.clearTurn(threadId);
+      this.clearTurn(threadId, turnRef);
     } finally {
       this.persistingThreads.delete(threadId);
     }
@@ -261,8 +262,11 @@ export class TurnFinalizer {
    * flag in one transaction. Returns an empty list when no ref was recorded or
    * the working tree is unchanged.
    */
-  private async captureSnapshot(threadId: string, messageId: string): Promise<string[]> {
-    const refData = this.turnRefBefore.get(threadId);
+  private async captureSnapshot(
+    threadId: string,
+    messageId: string,
+    refData: TurnRef | undefined,
+  ): Promise<string[]> {
     if (!refData) return [];
     try {
       const refAfter = await this.snapshotService.captureRef(refData.cwd);
@@ -381,8 +385,10 @@ export class TurnFinalizer {
    * agentCallStack are reset on the next TurnStarted (not here) so late hooks
    * arriving after the turn can still increment the completed turn's counter.
    */
-  private clearTurn(threadId: string): void {
-    this.turnRefBefore.delete(threadId);
+  private clearTurn(threadId: string, turnRef: TurnRef | undefined): void {
+    if (turnRef !== undefined && this.turnRefBefore.get(threadId) === turnRef) {
+      this.turnRefBefore.delete(threadId);
+    }
     this.streamingAssistantTextByThread.delete(threadId);
     this.bufferedBodyByThread.delete(threadId);
     this.bufferedAttachmentsByThread.delete(threadId);

@@ -469,6 +469,96 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
     });
   });
 
+  it("does not let an older finalize clear a newer turn ref while snapshot capture is still running", async () => {
+    let resolveFirstCapture: ((ref: string) => void) | undefined;
+    const captureRef = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveFirstCapture = resolve;
+          }),
+      )
+      .mockResolvedValueOnce("second-after");
+    const getFilesChanged = vi.fn(
+      async (_cwd: string, refBefore: string) =>
+        refBefore === "first-before" ? ["first.ts"] : ["second.ts"],
+    );
+    const messageRepo = {
+      listByThread: vi.fn(() => ({
+        messages: [{ id: "msg-1", role: "assistant", sequence: 2, content: "" }],
+      })),
+      create: vi.fn(),
+    } as unknown as MessageRepo;
+    const threadRepo = { findById: vi.fn(() => ({ model: null })) } as unknown as ThreadRepo;
+    const narrativeStore = {
+      getBufferedToolCalls: vi.fn(() => []),
+      hasBufferedNarrative: vi.fn(() => true),
+      persistNarrative: vi.fn(() => ({ toolCallCount: 0 })),
+      clearTurn: vi.fn(),
+    } as unknown as NarrativeStore;
+    const snapshotService = { captureRef, getFilesChanged } as unknown as SnapshotService;
+    const turnSnapshotRepo = { create: vi.fn() } as unknown as TurnSnapshotRepo;
+    const db = {
+      transaction: vi.fn((fn: (files: string[]) => void) => fn),
+      prepare: vi.fn(() => ({ run: vi.fn() })),
+    } as unknown as Database.Database;
+    const finalizer = new TurnFinalizer(
+      messageRepo,
+      threadRepo,
+      narrativeStore,
+      snapshotService,
+      turnSnapshotRepo,
+      db,
+    );
+
+    finalizer.recordTurnRef(THREAD, "first-before", "/workspace");
+    const first = finalizer.finalize(THREAD, "completed");
+
+    await vi.waitFor(() => expect(captureRef).toHaveBeenCalledTimes(1));
+    finalizer.recordTurnRef(THREAD, "second-before", "/workspace");
+    resolveFirstCapture?.("first-after");
+    await first;
+
+    await finalizer.finalize(THREAD, "completed");
+
+    expect(captureRef).toHaveBeenCalledTimes(2);
+    expect(turnSnapshotRepo.create).toHaveBeenNthCalledWith(1, {
+      messageId: "msg-1",
+      threadId: THREAD,
+      refBefore: "first-before",
+      refAfter: "first-after",
+      filesChanged: ["first.ts"],
+      worktreePath: null,
+    });
+    expect(turnSnapshotRepo.create).toHaveBeenNthCalledWith(2, {
+      messageId: "msg-1",
+      threadId: THREAD,
+      refBefore: "second-before",
+      refAfter: "second-after",
+      filesChanged: ["second.ts"],
+      worktreePath: null,
+    });
+  });
+
+  it("does not let a finalize without a ref clear a newer turn ref before cleanup", async () => {
+    const { finalizer, turnSnapshotRepo } = build(["second.ts"]);
+    const first = finalizer.finalize(THREAD, "completed");
+    queueMicrotask(() => finalizer.recordTurnRef(THREAD, "second-before", "/workspace"));
+
+    await first;
+    await finalizer.finalize(THREAD, "completed");
+
+    expect(turnSnapshotRepo.create).toHaveBeenCalledWith({
+      messageId: "msg-1",
+      threadId: THREAD,
+      refBefore: "second-before",
+      refAfter: "def222",
+      filesChanged: ["second.ts"],
+      worktreePath: null,
+    });
+  });
+
   it("runs the idempotent has_file_changes update when files changed", async () => {
     const { finalizer, db, runSpy } = build(["src/index.ts"]);
     finalizer.recordTurnRef(THREAD, "abc111", "/workspace");
