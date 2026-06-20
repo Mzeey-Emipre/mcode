@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
   Copy,
   Diff,
+  ExternalLink,
   GitBranch,
   GitPullRequest,
+  Globe,
   Laptop,
   Menu,
   Plus,
@@ -13,15 +15,23 @@ import {
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SiteFavicon } from "@/components/ui/favicon";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PrSplitButton } from "./PrSplitButton";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { useDiffStore } from "@/stores/diffStore";
+import { useThreadStore } from "@/stores/threadStore";
+import { useLayoutStore } from "@/stores/layoutStore";
+import { useOverviewStore } from "@/stores/overviewStore";
 import { executeCommand } from "@/lib/command-registry";
+import { getContentRowWidth, shouldAutoOpenOverview } from "@/lib/composer-layout";
+import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
+import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
 import { cn } from "@/lib/utils";
 import {
   getTransport,
@@ -29,7 +39,10 @@ import {
   type McodeTransport,
   type Thread,
 } from "@/transport";
-import type { ChecksStatus, TurnSnapshot } from "@mcode/contracts";
+import type { ChecksStatus, Message, TurnSnapshot } from "@mcode/contracts";
+
+/** Stable empty messages reference so the closed Overview never re-renders on new messages. */
+const EMPTY_MESSAGES: Message[] = [];
 
 /** CI dot shown on the Overview trigger for terminal check states. */
 export type ThreadOverviewCiDot = "red" | "green" | null;
@@ -50,6 +63,7 @@ type ThreadOverviewChangeSummaryTransport = Pick<
   | "getBranchFiles"
   | "getReviewDiffStats"
 >;
+type ThreadOverviewRepositoryTransport = Pick<McodeTransport, "getRemoteUrl">;
 
 type LoadedBranchState =
   | { status: "idle"; branches: GitBranchRecord[]; uncommittedFiles: number | null }
@@ -58,6 +72,16 @@ type LoadedBranchState =
   | { status: "error"; branches: GitBranchRecord[]; uncommittedFiles: number | null };
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 type LocalCopyTarget = "path" | "branch";
+
+/** Repository metadata rendered by the Overview Repository row. */
+export interface ThreadOverviewRepository {
+  /** Label shown in the row, usually "org/repo". */
+  label: string;
+  /** Safe HTTPS web URL opened from the row, or null for local-only repos. */
+  webUrl: string | null;
+  /** HTTPS favicon URL for the remote host, or null when unavailable. */
+  faviconUrl: string | null;
+}
 
 /** Aggregate change totals shown in the Overview popover. */
 export interface ThreadOverviewChangeSummary {
@@ -80,6 +104,12 @@ const EMPTY_REVIEW_DIFF_STAT: ReviewDiffStat = {
   deletions: 0,
 };
 
+const EMPTY_REPOSITORY: ThreadOverviewRepository = {
+  label: "Repository",
+  webUrl: null,
+  faviconUrl: null,
+};
+
 /**
  * Derives the active thread's compact CI signal for the Overview trigger.
  */
@@ -100,6 +130,29 @@ function changedFilesLabel(count: number): string {
 
 function uncommittedFilesLabel(count: number): string {
   return `Uncommitted: ${count} ${count === 1 ? "file" : "files"}`;
+}
+
+/**
+ * Returns a repository URL only when it is safe for an external open action.
+ */
+export function getSafeRepositoryWebUrl(webUrl: string | null): string | null {
+  if (!webUrl) return null;
+  try {
+    const parsed = new URL(webUrl);
+    if (parsed.protocol !== "https:") return null;
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Derives the favicon URL for a safe repository web URL.
+ */
+export function getRepositoryFaviconUrl(webUrl: string | null): string | null {
+  const safeUrl = getSafeRepositoryWebUrl(webUrl);
+  if (!safeUrl) return null;
+  return `${new URL(safeUrl).origin}/favicon.ico`;
 }
 
 function snapshotKey(snapshots: readonly Pick<TurnSnapshot, "id">[] | undefined): string {
@@ -238,6 +291,25 @@ export async function resolveThreadOverviewChangeSummary({
   };
 }
 
+/**
+ * Resolves the active thread checkout's repository label, safe URL, and favicon.
+ */
+export async function resolveThreadOverviewRepository({
+  thread,
+  transport,
+}: {
+  thread: Pick<Thread, "id" | "workspace_id">;
+  transport: ThreadOverviewRepositoryTransport;
+}): Promise<ThreadOverviewRepository> {
+  const remote = await transport.getRemoteUrl(thread.workspace_id, thread.id);
+  const webUrl = getSafeRepositoryWebUrl(remote.webUrl);
+  return {
+    label: remote.label,
+    webUrl,
+    faviconUrl: getRepositoryFaviconUrl(webUrl),
+  };
+}
+
 function branchRows(branches: readonly GitBranchRecord[], currentBranch: string): GitBranchRecord[] {
   const localBranches = new Map<string, GitBranchRecord>();
   for (const branch of branches) {
@@ -259,6 +331,57 @@ function branchRows(branches: readonly GitBranchRecord[], currentBranch: string)
     if (b.name === currentBranch) return 1;
     return a.name.localeCompare(b.name);
   });
+}
+
+interface ThreadOverviewRepositoryRowProps {
+  repository: ThreadOverviewRepository;
+  status: LoadStatus;
+  onOpen: () => void;
+}
+
+function ThreadOverviewRepositoryRow({
+  repository,
+  status,
+  onOpen,
+}: ThreadOverviewRepositoryRowProps) {
+  const canOpen = status === "ready" && !!repository.webUrl;
+  const label = repository.label;
+
+  if (!canOpen) return null;
+
+  return (
+    <div className="grid animate-thread-overview-row-reveal">
+      <div className="min-h-0 overflow-hidden">
+        <div
+          data-testid="thread-overview-repository"
+          className="flex w-full flex-col gap-1.5 px-2 py-1.5"
+        >
+          <span className="font-mono text-xs font-medium uppercase leading-tight tracking-[0.18em] text-muted-foreground">
+            REPOSITORY
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            onClick={onOpen}
+            data-testid="thread-overview-repository-link"
+            aria-label={`Open ${label} on remote`}
+            title={repository.webUrl ?? label}
+            className="-mx-1.5 h-7 min-w-0 justify-start gap-1.5 rounded-md px-1.5 text-left text-primary hover:bg-muted/50 hover:text-primary focus-visible:ring-inset"
+          >
+            <SiteFavicon
+              src={repository.faviconUrl}
+              frameTestId="thread-overview-repository-favicon-frame"
+              imageTestId="thread-overview-repository-favicon"
+              fallback={<GitBranch size={14} className="shrink-0 text-muted-foreground" />}
+            />
+            <span className="truncate text-xs font-medium">{label}</span>
+            <ExternalLink size={12} aria-hidden className="shrink-0 text-muted-foreground" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface ThreadOverviewLocalMenuProps {
@@ -498,6 +621,56 @@ function ThreadOverviewBranchMenu({
   );
 }
 
+interface ThreadOverviewSourcesProps {
+  sources: ThreadSource[];
+  onOpen: (event: React.MouseEvent, url: string) => void;
+}
+
+/**
+ * Renders the deduped external links the assistant produced this thread as a
+ * compact favicon grid. Each chip shows its full URL on hover and reuses the
+ * standard link-open behavior (Ctrl/Cmd+click opens in the in-app preview,
+ * plain click opens the system browser).
+ */
+function ThreadOverviewSources({ sources, onOpen }: ThreadOverviewSourcesProps) {
+  if (sources.length === 0) return null;
+
+  return (
+    <div data-testid="thread-overview-sources" className="flex w-full flex-col gap-1.5 px-2 py-1.5">
+      <span className="font-mono text-xs font-medium uppercase leading-tight tracking-[0.18em] text-muted-foreground">
+        SOURCES
+      </span>
+      <div className="flex flex-wrap gap-1">
+        {sources.map((source) => (
+          <Tooltip key={source.url}>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  aria-label={source.url}
+                  data-testid="thread-overview-source"
+                  onClick={(event) => onOpen(event, source.url)}
+                  className="size-6 rounded-md hover:bg-muted/50"
+                >
+                  <SiteFavicon
+                    src={source.faviconUrl}
+                    fallback={<Globe size={13} className="text-muted-foreground" />}
+                  />
+                </Button>
+              }
+            />
+            <TooltipContent side="top" className="max-w-xs break-all text-xs">
+              {source.url}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Thread-scoped Overview popover for the chat header.
  *
@@ -505,7 +678,6 @@ function ThreadOverviewBranchMenu({
  * thread: changed files, PR actions, and the thread's worktree mode.
  */
 export function ThreadOverview({ thread }: ThreadOverviewProps) {
-  const [open, setOpen] = useState(false);
   const [localOpen, setLocalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
   const [loadedChangeSummary, setLoadedChangeSummary] = useState<{
@@ -514,7 +686,68 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     revision: number;
     summary: ThreadOverviewChangeSummary;
   } | null>(null);
+  const [loadedRepository, setLoadedRepository] = useState<{
+    threadId: string;
+    status: LoadStatus;
+    repository: ThreadOverviewRepository;
+  } | null>(null);
   const [changeSummaryStatus, setChangeSummaryStatus] = useState<LoadStatus>("idle");
+
+  // Space-aware open: the Overview sits open when there is room and steps aside
+  // when the right panel or a narrow viewport leaves none, until the user takes
+  // manual control of it for this thread.
+  const panelVisible = useDiffStore((s) => s.getRightPanelVisible(thread.workspace_id, thread.id));
+  const panelWidth = useDiffStore((s) => s.getRightPanel(thread.workspace_id, thread.id).width);
+  const measuredContentRowWidth = useLayoutStore((s) => s.contentRowWidth);
+  const [open, setOpen] = useState(false);
+  const autoManagedRef = useRef(true);
+  const lastAutoValueRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    autoManagedRef.current = true;
+  }, [thread.id]);
+
+  // Whether there is room for the Overview to open by default. Driven by the
+  // reactive content-row width so it tracks resizes and panel changes without
+  // racing the layout guard's measurement.
+  const hasRoom = useMemo(
+    () =>
+      shouldAutoOpenOverview({
+        contentRowWidth: measuredContentRowWidth || getContentRowWidth(),
+        rightPanelVisible: panelVisible,
+        rightPanelWidth: panelWidth,
+      }),
+    [measuredContentRowWidth, panelVisible, panelWidth],
+  );
+
+  // The Overview opens by default when there is room and steps aside when a
+  // narrow viewport or the right panel leaves none, until the user takes manual
+  // control of it for this thread. The echo guard ignores base-ui's onOpenChange
+  // when our own programmatic open/close round-trips.
+  useEffect(() => {
+    if (!autoManagedRef.current) return;
+    lastAutoValueRef.current = hasRoom;
+    setOpen(hasRoom);
+  }, [hasRoom]);
+
+  const handleOpenChange = useCallback((next: boolean, eventDetails?: { reason?: string }) => {
+    // Clicking elsewhere (or focus leaving) must not close the Overview; only the
+    // trigger button and Escape do. base-ui is controlled, so ignoring the change
+    // keeps it open.
+    if (!next && (eventDetails?.reason === "outside-press" || eventDetails?.reason === "focus-out")) {
+      return;
+    }
+    if (next !== lastAutoValueRef.current) autoManagedRef.current = false;
+    setOpen(next);
+  }, []);
+
+  // Reserve room on the right only when open AND there's space (wide view); on a
+  // small view the popover floats over the chat instead of squeezing it.
+  const setReserveSpace = useOverviewStore((s) => s.setReserveSpace);
+  useEffect(() => {
+    setReserveSpace(open && hasRoom);
+    return () => setReserveSpace(false);
+  }, [open, hasRoom, setReserveSpace]);
 
   const {
     prable,
@@ -548,6 +781,10 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
       : fallbackChangeSummary;
   const showChangeSummary = hasVisibleThreadOverviewChangeSummary(changeSummary);
   const isChangeSummaryLoading = open && changeSummaryStatus === "loading";
+  const loadedRepositoryForThread =
+    loadedRepository?.threadId === thread.id ? loadedRepository : null;
+  const repository = loadedRepositoryForThread?.repository ?? EMPTY_REPOSITORY;
+  const repositoryStatus = loadedRepositoryForThread?.status ?? "idle";
 
   useEffect(() => {
     if (!open) return;
@@ -584,43 +821,113 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     };
   }, [cachedSnapshotKey, cachedSnapshots, diffRevision, open, setSnapshots, thread.id, thread.workspace_id]);
 
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+    setLoadedRepository({
+      threadId: thread.id,
+      status: "loading",
+      repository: EMPTY_REPOSITORY,
+    });
+
+    const loadRepository = async () => {
+      try {
+        const repository = await resolveThreadOverviewRepository({
+          thread: { id: thread.id, workspace_id: thread.workspace_id },
+          transport: getTransport(),
+        });
+        if (cancelled) return;
+        setLoadedRepository({ threadId: thread.id, status: "ready", repository });
+      } catch {
+        if (!cancelled) {
+          setLoadedRepository({
+            threadId: thread.id,
+            status: "error",
+            repository: { label: "Unavailable", webUrl: null, faviconUrl: null },
+          });
+        }
+      }
+    };
+
+    void loadRepository();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, thread.id, thread.workspace_id]);
+
   const openChanges = useCallback(() => {
     executeCommand("changes.toggle");
   }, []);
 
+  const openRepository = useCallback(() => {
+    if (!repository.webUrl) return;
+    if (window.desktopBridge?.openExternalUrl) {
+      void window.desktopBridge.openExternalUrl(repository.webUrl);
+      return;
+    }
+    window.open(repository.webUrl, "_blank", "noopener,noreferrer");
+  }, [repository.webUrl]);
+
+  // Subscribe to messages only while the Overview is open so a closed popover
+  // never re-renders as the thread streams; sources are computed lazily here.
+  const sourceMessages = useThreadStore((s) =>
+    open ? (s.records.get(thread.id)?.messages ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
+  );
+  const sources = useMemo(
+    () => (open ? extractThreadSources(sourceMessages) : []),
+    [open, sourceMessages],
+  );
+
+  const openSource = useCallback(
+    (event: React.MouseEvent, url: string) => {
+      if (isModifierClick(event) && window.desktopBridge?.preview && isPreviewableUrl(url)) {
+        openUrlInPreview({ url, threadId: thread.id });
+        return;
+      }
+      if (window.desktopBridge?.openExternalUrl) {
+        void window.desktopBridge.openExternalUrl(url);
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    },
+    [thread.id],
+  );
+
   const ciDot = useMemo(() => getThreadOverviewCiDot(pr, checks), [pr, checks]);
   const modeLabel = thread.mode === "worktree" ? "Worktree" : "Direct";
 
-  return (
-    <>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              title="Thread overview"
-              aria-label="Thread overview"
-              data-testid="header-workspace-menu"
-              className="relative cursor-pointer text-foreground/70 hover:bg-muted/40 hover:text-foreground"
-            >
-              <Menu size={14} />
-              {ciDot && (
-                <span
-                  data-testid={`thread-overview-ci-${ciDot}`}
-                  aria-hidden
-                  className={cn(
-                    "absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background",
-                    ciDot === "red" && "bg-[var(--diff-remove-strong)]",
-                    ciDot === "green" && "bg-[var(--diff-add-strong)]",
-                  )}
-                />
-              )}
-            </Button>
-          }
+  const triggerButton = (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      type="button"
+      title="Thread overview"
+      aria-label="Thread overview"
+      data-testid="header-workspace-menu"
+      className={cn(
+        "relative cursor-pointer text-foreground/70 hover:bg-muted/40 hover:text-foreground",
+        open && "bg-muted text-foreground",
+      )}
+    >
+      <Menu size={14} />
+      {ciDot && (
+        <span
+          data-testid={`thread-overview-ci-${ciDot}`}
+          aria-hidden
+          className={cn(
+            "absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background",
+            ciDot === "red" && "bg-[var(--diff-remove-strong)]",
+            ciDot === "green" && "bg-[var(--diff-add-strong)]",
+          )}
         />
-        <PopoverContent align="end" sideOffset={12} className="w-80 p-0">
-          <div className="animate-popover-enter p-1.5">
+      )}
+    </Button>
+  );
+
+  const overviewBody = (
+    <div data-testid="thread-overview-body" className="animate-overview-enter p-1.5">
             <Button
               variant="ghost"
               size="sm"
@@ -654,6 +961,12 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 </span>
               ) : null}
             </Button>
+
+            <ThreadOverviewRepositoryRow
+              repository={repository}
+              status={repositoryStatus}
+              onOpen={openRepository}
+            />
 
             <Popover open={localOpen} onOpenChange={setLocalOpen}>
               <PopoverTrigger
@@ -762,7 +1075,37 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 />
               </div>
             )}
-          </div>
+
+            {sources.length > 0 && (
+              <>
+                <Separator className="my-1.5" />
+                <ThreadOverviewSources sources={sources} onOpen={openSource} />
+              </>
+            )}
+    </div>
+  );
+
+  return (
+    <>
+      <Popover open={open} onOpenChange={handleOpenChange}>
+        <PopoverTrigger render={triggerButton} />
+        {/*
+          Pin the popover to the far right edge with a comfortable gap below the
+          trigger. NOTE: base-ui's alignOffset is inverted from what you'd expect
+          for align="end" — a POSITIVE value moves the popover LEFT, a NEGATIVE
+          value moves it RIGHT. The large negative offset overshoots to the right
+          so collision detection clamps it to `collisionPadding` from the edge.
+          collisionPadding matches the header's right padding (pr-4 = 16px) so the
+          popover's right edge lines up with the rightmost header icon.
+        */}
+        <PopoverContent
+          align="end"
+          sideOffset={18}
+          alignOffset={-40}
+          collisionPadding={8}
+          className="w-80 p-0"
+        >
+          {overviewBody}
         </PopoverContent>
       </Popover>
 

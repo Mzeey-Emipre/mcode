@@ -1,10 +1,22 @@
-import { useDiffStore } from "@/stores/diffStore";
+import { getDefaultPanelWidthPx, useDiffStore } from "@/stores/diffStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   canFitSideBySidePanel,
   getContentRowWidth,
+  preferredSplitPanelWidth,
 } from "@/lib/composer-layout";
+
+/**
+ * On first open, size the panel to ~half the content row instead of the fixed
+ * default. Only applies while the scope still carries the built-in default
+ * width, so a width the user has dragged is never overridden.
+ */
+function applyHalfWidthIfUntouched(workspaceId: string, threadId?: string | null): void {
+  const diff = useDiffStore.getState();
+  if (diff.getRightPanel(workspaceId, threadId).width !== getDefaultPanelWidthPx()) return;
+  diff.setRightPanelWidth(workspaceId, threadId, preferredSplitPanelWidth(getContentRowWidth()));
+}
 
 /**
  * After opening the right panel, maximize it when the content row cannot fit
@@ -29,6 +41,7 @@ export function showRightPanelAdaptive(
   threadId?: string | null,
 ): void {
   useDiffStore.getState().showRightPanel(workspaceId, threadId);
+  applyHalfWidthIfUntouched(workspaceId, threadId);
   applyMaximizeIfCramped(workspaceId, threadId);
 }
 
@@ -47,6 +60,7 @@ export function toggleRightPanelAdaptive(
     useUiStore.getState().setRightPanelMaximized(false);
     return;
   }
+  applyHalfWidthIfUntouched(workspaceId, threadId);
   applyMaximizeIfCramped(workspaceId, threadId);
 }
 
