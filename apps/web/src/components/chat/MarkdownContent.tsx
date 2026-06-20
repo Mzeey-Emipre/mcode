@@ -2,14 +2,14 @@ import { memo, useMemo, lazy, Suspense } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Globe } from "lucide-react";
 import {
   isMcodeWorkspacePreviewUrl,
   mcodeWorkspacePreviewHref,
   looksLikeWorkspaceRelativeFileRef,
 } from "@mcode/contracts";
 import { CodeBlock } from "./CodeBlock";
-import { Favicon } from "@/components/ui/favicon";
+import { SiteFavicon } from "@/components/ui/favicon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { resolveCodeBlockLanguage } from "@/lib/resolve-code-block-language";
 import { isMac } from "@/lib/platform";
@@ -115,6 +115,47 @@ function resolveMarkdownHref(href: string | undefined, workspacePath: string | n
   return undefined;
 }
 
+/**
+ * Produces a compact, human-readable label for a bare URL so inline links read
+ * like the Overview repository row (`owner/repo`) instead of a raw `https://`
+ * string. GitHub repos collapse to `owner/repo`, issues and pull requests to
+ * `owner/repo#123`, commits to `owner/repo@shortsha`; every other URL drops the
+ * protocol and a leading `www.`, keeping `host/path`. Only used when the link's
+ * visible text is the URL itself; authored link text is never rewritten.
+ */
+function formatBareUrlLabel(rawHref: string): string {
+  try {
+    const url = new URL(rawHref);
+    const host = url.hostname.replace(/^www\./, "");
+    const path = url.pathname.replace(/\/+$/, "");
+    const segments = path.split("/").filter(Boolean);
+
+    if (host === "github.com" && segments.length >= 2) {
+      const ownerRepo = `${segments[0]}/${segments[1]}`;
+      if (segments.length >= 4 && (segments[2] === "issues" || segments[2] === "pull")) {
+        return `${ownerRepo}#${segments[3]}`;
+      }
+      if (segments.length >= 4 && segments[2] === "commit") {
+        return `${ownerRepo}@${segments[3].slice(0, 7)}`;
+      }
+      return ownerRepo;
+    }
+
+    return path ? `${host}${path}` : host;
+  } catch {
+    return rawHref;
+  }
+}
+
+/** Extracts plain text from link children when it is a single string node. */
+function getPlainTextChild(children: React.ReactNode): string | null {
+  if (typeof children === "string") return children;
+  if (Array.isArray(children) && children.length === 1 && typeof children[0] === "string") {
+    return children[0];
+  }
+  return null;
+}
+
 function getLinkFaviconUrl(href: string | undefined): string | null {
   if (!href) return null;
   try {
@@ -144,14 +185,16 @@ function MarkdownLink({
   const isPreviewable = !!safeHref && isPreviewableUrl(safeHref);
   const showHint = isPreviewable && hasPreview();
   const faviconUrl = getLinkFaviconUrl(safeHref);
+  const childText = getPlainTextChild(children);
+  const isBareUrlText =
+    !!childText && !!safeHref && (childText === href || childText === safeHref || HTTP_URL_RE.test(childText.trim()));
+  const label = isBareUrlText && safeHref ? formatBareUrlLabel(safeHref) : children;
   const anchor = (
     <a
       href={safeHref}
       className={cn(
-        "inline-flex max-w-full items-center gap-1 rounded-[min(var(--radius-md),10px)] px-1.5 py-0.5 align-baseline no-underline ring-1 transition-colors",
-        isUser
-          ? "bg-primary-foreground/10 text-primary-foreground ring-primary-foreground/20 hover:bg-primary-foreground/15 hover:text-primary-foreground"
-          : "bg-muted/45 text-primary ring-border/60 hover:bg-muted hover:text-primary",
+        "inline-flex max-w-full items-center gap-1 align-baseline no-underline transition-colors hover:underline",
+        isUser ? "text-primary-foreground" : "text-primary",
       )}
       target="_blank"
       rel="noopener noreferrer"
@@ -168,14 +211,13 @@ function MarkdownLink({
         }
       }}
     >
-      <Favicon
+      <SiteFavicon
         src={faviconUrl}
+        fallback={<Globe size={12} aria-hidden className="shrink-0 text-muted-foreground" />}
         frameTestId="markdown-link-favicon-frame"
         imageTestId="markdown-link-favicon"
-        className="size-3.5 rounded-[3px]"
-        imageClassName="size-3 rounded-[2px]"
       />
-      <span className="min-w-0 truncate">{children}</span>
+      <span className="min-w-0 truncate">{label}</span>
       {safeHref ? (
         <ExternalLink
           size={12}
