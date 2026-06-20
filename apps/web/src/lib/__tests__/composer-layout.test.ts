@@ -7,6 +7,13 @@ import {
   canFitSideBySidePanel,
   minContentWidthForSideBySidePanel,
   minOuterWidthForInlineSidebar,
+  overviewNoPaddingMinWidth,
+  overviewResponsivePaddingPx,
+  OVERVIEW_POPOVER_RESERVE_PX,
+  OVERVIEW_THREAD_CONTENT_MAX_WIDTH_PX,
+  OVERVIEW_THREAD_GAP_PX,
+  preferredSplitPanelWidth,
+  shouldAutoOpenOverview,
 } from "@/lib/composer-layout";
 import { COMPOSER_MIN_WIDTH, PANEL_MIN_WIDTH, PANEL_SPLIT_GAP_PX } from "@/stores/diffStore";
 
@@ -30,6 +37,62 @@ describe("composer-layout", () => {
     const need = minContentWidthForSideBySidePanel(440);
     expect(canFitSideBySidePanel(need, 440)).toBe(true);
     expect(canFitSideBySidePanel(need - 1, 440)).toBe(false);
+  });
+
+  it("opens the panel at half the content row by default", () => {
+    expect(preferredSplitPanelWidth(2000)).toBe(1000);
+  });
+
+  it("never lets the default panel width starve the composer", () => {
+    // A 900px row can't give half (450) and still leave the composer its min,
+    // so the panel is capped to what remains after the composer and gap.
+    const width = preferredSplitPanelWidth(900);
+    expect(width).toBe(900 - COMPOSER_MIN_WIDTH - PANEL_SPLIT_GAP_PX);
+    expect(width).toBeGreaterThanOrEqual(PANEL_MIN_WIDTH);
+  });
+
+  it("clamps the default panel width to the panel minimum on narrow rows", () => {
+    expect(preferredSplitPanelWidth(600)).toBe(PANEL_MIN_WIDTH);
+  });
+
+  it("auto-opens the Overview on a wide row with no panel", () => {
+    expect(
+      shouldAutoOpenOverview({ contentRowWidth: 1400, rightPanelVisible: false, rightPanelWidth: 440 }),
+    ).toBe(true);
+  });
+
+  it("does not auto-open the Overview on a narrow row", () => {
+    expect(
+      shouldAutoOpenOverview({ contentRowWidth: 800, rightPanelVisible: false, rightPanelWidth: 440 }),
+    ).toBe(false);
+  });
+
+  it("auto-opens beside an open panel only when both still fit", () => {
+    expect(
+      shouldAutoOpenOverview({ contentRowWidth: 1400, rightPanelVisible: true, rightPanelWidth: 440 }),
+    ).toBe(true);
+    expect(
+      shouldAutoOpenOverview({ contentRowWidth: 1400, rightPanelVisible: true, rightPanelWidth: 1000 }),
+    ).toBe(false);
+  });
+
+  it("keeps the centered thread unpadded when the Overview can sit beside it", () => {
+    expect(overviewNoPaddingMinWidth()).toBe(
+      OVERVIEW_THREAD_CONTENT_MAX_WIDTH_PX +
+        OVERVIEW_POPOVER_RESERVE_PX * 2 +
+        OVERVIEW_THREAD_GAP_PX * 2,
+    );
+    expect(overviewResponsivePaddingPx(overviewNoPaddingMinWidth())).toBe(0);
+  });
+
+  it("only shifts the thread by the collision amount on roomy Overview layouts", () => {
+    expect(overviewResponsivePaddingPx(overviewNoPaddingMinWidth() - 120)).toBe(120);
+  });
+
+  it("caps the Overview thread offset at the popover reserve on narrow layouts", () => {
+    expect(overviewResponsivePaddingPx(overviewNoPaddingMinWidth() - OVERVIEW_POPOVER_RESERVE_PX - 1)).toBe(
+      OVERVIEW_POPOVER_RESERVE_PX,
+    );
   });
 
   it("reports inline sidebar fit from outer-row width", () => {

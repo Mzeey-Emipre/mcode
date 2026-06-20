@@ -10,6 +10,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useActiveThreadRecord, readThreadRecord } from "@/stores/thread-selectors";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
+import { useOverviewStore } from "@/stores/overviewStore";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
@@ -27,6 +28,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { preparingStatusLabel, type WorkspaceThread } from "@/lib/workspace-thread";
 import { useReplyStore } from "@/stores/replyStore";
 import { getTransport } from "@/transport";
+import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -202,6 +204,8 @@ export function ChatView() {
 
   const connectionStatus = useConnectionStore((s) => s.status);
   const sendMessage = useThreadStore((s) => s.sendMessage);
+  const reserveOverviewSpace = useOverviewStore((s) => s.reserveSpace);
+  const overviewPaddingRight = reserveOverviewSpace ? overviewResponsivePaddingRight() : undefined;
 
   const handleDismissCliError = useCallback(() => {
     setDismissedError(sessionError);
@@ -515,7 +519,10 @@ export function ChatView() {
           No `key` here: forcing remount on thread switch would destroy the
           virtualizer and discard cached row heights. MessageList resets its
           own per-thread state imperatively in a useEffect on activeThreadId. */}
-      <div className="animate-fade-up-in flex-1 min-h-0">
+      <div
+        className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200"
+        style={{ paddingRight: overviewPaddingRight }}
+      >
         {showEmptyState ? (
           <div className="flex h-full items-center justify-center">
             <EmptyState onPromptSelect={setPendingPrefill} />
@@ -535,7 +542,10 @@ export function ChatView() {
       )}
 
       {/* Composer area — plan question wizard floats above the composer input */}
-      <div className="relative flex-shrink-0">
+      <div
+        className="relative flex-shrink-0 transition-[padding] duration-200"
+        style={{ paddingRight: overviewPaddingRight }}
+      >
         <PlanQuestionWizard threadId={activeThread.id} />
         <Composer
           threadId={activeThread.id}

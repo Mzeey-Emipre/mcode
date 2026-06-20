@@ -29,7 +29,10 @@ vi.mock("@/stores/terminalStore", () => ({
   ),
 }));
 
-vi.mock("@/stores/diffStore", () => {
+vi.mock("@/stores/diffStore", async (importOriginal) => {
+  // Keep the real width constants and layout helpers (composer-layout imports
+  // them); override only the store hook so the Overview reads stub panel state.
+  const actual = await importOriginal<typeof import("@/stores/diffStore")>();
   const getRightPanel = vi.fn().mockReturnValue({ visible: false, width: 380, activeTab: "tasks" });
   const actions = {
     getRightPanel,
@@ -38,6 +41,7 @@ vi.mock("@/stores/diffStore", () => {
     hideRightPanel: vi.fn(),
     toggleRightPanel: vi.fn(),
     setRightPanelTab: vi.fn(),
+    setRightPanelWidth: vi.fn(),
     setSnapshots: vi.fn(),
   };
   const store = Object.assign(
@@ -51,7 +55,7 @@ vi.mock("@/stores/diffStore", () => {
     ),
     { getState: vi.fn().mockReturnValue(actions) },
   );
-  return { useDiffStore: store };
+  return { ...actual, useDiffStore: store };
 });
 
 vi.mock("./OpenInAppButton", () => ({
@@ -296,7 +300,7 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.queryByText("Environment")).not.toBeInTheDocument();
     expect(screen.getByTestId("workspace-menu-changes")).toHaveTextContent("Changes");
     expect(screen.queryByTestId("thread-overview-change-summary")).not.toBeInTheDocument();
-    expect(screen.getByTestId("thread-overview-repository")).toHaveTextContent("Repository");
+    expect(screen.queryByTestId("thread-overview-repository")).not.toBeInTheDocument();
     expect(screen.getByTestId("thread-overview-local")).toHaveTextContent("Local");
     expect(screen.getByTestId("thread-overview-local")).toHaveAttribute(
       "aria-label",

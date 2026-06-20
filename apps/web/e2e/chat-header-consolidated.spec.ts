@@ -115,6 +115,28 @@ const branches = [
   },
 ];
 
+/** The Overview body, whether docked (reflowed) or floating (popover). */
+const overviewContent = (page: import("@playwright/test").Page) =>
+  page.getByTestId("thread-overview-body");
+
+/** Opens the Overview if it isn't already (it auto-opens on wide viewports). */
+async function ensureOverviewOpen(page: import("@playwright/test").Page) {
+  const content = overviewContent(page);
+  if (!(await content.isVisible().catch(() => false))) {
+    await page.getByTestId("header-workspace-menu").click();
+  }
+  await expect(content).toBeVisible();
+}
+
+/** Closes the Overview if it auto-opened, so closed-state assertions are stable. */
+async function ensureOverviewClosed(page: import("@playwright/test").Page) {
+  const content = overviewContent(page);
+  if (await content.isVisible().catch(() => false)) {
+    await page.getByTestId("header-workspace-menu").click();
+  }
+  await expect(content).toBeHidden();
+}
+
 test.describe("Consolidated chat header", () => {
   // Dock the right panel inline (not as a modal overlay) so the header toggle
   // stays clickable for the show/hide assertions. The default panel width is 50%
@@ -199,6 +221,7 @@ test.describe("Consolidated chat header", () => {
   });
 
   test("keeps Open and the Overview controls visible; Create PR lives in the popover", async ({ page }) => {
+    await ensureOverviewClosed(page);
     await expect(page.getByRole("button", { name: /^open in /i })).toBeVisible();
     await expect(page.getByTestId("header-workspace-menu")).toBeVisible();
     await expect(page.getByTestId("header-panel-toggle")).toBeVisible();
@@ -208,9 +231,9 @@ test.describe("Consolidated chat header", () => {
   });
 
   test("Overview popover holds changes, local, branch, commit, and PR actions", async ({ page }) => {
-    await page.getByTestId("header-workspace-menu").click();
+    await ensureOverviewOpen(page);
 
-    await expect(page.locator('[data-slot="popover-content"]').first()).toBeVisible();
+    await expect(page.getByTestId("thread-overview-body")).toBeVisible();
     await expect(page.getByText("Environment", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("workspace-menu-changes")).toBeVisible();
     await expect(page.getByTestId("thread-overview-repository")).toBeVisible();
@@ -219,11 +242,11 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("workspace-menu-commit")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
     await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);
-    await expect(page.locator(".animate-popover-enter").first()).toBeVisible();
+    await expect(page.locator(".animate-overview-enter").first()).toBeVisible();
 
     await expect(page.getByTestId("thread-overview-local")).toContainText("Local");
     await expect(page.getByTestId("thread-overview-repository")).toContainText(
-      "Repository",
+      "REPOSITORY",
     );
     await expect(page.getByTestId("thread-overview-repository")).toContainText(
       "Mzeey-Empire/mcode",
@@ -235,10 +258,10 @@ test.describe("Consolidated chat header", () => {
     );
     await expect(page.getByTestId("thread-overview-repository-favicon")).toHaveCSS(
       "filter",
-      /drop-shadow/,
+      "invert(1)",
     );
     expect(remoteUrlCalls).toContainEqual({ workspaceId: WS_ID, threadId: thread.id });
-    await page.getByTestId("thread-overview-repository").click();
+    await page.getByTestId("thread-overview-repository-link").click();
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -248,10 +271,6 @@ test.describe("Consolidated chat header", () => {
       )
       .toBe("https://github.com/Mzeey-Empire/mcode");
     await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/consolidated-header");
-    await expect(page.getByTestId("thread-overview-change-loading")).toBeVisible();
-    await expect(page.getByTestId("thread-overview-change-loading")).toHaveClass(
-      /animate-thread-overview-loading/,
-    );
     await expect(page.getByTestId("thread-overview-change-summary")).toContainText("+233");
     await expect(page.getByTestId("thread-overview-change-summary")).toContainText("-0");
     await expect(page.getByTestId("workspace-menu-changes")).toHaveCSS("cursor", "pointer");
@@ -313,9 +332,26 @@ test.describe("Consolidated chat header", () => {
     const toggle = page.getByTestId("header-panel-toggle");
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
 
-    await page.getByTestId("header-workspace-menu").click();
+    await ensureOverviewOpen(page);
     await page.getByTestId("workspace-menu-changes").click();
 
     await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("auto-opens the Overview when the viewport has room", async ({ page }) => {
+    // Wide describe viewport (1920px) leaves room, so the Overview sits open
+    // without a click. It steps aside on narrow viewports / when cramped.
+    await expect(overviewContent(page)).toBeVisible();
+    await expect(page.getByTestId("thread-overview-repository")).toBeVisible();
+  });
+
+  test("keeps the thread centered when the Overview has room beside it", async ({ page }) => {
+    await ensureOverviewOpen(page);
+
+    const messageAreaPaddingRight = await page
+      .locator("[data-testid='chat-view'] > .animate-fade-up-in")
+      .evaluate((node) => getComputedStyle(node).paddingRight);
+
+    expect(messageAreaPaddingRight).toBe("0px");
   });
 });
