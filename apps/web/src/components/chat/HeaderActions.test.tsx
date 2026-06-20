@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode, ReactElement } from "react";
 import type { Thread } from "@/transport/types";
@@ -8,10 +8,28 @@ import type { TurnSnapshot } from "@mcode/contracts";
 const {
   mockUseBranchPr,
   mockUseHasCommitsAhead,
+  mockTransport,
   mockWorkspaceSelector,
 } = vi.hoisted(() => ({
   mockUseBranchPr: vi.fn().mockReturnValue(null),
   mockUseHasCommitsAhead: vi.fn().mockReturnValue(null),
+  mockTransport: {
+    createBranch: vi.fn().mockResolvedValue({ branch: "feat/test" }),
+    getBranchComparison: vi.fn().mockResolvedValue({
+      base: null,
+      target: null,
+      refs: [],
+      isUnborn: false,
+      isComparisonAvailable: false,
+    }),
+    getBranchFiles: vi.fn().mockResolvedValue([]),
+    getRemoteUrl: vi.fn().mockResolvedValue({ label: "local-only", webUrl: null }),
+    getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
+    getSnapshotDiffStats: vi.fn().mockResolvedValue([]),
+    getWorkingTreeFiles: vi.fn().mockResolvedValue([]),
+    listBranches: vi.fn().mockResolvedValue([]),
+    listSnapshots: vi.fn().mockResolvedValue([]),
+  },
   mockWorkspaceSelector: vi.fn(),
 }));
 
@@ -56,6 +74,11 @@ vi.mock("@/stores/diffStore", async (importOriginal) => {
     { getState: vi.fn().mockReturnValue(actions) },
   );
   return { ...actual, useDiffStore: store };
+});
+
+vi.mock("@/transport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/transport")>();
+  return { ...actual, getTransport: () => mockTransport };
 });
 
 vi.mock("./OpenInAppButton", () => ({
@@ -249,6 +272,8 @@ describe("HeaderActions - PR-ability gating by mode", () => {
     );
     mockUseBranchPr.mockReturnValue(null);
     mockUseHasCommitsAhead.mockReturnValue(true);
+    mockTransport.createBranch.mockReset();
+    mockTransport.createBranch.mockResolvedValue({ branch: "feat/test" });
   });
 
   it("does not show the Create PR button for a direct-mode thread", () => {
@@ -288,6 +313,8 @@ describe("HeaderActions - consolidated header", () => {
     );
     mockUseBranchPr.mockReturnValue(null);
     mockUseHasCommitsAhead.mockReturnValue(true);
+    mockTransport.createBranch.mockReset();
+    mockTransport.createBranch.mockResolvedValue({ branch: "feat/test" });
   });
 
   it("renders the consolidated workspace menu trigger", () => {
@@ -312,7 +339,50 @@ describe("HeaderActions - consolidated header", () => {
     );
     expect(screen.getByTestId("thread-overview-local-branch")).toHaveTextContent("feat/my-feature");
     expect(screen.getByTestId("workspace-menu-branch")).toHaveTextContent("feat/my-feature");
+    expect(screen.getByTestId("thread-overview-create-branch")).toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
+  });
+
+  it("creates and checks out a branch from the Overview row", async () => {
+    mockTransport.createBranch.mockResolvedValue({ branch: "feat/new-overview-row" });
+
+    render(<HeaderActions thread={makeThread()} />);
+
+    fireEvent.change(screen.getByTestId("thread-overview-create-branch-input"), {
+      target: { value: "feat/new-overview-row" },
+    });
+    fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
+
+    await waitFor(() => {
+      expect(mockTransport.createBranch).toHaveBeenCalledWith(
+        "ws-1",
+        "feat/new-overview-row",
+        "thread-1",
+      );
+    });
+    expect(await screen.findByText("Checked out feat/new-overview-row")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-menu-branch")).toHaveTextContent(
+      "feat/new-overview-row",
+    );
+  });
+
+  it("surfaces rejected branch names inline", async () => {
+    mockTransport.createBranch.mockRejectedValue(new Error("Branch name cannot start with '-'"));
+
+    render(<HeaderActions thread={makeThread()} />);
+
+    fireEvent.change(screen.getByTestId("thread-overview-create-branch-input"), {
+      target: { value: "--bad" },
+    });
+    fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Branch name cannot start with '-'",
+    );
+    expect(screen.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
   });
 
   it("renders a single dedicated right-panel toggle", () => {

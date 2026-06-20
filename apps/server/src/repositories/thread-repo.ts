@@ -301,6 +301,18 @@ export class ThreadRepo {
     return result.changes > 0;
   }
 
+  /** Update the branch associated with a thread and clear branch-scoped PR metadata. */
+  updateBranch(id: string, branch: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        "UPDATE threads SET branch = ?, pr_number = NULL, pr_status = NULL, updated_at = ? WHERE id = ?",
+      )
+      .run(branch, now, id);
+
+    return result.changes > 0;
+  }
+
   /** Soft-delete a thread by setting deleted_at and status to "deleted". */
   softDelete(id: string): boolean {
     const now = new Date().toISOString();

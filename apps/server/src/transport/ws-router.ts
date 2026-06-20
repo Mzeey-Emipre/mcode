@@ -451,6 +451,7 @@ async function dispatch(
     case "git.createBranch": {
       const path = resolveWorkspaceRepoPath(deps, params.workspaceId, params.threadId);
       const branch = await deps.gitService.createBranch(path, params.name);
+      if (params.threadId) deps.threadRepo.updateBranch(params.threadId, branch);
       return { branch };
     }
     case "git.listWorktrees": {

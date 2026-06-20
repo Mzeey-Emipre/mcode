@@ -125,6 +125,7 @@ describe("routeMessage git.createBranch", () => {
         findById: vi.fn().mockReturnValue({ id: "ws-1", path: "C:/repo" }),
       },
       threadRepo: {
+        updateBranch: vi.fn(),
         findById: vi.fn().mockReturnValue({
           id: "thread-1",
           workspace_id: "ws-1",
@@ -154,6 +155,10 @@ describe("routeMessage git.createBranch", () => {
       "C:/repo-worktree",
     );
     expect(createBranch).toHaveBeenCalledWith("C:/repo-worktree", "feat/from-thread");
+    expect(deps.threadRepo.updateBranch).toHaveBeenCalledWith(
+      "thread-1",
+      "feat/from-thread",
+    );
   });
 
   it("rejects a thread from another workspace before creating a branch", async () => {

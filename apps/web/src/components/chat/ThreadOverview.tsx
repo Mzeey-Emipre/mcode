@@ -26,6 +26,7 @@ import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { executeCommand } from "@/lib/command-registry";
@@ -64,6 +65,7 @@ type ThreadOverviewChangeSummaryTransport = Pick<
   | "getReviewDiffStats"
 >;
 type ThreadOverviewRepositoryTransport = Pick<McodeTransport, "getRemoteUrl">;
+type BranchCreationStatus = "idle" | "creating" | "created" | "error";
 
 type LoadedBranchState =
   | { status: "idle"; branches: GitBranchRecord[]; uncommittedFiles: number | null }
@@ -605,19 +607,111 @@ function ThreadOverviewBranchMenu({
           ) : null}
         </div>
       </ScrollArea>
-
-      <Separator className="my-2" />
-      <Button
-        variant="ghost"
-        size="sm"
-        type="button"
-        disabled
-        className="h-8 w-full justify-start gap-2 px-2 text-xs disabled:opacity-60"
-      >
-        <Plus size={14} className="text-muted-foreground" />
-        Create and checkout new branch...
-      </Button>
     </div>
+  );
+}
+
+interface ThreadOverviewCreateBranchRowProps {
+  thread: Thread;
+  currentBranch: string;
+  onCreated: (branch: string) => void;
+}
+
+function createBranchErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return "Branch name rejected";
+}
+
+function ThreadOverviewCreateBranchRow({
+  thread,
+  currentBranch,
+  onCreated,
+}: ThreadOverviewCreateBranchRowProps) {
+  const [name, setName] = useState("");
+  const [status, setStatus] = useState<BranchCreationStatus>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const trimmedName = name.trim();
+  const canSubmit = trimmedName.length > 0 && status !== "creating";
+
+  const handleSubmit = useCallback(
+    async (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!canSubmit) return;
+
+      setStatus("creating");
+      setError(null);
+
+      try {
+        const result = await getTransport().createBranch(
+          thread.workspace_id,
+          trimmedName,
+          thread.id,
+        );
+        setName("");
+        setStatus("created");
+        onCreated(result.branch);
+      } catch (err) {
+        setStatus("error");
+        setError(createBranchErrorMessage(err));
+      }
+    },
+    [canSubmit, onCreated, thread.id, thread.workspace_id, trimmedName],
+  );
+
+  return (
+    <form
+      data-testid="thread-overview-create-branch"
+      className="flex w-full flex-col gap-1.5 px-2 py-1.5"
+      onSubmit={handleSubmit}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <Plus size={14} className="shrink-0 text-muted-foreground" />
+        <span className="truncate text-xs font-medium">Create branch</span>
+      </div>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Input
+          size="xs"
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            if (status === "error") {
+              setStatus("idle");
+              setError(null);
+            }
+          }}
+          placeholder="feat/new-branch"
+          aria-label="New branch name"
+          aria-invalid={status === "error" ? "true" : undefined}
+          data-testid="thread-overview-create-branch-input"
+          className="h-7 min-w-0 font-mono"
+        />
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          type="submit"
+          disabled={!canSubmit}
+          aria-label="Create branch"
+          data-testid="thread-overview-create-branch-submit"
+          className="size-7"
+        >
+          {status === "created" ? <Check size={13} /> : <GitBranch size={13} />}
+        </Button>
+      </div>
+      <div
+        data-testid="thread-overview-create-branch-status"
+        className={cn(
+          "min-h-4 truncate font-mono text-xs",
+          status === "error" ? "text-[var(--diff-remove-strong)]" : "text-muted-foreground",
+        )}
+        role={status === "error" ? "alert" : undefined}
+      >
+        {status === "creating"
+          ? "Creating..."
+          : status === "created"
+            ? `Checked out ${currentBranch}`
+            : error}
+      </div>
+    </form>
   );
 }
 
@@ -680,6 +774,7 @@ function ThreadOverviewSources({ sources, onOpen }: ThreadOverviewSourcesProps) 
 export function ThreadOverview({ thread }: ThreadOverviewProps) {
   const [localOpen, setLocalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
+  const [createdBranch, setCreatedBranch] = useState<string | null>(null);
   const [loadedChangeSummary, setLoadedChangeSummary] = useState<{
     threadId: string;
     snapshotKey: string;
@@ -705,6 +800,7 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
 
   useEffect(() => {
     autoManagedRef.current = true;
+    setCreatedBranch(null);
   }, [thread.id]);
 
   // Whether there is room for the Overview to open by default. Driven by the
@@ -897,6 +993,32 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
 
   const ciDot = useMemo(() => getThreadOverviewCiDot(pr, checks), [pr, checks]);
   const modeLabel = thread.mode === "worktree" ? "Worktree" : "Direct";
+  const currentBranch = createdBranch ?? thread.branch;
+  const handleBranchCreated = useCallback(
+    (branch: string) => {
+      setCreatedBranch(branch);
+      useWorkspaceStore.setState((state) => {
+        const threadExists = state.threads.some((storedThread) => storedThread.id === thread.id);
+        if (!threadExists) return state;
+
+        const prUrlsByThreadId = { ...state.prUrlsByThreadId };
+        delete prUrlsByThreadId[thread.id];
+        const checksById = { ...state.checksById };
+        delete checksById[thread.id];
+
+        return {
+          threads: state.threads.map((storedThread) =>
+            storedThread.id === thread.id
+              ? { ...storedThread, branch, pr_number: null, pr_status: null }
+              : storedThread,
+          ),
+          prUrlsByThreadId,
+          checksById,
+        };
+      });
+    },
+    [thread.id],
+  );
 
   const triggerButton = (
     <Button
@@ -996,7 +1118,7 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 sideOffset={12}
                 className="w-80 p-0"
               >
-                <ThreadOverviewLocalMenu worktreePath={dirPath} branch={thread.branch} />
+                <ThreadOverviewLocalMenu worktreePath={dirPath} branch={currentBranch} />
               </PopoverContent>
             </Popover>
 
@@ -1015,7 +1137,7 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                   >
                     <span className="flex min-w-0 items-center gap-2">
                       <GitBranch size={14} className="shrink-0 text-muted-foreground" />
-                      <span className="truncate text-xs font-medium">{thread.branch}</span>
+                      <span className="truncate text-xs font-medium">{currentBranch}</span>
                     </span>
                     <ChevronDown size={13} aria-hidden className="shrink-0 text-muted-foreground" />
                   </Button>
@@ -1028,12 +1150,18 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 className="w-72 p-0"
               >
                 <ThreadOverviewBranchMenu
-                  thread={thread}
+                  thread={{ ...thread, branch: currentBranch }}
                   open={branchOpen}
                   onOpenChange={setBranchOpen}
                 />
               </PopoverContent>
             </Popover>
+
+            <ThreadOverviewCreateBranchRow
+              thread={thread}
+              currentBranch={currentBranch}
+              onCreated={handleBranchCreated}
+            />
 
             <Button
               variant="ghost"
