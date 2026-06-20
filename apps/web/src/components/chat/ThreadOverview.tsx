@@ -15,6 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { SiteFavicon } from "@/components/ui/favicon";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -671,6 +672,130 @@ function ThreadOverviewSources({ sources, onOpen }: ThreadOverviewSourcesProps) 
   );
 }
 
+type ThreadOverviewPr = { number: number; url: string; state: string } | null;
+type PrRowTone = "positive" | "danger" | "neutral" | "muted";
+
+function getPrRowStatus(
+  pr: ThreadOverviewPr,
+  hasCommitsAhead: boolean | null,
+  checks: ChecksStatus | null,
+): { label: string; tone: PrRowTone } {
+  if (pr) {
+    const state = pr.state.toLowerCase();
+    if (state === "open") {
+      if (checks?.aggregate === "failing") return { label: "Checks failing", tone: "danger" };
+      if (checks?.aggregate === "passing") return { label: "Checks passing", tone: "positive" };
+      if (checks?.aggregate === "pending") return { label: "Checks running", tone: "neutral" };
+      return { label: "Open", tone: "positive" };
+    }
+    if (state === "merged") return { label: "Merged", tone: "positive" };
+    if (state === "closed") return { label: "Closed", tone: "danger" };
+    return { label: pr.state, tone: "neutral" };
+  }
+
+  if (hasCommitsAhead === true) return { label: "Ready", tone: "neutral" };
+  if (hasCommitsAhead === false) return { label: "No commits ahead", tone: "muted" };
+  return { label: "Checking", tone: "muted" };
+}
+
+interface ThreadOverviewPrRowProps {
+  pr: ThreadOverviewPr;
+  hasCommitsAhead: boolean | null;
+  checks: ChecksStatus | null;
+  openPrDetail: { title?: string; author?: string } | null;
+  threadId: string;
+  onCommitOrPush: () => void;
+  onCreatePr: () => void;
+  onOpenPr: (url: string, event?: React.MouseEvent) => void;
+}
+
+function ThreadOverviewPrRow({
+  pr,
+  hasCommitsAhead,
+  checks,
+  openPrDetail,
+  threadId,
+  onCommitOrPush,
+  onCreatePr,
+  onOpenPr,
+}: ThreadOverviewPrRowProps) {
+  const status = getPrRowStatus(pr, hasCommitsAhead, checks);
+  const badgeVariant =
+    status.tone === "danger"
+      ? "destructive"
+      : status.tone === "positive"
+        ? "secondary"
+        : status.tone === "muted"
+          ? "outline"
+          : "ghost";
+
+  return (
+    <div
+      data-testid="thread-overview-pr"
+      className="flex w-full items-center justify-between gap-2 px-2 py-1.5"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-xs font-medium">Pull request</span>
+            <Badge
+              variant={badgeVariant}
+              size="sm"
+              data-testid="thread-overview-pr-status"
+              className="max-w-32 truncate"
+            >
+              {status.label}
+            </Badge>
+          </div>
+          <span
+            data-testid="thread-overview-pr-detail"
+            className="block truncate text-xs text-muted-foreground"
+          >
+            {pr ? `#${pr.number}` : "No PR yet"}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                type="button"
+                onClick={onCommitOrPush}
+                data-testid="workspace-menu-commit"
+                aria-label="Commit or push"
+                className="cursor-pointer text-foreground/70 hover:text-foreground"
+              >
+                <Upload size={13} className="text-muted-foreground" />
+              </Button>
+            }
+          />
+          <TooltipContent side="bottom" className="text-xs">
+            Commit or push
+          </TooltipContent>
+        </Tooltip>
+
+        <PrSplitButton
+          pr={pr}
+          hasCommitsAhead={hasCommitsAhead}
+          onCreatePr={onCreatePr}
+          onOpenPr={onOpenPr}
+          checks={checks}
+          threadId={threadId}
+          prTitle={openPrDetail?.title}
+          prAuthor={openPrDetail?.author}
+          createButtonTestId="workspace-menu-create-pr"
+          primaryButtonTestId="workspace-menu-open-pr"
+        />
+      </div>
+    </div>
+  );
+}
+
 /**
  * Thread-scoped Overview popover for the chat header.
  *
@@ -1035,45 +1160,17 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
               </PopoverContent>
             </Popover>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCommitOrPush}
-              data-testid="workspace-menu-commit"
-              className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-xs"
-            >
-              <Upload size={14} className="text-muted-foreground" />
-              Commit or push
-            </Button>
-
-            {prable && !pr && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setCreatePrOpen(true)}
-                disabled={!hasCommitsAhead}
-                data-testid="workspace-menu-create-pr"
-                title={hasCommitsAhead === false ? "No commits ahead of base branch" : undefined}
-                className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-xs disabled:cursor-not-allowed"
-              >
-                <GitPullRequest size={14} className="text-muted-foreground" />
-                Create PR
-              </Button>
-            )}
-
-            {prable && pr && (
-              <div data-testid="thread-overview-pr" className="px-2 py-1.5">
-                <PrSplitButton
-                  pr={pr}
-                  hasCommitsAhead={hasCommitsAhead}
-                  onCreatePr={() => setCreatePrOpen(true)}
-                  onOpenPr={handleOpenPr}
-                  checks={checks}
-                  threadId={thread.id}
-                  prTitle={openPrDetail?.title}
-                  prAuthor={openPrDetail?.author}
-                />
-              </div>
+            {prable && (
+              <ThreadOverviewPrRow
+                pr={pr}
+                hasCommitsAhead={hasCommitsAhead}
+                checks={checks}
+                openPrDetail={openPrDetail}
+                threadId={thread.id}
+                onCommitOrPush={handleCommitOrPush}
+                onCreatePr={() => setCreatePrOpen(true)}
+                onOpenPr={handleOpenPr}
+              />
             )}
 
             {sources.length > 0 && (

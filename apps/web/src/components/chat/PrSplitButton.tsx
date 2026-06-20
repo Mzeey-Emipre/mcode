@@ -39,6 +39,10 @@ interface PrSplitButtonProps {
   prTitle?: string;
   /** PR author shown in ChecksPopover header. */
   prAuthor?: string;
+  /** Optional test id for the no-PR create action. */
+  createButtonTestId?: string;
+  /** Optional test id for the PR primary action. */
+  primaryButtonTestId?: string;
 }
 
 /** Compact segmented progress pills showing pass / fail / running / pending slots. */
@@ -93,7 +97,18 @@ function ProgressPills({ checks }: { checks: ChecksStatus }) {
  *   + headline (e.g. "2/5" running, "1 failing", "5 passing"), themed by CI aggregate
  * - Merged / closed PR → coloured primary + chevron with secondary actions
  */
-export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, checks, threadId, prTitle, prAuthor }: PrSplitButtonProps) {
+export function PrSplitButton({
+  pr,
+  hasCommitsAhead,
+  onCreatePr,
+  onOpenPr,
+  checks,
+  threadId,
+  prTitle,
+  prAuthor,
+  createButtonTestId,
+  primaryButtonTestId,
+}: PrSplitButtonProps) {
   const [checksOpen, setChecksOpen] = useState(false);
   // Chevron dropdown open state: kept so the chevron glyph can rotate in sync with
   // the base-ui primitive's open state. The primitive itself owns focus trap,
@@ -126,6 +141,7 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
       <Button
         variant="ghost"
         size="xs"
+        data-testid={createButtonTestId}
         className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6"
         onClick={onCreatePr}
         disabled={!hasCommitsAhead}
@@ -213,6 +229,7 @@ export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, check
         aggregate === "pending" && "border-primary/25",
         !showChevron && "rounded-r",
       )}
+      data-testid={primaryButtonTestId}
       title={titleAttr}
       onClick={handlePrimaryClick}
     >

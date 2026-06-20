@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode, ReactElement } from "react";
 import type { Thread } from "@/transport/types";
@@ -8,10 +8,12 @@ import type { TurnSnapshot } from "@mcode/contracts";
 const {
   mockUseBranchPr,
   mockUseHasCommitsAhead,
+  mockSetPendingPrefill,
   mockWorkspaceSelector,
 } = vi.hoisted(() => ({
   mockUseBranchPr: vi.fn().mockReturnValue(null),
   mockUseHasCommitsAhead: vi.fn().mockReturnValue(null),
+  mockSetPendingPrefill: vi.fn(),
   mockWorkspaceSelector: vi.fn(),
 }));
 
@@ -22,6 +24,12 @@ vi.mock("@/stores/workspaceStore", () => {
   );
   return { useWorkspaceStore: store };
 });
+
+vi.mock("@/stores/composerDraftStore", () => ({
+  useComposerDraftStore: vi.fn((selector: (s: unknown) => unknown) =>
+    selector({ setPendingPrefill: mockSetPendingPrefill }),
+  ),
+}));
 
 vi.mock("@/stores/terminalStore", () => ({
   useTerminalStore: vi.fn((selector: (s: unknown) => unknown) =>
@@ -96,6 +104,7 @@ vi.mock("@/hooks/useHasCommitsAhead", () => ({
 }));
 
 import { HeaderActions } from "./HeaderActions";
+import { COMMIT_PREFILL } from "@/hooks/useThreadGitActions";
 import {
   getRepositoryFaviconUrl,
   getSafeRepositoryWebUrl,
@@ -223,6 +232,8 @@ describe("HeaderActions - Create PR menu item", () => {
     render(<HeaderActions thread={makeThread()} />);
     expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
     expect(screen.getByText("PR #42")).toBeInTheDocument();
+    expect(screen.getByTestId("thread-overview-pr-status")).toHaveTextContent("Open");
+    expect(screen.getByTestId("thread-overview-pr-detail")).toHaveTextContent("#42");
   });
 
   it("explains why Create PR is disabled when no commits", () => {
@@ -312,7 +323,16 @@ describe("HeaderActions - consolidated header", () => {
     );
     expect(screen.getByTestId("thread-overview-local-branch")).toHaveTextContent("feat/my-feature");
     expect(screen.getByTestId("workspace-menu-branch")).toHaveTextContent("feat/my-feature");
+    expect(screen.getByTestId("thread-overview-pr")).toHaveTextContent("Pull request");
+    expect(screen.getByTestId("thread-overview-pr-status")).toHaveTextContent("Ready");
+    expect(screen.getByTestId("thread-overview-pr-detail")).toHaveTextContent("No PR yet");
     expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
+  });
+
+  it("prefills commit-or-push from the PR row", () => {
+    render(<HeaderActions thread={makeThread()} />);
+    fireEvent.click(screen.getByTestId("workspace-menu-commit"));
+    expect(mockSetPendingPrefill).toHaveBeenCalledWith(COMMIT_PREFILL);
   });
 
   it("renders a single dedicated right-panel toggle", () => {

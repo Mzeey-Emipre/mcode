@@ -239,6 +239,7 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("thread-overview-repository")).toBeVisible();
     await expect(page.getByTestId("thread-overview-local")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-pr")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
     await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);
@@ -271,6 +272,9 @@ test.describe("Consolidated chat header", () => {
       )
       .toBe("https://github.com/Mzeey-Empire/mcode");
     await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/consolidated-header");
+    await expect(page.getByTestId("thread-overview-pr")).toContainText("Pull request");
+    await expect(page.getByTestId("thread-overview-pr-status")).toContainText("Ready");
+    await expect(page.getByTestId("thread-overview-pr-detail")).toContainText("No PR yet");
     await expect(page.getByTestId("thread-overview-change-summary")).toContainText("+233");
     await expect(page.getByTestId("thread-overview-change-summary")).toContainText("-0");
     await expect(page.getByTestId("workspace-menu-changes")).toHaveCSS("cursor", "pointer");
