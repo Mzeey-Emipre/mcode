@@ -1,9 +1,10 @@
 /**
  * Skill and command scanning service.
  * Walks user, project, agent, and plugin directories looking for both
- * `skills/` (each subdirectory is a skill) and `commands/` (each .md file
- * is a command). Mirrors Claude Code's native discovery, extended to cover
- * Codex and Copilot provider directories, plus Cursor `.cursor/skills` and commands.
+ * `skills/` (each subdirectory is a skill), provider command directories, and
+ * Codex's `prompts/` directory. Mirrors Claude Code's native discovery,
+ * extended to cover Codex and Copilot provider directories, plus Cursor
+ * `.cursor/skills` and commands.
  */
 
 import { injectable } from "tsyringe";
@@ -345,6 +346,8 @@ interface ScanRoot {
   providers: string[];
   /** "skills" scans for subdirs with SKILL.md, "commands" scans for *.md files, "both" does both. */
   kind: "skills" | "commands" | "both";
+  /** Optional namespace prefix applied to markdown command files. */
+  prefix?: string;
 }
 
 /** Build the ordered list of directories to scan for skills and commands. */
@@ -363,7 +366,7 @@ function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
 
     // Codex ecosystem
     { path: join(codexDir, "skills"), source: "user", providers: ["codex"], kind: "skills" },
-    { path: join(codexDir, "commands"), source: "user", providers: ["codex"], kind: "commands" },
+    { path: join(codexDir, "prompts"), source: "user", providers: ["codex"], kind: "commands", prefix: "prompts" },
 
     // Copilot ecosystem
     { path: join(copilotDir, "skills"), source: "user", providers: ["copilot"], kind: "skills" },
@@ -389,7 +392,6 @@ function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
 
       // Codex project-level
       { path: join(cwd, ".codex", "skills"), source: "project", providers: ["codex"], kind: "skills" },
-      { path: join(cwd, ".codex", "commands"), source: "project", providers: ["codex"], kind: "commands" },
 
       // Cross-provider project-level
       { path: join(cwd, ".agents", "skills"), source: "project", providers: ["codex"], kind: "skills" },
@@ -513,7 +515,7 @@ export class SkillService {
         scanSkillsDir(ctx, root.path, "", root.source, root.providers);
       }
       if (root.kind === "commands" || root.kind === "both") {
-        scanCommandsDir(ctx, root.path, "", root.source, root.providers);
+        scanCommandsDir(ctx, root.path, root.prefix ?? "", root.source, root.providers);
       }
     }
 

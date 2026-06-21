@@ -393,16 +393,20 @@ describe("SkillService", () => {
       expect(codexDeploy!.description).toBe("Codex deploy");
     });
 
-    it("tags commands from ~/.codex/commands with providers=['codex']", () => {
-      const cmdDir = join(fakeHome, ".codex", "commands");
+    it("tags prompts from ~/.codex/prompts as Codex prompt commands", () => {
+      const cmdDir = join(fakeHome, ".codex", "prompts");
       mkdirSync(cmdDir, { recursive: true });
-      writeMd(join(cmdDir, "deploy.md"), { description: "Codex deploy command" });
+      const promptPath = join(cmdDir, "deploy.md");
+      writeMd(promptPath, { description: "Codex deploy prompt" });
 
       const items = new SkillService().list(undefined, "codex");
 
-      const cmd = items.find((i) => i.name === "deploy");
+      const cmd = items.find((i) => i.name === "prompts:deploy");
       expect(cmd).toBeDefined();
       expect(cmd!.kind).toBe("command");
+      expect(cmd!.description).toBe("Codex deploy prompt");
+      expect(cmd!.nativeName).toBe("deploy");
+      expect(cmd!.path).toBe(promptPath);
       expect(cmd!.providers).toEqual(["codex"]);
     });
 

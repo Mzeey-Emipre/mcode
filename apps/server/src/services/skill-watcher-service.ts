@@ -85,7 +85,7 @@ export class SkillWatcherService {
       join(claudeDir, ".agents", "skills"),
       // Codex roots
       join(codexDir, "skills"),
-      join(codexDir, "commands"),
+      join(codexDir, "prompts"),
       join(codexDir, "plugins"),
       join(codexRuntimeDir, "plugins"),
       // Cross-provider roots
