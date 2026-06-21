@@ -5,6 +5,7 @@ const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 const MAX_PROMPT_TEMPLATE_BYTES = 256 * 1024;
 const MAX_PROMPT_TEMPLATE_CACHE_ENTRIES = 64;
 
+/** Parsed slash-command name and raw argument string for Codex command resolution. */
 export interface CodexSlashInvocation {
   requestedName: string;
   args: string;

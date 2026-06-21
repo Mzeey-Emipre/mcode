@@ -240,38 +240,43 @@ describe("CodexProvider first turn on new session", () => {
   });
 
   it("emits a controlled error when a listed Codex prompt cannot be read", async () => {
-    const provider = makeProvider(vi.fn(() => [{
-      name: "prompts:draftpr",
-      nativeName: "draftpr",
-      description: "Draft a PR",
-      kind: "command",
-      source: "user",
-      providers: ["codex"],
-      path: join(tmpdir(), "missing-codex-prompt.md"),
-    }]));
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const promptDir = mkdtempSync(join(tmpdir(), "missing-codex-prompt-"));
+    try {
+      const provider = makeProvider(vi.fn(() => [{
+        name: "prompts:draftpr",
+        nativeName: "draftpr",
+        description: "Draft a PR",
+        kind: "command",
+        source: "user",
+        providers: ["codex"],
+        path: join(promptDir, "draftpr.md"),
+      }]));
+      const events: AgentEvent[] = [];
+      provider.on("event", (event: AgentEvent) => events.push(event));
 
-    await provider.sendTurn({
-      sessionId: "mcode-missing-prompt",
-      threadId: "missing-prompt",
-      message: "/prompts:draftpr src/a.ts",
-      cwd: process.cwd(),
-      model: "gpt-5.4",
-      interactionMode: "build",
-      providerOptions: {},
-      permissionMode: "auto",
-    });
-
-    expect(sendTurnMock).not.toHaveBeenCalled();
-    expect(events).toEqual([
-      {
-        type: AgentEventType.Error,
+      await provider.sendTurn({
+        sessionId: "mcode-missing-prompt",
         threadId: "missing-prompt",
-        error: "Could not load Codex prompt /prompts:draftpr. Refresh commands and try again.",
-      },
-      { type: AgentEventType.Ended, threadId: "missing-prompt" },
-    ]);
+        message: "/prompts:draftpr src/a.ts",
+        cwd: process.cwd(),
+        model: "gpt-5.4",
+        interactionMode: "build",
+        providerOptions: {},
+        permissionMode: "auto",
+      });
+
+      expect(sendTurnMock).not.toHaveBeenCalled();
+      expect(events).toEqual([
+        {
+          type: AgentEventType.Error,
+          threadId: "missing-prompt",
+          error: "Could not load Codex prompt /prompts:draftpr. Refresh commands and try again.",
+        },
+        { type: AgentEventType.Ended, threadId: "missing-prompt" },
+      ]);
+    } finally {
+      rmSync(promptDir, { recursive: true, force: true });
+    }
   });
 
   it("leaves unknown slash commands unchanged", async () => {
