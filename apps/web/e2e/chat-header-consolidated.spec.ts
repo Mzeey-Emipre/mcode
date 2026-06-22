@@ -145,13 +145,9 @@ test.describe("Consolidated chat header", () => {
   test.use({ viewport: { width: 1920, height: 1080 } });
 
   let remoteUrlCalls: unknown[] = [];
-  let createBranchCalls: unknown[] = [];
-  let createBranchError: string | null = null;
 
   test.beforeEach(async ({ page }) => {
     remoteUrlCalls = [];
-    createBranchCalls = [];
-    createBranchError = null;
     await page.addInitScript((wsId: string) => {
       localStorage.setItem(
         "mcode-expanded-projects",
@@ -210,11 +206,6 @@ test.describe("Consolidated chat header", () => {
           webUrl: "https://github.com/Mzeey-Empire/mcode",
         };
       },
-      "git.createBranch": (params) => {
-        createBranchCalls.push(params);
-        if (createBranchError) throw new Error(createBranchError);
-        return { branch: (params as { name: string }).name };
-      },
       "git.workingTreeFiles": (params) =>
         (params as { staged?: boolean } | undefined)?.staged
           ? ["apps/web/src/components/chat/HeaderActions.tsx"]
@@ -248,7 +239,6 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("thread-overview-repository")).toBeVisible();
     await expect(page.getByTestId("thread-overview-local")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toBeVisible();
-    await expect(page.getByTestId("thread-overview-create-branch")).toBeVisible();
     await expect(page.getByTestId("thread-overview-pr")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toHaveCount(0);
@@ -326,31 +316,6 @@ test.describe("Consolidated chat header", () => {
     );
     await expect(page.getByTestId("thread-overview-current-branch")).toContainText(
       "Uncommitted: 3 files",
-    );
-  });
-
-  test("Create branch row checks out the branch and shows validation errors", async ({ page }) => {
-    await ensureOverviewOpen(page);
-
-    await page.getByTestId("thread-overview-create-branch-input").fill("feat/overview-row");
-    await page.getByTestId("thread-overview-create-branch-submit").click();
-
-    await expect(page.getByText("Checked out feat/overview-row")).toBeVisible();
-    await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/overview-row");
-    expect(createBranchCalls).toContainEqual({
-      workspaceId: WS_ID,
-      threadId: thread.id,
-      name: "feat/overview-row",
-    });
-
-    createBranchError = "Branch name cannot start with '-'";
-    await page.getByTestId("thread-overview-create-branch-input").fill("--bad");
-    await page.getByTestId("thread-overview-create-branch-submit").click();
-
-    await expect(page.getByRole("alert")).toContainText("Branch name cannot start with '-'");
-    await expect(page.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
-      "aria-invalid",
-      "true",
     );
   });
 

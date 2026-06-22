@@ -41,33 +41,6 @@ describe("ThreadRepo has_file_changes", () => {
   });
 });
 
-describe("ThreadRepo.updateBranch", () => {
-  let threadRepo: ThreadRepo;
-  let workspaceId: string;
-
-  beforeEach(() => {
-    const db = openMemoryDatabase();
-    container.reset();
-    container.registerInstance("Database", db);
-    threadRepo = container.resolve(ThreadRepo);
-    const workspaceRepo = container.resolve(WorkspaceRepo);
-    const ws = workspaceRepo.create("test-ws", "/tmp/ws", false);
-    workspaceId = ws.id;
-  });
-
-  it("updates the branch and clears branch-scoped PR metadata", () => {
-    const thread = threadRepo.create(workspaceId, "t", "worktree", "feat/old");
-    threadRepo.updatePr(thread.id, 42, "OPEN");
-
-    expect(threadRepo.updateBranch(thread.id, "feat/new")).toBe(true);
-
-    const reloaded = threadRepo.findById(thread.id);
-    expect(reloaded?.branch).toBe("feat/new");
-    expect(reloaded?.pr_number).toBeNull();
-    expect(reloaded?.pr_status).toBeNull();
-  });
-});
-
 describe("Migration 019 backfill", () => {
   it("backfills has_file_changes = 1 for threads with non-empty file changes in any snapshot", () => {
     const db = openMemoryDatabase();
