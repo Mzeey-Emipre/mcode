@@ -813,47 +813,32 @@ function ThreadOverviewPrActiveRow({
     </Badge>
   ) : null;
 
-  return (
-    <div
-      data-testid="thread-overview-pr"
-      className="flex w-full items-center justify-between gap-2 px-2 py-1.5"
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-xs font-medium">Pull request</span>
-            {statusBadge && canOpenChecks ? (
-              <ChecksPopover
-                threadId={threadId}
-                prUrl={pr.url}
-                prTitle={openPrDetail?.title}
-                prAuthor={openPrDetail?.author}
-                checks={checks!}
-                open={checksOpen}
-                onOpenChange={setChecksOpen}
-              >
-                {statusBadge}
-              </ChecksPopover>
-            ) : (
-              statusBadge
-            )}
-          </div>
-          {detailText ? (
-            <span
-              data-testid="thread-overview-pr-detail"
-              className="block truncate text-xs text-muted-foreground"
-            >
-              {detailText}
-            </span>
-          ) : null}
-        </div>
-      </div>
+  const rowLabel = detailText ?? `PR #${pr.number}`;
+  const trailingBadge =
+    statusBadge && canOpenChecks ? (
+      <ChecksPopover
+        threadId={threadId}
+        prUrl={pr.url}
+        prTitle={openPrDetail?.title}
+        prAuthor={openPrDetail?.author}
+        checks={checks!}
+        open={checksOpen}
+        onOpenChange={setChecksOpen}
+      >
+        {statusBadge}
+      </ChecksPopover>
+    ) : (
+      statusBadge
+    );
 
+  return (
+    <div data-testid="thread-overview-pr">
       <PrSplitButton
         pr={pr}
+        label={rowLabel}
         onCreatePr={onCreatePr}
         onOpenPr={onOpenPr}
+        trailing={trailingBadge}
         primaryButtonTestId="workspace-menu-open-pr"
         newPrButtonTestId="workspace-menu-new-pr"
       />

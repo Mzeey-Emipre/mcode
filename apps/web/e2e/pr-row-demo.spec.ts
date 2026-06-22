@@ -137,10 +137,37 @@ test("PR row demo: view open PR", async ({ page }) => {
 
   await openOverview(page);
 
-  await expect(page.getByTestId("workspace-menu-open-pr")).toContainText("View PR #790");
-  await expect(page.getByRole("button", { name: "Open PR menu" })).toBeVisible();
+  await expect(page.getByTestId("workspace-menu-open-pr")).toContainText("PR #790");
 
   await page.locator("[data-testid='thread-overview-pr']").screenshot({
     path: "e2e/screenshots/demo/pr-row-view-open.png",
+  });
+
+  await page.getByTestId("workspace-menu-open-pr").click();
+  await expect(page.getByTestId("thread-overview-pr-popover")).toBeVisible();
+  await expect(page.getByTestId("workspace-menu-open-pr-action")).toContainText("Open PR #790");
+  await expect(page.getByTestId("workspace-menu-new-pr")).toContainText("Create new PR");
+
+  const triggerBox = await page.getByTestId("workspace-menu-open-pr").boundingBox();
+  const popoverBox = await page.getByTestId("thread-overview-pr-popover").boundingBox();
+  expect(triggerBox).not.toBeNull();
+  expect(popoverBox).not.toBeNull();
+  if (triggerBox && popoverBox) {
+    expect(popoverBox.x + popoverBox.width).toBeLessThanOrEqual(triggerBox.x + 4);
+    expect(popoverBox.y).toBeLessThan(triggerBox.y + triggerBox.height);
+  }
+
+  await page.locator("[data-testid='thread-overview-body']").screenshot({
+    path: "e2e/screenshots/demo/pr-row-menu-open.png",
+  });
+
+  await page.screenshot({
+    path: "e2e/screenshots/demo/pr-row-menu-open-wide.png",
+    clip: {
+      x: Math.max(0, (popoverBox?.x ?? 0) - 16),
+      y: Math.max(0, (triggerBox?.y ?? 0) - 16),
+      width: (triggerBox?.x ?? 0) + (triggerBox?.width ?? 0) - Math.max(0, (popoverBox?.x ?? 0) - 16) + 16,
+      height: Math.max(triggerBox?.height ?? 0, popoverBox?.height ?? 0) + 32,
+    },
   });
 });

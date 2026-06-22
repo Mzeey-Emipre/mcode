@@ -10,39 +10,54 @@ describe("PrSplitButton", () => {
     vi.clearAllMocks();
   });
 
-  it("renders View PR with the PR number for an active PR", () => {
-    render(<PrSplitButton pr={openPr} onCreatePr={noop} onOpenPr={noop} />);
-
-    expect(screen.getByRole("button", { name: "View PR #42" })).toHaveAttribute(
-      "title",
-      "View PR #42",
+  it("renders the PR label and row trigger for an active PR", () => {
+    render(
+      <PrSplitButton
+        pr={openPr}
+        label="PR #42"
+        onCreatePr={noop}
+        onOpenPr={noop}
+        primaryButtonTestId="workspace-menu-open-pr"
+      />,
     );
-    expect(screen.getByRole("button", { name: /open pr menu/i })).toBeInTheDocument();
+
+    expect(screen.getByTestId("workspace-menu-open-pr")).toHaveTextContent("PR #42");
   });
 
-  it("calls onOpenPr from the View PR action", () => {
+  it("calls onOpenPr from the popover action", () => {
     const onOpenPr = vi.fn();
-    render(<PrSplitButton pr={openPr} onCreatePr={noop} onOpenPr={onOpenPr} />);
+    render(
+      <PrSplitButton
+        pr={openPr}
+        label="PR #42"
+        onCreatePr={noop}
+        onOpenPr={onOpenPr}
+        primaryButtonTestId="workspace-menu-open-pr"
+      />,
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: "View PR #42" }));
+    fireEvent.click(screen.getByTestId("workspace-menu-open-pr"));
+    fireEvent.click(screen.getByTestId("workspace-menu-open-pr-action"));
     expect(onOpenPr).toHaveBeenCalledWith(
       "https://github.com/o/r/pull/42",
       expect.objectContaining({ type: "click" }),
     );
   });
 
-  it("offers Create new PR from the menu", () => {
+  it("offers Create new PR from the popover", () => {
     const onCreatePr = vi.fn();
     render(
       <PrSplitButton
         pr={openPr}
+        label="PR #42"
         onCreatePr={onCreatePr}
         onOpenPr={noop}
+        primaryButtonTestId="workspace-menu-open-pr"
         newPrButtonTestId="workspace-menu-new-pr"
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /open pr menu/i }));
+    fireEvent.click(screen.getByTestId("workspace-menu-open-pr"));
     fireEvent.click(screen.getByTestId("workspace-menu-new-pr"));
     expect(onCreatePr).toHaveBeenCalledTimes(1);
   });

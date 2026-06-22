@@ -233,7 +233,7 @@ describe("HeaderActions - Create PR menu item", () => {
     mockUseBranchPr.mockReturnValue({ number: 42, state: "OPEN", url: "https://github.com/test/pr/42" });
     render(<HeaderActions thread={makeThread()} />);
     expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
-    expect(screen.getByTestId("workspace-menu-open-pr")).toHaveTextContent("View PR #42");
+    expect(screen.getByTestId("workspace-menu-open-pr")).toHaveTextContent("PR #42");
   });
 
   it("explains commit-or-push when no commits are ahead", () => {

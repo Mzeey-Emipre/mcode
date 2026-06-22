@@ -1,30 +1,28 @@
 import { useState } from "react";
 import { ChevronDown, GitPullRequest } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
 /** Props for {@link PrSplitButton}. */
 interface PrSplitButtonProps {
   /** Active pull request for this branch. */
   pr: { number: number; url: string; state: "OPEN" | "MERGED" | "CLOSED" | string };
+  /** Primary row label, usually the PR title or PR number. */
+  label: string;
   /** Called when the user wants to open CreatePrDialog. */
   onCreatePr: () => void;
   /** Called with the PR URL when the user wants to open it in the browser or preview. */
   onOpenPr: (url: string, event?: React.MouseEvent) => void;
-  /** Optional test id for the PR primary action. */
+  /** Optional trailing content rendered before the menu chevron (for example a CI badge). */
+  trailing?: React.ReactNode;
+  /** Optional test id for the PR row trigger. */
   primaryButtonTestId?: string;
+  /** Optional test id for the open action inside the popover. */
+  openActionTestId?: string;
   /** Optional test id for the follow-up create action in the menu. */
   newPrButtonTestId?: string;
 }
-
-const ACTION_CLASS =
-  "h-6 px-2 text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground";
 
 function prStateTitle(pr: PrSplitButtonProps["pr"]): string {
   const state = pr.state.toLowerCase();
@@ -33,67 +31,107 @@ function prStateTitle(pr: PrSplitButtonProps["pr"]): string {
   return `View PR #${pr.number}`;
 }
 
+function openPrLabel(pr: PrSplitButtonProps["pr"]): string {
+  const state = pr.state.toLowerCase();
+  if (state === "merged") return `Open merged PR #${pr.number}`;
+  if (state === "closed") return `Open closed PR #${pr.number}`;
+  return `Open PR #${pr.number}`;
+}
+
 /**
- * Split button for an active pull request in the Overview row.
+ * Overview row for an active pull request.
  *
- * Primary action opens the current PR. The chevron menu exposes Create new PR
- * without crowding the row when only one PR exists.
+ * Uses the same full-row Popover trigger as Local and Branch so the actions panel
+ * opens to the left of the Overview column instead of under the chevron.
  */
 export function PrSplitButton({
   pr,
+  label,
   onCreatePr,
   onOpenPr,
+  trailing,
   primaryButtonTestId,
+  openActionTestId = "workspace-menu-open-pr-action",
   newPrButtonTestId,
 }: PrSplitButtonProps) {
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const state = pr.state.toLowerCase();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <div className="relative inline-flex shrink-0">
-      <div className="inline-flex rounded-md">
-        <Button
-          variant="ghost"
-          size="xs"
-          type="button"
-          data-testid={primaryButtonTestId}
-          className={cn(
-            ACTION_CLASS,
-            "rounded-r-none",
-            state === "closed" && "text-destructive/80 hover:text-destructive",
-            state === "merged" && "text-primary/80 hover:text-primary",
-          )}
-          title={prStateTitle(pr)}
-          onClick={(event) => onOpenPr(pr.url, event)}
-        >
-          View PR #{pr.number}
-        </Button>
-
-        <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
-          <DropdownMenuTrigger
-            aria-label="Open PR menu"
-            className={cn(
-              "inline-flex items-center rounded-r-md border-l border-border/20 px-1.5 h-6 text-xs transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring",
-              "text-foreground/75 hover:bg-muted/40 hover:text-foreground",
-            )}
-          >
-            <ChevronDown
-              size={11}
-              className={cn("transition-transform duration-150", dropdownOpen && "rotate-180")}
-            />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={4} className="min-w-[170px] text-xs">
-            <DropdownMenuItem
-              data-testid={newPrButtonTestId}
-              onClick={() => onCreatePr()}
-              className="gap-2 text-foreground/75"
+    <div data-testid="workspace-menu-open-pr-split">
+      <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+        <PopoverTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              data-testid={primaryButtonTestId}
+              aria-label={`Pull request, ${label}`}
+              className={cn(
+                "h-8 w-full justify-between gap-3 px-2 text-left",
+                menuOpen && "bg-muted text-foreground",
+              )}
             >
-              <GitPullRequest size={11} className="opacity-75" />
-              Create new PR
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+              <span className="flex min-w-0 items-center gap-2">
+                <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+                <span className="truncate text-xs font-medium">{label}</span>
+              </span>
+              <span className="flex shrink-0 items-center gap-1">
+                {trailing ? (
+                  <span
+                    className="flex items-center"
+                    onClick={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    {trailing}
+                  </span>
+                ) : null}
+                <ChevronDown
+                  size={13}
+                  aria-hidden
+                  className={cn(
+                    "shrink-0 text-muted-foreground transition-transform duration-150",
+                    menuOpen && "rotate-180",
+                  )}
+                />
+              </span>
+            </Button>
+          }
+        />
+        <PopoverContent align="start" side="left" sideOffset={12} className="w-72 p-0">
+          <div data-testid="thread-overview-pr-popover" className="animate-popover-enter space-y-0.5 p-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              data-testid={openActionTestId}
+              title={prStateTitle(pr)}
+              className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+              onClick={(event) => {
+                setMenuOpen(false);
+                onOpenPr(pr.url, event);
+              }}
+            >
+              <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+              <span className="font-medium">{openPrLabel(pr)}</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              data-testid={newPrButtonTestId}
+              className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+              onClick={() => {
+                setMenuOpen(false);
+                onCreatePr();
+              }}
+            >
+              <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+              <span className="font-medium">Create new PR</span>
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
