@@ -1,7 +1,8 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
 
 vi.mock("@mcode/shared", () => ({
   getMcodeDir: () => process.env.MCODE_DATA_DIR ?? ".",
@@ -194,6 +195,88 @@ describe("CodexProvider first turn on new session", () => {
       { type: "skill", name: "control-in-app-browser", path: skillPath },
       { type: "text", text: "$control-in-app-browser inspect localhost" },
     ], expect.anything());
+  });
+
+  it("expands Codex prompt commands before turn/start", async () => {
+    const promptDir = mkdtempSync(join(tmpdir(), "codex-provider-prompt-"));
+    try {
+      const promptPath = join(promptDir, "draftpr.md");
+      writeFileSync(
+        promptPath,
+        "---\ndescription: Draft a PR\n---\nDraft a PR for $FILES titled $PR_TITLE. Args: $ARGUMENTS",
+      );
+      const provider = makeProvider(vi.fn(() => [{
+        name: "prompts:draftpr",
+        nativeName: "draftpr",
+        description: "Draft a PR",
+        kind: "command",
+        source: "user",
+        providers: ["codex"],
+        path: promptPath,
+      }]));
+
+      await provider.sendTurn({
+        sessionId: "mcode-prompt-turn",
+        threadId: "prompt-turn",
+        message: '/prompts:draftpr FILES="src/a.ts src/b.ts" PR_TITLE="Add files"',
+        cwd: process.cwd(),
+        model: "gpt-5.4",
+        interactionMode: "build",
+        providerOptions: {},
+        permissionMode: "auto",
+      });
+
+      for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+
+      expect(sendTurnMock.mock.calls[0][0]).toEqual([{
+        type: "text",
+        text: 'Draft a PR for src/a.ts src/b.ts titled Add files. Args: FILES="src/a.ts src/b.ts" PR_TITLE="Add files"',
+      }]);
+    } finally {
+      rmSync(promptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("emits a controlled error when a listed Codex prompt cannot be read", async () => {
+    const promptDir = mkdtempSync(join(tmpdir(), "missing-codex-prompt-"));
+    try {
+      const provider = makeProvider(vi.fn(() => [{
+        name: "prompts:draftpr",
+        nativeName: "draftpr",
+        description: "Draft a PR",
+        kind: "command",
+        source: "user",
+        providers: ["codex"],
+        path: join(promptDir, "draftpr.md"),
+      }]));
+      const events: AgentEvent[] = [];
+      provider.on("event", (event: AgentEvent) => events.push(event));
+
+      await provider.sendTurn({
+        sessionId: "mcode-missing-prompt",
+        threadId: "missing-prompt",
+        message: "/prompts:draftpr src/a.ts",
+        cwd: process.cwd(),
+        model: "gpt-5.4",
+        interactionMode: "build",
+        providerOptions: {},
+        permissionMode: "auto",
+      });
+
+      expect(sendTurnMock).not.toHaveBeenCalled();
+      expect(events).toEqual([
+        {
+          type: AgentEventType.Error,
+          threadId: "missing-prompt",
+          error: "Could not load Codex prompt /prompts:draftpr. Refresh commands and try again.",
+        },
+        { type: AgentEventType.Ended, threadId: "missing-prompt" },
+      ]);
+    } finally {
+      rmSync(promptDir, { recursive: true, force: true });
+    }
   });
 
   it("leaves unknown slash commands unchanged", async () => {
