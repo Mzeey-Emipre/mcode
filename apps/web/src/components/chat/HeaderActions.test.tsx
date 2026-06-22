@@ -354,18 +354,6 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-local-branch")).toHaveTextContent("feat/my-feature");
     expect(screen.getByTestId("workspace-menu-branch")).toHaveTextContent("feat/my-feature");
     expect(screen.getByTestId("thread-overview-create-branch")).toBeInTheDocument();
-    expect(screen.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
-      "maxlength",
-      "250",
-    );
-    expect(screen.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
-      "dir",
-      "ltr",
-    );
-    expect(screen.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
-      "autocomplete",
-      "off",
-    );
     expect(screen.getByTestId("thread-overview-pr")).toHaveTextContent("Create PR");
     expect(screen.queryByTestId("thread-overview-pr-status")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-pr-detail")).not.toBeInTheDocument();
@@ -393,48 +381,10 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("workspace-menu-branch")).toHaveTextContent(
       "feat/new-overview-row",
     );
-
-    fireEvent.change(screen.getByTestId("thread-overview-create-branch-input"), {
-      target: { value: "feat/next-branch" },
-    });
-
-    expect(screen.getByTestId("thread-overview-create-branch-status")).toBeEmptyDOMElement();
-  });
-
-  it("prevents concurrent create-branch submissions", async () => {
-    let resolveBranch!: (value: { branch: string }) => void;
-    mockTransport.createBranch.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveBranch = resolve;
-        }),
-    );
-
-    render(<HeaderActions thread={makeThread()} />);
-
-    fireEvent.change(screen.getByTestId("thread-overview-create-branch-input"), {
-      target: { value: "feat/one-call" },
-    });
-    fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
-    fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
-
-    await waitFor(() => {
-      expect(mockTransport.createBranch).toHaveBeenCalledTimes(1);
-    });
-    expect(screen.getByTestId("thread-overview-create-branch")).toHaveAttribute(
-      "aria-busy",
-      "true",
-    );
-    expect(screen.getByTestId("thread-overview-create-branch-input")).toBeDisabled();
-
-    resolveBranch({ branch: "feat/one-call" });
-    expect(await screen.findByText("Checked out feat/one-call")).toBeInTheDocument();
   });
 
   it("surfaces rejected branch names inline", async () => {
-    mockTransport.createBranch.mockRejectedValue(
-      new Error("Branch name cannot start with '-' or contain spaces after normalization"),
-    );
+    mockTransport.createBranch.mockRejectedValue(new Error("Branch name cannot start with '-'"));
 
     render(<HeaderActions thread={makeThread()} />);
 
@@ -443,11 +393,9 @@ describe("HeaderActions - consolidated header", () => {
     });
     fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
 
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(
-      "Branch name cannot start with '-' or contain spaces after normalization",
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Branch name cannot start with '-'",
     );
-    expect(alert).toHaveClass("break-words");
     expect(screen.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
       "aria-invalid",
       "true",

@@ -67,7 +67,6 @@ type ThreadOverviewChangeSummaryTransport = Pick<
 >;
 type ThreadOverviewRepositoryTransport = Pick<McodeTransport, "getRemoteUrl">;
 type BranchCreationStatus = "idle" | "creating" | "created" | "error";
-const MAX_BRANCH_NAME_LENGTH = 250;
 
 type LoadedBranchState =
   | { status: "idle"; branches: GitBranchRecord[]; uncommittedFiles: number | null }
@@ -632,16 +631,14 @@ function ThreadOverviewCreateBranchRow({
   const [name, setName] = useState("");
   const [status, setStatus] = useState<BranchCreationStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const submittingRef = useRef(false);
   const trimmedName = name.trim();
   const canSubmit = trimmedName.length > 0 && status !== "creating";
 
   const handleSubmit = useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      if (!canSubmit || submittingRef.current) return;
+      if (!canSubmit) return;
 
-      submittingRef.current = true;
       setStatus("creating");
       setError(null);
 
@@ -657,8 +654,6 @@ function ThreadOverviewCreateBranchRow({
       } catch (err) {
         setStatus("error");
         setError(createBranchErrorMessage(err));
-      } finally {
-        submittingRef.current = false;
       }
     },
     [canSubmit, onCreated, thread.id, thread.workspace_id, trimmedName],
@@ -669,7 +664,6 @@ function ThreadOverviewCreateBranchRow({
       data-testid="thread-overview-create-branch"
       className="flex w-full flex-col gap-1.5 px-2 py-1.5"
       onSubmit={handleSubmit}
-      aria-busy={status === "creating" ? "true" : undefined}
     >
       <div className="flex min-w-0 items-center gap-2">
         <Plus size={14} className="shrink-0 text-muted-foreground" />
@@ -681,18 +675,13 @@ function ThreadOverviewCreateBranchRow({
           value={name}
           onChange={(event) => {
             setName(event.target.value);
-            if (status === "error" || status === "created") {
+            if (status === "error") {
               setStatus("idle");
               setError(null);
             }
           }}
           placeholder="feat/new-branch"
           aria-label="New branch name"
-          autoComplete="off"
-          dir="ltr"
-          disabled={status === "creating"}
-          maxLength={MAX_BRANCH_NAME_LENGTH}
-          spellCheck={false}
           aria-invalid={status === "error" ? "true" : undefined}
           data-testid="thread-overview-create-branch-input"
           className="h-7 min-w-0 font-mono"
@@ -712,10 +701,9 @@ function ThreadOverviewCreateBranchRow({
       <div
         data-testid="thread-overview-create-branch-status"
         className={cn(
-          "min-h-4 break-words font-mono text-xs",
+          "min-h-4 truncate font-mono text-xs",
           status === "error" ? "text-[var(--diff-remove-strong)]" : "text-muted-foreground",
         )}
-        aria-live={status === "error" ? "assertive" : "polite"}
         role={status === "error" ? "alert" : undefined}
       >
         {status === "creating"
