@@ -92,7 +92,6 @@ export {
   ReasoningLevelSchema,
   ContextWindowModeSchema,
   ProviderIdSchema,
-  NamingModeSchema,
   UpdateCheckIntervalSchema,
   UpdateReleaseLineSchema,
   GRACE_PERIOD_DEFAULT_SECONDS,
@@ -109,7 +108,6 @@ export type {
   ReasoningLevel,
   ContextWindowMode,
   SettingsProviderId,
-  NamingMode,
   UpdateCheckInterval,
   UpdateReleaseLine,
 } from "./models/settings.js";

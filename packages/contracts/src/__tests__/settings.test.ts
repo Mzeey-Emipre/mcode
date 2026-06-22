@@ -209,4 +209,15 @@ describe("SettingsSchema", () => {
       ).toThrow();
     });
   });
+
+  describe("worktree", () => {
+    it("strips removed branch naming settings", () => {
+      const result = SettingsSchema().parse({
+        worktree: {
+          naming: { mode: "custom", aiConfirmation: true },
+        },
+      });
+      expect(result.worktree).toEqual({});
+    });
+  });
 });

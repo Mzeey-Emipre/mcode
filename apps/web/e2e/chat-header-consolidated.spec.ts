@@ -229,14 +229,14 @@ test.describe("Consolidated chat header", () => {
     await page.waitForSelector("[data-testid='chat-header-title']");
   });
 
-  test("keeps Open and the Overview controls visible; Create PR lives in the popover", async ({ page }) => {
+  test("keeps Open and the Overview controls visible; Create pull request lives in the popover", async ({ page }) => {
     await ensureOverviewClosed(page);
     await expect(page.getByRole("button", { name: /^open in /i })).toBeVisible();
     await expect(page.getByTestId("header-workspace-menu")).toBeVisible();
     await expect(page.getByTestId("header-panel-toggle")).toBeVisible();
-    // No standalone Create PR button in the header chrome. It lives in Overview
+    // No standalone pull request button in the header chrome. It lives in Overview
     // (no PR exists yet for this thread, so the PR-status badge is absent too).
-    await expect(page.getByRole("button", { name: /create pr/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /create pull request/i })).toHaveCount(0);
   });
 
   test("Overview popover holds changes, local, branch, commit, and PR actions", async ({ page }) => {
@@ -251,6 +251,9 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("thread-overview-create-branch")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
+    await expect(page.getByTestId("workspace-menu-create-pr")).toContainText(
+      "Create pull request",
+    );
     await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);
     await expect(page.locator(".animate-overview-enter").first()).toBeVisible();
 
@@ -309,7 +312,6 @@ test.describe("Consolidated chat header", () => {
 
     await page.getByTestId("workspace-menu-branch").click();
     await expect(page.getByTestId("thread-overview-branch-popover")).toBeVisible();
-    await expect(page.getByTestId("thread-overview-branch-list")).not.toHaveClass(/h-60/);
     await expect(page.getByRole("textbox", { name: "Search branches" })).toBeVisible();
     await expect(page.getByTestId("thread-overview-current-branch")).toContainText(
       "feat/consolidated-header",
@@ -324,29 +326,30 @@ test.describe("Consolidated chat header", () => {
     );
   });
 
-  test("Create branch row checks out the branch and shows validation errors", async ({ page }) => {
+  test("Create branch row checks out the branch once", async ({ page }) => {
     await ensureOverviewOpen(page);
 
-    await page.getByTestId("thread-overview-create-branch-input").fill("feat/overview-row");
     await page.getByTestId("thread-overview-create-branch-submit").click();
 
-    await expect(page.getByText("Checked out feat/overview-row")).toBeVisible();
-    await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/overview-row");
+    await expect(page.getByText("Checked out consolidated-header-thread")).toBeVisible();
+    await expect(page.getByTestId("workspace-menu-branch")).toContainText(
+      "consolidated-header-thread",
+    );
     expect(createBranchCalls).toContainEqual({
       workspaceId: WS_ID,
       threadId: thread.id,
-      name: "feat/overview-row",
+      name: "consolidated-header-thread",
     });
+    await expect(page.getByTestId("thread-overview-create-branch-submit")).toBeDisabled();
+  });
 
+  test("Create branch row shows validation errors", async ({ page }) => {
     createBranchError = "Branch name cannot start with '-'";
-    await page.getByTestId("thread-overview-create-branch-input").fill("--bad");
+    await ensureOverviewOpen(page);
+
     await page.getByTestId("thread-overview-create-branch-submit").click();
 
     await expect(page.getByRole("alert")).toContainText("Branch name cannot start with '-'");
-    await expect(page.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
-      "aria-invalid",
-      "true",
-    );
   });
 
   test("panel toggle shows and hides the workspace-global right panel", async ({ page }) => {

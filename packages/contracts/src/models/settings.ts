@@ -63,11 +63,6 @@ export const ProviderIdSchema = z.enum(["claude", "codex", "gemini", "copilot", 
 /** Supported AI provider identifier value. */
 export type SettingsProviderId = z.infer<typeof ProviderIdSchema>;
 
-/** Worktree branch naming strategy. */
-export const NamingModeSchema = z.enum(["auto", "custom", "ai"]);
-/** Worktree branch naming strategy value. */
-export type NamingMode = z.infer<typeof NamingModeSchema>;
-
 /** Auto-update check interval. */
 export const UpdateCheckIntervalSchema = z.enum(["15min", "1hour", "4hours", "1day", "never"]);
 /** Auto-update check interval value. */
@@ -251,20 +246,8 @@ export const SettingsSchema = lazySchema(() =>
       })
       .default({}),
 
-    /** Git worktree settings. */
-    worktree: z
-      .object({
-        /** Branch naming settings for new worktrees. */
-        naming: z
-          .object({
-            /** Naming strategy for new worktree branches. */
-            mode: NamingModeSchema.default("auto"),
-            /** Whether to prompt for confirmation when using AI-generated names. */
-            aiConfirmation: z.boolean().default(true),
-          })
-          .default({}),
-      })
-      .default({}),
+    /** Git worktree settings. Reserved for future user-facing worktree controls. */
+    worktree: z.object({}).default({}),
 
     /** Server child process settings. */
     server: z
@@ -573,16 +556,7 @@ export const PartialSettingsSchema = lazySchema(() =>
         enabled: z.boolean().optional(),
       })
       .optional(),
-    worktree: z
-      .object({
-        naming: z
-          .object({
-            mode: NamingModeSchema.optional(),
-            aiConfirmation: z.boolean().optional(),
-          })
-          .optional(),
-      })
-      .optional(),
+    worktree: z.object({}).optional(),
     server: z
       .object({
         memory: z

@@ -138,12 +138,7 @@ When adding a new setting, ask these questions in order:
   "notifications": {
     "enabled": true
   },
-  "worktree": {
-    "naming": {
-      "mode": "auto",                  // "auto" | "custom" | "ai"
-      "aiConfirmation": true
-    }
-  },
+  "worktree": {},
   "server": {
     "memory": {
       "heapMb": 512                    // 256-8192, V8 max old space (MB)

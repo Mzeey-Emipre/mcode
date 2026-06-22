@@ -1,7 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import type { Thread } from "@mcode/contracts";
-import { getDefaultSettings } from "@mcode/contracts";
 import {
   mockWebSocketServer,
   interceptZustandStores,
@@ -9,18 +8,14 @@ import {
 } from "./helpers/e2e-helpers";
 
 /**
- * E2E verification for the branch-from-chat naming fix (issue #339).
+ * E2E verification for branch-from-chat worktree execution.
  *
- * Tests four behaviors that were broken before the fix:
- * 1. branchNamingMode initializes from settings.worktree.naming.mode
- * 2. branchNamingMode defaults to "auto" when settings mode is "auto"
- * 3. branchAutoPreview is independent from autoPreviewBranch
- * 4. initBranchMode defaults to "existing-worktree" for worktree parent threads
+ * Tests the state split between new-thread worktrees and branch-from-chat
+ * worktrees after user-facing branch naming moved to publish time.
  *
  * Strategy: Use interceptZustandStores to read store state directly, bypassing
  * the need to submit real forms or hit a live server. The store state reflects
  * what initBranchMode sets, which is the target of this regression suite.
- * Note: resolveBranchName submit-time behavior is covered by unit tests.
  */
 
 // ─── Test data ────────────────────────────────────────────────────────────────
@@ -115,6 +110,20 @@ async function activateThreadAndInjectMessages(
   await seedActiveThread(page, FAKE_WORKSPACE, thread, messages);
 }
 
+async function mockBranchWorkspace(
+  page: Page,
+  thread: Thread,
+  messages: typeof FAKE_MESSAGE[],
+): Promise<void> {
+  await mockWebSocketServer(page, {
+    "workspace.list": [FAKE_WORKSPACE],
+    "workspace.enrich": { items: [] },
+    "workspace.touchLastOpened": null,
+    "thread.list": [thread],
+    "message.list": messages,
+  });
+}
+
 /** Read the workspaceStore state from the injected registry. */
 async function getWorkspaceStoreState(page: Page): Promise<Record<string, unknown>> {
   return page.evaluate(() => {
@@ -123,7 +132,6 @@ async function getWorkspaceStoreState(page: Page): Promise<Record<string, unknow
     if (!wsStore) return {};
     const st = wsStore.getState();
     return {
-      branchNamingMode: st.branchNamingMode,
       branchAutoPreview: st.branchAutoPreview,
       branchExecMode: st.branchExecMode,
       branchTargetBranch: st.branchTargetBranch,
@@ -135,112 +143,11 @@ async function getWorkspaceStoreState(page: Page): Promise<Record<string, unknow
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-test.describe("Branch-from-chat naming fix (#339)", () => {
+test.describe("Branch-from-chat worktree execution", () => {
   test.setTimeout(30000);
 
-  test("branchNamingMode initializes from settings when mode is 'custom'", async ({ page }) => {
-    // Override settings so worktree.naming.mode is "custom"
-    const customSettings = {
-      ...getDefaultSettings(),
-      worktree: { naming: { mode: "custom" as const, aiConfirmation: true } },
-    };
-
-    await mockWebSocketServer(page, { "settings.get": customSettings });
-    await interceptZustandStores(page);
-    await injectStoreHelpers(page);
-    await page.goto("/");
-    await page.waitForLoadState("networkidle");
-
-    // The settingsStore.fetch() is async (WS RPC). Rather than racing against it,
-    // inject the custom settings directly so initBranchMode reads "custom" reliably.
-    await page.evaluate(
-      ({ settings }) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const stores: any[] = (window as any).__mcodeStores ?? [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const settingsStore = stores.find((s: any) => {
-          const st = s.getState();
-          return "loaded" in st && "settings" in st && !("threads" in st);
-        });
-        if (!settingsStore) { console.error("[E2E] settings store not found"); return; }
-        settingsStore.setState({ settings, loaded: true });
-      },
-      { settings: customSettings }
-    );
-
-    await activateThreadAndInjectMessages(page, FAKE_THREAD, [FAKE_MESSAGE]);
-
-    // Wait for message to be visible
-    await page.waitForFunction(
-      () => document.body.innerText.includes("I can help you with that feature."),
-      { timeout: 5000 }
-    );
-
-    // Trigger branch mode via the branch button on the message
-    const branchBtn = page.getByRole("button", { name: "Fork from this message" });
-    await expect(branchBtn).toBeVisible({ timeout: 5000 });
-    await branchBtn.click();
-
-    // Switch exec mode to "New worktree" via ModeSelector
-    const modeSelector = page.getByRole("button", { name: /Local|New worktree|Existing worktree/i }).first();
-    await expect(modeSelector).toBeVisible({ timeout: 3000 });
-    await modeSelector.click();
-    const newWorktreeOption = page.getByRole("menuitem", { name: "New worktree" });
-    await expect(newWorktreeOption).toBeVisible({ timeout: 3000 });
-    await newWorktreeOption.click();
-
-    // Verify the NamingModeSelector shows "Custom" (not "Auto")
-    const namingSelector = page.getByRole("button", { name: "Branch naming mode" });
-    await expect(namingSelector).toBeVisible({ timeout: 3000 });
-    await expect(namingSelector).toContainText("Custom");
-
-    // Also verify via store state
-    const storeState = await getWorkspaceStoreState(page);
-    expect(storeState.branchNamingMode).toBe("custom");
-
-    await page.screenshot({ path: "e2e/screenshots/branch-from-chat-naming-custom.png" });
-  });
-
-  test("branchNamingMode initializes to 'auto' when settings mode is 'auto'", async ({ page }) => {
-    // Default settings have mode: "auto"
-    await mockWebSocketServer(page);
-    await interceptZustandStores(page);
-    await injectStoreHelpers(page);
-    await page.goto("/");
-    await page.waitForLoadState("networkidle");
-
-    await activateThreadAndInjectMessages(page, FAKE_THREAD, [FAKE_MESSAGE]);
-
-    await page.waitForFunction(
-      () => document.body.innerText.includes("I can help you with that feature."),
-      { timeout: 5000 }
-    );
-
-    const branchBtn = page.getByRole("button", { name: "Fork from this message" });
-    await expect(branchBtn).toBeVisible({ timeout: 5000 });
-    await branchBtn.click();
-
-    // Switch to new worktree mode
-    const modeSelector = page.getByRole("button", { name: /Local|New worktree|Existing worktree/i }).first();
-    await expect(modeSelector).toBeVisible({ timeout: 3000 });
-    await modeSelector.click();
-    const newWorktreeOption = page.getByRole("menuitem", { name: "New worktree" });
-    await expect(newWorktreeOption).toBeVisible({ timeout: 3000 });
-    await newWorktreeOption.click();
-
-    // Verify the NamingModeSelector shows "Auto"
-    const namingSelector = page.getByRole("button", { name: "Branch naming mode" });
-    await expect(namingSelector).toBeVisible({ timeout: 3000 });
-    await expect(namingSelector).toContainText("Auto");
-
-    const storeState = await getWorkspaceStoreState(page);
-    expect(storeState.branchNamingMode).toBe("auto");
-
-    await page.screenshot({ path: "e2e/screenshots/branch-from-chat-naming-auto.png" });
-  });
-
   test("branchAutoPreview is independent from autoPreviewBranch", async ({ page }) => {
-    await mockWebSocketServer(page);
+    await mockBranchWorkspace(page, FAKE_THREAD, [FAKE_MESSAGE]);
     await interceptZustandStores(page);
     await injectStoreHelpers(page);
     await page.goto("/");
@@ -288,14 +195,13 @@ test.describe("Branch-from-chat naming fix (#339)", () => {
   });
 
   test("initBranchMode defaults to existing-worktree when parent thread is in worktree mode", async ({ page }) => {
-    await mockWebSocketServer(page);
+    const worktreeMessage = { ...FAKE_MESSAGE, thread_id: FAKE_THREAD_WORKTREE.id };
+    await mockBranchWorkspace(page, FAKE_THREAD_WORKTREE, [worktreeMessage]);
     await interceptZustandStores(page);
     await injectStoreHelpers(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
-    // Use the worktree thread
-    const worktreeMessage = { ...FAKE_MESSAGE, thread_id: FAKE_THREAD_WORKTREE.id };
     await activateThreadAndInjectMessages(page, FAKE_THREAD_WORKTREE, [worktreeMessage]);
 
     await page.waitForFunction(

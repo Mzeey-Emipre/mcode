@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-16
 **Status:** Design
-**Related ADRs:** [0011](../adr/0011-review-default-view-per-thread.md) (Review default view per thread), [0012](../adr/0012-right-panel-state-per-thread.md) (right-panel state per thread), [0013](../adr/0013-thread-recap-generation-and-caching.md) (thread recap generation and caching)
+**Related ADRs:** [0011](../adr/0011-review-default-view-per-thread.md) (Review default view per thread), [0012](../adr/0012-right-panel-state-per-thread.md) (right-panel state per thread), [0013](../adr/0013-thread-recap-generation-and-caching.md) (thread recap generation and caching), [0014](../adr/0014-defer-user-branch-naming-to-publish-time.md) (defer branch naming to publish time)
 **Related specs:** [2026-04-14](2026-04-14-usage-tracking-design.md) (usage tracking), [2026-04-22](2026-04-22-dynamic-context-window-design.md) (dynamic context window)
 **Reference implementation:** Synara (github.com/Emanuele-web04/synara), a diverged sibling fork that already shipped the Recap. Adapt, do not cherry-pick.
 **Epics:** #753 (per-thread panel state), #754 (Overview surface), #755 (Thread Recap), #756 (Fork & Switch provider). Sub-issues #757-#776.
@@ -11,7 +11,7 @@ This is the shared architectural backbone for four epics. It pins the system sha
 
 ## Problem
 
-A thread's working context is scattered across the header. The current `header-workspace-menu` is a thin dropdown (Changes, Branch, Commit-or-push, Create PR) that answers "what git actions can I take" but not "what is this thread, where does its code live, how much budget is left, and how do I take it further." A user mid-thread cannot see, in one place: a plain-language recap of what the thread is doing, the repository it targets, the worktree and branch it runs on, its provider usage, and the full set of ways to continue (commit, PR, fork, switch provider, branch). Codex's Environment panel solves this for its world; mcode has no equivalent thread-scoped surface.
+A thread's working context is scattered across the header. The current `header-workspace-menu` is a thin dropdown (Changes, Branch, Commit-or-push, Create pull request) that answers "what git actions can I take" but not "what is this thread, where does its code live, how much budget is left, and how do I take it further." A user mid-thread cannot see, in one place: a plain-language recap of what the thread is doing, the repository it targets, the working location it runs in, the current branch state, its provider usage, and the full set of ways to continue. Codex's Environment panel solves this for its world; Mcode should follow that pattern.
 
 ## Solution
 
@@ -22,10 +22,11 @@ Enrich the existing `header-workspace-menu` into a thread-scoped header popover,
 | **Recap** | AI one-line "what you're working on" | none (display) | new `recap.generate` RPC, in-memory cache (ADR-0013) |
 | **Changes** | changed-file count | opens Review tab | existing `changes.toggle`; lands on the ADR-0011 per-thread default |
 | **Repository** | `org/repo` (or folder name) | opens the remote in the browser | new `git.getRemoteUrl` RPC |
-| **PR** | live PR status + CI | commit-or-push, create PR, open PR | reuse `PrSplitButton` / `ChecksPopover` / `useThreadGitActions` |
-| **Mode** | worktree path + branch | copy branch | existing thread fields |
+| **PR** | live PR status + CI | commit-or-push, Create pull request, open PR | reuse `PrSplitButton` / `ChecksPopover` / `useThreadGitActions` |
+| **Environment** | Local or Worktree | opens Continue in menu | existing thread fields |
+| **Branch** | current branch | opens branch menu | existing thread fields |
 | **Usage** | active provider's quota / cost | none (display) | reuse `usageByProvider[thread.provider]` (no new fetch) |
-| **Create branch** | current branch | `git checkout -b` in place | new `git.createBranch` RPC |
+| **Create branch** | publish readiness | creates a publishable branch in place | new `git.createBranch` RPC |
 | **Fork** | new worktree / existing worktree / new local thread | spawns a child thread + handoff | reuse `agent.createAndSend` + `HandoffCoordinator` |
 | **Switch provider** | provider list | swaps this thread's provider + handoff | new `thread.switchProvider` RPC |
 
@@ -125,6 +126,8 @@ Server: `GitService.getRemoteUrl(path)` runs `git -C <path> remote get-url origi
 ```
 
 Server: `GitService.createBranch(path, name)` runs `git -C <path> checkout -b <name>` (create plus checkout in one step) and returns the created branch. The name crosses a process boundary into a subprocess, so it is validated against a git-ref allowlist before the exec: reject empty, leading `-`, whitespace, `..`, and shell metacharacters. Fail closed.
+
+Product shape: `name` is resolved inside the late Create branch or Create pull request flow. It is not chosen in the new-thread composer and is not controlled by an Auto, Custom, or AI setting.
 
 ### `thread.switchProvider`
 
@@ -250,7 +253,7 @@ graph TD
 | Epic | Delivers | New contracts | Depends on |
 |------|----------|---------------|------------|
 | 1 (#753) - per-thread panel state | ADR-0011 + ADR-0012 store changes | none | none |
-| 2 (#754) - Overview surface + rows | `ThreadOverview` popover, Changes / Repository / Create branch / Mode / Usage / PR rows + CI blob | `git.getRemoteUrl`, `git.createBranch` | 1 (soft - Changes row works without it, just with the old default) |
+| 2 (#754) - Overview surface + rows | `ThreadOverview` popover, Changes / Repository / Environment / Branch / Create branch / Usage / PR rows + CI blob | `git.getRemoteUrl`, `git.createBranch` | 1 (soft - Changes row works without it, just with the old default) |
 | 3 (#755) - Thread Recap | `recap.generate` + cache + trigger hook + Recap row | `recap.generate` | 2 (hard - fills a row, needs the panel gate) |
 | 4 (#756) - Fork & Switch provider | Fork group + cross-provider switch (+ the seq-anchor fix) | `thread.switchProvider` | 2 (hard - actions live in the shell) |
 
@@ -274,7 +277,7 @@ The RPC handlers stay thin pass-throughs and are not separately unit-tested - co
 
 ## Security and defensive considerations
 
-- **`git.createBranch` name** crosses into a subprocess. Validate against a git-ref allowlist (reject empty, leading `-`, whitespace, `..`, shell metacharacters) before exec. Fail closed.
+- **`git.createBranch` name** crosses into a subprocess. Validate against a git-ref allowlist (reject empty, leading `-`, whitespace, `..`, shell metacharacters) before exec. Fail closed. Do not reintroduce composer-time custom branch naming as the validation surface.
 - **`git.getRemoteUrl`** normalizes an externally-controlled git config value. Normalize once at the boundary; return `null` rather than a half-parsed URL when the remote is malformed or absent.
 - **`recap.generate` input** is bounded by the client (first pass ~6 messages, ~600 chars each, delta ~4 messages), and the server clips output to ~220 chars. The utility model runs at low reasoning effort. No unbounded retention: the recap cache is in-memory and per-thread.
 - **`thread.switchProvider` seq anchor**: write the internal handoff message at `nextSeq`, never a constant, to avoid a primary-key collision on a non-empty thread.

@@ -86,7 +86,9 @@ vi.mock("./OpenInAppButton", () => ({
 }));
 
 vi.mock("./CreatePrDialog", () => ({
-  CreatePrDialog: () => <div data-testid="create-pr-dialog" />,
+  CreatePrDialog: ({ branch }: { branch: string }) => (
+    <div data-testid="create-pr-dialog" data-branch={branch} />
+  ),
 }));
 
 // Render the dropdown inline so menu items are queryable without driving the
@@ -212,6 +214,7 @@ describe("HeaderActions - Create PR menu item", () => {
     render(<HeaderActions thread={makeThread()} />);
     const item = screen.getByTestId("workspace-menu-create-pr");
     expect(item).toBeInTheDocument();
+    expect(item).toHaveTextContent("Create pull request");
     expect(item).not.toBeDisabled();
   });
 
@@ -233,12 +236,10 @@ describe("HeaderActions - Create PR menu item", () => {
     expect(screen.getByTestId("workspace-menu-create-pr")).not.toBeDisabled();
   });
 
-  it("offers Create PR on a worktree thread regardless of branch name", () => {
-    // The gate is mode-based, not branch-based: a worktree thread that happens
-    // to sit on a branch named "main" is still PR-able.
+  it("hides Create PR on an internal worktree branch", () => {
     mockUseHasCommitsAhead.mockReturnValue(true);
-    render(<HeaderActions thread={makeThread({ branch: "main" })} />);
-    expect(screen.getByTestId("workspace-menu-create-pr")).toBeInTheDocument();
+    render(<HeaderActions thread={makeThread({ branch: "mcode-abc12345" })} />);
+    expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
   });
 
   it("hides Create PR and shows the PR badge when a PR already exists", () => {
@@ -278,7 +279,7 @@ describe("HeaderActions - PR-ability gating by mode", () => {
 
   it("does not show the Create PR button for a direct-mode thread", () => {
     render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
-    expect(screen.queryByRole("button", { name: /create pr/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create pull request/i })).not.toBeInTheDocument();
   });
 
   it("does not mount the create-PR dialog for a direct-mode thread", () => {
@@ -302,6 +303,12 @@ describe("HeaderActions - PR-ability gating by mode", () => {
     render(<HeaderActions thread={makeThread({ mode: "worktree", branch: "feat/x" })} />);
     expect(mockUseBranchPr).toHaveBeenCalledWith("feat/x", expect.anything());
     expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("ws-1", "feat/x", "thread-1");
+  });
+
+  it("skips PR polling for an internal worktree branch", () => {
+    render(<HeaderActions thread={makeThread({ mode: "worktree", branch: "mcode-abc12345" })} />);
+    expect(mockUseBranchPr).toHaveBeenCalledWith(null, expect.anything());
+    expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("", null, undefined);
   });
 });
 
@@ -340,17 +347,8 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-local-branch")).toHaveTextContent("feat/my-feature");
     expect(screen.getByTestId("workspace-menu-branch")).toHaveTextContent("feat/my-feature");
     expect(screen.getByTestId("thread-overview-create-branch")).toBeInTheDocument();
-    expect(screen.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
-      "maxlength",
-      "250",
-    );
-    expect(screen.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
-      "dir",
-      "ltr",
-    );
-    expect(screen.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
-      "autocomplete",
-      "off",
+    expect(screen.getByTestId("thread-overview-create-branch-submit")).toHaveAccessibleName(
+      "Create branch",
     );
     expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
   });
@@ -360,15 +358,12 @@ describe("HeaderActions - consolidated header", () => {
 
     render(<HeaderActions thread={makeThread()} />);
 
-    fireEvent.change(screen.getByTestId("thread-overview-create-branch-input"), {
-      target: { value: "feat/new-overview-row" },
-    });
     fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
 
     await waitFor(() => {
       expect(mockTransport.createBranch).toHaveBeenCalledWith(
         "ws-1",
-        "feat/new-overview-row",
+        "test-thread",
         "thread-1",
       );
     });
@@ -376,12 +371,57 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("workspace-menu-branch")).toHaveTextContent(
       "feat/new-overview-row",
     );
+    expect(screen.getByTestId("thread-overview-create-branch-submit")).toBeDisabled();
+  });
 
-    fireEvent.change(screen.getByTestId("thread-overview-create-branch-input"), {
-      target: { value: "feat/next-branch" },
+  it("enables Create pull request after an internal branch is named", async () => {
+    mockTransport.createBranch.mockResolvedValue({ branch: "feat/publishable-thread" });
+
+    render(<HeaderActions thread={makeThread({ branch: "mcode-abc12345" })} />);
+
+    expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
+
+    expect(await screen.findByText("Checked out feat/publishable-thread")).toBeInTheDocument();
+    const prRow = await screen.findByTestId("workspace-menu-create-pr");
+    expect(prRow).toHaveTextContent("Create pull request");
+    expect(screen.getByTestId("create-pr-dialog")).toHaveAttribute(
+      "data-branch",
+      "feat/publishable-thread",
+    );
+    expect(mockUseHasCommitsAhead).toHaveBeenLastCalledWith(
+      "ws-1",
+      "feat/publishable-thread",
+      "thread-1",
+    );
+  });
+
+  it("retries Create branch with a thread suffix when the generated name exists", async () => {
+    mockTransport.createBranch
+      .mockRejectedValueOnce(new Error("fatal: a branch named 'test-thread' already exists"))
+      .mockResolvedValueOnce({ branch: "test-thread-thread-1" });
+
+    render(<HeaderActions thread={makeThread()} />);
+
+    fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
+
+    await waitFor(() => {
+      expect(mockTransport.createBranch).toHaveBeenCalledTimes(2);
     });
-
-    expect(screen.getByTestId("thread-overview-create-branch-status")).toBeEmptyDOMElement();
+    expect(mockTransport.createBranch).toHaveBeenNthCalledWith(
+      1,
+      "ws-1",
+      "test-thread",
+      "thread-1",
+    );
+    expect(mockTransport.createBranch).toHaveBeenNthCalledWith(
+      2,
+      "ws-1",
+      "test-thread-thread-1",
+      "thread-1",
+    );
+    expect(await screen.findByText("Checked out test-thread-thread-1")).toBeInTheDocument();
   });
 
   it("prevents concurrent create-branch submissions", async () => {
@@ -395,9 +435,6 @@ describe("HeaderActions - consolidated header", () => {
 
     render(<HeaderActions thread={makeThread()} />);
 
-    fireEvent.change(screen.getByTestId("thread-overview-create-branch-input"), {
-      target: { value: "feat/one-call" },
-    });
     fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
     fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
 
@@ -408,7 +445,7 @@ describe("HeaderActions - consolidated header", () => {
       "aria-busy",
       "true",
     );
-    expect(screen.getByTestId("thread-overview-create-branch-input")).toBeDisabled();
+    expect(screen.getByTestId("thread-overview-create-branch-submit")).toBeDisabled();
 
     resolveBranch({ branch: "feat/one-call" });
     expect(await screen.findByText("Checked out feat/one-call")).toBeInTheDocument();
@@ -421,9 +458,6 @@ describe("HeaderActions - consolidated header", () => {
 
     render(<HeaderActions thread={makeThread()} />);
 
-    fireEvent.change(screen.getByTestId("thread-overview-create-branch-input"), {
-      target: { value: "--bad" },
-    });
     fireEvent.click(screen.getByTestId("thread-overview-create-branch-submit"));
 
     const alert = await screen.findByRole("alert");
@@ -431,10 +465,6 @@ describe("HeaderActions - consolidated header", () => {
       "Branch name cannot start with '-' or contain spaces after normalization",
     );
     expect(alert).toHaveClass("break-words");
-    expect(screen.getByTestId("thread-overview-create-branch-input")).toHaveAttribute(
-      "aria-invalid",
-      "true",
-    );
   });
 
   it("renders a single dedicated right-panel toggle", () => {

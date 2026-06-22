@@ -6,11 +6,10 @@ import {
   Diff,
   ExternalLink,
   GitBranch,
-  GitPullRequest,
+  Github,
   Globe,
   Laptop,
   Menu,
-  Plus,
   Search,
   Upload,
 } from "lucide-react";
@@ -31,6 +30,7 @@ import { useLayoutStore } from "@/stores/layoutStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { executeCommand } from "@/lib/command-registry";
 import { getContentRowWidth, shouldAutoOpenOverview } from "@/lib/composer-layout";
+import { generateBranchNameFromMessage, sanitizeBranchName } from "@/lib/branch-name";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
 import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
 import { cn } from "@/lib/utils";
@@ -66,7 +66,6 @@ type ThreadOverviewChangeSummaryTransport = Pick<
 >;
 type ThreadOverviewRepositoryTransport = Pick<McodeTransport, "getRemoteUrl">;
 type BranchCreationStatus = "idle" | "creating" | "created" | "error";
-const MAX_BRANCH_NAME_LENGTH = 250;
 
 type LoadedBranchState =
   | { status: "idle"; branches: GitBranchRecord[]; uncommittedFiles: number | null }
@@ -623,21 +622,33 @@ function createBranchErrorMessage(error: unknown): string {
   return "Branch name rejected";
 }
 
+function resolveCreateBranchName(thread: Pick<Thread, "title" | "branch" | "id">): string {
+  return generateBranchNameFromMessage(thread.title || thread.branch || thread.id);
+}
+
+function resolveCreateBranchFallbackName(thread: Pick<Thread, "title" | "branch" | "id">): string {
+  const base = resolveCreateBranchName(thread);
+  const suffix = sanitizeBranchName(thread.id).slice(0, 12) || "branch";
+  const prefix = base.slice(0, Math.max(1, 50 - suffix.length - 1)).replace(/-+$/g, "");
+  return `${prefix}-${suffix}`;
+}
+
+function isExistingBranchError(error: unknown): boolean {
+  return createBranchErrorMessage(error).toLowerCase().includes("already exists");
+}
+
 function ThreadOverviewCreateBranchRow({
   thread,
   currentBranch,
   onCreated,
 }: ThreadOverviewCreateBranchRowProps) {
-  const [name, setName] = useState("");
   const [status, setStatus] = useState<BranchCreationStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const submittingRef = useRef(false);
-  const trimmedName = name.trim();
-  const canSubmit = trimmedName.length > 0 && status !== "creating";
+  const canSubmit = status !== "creating" && status !== "created";
 
-  const handleSubmit = useCallback(
-    async (event: React.FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
+  const handleCreate = useCallback(
+    async () => {
       if (!canSubmit || submittingRef.current) return;
 
       submittingRef.current = true;
@@ -645,12 +656,22 @@ function ThreadOverviewCreateBranchRow({
       setError(null);
 
       try {
-        const result = await getTransport().createBranch(
-          thread.workspace_id,
-          trimmedName,
-          thread.id,
-        );
-        setName("");
+        const transport = getTransport();
+        let result: { branch: string };
+        try {
+          result = await transport.createBranch(
+            thread.workspace_id,
+            resolveCreateBranchName(thread),
+            thread.id,
+          );
+        } catch (err) {
+          if (!isExistingBranchError(err)) throw err;
+          result = await transport.createBranch(
+            thread.workspace_id,
+            resolveCreateBranchFallbackName(thread),
+            thread.id,
+          );
+        }
         setStatus("created");
         onCreated(result.branch);
       } catch (err) {
@@ -660,70 +681,48 @@ function ThreadOverviewCreateBranchRow({
         submittingRef.current = false;
       }
     },
-    [canSubmit, onCreated, thread.id, thread.workspace_id, trimmedName],
+    [canSubmit, onCreated, thread],
   );
 
   return (
-    <form
+    <div
       data-testid="thread-overview-create-branch"
       className="flex w-full flex-col gap-1.5 px-2 py-1.5"
-      onSubmit={handleSubmit}
       aria-busy={status === "creating" ? "true" : undefined}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <Plus size={14} className="shrink-0 text-muted-foreground" />
-        <span className="truncate text-xs font-medium">Create branch</span>
-      </div>
-      <div className="flex min-w-0 items-center gap-1.5">
-        <Input
-          size="xs"
-          value={name}
-          onChange={(event) => {
-            setName(event.target.value);
-            if (status === "error" || status === "created") {
-              setStatus("idle");
-              setError(null);
-            }
-          }}
-          placeholder="feat/new-branch"
-          aria-label="New branch name"
-          autoComplete="off"
-          dir="ltr"
-          disabled={status === "creating"}
-          maxLength={MAX_BRANCH_NAME_LENGTH}
-          spellCheck={false}
-          aria-invalid={status === "error" ? "true" : undefined}
-          data-testid="thread-overview-create-branch-input"
-          className="h-7 min-w-0 font-mono"
-        />
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          type="submit"
-          disabled={!canSubmit}
-          aria-label="Create branch"
-          data-testid="thread-overview-create-branch-submit"
-          className="size-7"
-        >
-          {status === "created" ? <Check size={13} /> : <GitBranch size={13} />}
-        </Button>
-      </div>
-      <div
-        data-testid="thread-overview-create-branch-status"
-        className={cn(
-          "min-h-4 break-words font-mono text-xs",
-          status === "error" ? "text-[var(--diff-remove-strong)]" : "text-muted-foreground",
-        )}
-        aria-live={status === "error" ? "assertive" : "polite"}
-        role={status === "error" ? "alert" : undefined}
+      <Button
+        variant="ghost"
+        size="sm"
+        type="button"
+        disabled={!canSubmit}
+        onClick={() => void handleCreate()}
+        aria-label="Create branch"
+        data-testid="thread-overview-create-branch-submit"
+        className="h-8 w-full cursor-pointer justify-start gap-2 px-0 text-xs disabled:cursor-not-allowed"
       >
-        {status === "creating"
-          ? "Creating..."
-          : status === "created"
-            ? `Checked out ${currentBranch}`
-            : error}
-      </div>
-    </form>
+        {status === "created"
+          ? <Check size={14} className="text-muted-foreground" />
+          : <GitBranch size={14} className="text-muted-foreground" />}
+        Create branch
+      </Button>
+      {(status !== "idle" || error) && (
+        <div
+          data-testid="thread-overview-create-branch-status"
+          className={cn(
+            "break-words px-1 font-mono text-xs",
+            status === "error" ? "text-[var(--diff-remove-strong)]" : "text-muted-foreground",
+          )}
+          aria-live={status === "error" ? "assertive" : "polite"}
+          role={status === "error" ? "alert" : undefined}
+        >
+          {status === "creating"
+            ? "Creating..."
+            : status === "created"
+              ? `Checked out ${currentBranch}`
+              : error}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -857,6 +856,12 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     return () => setReserveSpace(false);
   }, [open, hasRoom, setReserveSpace]);
 
+  const currentBranch = createdBranch ?? thread.branch;
+  const gitActionThread = useMemo(
+    () => ({ ...thread, branch: currentBranch }),
+    [currentBranch, thread],
+  );
+
   const {
     prable,
     pr,
@@ -868,7 +873,7 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     setCreatePrOpen,
     handleCommitOrPush,
     handleOpenPr,
-  } = useThreadGitActions(thread);
+  } = useThreadGitActions(gitActionThread);
 
   const cachedSnapshots = useDiffStore((s) => s.snapshotsByThread[thread.id]);
   const setSnapshots = useDiffStore((s) => s.setSnapshots);
@@ -1005,7 +1010,6 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
 
   const ciDot = useMemo(() => getThreadOverviewCiDot(pr, checks), [pr, checks]);
   const modeLabel = thread.mode === "worktree" ? "Worktree" : "Direct";
-  const currentBranch = createdBranch ?? thread.branch;
   const handleBranchCreated = useCallback(
     (branch: string) => {
       setCreatedBranch(branch);
@@ -1196,8 +1200,8 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 title={hasCommitsAhead === false ? "No commits ahead of base branch" : undefined}
                 className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-xs disabled:cursor-not-allowed"
               >
-                <GitPullRequest size={14} className="text-muted-foreground" />
-                Create PR
+                <Github size={14} className="text-muted-foreground" />
+                Create pull request
               </Button>
             )}
 
@@ -1255,7 +1259,7 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
           onOpenChange={setCreatePrOpen}
           threadId={thread.id}
           workspaceId={thread.workspace_id}
-          branch={thread.branch}
+          branch={currentBranch}
         />
       )}
     </>

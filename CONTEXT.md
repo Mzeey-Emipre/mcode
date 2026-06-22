@@ -81,16 +81,13 @@ thread, an option to delete its worktree is offered alongside; the
 worktree can also be kept and reused for future threads.
 
 ### PR-able thread
-A thread the app can open a pull request from. A thread is PR-able only
-when it runs in an isolated worktree; direct-mode threads are never
-PR-able, because they run against the workspace's main checkout and there
-is nothing to open a pull request from. This single notion gates every PR
-affordance: the thread-row PR icon, the chat header's Create PR button,
-and the background PR and commits-ahead polling. A non-PR-able thread
-shows its branch/agent status instead of a PR glyph, offers no Create PR
-button, and is never polled against GitHub, even if a PR number happens to
-be attached to it. A user who wants a pull request from local work creates
-a worktree.
+A thread whose current checkout can produce a pull request. A thread becomes
+PR-able only when it has a publishable branch; an internal worktree branch is
+not enough. This gates PR affordances: the thread-row PR icon, the Overview's
+Create pull request action, and background PR and commits-ahead polling.
+
+A thread without a publishable branch offers Create branch before Create pull
+request. The branch used to provision a worktree is not the user's PR branch.
 
 ## Composer
 
@@ -109,19 +106,19 @@ current branch. The default when a workspace is not a git repo.
 
 ### New worktree mode
 Composer mode where the thread provisions a fresh git worktree on a new
-branch. Used when the user wants isolation and a clean branch for the work
-about to be done. Code identifier: `"worktree"`.
+app-generated local branch. Used when the user wants isolation and a clean
+checkout for the work about to be done. The user does not name this branch when
+the thread starts. Code identifier: `"worktree"`.
 
 ### Existing worktree mode
 Composer mode where the thread attaches to a worktree that already exists.
 Enables multiple threads to share one worktree — e.g. follow-up work on
 the same branch without re-creating the directory.
 
-### Naming mode (Auto / Custom)
-Sub-control of New worktree mode controlling how the new branch is named.
-**Auto** generates a branch name from the thread's first message;
-**Custom** lets the user type one explicitly. Auto is the default, but the
-user can change the default to Custom from settings.
+### Internal worktree branch
+The app-generated local branch used to create an isolated checkout for a new
+worktree thread. It is scaffolding for Git, not a user-facing branch choice.
+_Avoid_: Naming mode, auto branch setting, custom branch setting.
 
 ### Composer session
 The composer's per-thread state, treated as one value: draft text,
@@ -210,21 +207,17 @@ or `assistant` (forking from the agent's reply; intent is "follow up about
 what was just said"). The role shapes how the handoff is framed.
 
 ### Create branch
-An [[Overview]] action that runs `git checkout -b <name>` in the active thread's
-own working directory: it creates a branch at the current HEAD and switches the
-thread onto it. **Same thread, same worktree, new branch** - no child thread, no
-handoff; the thread's `branch` updates in place. Backed by a net-new
-`git.createBranch` RPC (create + checkout); the app otherwise only checks out
-*existing* branches.
+An [[Overview]] action that creates a user-facing branch from the active
+thread's current checkout. It keeps the same thread and working location, then
+switches the thread onto the new branch so commit, push, and pull-request
+actions can proceed.
 
 Not to be confused with [[Fork]]. The two share one git primitive (a branch
 pointer) in exactly one case, which is why they are easy to collapse, but they
-are different actions: Create branch moves *this* thread onto a new branch right
-here, whereas Fork spawns a *new* thread - and only its new-worktree variant
-also creates a branch (in a *separate* worktree; existing-worktree reuses that
-worktree's branch, and new-local does no branch op at all). One line each:
-Create branch = "this thread, new branch, here"; Fork = "a new thread, possibly
-elsewhere."
+are different actions: Create branch moves *this* thread onto a publishable
+branch in place, whereas Fork spawns a *new* thread. One line each: Create
+branch = "this thread, publishable branch, here"; Fork = "a new thread,
+possibly elsewhere."
 
 ## Chat lifecycle
 
@@ -563,9 +556,13 @@ deterministic path-D handoff.
 ### Overview
 The chat-header popover that recaps the active thread's working context (its
 changes, current branch, and pull-request state) and hosts the git actions for
-that thread (Commit-or-push, Create PR). An enrichment of the former plain
+that thread (Commit-or-push, Create pull request). An enrichment of the former plain
 header menu (`header-workspace-menu`) into a live status surface, modelled on
 Codex's "Environment" panel. Code symbol: `ThreadOverview`.
+
+The Overview follows the Environment pattern: show where the thread is running
+(Local or Worktree), show the current branch as state, and present Create branch
+as the late publish action instead of a standing branch-name field.
 
 **Thread-scoped.** The Overview lives in the chat header, which renders only
 when a thread is active. With no thread open there is no Overview; the

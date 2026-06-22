@@ -3,12 +3,15 @@ import type { Thread } from "@/transport";
 /**
  * Returns whether a thread can have a pull request through this app.
  *
- * A thread is PR-able only when it runs in an isolated worktree. Direct-mode
- * (local) threads run against the workspace's main checkout and are never
- * PR-able: there is nothing to open a pull request from. This is the single
- * source of truth shared by the sidebar thread list and the chat header so the
- * two surfaces can never disagree about whether to show PR affordances.
+ * A thread is PR-able only after it runs on a publishable branch. Internal
+ * worktree branches keep agent execution isolated, but the user should create
+ * a named branch before opening a pull request.
  */
-export function isPrable(thread: Pick<Thread, "mode">): boolean {
-  return thread.mode === "worktree";
+export function isPrable(thread: Pick<Thread, "mode" | "branch">): boolean {
+  return thread.mode === "worktree" && !isInternalWorktreeBranch(thread.branch);
+}
+
+/** Returns whether a branch is an app-generated worktree implementation detail. */
+export function isInternalWorktreeBranch(branch: string | null | undefined): boolean {
+  return !branch || /^mcode-[a-z0-9]{8}$/.test(branch);
 }

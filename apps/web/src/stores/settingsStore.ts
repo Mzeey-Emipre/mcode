@@ -56,21 +56,6 @@ async function migrateFromLocalStorage(
       patch.notifications = { enabled: zustandState.notificationsEnabled };
     }
 
-    // Nested global worktree settings come from the lib/settings.ts format
-    const global = parsed.global;
-    if (global && typeof global === "object") {
-      const naming: DeepPartial<Settings["worktree"]["naming"]> = {};
-      if (typeof global.defaultNamingMode === "string") {
-        naming.mode = global.defaultNamingMode;
-      }
-      if (typeof global.aiConfirmation === "boolean") {
-        naming.aiConfirmation = global.aiConfirmation;
-      }
-      if (Object.keys(naming).length > 0) {
-        patch.worktree = { naming };
-      }
-    }
-
     if (Object.keys(patch).length > 0) {
       await update(patch);
     }

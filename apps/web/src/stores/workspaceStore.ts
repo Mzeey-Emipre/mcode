@@ -6,6 +6,7 @@ import {
   titleFromMessageContent,
 } from "@/lib/workspace-thread";
 import type { ChecksStatus, CreateAndSendResult } from "@mcode/contracts";
+import { generateInternalBranchName } from "@/lib/branch-name";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "./thread-record";
@@ -16,14 +17,7 @@ import { useComposerDraftStore } from "./composerDraftStore";
 import { useDiffStore } from "./diffStore";
 import { usePreviewReferenceQueueStore } from "./previewReferenceQueueStore";
 import { usePreviewTabsStore } from "./previewTabsStore";
-import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
-import { useSettingsStore } from "./settingsStore";
-import { sanitizeCustomBranchInput, resolveBranchName } from "@/lib/branch-name";
-
-/** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
-function generateBranchId(): string {
-  return `mcode-${Math.random().toString(36).slice(2, 10)}`;
-}
+import type { ContextWindowMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
 
 /** Minimum interval between syncThreadPrs calls per workspace. */
 const SYNC_THROTTLE_MS = 30_000;
@@ -150,8 +144,7 @@ interface WorkspaceState {
   worktreesLoading: boolean;
   /** The workspace ID whose worktrees are currently in the `worktrees` array. Null before any load. */
   worktreesLoadedForWorkspace: string | null;
-  namingMode: NamingMode;
-  customBranchName: string;
+  /** Internal branch name used when provisioning a new worktree thread. */
   autoPreviewBranch: string;
   selectedWorktree: WorktreeInfo | null;
   openPrs: PrDetail[];
@@ -251,23 +244,17 @@ interface WorkspaceState {
 
   // Worktree actions
   loadWorktrees: (workspaceId: string) => Promise<void>;
-  setNamingMode: (mode: NamingMode) => void;
-  setCustomBranchName: (name: string) => void;
   setSelectedWorktree: (worktree: WorktreeInfo | null) => void;
   regenerateAutoPreview: () => void;
 
-  // Branch-from-chat state (mirrors new-thread naming fields)
+  // Branch-from-chat state
   /** Execution mode chosen for the branched thread (direct, new worktree, existing worktree). */
   branchExecMode: "direct" | "worktree" | "existing-worktree";
   /** Base branch selected in the branch-from-chat branch picker. */
   branchTargetBranch: string;
   /** Path of the existing worktree to attach to when branchExecMode is "existing-worktree". */
   branchWorktreePath: string;
-  /** Naming mode for the branch-from-chat worktree branch (auto or custom). */
-  branchNamingMode: NamingMode;
-  /** Custom branch name entered by the user in branch-from-chat mode. */
-  branchCustomName: string;
-  /** Auto-generated preview branch name for branch-from-chat mode. Independent of autoPreviewBranch. */
+  /** Internal branch name for branch-from-chat worktree mode. Independent of autoPreviewBranch. */
   branchAutoPreview: string;
 
   // Branch-from-chat actions
@@ -279,11 +266,6 @@ interface WorkspaceState {
   setBranchTargetBranch: (branch: string) => void;
   /** Set the existing worktree path for the branched thread. */
   setBranchWorktreePath: (path: string) => void;
-  /** Set the naming mode for the branch-from-chat worktree branch. */
-  setBranchNamingMode: (mode: NamingMode) => void;
-  /** Set and sanitize the custom branch name for the branch-from-chat flow. */
-  setBranchCustomName: (name: string) => void;
-
   loadOpenPrs: (workspaceId: string) => Promise<void>;
   fetchBranch: (workspaceId: string, branch: string, prNumber?: number) => Promise<void>;
   /**
@@ -394,9 +376,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   worktrees: [],
   worktreesLoading: false,
   worktreesLoadedForWorkspace: null,
-  namingMode: "auto" as const,
-  customBranchName: "",
-  autoPreviewBranch: generateBranchId(),
+  autoPreviewBranch: generateInternalBranchName(),
   selectedWorktree: null,
   openPrs: [],
   openPrsLoading: false,
@@ -406,9 +386,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   branchExecMode: "direct" as const,
   branchTargetBranch: "",
   branchWorktreePath: "",
-  branchNamingMode: "auto" as NamingMode,
-  branchCustomName: "",
-  branchAutoPreview: generateBranchId(),
+  branchAutoPreview: generateInternalBranchName(),
   prUrlsByThreadId: {},
   checksById: {},
 
@@ -721,7 +699,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
 
-    const { newThreadMode, newThreadBranch, namingMode, customBranchName, autoPreviewBranch, selectedWorktree } = get();
+    const { newThreadMode, newThreadBranch, autoPreviewBranch, selectedWorktree } = get();
 
     let mode: "direct" | "worktree" = "direct";
     let branch = newThreadBranch || "main";
@@ -729,7 +707,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     if (newThreadMode === "worktree") {
       mode = "worktree";
-      branch = resolveBranchName({ namingMode, customName: customBranchName, autoPreview: autoPreviewBranch });
+      branch = newThreadBranch || autoPreviewBranch;
     } else if (newThreadMode === "existing-worktree") {
       mode = "worktree";
       if (!selectedWorktree) throw new Error("No worktree selected");
@@ -1055,9 +1033,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ? {
             newThreadMode: "direct" as const,
             newThreadBranch: "",
-            namingMode: useSettingsStore.getState().settings.worktree.naming.mode,
-            customBranchName: "",
-            autoPreviewBranch: generateBranchId(),
+            autoPreviewBranch: generateInternalBranchName(),
             selectedWorktree: null,
             branchManuallySelected: false,
           }
@@ -1109,7 +1085,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   },
 
   setNewThreadMode: (mode) => {
-    set({ newThreadMode: mode });
+    set({
+      newThreadMode: mode,
+      ...(mode === "worktree" ? { newThreadBranch: "" } : {}),
+    });
   },
 
   setNewThreadBranch: (branch) => {
@@ -1132,10 +1111,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     }
   },
 
-  setNamingMode: (mode) => set({ namingMode: mode }),
-  setCustomBranchName: (name) => set({ customBranchName: sanitizeCustomBranchInput(name) }),
   setSelectedWorktree: (worktree) => set({ selectedWorktree: worktree }),
-  regenerateAutoPreview: () => set({ autoPreviewBranch: generateBranchId() }),
+  regenerateAutoPreview: () => set({ autoPreviewBranch: generateInternalBranchName() }),
   initBranchMode: (parentThread) => {
     const defaultExecMode: "direct" | "worktree" | "existing-worktree" =
       parentThread?.mode === "worktree" ? "existing-worktree" : "direct";
@@ -1143,19 +1120,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       branchExecMode: defaultExecMode,
       branchTargetBranch: parentThread?.branch ?? "",
       branchWorktreePath: parentThread?.worktree_path ?? "",
-      // Intentional snapshot: reads the current setting at activation time.
-      // If settings load after the user opens branch mode, they'll see "auto"
-      // until the next activation — acceptable given the narrow timing window.
-      branchNamingMode: useSettingsStore.getState().settings.worktree.naming.mode,
-      branchCustomName: "",
-      branchAutoPreview: generateBranchId(),
+      branchAutoPreview: generateInternalBranchName(),
     });
   },
   setBranchExecMode: (mode) => set({ branchExecMode: mode }),
   setBranchTargetBranch: (branch) => set({ branchTargetBranch: branch }),
   setBranchWorktreePath: (path) => set({ branchWorktreePath: path }),
-  setBranchNamingMode: (mode) => set({ branchNamingMode: mode }),
-  setBranchCustomName: (name) => set({ branchCustomName: sanitizeCustomBranchInput(name) }),
 
   loadOpenPrs: async (workspaceId) => {
     set({ openPrsLoading: true });

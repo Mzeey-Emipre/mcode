@@ -234,6 +234,49 @@ describe("Workspace Behavior", () => {
     expect(useWorkspaceStore.getState().threads.some((t) => t.id === "new-first-send")).toBe(true);
   });
 
+  it("uses the internal auto branch for new worktree threads without an explicit branch", async () => {
+    const ws = createMockWorkspace({ id: "ws-worktree-auto" });
+    const created = createMockThread({
+      id: "new-worktree-auto",
+      workspace_id: ws.id,
+      title: "Worktree auto",
+      mode: "worktree",
+      branch: "mcode-00000000",
+    });
+
+    useWorkspaceStore.setState({
+      workspaces: [ws],
+      activeWorkspaceId: ws.id,
+      newThreadMode: "worktree",
+      newThreadBranch: "",
+      autoPreviewBranch: "mcode-00000000",
+    });
+    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(created);
+
+    await useWorkspaceStore.getState().createAndSendMessage("Review PR #123", "composer-2-fast");
+
+    expect(mockTransport.createAndSendMessage).toHaveBeenCalledWith(
+      ws.id,
+      "Review PR #123",
+      "composer-2-fast",
+      undefined,
+      "worktree",
+      "mcode-00000000",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+  });
+
   it("when the user creates a thread, it appears in the list", async () => {
     const ws = createMockWorkspace();
     const thread = createMockThread({

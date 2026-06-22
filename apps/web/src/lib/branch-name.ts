@@ -1,5 +1,3 @@
-import type { NamingMode } from "@mcode/contracts";
-
 const STOP_WORDS = new Set([
   "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
   "have", "has", "had", "do", "does", "did", "will", "would", "could",
@@ -78,18 +76,9 @@ export function generateFallbackBranchName(): string {
   return `thread-${Date.now().toString(36)}`;
 }
 
-/**
- * Resolve the final branch name from naming mode, custom input, and auto preview.
- * Used at submission time by both new-worktree and branch-from-chat flows.
- */
-export function resolveBranchName(opts: {
-  namingMode: NamingMode;
-  customName: string;
-  autoPreview: string;
-}): string {
-  if (opts.namingMode === "custom") {
-    const cleaned = trimTrailingBranchChars(opts.customName);
-    return cleaned || opts.autoPreview;
-  }
-  return opts.autoPreview;
+/** Generate an app-internal worktree branch name (e.g. `mcode-a1b2c3d4`). */
+export function generateInternalBranchName(random: () => number = Math.random): string {
+  const max = 36 ** 8;
+  const bucket = Math.min(Math.floor(Math.max(random(), 0) * max), max - 1);
+  return `mcode-${bucket.toString(36).padStart(8, "0")}`;
 }
