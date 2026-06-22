@@ -218,7 +218,7 @@ export function formatThreadOverviewUsage(usageInfo: ProviderUsageInfo | undefin
 function formatThreadOverviewUsageTrigger(usageInfo: ProviderUsageInfo | undefined): string {
   const categories = getThreadOverviewUsageCategories(usageInfo);
   if (categories.length === 0) return "Unavailable";
-  return `${categories.length} ${categories.length === 1 ? "limit" : "limits"}`;
+  return `${Math.round(usageCategoryPercent(categories[0]))}%`;
 }
 
 interface ThreadOverviewUsageMenuProps {
@@ -230,16 +230,13 @@ function ThreadOverviewUsageMenu({ providerId, usageInfo }: ThreadOverviewUsageM
   const categories = getThreadOverviewUsageCategories(usageInfo);
 
   return (
-    <div data-testid="thread-overview-usage-popover" className="animate-popover-enter p-2">
-      <div className="flex items-start justify-between gap-3 px-1 pb-2">
+    <div data-testid="thread-overview-usage-popover" className="px-2 pb-2 pt-1">
+      <div className="flex items-start justify-between gap-3 pb-2">
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold">{providerUsageName(providerId)} usage</div>
           <div className="mt-0.5 text-[10px] text-muted-foreground">
             Provider limits for this thread
           </div>
-        </div>
-        <div className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
-          {formatThreadOverviewUsageTrigger(usageInfo)}
         </div>
       </div>
 
@@ -1044,7 +1041,7 @@ function ThreadOverviewPrRow({
 export function ThreadOverview({ thread }: ThreadOverviewProps) {
   const [localOpen, setLocalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
-  const [usageOpen, setUsageOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(true);
   const [loadedChangeSummary, setLoadedChangeSummary] = useState<{
     threadId: string;
     snapshotKey: string;
@@ -1071,6 +1068,10 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
   useEffect(() => {
     autoManagedRef.current = true;
   }, [thread.id]);
+
+  useEffect(() => {
+    setUsageOpen(true);
+  }, [thread.id, thread.provider]);
 
   // Whether there is room for the Overview to open by default. Driven by the
   // reactive content-row width so it tracks resizes and panel changes without
@@ -1162,14 +1163,22 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
   const fetchProviderUsage = useThreadStore((state) => state.fetchProviderUsage);
 
   const handleUsageOpenChange = useCallback(
-    (nextOpen: boolean) => {
-      setUsageOpen(nextOpen);
-      if (nextOpen) {
-        void fetchProviderUsage(thread.id, thread.provider);
-      }
+    () => {
+      setUsageOpen((current) => {
+        const nextOpen = !current;
+        if (nextOpen) {
+          void fetchProviderUsage(thread.id, thread.provider);
+        }
+        return nextOpen;
+      });
     },
     [fetchProviderUsage, thread.id, thread.provider],
   );
+
+  useEffect(() => {
+    if (!open || !usageOpen) return;
+    void fetchProviderUsage(thread.id, thread.provider);
+  }, [fetchProviderUsage, open, thread.id, thread.provider, usageOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -1420,49 +1429,50 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
               </PopoverContent>
             </Popover>
 
-            <Popover open={usageOpen} onOpenChange={handleUsageOpenChange}>
-              <PopoverTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    type="button"
-                    data-testid="thread-overview-usage"
-                    aria-label={`Usage, ${usageLabel}`}
-                    className={cn(
-                      "h-8 w-full cursor-pointer justify-between gap-2 px-2 text-xs",
-                      usageOpen && "bg-muted text-foreground",
-                    )}
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <Gauge size={14} className="shrink-0 text-muted-foreground" />
-                      <span className="truncate text-xs font-medium">Usage</span>
-                    </span>
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <span className="truncate font-mono text-xs tabular-nums text-muted-foreground">
-                        {usageTriggerLabel}
-                      </span>
-                      <ChevronDown
-                        size={13}
-                        aria-hidden
-                        className={cn(
-                          "shrink-0 text-muted-foreground transition-transform duration-150",
-                          usageOpen && "rotate-180",
-                        )}
-                      />
-                    </span>
-                  </Button>
-                }
-              />
-              <PopoverContent
-                align="start"
-                side="left"
-                sideOffset={12}
-                className="w-80 p-0"
+            <div className="w-full" data-testid="thread-overview-usage-section">
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                data-testid="thread-overview-usage"
+                aria-label={`Usage, ${usageLabel}`}
+                aria-expanded={usageOpen}
+                onClick={handleUsageOpenChange}
+                className={cn(
+                  "h-8 w-full cursor-pointer justify-between gap-2 px-2 text-xs",
+                  usageOpen && "bg-muted text-foreground",
+                )}
               >
-                <ThreadOverviewUsageMenu providerId={thread.provider} usageInfo={usageInfo} />
-              </PopoverContent>
-            </Popover>
+                <span className="flex min-w-0 items-center gap-2">
+                  <Gauge size={14} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate text-xs font-medium">Usage</span>
+                </span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-mono text-xs tabular-nums text-muted-foreground">
+                    {usageTriggerLabel}
+                  </span>
+                  <ChevronDown
+                    size={13}
+                    aria-hidden
+                    className={cn(
+                      "shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+                      usageOpen && "rotate-180",
+                    )}
+                  />
+                </span>
+              </Button>
+              <div
+                className="grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+                style={{
+                  gridTemplateRows: usageOpen ? "1fr" : "0fr",
+                  opacity: usageOpen ? 1 : 0,
+                }}
+              >
+                <div className="min-h-0 overflow-hidden">
+                  <ThreadOverviewUsageMenu providerId={thread.provider} usageInfo={usageInfo} />
+                </div>
+              </div>
+            </div>
 
             {prable && (
               <ThreadOverviewPrRow
