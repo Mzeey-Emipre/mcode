@@ -166,6 +166,8 @@ export async function mockWebSocketServer(
           answeredPlanMessageIds: [],
           narrativeByMessage: {},
         };
+      } else if (method === "thread.recent") {
+        result = [];
       } else if (method === "permission.listPending") {
         result = [];
       } else if (method === "thread.getTasks") {
@@ -187,16 +189,28 @@ export async function mockWebSocketServer(
       else if (method === "push.subscribeThread" || method === "push.unsubscribeThread") result = undefined;
       else if (method === "agent.dismissPlanQuestions") result = undefined;
       else if (method === "plan.list") result = [];
+      else if (method === "skill.list") result = [];
       else if (method === "thread.syncPrs") result = [];
+      else if (method === "workspace.touchLastOpened") result = null;
       else if (method === "workspace.enrich") result = { items: [] };
       else if (method === "app.version") result = "0.0.1-test";
       else if (method === "config.discover") result = {};
+      else if (method === "terminal.listActive") result = [];
+      else if (method === "git.listWorktrees") result = [];
+      else if (method === "git.branchComparison") result = null;
       // Settings round-trip through the page-session store-of-record so a
       // UI-driven change (theme, concurrency) is reflected on the next read.
       else if (method === "settings.get") result = currentSettings;
       else if (method === "settings.update") {
         currentSettings = deepMerge(currentSettings, msg.params) as Settings;
         result = currentSettings;
+      }
+      else if (method === "provider.getUsage") {
+        const providerId =
+          msg.params && typeof msg.params === "object" && "providerId" in msg.params
+            ? String((msg.params as { providerId?: unknown }).providerId)
+            : "claude";
+        result = { providerId, quotaCategories: [] };
       }
       else if (method === "workspace.reorder") result = { ok: true };
       // ADR-0010: TerminalView calls terminal.reattach on every mount to replay

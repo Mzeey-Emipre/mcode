@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   Check,
   ChevronDown,
@@ -12,7 +12,6 @@ import {
   Menu,
   Plus,
   Search,
-  Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,13 +22,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PrSplitButton } from "./PrSplitButton";
+import { ChecksPopover } from "./ChecksPopover";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useOverviewStore } from "@/stores/overviewStore";
-import { executeCommand } from "@/lib/command-registry";
+import { executeCommand, registerCommand } from "@/lib/command-registry";
 import { getContentRowWidth, shouldAutoOpenOverview } from "@/lib/composer-layout";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
 import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
@@ -698,6 +698,17 @@ function getPrRowStatus(
   return { label: "Checking", tone: "muted" };
 }
 
+/**
+ * Derives the PR row subtitle from PR state and branch readiness.
+ */
+export function getPrRowDetail(
+  pr: ThreadOverviewPr,
+  openPrDetail: { title?: string } | null,
+): string | null {
+  if (pr) return openPrDetail?.title?.trim() || null;
+  return null;
+}
+
 interface ThreadOverviewPrRowProps {
   pr: ThreadOverviewPr;
   hasCommitsAhead: boolean | null;
@@ -706,7 +717,148 @@ interface ThreadOverviewPrRowProps {
   threadId: string;
   onCommitOrPush: () => void;
   onCreatePr: () => void;
-  onOpenPr: (url: string, event?: React.MouseEvent) => void;
+  onOpenPr: (url: string, event?: MouseEvent) => void;
+}
+
+function ThreadOverviewPrActionRow({
+  hasCommitsAhead,
+  onCommitOrPush,
+  onCreatePr,
+}: Pick<ThreadOverviewPrRowProps, "hasCommitsAhead" | "onCommitOrPush" | "onCreatePr">) {
+  if (hasCommitsAhead === false) {
+    return (
+      <div data-testid="thread-overview-pr">
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          data-testid="workspace-menu-commit"
+          className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+          onClick={onCommitOrPush}
+          title="Ask the agent to commit and push the changes"
+        >
+          <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+          <span className="font-medium">Commit or push</span>
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="thread-overview-pr">
+      <Button
+        variant="ghost"
+        size="sm"
+        type="button"
+        data-testid="workspace-menu-create-pr"
+        className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        onClick={onCreatePr}
+        disabled={!hasCommitsAhead}
+        title={hasCommitsAhead ? "Create pull request" : "Waiting for commits ahead of base branch"}
+      >
+        <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+        <span className="font-medium">Create PR</span>
+      </Button>
+    </div>
+  );
+}
+
+function ThreadOverviewPrActiveRow({
+  pr,
+  hasCommitsAhead,
+  checks,
+  openPrDetail,
+  threadId,
+  onCreatePr,
+  onOpenPr,
+}: Required<Pick<ThreadOverviewPrRowProps, "pr" | "hasCommitsAhead" | "checks" | "openPrDetail" | "threadId" | "onCreatePr" | "onOpenPr">> & {
+  pr: NonNullable<ThreadOverviewPrRowProps["pr"]>;
+}) {
+  const [checksOpen, setChecksOpen] = useState(false);
+  const status = getPrRowStatus(pr, hasCommitsAhead, checks);
+  const detailText = getPrRowDetail(pr, openPrDetail);
+  const badgeVariant =
+    status.tone === "danger"
+      ? "destructive"
+      : status.tone === "positive"
+        ? "secondary"
+        : status.tone === "muted"
+          ? "outline"
+          : "ghost";
+  const hasChecksData =
+    pr.state.toLowerCase() === "open" &&
+    checks != null &&
+    checks.aggregate !== "no_checks";
+  const canOpenChecks = hasChecksData && threadId.length > 0;
+
+  useEffect(() => {
+    if (!canOpenChecks) return;
+    const dispose = registerCommand({
+      id: "checks.open",
+      title: "Open CI checks for active thread",
+      category: "Git",
+      handler: () => setChecksOpen(true),
+    });
+    return dispose;
+  }, [canOpenChecks]);
+
+  const statusBadge = status.label ? (
+    <Badge
+      variant={badgeVariant}
+      size="sm"
+      data-testid="thread-overview-pr-status"
+      className={cn("max-w-32 truncate", canOpenChecks && "cursor-pointer")}
+    >
+      {status.label}
+    </Badge>
+  ) : null;
+
+  return (
+    <div
+      data-testid="thread-overview-pr"
+      className="flex w-full items-center justify-between gap-2 px-2 py-1.5"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-xs font-medium">Pull request</span>
+            {statusBadge && canOpenChecks ? (
+              <ChecksPopover
+                threadId={threadId}
+                prUrl={pr.url}
+                prTitle={openPrDetail?.title}
+                prAuthor={openPrDetail?.author}
+                checks={checks!}
+                open={checksOpen}
+                onOpenChange={setChecksOpen}
+              >
+                {statusBadge}
+              </ChecksPopover>
+            ) : (
+              statusBadge
+            )}
+          </div>
+          {detailText ? (
+            <span
+              data-testid="thread-overview-pr-detail"
+              className="block truncate text-xs text-muted-foreground"
+            >
+              {detailText}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <PrSplitButton
+        pr={pr}
+        onCreatePr={onCreatePr}
+        onOpenPr={onOpenPr}
+        primaryButtonTestId="workspace-menu-open-pr"
+        newPrButtonTestId="workspace-menu-new-pr"
+      />
+    </div>
+  );
 }
 
 function ThreadOverviewPrRow({
@@ -719,85 +871,26 @@ function ThreadOverviewPrRow({
   onCreatePr,
   onOpenPr,
 }: ThreadOverviewPrRowProps) {
-  const status = getPrRowStatus(pr, hasCommitsAhead, checks);
-  const detailText = pr ? openPrDetail?.title?.trim() || null : "No PR yet";
-  const badgeVariant =
-    status.tone === "danger"
-      ? "destructive"
-      : status.tone === "positive"
-        ? "secondary"
-        : status.tone === "muted"
-          ? "outline"
-          : "ghost";
+  if (!pr) {
+    return (
+      <ThreadOverviewPrActionRow
+        hasCommitsAhead={hasCommitsAhead}
+        onCommitOrPush={onCommitOrPush}
+        onCreatePr={onCreatePr}
+      />
+    );
+  }
 
   return (
-    <div
-      data-testid="thread-overview-pr"
-      className="flex w-full items-center justify-between gap-2 px-2 py-1.5"
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-xs font-medium">Pull request</span>
-            {status.label && (
-              <Badge
-                variant={badgeVariant}
-                size="sm"
-                data-testid="thread-overview-pr-status"
-                className="max-w-32 truncate"
-              >
-                {status.label}
-              </Badge>
-            )}
-          </div>
-          {detailText && (
-            <span
-              data-testid="thread-overview-pr-detail"
-              className="block truncate text-xs text-muted-foreground"
-            >
-              {detailText}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                type="button"
-                onClick={onCommitOrPush}
-                data-testid="workspace-menu-commit"
-                aria-label="Commit or push"
-                className="cursor-pointer text-foreground/70 hover:text-foreground"
-              >
-                <Upload size={13} className="text-muted-foreground" />
-              </Button>
-            }
-          />
-          <TooltipContent side="bottom" className="text-xs">
-            Commit or push
-          </TooltipContent>
-        </Tooltip>
-
-        <PrSplitButton
-          pr={pr}
-          hasCommitsAhead={hasCommitsAhead}
-          onCreatePr={onCreatePr}
-          onOpenPr={onOpenPr}
-          checks={checks}
-          threadId={threadId}
-          prTitle={openPrDetail?.title}
-          prAuthor={openPrDetail?.author}
-          createButtonTestId="workspace-menu-create-pr"
-          primaryButtonTestId="workspace-menu-open-pr"
-        />
-      </div>
-    </div>
+    <ThreadOverviewPrActiveRow
+      pr={pr}
+      hasCommitsAhead={hasCommitsAhead}
+      checks={checks}
+      openPrDetail={openPrDetail}
+      threadId={threadId}
+      onCreatePr={onCreatePr}
+      onOpenPr={onOpenPr}
+    />
   );
 }
 
