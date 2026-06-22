@@ -330,7 +330,11 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-pr")).toHaveTextContent("Create PR");
     expect(screen.queryByTestId("thread-overview-pr-status")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-pr-detail")).not.toBeInTheDocument();
-    expect(screen.getByTestId("thread-overview-usage")).toHaveTextContent("usage unavailable");
+    expect(screen.getByTestId("thread-overview-usage")).toHaveTextContent("Unavailable");
+    fireEvent.click(screen.getByTestId("thread-overview-usage"));
+    expect(screen.getByTestId("thread-overview-usage-popover")).toHaveTextContent(
+      "Usage limits unavailable for this provider.",
+    );
     expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
   });
 
