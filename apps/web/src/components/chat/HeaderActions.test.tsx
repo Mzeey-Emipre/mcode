@@ -232,8 +232,8 @@ describe("HeaderActions - Create PR menu item", () => {
     render(<HeaderActions thread={makeThread()} />);
     expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
     expect(screen.getByText("PR #42")).toBeInTheDocument();
-    expect(screen.getByTestId("thread-overview-pr-status")).toHaveTextContent("Open");
-    expect(screen.getByTestId("thread-overview-pr-detail")).toHaveTextContent("#42");
+    expect(screen.queryByTestId("thread-overview-pr-status")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("thread-overview-pr-detail")).not.toBeInTheDocument();
   });
 
   it("explains why Create PR is disabled when no commits", () => {

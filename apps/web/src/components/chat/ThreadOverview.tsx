@@ -679,14 +679,14 @@ function getPrRowStatus(
   pr: ThreadOverviewPr,
   hasCommitsAhead: boolean | null,
   checks: ChecksStatus | null,
-): { label: string; tone: PrRowTone } {
+): { label: string | null; tone: PrRowTone } {
   if (pr) {
     const state = pr.state.toLowerCase();
     if (state === "open") {
       if (checks?.aggregate === "failing") return { label: "Checks failing", tone: "danger" };
       if (checks?.aggregate === "passing") return { label: "Checks passing", tone: "positive" };
       if (checks?.aggregate === "pending") return { label: "Checks running", tone: "neutral" };
-      return { label: "Open", tone: "positive" };
+      return { label: null, tone: "positive" };
     }
     if (state === "merged") return { label: "Merged", tone: "positive" };
     if (state === "closed") return { label: "Closed", tone: "danger" };
@@ -720,6 +720,7 @@ function ThreadOverviewPrRow({
   onOpenPr,
 }: ThreadOverviewPrRowProps) {
   const status = getPrRowStatus(pr, hasCommitsAhead, checks);
+  const detailText = pr ? openPrDetail?.title?.trim() || null : "No PR yet";
   const badgeVariant =
     status.tone === "danger"
       ? "destructive"
@@ -739,21 +740,25 @@ function ThreadOverviewPrRow({
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="truncate text-xs font-medium">Pull request</span>
-            <Badge
-              variant={badgeVariant}
-              size="sm"
-              data-testid="thread-overview-pr-status"
-              className="max-w-32 truncate"
-            >
-              {status.label}
-            </Badge>
+            {status.label && (
+              <Badge
+                variant={badgeVariant}
+                size="sm"
+                data-testid="thread-overview-pr-status"
+                className="max-w-32 truncate"
+              >
+                {status.label}
+              </Badge>
+            )}
           </div>
-          <span
-            data-testid="thread-overview-pr-detail"
-            className="block truncate text-xs text-muted-foreground"
-          >
-            {pr ? `#${pr.number}` : "No PR yet"}
-          </span>
+          {detailText && (
+            <span
+              data-testid="thread-overview-pr-detail"
+              className="block truncate text-xs text-muted-foreground"
+            >
+              {detailText}
+            </span>
+          )}
         </div>
       </div>
 
