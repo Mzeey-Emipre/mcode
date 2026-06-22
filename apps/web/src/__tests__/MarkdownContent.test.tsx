@@ -86,6 +86,13 @@ describe("MarkdownContent link handling", () => {
     expect(screen.getByTestId("markdown-link-favicon-frame").className).not.toContain("ring-1");
   });
 
+  it("renders local file links with the file icon component, not a site favicon", () => {
+    render(<MarkdownContent content="[local-unseeded-app.png](/tmp/screens/local-unseeded-app.png)" />);
+
+    expect(screen.getByTestId("markdown-link-file-icon")).toBeInTheDocument();
+    expect(screen.queryByTestId("markdown-link-favicon-frame")).not.toBeInTheDocument();
+  });
+
   it("shows a bare GitHub repo URL as owner/repo but opens the full URL", () => {
     render(<MarkdownContent content="https://github.com/milex-consulting/CaravanFE" />);
     const link = screen.getByText("milex-consulting/CaravanFE");
@@ -216,6 +223,8 @@ describe("MarkdownContent workspace preview navigation", () => {
     const { container } = render(<MarkdownContent content="[doc](mcode-workspace:///sub/page.html)" />);
     const link = container.querySelector("a");
     expect(link).toBeTruthy();
+    expect(screen.getByTestId("markdown-link-file-icon")).toBeInTheDocument();
+    expect(screen.queryByTestId("markdown-link-favicon-frame")).not.toBeInTheDocument();
     await act(async () => {
       fireEvent.click(link!, { ctrlKey: true });
       await vi.runAllTimersAsync();

@@ -1,314 +1,137 @@
-import { useState, useEffect } from "react";
-import { Github, ChevronDown, GitPullRequest } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, GitPullRequest } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { ChecksPopover } from "./ChecksPopover";
-import {
-  getBreakdown,
-  getInlineHeadline,
-  getLeadFailingName,
-  getCiVisual,
-  CI_ICON_STROKE,
-} from "@/lib/ci-status";
-import { registerCommand } from "@/lib/command-registry";
-import type { ChecksStatus } from "@mcode/contracts";
-import { isModifierClick } from "@/lib/open-url-in-preview";
 
 /** Props for {@link PrSplitButton}. */
 interface PrSplitButtonProps {
-  /** Null when no PR exists for this branch. */
-  pr: { number: number; url: string; state: "OPEN" | "MERGED" | "CLOSED" | string } | null;
-  /** Null while the initial commits-ahead poll is in flight. */
-  hasCommitsAhead: boolean | null;
+  /** Active pull request for this branch. */
+  pr: { number: number; url: string; state: "OPEN" | "MERGED" | "CLOSED" | string };
+  /** Primary row label, usually the PR title or PR number. */
+  label: string;
   /** Called when the user wants to open CreatePrDialog. */
   onCreatePr: () => void;
   /** Called with the PR URL when the user wants to open it in the browser or preview. */
   onOpenPr: (url: string, event?: React.MouseEvent) => void;
-  /** CI check status for this thread, if available. */
-  checks?: ChecksStatus | null;
-  /** Thread ID for manual refresh via ChecksPopover. */
-  threadId?: string;
-  /** PR title shown in ChecksPopover header. */
-  prTitle?: string;
-  /** PR author shown in ChecksPopover header. */
-  prAuthor?: string;
+  /** Optional trailing content rendered before the menu chevron (for example a CI badge). */
+  trailing?: React.ReactNode;
+  /** Optional test id for the PR row trigger. */
+  primaryButtonTestId?: string;
+  /** Optional test id for the open action inside the popover. */
+  openActionTestId?: string;
+  /** Optional test id for the follow-up create action in the menu. */
+  newPrButtonTestId?: string;
 }
 
-/** Compact segmented progress pills showing pass / fail / running / pending slots. */
-function ProgressPills({ checks }: { checks: ChecksStatus }) {
-  const b = getBreakdown(checks);
-  if (b.total === 0) return null;
+function prStateTitle(pr: PrSplitButtonProps["pr"]): string {
+  const state = pr.state.toLowerCase();
+  if (state === "merged") return `View merged PR #${pr.number}`;
+  if (state === "closed") return `View closed PR #${pr.number}`;
+  return `View PR #${pr.number}`;
+}
 
-  // Cap rendered pills at 5 so the chat header stays compact even when a PR has 20+ jobs.
-  // A +N badge indicates the overflow.
-  const MAX_PILLS = 5;
-  const capped = b.total > MAX_PILLS;
-  const renderTotal = capped ? MAX_PILLS : b.total;
-
-  // Build the visible pill list: failing first, then running, then passing, then other.
-  type Slot = "fail" | "run" | "pass" | "other";
-  const slots: Slot[] = [];
-  for (let i = 0; i < b.failing; i++) slots.push("fail");
-  for (let i = 0; i < b.running; i++) slots.push("run");
-  for (let i = 0; i < b.passing; i++) slots.push("pass");
-  for (let i = 0; i < b.other; i++) slots.push("other");
-  const visible = slots.slice(0, renderTotal);
-
-  return (
-    <span className="inline-flex items-center gap-[3px]">
-      {visible.map((slot, i) => (
-        <span
-          key={i}
-          className={cn(
-            "h-[5px] w-[5px] rounded-full transition-colors",
-            slot === "fail" && "bg-[var(--diff-remove-strong)]",
-            slot === "run" && "bg-primary status-pulse",
-            slot === "pass" && "bg-[var(--diff-add-strong)]",
-            slot === "other" && "bg-muted-foreground/40",
-          )}
-        />
-      ))}
-      {capped && (
-        <span className="text-[10px] text-muted-foreground tabular-nums ml-0.5">
-          +{b.total - MAX_PILLS}
-        </span>
-      )}
-    </span>
-  );
+function openPrLabel(pr: PrSplitButtonProps["pr"]): string {
+  const state = pr.state.toLowerCase();
+  if (state === "merged") return `Open merged PR #${pr.number}`;
+  if (state === "closed") return `Open closed PR #${pr.number}`;
+  return `Open PR #${pr.number}`;
 }
 
 /**
- * Split button for PR actions in the chat header.
+ * Overview row for an active pull request.
  *
- * Three layouts depending on PR state:
- * - No PR → "Create PR" button (disabled until commits land)
- * - Open PR with checks → primary button wraps ChecksPopover, shows inline progress pills
- *   + headline (e.g. "2/5" running, "1 failing", "5 passing"), themed by CI aggregate
- * - Merged / closed PR → coloured primary + chevron with secondary actions
+ * Uses the same full-row Popover trigger as Local and Branch so the actions panel
+ * opens to the left of the Overview column instead of under the chevron.
  */
-export function PrSplitButton({ pr, hasCommitsAhead, onCreatePr, onOpenPr, checks, threadId, prTitle, prAuthor }: PrSplitButtonProps) {
-  const [checksOpen, setChecksOpen] = useState(false);
-  // Chevron dropdown open state: kept so the chevron glyph can rotate in sync with
-  // the base-ui primitive's open state. The primitive itself owns focus trap,
-  // Escape, outside-click, and keyboard nav — we no longer roll those manually.
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-
-  // Register a global command to open the checks popover for the active thread.
-  // Only the PrSplitButton currently mounted for the active thread has real checks
-  // data, so a single registration here naturally targets the right PR.
-  const canOpenChecks =
-    pr != null &&
-    pr.state.toLowerCase() === "open" &&
-    checks != null &&
-    checks.aggregate !== "no_checks" &&
-    threadId != null;
-  useEffect(() => {
-    if (!canOpenChecks) return;
-    const dispose = registerCommand({
-      id: "checks.open",
-      title: "Open CI checks for active thread",
-      category: "Git",
-      handler: () => setChecksOpen(true),
-    });
-    return dispose;
-  }, [canOpenChecks]);
-
-  // No PR — show Create PR button
-  if (!pr) {
-    return (
-      <Button
-        variant="ghost"
-        size="xs"
-        className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6"
-        onClick={onCreatePr}
-        disabled={!hasCommitsAhead}
-        title={hasCommitsAhead === false ? "No commits ahead of base branch" : undefined}
-      >
-        <GitPullRequest size={12} />
-        <span>Create PR</span>
-      </Button>
-    );
-  }
-
-  const state = pr.state.toLowerCase();
-  const isOpen = state === "open";
-  const hasChecksData = checks != null && checks.aggregate !== "no_checks" && isOpen;
-  const aggregate = hasChecksData ? checks!.aggregate : null;
-  const inlineHeadline = hasChecksData ? getInlineHeadline(checks!) : null;
-  const leadFailing = aggregate === "failing" ? getLeadFailingName(checks!) : null;
-
-  // Single chrome derivation: CI visual when we have data, otherwise state-based accent.
-  // `chromeClass` + `hoverSurface` both come from `getCiVisual` so base and hover
-  // washes stay tuned to each other — no more drift if one opacity is adjusted.
-  const ciVisual = hasChecksData ? getCiVisual(aggregate!) : null;
-
-  const mergedClosedAccent = state === "merged"
-    ? "text-primary/70 hover:text-primary bg-muted/10 hover:bg-muted/20"
-    : state === "closed"
-      ? "text-destructive/70 hover:text-destructive bg-muted/10 hover:bg-muted/20"
-      : null;
-
-  const openNoCiAccent = isOpen && !hasChecksData
-    ? "text-[var(--diff-add-strong)]/85 hover:text-[var(--diff-add-strong)] bg-muted/10 hover:bg-muted/20"
-    : null;
-
-  const chromeClass = ciVisual
-    ? `${ciVisual.chromeClass} ${ciVisual.hoverSurface}`
-    : mergedClosedAccent ?? openNoCiAccent ?? "bg-muted/10 hover:bg-muted/20";
-
-  // Keep state-terminal suffix in the label text ("merged"/"closed") so the button reads
-  // correctly even when colour alone is ambiguous. Open PRs drop the suffix — the CI rail
-  // carries the live state signal there.
-  const label = state === "merged"
-    ? `PR #${pr.number} merged`
-    : state === "closed"
-      ? `PR #${pr.number} closed`
-      : `PR #${pr.number}`;
-
-  const showChevron = state === "merged" || state === "closed";
-  const usePopover = hasChecksData && threadId != null;
-
-  // Tiny status-icon shown as part of the CI rail when CI is active — sourced from the
-  // shared CI visual so chip/button/popover use identical glyphs.
-  const LeadIcon = ciVisual?.icon ?? null;
-
-  const titleAttr = aggregate === "failing" && leadFailing
-    ? `${leadFailing} failing`
-    : aggregate === "pending"
-      ? "Checks running"
-      : aggregate === "passing"
-        ? "All checks passing"
-        : state === "merged"
-          ? "Pull request merged"
-          : state === "closed"
-            ? "Pull request closed"
-            : "Pull request open";
-
-  const handlePrimaryClick = (event: React.MouseEvent) => {
-    if (isModifierClick(event)) {
-      event.preventDefault();
-      event.stopPropagation();
-      onOpenPr(pr.url, event);
-      return;
-    }
-    if (!usePopover) {
-      onOpenPr(pr.url, event);
-    }
-  };
-
-  const primaryButton = (
-    <button
-      type="button"
-      className={cn(
-        "relative inline-flex items-center gap-1.5 px-2 h-6 rounded-l text-xs transition-colors border border-transparent",
-        "font-medium tabular-nums",
-        chromeClass,
-        aggregate === "pending" && "border-primary/25",
-        !showChevron && "rounded-r",
-      )}
-      title={titleAttr}
-      onClick={handlePrimaryClick}
-    >
-      <Github size={12} className="opacity-70 shrink-0" />
-      <span className="text-foreground/85">{label}</span>
-
-      {/* CI rail: divider · icon · pills · headline. Only when open + has data. */}
-      {hasChecksData && (
-        <span className="inline-flex items-center gap-1.5 pl-1.5 ml-0.5 border-l border-current/15">
-          {LeadIcon && (
-            <LeadIcon
-              size={11}
-              className={cn(
-                "shrink-0",
-                aggregate === "pending" && "status-spin",
-              )}
-              strokeWidth={CI_ICON_STROKE}
-            />
-          )}
-          <ProgressPills checks={checks!} />
-          {inlineHeadline && (
-            <span className="text-[11px] opacity-85 whitespace-nowrap">
-              {inlineHeadline}
-            </span>
-          )}
-        </span>
-      )}
-
-      {/* Indeterminate bottom-edge progress strip when running.
-       * Wrapped in motion-reduce:hidden so reduced-motion users don't see a stationary
-       * partial bar (which would look like a broken progress indicator).
-       * The Loader icon already conveys pending state without motion. */}
-      {aggregate === "pending" && (
-        <span
-          aria-hidden
-          className="absolute inset-x-1 bottom-0 h-[1.5px] overflow-hidden rounded-full motion-reduce:hidden"
-        >
-          <span className="block h-full w-1/3 bg-primary/80 animate-ci-slide" />
-        </span>
-      )}
-    </button>
-  );
+export function PrSplitButton({
+  pr,
+  label,
+  onCreatePr,
+  onOpenPr,
+  trailing,
+  primaryButtonTestId,
+  openActionTestId = "workspace-menu-open-pr-action",
+  newPrButtonTestId,
+}: PrSplitButtonProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <div className="relative inline-flex">
-      <div className="inline-flex rounded">
-        {usePopover ? (
-          <ChecksPopover
-            threadId={threadId!}
-            prUrl={pr.url}
-            prTitle={prTitle}
-            prAuthor={prAuthor}
-            checks={checks!}
-            open={checksOpen}
-            onOpenChange={setChecksOpen}
-          >
-            {primaryButton}
-          </ChecksPopover>
-        ) : (
-          primaryButton
-        )}
-
-        {showChevron && (
-          <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
-            <DropdownMenuTrigger
-              aria-label="Open PR menu"
+    <div data-testid="workspace-menu-open-pr-split">
+      <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+        <PopoverTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              data-testid={primaryButtonTestId}
+              aria-label={`Pull request, ${label}`}
               className={cn(
-                "inline-flex items-center px-1.5 h-6 text-xs border-l border-border/20 rounded-r transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                mergedClosedAccent ?? "bg-muted/10 hover:bg-muted/20",
+                "h-8 w-full justify-between gap-3 px-2 text-left",
+                menuOpen && "bg-muted text-foreground",
               )}
             >
-              <ChevronDown
-                size={11}
-                className={cn("transition-transform duration-150", dropdownOpen && "rotate-180")}
-              />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" sideOffset={4} className="min-w-[170px] text-xs">
-              <DropdownMenuItem
-                onClick={(e) => onOpenPr(pr.url, e)}
-                className="text-foreground/75 gap-2"
-              >
-                <Github size={11} className="opacity-75" />
-                View on GitHub
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => onCreatePr()}
-                className="text-foreground/75 gap-2"
-              >
-                <GitPullRequest size={11} className="opacity-75" />
-                Create new PR
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
+              <span className="flex min-w-0 items-center gap-2">
+                <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+                <span className="truncate text-xs font-medium">{label}</span>
+              </span>
+              <span className="flex shrink-0 items-center gap-1">
+                {trailing ? (
+                  <span
+                    className="flex items-center"
+                    onClick={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    {trailing}
+                  </span>
+                ) : null}
+                <ChevronDown
+                  size={13}
+                  aria-hidden
+                  className={cn(
+                    "shrink-0 text-muted-foreground transition-transform duration-150",
+                    menuOpen && "rotate-180",
+                  )}
+                />
+              </span>
+            </Button>
+          }
+        />
+        <PopoverContent align="start" side="left" sideOffset={12} className="w-72 p-0">
+          <div data-testid="thread-overview-pr-popover" className="animate-popover-enter space-y-0.5 p-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              data-testid={openActionTestId}
+              title={prStateTitle(pr)}
+              className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+              onClick={(event) => {
+                setMenuOpen(false);
+                onOpenPr(pr.url, event);
+              }}
+            >
+              <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+              <span className="font-medium">{openPrLabel(pr)}</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              data-testid={newPrButtonTestId}
+              className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+              onClick={() => {
+                setMenuOpen(false);
+                onCreatePr();
+              }}
+            >
+              <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+              <span className="font-medium">Create new PR</span>
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

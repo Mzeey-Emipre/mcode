@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode, ReactElement } from "react";
 import type { Thread } from "@/transport/types";
@@ -8,10 +8,12 @@ import type { TurnSnapshot } from "@mcode/contracts";
 const {
   mockUseBranchPr,
   mockUseHasCommitsAhead,
+  mockSetPendingPrefill,
   mockWorkspaceSelector,
 } = vi.hoisted(() => ({
   mockUseBranchPr: vi.fn().mockReturnValue(null),
   mockUseHasCommitsAhead: vi.fn().mockReturnValue(null),
+  mockSetPendingPrefill: vi.fn(),
   mockWorkspaceSelector: vi.fn(),
 }));
 
@@ -22,6 +24,12 @@ vi.mock("@/stores/workspaceStore", () => {
   );
   return { useWorkspaceStore: store };
 });
+
+vi.mock("@/stores/composerDraftStore", () => ({
+  useComposerDraftStore: vi.fn((selector: (s: unknown) => unknown) =>
+    selector({ setPendingPrefill: mockSetPendingPrefill }),
+  ),
+}));
 
 vi.mock("@/stores/terminalStore", () => ({
   useTerminalStore: vi.fn((selector: (s: unknown) => unknown) =>
@@ -96,6 +104,7 @@ vi.mock("@/hooks/useHasCommitsAhead", () => ({
 }));
 
 import { HeaderActions } from "./HeaderActions";
+import { COMMIT_PREFILL } from "@/hooks/useThreadGitActions";
 import {
   getRepositoryFaviconUrl,
   getSafeRepositoryWebUrl,
@@ -192,10 +201,12 @@ describe("HeaderActions - Create PR menu item", () => {
     expect(item).not.toBeDisabled();
   });
 
-  it("disables Create PR when no commits ahead of base", () => {
+  it("shows Commit or push instead of Create PR when no commits ahead of base", () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
     render(<HeaderActions thread={makeThread()} />);
-    expect(screen.getByTestId("workspace-menu-create-pr")).toBeDisabled();
+    expect(screen.getByTestId("workspace-menu-commit")).toBeInTheDocument();
+    expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("thread-overview-pr-status")).not.toBeInTheDocument();
   });
 
   it("disables Create PR while loading (null)", () => {
@@ -218,26 +229,29 @@ describe("HeaderActions - Create PR menu item", () => {
     expect(screen.getByTestId("workspace-menu-create-pr")).toBeInTheDocument();
   });
 
-  it("hides Create PR and shows the PR badge when a PR already exists", () => {
+  it("hides Create PR and shows View PR when a PR already exists", () => {
     mockUseBranchPr.mockReturnValue({ number: 42, state: "OPEN", url: "https://github.com/test/pr/42" });
     render(<HeaderActions thread={makeThread()} />);
     expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
-    expect(screen.getByText("PR #42")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-menu-open-pr")).toHaveTextContent("PR #42");
   });
 
-  it("explains why Create PR is disabled when no commits", () => {
+  it("explains commit-or-push when no commits are ahead", () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
     render(<HeaderActions thread={makeThread()} />);
-    expect(screen.getByTestId("workspace-menu-create-pr")).toHaveAttribute(
+    expect(screen.getByTestId("workspace-menu-commit")).toHaveAttribute(
       "title",
-      expect.stringContaining("No commits"),
+      expect.stringContaining("commit and push"),
     );
   });
 
-  it("has no disabled-reason title when loading (null)", () => {
+  it("shows a loading title while commits-ahead state is unknown", () => {
     mockUseHasCommitsAhead.mockReturnValue(null);
     render(<HeaderActions thread={makeThread()} />);
-    expect(screen.getByTestId("workspace-menu-create-pr")).not.toHaveAttribute("title");
+    expect(screen.getByTestId("workspace-menu-create-pr")).toHaveAttribute(
+      "title",
+      expect.stringContaining("Waiting for commits"),
+    );
   });
 });
 
@@ -312,7 +326,17 @@ describe("HeaderActions - consolidated header", () => {
     );
     expect(screen.getByTestId("thread-overview-local-branch")).toHaveTextContent("feat/my-feature");
     expect(screen.getByTestId("workspace-menu-branch")).toHaveTextContent("feat/my-feature");
+    expect(screen.getByTestId("thread-overview-pr")).toHaveTextContent("Create PR");
+    expect(screen.queryByTestId("thread-overview-pr-status")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("thread-overview-pr-detail")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
+  });
+
+  it("prefills commit-or-push from the PR row when the branch is not ahead", () => {
+    mockUseHasCommitsAhead.mockReturnValue(false);
+    render(<HeaderActions thread={makeThread()} />);
+    fireEvent.click(screen.getByTestId("workspace-menu-commit"));
+    expect(mockSetPendingPrefill).toHaveBeenCalledWith(COMMIT_PREFILL);
   });
 
   it("renders a single dedicated right-panel toggle", () => {
