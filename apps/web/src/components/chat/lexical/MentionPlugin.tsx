@@ -7,7 +7,7 @@ import {
   TextNode,
   type LexicalEditor,
 } from "lexical";
-import { $createMentionNode } from "./MentionNode";
+import { $createTypedMentionNode, type MentionNodeData } from "./MentionNode";
 
 /** Props for the MentionPlugin that detects @-triggers in the editor. */
 interface MentionPluginProps {
@@ -92,7 +92,7 @@ export function MentionPlugin({
  */
 export function insertMentionNode(
   editor: LexicalEditor,
-  filePath: string,
+  mention: MentionNodeData,
   triggerStart: number,
   queryLength: number,
 ): void {
@@ -110,7 +110,7 @@ export function insertMentionNode(
     const beforeAt = textContent.slice(0, triggerStart);
     const afterQuery = textContent.slice(triggerStart + 1 + queryLength);
 
-    const mentionNode = $createMentionNode(filePath);
+    const mentionNode = $createTypedMentionNode(mention);
     const trailingText = afterQuery.length > 0 ? afterQuery : " ";
     const afterNode = $createTextNode(trailingText);
 

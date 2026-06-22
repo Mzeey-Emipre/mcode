@@ -794,6 +794,13 @@ Each shares a name with a dev-tooling concept used by contributors who
 develop Mcode itself (documented in `AGENTS.md`); the entries here refer
 to the runtime, user-facing version only.
 
+### @ mention
+A composer reference inserted from the `@` mention picker. Mentions are typed
+and rendered as highlighted references in the composer and user transcript: a
+file mention references a workspace file, while a sub-agent mention requests a
+provider agent for part of the turn.
+_Avoid_: treating every `@...` string as a file path.
+
 ### Skill
 A reusable agent capability the end user can attach to their threads
 inside the Mcode app — domain knowledge or a multi-step workflow the
@@ -818,10 +825,9 @@ lives in the composer's Lexical plugin (`SlashCommandPlugin`,
 slash commands under `.claude/commands/` etc. (which are for
 contributors).
 
-`/` is the **only** composer gesture, for every provider. Providers with
-their own native invocation syntax (Codex's `$` mentions) get a
-translation at the provider boundary; the user never types the native
-syntax in Mcode.
+Slash commands use `/` as their composer gesture. Providers with their own
+native invocation syntax (Codex's `$` mentions) get a translation at the
+provider boundary; the user never types the native syntax in Mcode.
 
 Slash commands sit in one of three availability layers:
 

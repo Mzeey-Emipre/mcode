@@ -223,6 +223,22 @@ export function applySchemaPatches(db: Database.Database): void {
   if (toolCols.length > 0 && !toolCols.includes("output_artifact_path")) {
     addToolCallColumn("output_artifact_path TEXT");
   }
+
+  const messageCols = (
+    db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>
+  ).map((r) => r.name);
+  if (messageCols.length > 0 && !messageCols.includes("mentions")) {
+    try {
+      db.prepare("ALTER TABLE messages ADD COLUMN mentions TEXT").run();
+    } catch (err) {
+      if (
+        !(err instanceof Error) ||
+        !err.message.includes("duplicate column name")
+      ) {
+        throw err;
+      }
+    }
+  }
 }
 
 function runMigrations(db: Database.Database): void {

@@ -176,6 +176,8 @@ export async function mockWebSocketServer(
         result = [];
       } else if (method === "providers.listAvailability") {
         result = [];
+      } else if (method === "provider.codexAgents") {
+        result = [];
       } else if (method === "narrative.list") {
         // Assistant messages mount <PersistedNarrative>, which calls this RPC and
         // spreads the result into buildPersistedNarrativeItems. The generic

@@ -8,6 +8,7 @@ import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type {
   Message,
+  MessageMention,
   MessageRole,
   StoredAttachment,
 } from "@mcode/contracts";
@@ -24,6 +25,7 @@ interface MessageRow {
   timestamp: string;
   sequence: number;
   attachments: string | null;
+  mentions: string | null;
   reply_to_message_id: string | null;
   quoted_text: string | null;
   model: string | null;
@@ -87,6 +89,7 @@ function rowToMessage(row: MessageRow): Message {
     attachments: parseJsonField(row.attachments) as
       | StoredAttachment[]
       | null,
+    mentions: parseJsonField(row.mentions) as MessageMention[] | null,
     reply_to_message_id: row.reply_to_message_id,
     quoted_text: row.quoted_text,
     model: row.model,
@@ -101,10 +104,10 @@ function rowToMessage(row: MessageRow): Message {
 }
 
 const MESSAGE_COLUMNS =
-  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, reply_to_message_id, quoted_text, model, is_internal";
+  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, mentions, reply_to_message_id, quoted_text, model, is_internal";
 
 const MESSAGE_COLUMNS_PREFIXED =
-  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal";
+  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal";
 
 /**
  * Pre-aggregates tool call counts for the selected page only.
@@ -180,6 +183,7 @@ export class MessageRepo {
     quotedText?: string,
     model?: string | null,
     isInternal?: boolean,
+    mentions?: MessageMention[],
   ): Message {
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -187,16 +191,20 @@ export class MessageRepo {
       attachments && attachments.length > 0
         ? JSON.stringify(attachments)
         : null;
+    const mentionsJson =
+      mentions && mentions.length > 0
+        ? JSON.stringify(mentions)
+        : null;
     const modelValue = model ?? null;
     const isInternalValue = isInternal ? 1 : 0;
 
     this.db
       .prepare(
-        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, reply_to_message_id, quoted_text, model, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, mentions, reply_to_message_id, quoted_text, model, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id, threadId, role, content, now, sequence,
-        attachmentsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, isInternalValue,
+        attachmentsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, isInternalValue,
       );
 
     return {
@@ -211,6 +219,7 @@ export class MessageRepo {
       timestamp: now,
       sequence,
       attachments: attachments ?? null,
+      mentions: mentions ?? null,
       reply_to_message_id: replyToMessageId ?? null,
       quoted_text: quotedText ?? null,
       model: modelValue,
@@ -241,6 +250,7 @@ export class MessageRepo {
     sequence: number;
     model?: string | null;
     attachments?: StoredAttachment[];
+    mentions?: MessageMention[];
   }): Message {
     const now = new Date().toISOString();
     const modelValue = input.model ?? null;
@@ -248,12 +258,16 @@ export class MessageRepo {
       input.attachments && input.attachments.length > 0
         ? JSON.stringify(input.attachments)
         : null;
+    const mentionsJson =
+      input.mentions && input.mentions.length > 0
+        ? JSON.stringify(input.mentions)
+        : null;
 
     const result = this.db
       .prepare(
-        "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, model, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, 0)",
+        "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, mentions, model, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?, 0)",
       )
-      .run(input.id, input.threadId, input.content, now, input.sequence, attachmentsJson, modelValue);
+      .run(input.id, input.threadId, input.content, now, input.sequence, attachmentsJson, mentionsJson, modelValue);
 
     const attachments =
       result.changes === 0 && input.attachments && input.attachments.length > 0
@@ -272,6 +286,7 @@ export class MessageRepo {
       timestamp: now,
       sequence: input.sequence,
       attachments,
+      mentions: input.mentions ?? null,
       reply_to_message_id: null,
       quoted_text: null,
       model: modelValue,
@@ -396,6 +411,7 @@ ORDER BY m.sequence ASC`,
   (
     length(CAST(COALESCE(m.files_changed, '') AS BLOB)) +
     length(CAST(COALESCE(m.attachments, '') AS BLOB)) +
+    length(CAST(COALESCE(m.mentions, '') AS BLOB)) +
     length(CAST(COALESCE(m.quoted_text, '') AS BLOB))
   ) AS metadata_bytes
 FROM messages m
@@ -514,7 +530,7 @@ LIMIT ?`,
       `SELECT
   m.id, m.thread_id, m.role, m.content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
-  m.attachments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  m.attachments, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
   ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,
@@ -523,7 +539,7 @@ WHERE m.id = ?`,
       `SELECT
   m.id, m.thread_id, m.role, substr(m.content, 1, ?) AS content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
-  m.attachments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  m.attachments, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
   ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,

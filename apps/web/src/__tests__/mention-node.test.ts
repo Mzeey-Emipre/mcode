@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { createEditor } from "lexical";
+import { $createParagraphNode, $createTextNode, $getRoot, createEditor } from "lexical";
 import {
   MentionNode,
   $createMentionNode,
   $isMentionNode,
 } from "@/components/chat/lexical/MentionNode";
+import { extractComposerMessage } from "@/components/chat/lexical/cursor-utils";
 
 function createTestEditor() {
   return createEditor({
@@ -81,5 +82,31 @@ describe("MentionNode", () => {
   it("$isMentionNode returns false for non-MentionNode", () => {
     expect($isMentionNode(null)).toBe(false);
     expect($isMentionNode(undefined)).toBe(false);
+  });
+
+  it("extracts selected mentions with JavaScript string offsets", () => {
+    const editor = createTestEditor();
+    editor.update(
+      () => {
+        const root = $getRoot();
+        const paragraph = $createParagraphNode();
+        paragraph.append($createTextNode("😀 see "));
+        paragraph.append($createMentionNode("src/app.ts"));
+        paragraph.append($createTextNode(" and @plain"));
+        root.append(paragraph);
+      },
+      { discrete: true },
+    );
+
+    expect(extractComposerMessage(editor)).toEqual({
+      text: "😀 see @src/app.ts and @plain",
+      mentions: [{
+        id: expect.any(String),
+        kind: "file",
+        label: "src/app.ts",
+        path: "src/app.ts",
+        range: { start: 7, end: 18 },
+      }],
+    });
   });
 });

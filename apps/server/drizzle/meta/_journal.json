@@ -106,6 +106,13 @@
       "when": 1781371200000,
       "tag": "0013_thread_perf_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1782172800000,
+      "tag": "0014_message_mentions",
+      "breakpoints": true
     }
   ]
 }

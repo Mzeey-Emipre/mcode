@@ -47,6 +47,13 @@ export { MessageSchema, PaginatedMessagesSchema } from "./models/message.js";
 export type { Message, PaginatedMessages } from "./models/message.js";
 
 export {
+  MessageMentionSchema,
+  MessageMentionsSchema,
+  MAX_MESSAGE_MENTIONS,
+} from "./models/mention.js";
+export type { MessageMention } from "./models/mention.js";
+
+export {
   GoalControlsSchema,
   GoalStateSchema,
   GoalStatusSchema,

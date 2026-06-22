@@ -19,6 +19,7 @@ import type {
   GitCommit,
   ProviderModelInfo,
   CopilotSubagent,
+  CodexAgentMentionInfo,
   GitRemoteUrl,
 } from "./types";
 import type { CreateAndSendResult } from "@mcode/contracts";
@@ -558,6 +559,7 @@ export function createWsTransport(
       replyToMessageId?,
       quotedText?,
       planAction?,
+      mentions?,
     ) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
@@ -580,6 +582,7 @@ export function createWsTransport(
         ...(quotedText && { quotedText }),
         ...(displayContent !== undefined && { displayContent }),
         ...(planAction !== undefined && { planAction }),
+        ...(mentions !== undefined && { mentions }),
         ...guardrails,
       });
     },
@@ -602,6 +605,7 @@ export function createWsTransport(
       thinking?,
       codexFastMode?,
       displayContent?,
+      mentions?,
     ) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
@@ -626,6 +630,7 @@ export function createWsTransport(
         thinking,
         ...(codexFastMode !== undefined && { codexFastMode }),
         ...(displayContent !== undefined && { displayContent }),
+        ...(mentions !== undefined && { mentions }),
         ...guardrails,
       });
     },
@@ -803,6 +808,8 @@ export function createWsTransport(
     /** Fetches all available Copilot sub-agents for the given workspace (built-in + user + project). */
     listCopilotAgents: (workspaceId) =>
       rpc<CopilotSubagent[]>("provider.copilotAgents", { workspaceId }),
+    listCodexAgents: (workspaceId, threadId?) =>
+      rpc<CodexAgentMentionInfo[]>("provider.codexAgents", { workspaceId, threadId }),
     listProviderAvailability: () =>
       rpc<ProviderAvailability[]>("providers.listAvailability", {}),
 

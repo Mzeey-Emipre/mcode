@@ -1,6 +1,7 @@
 import type { AgentEvent } from "../events/agent-event.js";
 import type { InteractionMode } from "../models/enums.js";
 import type { AttachmentMeta } from "../models/attachment.js";
+import type { MessageMention } from "../models/mention.js";
 import type { GoalState } from "../models/goal.js";
 import type { PermissionDecision, PermissionRequest } from "../models/permission.js";
 import type { ContextWindowMode, ReasoningLevel } from "../models/settings.js";
@@ -49,6 +50,8 @@ export interface TurnRequest<P extends ProviderId = ProviderId> {
   threadId: string;
   /** User input text (already wire-wrapped by the orchestrator when needed). */
   message: string;
+  /** Selected composer mentions with JS string-offset ranges in `message`. */
+  mentions?: MessageMention[];
   attachments?: AttachmentMeta[];
   /** Working directory: the thread's effective worktree or workspace path. */
   cwd: string;

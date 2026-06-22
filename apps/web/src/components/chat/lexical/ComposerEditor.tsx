@@ -7,15 +7,16 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { type EditorState, type LexicalEditor } from "lexical";
+import type { MessageMention } from "@mcode/contracts";
 import { MentionNode } from "./MentionNode";
 import { SlashCommandNode } from "./SlashCommandNode";
 import { MentionPlugin } from "./MentionPlugin";
 import { SlashCommandPlugin } from "./SlashCommandPlugin";
 import { KeyboardPlugin } from "./KeyboardPlugin";
-import { getPlainTextFromEditor } from "./cursor-utils";
+import { extractComposerMessage } from "./cursor-utils";
 
 interface ComposerEditorProps {
-  onChange: (text: string) => void;
+  onChange: (text: string, mentions: MessageMention[]) => void;
   onSubmit: () => void;
   /** Called when @ trigger is detected - drives file autocomplete popup */
   onMentionTrigger: (text: string, cursorPos: number) => void;
@@ -95,8 +96,8 @@ export function ComposerEditor({
 
   const handleChange = useCallback(
     (_editorState: EditorState, editor: LexicalEditor) => {
-      const text = getPlainTextFromEditor(editor);
-      onChange(text);
+      const message = extractComposerMessage(editor);
+      onChange(message.text, message.mentions);
     },
     [onChange],
   );

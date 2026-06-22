@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
-import type { ContextWindowMode, ReasoningLevel } from "@mcode/contracts";
+import type { ContextWindowMode, MessageMention, ReasoningLevel } from "@mcode/contracts";
 
 /** Draft state for a single composer instance, keyed by thread ID. */
 export interface ComposerDraft {
   input: string;
+  mentions?: MessageMention[];
   attachments: PendingAttachment[];
   modelId: string;
   /** Provider ID stored alongside the model because multiple providers share model IDs. */

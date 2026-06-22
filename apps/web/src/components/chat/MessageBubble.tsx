@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useCallback, useRef, useEffect, lazy, Suspense } from "react";
+import { memo, useMemo, useState, useCallback, useRef, useEffect, lazy, Suspense, type ReactNode } from "react";
 import type { Message } from "@/transport";
 import { ImageIcon, RotateCcw, Copy, Check, GitFork, AlertCircle, Reply, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -72,6 +72,43 @@ function parseUserGoalCommand(content: string): { condition: string } | null {
   const lower = arg.toLowerCase();
   if (lower === "clear" || lower === "reset" || lower === "show") return null;
   return { condition: arg };
+}
+
+function MentionedUserText({
+  text,
+  mentions,
+}: {
+  text: string;
+  mentions: NonNullable<Message["mentions"]>;
+}) {
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  const sorted = [...mentions].sort((a, b) => a.range.start - b.range.start);
+
+  for (const mention of sorted) {
+    if (
+      mention.range.start < cursor ||
+      mention.range.end > text.length ||
+      text.slice(mention.range.start, mention.range.end) !== `@${mention.label}`
+    ) {
+      continue;
+    }
+    if (mention.range.start > cursor) {
+      nodes.push(text.slice(cursor, mention.range.start));
+    }
+    nodes.push(
+      <span
+        key={`${mention.id}-${mention.range.start}`}
+        className="rounded-md bg-primary-foreground/20 px-1 py-0.5 font-medium"
+      >
+        {text.slice(mention.range.start, mention.range.end)}
+      </span>,
+    );
+    cursor = mention.range.end;
+  }
+
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return <span className="whitespace-pre-wrap">{nodes}</span>;
 }
 
 /**
@@ -606,9 +643,13 @@ export const MessageBubble = memo(function MessageBubble({
 
           {userDisplayText.trim() && (
             <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground shadow-sm shadow-primary/15">
-              <Suspense fallback={null}>
-                <LazyMarkdownContent content={userDisplayText} isStreaming={false} variant="user" />
-              </Suspense>
+              {!userGoal && message.mentions?.length ? (
+                <MentionedUserText text={userDisplayText} mentions={message.mentions} />
+              ) : (
+                <Suspense fallback={null}>
+                  <LazyMarkdownContent content={userDisplayText} isStreaming={false} variant="user" />
+                </Suspense>
+              )}
             </div>
           )}
 

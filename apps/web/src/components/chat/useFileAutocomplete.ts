@@ -4,15 +4,35 @@ import { getTransport } from "@/transport";
 interface UseFileAutocompleteOptions {
   workspaceId?: string;
   threadId?: string;
+  providerId?: string;
 }
+
+export type MentionSuggestion =
+  | {
+      id: string;
+      kind: "agent";
+      group: "Agents";
+      label: string;
+      name: string;
+      path: string;
+      provider: "codex";
+      description?: string;
+    }
+  | {
+      id: string;
+      kind: "file";
+      group: "Files";
+      label: string;
+      path: string;
+    };
 
 interface UseFileAutocompleteResult {
   isOpen: boolean;
-  filteredFiles: string[];
+  suggestions: MentionSuggestion[];
   query: string;
   triggerStart: number;
   handleInputChange: (text: string, cursorPos: number) => void;
-  selectFile: (filePath: string) => string;
+  selectSuggestion: (suggestion: MentionSuggestion) => MentionSuggestion;
   dismiss: () => void;
 }
 
@@ -27,6 +47,12 @@ const fileListCache = new Map<string, string[]>();
 /** In-flight fetch promises keyed by scope, so concurrent callers reuse the same request. */
 const inFlightFetches = new Map<string, Promise<string[]>>();
 
+/** Cache Codex agent suggestions per scope. */
+const codexAgentCache = new Map<string, MentionSuggestion[]>();
+
+/** In-flight Codex agent fetches keyed by scope. */
+const inFlightAgentFetches = new Map<string, Promise<MentionSuggestion[]>>();
+
 /**
  * Clear the cached file list for a scope.
  * Pass workspaceId (and optionally threadId) to clear a specific scope,
@@ -34,9 +60,12 @@ const inFlightFetches = new Map<string, Promise<string[]>>();
  */
 export function clearFileListCache(workspaceId?: string, threadId?: string): void {
   if (workspaceId) {
-    fileListCache.delete(scopeKey(workspaceId, threadId));
+    const key = scopeKey(workspaceId, threadId);
+    fileListCache.delete(key);
+    codexAgentCache.delete(key);
   } else {
     fileListCache.clear();
+    codexAgentCache.clear();
   }
 }
 
@@ -50,10 +79,12 @@ export function clearFileListCache(workspaceId?: string, threadId?: string): voi
 export function useFileAutocomplete({
   workspaceId,
   threadId,
+  providerId,
 }: UseFileAutocompleteOptions): UseFileAutocompleteResult {
   const [isOpen, setIsOpen] = useState(false);
   const [allFiles, setAllFiles] = useState<string[]>([]);
-  const [filteredFiles, setFilteredFiles] = useState<string[]>([]);
+  const [allAgents, setAllAgents] = useState<MentionSuggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<MentionSuggestion[]>([]);
   const [query, setQuery] = useState("");
   const [triggerStart, setTriggerStart] = useState(-1);
 
@@ -64,6 +95,7 @@ export function useFileAutocomplete({
     if (key !== prevScopeRef.current) {
       prevScopeRef.current = key;
       setAllFiles([]);
+      setAllAgents([]);
     }
   }, [workspaceId, threadId]);
 
@@ -113,6 +145,59 @@ export function useFileAutocomplete({
     return files;
   }, [workspaceId, threadId]);
 
+  const loadAgents = useCallback(async (): Promise<MentionSuggestion[]> => {
+    if (!workspaceId || providerId !== "codex") return [];
+
+    const key = scopeKey(workspaceId, threadId);
+    const cached = codexAgentCache.get(key);
+    if (cached) {
+      setAllAgents(cached);
+      return cached;
+    }
+
+    const existing = inFlightAgentFetches.get(key);
+    if (existing) {
+      const agents = await existing;
+      setAllAgents(agents);
+      return agents;
+    }
+
+    const fetchPromise = getTransport()
+      .listCodexAgents(workspaceId, threadId)
+      .then((agents) =>
+        agents.map((agent) => ({
+          id: `agent:${agent.path}`,
+          kind: "agent" as const,
+          group: "Agents" as const,
+          label: agent.name,
+          name: agent.name,
+          path: agent.path,
+          provider: "codex" as const,
+          ...(agent.description ? { description: agent.description } : {}),
+        })),
+      )
+      .then((agents) => {
+        codexAgentCache.set(key, agents);
+        return agents;
+      })
+      .catch((err) => {
+        console.error("[useFileAutocomplete] Failed to load Codex agents:", err);
+        return [] as MentionSuggestion[];
+      })
+      .finally(() => {
+        inFlightAgentFetches.delete(key);
+      });
+
+    inFlightAgentFetches.set(key, fetchPromise);
+
+    const agents = await fetchPromise;
+    const currentKey = scopeKey(workspaceId, threadId);
+    if (currentKey === key) {
+      setAllAgents(agents);
+    }
+    return agents;
+  }, [workspaceId, threadId, providerId]);
+
   const handleInputChange = useCallback(
     async (text: string, cursorPos: number) => {
       // Find the @ trigger: scan backwards from cursor
@@ -146,26 +231,47 @@ export function useFileAutocomplete({
       // Lazy load file list on first @ trigger.
       // Always prefer the direct return from loadFiles() over the
       // closure-captured allFiles, which may be stale after an async gap.
-      const loaded = allFiles.length === 0 ? await loadFiles() : undefined;
+      const [loadedFiles, loadedAgents] = await Promise.all([
+        allFiles.length === 0 ? loadFiles() : Promise.resolve(undefined),
+        providerId === "codex" && allAgents.length === 0 ? loadAgents() : Promise.resolve(undefined),
+      ]);
+      const loaded = loadedFiles;
       const files = loaded ?? allFiles;
+      const agents = providerId === "codex" ? (loadedAgents ?? allAgents) : [];
 
-      // Filter: plain substring match
+      const fileSuggestions: MentionSuggestion[] = files.map((filePath) => ({
+        id: `file:${filePath}`,
+        kind: "file",
+        group: "Files",
+        label: filePath,
+        path: filePath,
+      }));
+
+      const allSuggestions = [...agents, ...fileSuggestions];
+      const matches = (suggestion: MentionSuggestion) => {
+        if (q.length === 0) return true;
+        const haystack =
+          suggestion.kind === "agent"
+            ? `${suggestion.label} ${suggestion.description ?? ""}`.toLowerCase()
+            : suggestion.path.toLowerCase();
+        return haystack.includes(q);
+      };
       const filtered =
         q.length === 0
-          ? files.slice(0, 100) // Show first 100 when no query
-          : files.filter((f) => f.toLowerCase().includes(q)).slice(0, 100);
+          ? [...agents.slice(0, 20), ...fileSuggestions.slice(0, 80)]
+          : allSuggestions.filter(matches).slice(0, 100);
 
-      setFilteredFiles(filtered);
+      setSuggestions(filtered);
       setIsOpen(true);
     },
-    [isOpen, allFiles, loadFiles],
+    [isOpen, allFiles, allAgents, loadFiles, loadAgents, providerId],
   );
 
-  const selectFile = useCallback((filePath: string): string => {
+  const selectSuggestion = useCallback((suggestion: MentionSuggestion): MentionSuggestion => {
     setIsOpen(false);
     setQuery("");
     setTriggerStart(-1);
-    return filePath;
+    return suggestion;
   }, []);
 
   const dismiss = useCallback(() => {
@@ -176,11 +282,11 @@ export function useFileAutocomplete({
 
   return {
     isOpen,
-    filteredFiles,
+    suggestions,
     query,
     triggerStart,
     handleInputChange,
-    selectFile,
+    selectSuggestion,
     dismiss,
   };
 }

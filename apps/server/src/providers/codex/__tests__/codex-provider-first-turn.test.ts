@@ -197,6 +197,69 @@ describe("CodexProvider first turn on new session", () => {
     ], expect.anything());
   });
 
+  it("sends selected file mentions as native Codex mention input", async () => {
+    const provider = makeProvider();
+
+    await provider.sendTurn({
+      sessionId: "mcode-mentioned-file",
+      threadId: "mentioned-file",
+      message: "check @src/app.ts",
+      mentions: [{
+        id: "mention-1",
+        kind: "file",
+        label: "src/app.ts",
+        path: "src/app.ts",
+        range: { start: 6, end: 17 },
+      }],
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    expect(sendTurnMock.mock.calls[0][0]).toEqual([
+      { type: "mention", name: "src/app.ts", path: "src/app.ts" },
+      { type: "text", text: "check @src/app.ts" },
+    ]);
+  });
+
+  it("sends selected agent mentions as Codex subagent URI input", async () => {
+    const provider = makeProvider();
+
+    await provider.sendTurn({
+      sessionId: "mcode-mentioned-agent",
+      threadId: "mentioned-agent",
+      message: "ask @planner",
+      mentions: [{
+        id: "mention-agent-1",
+        kind: "agent",
+        label: "planner",
+        name: "planner",
+        path: "C:\\Users\\Test\\.codex\\agents\\planner.toml",
+        provider: "codex",
+        range: { start: 4, end: 12 },
+      }],
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    expect(sendTurnMock.mock.calls[0][0]).toEqual([
+      { type: "text", text: "ask subagent://planner" },
+    ]);
+  });
+
   it("expands Codex prompt commands before turn/start", async () => {
     const promptDir = mkdtempSync(join(tmpdir(), "codex-provider-prompt-"));
     try {

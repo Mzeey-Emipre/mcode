@@ -18,6 +18,7 @@ function createTestDb(): Database.Database {
       timestamp TEXT NOT NULL,
       sequence INTEGER NOT NULL,
       attachments TEXT,
+      mentions TEXT,
       reply_to_message_id TEXT,
       quoted_text TEXT,
       model TEXT,
@@ -66,7 +67,7 @@ describe("MessageRepo", () => {
       const stmt = db.prepare(
         `EXPLAIN QUERY PLAN
 WITH page AS (
-  SELECT m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.reply_to_message_id, m.quoted_text, m.model
+  SELECT m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal
   FROM messages m
   WHERE m.thread_id = ? AND m.is_internal = 0
   ORDER BY m.sequence DESC
@@ -224,6 +225,35 @@ ORDER BY page.sequence ASC`,
       expect(found).not.toBeNull();
       expect(found!.reply_to_message_id).toBe(original.id);
       expect(found!.quoted_text).toBe("some quote");
+    });
+  });
+
+  describe("create with mention metadata", () => {
+    it("round-trips selected typed mentions", () => {
+      const mentions = [{
+        id: "mention-1",
+        kind: "file" as const,
+        label: "src/app.ts",
+        path: "src/app.ts",
+        range: { start: 6, end: 17 },
+      }];
+
+      const created = repo.create(
+        "thread-1",
+        "user",
+        "check @src/app.ts",
+        1,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        mentions,
+      );
+      const fetched = repo.findByIdInThread("thread-1", created.id);
+
+      expect(created.mentions).toEqual(mentions);
+      expect(fetched?.mentions).toEqual(mentions);
     });
   });
 

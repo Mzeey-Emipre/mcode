@@ -2,6 +2,7 @@ import { z } from "zod";
 import { MessageRoleSchema } from "./enums.js";
 import { StoredAttachmentSchema } from "./attachment.js";
 import { lazySchema } from "../utils/lazySchema.js";
+import { MessageMentionsSchema } from "./mention.js";
 
 /** Message schema matching the SQLite row shape. */
 export const MessageSchema = lazySchema(() =>
@@ -17,6 +18,7 @@ export const MessageSchema = lazySchema(() =>
     timestamp: z.string(),
     sequence: z.number(),
     attachments: z.array(StoredAttachmentSchema).nullable(),
+    mentions: MessageMentionsSchema.nullable().optional(),
     tool_call_count: z.number().optional(),
     reply_to_message_id: z.string().nullable().optional(),
     quoted_text: z.string().nullable().optional(),

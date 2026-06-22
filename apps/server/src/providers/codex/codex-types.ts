@@ -77,7 +77,8 @@ export interface ThreadResumeResult {
 export type TurnInputPart =
   | { type: "text"; text: string }
   | { type: "localImage"; path: string }
-  | { type: "skill"; name: string; path: string };
+  | { type: "skill"; name: string; path: string }
+  | { type: "mention"; name: string; path: string };
 
 /** Parameters for the `turn/start` RPC method. */
 export interface TurnStartParams {

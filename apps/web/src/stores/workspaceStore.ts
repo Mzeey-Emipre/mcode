@@ -5,7 +5,7 @@ import {
   buildPlaceholderWorkspaceThread,
   titleFromMessageContent,
 } from "@/lib/workspace-thread";
-import type { ChecksStatus, CreateAndSendResult } from "@mcode/contracts";
+import type { ChecksStatus, CreateAndSendResult, MessageMention } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "./thread-record";
@@ -85,6 +85,8 @@ interface PendingThreadCreation {
   content: string;
   /** Persisted/UI caption when outbound `content` includes hidden augmentation. */
   displayContent?: string;
+  /** Selected typed mentions with offsets into content. */
+  mentions?: MessageMention[];
   model: string;
   permissionMode?: PermissionMode;
   transportMode: "direct" | "worktree";
@@ -124,6 +126,7 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     pending.thinking,
     pending.codexFastMode,
     pending.displayContent,
+    pending.mentions,
   );
 }
 /**
@@ -204,6 +207,7 @@ interface WorkspaceState {
     thinking?: boolean,
     codexFastMode?: boolean,
     displayContent?: string,
+    mentions?: MessageMention[],
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: {
@@ -224,6 +228,7 @@ interface WorkspaceState {
     contextWindow?: ContextWindowMode;
     thinking?: boolean;
     codexFastMode?: boolean;
+    mentions?: MessageMention[];
   }) => Promise<Thread>;
   /**
    * Re-run server creation for a placeholder thread after {@link WorkspaceThread.clientError}.
@@ -717,6 +722,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     thinking,
     codexFastMode,
     displayContent,
+    mentions,
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
@@ -762,6 +768,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       contextWindow,
       thinking,
       codexFastMode,
+      mentions,
     };
 
     const captionForUi = displayContent ?? content;
@@ -855,6 +862,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       contextWindow: params.contextWindow,
       thinking: params.thinking,
       codexFastMode: params.codexFastMode,
+      mentions: params.mentions,
     };
 
     const branchCaptionForUi = params.displayContent ?? params.content;
