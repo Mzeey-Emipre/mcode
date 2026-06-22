@@ -10,7 +10,7 @@
  */
 
 import { build } from "esbuild";
-import { execFileSync } from "child_process";
+import { spawn } from "child_process";
 import { renameSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -81,11 +81,46 @@ if (!existsSync(mksnapshot)) {
   process.exit(1);
 }
 
-execFileSync(
-  mksnapshot,
-  [resolve(snapshotDir, "snapshot-entry.js"), "--output_dir", snapshotDir],
-  { stdio: "inherit" },
-);
+const snapshotResult = await new Promise((resolveResult) => {
+  const child = spawn(
+    mksnapshot,
+    [resolve(snapshotDir, "snapshot-entry.js"), "--output_dir", snapshotDir],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let output = "";
+  const appendOutput = (chunk, write) => {
+    const text = chunk.toString();
+    output = `${output}${text}`.slice(-20_000);
+    write(text);
+  };
+
+  child.stdout.on("data", (chunk) =>
+    appendOutput(chunk, process.stdout.write.bind(process.stdout)),
+  );
+  child.stderr.on("data", (chunk) =>
+    appendOutput(chunk, process.stderr.write.bind(process.stderr)),
+  );
+  child.on("error", (error) => resolveResult({ error, status: null, output }));
+  child.on("close", (status) => resolveResult({ error: null, status, output }));
+});
+
+if (snapshotResult.error) {
+  console.error(snapshotResult.error);
+  process.exit(1);
+}
+
+if (snapshotResult.status !== 0) {
+  if (snapshotResult.output.includes("Could not find mksnapshot")) {
+    console.warn(
+      "Skipping V8 snapshot: electron-mksnapshot did not install a native mksnapshot binary for this platform. " +
+      "The app will start without a custom snapshot.",
+    );
+    rmSync(snapshotDir, { recursive: true, force: true });
+    process.exit(0);
+  }
+
+  process.exit(snapshotResult.status ?? 1);
+}
 
 // ---------------------------------------------------------------------------
 // Step 3: Rename to browser-specific snapshot
