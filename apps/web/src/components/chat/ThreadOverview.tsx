@@ -165,6 +165,13 @@ function usageCategoryValueLabel(category: QuotaCategory): string {
   return `${Math.round(usageCategoryPercent(category))}%`;
 }
 
+function usageCategoryPriority(category: QuotaCategory): number {
+  const label = category.label.trim();
+  if (/^5[- ]hour/i.test(label)) return 0;
+  if (/^weekly/i.test(label)) return 1;
+  return 2;
+}
+
 function usageProgressClass(percent: number): string {
   if (percent >= 90) return "bg-destructive";
   if (percent >= 70) return "bg-primary";
@@ -195,7 +202,10 @@ export function getThreadOverviewUsageCategories(
   return (
     usageInfo?.quotaCategories
       .filter((category) => !category.isUnlimited)
-      .sort((a, b) => usageCategoryPercent(b) - usageCategoryPercent(a)) ?? []
+      .sort((a, b) => (
+        usageCategoryPriority(a) - usageCategoryPriority(b)
+        || usageCategoryPercent(b) - usageCategoryPercent(a)
+      )) ?? []
   );
 }
 

@@ -393,17 +393,17 @@ describe("formatThreadOverviewUsage", () => {
         sessionCostUsd: 12.34,
         quotaCategories: [
           {
-            label: "5-hour limit",
-            used: 42,
-            total: 100,
-            remainingPercent: 0.58,
-            isUnlimited: false,
-          },
-          {
             label: "Weekly limit",
             used: 18,
             total: 100,
             remainingPercent: 0.82,
+            isUnlimited: false,
+          },
+          {
+            label: "5-hour limit",
+            used: 42,
+            total: 100,
+            remainingPercent: 0.58,
             isUnlimited: false,
           },
         ],
