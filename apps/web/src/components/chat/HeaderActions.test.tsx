@@ -375,7 +375,7 @@ describe("formatThreadOverviewUsage", () => {
         providerId: "copilot",
         quotaCategories: [
           {
-            label: "Premium requests",
+            label: "Premium usage",
             used: 25,
             total: 100,
             remainingPercent: 0.75,
@@ -383,7 +383,7 @@ describe("formatThreadOverviewUsage", () => {
           },
         ],
       }),
-    ).toBe("Premium requests 25%");
+    ).toBe("Premium usage 25%");
   });
 
   it("renders Claude 5-hour and weekly limits without session cost", () => {

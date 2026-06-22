@@ -15,7 +15,7 @@ export const TurnUsageSchema = lazySchema(() =>
 /** TypeScript type inferred from TurnUsageSchema. */
 export type TurnUsage = z.infer<ReturnType<typeof TurnUsageSchema>>;
 
-/** A single quota bucket (e.g. "Premium requests", "Chat"). */
+/** A single quota bucket (e.g. "Premium usage", "Chat"). */
 export const QuotaCategorySchema = lazySchema(() =>
   z.object({
     /** Human-readable label for the quota category. */

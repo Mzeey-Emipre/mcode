@@ -44,7 +44,7 @@ interface TurnUsage {
 
 ### QuotaCategory
 
-A single quota bucket (e.g. "Premium requests", "Chat").
+A single quota bucket (e.g. "Premium usage", "Chat").
 
 ```ts
 interface QuotaCategory {
