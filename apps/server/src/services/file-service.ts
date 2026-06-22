@@ -54,9 +54,35 @@ export class FileService {
     relativePath: string,
     threadId?: string,
   ): string {
+    const canonicalPath = this.validateWorkspaceRelativePath(
+      workspaceId,
+      relativePath,
+      threadId,
+    );
+
+    return readFileSync(canonicalPath, "utf-8");
+  }
+
+  /**
+   * Validate that a relative file mention resolves to an existing file inside
+   * the workspace or thread working directory.
+   */
+  validateMentionPath(
+    workspaceId: string,
+    relativePath: string,
+    threadId?: string,
+  ): void {
+    this.validateWorkspaceRelativePath(workspaceId, relativePath, threadId);
+  }
+
+  private validateWorkspaceRelativePath(
+    workspaceId: string,
+    relativePath: string,
+    threadId?: string,
+  ): string {
     const rootDir = this.resolveWorkingDir(workspaceId, threadId);
 
-    if (isAbsolute(relativePath) || relativePath.includes("..")) {
+    if (isAbsolute(relativePath) || relativePath.includes("..") || relativePath.includes("\0")) {
       throw new Error(`Invalid file path: ${relativePath}`);
     }
 
@@ -100,7 +126,7 @@ export class FileService {
       );
     }
 
-    return readFileSync(canonicalPath, "utf-8");
+    return canonicalPath;
   }
 
   /**

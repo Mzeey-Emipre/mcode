@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AttachmentMeta, PermissionMode } from "@/transport";
-import type { ContextWindowMode, ReasoningLevel } from "@mcode/contracts";
+import type { ContextWindowMode, MessageMention, ReasoningLevel } from "@mcode/contracts";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
 
 /** A message waiting to be sent while the thread is busy with another turn. */
@@ -9,6 +9,8 @@ export interface QueuedMessage {
   content: string;
   /** Optional display-only variant of content (e.g. stripped of internal markup). */
   displayContent?: string;
+  /** Selected typed mentions with offsets into content. Plain typed @text is not included. */
+  mentions?: MessageMention[];
   attachments: AttachmentMeta[];
   model: string;
   permissionMode: PermissionMode;
@@ -66,6 +68,7 @@ interface QueueState {
     messageId: string,
     content: string,
     displayContent?: string,
+    mentions?: MessageMention[],
   ) => void;
   /**
    * Move a queued message to a new index (0-based). Indices are clamped to the
@@ -181,7 +184,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     });
   },
 
-  editMessage: (threadId, messageId, content, displayContent) => {
+  editMessage: (threadId, messageId, content, displayContent, mentions) => {
     set((state) => {
       const current = state.queues[threadId];
       if (!current) return state;
@@ -191,6 +194,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
         ...current[idx],
         content,
         displayContent: displayContent ?? content,
+        mentions,
       };
       const nextList = [...current];
       nextList[idx] = updated;

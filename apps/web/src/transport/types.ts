@@ -38,6 +38,7 @@ import type {
   PermissionRequest,
   CreateAndSendResult,
   ConversationPage,
+  MessageMention,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -66,11 +67,19 @@ export type {
   PlanAnswer,
   PlanAction,
   ProviderModelInfo,
+  MessageMention,
 } from "@mcode/contracts";
 
 export type { PaginatedMessages, ConversationPage, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
+
+/** Codex sub-agent metadata exposed for @ mention autocomplete. */
+export interface CodexAgentMentionInfo {
+  name: string;
+  path: string;
+  description?: string;
+}
 
 /** In-progress tool call tracked by the frontend streaming layer. */
 export interface ToolCall {
@@ -201,6 +210,7 @@ export interface McodeTransport {
     replyToMessageId?: string,
     quotedText?: string,
     planAction?: PlanAction,
+    mentions?: MessageMention[],
   ): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
@@ -221,6 +231,7 @@ export interface McodeTransport {
     thinking?: boolean,
     codexFastMode?: boolean,
     displayContent?: string,
+    mentions?: MessageMention[],
   ): Promise<CreateAndSendResult>;
   stopAgent(threadId: string): Promise<void>;
   /** Respond to a tool permission request from the agent. */
@@ -301,6 +312,8 @@ export interface McodeTransport {
 
   // File operations (@ file tagging)
   listWorkspaceFiles(workspaceId: string, threadId?: string): Promise<string[]>;
+  /** List Codex sub-agents available for @ mention autocomplete. */
+  listCodexAgents(workspaceId?: string, threadId?: string): Promise<CodexAgentMentionInfo[]>;
   readFileContent(workspaceId: string, relativePath: string, threadId?: string): Promise<string>;
 
   // Open-in app actions

@@ -13,6 +13,7 @@ import {
   type NodeKey,
   type SerializedLexicalNode,
 } from "lexical";
+import type { MessageMention } from "@mcode/contracts";
 import { resolveIcon, type ResolvedIcon } from "@/lib/vscode-icons";
 import { basename } from "@/lib/path";
 
@@ -23,8 +24,21 @@ import { basename } from "@/lib/path";
 /** JSON-serialized form of a MentionNode for editor state persistence. */
 export interface SerializedMentionNode extends SerializedLexicalNode {
   readonly type: "mention";
-  readonly filePath: string;
+  readonly id?: string;
+  readonly kind?: MessageMention["kind"];
+  readonly label?: string;
+  readonly filePath?: string;
+  readonly path?: string;
+  readonly name?: string;
+  readonly provider?: string;
 }
+
+/** Mention metadata stored by the editor before range offsets are computed. */
+export type MentionNodeData = MessageMention extends infer T
+  ? T extends MessageMention
+    ? Omit<T, "range">
+    : never
+  : never;
 
 // ---------------------------------------------------------------------------
 // MentionChip (React component rendered by decorate())
@@ -33,8 +47,8 @@ export interface SerializedMentionNode extends SerializedLexicalNode {
 const CHIP_CLASS =
   "inline-flex items-center gap-1 rounded-md border bg-sky-500/20 ring-1 ring-sky-500/30 px-1.5 py-0.5 text-xs align-baseline";
 
-function MentionChip({ filePath }: { readonly filePath: string }): JSX.Element {
-  const name = basename(filePath);
+function MentionChip({ mention }: { readonly mention: MentionNodeData }): JSX.Element {
+  const name = mention.kind === "file" ? basename(mention.path) : mention.label;
   const [icon, setIcon] = useState<ResolvedIcon | null>(null);
 
   useEffect(() => {
@@ -71,25 +85,29 @@ function MentionChip({ filePath }: { readonly filePath: string }): JSX.Element {
 
 /** Inline decorator node rendering an @file mention chip. */
 export class MentionNode extends DecoratorNode<JSX.Element> {
-  __filePath: string;
+  __mention: MentionNodeData;
 
   static getType(): string {
     return "mention";
   }
 
   static clone(node: MentionNode): MentionNode {
-    return new MentionNode(node.__filePath, node.__key);
+    return new MentionNode(node.__mention, node.__key);
   }
 
-  constructor(filePath: string, key?: NodeKey) {
+  constructor(mention: MentionNodeData, key?: NodeKey) {
     super(key);
-    this.__filePath = filePath;
+    this.__mention = mention;
   }
 
   // -- Accessors ------------------------------------------------------------
 
   getFilePath(): string {
-    return this.getLatest().__filePath;
+    return this.getLatest().__mention.path;
+  }
+
+  getMentionData(): MentionNodeData {
+    return this.getLatest().__mention;
   }
 
   // -- Behavior -------------------------------------------------------------
@@ -99,7 +117,7 @@ export class MentionNode extends DecoratorNode<JSX.Element> {
   }
 
   getTextContent(): string {
-    return `@${this.getFilePath()}`;
+    return `@${this.getMentionData().label}`;
   }
 
   // -- DOM ------------------------------------------------------------------
@@ -119,19 +137,34 @@ export class MentionNode extends DecoratorNode<JSX.Element> {
   exportJSON(): SerializedMentionNode {
     return {
       type: "mention",
-      filePath: this.__filePath,
+      id: this.__mention.id,
+      kind: this.__mention.kind,
+      label: this.__mention.label,
+      filePath: this.__mention.kind === "file" ? this.__mention.path : undefined,
+      path: this.__mention.path,
+      name: this.__mention.kind === "agent" ? this.__mention.name : undefined,
+      provider: this.__mention.kind === "agent" ? this.__mention.provider : undefined,
       version: 1,
     };
   }
 
   static importJSON(serializedNode: SerializedMentionNode): MentionNode {
-    return $createMentionNode(serializedNode.filePath);
+    const path = serializedNode.path ?? serializedNode.filePath ?? serializedNode.label ?? "";
+    return $createTypedMentionNode({
+      id: serializedNode.id ?? createMentionId(),
+      kind: serializedNode.kind ?? "file",
+      label: serializedNode.label ?? path,
+      path,
+      ...(serializedNode.kind === "agent" && serializedNode.name
+        ? { name: serializedNode.name, provider: serializedNode.provider }
+        : {}),
+    } as MentionNodeData);
   }
 
   // -- Decoration -----------------------------------------------------------
 
   decorate(_editor: LexicalEditor, _config: EditorConfig): JSX.Element {
-    return <MentionChip filePath={this.__filePath} />;
+    return <MentionChip mention={this.__mention} />;
   }
 }
 
@@ -141,7 +174,17 @@ export class MentionNode extends DecoratorNode<JSX.Element> {
 
 /** Create a new MentionNode for the given file path. */
 export function $createMentionNode(filePath: string): MentionNode {
-  return new MentionNode(filePath);
+  return $createTypedMentionNode({
+    id: createMentionId(),
+    kind: "file",
+    label: filePath,
+    path: filePath,
+  });
+}
+
+/** Create a new MentionNode for typed mention metadata. */
+export function $createTypedMentionNode(mention: MentionNodeData): MentionNode {
+  return new MentionNode(mention);
 }
 
 /** Type guard: returns true when the node is a MentionNode. */
@@ -149,4 +192,11 @@ export function $isMentionNode(
   node: LexicalNode | null | undefined,
 ): node is MentionNode {
   return node instanceof MentionNode;
+}
+
+function createMentionId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `mention-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

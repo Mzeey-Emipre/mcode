@@ -1,29 +1,27 @@
 // apps/web/src/components/chat/FileTagPopup.tsx
 import { useRef, useEffect, useCallback, useState, memo } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { getFileIcon, getFileIconColor } from "@/lib/file-icons";
+import type { MentionSuggestion } from "./useFileAutocomplete";
+import { StackedLayersIcon } from "./narrative/StackedLayersIcon";
 
 const ITEM_HEIGHT = 28; // px per row (py-1.5 + 14px icon)
 const VISIBLE_ITEMS = 8;
-// Virtualizing below this count adds more overhead (scroll listeners, index
-// math) than it saves; native rendering of ≤20 rows has no measurable cost.
-const VIRTUAL_THRESHOLD = 20;
 
 /** Options for the useFileTagPopup keyboard-navigation hook. */
 interface FileTagPopupOptions {
-  files: string[];
+  items: MentionSuggestion[];
   query: string;
   isOpen: boolean;
-  onSelect: (filePath: string) => void;
+  onSelect: (item: MentionSuggestion) => void;
   onDismiss: () => void;
 }
 
 /** Props for the FileTagPopup display component. */
 interface FileTagPopupProps {
-  files: string[];
+  items: MentionSuggestion[];
   isOpen: boolean;
-  onSelect: (filePath: string) => void;
+  onSelect: (item: MentionSuggestion) => void;
   /** Ref forwarded from useFileTagPopup — used by the parent for focus management. */
   listRef: React.RefObject<HTMLDivElement | null>;
   /** Controlled selection index driven by useFileTagPopup state. */
@@ -39,7 +37,7 @@ function splitPath(path: string): { dir: string; name: string } {
 
 /** Hook for keyboard navigation within the file tag popup. */
 export function useFileTagPopup({
-  files,
+  items,
   query,
   isOpen,
   onSelect,
@@ -51,20 +49,20 @@ export function useFileTagPopup({
   // when Enter/Tab fires in the same synchronous batch as a preceding Arrow key.
   const selectedIndexRef = useRef(0);
 
-  // Reset selection when files or query change
+  // Reset selection when items or query change
   useEffect(() => {
     setSelectedIndex(0);
     selectedIndexRef.current = 0;
-  }, [files, query]);
+  }, [items, query]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent): boolean => {
-      if (!isOpen || files.length === 0) return false;
+      if (!isOpen || items.length === 0) return false;
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSelectedIndex((prev) => {
-          const next = Math.min(prev + 1, files.length - 1);
+          const next = Math.min(prev + 1, items.length - 1);
           selectedIndexRef.current = next;
           return next;
         });
@@ -83,7 +81,7 @@ export function useFileTagPopup({
         e.preventDefault();
         // Read from ref so we get the value set by a preceding Arrow key in
         // the same synchronous event batch, not the stale closure snapshot.
-        const selected = files[selectedIndexRef.current];
+        const selected = items[selectedIndexRef.current];
         if (selected) onSelect(selected);
         return true;
       }
@@ -94,7 +92,7 @@ export function useFileTagPopup({
       }
       return false;
     },
-    [isOpen, files, onSelect, onDismiss],
+    [isOpen, items, onSelect, onDismiss],
   );
 
   return { handleKeyDown, listRef, selectedIndex };
@@ -105,99 +103,87 @@ export function useFileTagPopup({
  * Memoized so only the two rows whose `selected` prop flips re-render on
  * each navigation keypress.
  */
-const FileRow = memo(function FileRow({
-  filePath,
+const SuggestionRow = memo(function SuggestionRow({
+  item,
   selected,
   onSelect,
 }: {
-  filePath: string;
+  item: MentionSuggestion;
   selected: boolean;
-  onSelect: (filePath: string) => void;
+  onSelect: (item: MentionSuggestion) => void;
 }) {
-  const { dir, name } = splitPath(filePath);
-  const Icon = getFileIcon(filePath);
+  const isFile = item.kind === "file";
+  const { dir, name } = isFile ? splitPath(item.path) : { dir: "", name: item.label };
+  const Icon = isFile ? getFileIcon(item.path) : StackedLayersIcon;
   return (
     <button
       type="button"
       role="option"
       aria-selected={selected}
       data-file-item
-      onClick={() => onSelect(filePath)}
+      onClick={() => onSelect(item)}
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
-        "hover:bg-accent hover:text-accent-foreground",
+        "group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-100",
+        "hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:outline-none",
         selected && "bg-accent text-accent-foreground",
       )}
     >
-      <Icon size={14} className={cn("shrink-0", getFileIconColor(filePath))} />
-      <span className="truncate">
-        <span className="text-muted-foreground">{dir}</span>
+      <Icon
+        size={14}
+        className={cn(
+          "size-3.5 shrink-0",
+          isFile
+            ? getFileIconColor(item.path)
+            : "text-muted-foreground/55 group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
+        )}
+      />
+      <span className="min-w-0 flex-1 truncate">
+        <span className="text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70">{dir}</span>
         <span className="font-medium">{name}</span>
       </span>
+      {item.kind === "agent" && item.description ? (
+        <span className="min-w-0 flex-[1.2] truncate text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70">
+          {item.description}
+        </span>
+      ) : null}
     </button>
   );
 });
 
 /** Dropdown popup displaying file suggestions for @ tagging. */
 export function FileTagPopup({
-  files,
+  items,
   isOpen,
   onSelect,
   listRef,
   selectedIndex,
 }: FileTagPopupProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const isVirtualized = files.length > VIRTUAL_THRESHOLD;
-
-  const virtualizer = useVirtualizer({
-    count: isVirtualized ? files.length : 0,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => ITEM_HEIGHT,
-    overscan: 4,
-    // Opt out of react-virtual's flushSync(rerender) on sync measurement; it
-    // fires inside the library's commit-phase layout effect and trips React's
-    // "flushSync called from inside a lifecycle method" warning. A popup list
-    // does not need a synchronous re-render.
-    useFlushSync: false,
-  });
-
-  // Keep a stable ref to the virtualizer so the scroll effect below doesn't
-  // re-run on every render — the virtualizer object reference can change each
-  // render even though the instance is effectively the same.
-  const virtualizerRef = useRef(virtualizer);
-  virtualizerRef.current = virtualizer;
 
   useEffect(() => {
     if (!isOpen) return;
-    if (isVirtualized) {
-      // Virtual path: delegate to the virtualizer, which maps indices to scroll
-      // offsets without querying the DOM.
-      virtualizerRef.current.scrollToIndex(selectedIndex, { align: "auto" });
-    } else {
-      // Non-virtual path: target the wrapper div by data-index attribute.
-      // We use the wrapper div (not the button) because scrollIntoView on a
-      // fixed-height container works best on the outermost positioned element.
-      const el = scrollRef.current?.querySelector(
-        `[data-index="${selectedIndex}"]`,
-      );
-      if (el && typeof (el as HTMLElement).scrollIntoView === "function") {
-        (el as HTMLElement).scrollIntoView({ block: "nearest" });
-      }
+    const el = scrollRef.current?.querySelector(
+      `[data-index="${selectedIndex}"]`,
+    );
+    if (el && typeof (el as HTMLElement).scrollIntoView === "function") {
+      (el as HTMLElement).scrollIntoView({ block: "nearest" });
     }
-  }, [selectedIndex, isOpen, isVirtualized, files]);
+  }, [selectedIndex, isOpen, items]);
 
-  if (!isOpen || files.length === 0) return null;
+  if (!isOpen || items.length === 0) return null;
 
   const maxHeight = Math.min(
     VISIBLE_ITEMS * ITEM_HEIGHT,
-    files.length * ITEM_HEIGHT,
+    items.length * ITEM_HEIGHT + 48,
   );
+  let renderedIndex = 0;
+  let currentGroup: MentionSuggestion["group"] | null = null;
 
   return (
     <div
       ref={listRef}
       role="listbox"
-      aria-label="File suggestions"
+      aria-label="Mention suggestions"
       className="absolute bottom-full left-0 z-50 mb-1 w-full overflow-hidden rounded-lg border border-border bg-popover shadow-lg"
     >
       <div
@@ -205,45 +191,27 @@ export function FileTagPopup({
         className="p-1"
         style={{ maxHeight, overflowY: "auto" }}
       >
-        {isVirtualized ? (
-          <div
-            role="presentation"
-            style={{
-              height: virtualizer.getTotalSize(),
-              position: "relative",
-            }}
-          >
-            {virtualizer.getVirtualItems().map((vi) => (
-              <div
-                key={vi.key}
-                role="presentation"
-                data-index={vi.index}
-                style={{
-                  position: "absolute",
-                  top: vi.start,
-                  width: "100%",
-                  height: vi.size,
-                }}
-              >
-                <FileRow
-                  filePath={files[vi.index]}
-                  selected={vi.index === selectedIndex}
+        {items.map((item) => {
+          const index = renderedIndex++;
+          const showGroup = item.group !== currentGroup;
+          currentGroup = item.group;
+          return (
+            <div key={item.id} role="presentation">
+              {showGroup ? (
+                <div className="sticky top-0 z-10 bg-popover px-2 py-1 text-xs font-medium text-muted-foreground/70">
+                  {item.group}
+                </div>
+              ) : null}
+              <div role="presentation" data-index={index}>
+                <SuggestionRow
+                  item={item}
+                  selected={index === selectedIndex}
                   onSelect={onSelect}
                 />
               </div>
-            ))}
-          </div>
-        ) : (
-          files.map((filePath, i) => (
-            <div key={filePath} role="presentation" data-index={i}>
-              <FileRow
-                filePath={filePath}
-                selected={i === selectedIndex}
-                onSelect={onSelect}
-              />
             </div>
-          ))
-        )}
+          );
+        })}
       </div>
     </div>
   );

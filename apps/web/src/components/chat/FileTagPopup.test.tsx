@@ -1,16 +1,39 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderHook, act, render, screen } from "@testing-library/react";
 import type { RefObject } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
+import type { MentionSuggestion } from "./useFileAutocomplete";
 
-// Mock the virtualizer so component tests control which virtual items are
-// "rendered" without needing real scroll dimensions from jsdom.
-vi.mock("@tanstack/react-virtual");
+const items: MentionSuggestion[] = [
+  {
+    id: "agent:planner",
+    kind: "agent",
+    group: "Agents",
+    label: "planner",
+    name: "planner",
+    path: "C:/Users/example/.codex/agents/planner.toml",
+    provider: "codex",
+    description: "Plans implementation work.",
+  },
+  {
+    id: "file:src/a.ts",
+    kind: "file",
+    group: "Files",
+    label: "src/a.ts",
+    path: "src/a.ts",
+  },
+  {
+    id: "file:src/b.ts",
+    kind: "file",
+    group: "Files",
+    label: "src/b.ts",
+    path: "src/b.ts",
+  },
+];
 
 describe("useFileTagPopup", () => {
   const defaultProps = {
-    files: ["src/a.ts", "src/b.ts", "src/c.ts"],
+    items,
     query: "",
     isOpen: true,
     onSelect: vi.fn(),
@@ -74,7 +97,7 @@ describe("useFileTagPopup", () => {
     expect(result.current.selectedIndex).toBe(0);
   });
 
-  it("resets selectedIndex when files change", () => {
+  it("resets selectedIndex when items change", () => {
     const { result, rerender } = renderHook(
       (props) => useFileTagPopup(props),
       { initialProps: defaultProps },
@@ -86,11 +109,11 @@ describe("useFileTagPopup", () => {
       } as unknown as React.KeyboardEvent);
     });
     expect(result.current.selectedIndex).toBe(1);
-    rerender({ ...defaultProps, files: ["src/x.ts", "src/y.ts"] });
+    rerender({ ...defaultProps, items: items.slice(0, 2) });
     expect(result.current.selectedIndex).toBe(0);
   });
 
-  it("calls onSelect with selected file on Enter", () => {
+  it("calls onSelect with selected item on Enter", () => {
     const onSelect = vi.fn();
     const { result } = renderHook(() =>
       useFileTagPopup({ ...defaultProps, onSelect }),
@@ -101,10 +124,10 @@ describe("useFileTagPopup", () => {
         preventDefault: vi.fn(),
       } as unknown as React.KeyboardEvent);
     });
-    expect(onSelect).toHaveBeenCalledWith("src/a.ts");
+    expect(onSelect).toHaveBeenCalledWith(items[0]);
   });
 
-  it("calls onSelect with selected file on Tab", () => {
+  it("calls onSelect with selected item on Tab", () => {
     const onSelect = vi.fn();
     const { result } = renderHook(() =>
       useFileTagPopup({ ...defaultProps, onSelect }),
@@ -119,7 +142,7 @@ describe("useFileTagPopup", () => {
         preventDefault: vi.fn(),
       } as unknown as React.KeyboardEvent);
     });
-    expect(onSelect).toHaveBeenCalledWith("src/b.ts");
+    expect(onSelect).toHaveBeenCalledWith(items[1]);
   });
 
   it("calls onDismiss on Escape", () => {
@@ -160,37 +183,61 @@ describe("FileTagPopup", () => {
   const mockListRef = { current: null } as RefObject<HTMLDivElement | null>;
   const onSelect = vi.fn();
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // Default stub: virtualizer renders no items (mirrors jsdom behavior).
-    // Individual tests override this when they need to inspect virtual output.
-    vi.mocked(useVirtualizer).mockReturnValue({
-      getVirtualItems: () => [],
-      getTotalSize: () => 0,
-      scrollToIndex: vi.fn(),
-    } as unknown as ReturnType<typeof useVirtualizer>);
-  });
-
-  it("renders all items when below virtual threshold", () => {
-    const files = Array.from({ length: 10 }, (_, i) => `src/file${i}.ts`);
+  it("renders grouped agent and file items", () => {
     render(
       <FileTagPopup
-        files={files}
+        items={items}
         isOpen={true}
         onSelect={onSelect}
         listRef={mockListRef}
         selectedIndex={0}
       />,
     );
-    const options = screen.getAllByRole("option");
-    expect(options).toHaveLength(10);
+
+    expect(screen.getByText("Agents")).toBeInTheDocument();
+    expect(screen.getByText("Files")).toBeInTheDocument();
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+    expect(screen.getByText("planner")).toBeInTheDocument();
+    expect(screen.getAllByText("src/")).toHaveLength(2);
+  });
+
+  it("keeps group labels sticky while scrolling within long sections", () => {
+    render(
+      <FileTagPopup
+        items={items}
+        isOpen={true}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={0}
+      />,
+    );
+
+    expect(screen.getByText("Agents").className).toContain("sticky");
+    expect(screen.getByText("Files").className).toContain("sticky");
+  });
+
+  it("renders agent suggestions with a muted non-robot glyph", () => {
+    render(
+      <FileTagPopup
+        items={items}
+        isOpen={true}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={0}
+      />,
+    );
+
+    const agentOption = screen.getByRole("option", { name: /planner/i });
+    const icon = agentOption.querySelector("svg");
+    expect(icon?.className.baseVal).toContain("text-muted-foreground/55");
+    expect(icon?.className.baseVal).not.toContain("text-primary");
+    expect(agentOption.querySelector(".lucide-bot")).toBeNull();
   });
 
   it("accepts selectedIndex prop and marks the correct item", () => {
-    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
     render(
       <FileTagPopup
-        files={files}
+        items={items}
         isOpen={true}
         onSelect={onSelect}
         listRef={mockListRef}
@@ -205,7 +252,7 @@ describe("FileTagPopup", () => {
   it("renders nothing when closed", () => {
     render(
       <FileTagPopup
-        files={["src/a.ts"]}
+        items={[items[0]]}
         isOpen={false}
         onSelect={onSelect}
         listRef={mockListRef}
@@ -213,52 +260,5 @@ describe("FileTagPopup", () => {
       />,
     );
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-  });
-
-  it("uses native rendering at threshold boundary (20 items)", () => {
-    // 20 items == VIRTUAL_THRESHOLD: strict > check means this is non-virtual.
-    const files = Array.from({ length: 20 }, (_, i) => `src/file${i}.ts`);
-    render(
-      <FileTagPopup
-        files={files}
-        isOpen={true}
-        onSelect={onSelect}
-        listRef={mockListRef}
-        selectedIndex={0}
-      />,
-    );
-    expect(screen.getAllByRole("option")).toHaveLength(20);
-  });
-
-  it("uses virtual rendering above threshold and marks selected item", () => {
-    // 21 items crosses VIRTUAL_THRESHOLD (20). Override the mock to return a
-    // controlled window of virtual rows so we can assert aria-selected without
-    // relying on jsdom scroll dimensions.
-    vi.mocked(useVirtualizer).mockReturnValueOnce({
-      getVirtualItems: () => [
-        { key: "0", index: 0, start: 0, size: 28 },
-        { key: "1", index: 1, start: 28, size: 28 },
-        { key: "2", index: 2, start: 56, size: 28 },
-      ],
-      getTotalSize: () => 588,
-      scrollToIndex: vi.fn(),
-    } as unknown as ReturnType<typeof useVirtualizer>);
-
-    const files = Array.from({ length: 21 }, (_, i) => `src/file${i}.ts`);
-    render(
-      <FileTagPopup
-        files={files}
-        isOpen={true}
-        onSelect={onSelect}
-        listRef={mockListRef}
-        selectedIndex={1}
-      />,
-    );
-
-    const options = screen.getAllByRole("option");
-    expect(options).toHaveLength(3);
-    expect(options[0]).toHaveAttribute("aria-selected", "false");
-    expect(options[1]).toHaveAttribute("aria-selected", "true");
-    expect(options[2]).toHaveAttribute("aria-selected", "false");
   });
 });

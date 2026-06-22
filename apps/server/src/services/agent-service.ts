@@ -25,6 +25,7 @@ import type {
   PermissionRequest,
   PlanOutput,
   PlanAction,
+  MessageMention,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -39,6 +40,7 @@ import { TaskRepo, type StoredTask } from "../repositories/task-repo";
 import { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo";
 import { GitService } from "./git-service";
 import { AttachmentService } from "./attachment-service";
+import { FileService } from "./file-service";
 import { SnapshotService } from "./snapshot-service";
 import { MemoryPressureService, type MemoryPressureSnapshot } from "./memory-pressure-service";
 import { broadcast } from "../transport/push";
@@ -69,6 +71,23 @@ import type { TurnOutcome } from "./turn-outcome.js";
  */
 function escapeXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const FILE_INJECTION_SEPARATOR = "\n\n---\n";
+
+function buildInjectedFileMessage(
+  text: string,
+  files: Array<{ path: string; content: string }>,
+): string {
+  if (files.length === 0) return text;
+  const fileBlocks = files
+    .map((file) => {
+      const escapedContent = file.content.replace(/<\/file>/gi, "<\\/file>");
+      const escapedPath = file.path.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+      return `<file path="${escapedPath}">\n${escapedContent}\n</file>`;
+    })
+    .join("\n");
+  return `${text}${FILE_INJECTION_SEPARATOR}${fileBlocks}`;
 }
 
 /**
@@ -241,6 +260,7 @@ export class AgentService {
     private readonly narrativeStore: NarrativeStore,
     @inject(PlanQuestionService)
     private readonly planQuestionService: PlanQuestionService,
+    @inject(FileService) private readonly fileService?: FileService,
   ) {
     this.turnFinalizer = new TurnFinalizer(
       this.messageRepo,
@@ -300,6 +320,7 @@ export class AgentService {
      */
     messageDisplayContent?: string,
     planAction?: PlanAction,
+    mentions: MessageMention[] = [],
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -337,6 +358,14 @@ export class AgentService {
     if (!workspace) {
       throw new Error(`Workspace not found: ${thread.workspace_id}`);
     }
+
+    const validatedMentions = this.validateMessageMentions({
+      workspaceId: workspace.id,
+      threadId,
+      content,
+      mentions,
+      provider: effectiveProvider,
+    });
 
     // Route the message through the mcode-native command namespace before it
     // reaches the provider. The router probes each command's required
@@ -433,6 +462,9 @@ export class AgentService {
         stored.length > 0 ? stored : undefined,
         replyToMessageId,
         quotedText,
+        undefined,
+        undefined,
+        validatedMentions.length > 0 ? validatedMentions : undefined,
       );
       if (markPlanAnswerForMessageId) {
         // INSERT OR IGNORE inside the repo skips PK collisions (idempotent
@@ -594,7 +626,15 @@ export class AgentService {
       threadId,
     } satisfies AgentEvent);
 
-    const providerMessage = providerWireOverride ?? wirePayload;
+    let providerMessage = providerWireOverride ?? wirePayload;
+    if (effectiveProvider !== "codex") {
+      providerMessage = this.injectMentionFileContents({
+        workspaceId: workspace.id,
+        threadId,
+        text: providerMessage,
+        mentions: validatedMentions,
+      });
+    }
 
     // Run the command's deferred dispatch side effect now, as late as possible
     // before dispatch. If sendTurn throws synchronously or rejects, the catch
@@ -640,6 +680,7 @@ export class AgentService {
       sessionId: sessionName,
       threadId,
       message: providerMessage,
+      mentions: validatedMentions.length > 0 ? validatedMentions : undefined,
       cwd,
       model: resolvedModel,
       fallbackModel,
@@ -770,6 +811,69 @@ export class AgentService {
     broadcast("plan.dismissed", { threadId, assistantMessageId });
   }
 
+  private validateMessageMentions(input: {
+    workspaceId: string;
+    threadId: string;
+    content: string;
+    mentions: readonly MessageMention[];
+    provider: ProviderId;
+  }): MessageMention[] {
+    const sorted = [...input.mentions].sort((a, b) => a.range.start - b.range.start);
+    let previousEnd = 0;
+
+    for (const mention of sorted) {
+      const displayText = `@${mention.label}`;
+      if (
+        mention.range.end > input.content.length ||
+        input.content.slice(mention.range.start, mention.range.end) !== displayText
+      ) {
+        throw new Error(`Invalid mention range for @${mention.label}`);
+      }
+      if (mention.range.start < previousEnd) {
+        throw new Error("Mention ranges must not overlap");
+      }
+      previousEnd = mention.range.end;
+
+      if (mention.kind === "file") {
+        if (!this.fileService) {
+          throw new Error("File mention validation is unavailable");
+        }
+        this.fileService.validateMentionPath(input.workspaceId, mention.path, input.threadId);
+        continue;
+      }
+
+      if (input.provider !== "codex") {
+        throw new Error("Agent mentions are only supported by Codex");
+      }
+    }
+
+    return sorted;
+  }
+
+  private injectMentionFileContents(input: {
+    workspaceId: string;
+    threadId: string;
+    text: string;
+    mentions: readonly MessageMention[];
+  }): string {
+    const uniquePaths = new Set<string>();
+    const files: Array<{ path: string; content: string }> = [];
+
+    for (const mention of input.mentions) {
+      if (mention.kind !== "file" || uniquePaths.has(mention.path)) continue;
+      if (!this.fileService) {
+        throw new Error("File mention injection is unavailable");
+      }
+      uniquePaths.add(mention.path);
+      files.push({
+        path: mention.path,
+        content: this.fileService.read(input.workspaceId, mention.path, input.threadId),
+      });
+    }
+
+    return buildInjectedFileMessage(input.text, files);
+  }
+
   /**
    * Create a new thread and immediately send the first message.
    * Generates a title from the content, creates the thread, sends,
@@ -796,13 +900,14 @@ export class AgentService {
     thinking?: boolean,
     codexFastMode?: boolean,
     displayContent?: string,
+    mentions: MessageMention[] = [],
   ): Promise<Thread & { warnings?: string[] }> {
     const title = truncateTitle(displayContent ?? content);
 
     if (parentThreadId) {
       return this.createBranchedThread({
         workspaceId, content, model, permissionMode, mode, branch,
-        existingWorktreePath, attachments, reasoningLevel, provider,
+        existingWorktreePath, attachments, mentions, reasoningLevel, provider,
         interactionMode, parentThreadId, forkedFromMessageId, title,
         maxBudgetUsd, maxTurns,
         copilotAgent,
@@ -911,6 +1016,8 @@ export class AgentService {
       undefined,
       undefined,
       displayContent,
+      undefined,
+      mentions,
     ).catch((err) => {
       logger.error("createAndSend initial send failed", {
         threadId: thread.id,
@@ -937,6 +1044,7 @@ export class AgentService {
     branch: string;
     existingWorktreePath?: string;
     attachments: AttachmentMeta[];
+    mentions: MessageMention[];
     reasoningLevel?: ReasoningLevel;
     provider: ProviderId;
     interactionMode?: InteractionMode;
@@ -953,7 +1061,7 @@ export class AgentService {
   }): Promise<Thread & { warnings?: string[] }> {
     const {
       workspaceId, content, model, permissionMode, mode, branch,
-      existingWorktreePath, attachments, reasoningLevel, provider,
+      existingWorktreePath, attachments, mentions, reasoningLevel, provider,
       interactionMode, parentThreadId, forkedFromMessageId, title,
       maxBudgetUsd, maxTurns,
       copilotAgent,
@@ -1119,6 +1227,8 @@ export class AgentService {
       undefined,
       undefined,
       displayContent,
+      undefined,
+      mentions,
     ).catch((err) => {
       logger.error("createBranchedThread initial send failed", {
         threadId: thread.id,

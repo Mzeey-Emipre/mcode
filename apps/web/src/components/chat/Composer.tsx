@@ -43,10 +43,17 @@ const LazyWorktreePicker = lazy(() => import("./WorktreePicker"));
 import { CopilotAgentSelector } from "./CopilotAgentSelector";
 import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
-import { useFileAutocomplete, clearFileListCache } from "./useFileAutocomplete";
+import { useFileAutocomplete, clearFileListCache, type MentionSuggestion } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
-import { ComposerEditor, insertMentionNode, insertSlashCommandNode } from "./lexical";
+import {
+  ComposerEditor,
+  $createTypedMentionNode,
+  extractComposerMessage,
+  insertMentionNode,
+  insertSlashCommandNode,
+  type MentionNodeData,
+} from "./lexical";
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
 import { useTaskStore } from "@/stores/taskStore";
 import { useDiffStore } from "@/stores/diffStore";
@@ -54,7 +61,6 @@ import {
   hideRightPanelAdaptive,
   showRightPanelAdaptive,
 } from "@/lib/right-panel-layout";
-import { extractFileRefs, buildInjectedMessage } from "@/lib/file-tags";
 import { resolveBranchName } from "@/lib/branch-name";
 import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
@@ -85,6 +91,7 @@ import {
 import type {
   AttachedBrowserCapture,
   ContextWindowMode,
+  MessageMention,
   ReasoningLevel,
   ProviderId,
   GoalState,
@@ -120,6 +127,68 @@ function resolveOutboundDisplayContent(
   displayInjected: string | undefined,
 ): string {
   return (displayInjected ?? rawInput).trim();
+}
+
+function writeComposerContent(
+  editor: LexicalEditor,
+  text: string,
+  mentionRanges: readonly MessageMention[] = [],
+  italic = false,
+): void {
+  editor.update(() => {
+    const root = $getRoot();
+    root.clear();
+    let paragraph = $createParagraphNode();
+    const sortedMentions = [...mentionRanges].sort((a, b) => a.range.start - b.range.start);
+    let cursor = 0;
+
+    const appendText = (value: string) => {
+      const parts = value.split("\n");
+      for (let i = 0; i < parts.length; i++) {
+        if (i > 0) {
+          root.append(paragraph);
+          paragraph = $createParagraphNode();
+        }
+        if (parts[i]) {
+          const node = $createTextNode(parts[i]);
+          if (italic) node.setFormat(2);
+          paragraph.append(node);
+        }
+      }
+    };
+
+    for (const mention of sortedMentions) {
+      if (
+        mention.range.start < cursor ||
+        mention.range.end > text.length ||
+        text.slice(mention.range.start, mention.range.end) !== `@${mention.label}`
+      ) {
+        continue;
+      }
+      appendText(text.slice(cursor, mention.range.start));
+      const nodeMention =
+        mention.kind === "file"
+          ? {
+              id: mention.id,
+              kind: mention.kind,
+              label: mention.label,
+              path: mention.path,
+            }
+          : {
+              id: mention.id,
+              kind: mention.kind,
+              label: mention.label,
+              name: mention.name,
+              path: mention.path,
+              provider: mention.provider,
+            };
+      paragraph.append($createTypedMentionNode(nodeMention));
+      cursor = mention.range.end;
+    }
+
+    appendText(text.slice(cursor));
+    root.append(paragraph);
+  });
 }
 
 /**
@@ -621,6 +690,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const clearReply = useReplyStore((s) => s.clearReply);
 
   const [input, setInput] = useState("");
+  const [mentions, setMentions] = useState<MessageMention[]>([]);
   const [modelId, setModelId] = useState(getDefaultModelId());
   // Track provider explicitly: multiple providers share the same model IDs
   // (e.g. "gpt-5.3-codex" exists in both Codex and Copilot), so deriving the
@@ -659,7 +729,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
    * Text queued for send while the child thread's handoff context is still generating.
    * Fires automatically when handoff status transitions to ready or fallback.
    */
-  const [queuedSend, setQueuedSend] = useState<string | null>(null);
+  const [queuedSend, setQueuedSend] = useState<{
+    content: string;
+    displayContent: string;
+    mentions: MessageMention[];
+  } | null>(null);
   // Tracks whether we have seen the handoff transition away from "generating"
   // at least once since this thread was opened. Guards against queueing a
   // message when the user types during the server-initiated first turn on a
@@ -678,6 +752,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const prevThreadIdRef = useRef<string | undefined>(threadId);
   const draftRef = useRef<{
     input: string;
+    mentions: MessageMention[];
     attachments: PendingAttachment[];
     modelId: string;
     provider: string;
@@ -685,7 +760,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     contextWindow?: ContextWindowMode;
     thinking?: boolean;
     codexFastMode?: boolean | null;
-  }>({ input, attachments, modelId, provider, reasoning });
+  }>({ input, mentions, attachments, modelId, provider, reasoning });
   /** Tracks whether the user toggled mode/access before settings finished loading. */
   const agentSettingsTouchedRef = useRef(false);
   /** Set to true by the thread-switch effect; cleared by the model-sync effect.
@@ -698,6 +773,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   useEffect(() => {
     draftRef.current = {
       input,
+      mentions,
       attachments,
       modelId,
       provider,
@@ -855,6 +931,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     });
 
     setInput(session.input);
+    setMentions(session.mentions);
     setAttachments(session.attachments);
     setModelId(session.modelId);
     setProvider(session.provider);
@@ -867,17 +944,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     setCodexFastMode(session.codexFastMode);
 
     if (editorRef.current) {
-      editorRef.current.update(() => {
-        const root = $getRoot();
-        root.clear();
-        if (session.input) {
-          const para = $createParagraphNode();
-          para.append($createTextNode(session.input));
-          root.append(para);
-        } else {
-          root.append($createParagraphNode());
-        }
-      });
+      writeComposerContent(editorRef.current, session.input, session.mentions);
     }
 
     if (!threadId) {
@@ -934,17 +1001,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   useEffect(() => {
     if (!branchFromMessageId || !branchFromMessageContent || !editorRef.current) return;
     const text = branchFromMessageContent;
-    editorRef.current.update(() => {
-      const root = $getRoot();
-      root.clear();
-      const para = $createParagraphNode();
-      const textNode = $createTextNode(text);
-      // Lexical format bitmask: 2 = italic
-      textNode.setFormat(2);
-      para.append(textNode);
-      root.append(para);
-    });
+    writeComposerContent(editorRef.current, text, [], true);
     setInput(branchFromMessageContent);
+    setMentions([]);
     editorRef.current.focus();
   // Only fire when branch mode is newly activated (branchFromMessageId transitions from falsy to truthy).
   }, [branchFromMessageId]);
@@ -953,14 +1012,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   useEffect(() => {
     if (!pendingPrefill) return;
     setInput(pendingPrefill);
+    setMentions([]);
     if (editorRef.current) {
-      editorRef.current.update(() => {
-        const root = $getRoot();
-        root.clear();
-        const para = $createParagraphNode();
-        para.append($createTextNode(pendingPrefill));
-        root.append(para);
-      });
+      writeComposerContent(editorRef.current, pendingPrefill);
       clearPendingPrefill();
       editorRef.current.focus();
     }
@@ -974,47 +1028,18 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const text = composerRecallFromStop.text;
     clearComposerRecallFromStop(threadId);
     setInput(text);
+    setMentions([]);
     if (editorRef.current) {
-      editorRef.current.update(() => {
-        const root = $getRoot();
-        root.clear();
-        const para = $createParagraphNode();
-        para.append($createTextNode(text));
-        root.append(para);
-      });
+      writeComposerContent(editorRef.current, text);
       editorRef.current.focus();
     }
   }, [composerRecallFromStop, threadId, clearComposerRecallFromStop]);
 
   // Ref to the latest queuedSend value so the handoff-fire effect doesn't need it as
   // a reactive dep (which would re-run the effect on every keystroke while queued).
-  const queuedSendRef = useRef<string | null>(null);
+  const queuedSendRef = useRef<typeof queuedSend>(null);
   queuedSendRef.current = queuedSend;
 
-  const fileAutocomplete = useFileAutocomplete({
-    workspaceId,
-    threadId,
-  });
-
-  const handleFileSelect = useCallback((filePath: string) => {
-    fileAutocomplete.selectFile(filePath);
-    if (editorRef.current) {
-      insertMentionNode(
-        editorRef.current,
-        filePath,
-        fileAutocomplete.triggerStart,
-        fileAutocomplete.query.length,
-      );
-    }
-  }, [fileAutocomplete]);
-
-  const filePopup = useFileTagPopup({
-    files: fileAutocomplete.filteredFiles,
-    query: fileAutocomplete.query,
-    isOpen: fileAutocomplete.isOpen,
-    onSelect: handleFileSelect,
-    onDismiss: fileAutocomplete.dismiss,
-  });
   const sendMessage = useThreadStore((s) => s.sendMessage);
   const stopAgent = useThreadStore((s) => s.stopAgent);
   const branchThread = useWorkspaceStore((s) => s.branchThread);
@@ -1074,6 +1099,53 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const providerReason: "disabled" | "cli_missing" | null = providerUnusable
     ? (!availability!.enabled ? "disabled" : "cli_missing")
     : null;
+
+  const fileAutocomplete = useFileAutocomplete({
+    workspaceId,
+    threadId,
+    providerId: effectiveProviderId,
+  });
+
+  const handleMentionSelect = useCallback((item: MentionSuggestion) => {
+    fileAutocomplete.selectSuggestion(item);
+    if (!editorRef.current) return;
+
+    const id =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `mention-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const mention: MentionNodeData =
+      item.kind === "agent"
+        ? {
+            id,
+            kind: "agent",
+            label: item.label,
+            name: item.name,
+            path: item.path,
+            provider: item.provider,
+          }
+        : {
+            id,
+            kind: "file",
+            label: item.label,
+            path: item.path,
+          };
+
+    insertMentionNode(
+      editorRef.current,
+      mention,
+      fileAutocomplete.triggerStart,
+      fileAutocomplete.query.length,
+    );
+  }, [fileAutocomplete]);
+
+  const filePopup = useFileTagPopup({
+    items: fileAutocomplete.suggestions,
+    query: fileAutocomplete.query,
+    isOpen: fileAutocomplete.isOpen,
+    onSelect: handleMentionSelect,
+    onDismiss: fileAutocomplete.dismiss,
+  });
 
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
@@ -1323,6 +1395,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     (
       attachmentsSnapshot: PendingAttachment[],
       inputSnapshot: string,
+      mentionsSnapshot: MessageMention[],
     ): Omit<QueuedMessage, "id" | "queuedAt"> => {
       const attachmentMetas: AttachmentMeta[] = attachmentsSnapshot.map((att) => ({
         id: att.id,
@@ -1335,6 +1408,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       return {
         content: trimmedInput,
         displayContent: trimmedInput,
+        mentions: mentionsSnapshot.length > 0 ? mentionsSnapshot : undefined,
         attachments: attachmentMetas,
         model: modelId,
         permissionMode: access,
@@ -1382,7 +1456,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       // content back to the queue at its original slot before swapping in
       // the new one.
       if (editingFromQueue && (input.trim().length > 0 || attachments.length > 0)) {
-        const payload = captureComposerForRequeue(attachments, input);
+        const payload = captureComposerForRequeue(attachments, input, mentions);
         useQueueStore.getState().insertAt(
           threadId,
           editingFromQueue.originalIndex,
@@ -1398,15 +1472,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       useQueueStore.getState().setEditingThreadId(threadId);
 
       const text = popped.displayContent || popped.content;
+      const poppedMentions = popped.mentions ?? [];
       setInput(text);
+      setMentions(poppedMentions);
       if (editorRef.current) {
-        editorRef.current.update(() => {
-          const root = $getRoot();
-          root.clear();
-          const para = $createParagraphNode();
-          if (text) para.append($createTextNode(text));
-          root.append(para);
-        });
+        writeComposerContent(editorRef.current, text, poppedMentions);
       }
 
       if (popped.attachments.length > 0) {
@@ -1444,6 +1514,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       editingFromQueue,
       input,
       attachments,
+      mentions,
       captureComposerForRequeue,
       setInput,
       setAttachments,
@@ -1473,6 +1544,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       useQueueStore.getState().insertAt(threadId, editingFromQueue.originalIndex, {
         content: original.content,
         displayContent: original.displayContent,
+        mentions: original.mentions,
         attachments: original.attachments,
         model: original.model,
         permissionMode: original.permissionMode,
@@ -1492,6 +1564,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     useQueueStore.getState().setEditingThreadId(null);
     scheduleDrainAfterEdit(threadId);
     setInput("");
+    setMentions([]);
     setAttachments([]);
     if (editorRef.current) {
       editorRef.current.update(() => {
@@ -1521,14 +1594,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     setCustomBranchName(detectedPr.branch);
     const prefill = `Review PR #${detectedPr.number}: ${detectedPr.title}`;
     setInput(prefill);
+    setMentions([]);
     // Also populate the Lexical editor so the user sees the prefilled text
-    editorRef.current?.update(() => {
-      const root = $getRoot();
-      root.clear();
-      const para = $createParagraphNode();
-      para.append($createTextNode(prefill));
-      root.append(para);
-    });
+    if (editorRef.current) writeComposerContent(editorRef.current, prefill);
     setDetectedPr(null);
     setPrDismissed(false);
   }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranch, setNamingMode, setCustomBranchName]);
@@ -1757,30 +1825,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     editorRef.current?.focus();
   }, [addFiles]);
 
-  /** Resolve @file tags into injected content for the agent wire payload. */
-  const injectFileContent = useCallback(async (rawInput: string): Promise<{ content: string; display?: string }> => {
-    const refs = extractFileRefs(rawInput);
-    if (refs.length > 0 && workspaceId) {
-      try {
-        const transport = getTransport();
-        const fileContents = await Promise.all(
-          refs.map(async (path) => {
-            try {
-              const content = await transport.readFileContent(workspaceId, path, threadId);
-              return { path, content };
-            } catch { return null; }
-          }),
-        );
-        const validFiles = fileContents.filter(
-          (f): f is { path: string; content: string } => f !== null,
-        );
-        const injected = buildInjectedMessage(rawInput, validFiles);
-        return { content: injected, display: injected !== rawInput ? rawInput : undefined };
-      } catch { /* fall through */ }
-    }
-    return { content: rawInput };
-  }, [workspaceId, threadId]);
-
   /** Collect attachment metadata for RPC and revoke preview URLs. */
   const collectAndClearAttachments = useCallback((): AttachmentMeta[] => {
     const metas: AttachmentMeta[] = [];
@@ -1819,7 +1863,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   }, [attachments]);
 
   const handleSend = useCallback(async () => {
-    const rawInput = input;
+    const composerMessage = editorRef.current
+      ? extractComposerMessage(editorRef.current)
+      : { text: input, mentions };
+    const rawInput = composerMessage.text;
+    const selectedMentions = composerMessage.mentions;
     const trimmed = rawInput.trim();
     if (trimmed.length === 0 && attachments.length === 0) {
       // Empty submit while editing a queued message = the user emptied it
@@ -1853,7 +1901,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         ? getHandoffStatus(getThreadRecord(useThreadStore.getState().records, threadId))
         : undefined;
       if (status === "generating" && hasSeenHandoffTransition) {
-        setQueuedSend(trimmed);
+        setQueuedSend({
+          content: trimmed,
+          displayContent: trimmed,
+          mentions: selectedMentions,
+        });
         return;
       }
     }
@@ -1870,6 +1922,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const payload = {
         content,
         displayContent: displayContentResolved,
+        mentions: selectedMentions.length > 0 ? selectedMentions : undefined,
         attachments: currentAttachments,
         model: modelId,
         permissionMode: access,
@@ -1905,6 +1958,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       useQueueStore.getState().setEditingThreadId(null);
 
       setInput("");
+      setMentions([]);
       if (threadId) clearDraftFromStore(threadId);
       if (threadId) clearReply(threadId);
       if (editorRef.current) {
@@ -1940,23 +1994,20 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       )
     ) {
       const captureRows = buildAttachedBrowserCaptures(attachments);
-      const { content: injectedContent, display: displayInjected } = await injectFileContent(rawInput);
       let content: string;
       try {
         content =
-          captureRows.length === 0 ? injectedContent : appendBrowserCaptureFence(injectedContent, captureRows);
+          captureRows.length === 0 ? rawInput : appendBrowserCaptureFence(rawInput, captureRows);
         content = content.trim();
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Invalid page preview payload";
         useToastStore.getState().show("error", "Could not send message", msg);
         return;
       }
-      const displayContentResolved = resolveOutboundDisplayContent(rawInput, displayInjected);
+      const displayContentResolved = resolveOutboundDisplayContent(rawInput, undefined);
       enqueueCurrentComposerMessage(content, displayContentResolved, captureRows);
       return;
     }
-
-    const { content: injectedContent, display: displayInjected } = await injectFileContent(rawInput);
 
     // Validate worktree mode requirements
     if (isNewThread && newThreadMode === "worktree" && namingMode === "custom" && !customBranchName.trim()) {
@@ -1983,14 +2034,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     let messageContent: string;
     try {
       messageContent =
-        captureRows.length === 0 ? injectedContent : appendBrowserCaptureFence(injectedContent, captureRows);
+        captureRows.length === 0 ? rawInput : appendBrowserCaptureFence(rawInput, captureRows);
       messageContent = messageContent.trim();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Invalid page preview payload";
       useToastStore.getState().show("error", "Could not send message", msg);
       return;
     }
-    const outboundDisplay = resolveOutboundDisplayContent(rawInput, displayInjected);
+    const outboundDisplay = resolveOutboundDisplayContent(rawInput, undefined);
 
     // ---- Normal send path ----
 
@@ -2008,6 +2059,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     setInput("");
+    setMentions([]);
     if (editorRef.current) {
       editorRef.current.update(() => {
         const root = $getRoot();
@@ -2042,6 +2094,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           thinking ?? undefined,
           provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
           outboundDisplay,
+          selectedMentions,
         );
     } else if (branchFromMessageId && threadId) {
       // Branch mode: create a child thread from the quoted message instead of sending.
@@ -2079,6 +2132,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         contextWindow: contextWindow ?? undefined,
         thinking: thinking ?? undefined,
         codexFastMode: provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
+        mentions: selectedMentions,
       });
       onBranchModeExit?.();
     } else if (threadId) {
@@ -2097,6 +2151,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
         replyContext?.messageId,
         replyContext?.quotedText,
+        undefined,
+        selectedMentions,
       );
     }
 
@@ -2114,7 +2170,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     editorRef.current?.focus();
-  }, [input, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, namingMode, customBranchName, selectedWorktree, injectFileContent, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchNamingMode, branchCustomName, branchWorktreePath, activeThread, branchThread, branchAutoPreview, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand]);
+  }, [input, mentions, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, namingMode, customBranchName, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchNamingMode, branchCustomName, branchWorktreePath, activeThread, branchThread, branchAutoPreview, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand]);
 
   // Reset the handoff-transition-seen flag whenever the user switches threads
   // so the guard below evaluates correctly for each new child thread.
@@ -2137,25 +2193,34 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   useEffect(() => {
     if (!threadId) return;
     if (handoffStatus !== "ready" && handoffStatus !== "fallback") return;
-    const text = queuedSendRef.current;
-    if (!text) return;
+    const queued = queuedSendRef.current;
+    if (!queued) return;
     setQueuedSend(null);
     useThreadStore.getState().sendMessage(
       threadId,
-      text.trim(),
+      queued.content,
       modelId,
       access,
       undefined,
-      text.trim(),
+      queued.displayContent,
       reasoning,
       provider,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      queued.mentions,
     );
   // modelId/access/reasoning/provider intentionally read from render-time values via closure;
   // handoffStatus is the sole reactive trigger so we don't re-fire on unrelated changes.
   }, [handoffStatus, threadId]);
 
-  const handleEditorChange = useCallback((text: string) => {
+  const handleEditorChange = useCallback((text: string, nextMentions: MessageMention[]) => {
     setInput(text);
+    setMentions(nextMentions);
   }, []);
 
   const handleSlashSelect = useCallback((cmd: Command) => {
@@ -2291,6 +2356,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 next.codexFastMode,
                 next.replyToMessageId,
                 next.quotedText,
+                undefined,
+                next.mentions,
               );
               const activeReply = useReplyStore.getState().getReply(threadId);
               if (
@@ -2326,6 +2393,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 popped.codexFastMode,
                 popped.replyToMessageId,
                 popped.quotedText,
+                undefined,
+                popped.mentions,
               );
               const activeReply = useReplyStore.getState().getReply(threadId);
               if (
@@ -2446,9 +2515,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : editingFromQueue ? "Edit the queued message - send to save." : replyContext ? "Type your reply..." : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
           />
           <FileTagPopup
-            files={fileAutocomplete.filteredFiles}
+            items={fileAutocomplete.suggestions}
             isOpen={fileAutocomplete.isOpen}
-            onSelect={handleFileSelect}
+            onSelect={handleMentionSelect}
             listRef={filePopup.listRef}
             selectedIndex={filePopup.selectedIndex}
           />

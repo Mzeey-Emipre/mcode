@@ -3,6 +3,7 @@ import { WorkspaceSchema, WorkspaceEnrichmentSchema } from "../models/workspace.
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema } from "../models/enums.js";
 import { PaginatedMessagesSchema } from "../models/message.js";
+import { MessageMentionsSchema } from "../models/mention.js";
 import { ConversationPageSchema } from "../models/conversation-page.js";
 import { AttachmentMetaSchema } from "../models/attachment.js";
 import { MAX_ATTACHMENTS } from "../models/file-types.js";
@@ -55,6 +56,8 @@ export const SendMessageSchema = lazySchema(() =>
     model: z.string().optional(),
     permissionMode: PermissionModeSchema.optional(),
     attachments: z.array(AttachmentMetaSchema).max(MAX_ATTACHMENTS).optional(),
+    /** Typed metadata for selected composer mentions. Plain @text is omitted. */
+    mentions: MessageMentionsSchema.optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
     provider: ProviderIdSchema.optional(),
     /** When "plan", the server wraps the message with the plan-mode question prompt. */
@@ -99,6 +102,8 @@ export const CreateAndSendSchema = lazySchema(() =>
     branch: z.string().optional(),
     existingWorktreePath: z.string().optional(),
     attachments: z.array(AttachmentMetaSchema).max(MAX_ATTACHMENTS).optional(),
+    /** Typed metadata for selected composer mentions. Plain @text is omitted. */
+    mentions: MessageMentionsSchema.optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
     provider: ProviderIdSchema.optional(),
     /** When "plan", the server wraps the message with the plan-mode question prompt. */
@@ -785,6 +790,18 @@ export const WS_METHODS = lazySchema(() => ({
       workspaceId: z.string(),
     }),
     result: z.array(CopilotSubagentSchema()),
+  },
+  /** Fetches Codex sub-agent definitions available for @ mentions. */
+  "provider.codexAgents": {
+    params: z.object({
+      workspaceId: z.string().optional(),
+      threadId: z.string().optional(),
+    }),
+    result: z.array(z.object({
+      name: z.string(),
+      path: z.string(),
+      description: z.string().optional(),
+    })),
   },
   "providers.listAvailability": {
     params: z.object({}),

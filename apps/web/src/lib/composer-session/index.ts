@@ -1,6 +1,6 @@
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
 import type { ComposerDraft } from "@/stores/composerDraftStore";
-import type { ContextWindowMode, ReasoningLevel } from "@mcode/contracts";
+import type { ContextWindowMode, MessageMention, ReasoningLevel } from "@mcode/contracts";
 import type { PermissionMode } from "@/transport";
 import { INTERACTION_MODES, type InteractionMode } from "@/transport";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
@@ -15,6 +15,7 @@ import {
 /** Full per-thread composer state restored as one value on thread switch. */
 export interface ComposerSession {
   input: string;
+  mentions: MessageMention[];
   attachments: PendingAttachment[];
   modelId: string;
   provider: string;
@@ -50,6 +51,10 @@ export interface ResolveComposerSessionInput {
 export function snapshotComposerDraft(draft: ComposerDraft): ComposerDraft {
   return {
     ...draft,
+    mentions: draft.mentions?.map((mention) => ({
+      ...mention,
+      range: { ...mention.range },
+    })),
     attachments: draft.attachments.map((attachment) => ({ ...attachment })),
   };
 }
@@ -65,6 +70,7 @@ export function resolveComposerSession(input: ResolveComposerSessionInput): Comp
     const modelId = getDefaultModelId();
     return {
       input: "",
+      mentions: [],
       attachments: [],
       modelId,
       provider: getDefaultProviderId(),
@@ -85,6 +91,7 @@ export function resolveComposerSession(input: ResolveComposerSessionInput): Comp
   if (saved) {
     return {
       input: saved.input,
+      mentions: saved.mentions ?? [],
       attachments: saved.attachments.map((attachment) => ({ ...attachment })),
       modelId: saved.modelId,
       provider: saved.provider ?? getDefaultProviderId(),
@@ -104,6 +111,7 @@ export function resolveComposerSession(input: ResolveComposerSessionInput): Comp
   const resolvedModelId = resolveThreadModelId(threadRow?.model, getDefaultModelId());
   return {
     input: "",
+    mentions: [],
     attachments: [],
     modelId: resolvedModelId,
     provider: (threadRow?.provider as string | undefined) ?? getDefaultProviderId(),

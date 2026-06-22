@@ -5,9 +5,9 @@
  */
 
 import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import type { WebSocket } from "ws";
 
 import {
@@ -66,6 +66,67 @@ import type { ThreadTeardownService } from "../services/thread-teardown-service.
 
 function teardownFailureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
+}
+
+interface CodexAgentMentionInfo {
+  name: string;
+  path: string;
+  description?: string;
+}
+
+function tomlStringValue(body: string, key: string): string | undefined {
+  const match = new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m").exec(body);
+  return match?.[1]?.trim() || undefined;
+}
+
+async function scanCodexAgentDir(dir: string): Promise<CodexAgentMentionInfo[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+
+  const agents: CodexAgentMentionInfo[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".toml")) continue;
+    const path = join(dir, entry);
+    try {
+      const body = await readFile(path, "utf8");
+      const fallbackName = entry.slice(0, -".toml".length);
+      const name = tomlStringValue(body, "name") ?? fallbackName;
+      const description = tomlStringValue(body, "description");
+      agents.push({ name, path, ...(description ? { description } : {}) });
+    } catch {
+      // Ignore malformed or unreadable agent files; diagnostics belong in the agent editor.
+    }
+  }
+  return agents;
+}
+
+async function discoverCodexAgents(deps: RouterDeps, workspaceId?: string, threadId?: string): Promise<CodexAgentMentionInfo[]> {
+  const dirs = [join(homedir(), ".codex", "agents")];
+  if (workspaceId) {
+    const workspace = deps.workspaceService.findById(workspaceId);
+    if (workspace) {
+      let cwd = workspace.path;
+      if (threadId) {
+        const thread = deps.threadRepo.findById(threadId);
+        if (thread && thread.workspace_id === workspaceId) {
+          cwd = deps.gitService.resolveWorkingDir(workspace.path, thread.mode, thread.worktree_path);
+        }
+      }
+      dirs.push(join(cwd, ".codex", "agents"));
+    }
+  }
+
+  const byName = new Map<string, CodexAgentMentionInfo>();
+  for (const dir of dirs) {
+    for (const agent of await scanCodexAgentDir(dir)) {
+      byName.set(agent.name, agent);
+    }
+  }
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Service dependencies for the router. */
@@ -564,6 +625,7 @@ async function dispatch(
         params.quotedText,
         params.displayContent,
         params.planAction,
+        params.mentions,
       );
       return;
     case "agent.createAndSend":
@@ -588,6 +650,7 @@ async function dispatch(
         params.thinking,
         params.codexFastMode,
         params.displayContent,
+        params.mentions,
       );
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);
@@ -874,6 +937,9 @@ async function dispatch(
     }
     case "providers.listAvailability": {
       return deps.providerAvailability.listAvailability();
+    }
+    case "provider.codexAgents": {
+      return discoverCodexAgents(deps, params.workspaceId, params.threadId);
     }
     case "provider.copilotAgents": {
       const workspace = deps.workspaceService.findById(params.workspaceId);

@@ -34,6 +34,7 @@ import type {
   AgentEvent,
   AttachmentMeta,
   GoalState,
+  MessageMention,
   PermissionDecision,
   PermissionRequest,
   ProviderModelInfo,
@@ -152,6 +153,7 @@ async function buildCodexInput(
   message: string,
   attachments?: AttachmentMeta[],
   skills: readonly SkillInfo[] = [],
+  mentions: readonly MessageMention[] = [],
 ): Promise<TurnInputPart[]> {
   const inputs: TurnInputPart[] = [];
 
@@ -168,10 +170,47 @@ async function buildCodexInput(
     }
   }
 
-  const invocation = await resolveCodexSlashInvocation(message, skills);
+  for (const mention of mentions) {
+    if (mention.kind !== "file") continue;
+    inputs.push({
+      type: "mention",
+      name: mention.label,
+      path: mention.path,
+    });
+  }
+
+  const wireMessage = rewriteAgentMentionsAsSubagentUris(message, mentions);
+  const invocation = await resolveCodexSlashInvocation(wireMessage, skills);
   if (invocation.skillItem) inputs.push(invocation.skillItem);
   inputs.push({ type: "text", text: invocation.text });
   return inputs;
+}
+
+function rewriteAgentMentionsAsSubagentUris(
+  message: string,
+  mentions: readonly MessageMention[],
+): string {
+  let text = message;
+  const agentMentions = mentions
+    .filter((mention) => mention.kind === "agent")
+    .sort((a, b) => b.range.start - a.range.start);
+
+  for (const mention of agentMentions) {
+    const displayText = `@${mention.label}`;
+    if (
+      mention.range.start < 0 ||
+      mention.range.end > text.length ||
+      text.slice(mention.range.start, mention.range.end) !== displayText
+    ) {
+      continue;
+    }
+    text =
+      text.slice(0, mention.range.start) +
+      `subagent://${mention.name}` +
+      text.slice(mention.range.end);
+  }
+
+  return text;
 }
 
 /** Translates Mcode slash invocations into Codex-native skill or prompt input. */
@@ -511,7 +550,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     }
     const {
       sessionId, message, cwd, model, permissionMode,
-      reasoningLevel, attachments,
+      reasoningLevel, attachments, mentions,
     } = req;
     const codexFastMode = req.providerOptions.fastMode;
 
@@ -520,7 +559,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
     let input: TurnInputPart[];
     try {
-      input = await buildCodexInput(message, attachments, skillCatalog);
+      input = await buildCodexInput(message, attachments, skillCatalog, mentions);
     } catch (err) {
       if (!(err instanceof CodexPromptResolutionError)) throw err;
       logger.debug("Codex prompt expansion failed", {
