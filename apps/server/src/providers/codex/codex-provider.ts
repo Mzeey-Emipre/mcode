@@ -58,6 +58,12 @@ import {
   mapDecisionToCodexResponse,
   synthesizeCodexPermissionRequest,
 } from "./codex-permission-mapper.js";
+import {
+  CodexPromptResolutionError,
+  expandCodexPromptCommand,
+  isCodexPromptCommand,
+  parseCodexSlashInvocation,
+} from "./codex-prompt.js";
 
 /**
  * Liveness-probe interval for a silent turn, not a turn deadline. The timer
@@ -142,11 +148,11 @@ interface PendingPermissionEntry {
  * Images become `localImage` parts; non-image files become sanitised text notes
  * that omit internal filesystem paths to prevent prompt injection.
  */
-function buildCodexInput(
+async function buildCodexInput(
   message: string,
   attachments?: AttachmentMeta[],
   skills: readonly SkillInfo[] = [],
-): TurnInputPart[] {
+): Promise<TurnInputPart[]> {
   const inputs: TurnInputPart[] = [];
 
   for (const att of attachments ?? []) {
@@ -162,36 +168,44 @@ function buildCodexInput(
     }
   }
 
-  const invocation = resolveCodexSkillInvocation(message, skills);
+  const invocation = await resolveCodexSlashInvocation(message, skills);
   if (invocation.skillItem) inputs.push(invocation.skillItem);
   inputs.push({ type: "text", text: invocation.text });
   return inputs;
 }
 
-/** Translates an Mcode slash skill invocation into Codex's native skill input. */
-function resolveCodexSkillInvocation(
+/** Translates Mcode slash invocations into Codex-native skill or prompt input. */
+async function resolveCodexSlashInvocation(
   message: string,
   skills: readonly SkillInfo[],
-): { text: string; skillItem?: TurnInputPart } {
-  const withoutLeadingSpace = message.trimStart();
-  const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(withoutLeadingSpace);
-  if (!match) return { text: message };
+): Promise<{ text: string; skillItem?: TurnInputPart }> {
+  const slash = parseCodexSlashInvocation(message);
+  if (!slash) return { text: message };
 
-  const requestedName = match[1];
-  const skill = skills.find(
-    (item) =>
-      item.kind === "skill" &&
-      (item.name === requestedName || item.nativeName === requestedName),
-  );
-  if (!skill) return { text: message };
+  let promptCommand: (SkillInfo & { path: string }) | undefined;
+  for (const item of skills) {
+    if (item.name !== slash.requestedName && item.nativeName !== slash.requestedName) continue;
 
-  const nativeName = skill.nativeName ?? skill.name.split(":").pop() ?? skill.name;
-  const args = match[2]?.trimStart() ?? "";
-  const text = `$${nativeName}${args ? ` ${args}` : ""}`;
-  return {
-    text,
-    ...(skill.path ? { skillItem: { type: "skill" as const, name: nativeName, path: skill.path } } : {}),
-  };
+    if (item.kind === "skill") {
+      const nativeName = item.nativeName ?? item.name.split(":").pop() ?? item.name;
+      const args = slash.args.trimStart();
+      const text = `$${nativeName}${args ? ` ${args}` : ""}`;
+      return {
+        text,
+        ...(item.path ? { skillItem: { type: "skill" as const, name: nativeName, path: item.path } } : {}),
+      };
+    }
+
+    if (!promptCommand && isCodexPromptCommand(item, slash.requestedName)) {
+      promptCommand = item;
+    }
+  }
+
+  if (promptCommand) {
+    return { text: await expandCodexPromptCommand(promptCommand, slash.args) };
+  }
+
+  return { text: message };
 }
 
 /** Maps Codex native skill scope into Mcode's source labels. */
@@ -503,8 +517,20 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     const nativeSkills = await this.listSkills(cwd);
     const skillCatalog = this.skillService.list(cwd, "codex", nativeSkills);
-    const input = buildCodexInput(message, attachments, skillCatalog);
     const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+    let input: TurnInputPart[];
+    try {
+      input = await buildCodexInput(message, attachments, skillCatalog);
+    } catch (err) {
+      if (!(err instanceof CodexPromptResolutionError)) throw err;
+      logger.debug("Codex prompt expansion failed", {
+        promptName: err.promptName,
+        cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
+      });
+      this.emit("event", { type: AgentEventType.Error, threadId, error: err.message } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      return;
+    }
 
     const sandbox = permissionMode === "full" ? "danger-full-access" : "workspace-write";
 

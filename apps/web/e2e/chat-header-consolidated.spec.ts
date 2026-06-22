@@ -239,7 +239,7 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByRole("button", { name: /create pr/i })).toHaveCount(0);
   });
 
-  test("Overview popover holds changes, local, branch, commit, and PR actions", async ({ page }) => {
+  test("Overview popover holds changes, local, branch, and PR actions", async ({ page }) => {
     await ensureOverviewOpen(page);
 
     await expect(page.getByTestId("thread-overview-body")).toBeVisible();
@@ -249,8 +249,9 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("thread-overview-local")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toBeVisible();
     await expect(page.getByTestId("thread-overview-create-branch")).toBeVisible();
-    await expect(page.getByTestId("workspace-menu-commit")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-pr")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
+    await expect(page.getByTestId("workspace-menu-commit")).toHaveCount(0);
     await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);
     await expect(page.locator(".animate-overview-enter").first()).toBeVisible();
 
@@ -281,6 +282,10 @@ test.describe("Consolidated chat header", () => {
       )
       .toBe("https://github.com/Mzeey-Empire/mcode");
     await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/consolidated-header");
+    await expect(page.getByTestId("thread-overview-pr")).toContainText("Create PR");
+    await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-pr-status")).toHaveCount(0);
+    await expect(page.getByTestId("thread-overview-pr-detail")).toHaveCount(0);
     await expect(page.getByTestId("thread-overview-change-summary")).toContainText("+233");
     await expect(page.getByTestId("thread-overview-change-summary")).toContainText("-0");
     await expect(page.getByTestId("workspace-menu-changes")).toHaveCSS("cursor", "pointer");

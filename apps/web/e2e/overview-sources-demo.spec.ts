@@ -81,6 +81,7 @@ const assistantMessage = {
     "3. Recraft SVG converter: https://www.recraft.ai/ai-image-vectorizer",
     "4. The repo lives at https://github.com/milex-consulting/CaravanFE",
     "5. Tracking issue: https://github.com/milex-consulting/CaravanFE/issues/42",
+    "6. Screenshot artifact: [local-unseeded-app.png](/tmp/screens/local-unseeded-app.png)",
     "",
     "My pick: try SVGTrace next.",
   ].join("\n"),
@@ -106,6 +107,9 @@ test("Overview sources + humanized links demo", async ({ page }) => {
     "git.listBranches": [
       { name: "feat/logo", shortSha: "abc1234", type: "local", isCurrent: true },
     ],
+    "git.listWorktrees": [
+      { name: "feat-x", path: "/tmp/caravanfe/.worktrees/feat-x", branch: "feat/logo", managed: true },
+    ],
     "git.getRemoteUrl": {
       label: "milex-consulting/CaravanFE",
       webUrl: "https://github.com/milex-consulting/CaravanFE",
@@ -123,6 +127,7 @@ test("Overview sources + humanized links demo", async ({ page }) => {
 
   // Humanized inline links in the transcript.
   await expect(page.getByText("milex-consulting/CaravanFE#42")).toBeVisible();
+  await expect(page.getByTestId("markdown-link-file-icon")).toBeVisible();
   await page.screenshot({ path: "e2e/screenshots/demo/transcript-humanized-links.png", fullPage: false });
 
   // Wide viewport: the Overview opens by default and shows repo + Sources.

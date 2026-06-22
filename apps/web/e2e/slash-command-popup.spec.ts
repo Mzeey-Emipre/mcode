@@ -63,6 +63,13 @@ const THREAD_CURSOR = {
   model: "cursor-auto",
 };
 
+/** Codex-backed thread — prompt commands must be scoped to Codex. */
+const THREAD_CODEX = {
+  ...THREAD,
+  provider: "codex" as const,
+  model: "gpt-5.2-codex",
+};
+
 /** Varied skills payload covering multiple kinds and sources. */
 const FIXTURE_SKILLS = [
   { name: "superpowers:brainstorming", description: "Generate ideas creatively", kind: "skill", source: "user" },
@@ -248,7 +255,43 @@ test.describe("Slash command popup", () => {
     });
   });
 
-  test("06 - long plugin skill list opens without React flushSync warning", async ({ page }) => {
+  test("06 - codex provider thread shows prompt commands in completion", async ({ page }) => {
+    let listParams: { cwd?: string; providerId?: string } | undefined;
+    const codexPrompts = [
+      {
+        name: "prompts:draftpr",
+        description: "Draft a pull request",
+        kind: "command" as const,
+        source: "user" as const,
+        providers: ["codex"],
+        nativeName: "draftpr",
+      },
+    ];
+
+    await mockWebSocketServer(page, {
+      "workspace.list": [WORKSPACE],
+      "thread.list": [THREAD_CODEX],
+      "message.list": [],
+      "skill.list": (params) => {
+        listParams = params as { cwd?: string; providerId?: string };
+        return codexPrompts;
+      },
+    });
+
+    await openPopup(page, "/prompts");
+
+    expect(listParams?.providerId).toBe("codex");
+
+    const popup = page.locator("[data-slash-popup]");
+    await expect(popup.getByText("/prompts:draftpr")).toBeVisible();
+
+    await page.screenshot({
+      path: "e2e/screenshots/slash-command/06-codex-prompt-command.png",
+      fullPage: true,
+    });
+  });
+
+  test("07 - long plugin skill list opens without React flushSync warning", async ({ page }) => {
     const flushSyncWarnings: string[] = [];
     page.on("console", (msg) => {
       const text = msg.text();

@@ -9,6 +9,7 @@ import {
   looksLikeWorkspaceRelativeFileRef,
 } from "@mcode/contracts";
 import { CodeBlock } from "./CodeBlock";
+import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { SiteFavicon } from "@/components/ui/favicon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { resolveCodeBlockLanguage } from "@/lib/resolve-code-block-language";
@@ -52,6 +53,12 @@ const LazyMermaidBlock = lazy(() => import("./MermaidBlock"));
 
 /** Matches a standalone HTTP(S) URL (used to detect URLs inside inline code spans). */
 const HTTP_URL_RE = /^https?:\/\/\S+$/;
+
+/** Schemes that should keep site-style link chrome rather than file chrome. */
+const EXTERNAL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+
+/** Common basename shape for a file reference shown in Markdown. */
+const FILE_BASENAME_RE = /^[^/\\]+\.[A-Za-z0-9][A-Za-z0-9-]*$/;
 
 /** Tooltip label for the Ctrl/Cmd+click preview hint. */
 const previewHint = `${isMac ? "\u2318" : "Ctrl"}+click to open in preview`;
@@ -167,6 +174,42 @@ function getLinkFaviconUrl(href: string | undefined): string | null {
   }
 }
 
+function workspacePreviewPath(href: string): string | null {
+  if (!isMcodeWorkspacePreviewUrl(href)) return null;
+  try {
+    const url = new URL(href);
+    return decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeDisplayFileRef(value: string | undefined): boolean {
+  if (!value) return false;
+  const trimmed = value.trim().replace(/^<|>$/g, "");
+  if (!trimmed) return false;
+  if (isMcodeWorkspacePreviewUrl(trimmed)) return true;
+  if (EXTERNAL_SCHEME_RE.test(trimmed)) return false;
+
+  const normalized = trimmed.replace(/\\/g, "/");
+  const basename = normalized.split("/").filter(Boolean).at(-1) ?? normalized;
+  if (!FILE_BASENAME_RE.test(basename)) return false;
+  return normalized.includes("/") || normalized.startsWith(".") || trimmed.startsWith("/");
+}
+
+function getMarkdownFileIconPath(args: {
+  href: string | undefined;
+  safeHref: string | undefined;
+  childText: string | null;
+}): string | null {
+  const previewPath = args.safeHref ? workspacePreviewPath(args.safeHref) : null;
+  if (previewPath) return previewPath;
+
+  if (looksLikeDisplayFileRef(args.href)) return args.href!.trim().replace(/^<|>$/g, "");
+  if (looksLikeDisplayFileRef(args.childText ?? undefined)) return args.childText!.trim();
+  return null;
+}
+
 interface MarkdownLinkProps {
   href?: string;
   children?: React.ReactNode;
@@ -186,6 +229,7 @@ function MarkdownLink({
   const showHint = isPreviewable && hasPreview();
   const faviconUrl = getLinkFaviconUrl(safeHref);
   const childText = getPlainTextChild(children);
+  const fileIconPath = getMarkdownFileIconPath({ href, safeHref, childText });
   const isBareUrlText =
     !!childText && !!safeHref && (childText === href || childText === safeHref || HTTP_URL_RE.test(childText.trim()));
   const label = isBareUrlText && safeHref ? formatBareUrlLabel(safeHref) : children;
@@ -211,12 +255,18 @@ function MarkdownLink({
         }
       }}
     >
-      <SiteFavicon
-        src={faviconUrl}
-        fallback={<Globe size={12} aria-hidden className="shrink-0 text-muted-foreground" />}
-        frameTestId="markdown-link-favicon-frame"
-        imageTestId="markdown-link-favicon"
-      />
+      {fileIconPath ? (
+        <span data-testid="markdown-link-file-icon" className="inline-flex shrink-0">
+          <FileTypeIcon filePath={fileIconPath} size={13} />
+        </span>
+      ) : (
+        <SiteFavicon
+          src={faviconUrl}
+          fallback={<Globe size={12} aria-hidden className="shrink-0 text-muted-foreground" />}
+          frameTestId="markdown-link-favicon-frame"
+          imageTestId="markdown-link-favicon"
+        />
+      )}
       <span className="min-w-0 truncate">{label}</span>
       {safeHref ? (
         <ExternalLink

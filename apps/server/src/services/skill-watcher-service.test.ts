@@ -10,6 +10,15 @@ function tmp() {
   return mkdtempSync(join(tmpdir(), "skill-watch-"));
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  expect(predicate()).toBe(true);
+}
+
 describe("SkillWatcherService", () => {
   let dir: string;
   let svc: SkillService;
@@ -34,7 +43,7 @@ describe("SkillWatcherService", () => {
     // Trigger a change event
     writeFileSync(join(dir, "skills", "marker.txt"), "x");
 
-    await new Promise((r) => setTimeout(r, 350)); // > debounce window
+    await waitFor(() => invalidateSpy.mock.calls.length > 0);
     expect(invalidateSpy).toHaveBeenCalled();
   });
 
@@ -47,7 +56,8 @@ describe("SkillWatcherService", () => {
       writeFileSync(join(dir, "skills", `f${i}.txt`), "x");
     }
 
-    await new Promise((r) => setTimeout(r, 350));
+    await waitFor(() => invalidateSpy.mock.calls.length > 0);
+    await new Promise((r) => setTimeout(r, 250));
     expect(invalidateSpy.mock.calls.length).toBe(1);
   });
 
@@ -69,7 +79,8 @@ describe("SkillWatcherService", () => {
     // invalidate once — so call count alone is insufficient. The real
     // assertion is that we never registered a second underlying watcher.
     writeFileSync(join(target, "marker.txt"), "x");
-    await new Promise((r) => setTimeout(r, 350));
+    await waitFor(() => invalidateSpy.mock.calls.length > 0);
+    await new Promise((r) => setTimeout(r, 250));
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
 
     // stopAll() must close every registered watcher; if dedup leaked a second
@@ -97,12 +108,13 @@ describe("SkillWatcherService", () => {
     // for the parent, which alone could satisfy a naive call-count assert.
     // Clearing the spy after this isolates the next assertion to the
     // late-registered root's own watcher.
-    await new Promise((r) => setTimeout(r, 350));
+    await waitFor(() => invalidateSpy.mock.calls.length > 0);
     invalidateSpy.mockClear();
 
     // A change inside the late-registered root must invalidate exactly once.
     writeFileSync(join(root, "marker.txt"), "x");
-    await new Promise((r) => setTimeout(r, 350));
+    await waitFor(() => invalidateSpy.mock.calls.length > 0);
+    await new Promise((r) => setTimeout(r, 250));
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -114,6 +126,7 @@ describe("SkillWatcherService", () => {
 
     // Should watch all the new provider roots
     expect(watchedPaths.some((p) => p.includes(".codex"))).toBe(true);
+    expect(watchedPaths.some((p) => p.replace(/\\/g, "/").includes(".codex/prompts"))).toBe(true);
     expect(watchedPaths.some((p) => p.includes(".agents"))).toBe(true);
     expect(watchedPaths.some((p) => p.replace(/\\/g, "/").includes(".cursor/skills"))).toBe(true);
   });
@@ -138,12 +151,13 @@ describe("SkillWatcherService", () => {
     // Create the missing codex root after start() — the codexParent watcher
     // should detect this and auto-register codexRoot.
     mkdirSync(codexRoot, { recursive: true });
-    await new Promise((r) => setTimeout(r, 350));
+    await waitFor(() => invalidateSpy.mock.calls.length > 0);
     invalidateSpy.mockClear();
 
     // A change inside the late-registered codex root must invalidate
     writeFileSync(join(codexRoot, "marker.txt"), "x");
-    await new Promise((r) => setTimeout(r, 350));
+    await waitFor(() => invalidateSpy.mock.calls.length > 0);
+    await new Promise((r) => setTimeout(r, 250));
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
   });
 
