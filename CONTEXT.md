@@ -66,31 +66,43 @@ _Avoid_: using "project" in code or schema; reserve it for user-facing copy.
 
 ### Worktree
 A git worktree provisioned under a workspace so a thread can run against
-an isolated checkout of the repo on its own branch. Standard git semantics
-— one repository, multiple working directories — applied as an isolation
-primitive: each worktree-mode thread runs against its own files, its own
-branch, and (in dev mode) its own database.
+an isolated checkout of the repo. Standard git semantics, one repository
+with multiple working directories, applied as an isolation primitive: each
+worktree-mode thread runs against its own files and, in dev mode, its own
+database. A worktree-mode thread may start without its own branch; the user
+can create that branch later from the Overview.
 
 **A worktree is not 1:1 with a thread.** Multiple threads can share the
 same worktree via the composer's "Existing worktree" mode. A thread can
 also run *without* a worktree, directly against the workspace's main
-checkout — see "Direct mode" below.
+checkout. See "Direct mode" below.
 
 Worktrees are persistent and removed manually. When a user deletes a
 thread, an option to delete its worktree is offered alongside; the
 worktree can also be kept and reused for future threads.
 
+### Branchless worktree
+A worktree that has no named branch yet. It starts from a selected base
+branch and lets the thread run in isolation before the user decides whether
+the work needs a branch. In branch-facing UI, the current ref is shown as
+`HEAD` with a short commit hash rather than as the selected base branch.
+In Review comparisons, the target is shown as `HEAD` and the base remains
+the selected base branch for that worktree.
+_Avoid_: Headless worktree
+
+### Thread checkout state
+The thread's current git position. A worktree thread is either on a named
+branch or in a branchless worktree with a base branch and current `HEAD`;
+callers must not infer this state from the branch label alone.
+_Avoid_: Treating `HEAD` as a branch name
+
 ### PR-able thread
 A thread the app can open a pull request from. A thread is PR-able only
-when it runs in an isolated worktree; direct-mode threads are never
-PR-able, because they run against the workspace's main checkout and there
-is nothing to open a pull request from. This single notion gates every PR
-affordance: the thread-row PR icon, the chat header's Create PR button,
-and the background PR and commits-ahead polling. A non-PR-able thread
-shows its branch/agent status instead of a PR glyph, offers no Create PR
-button, and is never polled against GitHub, even if a PR number happens to
-be attached to it. A user who wants a pull request from local work creates
-a worktree.
+when it runs in an isolated worktree on a named branch; direct-mode and
+branchless worktree threads are not PR-able yet. This single notion gates
+background PR and commits-ahead polling. A branchless thread can still use
+the Create PR entry point, but that flow must ask for a branch name and
+create the branch before opening the pull request.
 
 ## Composer
 
@@ -99,7 +111,7 @@ The mode the composer is in when the user creates a new thread, determining
 whether the thread runs against the workspace's main checkout or against a
 worktree, and whether that worktree is new or pre-existing. Three modes:
 **Direct**, **New worktree**, **Existing worktree**. Once a thread has been
-created, its mode is fixed for the life of the thread — the composer shows
+created, its mode is fixed for the life of the thread. The composer shows
 the chosen mode in read-only form rather than as a fourth mode.
 
 ### Direct mode
@@ -108,20 +120,16 @@ No isolation: file edits affect the user's primary working directory and
 current branch. The default when a workspace is not a git repo.
 
 ### New worktree mode
-Composer mode where the thread provisions a fresh git worktree on a new
-branch. Used when the user wants isolation and a clean branch for the work
-about to be done. Code identifier: `"worktree"`.
+Composer mode where the thread provisions a fresh git worktree from a
+selected base branch without requiring the user to name a new branch first.
+Used when the user wants isolation before deciding whether the work needs a
+branch. Code identifier: `"worktree"`.
 
 ### Existing worktree mode
 Composer mode where the thread attaches to a worktree that already exists.
-Enables multiple threads to share one worktree — e.g. follow-up work on
-the same branch without re-creating the directory.
-
-### Naming mode (Auto / Custom)
-Sub-control of New worktree mode controlling how the new branch is named.
-**Auto** generates a branch name from the thread's first message;
-**Custom** lets the user type one explicitly. Auto is the default, but the
-user can change the default to Custom from settings.
+Enables multiple threads to share one worktree, such as follow-up work on
+the same branch without re-creating the directory. Existing worktree mode can
+also attach to a branchless worktree.
 
 ### Composer session
 The composer's per-thread state, treated as one value: draft text,
@@ -221,8 +229,8 @@ Not to be confused with [[Fork]]. The two share one git primitive (a branch
 pointer) in exactly one case, which is why they are easy to collapse, but they
 are different actions: Create branch moves *this* thread onto a new branch right
 here, whereas Fork spawns a *new* thread - and only its new-worktree variant
-also creates a branch (in a *separate* worktree; existing-worktree reuses that
-worktree's branch, and new-local does no branch op at all). One line each:
+also creates a separate worktree; existing-worktree reuses that worktree's
+branch, and new-local does no branch op at all. One line each:
 Create branch = "this thread, new branch, here"; Fork = "a new thread, possibly
 elsewhere."
 
@@ -573,6 +581,11 @@ workspace-root view of changes and branches stays the Review tab's job.
 
 The Overview offers two ways to take the thread further, split by what each does
 to *this* thread. Both anchor at the thread tail (not a picked message):
+
+For branchless worktrees, the Overview shows the checkout as `HEAD` from the
+selected base branch and makes Create branch the next git action. After Create
+branch succeeds, the Overview shows the named branch like any other worktree
+thread.
 
 **[[Fork]]** - spawns a *new* child thread; this thread stays untouched. Three
 targets:
