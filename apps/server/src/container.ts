@@ -92,6 +92,7 @@ export function setupContainer(mcodeDir: string): typeof container {
   // MCODE_ prefix already auto-protects, but this records intent and
   // survives any future prefix-rule change.
   container.resolve(ProtectedEnvStore).protect("MCODE_BROWSER_USE_PIPE_PATH");
+  container.resolve(ProtectedEnvStore).protect("MCODE_CURSOR_ADMIN_API_KEY");
   container.register(
     ShellEnvResolver,
     { useClass: ShellEnvResolver },

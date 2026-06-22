@@ -543,6 +543,11 @@ export class CodexAppServer extends EventEmitter {
 
     this.rpc.on("notification", (notification) => {
       const method = (notification as { method?: string }).method ?? "";
+      if (method === "account/rateLimits/updated") {
+        this.emit("activity");
+        this.emit("notification", notification);
+        return;
+      }
 
       // Capture thread/started notifications to update the thread ID if it changes
       // mid-session (e.g. context compaction). Without this, subsequent turns would

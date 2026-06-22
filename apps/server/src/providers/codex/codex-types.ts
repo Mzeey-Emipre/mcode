@@ -316,6 +316,24 @@ export interface ErrorNotificationPayload {
   [key: string]: unknown;
 }
 
+/** One Codex account rate-limit window from `account/rateLimits/updated`. */
+export interface CodexRateLimitWindow {
+  usedPercent?: number;
+  windowDurationMins?: number;
+  resetsAt?: number;
+}
+
+/** Account rate-limit payload from the Codex app-server. */
+export interface CodexRateLimitsPayload {
+  rateLimits?: {
+    primary?: CodexRateLimitWindow | null;
+    secondary?: CodexRateLimitWindow | null;
+    planType?: string | null;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+}
+
 /** Payload for native Codex goal-update notifications. */
 export interface ThreadGoalUpdatedPayload {
   threadId: string;
@@ -353,4 +371,5 @@ export type CodexNotification =
   | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn/completed" })
   | (JsonRpcNotification<ThreadGoalUpdatedPayload> & { method: "thread/goal/updated" })
   | (JsonRpcNotification<ThreadGoalClearedPayload> & { method: "thread/goal/cleared" })
+  | (JsonRpcNotification<CodexRateLimitsPayload> & { method: "account/rateLimits/updated" })
   | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" });

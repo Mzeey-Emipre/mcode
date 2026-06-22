@@ -38,6 +38,8 @@ import type {
   PermissionDecision,
   PermissionRequest,
   ProviderModelInfo,
+  ProviderUsageInfo,
+  QuotaCategory,
   SkillInfo,
 } from "@mcode/contracts";
 import { AgentEventType, CODEX_STATIC_MODELS, isVirtualBrowserContextAttachment } from "@mcode/contracts";
@@ -49,6 +51,7 @@ import { traceCodexIngest } from "./codex-trace.js";
 import type {
   TurnInputPart,
   CodexNotification,
+  CodexRateLimitsPayload,
   CodexTurnOptions,
   ReasoningEffort,
   CodexSkillMetadata,
@@ -80,6 +83,43 @@ const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
 
 type CodexEndedOutcome = "completed" | "errored" | "cancelled";
+
+function codexRateLimitLabel(windowDurationMins: number | undefined, fallback: string): string {
+  if (windowDurationMins === 300) return "5-hour limit";
+  if (windowDurationMins === 10_080) return "Weekly limit";
+  return fallback;
+}
+
+/** Maps Codex app-server account rate limits into shared usage categories. */
+export function mapCodexRateLimitsToUsage(payload: CodexRateLimitsPayload): ProviderUsageInfo {
+  const categories: QuotaCategory[] = [];
+  const rateLimits = payload.rateLimits;
+  const windows = [
+    { label: "Primary limit", limit: rateLimits?.primary ?? null },
+    { label: "Secondary limit", limit: rateLimits?.secondary ?? null },
+  ];
+
+  for (const { label, limit } of windows) {
+    if (!limit || typeof limit.usedPercent !== "number" || !Number.isFinite(limit.usedPercent)) {
+      continue;
+    }
+    const used = Math.max(0, Math.min(100, limit.usedPercent));
+    const resetDate =
+      typeof limit.resetsAt === "number" && Number.isFinite(limit.resetsAt)
+        ? new Date(limit.resetsAt * 1000).toISOString()
+        : undefined;
+    categories.push({
+      label: codexRateLimitLabel(limit.windowDurationMins, label),
+      used,
+      total: 100,
+      remainingPercent: Math.max(0, Math.min(1, (100 - used) / 100)),
+      resetDate,
+      isUnlimited: false,
+    });
+  }
+
+  return { providerId: "codex", quotaCategories: categories };
+}
 
 /** Internal: a newer `sendMessage` aborted this turn wait (not user-facing). */
 class CodexTurnSupersededError extends Error {
@@ -335,6 +375,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     return CODEX_STATIC_MODELS.map((m) => ({ ...m }));
   }
 
+  /** Return the latest Codex account rate-limit state pushed by the app-server. */
+  async getUsage(): Promise<ProviderUsageInfo> {
+    return this.usageInfo;
+  }
+
   /** Owns the session pool, idle eviction (with busy guard), and JobObject/kill. */
   private readonly runtime: SessionRuntime<CodexSessionState>;
   private sdkSessionIds = new Map<string, string>();
@@ -350,6 +395,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   private outputTruncationMode = false;
   /** Active goal state mirrored from native Codex goal RPCs and notifications. */
   private goalsBySession = new Map<string, GoalState>();
+  /** Last account rate limits pushed by the Codex app-server. */
+  private usageInfo: ProviderUsageInfo = { providerId: "codex", quotaCategories: [] };
   /** Goal objectives waiting for a Codex app-server thread to exist. */
   private pendingGoalObjectives = new Map<string, string>();
   /**
@@ -727,6 +774,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       const n = notification as { method?: string; params?: Record<string, unknown> };
       if (n.method === "skills/changed") {
         this.emit("skills_changed");
+      }
+      if (n.method === "account/rateLimits/updated") {
+        this.usageInfo = mapCodexRateLimitsToUsage(n.params as CodexRateLimitsPayload);
+        this.emit("event", {
+          type: AgentEventType.QuotaUpdate,
+          threadId,
+          providerId: "codex",
+          categories: this.usageInfo.quotaCategories,
+        } satisfies AgentEvent);
       }
       if (n.method === "turn/started" && isMainThreadNotification(server, n.params)) {
         const turn = n.params?.turn as { id?: string } | undefined;

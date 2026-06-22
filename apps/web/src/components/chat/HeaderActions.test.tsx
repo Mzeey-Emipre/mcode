@@ -109,6 +109,7 @@ import {
   getRepositoryFaviconUrl,
   getSafeRepositoryWebUrl,
   getThreadOverviewCiDot,
+  formatThreadOverviewUsage,
   hasVisibleThreadOverviewChangeSummary,
   resolveThreadOverviewChangeSummary,
   resolveThreadOverviewRepository,
@@ -329,6 +330,7 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-pr")).toHaveTextContent("Create PR");
     expect(screen.queryByTestId("thread-overview-pr-status")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-pr-detail")).not.toBeInTheDocument();
+    expect(screen.getByTestId("thread-overview-usage")).toHaveTextContent("usage unavailable");
     expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
   });
 
@@ -357,6 +359,93 @@ describe("HeaderActions - consolidated header", () => {
     render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
     expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
     expect(screen.getByTestId("header-panel-toggle")).toBeInTheDocument();
+  });
+});
+
+describe("formatThreadOverviewUsage", () => {
+  it("renders a single capped quota category as a percentage", () => {
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "copilot",
+        quotaCategories: [
+          {
+            label: "Premium requests",
+            used: 25,
+            total: 100,
+            remainingPercent: 0.75,
+            isUnlimited: false,
+          },
+        ],
+      }),
+    ).toBe("Premium requests 25%");
+  });
+
+  it("renders Claude 5-hour and weekly limits without session cost", () => {
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "claude",
+        sessionCostUsd: 12.34,
+        quotaCategories: [
+          {
+            label: "5-hour limit",
+            used: 42,
+            total: 100,
+            remainingPercent: 0.58,
+            isUnlimited: false,
+          },
+          {
+            label: "Weekly limit",
+            used: 18,
+            total: 100,
+            remainingPercent: 0.82,
+            isUnlimited: false,
+          },
+        ],
+      }),
+    ).toBe("5-hour 42%, weekly 18%");
+  });
+
+  it("renders Cursor API and Auto limits", () => {
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "cursor",
+        quotaCategories: [
+          {
+            label: "API usage",
+            used: 63,
+            total: 100,
+            remainingPercent: 0.37,
+            isUnlimited: false,
+          },
+          {
+            label: "Auto and Composer",
+            used: 21,
+            total: 100,
+            remainingPercent: 0.79,
+            isUnlimited: false,
+          },
+        ],
+      }),
+    ).toBe("API 63%, Auto 21%");
+  });
+
+  it("ignores unlimited cost-like categories and empty usage", () => {
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "claude",
+        sessionCostUsd: 1,
+        quotaCategories: [
+          {
+            label: "Pay-as-you-go",
+            used: 2,
+            total: null,
+            remainingPercent: 1,
+            isUnlimited: true,
+          },
+        ],
+      }),
+    ).toBe("usage unavailable");
+    expect(formatThreadOverviewUsage(undefined)).toBe("usage unavailable");
   });
 });
 

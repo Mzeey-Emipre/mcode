@@ -153,6 +153,9 @@ When adding a new setting, ask these questions in order:
     "cli": {
       "codex": "",                     // Path to codex CLI, empty = auto-discover
       "claude": ""                     // Path to claude CLI, empty = auto-discover
+    },
+    "cursor": {
+      "usageEmail": ""                 // Cursor team member email for Admin API usage lookup
     }
   },
   "prDraft": {

@@ -386,6 +386,11 @@ export const SettingsSchema = lazySchema(() =>
              * Emit synthetic `cursor:ask_question:auto` agent system events summarizing picks.
              */
             echoAskQuestionsToTimeline: z.boolean().default(false),
+            /**
+             * Team member email used to select Cursor Admin API usage rows.
+             * Empty string disables account-level usage lookup.
+             */
+            usageEmail: z.string().trim().default(""),
           })
           .default({}),
       })
@@ -633,6 +638,7 @@ export const PartialSettingsSchema = lazySchema(() =>
             traceSessionUpdates: z.boolean().optional(),
             autoAnswerAskQuestions: z.boolean().optional(),
             echoAskQuestionsToTimeline: z.boolean().optional(),
+            usageEmail: z.string().trim().optional(),
           })
           .optional(),
         codex: z

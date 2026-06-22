@@ -49,6 +49,7 @@ import type {
   PermissionRequest,
   ProviderId,
   ProviderModelInfo,
+  ProviderUsageInfo,
   Settings,
 } from "@mcode/contracts";
 import {
@@ -93,6 +94,7 @@ import {
 } from "./cursor-acp-session-trace.js";
 import { cursorTaskExtToAgentEvents } from "./cursor-acp-task.js";
 import { extractCursorCreatePlanMarkdown } from "./cursor-create-plan.js";
+import { CursorAdminUsageSource } from "./usage/cursor-admin-usage-source.js";
 
 const CURSOR_STDERR_TAIL_MAX = 48;
 
@@ -200,6 +202,8 @@ export class CursorProvider
 
   /** Owns the session pool, idle eviction (with busy guard), and JobObject/kill. */
   private readonly runtime: SessionRuntime<CursorSessionState>;
+  /** Cached source for account-level Cursor usage limits. */
+  private readonly usageSource: CursorAdminUsageSource;
   private sdkSessionIds = new Map<string, string>();
   /**
    * Session IDs for which a stop was requested before the session was created.
@@ -229,6 +233,10 @@ export class CursorProvider
       envService: this.envService,
       idleTtlMs: this.settingsService.get().provider.cursor.idleSessionTtlMinutes * 60 * 1000,
     });
+    this.usageSource = new CursorAdminUsageSource({
+      apiKey: () => process.env.MCODE_CURSOR_ADMIN_API_KEY,
+      usageEmail: () => this.settingsService.get().provider.cursor.usageEmail,
+    });
   }
 
   /** Lists models by running `cursor-agent models` (falls back when discovery fails). */
@@ -244,6 +252,12 @@ export class CursorProvider
 
     logger.info("Cursor listModels: using static fallback (CLI discovery unavailable)");
     return [...CURSOR_STATIC_MODEL_FALLBACK];
+  }
+
+  /** Return current Cursor usage-limit state from the configured Admin API source. */
+  async getUsage(): Promise<ProviderUsageInfo> {
+    const quotaCategories = await this.usageSource.fetch();
+    return { providerId: "cursor", quotaCategories };
   }
 
   /** Queues an ACP `session/prompt` on the session subprocess (serialized per thread). */

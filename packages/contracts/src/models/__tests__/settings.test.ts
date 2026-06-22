@@ -52,6 +52,7 @@ describe("settings.provider.cursor", () => {
       traceSessionUpdates: false,
       autoAnswerAskQuestions: true,
       echoAskQuestionsToTimeline: false,
+      usageEmail: "",
     });
   });
 
@@ -62,12 +63,14 @@ describe("settings.provider.cursor", () => {
           alwaysSendFullInstructions: true,
           fullPreambleEveryNTurns: 0,
           idleSessionTtlMinutes: 60,
+          usageEmail: "dev@example.com",
         },
       },
     });
     expect(parsed.provider?.cursor?.alwaysSendFullInstructions).toBe(true);
     expect(parsed.provider?.cursor?.fullPreambleEveryNTurns).toBe(0);
     expect(parsed.provider?.cursor?.idleSessionTtlMinutes).toBe(60);
+    expect(parsed.provider?.cursor?.usageEmail).toBe("dev@example.com");
   });
 });
 

@@ -240,6 +240,7 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("thread-overview-local")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toBeVisible();
     await expect(page.getByTestId("thread-overview-pr")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-usage")).toContainText("usage unavailable");
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toHaveCount(0);
     await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);

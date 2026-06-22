@@ -5,6 +5,7 @@ import {
   Copy,
   Diff,
   ExternalLink,
+  Gauge,
   GitBranch,
   GitPullRequest,
   Globe,
@@ -27,6 +28,7 @@ import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useThreadRecord } from "@/stores/thread-selectors";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
@@ -40,7 +42,13 @@ import {
   type McodeTransport,
   type Thread,
 } from "@/transport";
-import type { ChecksStatus, Message, TurnSnapshot } from "@mcode/contracts";
+import type {
+  ChecksStatus,
+  Message,
+  ProviderUsageInfo,
+  QuotaCategory,
+  TurnSnapshot,
+} from "@mcode/contracts";
 
 /** Stable empty messages reference so the closed Overview never re-renders on new messages. */
 const EMPTY_MESSAGES: Message[] = [];
@@ -131,6 +139,41 @@ function changedFilesLabel(count: number): string {
 
 function uncommittedFilesLabel(count: number): string {
   return `Uncommitted: ${count} ${count === 1 ? "file" : "files"}`;
+}
+
+function usageCategoryShortLabel(label: string): string {
+  const normalized = label.trim();
+  if (/^5[- ]hour/i.test(normalized)) return "5-hour";
+  if (/^weekly/i.test(normalized)) return "weekly";
+  if (/^api/i.test(normalized)) return "API";
+  if (/auto|composer/i.test(normalized)) return "Auto";
+  return normalized;
+}
+
+function usageCategoryPercent(category: QuotaCategory): number {
+  if (typeof category.used === "number" && typeof category.total === "number" && category.total > 0) {
+    return (category.used / category.total) * 100;
+  }
+  return (1 - category.remainingPercent) * 100;
+}
+
+/**
+ * Formats provider quota limits for the compact Overview Usage row.
+ */
+export function formatThreadOverviewUsage(usageInfo: ProviderUsageInfo | undefined): string {
+  const categories =
+    usageInfo?.quotaCategories
+      .filter((category) => !category.isUnlimited)
+      .sort((a, b) => usageCategoryPercent(b) - usageCategoryPercent(a)) ?? [];
+  if (categories.length === 0) return "usage unavailable";
+
+  return categories
+    .slice(0, 2)
+    .map((category) => {
+      const percent = Math.round(usageCategoryPercent(category));
+      return `${usageCategoryShortLabel(category.label)} ${percent}%`;
+    })
+    .join(", ");
 }
 
 /**
@@ -993,6 +1036,11 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     loadedRepository?.threadId === thread.id ? loadedRepository : null;
   const repository = loadedRepositoryForThread?.repository ?? EMPTY_REPOSITORY;
   const repositoryStatus = loadedRepositoryForThread?.status ?? "idle";
+  const usageInfo = useThreadRecord(
+    thread.id,
+    (record) => record.usageByProvider[thread.provider],
+  );
+  const usageLabel = useMemo(() => formatThreadOverviewUsage(usageInfo), [usageInfo]);
 
   useEffect(() => {
     if (!open) return;
@@ -1242,6 +1290,20 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 />
               </PopoverContent>
             </Popover>
+
+            <div
+              data-testid="thread-overview-usage"
+              aria-label={`Usage, ${usageLabel}`}
+              className="flex h-8 w-full items-center justify-between gap-3 px-2 text-left"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <Gauge size={14} className="shrink-0 text-muted-foreground" />
+                <span className="truncate text-xs font-medium">Usage</span>
+              </span>
+              <span className="min-w-0 truncate font-mono text-xs tabular-nums text-muted-foreground">
+                {usageLabel}
+              </span>
+            </div>
 
             {prable && (
               <ThreadOverviewPrRow
