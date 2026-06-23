@@ -1,5 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { existsSync } from "fs";
+import path from "path";
 import { validateBranchName } from "@mcode/shared";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import { GitService } from "../services/git-service";
@@ -93,6 +95,28 @@ describe("GitService.createBranch", () => {
       "checkout",
       "-b",
       "feat/create-branch",
+    ]);
+  });
+
+  it("creates a detached worktree from the selected base branch without creating a branch", async () => {
+    execFn.mockResolvedValue({ stdout: "", stderr: "" });
+    vi.mocked(existsSync).mockImplementation((path) => path === "/repo");
+
+    await expect(
+      gitService.createWorktree("/repo", "main-branchless", "main", { branchless: true }),
+    ).resolves.toMatchObject({
+      branch: "main",
+      createdBranch: false,
+    });
+
+    expect(execFn).toHaveBeenCalledWith([
+      "-C",
+      "/repo",
+      "worktree",
+      "add",
+      "--detach",
+      path.join("/mock/mcode", "worktrees", "repo", "main-branchless"),
+      "main",
     ]);
   });
 

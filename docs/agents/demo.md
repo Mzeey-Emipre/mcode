@@ -111,7 +111,7 @@ Both:
 2. Launch Electron via Playwright's `_electron.launch()` (not the Playwright MCP — the MCP does not support Electron) against an **isolated, empty `MCODE_DATA_DIR`** by default, so the demo never reads or mutates your real `~/.mcode` profile. The embedded server claims its own free port within the desktop range, so it never attaches to another running instance. Set `MCODE_DEMO_USE_REAL_DATA=1` to use the real profile.
 3. Wait for the first window, screenshot it to `apps/web/e2e/screenshots/demo-desktop/`, dump renderer console errors.
 
-> **Custom desktop demos that seed data.** If you script your own Electron demo that creates workspaces or threads over RPC (as `scripts/agent/demo-desktop-branch-view.mjs` does), launch with an isolated `MCODE_DATA_DIR` and read the launched server's `server.lock` from that dir for its port + auth token. Never scan a port range for a `/health` endpoint — a blind scan can attach to another app sharing the range and write to the wrong database.
+> **Custom desktop demos that seed data.** If you script an Electron demo that creates workspaces or threads over RPC, launch with an isolated `MCODE_DATA_DIR` and read the launched server's `server.lock` from that dir for its port + auth token. Never scan a port range for a `/health` endpoint. A blind scan can attach to another app sharing the range and write to the wrong database.
 4. (**Optional**) Pass `--tour` to record `tour-*.png` snapshots (`tour-02b-active-chat.png` opens a sidebar or Recent thread row when present, then captures Changes / Terminal / Preview hotkeys plus `tour-06-changes-header-button.png`).
 5. Exit and close the window by default. Pass `--keep-open` to leave Electron running for further interactive driving.
 

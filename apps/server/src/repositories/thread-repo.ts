@@ -16,6 +16,8 @@ interface ThreadRow {
   mode: string;
   worktree_path: string | null;
   branch: string;
+  checkout_state: string;
+  base_branch: string | null;
   worktree_managed: number;
   issue_number: number | null;
   pr_number: number | null;
@@ -51,6 +53,8 @@ function rowToThread(row: ThreadRow): Thread {
     mode: row.mode as ThreadMode,
     worktree_path: row.worktree_path,
     branch: row.branch,
+    checkout_state: row.checkout_state === "branchless" ? "branchless" : "named",
+    base_branch: row.base_branch ?? null,
     worktree_managed: row.worktree_managed === 1,
     issue_number: row.issue_number,
     pr_number: row.pr_number,
@@ -81,7 +85,7 @@ function rowToThread(row: ThreadRow): Thread {
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
+  "id, workspace_id, title, status, mode, worktree_path, branch, checkout_state, base_branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
 
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
@@ -100,6 +104,8 @@ export class ThreadRepo {
       parentThreadId: string;
       forkedFromMessageId: string;
     },
+    checkoutState: "named" | "branchless" = "named",
+    baseBranch: string | null = null,
   ): Thread {
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -107,7 +113,7 @@ export class ThreadRepo {
 
     this.db
       .prepare(
-        "INSERT INTO threads (id, workspace_id, title, status, mode, branch, worktree_managed, provider, parent_thread_id, forked_from_message_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO threads (id, workspace_id, title, status, mode, branch, checkout_state, base_branch, worktree_managed, provider, parent_thread_id, forked_from_message_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id,
@@ -116,6 +122,8 @@ export class ThreadRepo {
         "active",
         mode,
         branch,
+        checkoutState,
+        baseBranch,
         managedInt,
         provider,
         lineage?.parentThreadId ?? null,
@@ -132,6 +140,8 @@ export class ThreadRepo {
       mode,
       worktree_path: null,
       branch,
+      checkout_state: checkoutState,
+      base_branch: baseBranch,
       worktree_managed: worktreeManaged,
       issue_number: null,
       pr_number: null,
@@ -299,6 +309,18 @@ export class ThreadRepo {
       .run(worktreePath, now, id);
 
     return result.changes > 0;
+  }
+
+  /** Mark a thread as a named-branch checkout after creating a branch in place. */
+  updateCheckoutToNamedBranch(id: string, branch: string): Thread | null {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        "UPDATE threads SET branch = ?, checkout_state = 'named', base_branch = NULL, updated_at = ? WHERE id = ?",
+      )
+      .run(branch, now, id);
+    if (result.changes === 0) return null;
+    return this.findById(id);
   }
 
   /** Soft-delete a thread by setting deleted_at and status to "deleted". */

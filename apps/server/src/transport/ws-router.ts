@@ -417,6 +417,7 @@ async function dispatch(
         params.title,
         params.mode,
         params.branch,
+        { branchless: params.mode === "worktree" },
       );
     case "thread.delete": {
       deps.ciWatcherService.unwatch(params.threadId);
@@ -455,7 +456,9 @@ async function dispatch(
     case "thread.syncPrs": {
       const syncWs = deps.workspaceService.findById(params.workspaceId);
       if (!syncWs?.is_git_repo) return [];
-      const threads = deps.threadService.list(params.workspaceId);
+      const threads = deps.threadService
+        .list(params.workspaceId)
+        .filter((t) => t.mode === "worktree" && t.checkout_state === "named");
       /** Returns true if the thread has no linked PR, missing status, or a non-terminal PR state. */
       const needsPrCheck = (t: { pr_number: number | null; pr_status: string | null }) => {
         if (t.pr_number == null || t.pr_status == null) return true;
@@ -510,8 +513,11 @@ async function dispatch(
       return;
     }
     case "git.createBranch": {
-      const path = resolveWorkspaceRepoPath(deps, params.workspaceId, params.threadId);
-      const branch = await deps.gitService.createBranch(path, params.name);
+      const branch = await deps.threadService.createBranchForThread(
+        params.workspaceId,
+        params.threadId,
+        params.name,
+      );
       return { branch };
     }
     case "git.listWorktrees": {
@@ -589,7 +595,12 @@ async function dispatch(
       if (!ws?.is_git_repo) {
         return { base: null, target: null, refs: [], isUnborn: false, isComparisonAvailable: false };
       }
-      return deps.gitService.resolveBranchComparison(params.workspaceId, resolveThreadRepoPath(deps, params.threadId));
+      const thread = params.threadId ? deps.threadRepo.findById(params.threadId) : null;
+      return deps.gitService.resolveBranchComparison(
+        params.workspaceId,
+        resolveThreadRepoPath(deps, params.threadId),
+        thread?.checkout_state === "branchless" ? thread.base_branch ?? thread.branch : null,
+      );
     }
     case "git.reviewDiffStats": {
       const ws = deps.workspaceService.findById(params.workspaceId);
@@ -1020,6 +1031,11 @@ async function dispatch(
           `Thread ${params.threadId} does not belong to workspace ${params.workspaceId}`,
         );
       }
+      if (thread.mode !== "worktree" || thread.checkout_state !== "named") {
+        throw new Error(
+          `Thread ${params.threadId} must be a named worktree checkout before creating a PR`,
+        );
+      }
 
       const repoPath = deps.gitService.resolveWorkingDir(
         workspace.path,
@@ -1029,6 +1045,12 @@ async function dispatch(
       const branch = thread.branch;
       if (!branch) throw new Error(`Missing branch for thread ${params.threadId}`);
       validateBranchName(branch);
+      const currentBranch = await deps.gitService.getCurrentBranchAt(repoPath);
+      if (!currentBranch || currentBranch === "HEAD" || currentBranch !== branch) {
+        throw new Error(
+          `Thread ${params.threadId} checkout is on ${currentBranch ?? "HEAD"}, expected ${branch}`,
+        );
+      }
 
       // Silent auto-push (no-op if already up to date)
       try {

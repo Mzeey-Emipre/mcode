@@ -94,6 +94,8 @@ export function buildPlaceholderWorkspaceThread(params: {
     mode: params.transportMode,
     worktree_path: null,
     branch: params.branch,
+    checkout_state: params.transportMode === "worktree" ? "branchless" : "named",
+    base_branch: params.transportMode === "worktree" ? params.branch : null,
     worktree_managed: params.transportMode === "worktree",
     issue_number: null,
     pr_number: null,
