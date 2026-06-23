@@ -1,5 +1,7 @@
 import { type ReactNode } from "react";
 
+import { cn } from "@/lib/utils";
+
 interface AnimatedCollapsibleProps {
   /** Whether the content is expanded. */
   open: boolean;
@@ -21,11 +23,13 @@ export function AnimatedCollapsible({
 }: AnimatedCollapsibleProps) {
   return (
     <div
-      className={`grid transition-[grid-template-rows] duration-250 ease-[cubic-bezier(0.33,1,0.68,1)] ${
-        open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-      } ${className ?? ""}`}
+      className={cn(
+        "grid transition-[grid-template-rows] duration-250 ease-[cubic-bezier(0.33,1,0.68,1)] motion-reduce:transition-none",
+        open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        className,
+      )}
     >
-      <div className="overflow-hidden min-h-0">{children}</div>
+      <div className="min-h-0 overflow-hidden">{children}</div>
     </div>
   );
 }

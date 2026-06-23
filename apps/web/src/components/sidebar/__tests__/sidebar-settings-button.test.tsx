@@ -32,9 +32,6 @@ describe('Sidebar "Edit settings.json" button', () => {
     vi.doMock("@/components/sidebar/ProjectTree", () => ({
       ProjectTree: () => React.createElement("div", { "data-testid": "project-tree" }),
     }));
-    vi.doMock("@/components/sidebar/SidebarUsagePanel", () => ({
-      SidebarUsagePanel: () => React.createElement("div", { "data-testid": "usage-panel" }),
-    }));
     vi.doMock("@/components/settings/SettingsNav", () => ({
       SettingsNav: () => React.createElement("div", { "data-testid": "settings-nav" }),
     }));

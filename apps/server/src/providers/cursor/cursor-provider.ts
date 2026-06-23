@@ -7,12 +7,13 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
 import { logger } from "@mcode/shared";
 import {
   ClientSideConnection,
@@ -49,6 +50,7 @@ import type {
   PermissionRequest,
   ProviderId,
   ProviderModelInfo,
+  ProviderUsageInfo,
   Settings,
 } from "@mcode/contracts";
 import {
@@ -93,8 +95,10 @@ import {
 } from "./cursor-acp-session-trace.js";
 import { cursorTaskExtToAgentEvents } from "./cursor-acp-task.js";
 import { extractCursorCreatePlanMarkdown } from "./cursor-create-plan.js";
+import { CursorAdminUsageSource } from "./usage/cursor-admin-usage-source.js";
 
 const CURSOR_STDERR_TAIL_MAX = 48;
+const execFileAsync = promisify(execFile);
 
 /**
  * Wrap a message as a transient (ETIMEDOUT) error. `classifyProviderError` maps
@@ -133,6 +137,18 @@ type CursorSideChannelConnector = (args: {
 function cursorCliProbeBinaries(settings: Settings): string[] {
   const configured = settings.provider.cli.cursor?.trim();
   return configured ? [configured] : [getCatalogEntry("cursor").cliBinary, "agent"];
+}
+
+function readCursorStatusEmail(stdout: string): string | undefined {
+  try {
+    const parsed = JSON.parse(stdout) as {
+      userInfo?: { email?: unknown };
+    };
+    const email = parsed.userInfo?.email;
+    return typeof email === "string" && email.trim() ? email.trim() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface PendingAcpPermission {
@@ -200,6 +216,10 @@ export class CursorProvider
 
   /** Owns the session pool, idle eviction (with busy guard), and JobObject/kill. */
   private readonly runtime: SessionRuntime<CursorSessionState>;
+  /** Cached source for account-level Cursor usage limits. */
+  private readonly usageSource: CursorAdminUsageSource;
+  private accountEmail: string | null = null;
+  private accountEmailPromise: Promise<string | undefined> | null = null;
   private sdkSessionIds = new Map<string, string>();
   /**
    * Session IDs for which a stop was requested before the session was created.
@@ -229,6 +249,57 @@ export class CursorProvider
       envService: this.envService,
       idleTtlMs: this.settingsService.get().provider.cursor.idleSessionTtlMinutes * 60 * 1000,
     });
+    this.usageSource = new CursorAdminUsageSource({
+      apiKey: () => this.resolveCursorAdminApiKey(),
+      usageEmail: () => this.resolveCursorUsageEmail(),
+    });
+  }
+
+  private resolveCursorAdminApiKey(): string | undefined {
+    const env = this.envService.getEnv();
+    return (
+      process.env.MCODE_CURSOR_ADMIN_API_KEY
+      ?? env.MCODE_CURSOR_ADMIN_API_KEY
+      ?? process.env.CURSOR_ADMIN_API_KEY
+      ?? env.CURSOR_ADMIN_API_KEY
+    );
+  }
+
+  private async resolveCursorUsageEmail(): Promise<string | undefined> {
+    const configured = this.settingsService.get().provider.cursor.usageEmail.trim();
+    if (configured) return configured;
+    if (this.accountEmail) return this.accountEmail;
+    if (!this.accountEmailPromise) {
+      this.accountEmailPromise = this.readCursorAgentAccountEmail()
+        .then((email) => {
+          if (email) this.accountEmail = email;
+          return email;
+        })
+        .finally(() => {
+          this.accountEmailPromise = null;
+        });
+    }
+    return this.accountEmailPromise;
+  }
+
+  private async readCursorAgentAccountEmail(): Promise<string | undefined> {
+    for (const cliPath of cursorCliProbeBinaries(this.settingsService.get())) {
+      try {
+        const { stdout } = await execFileAsync(cliPath, ["status", "--format", "json"], {
+          shell: process.platform === "win32",
+          env: this.envService.getEnv(),
+          timeout: 5_000,
+          maxBuffer: 64 * 1024,
+          windowsHide: true,
+        });
+        const email = readCursorStatusEmail(String(stdout));
+        if (email) return email;
+      } catch {
+        // Try the next binary name. Usage fetch will simply return empty if
+        // no authenticated Cursor Agent account can be discovered.
+      }
+    }
+    return undefined;
   }
 
   /** Lists models by running `cursor-agent models` (falls back when discovery fails). */
@@ -244,6 +315,12 @@ export class CursorProvider
 
     logger.info("Cursor listModels: using static fallback (CLI discovery unavailable)");
     return [...CURSOR_STATIC_MODEL_FALLBACK];
+  }
+
+  /** Return current Cursor usage-limit state from the configured Admin API source. */
+  async getUsage(): Promise<ProviderUsageInfo> {
+    const quotaCategories = await this.usageSource.fetch();
+    return { providerId: "cursor", quotaCategories };
   }
 
   /** Queues an ACP `session/prompt` on the session subprocess (serialized per thread). */

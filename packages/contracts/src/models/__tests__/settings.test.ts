@@ -52,6 +52,7 @@ describe("settings.provider.cursor", () => {
       traceSessionUpdates: false,
       autoAnswerAskQuestions: true,
       echoAskQuestionsToTimeline: false,
+      usageEmail: "",
     });
   });
 
@@ -62,12 +63,34 @@ describe("settings.provider.cursor", () => {
           alwaysSendFullInstructions: true,
           fullPreambleEveryNTurns: 0,
           idleSessionTtlMinutes: 60,
+          usageEmail: "dev@example.com",
         },
       },
     });
     expect(parsed.provider?.cursor?.alwaysSendFullInstructions).toBe(true);
     expect(parsed.provider?.cursor?.fullPreambleEveryNTurns).toBe(0);
     expect(parsed.provider?.cursor?.idleSessionTtlMinutes).toBe(60);
+    expect(parsed.provider?.cursor?.usageEmail).toBe("dev@example.com");
+  });
+
+  it("bounds Cursor usage email in full and partial settings", () => {
+    expect(
+      SettingsSchema().parse({ provider: { cursor: { usageEmail: " dev@example.com " } } })
+        .provider.cursor.usageEmail,
+    ).toBe("dev@example.com");
+    expect(
+      PartialSettingsSchema().parse({ provider: { cursor: { usageEmail: "" } } })
+        .provider?.cursor?.usageEmail,
+    ).toBe("");
+    expect(
+      SettingsSchema().safeParse({ provider: { cursor: { usageEmail: "not-an-email" } } })
+        .success,
+    ).toBe(false);
+    expect(
+      PartialSettingsSchema().safeParse({
+        provider: { cursor: { usageEmail: `${"a".repeat(309)}@example.com` } },
+      }).success,
+    ).toBe(false);
   });
 });
 

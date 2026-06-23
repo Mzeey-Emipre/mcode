@@ -48,6 +48,26 @@ const thread = {
   forked_from_message_id: null,
 };
 
+const usage = {
+  providerId: "claude",
+  quotaCategories: [
+    {
+      label: "5-hour limit",
+      used: 12,
+      total: 100,
+      remainingPercent: 0.88,
+      isUnlimited: false,
+    },
+    {
+      label: "Weekly limit",
+      used: 47,
+      total: 100,
+      remainingPercent: 0.53,
+      isUnlimited: false,
+    },
+  ],
+};
+
 const gitCommit = {
   sha: "abc1234",
   message: "feat: work",
@@ -182,6 +202,7 @@ test.describe("Consolidated chat header", () => {
       "workspace.touchLastOpened": null,
       "thread.list": [thread],
       "settings.get": MOCK_SETTINGS,
+      "provider.getUsage": usage,
       // Keep PR polling deterministic: no existing PR, one commit ahead so the
       // Create PR affordance renders enabled.
       "github.branchPr": null,
@@ -242,6 +263,22 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("thread-overview-local")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toBeVisible();
     await expect(page.getByTestId("thread-overview-pr")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-usage")).toHaveAttribute(
+      "aria-label",
+      "Usage, 5-hour 12%, weekly 47%",
+    );
+    await expect(page.getByTestId("thread-overview-usage")).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId("thread-overview-usage")).not.toContainText("5-hour 12%, weekly 47%");
+    await expect(page.getByRole("progressbar", { name: "5-hour usage" })).toHaveAttribute(
+      "aria-valuenow",
+      "12",
+    );
+    await expect(page.getByRole("progressbar", { name: "weekly usage" })).toHaveAttribute(
+      "aria-valuenow",
+      "47",
+    );
+    await expect(page.getByText("usage unavailable")).toHaveCount(0);
+    await expect(page.getByTestId("thread-overview-usage-popover")).toHaveCount(0);
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toHaveCount(0);
     await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);
