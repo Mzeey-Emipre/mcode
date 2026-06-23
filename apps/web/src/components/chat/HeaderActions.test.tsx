@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode, ReactElement } from "react";
 import type { Thread } from "@/transport/types";
-import type { TurnSnapshot } from "@mcode/contracts";
+import type { ProviderUsageInfo, TurnSnapshot } from "@mcode/contracts";
 
 // vi.hoisted runs before vi.mock hoisting, so these are available in mock factories.
 const {
@@ -105,6 +105,8 @@ vi.mock("@/hooks/useHasCommitsAhead", () => ({
 
 import { HeaderActions } from "./HeaderActions";
 import { COMMIT_PREFILL } from "@/hooks/useThreadGitActions";
+import { useThreadStore } from "@/stores/threadStore";
+import { patchThreadRecord } from "@/stores/thread-record";
 import {
   getRepositoryFaviconUrl,
   getSafeRepositoryWebUrl,
@@ -161,6 +163,34 @@ const WORKSPACE = {
   updated_at: new Date().toISOString(),
 };
 
+const CLAUDE_USAGE: ProviderUsageInfo = {
+  providerId: "claude",
+  quotaCategories: [
+    {
+      label: "5-hour limit",
+      used: 12,
+      total: 100,
+      remainingPercent: 0.88,
+      isUnlimited: false,
+    },
+    {
+      label: "Weekly limit",
+      used: 47,
+      total: 100,
+      remainingPercent: 0.53,
+      isUnlimited: false,
+    },
+  ],
+};
+
+function seedThreadUsage(threadId: string, usage: ProviderUsageInfo) {
+  useThreadStore.setState((state) => ({
+    records: patchThreadRecord(new Map(state.records), threadId, {
+      usageByProvider: { [usage.providerId]: usage },
+    }),
+  }));
+}
+
 function defaultWorkspaceState() {
   return {
     workspaces: [WORKSPACE],
@@ -186,6 +216,7 @@ function defaultWorkspaceState() {
 
 describe("HeaderActions - Create PR menu item", () => {
   beforeEach(() => {
+    useThreadStore.setState({ records: new Map() });
     const state = defaultWorkspaceState();
     mockWorkspaceSelector.mockImplementation(
       (selector: (s: unknown) => unknown) => selector(state),
@@ -297,6 +328,7 @@ describe("HeaderActions - PR-ability gating by mode", () => {
 
 describe("HeaderActions - consolidated header", () => {
   beforeEach(() => {
+    useThreadStore.setState({ records: new Map() });
     const state = defaultWorkspaceState();
     mockWorkspaceSelector.mockImplementation(
       (selector: (s: unknown) => unknown) => selector(state),
@@ -330,14 +362,30 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-pr")).toHaveTextContent("Create PR");
     expect(screen.queryByTestId("thread-overview-pr-status")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-pr-detail")).not.toBeInTheDocument();
-    expect(screen.getByTestId("thread-overview-usage")).toHaveTextContent(/^usage unavailable$/);
+    expect(screen.queryByTestId("thread-overview-usage")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("thread-overview-usage-popover")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
+  });
+
+  it("renders usage limits as compact progress bars when quota data exists", () => {
+    seedThreadUsage("thread-1", CLAUDE_USAGE);
+    render(<HeaderActions thread={makeThread({ worktree_path: "/repo/worktrees/feat-x" })} />);
+
     expect(screen.getByTestId("thread-overview-usage")).toHaveAttribute(
       "aria-label",
-      "Usage, usage unavailable",
+      "Usage, 5-hour 12%, weekly 47%",
     );
+    expect(screen.getByRole("progressbar", { name: "5-hour usage" })).toHaveAttribute(
+      "aria-valuenow",
+      "12",
+    );
+    expect(screen.getByRole("progressbar", { name: "weekly usage" })).toHaveAttribute(
+      "aria-valuenow",
+      "47",
+    );
+    expect(screen.queryByText("usage unavailable")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-usage-popover")).not.toBeInTheDocument();
     expect(screen.getByTestId("thread-overview-usage")).not.toHaveAttribute("aria-expanded");
-    expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
   });
 
   it("prefills commit-or-push from the PR row when the branch is not ahead", () => {
@@ -450,8 +498,8 @@ describe("formatThreadOverviewUsage", () => {
           },
         ],
       }),
-    ).toBe("usage unavailable");
-    expect(formatThreadOverviewUsage(undefined)).toBe("usage unavailable");
+    ).toBeNull();
+    expect(formatThreadOverviewUsage(undefined)).toBeNull();
   });
 });
 

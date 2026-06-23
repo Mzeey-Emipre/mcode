@@ -164,6 +164,13 @@ function usageCategoryPriority(category: QuotaCategory): number {
   return 2;
 }
 
+function usageCategoryFillClass(category: QuotaCategory): string {
+  const percent = usageCategoryPercent(category);
+  if (percent >= 90) return "bg-destructive";
+  if (percent >= 70) return "bg-primary";
+  return "bg-[var(--diff-add-strong)]";
+}
+
 /**
  * Returns capped quota categories in priority order for the Overview Usage panel.
  */
@@ -181,11 +188,11 @@ export function getThreadOverviewUsageCategories(
 }
 
 /**
- * Formats provider quota limits for the compact Overview Usage row.
+ * Formats provider quota limits for compact Overview labels.
  */
-export function formatThreadOverviewUsage(usageInfo: ProviderUsageInfo | undefined): string {
+export function formatThreadOverviewUsage(usageInfo: ProviderUsageInfo | undefined): string | null {
   const categories = getThreadOverviewUsageCategories(usageInfo);
-  if (categories.length === 0) return "usage unavailable";
+  if (categories.length === 0) return null;
 
   return categories
     .slice(0, 2)
@@ -194,6 +201,74 @@ export function formatThreadOverviewUsage(usageInfo: ProviderUsageInfo | undefin
       return `${usageCategoryShortLabel(category.label)} ${percent}%`;
     })
     .join(", ");
+}
+
+interface ThreadOverviewUsageBarsProps {
+  categories: QuotaCategory[];
+  label: string;
+}
+
+function ThreadOverviewUsageBars({ categories, label }: ThreadOverviewUsageBarsProps) {
+  return (
+    <div className="grid animate-thread-overview-row-reveal">
+      <div className="min-h-0 overflow-hidden">
+        <div
+          className="w-full px-2 py-2 text-xs"
+          data-testid="thread-overview-usage-section"
+        >
+          <div
+            data-testid="thread-overview-usage"
+            aria-label={`Usage, ${label}`}
+            className="space-y-1.5 text-muted-foreground"
+          >
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-2">
+                <Gauge size={14} aria-hidden className="shrink-0" />
+                <span className="truncate font-medium text-foreground/80">Usage</span>
+              </span>
+              <span className="shrink-0 font-mono text-xs tabular-nums">{label}</span>
+            </div>
+            <div className="space-y-1.5">
+              {categories.map((category) => {
+                const percent = Math.min(Math.max(usageCategoryPercent(category), 0), 100);
+                const rounded = Math.round(percent);
+                const shortLabel = usageCategoryShortLabel(category.label);
+                return (
+                  <div
+                    key={category.label}
+                    className="grid grid-cols-[3.5rem_minmax(0,1fr)_2rem] items-center gap-2"
+                  >
+                    <span className="truncate font-mono text-xs tabular-nums text-muted-foreground">
+                      {shortLabel}
+                    </span>
+                    <div
+                      role="progressbar"
+                      aria-label={`${shortLabel} usage`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={rounded}
+                      className="h-1 overflow-hidden rounded-full bg-border/60"
+                    >
+                      <div
+                        className={cn(
+                          "h-full rounded-full animate-thread-overview-usage-fill",
+                          usageCategoryFillClass(category),
+                        )}
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+                    <span className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                      {rounded}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -1060,8 +1135,11 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     thread.id,
     (record) => record.usageByProvider[thread.provider],
   );
+  const usageCategories = useMemo(
+    () => getThreadOverviewUsageCategories(usageInfo).slice(0, 2),
+    [usageInfo],
+  );
   const usageLabel = useMemo(() => formatThreadOverviewUsage(usageInfo), [usageInfo]);
-  const usageRowLabel = usageLabel === "usage unavailable" ? usageLabel : `Usage ${usageLabel}`;
   const fetchProviderUsage = useThreadStore((state) => state.fetchProviderUsage);
 
   useEffect(() => {
@@ -1318,16 +1396,9 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
               </PopoverContent>
             </Popover>
 
-            <div className="w-full px-2 py-2 text-xs" data-testid="thread-overview-usage-section">
-              <div
-                data-testid="thread-overview-usage"
-                aria-label={`Usage, ${usageLabel}`}
-                className="flex min-w-0 items-center gap-2 text-muted-foreground"
-              >
-                <Gauge size={14} aria-hidden className="shrink-0" />
-                <span className="min-w-0 truncate font-mono tabular-nums">{usageRowLabel}</span>
-              </div>
-            </div>
+            {usageLabel && usageCategories.length > 0 && (
+              <ThreadOverviewUsageBars categories={usageCategories} label={usageLabel} />
+            )}
 
             {prable && (
               <ThreadOverviewPrRow
