@@ -57,6 +57,7 @@ import {
   ProviderAvailabilityService,
   defaultResolver,
 } from "./services/provider-availability-service";
+import { ProviderUsageWarmupService } from "./services/provider-usage-warmup-service";
 import { PtyPidRegistry } from "./services/pty-pid-registry";
 import { JobObject } from "./services/job-object.js";
 import { WorkspaceEnricher } from "./services/workspace-enricher";
@@ -402,6 +403,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     ProviderAvailabilityService,
     { useClass: ProviderAvailabilityService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ProviderUsageWarmupService,
+    { useClass: ProviderUsageWarmupService },
     { lifecycle: Lifecycle.Singleton },
   );
   // Registered after ProviderRegistry — ModelCacheService depends on

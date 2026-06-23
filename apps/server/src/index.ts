@@ -39,7 +39,6 @@ import { PlanRepo } from "./repositories/plan-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { warmCodexVersionCache } from "./providers/codex/codex-version";
-import { CodexProvider } from "./providers/codex/codex-provider";
 import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
@@ -48,6 +47,7 @@ import { CleanupWorker } from "./services/cleanup-worker";
 import { PrDraftService } from "./services/pr-draft-service";
 import { CiWatcherService } from "./services/ci-watcher";
 import { ProviderAvailabilityService } from "./services/provider-availability-service";
+import { ProviderUsageWarmupService } from "./services/provider-usage-warmup-service";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { CursorProvider } from "./providers/cursor/cursor-provider";
 import { WorkspaceEnricher } from "./services/workspace-enricher";
@@ -209,10 +209,11 @@ const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup
 const enricher = container.resolve(WorkspaceEnricher);
 const filesystemBrowser = container.resolve(FilesystemBrowser);
 const modelCacheService = container.resolve(ModelCacheService);
-const codexProvider = container.resolve(CodexProvider);
+const providerUsageWarmup = container.resolve(ProviderUsageWarmupService);
 
 /** Tracks CLI path edits so model catalog caches refresh when a different binary is targeted. */
 let lastCliPathsForModelCache = settingsService.get().provider.cli;
+let lastProviderUsageWarmupSnapshot = JSON.stringify(settingsService.get().provider);
 settingsService.on("change", (next) => {
   if (next.provider.cli.cursor !== lastCliPathsForModelCache.cursor) {
     modelCacheService.invalidate("cursor");
@@ -224,24 +225,26 @@ settingsService.on("change", (next) => {
   // Re-warm the Codex version gate when its CLI path changes so the next
   // send is a cache hit (no blocking spawnSync on the send path).
   warmCodexVersionGate(next);
+  const nextProviderUsageWarmupSnapshot = JSON.stringify(next.provider);
+  if (nextProviderUsageWarmupSnapshot !== lastProviderUsageWarmupSnapshot) {
+    lastProviderUsageWarmupSnapshot = nextProviderUsageWarmupSnapshot;
+    providerUsageWarmup.warmEnabledProviders(true);
+  }
 });
 
 /** CLI paths whose app-server has already been warmed this run. */
 const warmedCodexPaths = new Set<string>();
 
 /**
- * Warms the Codex `--version` gate cache and cold-starts a throwaway
- * app-server (file cache + chatgpt.com TLS/auth) off the send path. No-op
- * when the provider is disabled; the app-server warm-up runs once per CLI
- * path per app run.
+ * Warms the Codex `--version` gate cache off the send path. No-op when the
+ * provider is disabled; runs once per CLI path per app run.
  */
 function warmCodexVersionGate(s = settingsService.get()): void {
   if (!s.provider.enabled.codex) return;
   const cliPath = s.provider.cli.codex || "codex";
-  void warmCodexVersionCache(cliPath);
   if (!warmedCodexPaths.has(cliPath)) {
     warmedCodexPaths.add(cliPath);
-    void codexProvider.warmUsageCache(true);
+    void warmCodexVersionCache(cliPath);
   }
 }
 
@@ -318,6 +321,7 @@ providerAvailability
     // Warm the Codex version gate at boot so the first send never pays a
     // blocking `codex --version` spawnSync.
     warmCodexVersionGate();
+    providerUsageWarmup.warmEnabledProviders(true);
     // Warm the model cache once after CLI verification has gated which providers
     // are usable. Triggering this per WS connect would spam refreshes; running
     // it once at startup is sufficient because ModelCacheService also refreshes

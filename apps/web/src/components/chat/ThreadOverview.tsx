@@ -171,36 +171,14 @@ function usageCategoryFillClass(category: QuotaCategory): string {
   return "bg-[var(--diff-add-strong)]";
 }
 
-const CODEX_OVERVIEW_QUOTA_PLACEHOLDERS: QuotaCategory[] = [
-  {
-    label: "5-hour limit",
-    used: 0,
-    total: 100,
-    remainingPercent: 1,
-    isUnlimited: false,
-  },
-  {
-    label: "Weekly limit",
-    used: 0,
-    total: 100,
-    remainingPercent: 1,
-    isUnlimited: false,
-  },
-];
-
-function getThreadOverviewQuotaPlaceholders(providerId: string | undefined): QuotaCategory[] {
-  if (providerId === "codex") return CODEX_OVERVIEW_QUOTA_PLACEHOLDERS;
-  return [];
-}
-
 /**
  * Returns capped quota categories in priority order for the Overview Usage panel.
  */
 export function getThreadOverviewUsageCategories(
   usageInfo: ProviderUsageInfo | undefined,
-  providerId = usageInfo?.providerId,
+  _providerId = usageInfo?.providerId,
 ): QuotaCategory[] {
-  const categories = (
+  return (
     usageInfo?.quotaCategories
       .filter((category) => !category.isUnlimited)
       .sort((a, b) => (
@@ -208,7 +186,6 @@ export function getThreadOverviewUsageCategories(
         || usageCategoryPercent(b) - usageCategoryPercent(a)
       )) ?? []
   );
-  return categories.length > 0 ? categories : getThreadOverviewQuotaPlaceholders(providerId);
 }
 
 /**
