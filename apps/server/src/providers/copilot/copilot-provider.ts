@@ -82,7 +82,7 @@ function userSkillDirectories(): string[] {
 
 /** Maps raw Copilot quota snapshot keys to human-readable labels. */
 const QUOTA_LABELS: Record<string, string> = {
-  premium_interactions: "Premium requests",
+  premium_interactions: "Premium usage",
   chat: "Chat",
   completions: "Completions",
 };

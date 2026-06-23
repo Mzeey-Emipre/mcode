@@ -95,7 +95,7 @@ vi.mock("@/stores/overviewStore", () => ({
 
 vi.mock("@/stores/threadStore", () => ({
   useThreadStore: vi.fn((selector: (state: unknown) => unknown) =>
-    selector({ records: new Map() }),
+    selector({ records: new Map(), fetchProviderUsage: vi.fn() }),
   ),
 }));
 

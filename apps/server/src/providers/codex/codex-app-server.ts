@@ -33,6 +33,7 @@ import type {
   ThreadGoalClearParams,
   ThreadGoalClearResult,
   ThreadGoalStatus,
+  AccountRateLimitsReadResult,
   SkillsListParams,
   SkillsListResult,
   SandboxMode,
@@ -332,37 +333,51 @@ export function enrichHandshakeError(err: unknown, stderr: string | null): Error
  * round trip to chatgpt.com (~1.7s+, worse on slow networks); paying it at
  * app boot means the user's first real session starts warm.
  *
- * Fire-and-forget safe: never throws, resolves `true` only when `initialize`
- * was acknowledged within the timeout.
+ * Fire-and-forget safe: never throws. `initialized` is true only when
+ * `initialize` was acknowledged within the timeout. When the local app-server
+ * supports it, `rateLimitsPayload` carries the `account/rateLimits/read`
+ * snapshot for the provider-owned usage cache.
  */
-export async function warmCodexAppServer(cliPath: string, timeoutMs = 20_000): Promise<boolean> {
+export interface CodexAppServerWarmupResult {
+  initialized: boolean;
+  rateLimitsPayload?: unknown;
+}
+
+/** Starts a throwaway app-server process and reads an initial account limit snapshot. */
+export async function warmCodexAppServer(
+  cliPath: string,
+  timeoutMs = 20_000,
+  getSpawnEnv?: () => Record<string, string>,
+): Promise<CodexAppServerWarmupResult> {
   let resolvedCliPath = cliPath;
   if (!isAbsolute(cliPath)) {
     try {
       resolvedCliPath = await which(cliPath);
     } catch {
-      return false;
+      return { initialized: false };
     }
   }
   const needsShell =
     process.platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd");
 
-  return await new Promise<boolean>((resolve) => {
+  return await new Promise<CodexAppServerWarmupResult>((resolve) => {
     let child: ChildProcess;
     try {
       child = spawn(resolvedCliPath, ["app-server"], {
         stdio: ["pipe", "pipe", "ignore"],
         shell: needsShell,
-        env: flattenProcessEnv(process.env),
+        env: getSpawnEnv ? getSpawnEnv() : flattenProcessEnv(process.env),
         windowsHide: true,
       });
     } catch {
-      resolve(false);
+      resolve({ initialized: false });
       return;
     }
 
     let settled = false;
-    const finish = (ok: boolean) => {
+    let initialized = false;
+    let latestRateLimitsPayload: unknown;
+    const finish = (result: CodexAppServerWarmupResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -375,12 +390,12 @@ export async function warmCodexAppServer(cliPath: string, timeoutMs = 20_000): P
       } else {
         child.kill("SIGKILL");
       }
-      resolve(ok);
+      resolve(result);
     };
 
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    child.once("error", () => finish(false));
-    child.once("exit", () => finish(false));
+    const timer = setTimeout(() => finish({ initialized, rateLimitsPayload: latestRateLimitsPayload }), timeoutMs);
+    child.once("error", () => finish({ initialized, rateLimitsPayload: latestRateLimitsPayload }));
+    child.once("exit", () => finish({ initialized, rateLimitsPayload: latestRateLimitsPayload }));
 
     let buffer = "";
     child.stdout!.setEncoding("utf8");
@@ -391,10 +406,32 @@ export async function warmCodexAppServer(cliPath: string, timeoutMs = 20_000): P
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
-          const msg = JSON.parse(line) as { id?: number };
+          const msg = JSON.parse(line) as {
+            id?: number;
+            method?: string;
+            params?: unknown;
+            result?: unknown;
+          };
+          if (msg.method === "account/rateLimits/updated") {
+            latestRateLimitsPayload = msg.params;
+            continue;
+          }
           if (msg.id === 1) {
+            initialized = true;
             logger.info("Codex app-server warm-up completed", { cliPath });
-            finish(true);
+            child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }) + "\n");
+            child.stdin!.write(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "account/rateLimits/read",
+                params: {},
+              }) + "\n",
+            );
+            return;
+          }
+          if (msg.id === 2) {
+            finish({ initialized: true, rateLimitsPayload: msg.result ?? latestRateLimitsPayload });
             return;
           }
         } catch {
@@ -543,6 +580,11 @@ export class CodexAppServer extends EventEmitter {
 
     this.rpc.on("notification", (notification) => {
       const method = (notification as { method?: string }).method ?? "";
+      if (method === "account/rateLimits/updated" || method === "account/updated") {
+        this.emit("activity");
+        this.emit("notification", notification);
+        return;
+      }
 
       // Capture thread/started notifications to update the thread ID if it changes
       // mid-session (e.g. context compaction). Without this, subsequent turns would
@@ -756,6 +798,18 @@ export class CodexAppServer extends EventEmitter {
       10000,
     );
     return result.cleared;
+  }
+
+  /** Reads the current ChatGPT account rate-limit snapshot from the app-server. */
+  async readRateLimits(): Promise<AccountRateLimitsReadResult> {
+    if (!this._isAlive || !this.rpc) {
+      throw new Error("readRateLimits called before codex app-server was ready");
+    }
+    return this.rpc.sendRequest<Record<string, never>, AccountRateLimitsReadResult>(
+      "account/rateLimits/read",
+      {},
+      10000,
+    );
   }
 
   /**

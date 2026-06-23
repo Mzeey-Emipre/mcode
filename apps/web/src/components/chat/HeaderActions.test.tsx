@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode, ReactElement } from "react";
 import type { Thread } from "@/transport/types";
-import type { TurnSnapshot } from "@mcode/contracts";
+import type { ProviderUsageInfo, TurnSnapshot } from "@mcode/contracts";
 
 // vi.hoisted runs before vi.mock hoisting, so these are available in mock factories.
 const {
@@ -105,10 +105,13 @@ vi.mock("@/hooks/useHasCommitsAhead", () => ({
 
 import { HeaderActions } from "./HeaderActions";
 import { COMMIT_PREFILL } from "@/hooks/useThreadGitActions";
+import { useThreadStore } from "@/stores/threadStore";
+import { patchThreadRecord } from "@/stores/thread-record";
 import {
   getRepositoryFaviconUrl,
   getSafeRepositoryWebUrl,
   getThreadOverviewCiDot,
+  formatThreadOverviewUsage,
   hasVisibleThreadOverviewChangeSummary,
   resolveThreadOverviewChangeSummary,
   resolveThreadOverviewRepository,
@@ -162,6 +165,34 @@ const WORKSPACE = {
   updated_at: new Date().toISOString(),
 };
 
+const CLAUDE_USAGE: ProviderUsageInfo = {
+  providerId: "claude",
+  quotaCategories: [
+    {
+      label: "5-hour limit",
+      used: 12,
+      total: 100,
+      remainingPercent: 0.88,
+      isUnlimited: false,
+    },
+    {
+      label: "Weekly limit",
+      used: 47,
+      total: 100,
+      remainingPercent: 0.53,
+      isUnlimited: false,
+    },
+  ],
+};
+
+function seedThreadUsage(threadId: string, usage: ProviderUsageInfo) {
+  useThreadStore.setState((state) => ({
+    records: patchThreadRecord(new Map(state.records), threadId, {
+      usageByProvider: { [usage.providerId]: usage },
+    }),
+  }));
+}
+
 function defaultWorkspaceState() {
   return {
     workspaces: [WORKSPACE],
@@ -187,6 +218,7 @@ function defaultWorkspaceState() {
 
 describe("HeaderActions - Create PR menu item", () => {
   beforeEach(() => {
+    useThreadStore.setState({ records: new Map() });
     const state = defaultWorkspaceState();
     mockWorkspaceSelector.mockImplementation(
       (selector: (s: unknown) => unknown) => selector(state),
@@ -307,6 +339,7 @@ describe("HeaderActions - PR-ability gating by mode", () => {
 
 describe("HeaderActions - consolidated header", () => {
   beforeEach(() => {
+    useThreadStore.setState({ records: new Map() });
     const state = defaultWorkspaceState();
     mockWorkspaceSelector.mockImplementation(
       (selector: (s: unknown) => unknown) => selector(state),
@@ -340,7 +373,46 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-pr")).toHaveTextContent("Create PR");
     expect(screen.queryByTestId("thread-overview-pr-status")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-pr-detail")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("thread-overview-usage")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("thread-overview-usage-popover")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
+  });
+
+  it("renders usage limits as compact progress bars when quota data exists", () => {
+    seedThreadUsage("thread-1", CLAUDE_USAGE);
+    render(<HeaderActions thread={makeThread({ worktree_path: "/repo/worktrees/feat-x" })} />);
+
+    const usageTrigger = screen.getByTestId("thread-overview-usage");
+    expect(usageTrigger).toHaveAttribute("aria-label", "Usage, 5-hour 12%, weekly 47%");
+    expect(usageTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(usageTrigger).toHaveTextContent("Usage");
+    expect(usageTrigger).not.toHaveTextContent("5-hour 12%, weekly 47%");
+    expect(screen.getByTestId("thread-overview-usage-details")).toBeVisible();
+    expect(screen.getByText("5-hour limit")).toBeInTheDocument();
+    expect(screen.getByText("Weekly limit")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "5-hour usage" })).toHaveAttribute(
+      "aria-valuenow",
+      "12",
+    );
+    expect(screen.getByRole("progressbar", { name: "weekly usage" })).toHaveAttribute(
+      "aria-valuenow",
+      "47",
+    );
+
+    fireEvent.click(usageTrigger);
+
+    expect(usageTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(usageTrigger).toHaveTextContent("5-hour 12%, weekly 47%");
+    expect(screen.queryByRole("progressbar", { name: "5-hour usage" })).not.toBeInTheDocument();
+    expect(screen.queryByText("usage unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("thread-overview-usage-popover")).not.toBeInTheDocument();
+  });
+
+  it("does not render Codex usage before provider quota data arrives", () => {
+    render(<HeaderActions thread={makeThread({ provider: "codex" })} />);
+
+    expect(screen.queryByTestId("thread-overview-usage")).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar", { name: "5-hour usage" })).not.toBeInTheDocument();
   });
 
   it("prefills commit-or-push from the PR row when the branch is not ahead", () => {
@@ -368,6 +440,97 @@ describe("HeaderActions - consolidated header", () => {
     render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
     expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
     expect(screen.getByTestId("header-panel-toggle")).toBeInTheDocument();
+  });
+});
+
+describe("formatThreadOverviewUsage", () => {
+  it("renders a single capped quota category as a percentage", () => {
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "copilot",
+        quotaCategories: [
+          {
+            label: "Premium usage",
+            used: 25,
+            total: 100,
+            remainingPercent: 0.75,
+            isUnlimited: false,
+          },
+        ],
+      }),
+    ).toBe("Premium usage 25%");
+  });
+
+  it("renders Claude 5-hour and weekly limits without session cost", () => {
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "claude",
+        sessionCostUsd: 12.34,
+        quotaCategories: [
+          {
+            label: "Weekly limit",
+            used: 18,
+            total: 100,
+            remainingPercent: 0.82,
+            isUnlimited: false,
+          },
+          {
+            label: "5-hour limit",
+            used: 42,
+            total: 100,
+            remainingPercent: 0.58,
+            isUnlimited: false,
+          },
+        ],
+      }),
+    ).toBe("5-hour 42%, weekly 18%");
+  });
+
+  it("renders Cursor API and Auto limits", () => {
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "cursor",
+        quotaCategories: [
+          {
+            label: "API usage",
+            used: 63,
+            total: 100,
+            remainingPercent: 0.37,
+            isUnlimited: false,
+          },
+          {
+            label: "Auto and Composer",
+            used: 21,
+            total: 100,
+            remainingPercent: 0.79,
+            isUnlimited: false,
+          },
+        ],
+      }),
+    ).toBe("API 63%, Auto 21%");
+  });
+
+  it("ignores unlimited cost-like categories and empty usage", () => {
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "claude",
+        sessionCostUsd: 1,
+        quotaCategories: [
+          {
+            label: "Pay-as-you-go",
+            used: 2,
+            total: null,
+            remainingPercent: 1,
+            isUnlimited: true,
+          },
+        ],
+      }),
+    ).toBeNull();
+    expect(formatThreadOverviewUsage(undefined)).toBeNull();
+  });
+
+  it("does not fabricate Codex quota before provider quota data arrives", () => {
+    expect(formatThreadOverviewUsage(undefined, "codex")).toBeNull();
   });
 });
 

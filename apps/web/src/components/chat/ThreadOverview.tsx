@@ -5,6 +5,7 @@ import {
   Copy,
   Diff,
   ExternalLink,
+  Gauge,
   GitBranch,
   GitPullRequest,
   Globe,
@@ -25,6 +26,11 @@ import {
 } from "@/components/ui/dialog";
 import { SiteFavicon } from "@/components/ui/favicon";
 import { Input } from "@/components/ui/input";
+import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -35,6 +41,7 @@ import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useOverviewStore } from "@/stores/overviewStore";
@@ -50,7 +57,13 @@ import {
   type McodeTransport,
   type Thread,
 } from "@/transport";
-import type { ChecksStatus, Message, TurnSnapshot } from "@mcode/contracts";
+import type {
+  ChecksStatus,
+  Message,
+  ProviderUsageInfo,
+  QuotaCategory,
+  TurnSnapshot,
+} from "@mcode/contracts";
 
 /** Stable empty messages reference so the closed Overview never re-renders on new messages. */
 const EMPTY_MESSAGES: Message[] = [];
@@ -141,6 +154,167 @@ function changedFilesLabel(count: number): string {
 
 function uncommittedFilesLabel(count: number): string {
   return `Uncommitted: ${count} ${count === 1 ? "file" : "files"}`;
+}
+
+function usageCategoryShortLabel(label: string): string {
+  const normalized = label.trim();
+  if (/^5[- ]hour/i.test(normalized)) return "5-hour";
+  if (/^weekly/i.test(normalized)) return "weekly";
+  if (/^api/i.test(normalized)) return "API";
+  if (/auto|composer/i.test(normalized)) return "Auto";
+  return normalized;
+}
+
+function usageCategoryPercent(category: QuotaCategory): number {
+  if (typeof category.used === "number" && typeof category.total === "number" && category.total > 0) {
+    return (category.used / category.total) * 100;
+  }
+  return (1 - category.remainingPercent) * 100;
+}
+
+function usageCategoryPriority(category: QuotaCategory): number {
+  const label = category.label.trim();
+  if (/^5[- ]hour/i.test(label)) return 0;
+  if (/^weekly/i.test(label)) return 1;
+  return 2;
+}
+
+function usageCategoryFillClass(category: QuotaCategory): string {
+  const percent = usageCategoryPercent(category);
+  if (percent >= 90) return "bg-destructive";
+  if (percent >= 70) return "bg-primary";
+  return "bg-[var(--diff-add-strong)]";
+}
+
+/**
+ * Returns capped quota categories in priority order for the Overview Usage panel.
+ */
+export function getThreadOverviewUsageCategories(
+  usageInfo: ProviderUsageInfo | undefined,
+  _providerId = usageInfo?.providerId,
+): QuotaCategory[] {
+  return (
+    usageInfo?.quotaCategories
+      .filter((category) => !category.isUnlimited)
+      .sort((a, b) => (
+        usageCategoryPriority(a) - usageCategoryPriority(b)
+        || usageCategoryPercent(b) - usageCategoryPercent(a)
+      )) ?? []
+  );
+}
+
+/**
+ * Formats provider quota limits for compact Overview labels.
+ */
+export function formatThreadOverviewUsage(
+  usageInfo: ProviderUsageInfo | undefined,
+  providerId = usageInfo?.providerId,
+): string | null {
+  const categories = getThreadOverviewUsageCategories(usageInfo, providerId);
+  if (categories.length === 0) return null;
+
+  return categories
+    .slice(0, 2)
+    .map((category) => {
+      const percent = Math.round(usageCategoryPercent(category));
+      return `${usageCategoryShortLabel(category.label)} ${percent}%`;
+    })
+    .join(", ");
+}
+
+interface ThreadOverviewUsageBarsProps {
+  categories: QuotaCategory[];
+  summary: string;
+}
+
+const THREAD_OVERVIEW_USAGE_DETAILS_ID = "thread-overview-usage-details-panel";
+
+/** Expandable quota usage row for the Thread Overview popover. */
+function ThreadOverviewUsageBars({ categories, summary }: ThreadOverviewUsageBarsProps) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      data-testid="thread-overview-usage-section"
+    >
+      <CollapsibleTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          data-testid="thread-overview-usage"
+          aria-label={`Usage, ${summary}`}
+          aria-controls={THREAD_OVERVIEW_USAGE_DETAILS_ID}
+          className="h-8 w-full cursor-pointer justify-between gap-3 px-2 text-left"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <Gauge size={14} aria-hidden className="shrink-0 text-muted-foreground" />
+            <span className="truncate text-xs font-medium">Usage</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2">
+            {!open ? (
+              <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                {summary}
+              </span>
+            ) : null}
+            <ChevronDown
+              size={13}
+              aria-hidden
+              className={cn(
+                "shrink-0 text-muted-foreground transition-transform duration-250 ease-[cubic-bezier(0.33,1,0.68,1)] motion-reduce:transition-none",
+                open && "rotate-180",
+              )}
+            />
+          </span>
+        </Button>
+      </CollapsibleTrigger>
+
+      <AnimatedCollapsible open={open}>
+        <div
+          id={THREAD_OVERVIEW_USAGE_DETAILS_ID}
+          data-testid="thread-overview-usage-details"
+          aria-hidden={!open}
+          className="space-y-2.5 px-2 pb-2 pl-6 pt-1 text-muted-foreground"
+        >
+          {categories.map((category) => {
+            const percent = Math.min(Math.max(usageCategoryPercent(category), 0), 100);
+            const rounded = Math.round(percent);
+            const shortLabel = usageCategoryShortLabel(category.label);
+            const displayLabel = category.label.trim();
+            return (
+              <div key={category.label} className="space-y-1">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 truncate text-xs text-foreground/80">{displayLabel}</span>
+                  <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                    {rounded}%
+                  </span>
+                </div>
+                <div
+                  role="progressbar"
+                  aria-label={`${shortLabel} usage`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={rounded}
+                  className="h-1 w-full overflow-hidden rounded-full bg-muted/60"
+                >
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-[width] duration-300 ease-out motion-reduce:transition-none",
+                      open && "animate-thread-overview-usage-fill",
+                      usageCategoryFillClass(category),
+                    )}
+                    style={{ width: `${percent}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </AnimatedCollapsible>
+    </Collapsible>
+  );
 }
 
 /**
@@ -1242,6 +1416,24 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     loadedRepository?.threadId === thread.id ? loadedRepository : null;
   const repository = loadedRepositoryForThread?.repository ?? EMPTY_REPOSITORY;
   const repositoryStatus = loadedRepositoryForThread?.status ?? "idle";
+  const usageInfo = useThreadRecord(
+    thread.id,
+    (record) => record.usageByProvider[thread.provider],
+  );
+  const usageCategories = useMemo(
+    () => getThreadOverviewUsageCategories(usageInfo, thread.provider).slice(0, 2),
+    [thread.provider, usageInfo],
+  );
+  const usageSummary = useMemo(
+    () => formatThreadOverviewUsage(usageInfo, thread.provider),
+    [thread.provider, usageInfo],
+  );
+  const fetchProviderUsage = useThreadStore((state) => state.fetchProviderUsage);
+
+  useEffect(() => {
+    if (!open) return;
+    void fetchProviderUsage(thread.id, thread.provider);
+  }, [fetchProviderUsage, open, thread.id, thread.provider]);
 
   useEffect(() => {
     if (!open) return;
@@ -1495,6 +1687,10 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 />
               </PopoverContent>
             </Popover>
+
+            {usageSummary && usageCategories.length > 0 && (
+              <ThreadOverviewUsageBars categories={usageCategories} summary={usageSummary} />
+            )}
 
             {canShowPrActions && (
               <ThreadOverviewPrRow
