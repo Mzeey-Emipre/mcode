@@ -27,6 +27,8 @@ const thread = {
   mode: "worktree" as const,
   worktree_path: "/test/path/.worktrees/feat-x",
   branch: "feat/consolidated-header",
+  checkout_state: "named" as const,
+  base_branch: null,
   worktree_managed: true,
   issue_number: null,
   pr_number: null,

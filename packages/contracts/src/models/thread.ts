@@ -3,6 +3,11 @@ import { lazySchema } from "../utils/lazySchema.js";
 import { ThreadStatusSchema, ThreadModeSchema, InteractionModeSchema, PermissionModeSchema } from "./enums.js";
 import { ContextWindowModeSchema, ReasoningLevelSchema } from "./settings.js";
 
+/** Whether a worktree thread is on a named branch or still branchless on HEAD. */
+export const ThreadCheckoutStateSchema = z.enum(["named", "branchless"]);
+/** Thread checkout state discriminator. */
+export type ThreadCheckoutState = z.infer<typeof ThreadCheckoutStateSchema>;
+
 /** Thread schema matching the SQLite row shape. */
 export const ThreadSchema = lazySchema(() =>
   z.object({
@@ -13,6 +18,8 @@ export const ThreadSchema = lazySchema(() =>
   mode: ThreadModeSchema,
   worktree_path: z.string().nullable(),
   branch: z.string(),
+  checkout_state: ThreadCheckoutStateSchema.default("named"),
+  base_branch: z.string().nullable().default(null),
   /** Whether the worktree was provisioned by the app (true) or attached externally (false). */
   worktree_managed: z.boolean(),
   issue_number: z.number().nullable(),

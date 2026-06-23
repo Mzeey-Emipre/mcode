@@ -9,6 +9,6 @@ import type { Thread } from "@/transport";
  * source of truth shared by the sidebar thread list and the chat header so the
  * two surfaces can never disagree about whether to show PR affordances.
  */
-export function isPrable(thread: Pick<Thread, "mode">): boolean {
-  return thread.mode === "worktree";
+export function isPrable(thread: Pick<Thread, "mode" | "checkout_state">): boolean {
+  return thread.mode === "worktree" && thread.checkout_state === "named";
 }

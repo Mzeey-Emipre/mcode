@@ -30,6 +30,8 @@ const thread = {
   mode: "worktree" as const,
   worktree_path: "/tmp/mcode/.worktrees/feat-pr-row",
   branch: "feat/pr-row-and-actions",
+  checkout_state: "named" as const,
+  base_branch: null,
   worktree_managed: true,
   issue_number: null,
   pr_number: null,

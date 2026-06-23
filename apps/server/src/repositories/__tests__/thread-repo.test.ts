@@ -41,6 +41,42 @@ describe("ThreadRepo has_file_changes", () => {
   });
 });
 
+describe("ThreadRepo.updateCheckoutToNamedBranch", () => {
+  let threadRepo: ThreadRepo;
+  let workspaceId: string;
+
+  beforeEach(() => {
+    const db = openMemoryDatabase();
+    container.reset();
+    container.registerInstance("Database", db);
+    threadRepo = container.resolve(ThreadRepo);
+    const workspaceRepo = container.resolve(WorkspaceRepo);
+    const ws = workspaceRepo.create("test-ws", "/tmp/ws", false);
+    workspaceId = ws.id;
+  });
+
+  it("clears base_branch when a branchless checkout becomes a named branch", () => {
+    const thread = threadRepo.create(
+      workspaceId,
+      "branchless",
+      "worktree",
+      "main",
+      true,
+      "claude",
+      undefined,
+      "branchless",
+      "main",
+    );
+
+    const updated = threadRepo.updateCheckoutToNamedBranch(thread.id, "feat/named");
+
+    expect(updated?.checkout_state).toBe("named");
+    expect(updated?.branch).toBe("feat/named");
+    expect(updated?.base_branch).toBeNull();
+    expect(threadRepo.findById(thread.id)?.base_branch).toBeNull();
+  });
+});
+
 describe("Migration 019 backfill", () => {
   it("backfills has_file_changes = 1 for threads with non-empty file changes in any snapshot", () => {
     const db = openMemoryDatabase();

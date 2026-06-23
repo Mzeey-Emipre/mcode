@@ -105,6 +105,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     mode: "direct",
     worktree_path: null,
     branch: "main",
+    checkout_state: "named",
+    base_branch: null,
     worktree_managed: false,
     issue_number: null,
     pr_number: null,

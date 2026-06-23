@@ -304,6 +304,7 @@ export class GitService {
     repoPath: string,
     name: string,
     branchName?: string,
+    options: { branchless?: boolean } = {},
   ): Promise<WorktreeInfo & { createdBranch: boolean; warnings: string[] }> {
     validateWorktreeName(name);
 
@@ -319,11 +320,13 @@ export class GitService {
       throw new Error(`Worktree directory already exists: ${wtPath}`);
     }
 
-    const createdBranch = !(await this.branchExists(repoPath, branch));
+    const createdBranch = options.branchless ? false : !(await this.branchExists(repoPath, branch));
     const warnings: string[] = [];
 
     try {
-      if (!createdBranch) {
+      if (options.branchless) {
+        await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", "--detach", wtPath, branch]);
+      } else if (!createdBranch) {
         await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", wtPath, branch]);
       } else {
         await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", wtPath, "-b", branch]);
@@ -874,7 +877,11 @@ export class GitService {
    * Reads the workspace root by default; pass `repoPath` to resolve against a
    * thread's worktree so "current branch" is the thread's branch.
    */
-  async resolveBranchComparison(workspaceId: string, repoPath?: string): Promise<BranchComparison> {
+  async resolveBranchComparison(
+    workspaceId: string,
+    repoPath?: string,
+    savedBaseBranch?: string | null,
+  ): Promise<BranchComparison> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
     const refs = await this.listBranchesForPath(cwd);
 
@@ -900,7 +907,7 @@ export class GitService {
     // Detached HEAD (no branch name): compare the best base to HEAD. Three-dot
     // semantics resolve the merge-base internally, so an explicit base is enough.
     if (!current || current === "HEAD") {
-      const base = upstream ?? originDefaultRef ?? defaultBranch;
+      const base = savedBaseBranch ?? upstream ?? originDefaultRef ?? defaultBranch;
       if (!base) {
         return unavailable({ base: null, target: "HEAD", refs, isUnborn: false });
       }

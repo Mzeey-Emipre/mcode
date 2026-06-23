@@ -124,6 +124,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     mode: "worktree",
     worktree_path: null,
     branch: "feat/my-feature",
+    checkout_state: "named",
+    base_branch: null,
     worktree_managed: false,
     issue_number: null,
     pr_number: null,
@@ -221,9 +223,7 @@ describe("HeaderActions - Create PR menu item", () => {
     expect(screen.getByTestId("workspace-menu-create-pr")).not.toBeDisabled();
   });
 
-  it("offers Create PR on a worktree thread regardless of branch name", () => {
-    // The gate is mode-based, not branch-based: a worktree thread that happens
-    // to sit on a branch named "main" is still PR-able.
+  it("offers Create PR on a named worktree thread regardless of branch name", () => {
     mockUseHasCommitsAhead.mockReturnValue(true);
     render(<HeaderActions thread={makeThread({ branch: "main" })} />);
     expect(screen.getByTestId("workspace-menu-create-pr")).toBeInTheDocument();
@@ -280,6 +280,11 @@ describe("HeaderActions - PR-ability gating by mode", () => {
     expect(screen.getByTestId("create-pr-dialog")).toBeInTheDocument();
   });
 
+  it("does not mount the create-PR dialog for a branchless worktree thread", () => {
+    render(<HeaderActions thread={makeThread({ checkout_state: "branchless", base_branch: "main" })} />);
+    expect(screen.queryByTestId("create-pr-dialog")).not.toBeInTheDocument();
+  });
+
   it("skips PR polling for a direct-mode thread", () => {
     render(<HeaderActions thread={makeThread({ mode: "direct", branch: "feat/x" })} />);
     // Non-PR-able threads must not poll GitHub: both hooks receive null inputs.
@@ -291,6 +296,12 @@ describe("HeaderActions - PR-ability gating by mode", () => {
     render(<HeaderActions thread={makeThread({ mode: "worktree", branch: "feat/x" })} />);
     expect(mockUseBranchPr).toHaveBeenCalledWith("feat/x", expect.anything());
     expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("ws-1", "feat/x", "thread-1");
+  });
+
+  it("skips PR polling for a branchless worktree thread", () => {
+    render(<HeaderActions thread={makeThread({ checkout_state: "branchless", base_branch: "main" })} />);
+    expect(mockUseBranchPr).toHaveBeenCalledWith(null, expect.anything());
+    expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("", null, undefined);
   });
 });
 

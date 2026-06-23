@@ -27,6 +27,7 @@ import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
@@ -465,6 +466,8 @@ function ThreadOverviewBranchMenu({
   onOpenChange,
 }: ThreadOverviewBranchMenuProps) {
   const [search, setSearch] = useState("");
+  const [newBranchName, setNewBranchName] = useState("");
+  const [createState, setCreateState] = useState<"idle" | "creating" | "error">("idle");
   const [loaded, setLoaded] = useState<LoadedBranchState>({
     status: "idle",
     branches: [],
@@ -505,9 +508,10 @@ function ThreadOverviewBranchMenu({
     };
   }, [open, thread.id, thread.workspace_id]);
 
+  const displayBranch = thread.checkout_state === "branchless" ? "HEAD" : thread.branch;
   const branches = useMemo(
-    () => branchRows(loaded.branches, thread.branch),
-    [loaded.branches, thread.branch],
+    () => branchRows(loaded.branches, displayBranch),
+    [loaded.branches, displayBranch],
   );
   const visibleBranches = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -559,7 +563,7 @@ function ThreadOverviewBranchMenu({
 
           {loaded.status !== "loading" || loaded.branches.length > 0
             ? visibleBranches.map((branch) => {
-                const isCurrent = branch.name === thread.branch || branch.isCurrent;
+                const isCurrent = thread.checkout_state === "named" && (branch.name === thread.branch || branch.isCurrent);
                 return (
                   <Button
                     key={branch.name}
@@ -608,16 +612,65 @@ function ThreadOverviewBranchMenu({
       </ScrollArea>
 
       <Separator className="my-2" />
-      <Button
-        variant="ghost"
-        size="sm"
-        type="button"
-        disabled
-        className="h-8 w-full justify-start gap-2 px-2 text-xs disabled:opacity-60"
-      >
-        <Plus size={14} className="text-muted-foreground" />
-        Create and checkout new branch...
-      </Button>
+      {thread.checkout_state === "branchless" ? (
+        <div className="space-y-2 px-1 pb-1">
+          <Input
+            size="xs"
+            value={newBranchName}
+            onChange={(event) => {
+              setNewBranchName(event.target.value);
+              if (createState === "error") setCreateState("idle");
+            }}
+            placeholder="Branch name"
+            aria-label="New branch name"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            disabled={!newBranchName.trim() || createState === "creating"}
+            data-testid="thread-overview-create-branch"
+            className="h-8 w-full justify-start gap-2 px-2 text-xs disabled:opacity-60"
+            onClick={async () => {
+              const name = newBranchName.trim();
+              if (!name) return;
+              setCreateState("creating");
+              try {
+                const result = await getTransport().createBranch(thread.workspace_id, name, thread.id);
+                useWorkspaceStore.setState((state) => ({
+                  threads: state.threads.map((item) =>
+                    item.id === thread.id
+                      ? { ...item, branch: result.branch, checkout_state: "named" as const, base_branch: null }
+                      : item,
+                  ),
+                  worktreesLoadedForWorkspace: null,
+                }));
+                setCreateState("idle");
+                onOpenChange(false);
+              } catch {
+                setCreateState("error");
+              }
+            }}
+          >
+            <Plus size={14} className="text-muted-foreground" />
+            {createState === "creating" ? "Creating branch..." : "Create branch"}
+          </Button>
+          {createState === "error" ? (
+            <div className="px-1 text-xs text-destructive">Branch could not be created.</div>
+          ) : null}
+        </div>
+      ) : (
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          disabled
+          className="h-8 w-full justify-start gap-2 px-2 text-xs disabled:opacity-60"
+        >
+          <Plus size={14} className="text-muted-foreground" />
+          Create and checkout new branch...
+        </Button>
+      )}
     </div>
   );
 }
@@ -1105,6 +1158,10 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
 
   const ciDot = useMemo(() => getThreadOverviewCiDot(pr, checks), [pr, checks]);
   const modeLabel = thread.mode === "worktree" ? "Worktree" : "Direct";
+  const checkoutLabel =
+    thread.checkout_state === "branchless"
+      ? `HEAD from ${thread.base_branch ?? thread.branch}`
+      : thread.branch;
 
   const triggerButton = (
     <Button
@@ -1204,7 +1261,7 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 sideOffset={12}
                 className="w-80 p-0"
               >
-                <ThreadOverviewLocalMenu worktreePath={dirPath} branch={thread.branch} />
+                <ThreadOverviewLocalMenu worktreePath={dirPath} branch={checkoutLabel} />
               </PopoverContent>
             </Popover>
 
@@ -1223,7 +1280,7 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                   >
                     <span className="flex min-w-0 items-center gap-2">
                       <GitBranch size={14} className="shrink-0 text-muted-foreground" />
-                      <span className="truncate text-xs font-medium">{thread.branch}</span>
+                      <span className="truncate text-xs font-medium">{checkoutLabel}</span>
                     </span>
                     <ChevronDown size={13} aria-hidden className="shrink-0 text-muted-foreground" />
                   </Button>

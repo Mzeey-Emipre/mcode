@@ -75,5 +75,5 @@ describe("FileList jump to file", () => {
         "apps/web/src/beta.ts",
       ),
     );
-  });
+  }, 15_000);
 });

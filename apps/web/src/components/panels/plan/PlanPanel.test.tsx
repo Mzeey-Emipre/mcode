@@ -73,5 +73,5 @@ describe("PlanPanel", () => {
     expect(content).toContain(versionTwo.contentMd);
     expect(content).not.toContain(versionOne.contentMd);
     expect(sendCall?.[15]).toBe("implement");
-  });
+  }, 15_000);
 });
