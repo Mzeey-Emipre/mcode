@@ -265,6 +265,8 @@ test.describe("Consolidated chat header", () => {
       "aria-label",
       "Usage, 5-hour 12%, weekly 47%",
     );
+    await expect(page.getByTestId("thread-overview-usage")).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId("thread-overview-usage")).not.toContainText("5-hour 12%, weekly 47%");
     await expect(page.getByRole("progressbar", { name: "5-hour usage" })).toHaveAttribute(
       "aria-valuenow",
       "12",

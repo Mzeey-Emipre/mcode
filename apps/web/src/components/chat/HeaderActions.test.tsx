@@ -371,10 +371,14 @@ describe("HeaderActions - consolidated header", () => {
     seedThreadUsage("thread-1", CLAUDE_USAGE);
     render(<HeaderActions thread={makeThread({ worktree_path: "/repo/worktrees/feat-x" })} />);
 
-    expect(screen.getByTestId("thread-overview-usage")).toHaveAttribute(
-      "aria-label",
-      "Usage, 5-hour 12%, weekly 47%",
-    );
+    const usageTrigger = screen.getByTestId("thread-overview-usage");
+    expect(usageTrigger).toHaveAttribute("aria-label", "Usage, 5-hour 12%, weekly 47%");
+    expect(usageTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(usageTrigger).toHaveTextContent("Usage");
+    expect(usageTrigger).not.toHaveTextContent("5-hour 12%, weekly 47%");
+    expect(screen.getByTestId("thread-overview-usage-details")).toBeVisible();
+    expect(screen.getByText("5-hour limit")).toBeInTheDocument();
+    expect(screen.getByText("Weekly limit")).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "5-hour usage" })).toHaveAttribute(
       "aria-valuenow",
       "12",
@@ -383,9 +387,14 @@ describe("HeaderActions - consolidated header", () => {
       "aria-valuenow",
       "47",
     );
+
+    fireEvent.click(usageTrigger);
+
+    expect(usageTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(usageTrigger).toHaveTextContent("5-hour 12%, weekly 47%");
+    expect(screen.queryByRole("progressbar", { name: "5-hour usage" })).not.toBeInTheDocument();
     expect(screen.queryByText("usage unavailable")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-usage-popover")).not.toBeInTheDocument();
-    expect(screen.getByTestId("thread-overview-usage")).not.toHaveAttribute("aria-expanded");
   });
 
   it("does not render Codex usage before provider quota data arrives", () => {
