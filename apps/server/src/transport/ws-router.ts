@@ -749,7 +749,11 @@ async function dispatch(
         const thread = deps.threadRepo.findById(params.threadId);
         const prState = thread?.pr_status?.toLowerCase();
         const isTerminal = prState === "merged" || prState === "closed";
-        if (thread?.pr_number) {
+        if (
+          thread?.pr_number &&
+          thread.mode === "worktree" &&
+          thread.checkout_state === "named"
+        ) {
           const workspace = deps.workspaceRepo.findById(thread.workspace_id);
           if (workspace) {
             if (isTerminal) {

@@ -9,12 +9,20 @@ import {
   GitPullRequest,
   Globe,
   Laptop,
+  Loader2,
   Menu,
   Plus,
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { SiteFavicon } from "@/components/ui/favicon";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -34,6 +42,7 @@ import { executeCommand, registerCommand } from "@/lib/command-registry";
 import { getContentRowWidth, shouldAutoOpenOverview } from "@/lib/composer-layout";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
 import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
+import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
 import { cn } from "@/lib/utils";
 import {
   getTransport,
@@ -132,6 +141,15 @@ function changedFilesLabel(count: number): string {
 
 function uncommittedFilesLabel(count: number): string {
   return `Uncommitted: ${count} ${count === 1 ? "file" : "files"}`;
+}
+
+/**
+ * Returns whether a branchless worktree can enter the Create PR naming step.
+ */
+export function canStartBranchlessCreatePr(
+  thread: Pick<Thread, "mode" | "checkout_state">,
+): boolean {
+  return thread.mode === "worktree" && thread.checkout_state === "branchless";
 }
 
 /**
@@ -771,13 +789,34 @@ interface ThreadOverviewPrRowProps {
   onCommitOrPush: () => void;
   onCreatePr: () => void;
   onOpenPr: (url: string, event?: MouseEvent) => void;
+  branchless?: boolean;
 }
 
 function ThreadOverviewPrActionRow({
   hasCommitsAhead,
   onCommitOrPush,
   onCreatePr,
-}: Pick<ThreadOverviewPrRowProps, "hasCommitsAhead" | "onCommitOrPush" | "onCreatePr">) {
+  branchless = false,
+}: Pick<ThreadOverviewPrRowProps, "hasCommitsAhead" | "onCommitOrPush" | "onCreatePr" | "branchless">) {
+  if (branchless) {
+    return (
+      <div data-testid="thread-overview-pr">
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          data-testid="workspace-menu-create-pr"
+          className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+          onClick={onCreatePr}
+          title="Name this worktree branch before creating a pull request"
+        >
+          <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+          <span className="font-medium">Create PR</span>
+        </Button>
+      </div>
+    );
+  }
+
   if (hasCommitsAhead === false) {
     return (
       <div data-testid="thread-overview-pr">
@@ -908,6 +947,7 @@ function ThreadOverviewPrRow({
   onCommitOrPush,
   onCreatePr,
   onOpenPr,
+  branchless,
 }: ThreadOverviewPrRowProps) {
   if (!pr) {
     return (
@@ -915,6 +955,7 @@ function ThreadOverviewPrRow({
         hasCommitsAhead={hasCommitsAhead}
         onCommitOrPush={onCommitOrPush}
         onCreatePr={onCreatePr}
+        branchless={branchless}
       />
     );
   }
@@ -932,6 +973,148 @@ function ThreadOverviewPrRow({
   );
 }
 
+interface BranchlessCreatePrDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  thread: Thread;
+  baseBranch: string;
+  onCreated: (branch: string, baseBranch: string) => void;
+}
+
+function branchCreationErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err || "Unknown error");
+}
+
+function BranchlessCreatePrDialog({
+  open,
+  onOpenChange,
+  thread,
+  baseBranch,
+  onCreated,
+}: BranchlessCreatePrDialogProps) {
+  const [branchName, setBranchName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const branchInputRef = useRef<HTMLInputElement>(null);
+  const finalBranchName = trimTrailingBranchChars(branchName.trim());
+
+  useEffect(() => {
+    if (!open) return;
+    setBranchName("");
+    setSubmitting(false);
+    setError(null);
+    const frame = requestAnimationFrame(() => {
+      branchInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+
+  const handleSubmit = useCallback(async () => {
+    const name = finalBranchName;
+    if (!name || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await getTransport().createBranch(thread.workspace_id, name, thread.id);
+      const nextBranch = result.branch || name;
+      useWorkspaceStore.setState((state) => ({
+        threads: state.threads.map((candidate) =>
+          candidate.id === thread.id
+            ? {
+                ...candidate,
+                branch: nextBranch,
+                checkout_state: "named" as const,
+                base_branch: null,
+              }
+            : candidate,
+        ),
+        worktreesLoadedForWorkspace: null,
+      }));
+      onOpenChange(false);
+      onCreated(nextBranch, baseBranch);
+    } catch (err) {
+      setError(branchCreationErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }, [baseBranch, finalBranchName, onCreated, onOpenChange, submitting, thread.id, thread.workspace_id]);
+
+  return (
+    <Dialog open={open} onOpenChange={submitting ? undefined : onOpenChange}>
+      <DialogContent
+        className="w-[min(92vw,440px)] gap-0 overflow-hidden p-0"
+        showCloseButton={!submitting}
+      >
+        <div className="flex items-center gap-3 border-b border-border/50 py-4 pl-5 pr-12">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40">
+            <GitBranch className="size-3.5 text-muted-foreground" aria-hidden="true" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <DialogTitle className="text-sm font-medium leading-none">
+              Name branch for PR
+            </DialogTitle>
+            <DialogDescription className="mt-1 max-w-[36ch] text-pretty text-xs leading-5 text-muted-foreground">
+              Creates the branch at the current commit in this worktree, then opens the PR form.
+            </DialogDescription>
+          </div>
+        </div>
+
+        <div className="px-5 py-4">
+          <div className="space-y-1.5">
+            <label htmlFor="branchless-pr-branch" className="text-xs text-muted-foreground">
+              Branch name
+            </label>
+            <Input
+              ref={branchInputRef}
+              id="branchless-pr-branch"
+              value={branchName}
+              onChange={(event) => {
+                setBranchName(sanitizeCustomBranchInput(event.target.value));
+                setError(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void handleSubmit();
+                }
+              }}
+              disabled={submitting}
+              placeholder="feat/my-change"
+              aria-invalid={error ? "true" : undefined}
+              aria-describedby={error ? "branchless-pr-branch-error" : undefined}
+              className="font-mono"
+            />
+          </div>
+
+          {error ? (
+            <div
+              id="branchless-pr-branch-error"
+              role="alert"
+              className="mt-3 break-words rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              {error}
+            </div>
+          ) : null}
+        </div>
+
+        <DialogFooter className="m-0 flex-row justify-end gap-2 rounded-none border-t border-border/30 bg-transparent px-5 py-3.5">
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => void handleSubmit()}
+            disabled={submitting || !finalBranchName}
+            className="min-w-[11.5rem] gap-1.5"
+          >
+            {submitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+            Create branch and continue
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /**
  * Thread-scoped Overview popover for the chat header.
  *
@@ -941,6 +1124,9 @@ function ThreadOverviewPrRow({
 export function ThreadOverview({ thread }: ThreadOverviewProps) {
   const [localOpen, setLocalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
+  const [branchlessCreatePrOpen, setBranchlessCreatePrOpen] = useState(false);
+  const [createdBranchForPr, setCreatedBranchForPr] = useState<string | null>(null);
+  const [createdBranchBaseForPr, setCreatedBranchBaseForPr] = useState<string | null>(null);
   const [loadedChangeSummary, setLoadedChangeSummary] = useState<{
     threadId: string;
     snapshotKey: string;
@@ -966,6 +1152,12 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
 
   useEffect(() => {
     autoManagedRef.current = true;
+  }, [thread.id]);
+
+  useEffect(() => {
+    setCreatedBranchForPr(null);
+    setCreatedBranchBaseForPr(null);
+    setBranchlessCreatePrOpen(false);
   }, [thread.id]);
 
   // Whether there is room for the Overview to open by default. Driven by the
@@ -1022,6 +1214,10 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     handleCommitOrPush,
     handleOpenPr,
   } = useThreadGitActions(thread);
+  const branchlessCreatePr = canStartBranchlessCreatePr(thread);
+  const canShowPrActions = prable || branchlessCreatePr;
+  const createPrBranch = createdBranchForPr ?? thread.branch;
+  const branchlessBaseBranch = thread.base_branch ?? thread.branch;
 
   const cachedSnapshots = useDiffStore((s) => s.snapshotsByThread[thread.id]);
   const setSnapshots = useDiffStore((s) => s.setSnapshots);
@@ -1300,7 +1496,7 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
               </PopoverContent>
             </Popover>
 
-            {prable && (
+            {canShowPrActions && (
               <ThreadOverviewPrRow
                 pr={pr}
                 hasCommitsAhead={hasCommitsAhead}
@@ -1308,8 +1504,15 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
                 openPrDetail={openPrDetail}
                 threadId={thread.id}
                 onCommitOrPush={handleCommitOrPush}
-                onCreatePr={() => setCreatePrOpen(true)}
+                onCreatePr={() => {
+                  if (branchlessCreatePr) {
+                    setBranchlessCreatePrOpen(true);
+                    return;
+                  }
+                  setCreatePrOpen(true);
+                }}
                 onOpenPr={handleOpenPr}
+                branchless={branchlessCreatePr}
               />
             )}
 
@@ -1346,13 +1549,28 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
         </PopoverContent>
       </Popover>
 
-      {prable && (
+      {branchlessCreatePr && (
+        <BranchlessCreatePrDialog
+          open={branchlessCreatePrOpen}
+          onOpenChange={setBranchlessCreatePrOpen}
+          thread={thread}
+          baseBranch={branchlessBaseBranch}
+          onCreated={(branch, baseBranch) => {
+            setCreatedBranchForPr(branch);
+            setCreatedBranchBaseForPr(baseBranch);
+            setCreatePrOpen(true);
+          }}
+        />
+      )}
+
+      {(prable || createdBranchForPr) && (
         <CreatePrDialog
           open={createPrOpen}
           onOpenChange={setCreatePrOpen}
           threadId={thread.id}
           workspaceId={thread.workspace_id}
-          branch={thread.branch}
+          branch={createPrBranch}
+          preferredBaseBranch={createdBranchBaseForPr ?? thread.base_branch}
         />
       )}
     </>
