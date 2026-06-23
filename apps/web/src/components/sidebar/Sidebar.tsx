@@ -3,7 +3,6 @@ import { Settings, ArrowLeft, ExternalLink, Braces } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import type { SettingsSection } from "@/components/settings/settings-nav";
-import { SidebarUsagePanel } from "./SidebarUsagePanel";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { PanelCollapseIcon } from "./SidebarRevealButton";
 import { useUiStore } from "@/stores/uiStore";
@@ -93,7 +92,6 @@ export function Sidebar({
       {/* Footer */}
       <div className="border-t border-border/40 p-3 space-y-1">
         <UpdateIndicator />
-        {!settingsOpen && <SidebarUsagePanel />}
         {settingsOpen ? (
           IS_DESKTOP && (
             <Button
