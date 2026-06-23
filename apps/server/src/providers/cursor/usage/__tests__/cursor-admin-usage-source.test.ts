@@ -130,6 +130,30 @@ describe("CursorAdminUsageSource", () => {
     );
   });
 
+  it("supports async API key and usage email resolution", async () => {
+    fetchImpl.mockResolvedValue(
+      okResponse({
+        teamMemberSpend: [{ email: "dev@example.com", totalPercentUsed: 42 }],
+      }),
+    );
+    const source = new CursorAdminUsageSource({
+      apiKey: async () => "key",
+      usageEmail: async () => "dev@example.com",
+      fetchImpl,
+      now,
+    });
+
+    await expect(source.fetch()).resolves.toEqual([
+      {
+        label: "Total usage",
+        used: 42,
+        total: 100,
+        remainingPercent: 0.58,
+        isUnlimited: false,
+      },
+    ]);
+  });
+
   it("does not reuse cached usage after the configured email changes", async () => {
     let usageEmail = "first@example.com";
     fetchImpl

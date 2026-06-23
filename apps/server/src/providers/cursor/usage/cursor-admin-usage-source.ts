@@ -28,12 +28,14 @@ interface CacheEntry {
   categories: QuotaCategory[];
 }
 
+type ResolvableOption = string | undefined | (() => string | undefined | Promise<string | undefined>);
+
 /** Options for constructing a Cursor Admin API usage source. */
 export interface CursorAdminUsageSourceOptions {
   /** Cursor Admin API key, or a function that resolves it at fetch time. */
-  apiKey: string | undefined | (() => string | undefined);
+  apiKey: ResolvableOption;
   /** Team member email whose Cursor spend row must be selected exactly. */
-  usageEmail: string | undefined | (() => string | undefined);
+  usageEmail: ResolvableOption;
   /** Optional fetch implementation used by tests or alternate runtimes. */
   fetchImpl?: typeof fetch;
   /** Optional clock used for cache expiry tests. */
@@ -59,8 +61,8 @@ export class CursorAdminUsageSource {
 
   /** Fetches normalized Cursor quota categories or an empty list when unavailable. */
   async fetch(): Promise<QuotaCategory[]> {
-    const apiKey = resolveOption(this.options.apiKey)?.trim();
-    const usageEmail = resolveOption(this.options.usageEmail)?.trim();
+    const apiKey = (await resolveOption(this.options.apiKey))?.trim();
+    const usageEmail = (await resolveOption(this.options.usageEmail))?.trim();
     if (!apiKey || !usageEmail) return [];
 
     const cacheKey = cursorUsageCacheKey(apiKey, usageEmail);
@@ -166,7 +168,7 @@ export class CursorAdminUsageSource {
   }
 }
 
-function resolveOption(value: string | undefined | (() => string | undefined)): string | undefined {
+async function resolveOption(value: ResolvableOption): Promise<string | undefined> {
   return typeof value === "function" ? value() : value;
 }
 
