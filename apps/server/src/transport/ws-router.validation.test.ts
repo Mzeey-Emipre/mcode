@@ -477,3 +477,117 @@ describe("routeMessage thread.syncPrs", () => {
     expect(watch).toHaveBeenCalledWith("named-thread", 42, "feat/named", "C:/repo");
   });
 });
+
+describe("routeMessage github.checkStatus", () => {
+  it("does not bootstrap check polling for branchless worktree threads", async () => {
+    const getCheckRuns = vi.fn();
+    const watch = vi.fn();
+    const deps = {
+      threadRepo: {
+        findById: vi.fn().mockReturnValue({
+          id: "branchless-thread",
+          workspace_id: "ws-1",
+          branch: "main",
+          mode: "worktree",
+          checkout_state: "branchless",
+          pr_number: 42,
+          pr_status: "OPEN",
+        }),
+      },
+      workspaceRepo: {
+        findById: vi.fn().mockReturnValue({
+          id: "ws-1",
+          path: "C:/repo",
+        }),
+      },
+      ciWatcherService: {
+        getFreshCache: vi.fn().mockReturnValue(null),
+        getEntry: vi.fn().mockReturnValue(null),
+        watch,
+        refresh: vi.fn(),
+      },
+      githubService: {
+        getCheckRuns,
+      },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-checks",
+        method: "github.checkStatus",
+        params: { threadId: "branchless-thread" },
+      }),
+      deps,
+    );
+
+    expect(response.result).toMatchObject({ aggregate: "no_checks", runs: [] });
+    expect(watch).not.toHaveBeenCalled();
+    expect(getCheckRuns).not.toHaveBeenCalled();
+  });
+
+  it("bootstraps check polling only for named worktree threads", async () => {
+    const getCheckRuns = vi.fn().mockResolvedValue({
+      aggregate: "passing",
+      runs: [],
+      fetchedAt: 1,
+    });
+    const watch = vi.fn();
+    const deps = {
+      threadRepo: {
+        findById: vi.fn().mockReturnValue({
+          id: "named-thread",
+          workspace_id: "ws-1",
+          branch: "feat/named",
+          mode: "worktree",
+          checkout_state: "named",
+          pr_number: 42,
+          pr_status: "OPEN",
+        }),
+      },
+      workspaceRepo: {
+        findById: vi.fn().mockReturnValue({
+          id: "ws-1",
+          path: "C:/repo",
+        }),
+      },
+      ciWatcherService: {
+        getFreshCache: vi.fn().mockReturnValue(null),
+        getEntry: vi
+          .fn()
+          .mockReturnValueOnce(null)
+          .mockReturnValueOnce({
+            branch: "feat/named",
+            repoPath: "C:/repo",
+          }),
+        watch,
+        refresh: vi.fn(),
+      },
+      githubService: {
+        getCheckRuns,
+      },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-checks",
+        method: "github.checkStatus",
+        params: { threadId: "named-thread" },
+      }),
+      deps,
+    );
+
+    expect(response.result).toEqual({
+      aggregate: "passing",
+      runs: [],
+      fetchedAt: 1,
+    });
+    expect(watch).toHaveBeenCalledWith(
+      "named-thread",
+      42,
+      "feat/named",
+      "C:/repo",
+      { skipInitialFetch: true },
+    );
+    expect(getCheckRuns).toHaveBeenCalledWith("feat/named", "C:/repo");
+  });
+});
