@@ -156,6 +156,10 @@ export interface ThreadGoalClearResult { cleared: boolean }
 export interface ModelListResult { models: Array<{ id: string; name?: string }> }
 /** Result returned by the `account/read` RPC method. */
 export interface AccountReadResult { id?: string; email?: string; name?: string }
+/** Result returned by the `account/rateLimits/read` RPC method. */
+export interface AccountRateLimitsReadResult extends CodexRateLimitsPayload {
+  rateLimitResetCredits?: { availableCount?: number } | null;
+}
 
 // Skill RPCs
 

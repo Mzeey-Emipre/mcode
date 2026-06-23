@@ -39,7 +39,7 @@ import { PlanRepo } from "./repositories/plan-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { warmCodexVersionCache } from "./providers/codex/codex-version";
-import { warmCodexAppServer } from "./providers/codex/codex-app-server";
+import { CodexProvider } from "./providers/codex/codex-provider";
 import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
@@ -209,6 +209,7 @@ const workspaceRepo = container.resolve(WorkspaceRepo); // Used only for startup
 const enricher = container.resolve(WorkspaceEnricher);
 const filesystemBrowser = container.resolve(FilesystemBrowser);
 const modelCacheService = container.resolve(ModelCacheService);
+const codexProvider = container.resolve(CodexProvider);
 
 /** Tracks CLI path edits so model catalog caches refresh when a different binary is targeted. */
 let lastCliPathsForModelCache = settingsService.get().provider.cli;
@@ -240,7 +241,7 @@ function warmCodexVersionGate(s = settingsService.get()): void {
   void warmCodexVersionCache(cliPath);
   if (!warmedCodexPaths.has(cliPath)) {
     warmedCodexPaths.add(cliPath);
-    void warmCodexAppServer(cliPath);
+    void codexProvider.warmUsageCache(true);
   }
 }
 

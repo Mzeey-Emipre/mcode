@@ -44,7 +44,7 @@ import type {
 } from "@mcode/contracts";
 import { AgentEventType, CODEX_STATIC_MODELS, isVirtualBrowserContextAttachment } from "@mcode/contracts";
 import { checkCodexVersion, meetsMinVersion } from "./codex-version.js";
-import { CodexAppServer } from "./codex-app-server.js";
+import { CodexAppServer, warmCodexAppServer } from "./codex-app-server.js";
 import type { CodexApprovalRequest } from "./codex-app-server.js";
 import { CodexEventMapper } from "./codex-event-mapper.js";
 import { traceCodexIngest } from "./codex-trace.js";
@@ -82,6 +82,8 @@ import {
  */
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
+const USAGE_WARMUP_TIMEOUT_MS = 10_000;
+const USAGE_WARMUP_RETRY_MS = 60_000;
 
 type CodexEndedOutcome = "completed" | "errored" | "cancelled";
 
@@ -120,6 +122,45 @@ export function mapCodexRateLimitsToUsage(payload: unknown): ProviderUsageInfo {
   }
 
   return { providerId: "codex", quotaCategories: categories };
+}
+
+function codexUsageCategoryOrder(category: QuotaCategory): number {
+  const label = category.label.trim();
+  if (/^5[- ]hour/i.test(label)) return 0;
+  if (/^weekly/i.test(label)) return 1;
+  return 2;
+}
+
+/**
+ * Merges Codex account usage snapshots, preserving existing buckets when the
+ * app-server sends sparse rolling updates.
+ */
+export function mergeCodexUsageInfo(
+  current: ProviderUsageInfo,
+  next: ProviderUsageInfo,
+): ProviderUsageInfo {
+  if (next.quotaCategories.length === 0) return current;
+
+  const byLabel = new Map<string, QuotaCategory>();
+  for (const category of current.quotaCategories) {
+    byLabel.set(category.label, category);
+  }
+  for (const category of next.quotaCategories) {
+    byLabel.set(category.label, category);
+  }
+
+  return {
+    providerId: "codex",
+    quotaCategories: [...byLabel.values()].sort((a, b) => (
+      codexUsageCategoryOrder(a) - codexUsageCategoryOrder(b)
+      || a.label.localeCompare(b.label)
+    )),
+  };
+}
+
+/** Returns true when two provider usage snapshots are equivalent. */
+export function isSameProviderUsageInfo(a: ProviderUsageInfo, b: ProviderUsageInfo): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function readCodexRateLimits(payload: unknown): CodexRateLimitsPayload["rateLimits"] {
@@ -412,7 +453,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
   /** Return the latest Codex account rate-limit state pushed by the app-server. */
   async getUsage(): Promise<ProviderUsageInfo> {
-    return this.usageInfo;
+    if (this.usageInfo.quotaCategories.length > 0) return this.usageInfo;
+    return this.warmUsageCache();
   }
 
   /** Owns the session pool, idle eviction (with busy guard), and JobObject/kill. */
@@ -432,6 +474,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   private goalsBySession = new Map<string, GoalState>();
   /** Last account rate limits pushed by the Codex app-server. */
   private usageInfo: ProviderUsageInfo = { providerId: "codex", quotaCategories: [] };
+  private usageWarmupPromise: Promise<ProviderUsageInfo> | null = null;
+  private lastUsageWarmupAt = 0;
   /** Goal objectives waiting for a Codex app-server thread to exist. */
   private pendingGoalObjectives = new Map<string, string>();
   /**
@@ -456,6 +500,79 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       jobObject: this.jobObject,
       envService: this.envService,
     });
+  }
+
+  /**
+   * Primes the provider-owned Codex usage cache from a throwaway app-server.
+   * Consumers still read through getUsage(); this only fills the shared source
+   * before any real Codex session emits rate-limit notifications.
+   */
+  async warmUsageCache(force = false): Promise<ProviderUsageInfo> {
+    if (!force && this.usageInfo.quotaCategories.length > 0) return this.usageInfo;
+    const now = Date.now();
+    if (!force && now - this.lastUsageWarmupAt < USAGE_WARMUP_RETRY_MS) {
+      return this.usageInfo;
+    }
+    if (this.usageWarmupPromise) return this.usageWarmupPromise;
+
+    this.lastUsageWarmupAt = now;
+    this.usageWarmupPromise = this.fetchUsageViaWarmup()
+      .finally(() => {
+        this.usageWarmupPromise = null;
+      });
+    return this.usageWarmupPromise;
+  }
+
+  private async fetchUsageViaWarmup(): Promise<ProviderUsageInfo> {
+    const settings = await this.settingsService.get();
+    const cliPath = settings.provider.cli.codex || "codex";
+    const result = await warmCodexAppServer(
+      cliPath,
+      USAGE_WARMUP_TIMEOUT_MS,
+      () => this.envService.getEnv(),
+    );
+    if (result.rateLimitsPayload !== undefined) {
+      this.applyUsageSnapshot(result.rateLimitsPayload, undefined, "replace");
+    }
+    return this.usageInfo;
+  }
+
+  private applyUsageSnapshot(
+    payload: unknown,
+    threadId?: string,
+    mode: "merge" | "replace" = "merge",
+  ): boolean {
+    const mappedUsage = mapCodexRateLimitsToUsage(payload);
+    const nextUsage = mode === "replace"
+      ? mappedUsage
+      : mergeCodexUsageInfo(this.usageInfo, mappedUsage);
+    if (isSameProviderUsageInfo(this.usageInfo, nextUsage)) return false;
+
+    this.usageInfo = nextUsage;
+    if (threadId) {
+      this.emit("event", {
+        type: AgentEventType.QuotaUpdate,
+        threadId,
+        providerId: "codex",
+        categories: this.usageInfo.quotaCategories,
+      } satisfies AgentEvent);
+    }
+    return true;
+  }
+
+  private clearUsageCache(): void {
+    this.usageInfo = { providerId: "codex", quotaCategories: [] };
+    this.lastUsageWarmupAt = 0;
+  }
+
+  private refreshUsageFromServer(server: CodexAppServer, threadId: string): void {
+    const readRateLimits = (server as { readRateLimits?: () => Promise<unknown> }).readRateLimits;
+    if (!readRateLimits) return;
+    void readRateLimits.call(server)
+      .then((payload) => this.applyUsageSnapshot(payload, threadId, "replace"))
+      .catch((err: unknown) => {
+        logger.debug("Codex account rate-limit read failed", { error: String(err) });
+      });
   }
 
   /** Switch Codex mapper output buffering for active and future sessions. */
@@ -811,13 +928,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         this.emit("skills_changed");
       }
       if (n.method === "account/rateLimits/updated") {
-        this.usageInfo = mapCodexRateLimitsToUsage(n.params);
-        this.emit("event", {
-          type: AgentEventType.QuotaUpdate,
-          threadId,
-          providerId: "codex",
-          categories: this.usageInfo.quotaCategories,
-        } satisfies AgentEvent);
+        this.applyUsageSnapshot(n.params, threadId);
+      }
+      if (n.method === "account/updated") {
+        this.clearUsageCache();
+        this.refreshUsageFromServer(server, threadId);
       }
       if (n.method === "turn/started" && isMainThreadNotification(server, n.params)) {
         const turn = n.params?.turn as { id?: string } | undefined;
@@ -860,6 +975,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // Propagates start failures to the runtime, which surfaces them to the
     // `acquire` caller in `sendTurn` (emits Error/Ended there).
     await server.start();
+    this.refreshUsageFromServer(server, threadId);
 
     // Register after a successful handshake so a mid-handshake thread/started
     // notification cannot persist a stale SDK thread id when init later fails.
