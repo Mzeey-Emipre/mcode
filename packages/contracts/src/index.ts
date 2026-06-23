@@ -40,7 +40,7 @@ export {
   looksLikeWorkspaceRelativeFileRef,
 } from "./models/workspace-preview-uri.js";
 
-export { ThreadSchema, RecentThreadSchema } from "./models/thread.js";
+export { ThreadSchema, RecentThreadSchema, ThreadCheckoutStateSchema } from "./models/thread.js";
 export type { Thread, RecentThread } from "./models/thread.js";
 
 export { MessageSchema, PaginatedMessagesSchema } from "./models/message.js";

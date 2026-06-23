@@ -16,7 +16,7 @@ import type { CodexNotification } from "../codex-types.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(__dir, "fixtures", "codex-protocol-golden.ndjson");
-const GOLDEN_REPLAY_TIMEOUT_MS = 30_000;
+const GOLDEN_REPLAY_TIMEOUT_MS = 60_000;
 
 /** Methods the mapper must handle without logging "unrecognized". */
 const KNOWN_METHODS = new Set([

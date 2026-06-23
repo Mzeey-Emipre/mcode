@@ -64,6 +64,8 @@ function resetState() {
         mode: "direct" as const,
         worktree_path: null,
         branch: "main",
+        checkout_state: "named" as const,
+        base_branch: null,
         worktree_managed: false,
         issue_number: null,
         pr_number: null,

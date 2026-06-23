@@ -36,6 +36,7 @@ export class ThreadService {
     title: string,
     mode: string,
     branch: string,
+    options: { branchless?: boolean } = {},
   ): Promise<Thread & { warnings?: string[] }> {
     validateBranchName(branch);
 
@@ -51,6 +52,11 @@ export class ThreadService {
       title,
       threadMode,
       branch,
+      true,
+      "claude",
+      undefined,
+      options.branchless ? "branchless" : "named",
+      options.branchless ? branch : null,
     );
 
     if (threadMode === "worktree") {
@@ -70,6 +76,7 @@ export class ThreadService {
           workspace.path,
           worktreeName,
           branch,
+          { branchless: options.branchless },
         );
 
         this.threadRepo.updateStatus(thread.id, "active");

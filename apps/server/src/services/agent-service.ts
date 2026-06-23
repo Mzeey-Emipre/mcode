@@ -951,7 +951,7 @@ export class AgentService {
         branch: canonicalBranch,
       };
     } else if (mode === "worktree") {
-      const createResult = await this.threadService.create(workspaceId, title, "worktree", branch);
+      const createResult = await this.threadService.create(workspaceId, title, "worktree", branch, { branchless: true });
       threadWarnings = createResult.warnings;
       thread = createResult;
       this.threadRepo.updateProvider(thread.id, provider);
@@ -1133,7 +1133,7 @@ export class AgentService {
       this.threadRepo.updateWorktreePath(thread.id, existingWorktreePath);
       thread = { ...thread, worktree_path: existingWorktreePath, branch: matched.branch };
     } else if (mode === "worktree") {
-      const createResult = await this.threadService.create(workspaceId, title, "worktree", branch);
+      const createResult = await this.threadService.create(workspaceId, title, "worktree", branch, { branchless: true });
       threadWarnings = createResult.warnings;
       thread = createResult;
       // Patch lineage + provider atomically. If either fails, delete the orphan thread.

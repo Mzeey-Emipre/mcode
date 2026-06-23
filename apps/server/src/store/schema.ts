@@ -45,6 +45,8 @@ export const threads = sqliteTable(
     mode: text("mode").notNull().default("direct"),
     worktreePath: text("worktree_path"),
     branch: text("branch").notNull(),
+    checkoutState: text("checkout_state").notNull().default("named"),
+    baseBranch: text("base_branch"),
     issueNumber: integer("issue_number"),
     prNumber: integer("pr_number"),
     prStatus: text("pr_status"),

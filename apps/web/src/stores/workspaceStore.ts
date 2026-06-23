@@ -17,8 +17,7 @@ import { useDiffStore } from "./diffStore";
 import { usePreviewReferenceQueueStore } from "./previewReferenceQueueStore";
 import { usePreviewTabsStore } from "./previewTabsStore";
 import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
-import { useSettingsStore } from "./settingsStore";
-import { sanitizeCustomBranchInput, resolveBranchName } from "@/lib/branch-name";
+import { sanitizeCustomBranchInput } from "@/lib/branch-name";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
 function generateBranchId(): string {
@@ -727,7 +726,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
 
-    const { newThreadMode, newThreadBranch, namingMode, customBranchName, autoPreviewBranch, selectedWorktree } = get();
+    const { newThreadMode, newThreadBranch, selectedWorktree } = get();
 
     let mode: "direct" | "worktree" = "direct";
     let branch = newThreadBranch || "main";
@@ -735,7 +734,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     if (newThreadMode === "worktree") {
       mode = "worktree";
-      branch = resolveBranchName({ namingMode, customName: customBranchName, autoPreview: autoPreviewBranch });
     } else if (newThreadMode === "existing-worktree") {
       mode = "worktree";
       if (!selectedWorktree) throw new Error("No worktree selected");
@@ -1063,7 +1061,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ? {
             newThreadMode: "direct" as const,
             newThreadBranch: "",
-            namingMode: useSettingsStore.getState().settings.worktree.naming.mode,
+            namingMode: "auto" as const,
             customBranchName: "",
             autoPreviewBranch: generateBranchId(),
             selectedWorktree: null,
@@ -1151,10 +1149,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       branchExecMode: defaultExecMode,
       branchTargetBranch: parentThread?.branch ?? "",
       branchWorktreePath: parentThread?.worktree_path ?? "",
-      // Intentional snapshot: reads the current setting at activation time.
-      // If settings load after the user opens branch mode, they'll see "auto"
-      // until the next activation — acceptable given the narrow timing window.
-      branchNamingMode: useSettingsStore.getState().settings.worktree.naming.mode,
+      branchNamingMode: "auto" as NamingMode,
       branchCustomName: "",
       branchAutoPreview: generateBranchId(),
     });
