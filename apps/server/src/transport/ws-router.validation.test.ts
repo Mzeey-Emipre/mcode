@@ -117,29 +117,11 @@ describe("routeMessage git.getRemoteUrl", () => {
 });
 
 describe("routeMessage git.createBranch", () => {
-  it("resolves the git path from a workspace thread before creating the branch", async () => {
-    const createBranch = vi.fn().mockResolvedValue("feat/from-thread");
-    const resolveWorkingDir = vi.fn().mockReturnValue("C:/repo-worktree");
+  it("delegates branch creation and checkout-state persistence to ThreadService", async () => {
+    const createBranchForThread = vi.fn().mockResolvedValue("feat/from-thread");
     const deps = {
-      workspaceService: {
-        findById: vi.fn().mockReturnValue({ id: "ws-1", path: "C:/repo" }),
-      },
-      threadRepo: {
-        findById: vi.fn().mockReturnValue({
-          id: "thread-1",
-          workspace_id: "ws-1",
-          mode: "worktree",
-          worktree_path: "C:/repo-worktree",
-        }),
-        updateCheckoutToNamedBranch: vi.fn().mockReturnValue({
-          id: "thread-1",
-          branch: "feat/from-thread",
-          checkout_state: "named",
-        }),
-      },
-      gitService: {
-        createBranch,
-        resolveWorkingDir,
+      threadService: {
+        createBranchForThread,
       },
     } as unknown as RouterDeps;
 
@@ -153,36 +135,20 @@ describe("routeMessage git.createBranch", () => {
     );
 
     expect(response.result).toEqual({ branch: "feat/from-thread" });
-    expect(resolveWorkingDir).toHaveBeenCalledWith(
-      "C:/repo",
-      "worktree",
-      "C:/repo-worktree",
-    );
-    expect(createBranch).toHaveBeenCalledWith("C:/repo-worktree", "feat/from-thread");
-    expect(deps.threadRepo.updateCheckoutToNamedBranch).toHaveBeenCalledWith(
+    expect(createBranchForThread).toHaveBeenCalledWith(
+      "ws-1",
       "thread-1",
       "feat/from-thread",
     );
   });
 
   it("returns an error when the new branch cannot be attached to the thread", async () => {
-    const createBranch = vi.fn().mockResolvedValue("feat/from-thread");
+    const createBranchForThread = vi
+      .fn()
+      .mockRejectedValue(new Error("Failed to update checkout state for thread thread-1"));
     const deps = {
-      workspaceService: {
-        findById: vi.fn().mockReturnValue({ id: "ws-1", path: "C:/repo" }),
-      },
-      threadRepo: {
-        findById: vi.fn().mockReturnValue({
-          id: "thread-1",
-          workspace_id: "ws-1",
-          mode: "worktree",
-          worktree_path: "C:/repo-worktree",
-        }),
-        updateCheckoutToNamedBranch: vi.fn().mockReturnValue(null),
-      },
-      gitService: {
-        createBranch,
-        resolveWorkingDir: vi.fn().mockReturnValue("C:/repo-worktree"),
+      threadService: {
+        createBranchForThread,
       },
     } as unknown as RouterDeps;
 
@@ -198,26 +164,20 @@ describe("routeMessage git.createBranch", () => {
     expect(response.error?.message).toContain(
       "Failed to update checkout state for thread thread-1",
     );
-    expect(createBranch).toHaveBeenCalledWith("C:/repo-worktree", "feat/from-thread");
+    expect(createBranchForThread).toHaveBeenCalledWith(
+      "ws-1",
+      "thread-1",
+      "feat/from-thread",
+    );
   });
 
-  it("rejects a thread from another workspace before creating a branch", async () => {
-    const createBranch = vi.fn();
+  it("surfaces service rejection before returning a branch", async () => {
+    const createBranchForThread = vi
+      .fn()
+      .mockRejectedValue(new Error("Thread thread-1 does not belong to workspace ws-1"));
     const deps = {
-      workspaceService: {
-        findById: vi.fn().mockReturnValue({ id: "ws-1", path: "C:/repo" }),
-      },
-      threadRepo: {
-        findById: vi.fn().mockReturnValue({
-          id: "thread-1",
-          workspace_id: "ws-2",
-          mode: "worktree",
-          worktree_path: "C:/repo-worktree",
-        }),
-      },
-      gitService: {
-        createBranch,
-        resolveWorkingDir: vi.fn(),
+      threadService: {
+        createBranchForThread,
       },
     } as unknown as RouterDeps;
 
@@ -233,17 +193,18 @@ describe("routeMessage git.createBranch", () => {
     expect(response.error?.message).toContain(
       "Thread thread-1 does not belong to workspace ws-1",
     );
-    expect(createBranch).not.toHaveBeenCalled();
+    expect(createBranchForThread).toHaveBeenCalledWith(
+      "ws-1",
+      "thread-1",
+      "feat/from-thread",
+    );
   });
 
   it("rejects invalid branch names before dispatch", async () => {
-    const createBranch = vi.fn();
+    const createBranchForThread = vi.fn();
     const deps = {
-      workspaceService: {
-        findById: vi.fn().mockReturnValue({ id: "ws-1", path: "C:/repo" }),
-      },
-      gitService: {
-        createBranch,
+      threadService: {
+        createBranchForThread,
       },
     } as unknown as RouterDeps;
 
@@ -257,7 +218,187 @@ describe("routeMessage git.createBranch", () => {
     );
 
     expect(response.error?.code).toBe("INVALID_PARAMS");
-    expect(createBranch).not.toHaveBeenCalled();
+    expect(createBranchForThread).not.toHaveBeenCalled();
+  });
+});
+
+describe("routeMessage thread.create", () => {
+  it("creates new worktree threads as branchless", async () => {
+    const create = vi.fn().mockReturnValue({
+      id: "thread-1",
+      workspace_id: "ws-1",
+      title: "New thread",
+      status: "active",
+      mode: "worktree",
+      worktree_path: "C:/repo-worktree",
+      branch: "main",
+      checkout_state: "branchless",
+      base_branch: "main",
+      worktree_managed: true,
+      issue_number: null,
+      pr_number: null,
+      pr_status: null,
+      sdk_session_id: null,
+      model: null,
+      provider: "claude",
+      created_at: "2026-06-23T00:00:00.000Z",
+      updated_at: "2026-06-23T00:00:00.000Z",
+      deleted_at: null,
+      last_context_tokens: null,
+      context_window: null,
+      reasoning_level: null,
+      interaction_mode: null,
+      permission_mode: null,
+      context_window_mode: null,
+      thinking: null,
+      codex_fast_mode: null,
+      copilot_agent: null,
+      default_open_in_app: null,
+      parent_thread_id: null,
+      forked_from_message_id: null,
+      last_compact_summary: null,
+      has_file_changes: false,
+    });
+    const deps = {
+      threadService: { create },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-thread-create",
+        method: "thread.create",
+        params: {
+          workspaceId: "ws-1",
+          title: "New thread",
+          mode: "worktree",
+          branch: "main",
+        },
+      }),
+      deps,
+    );
+
+    expect(response.result).toMatchObject({
+      id: "thread-1",
+      checkout_state: "branchless",
+      base_branch: "main",
+    });
+    expect(create).toHaveBeenCalledWith(
+      "ws-1",
+      "New thread",
+      "worktree",
+      "main",
+      { branchless: true },
+    );
+  });
+});
+
+describe("routeMessage github.createPr", () => {
+  const namedThread = {
+    id: "thread-1",
+    workspace_id: "ws-1",
+    mode: "worktree",
+    worktree_path: "C:/repo-worktree",
+    branch: "feat/from-thread",
+    checkout_state: "named",
+  };
+
+  function createGithubPrDeps(thread: typeof namedThread, currentBranch: string | null) {
+    const push = vi.fn().mockResolvedValue(undefined);
+    const createPr = vi.fn().mockResolvedValue({
+      number: 42,
+      url: "https://github.com/Mzeey-Empire/mcode/pull/42",
+    });
+    const deps = {
+      workspaceService: {
+        findById: vi.fn().mockReturnValue({
+          id: "ws-1",
+          path: "C:/repo",
+          is_git_repo: true,
+        }),
+      },
+      threadService: {
+        findById: vi.fn().mockReturnValue(thread),
+        linkPr: vi.fn(),
+      },
+      gitService: {
+        resolveWorkingDir: vi.fn().mockReturnValue("C:/repo-worktree"),
+        getCurrentBranchAt: vi.fn().mockResolvedValue(currentBranch),
+        push,
+      },
+      githubService: {
+        createPr,
+      },
+      ciWatcherService: {
+        unwatch: vi.fn(),
+        watch: vi.fn(),
+        scheduleBumpAfterPush: vi.fn(),
+      },
+    } as unknown as RouterDeps;
+    return { deps, push, createPr };
+  }
+
+  const createPrRequest = {
+    id: "req-pr",
+    method: "github.createPr",
+    params: {
+      workspaceId: "ws-1",
+      threadId: "thread-1",
+      title: "Add branchless worktrees",
+      body: "Body",
+      baseBranch: "main",
+      isDraft: false,
+    },
+  };
+
+  it("rejects branchless worktree threads without pushing or creating a PR", async () => {
+    const { deps, push, createPr } = createGithubPrDeps(
+      {
+        ...namedThread,
+        branch: "main",
+        checkout_state: "branchless",
+      },
+      "HEAD",
+    );
+
+    const response = await routeMessage(JSON.stringify(createPrRequest), deps);
+
+    expect(response.error?.message).toContain(
+      "must be a named worktree checkout before creating a PR",
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(createPr).not.toHaveBeenCalled();
+  });
+
+  it("rejects mismatched current branch without pushing or creating a PR", async () => {
+    const { deps, push, createPr } = createGithubPrDeps(namedThread, "feat/other");
+
+    const response = await routeMessage(JSON.stringify(createPrRequest), deps);
+
+    expect(response.error?.message).toContain(
+      "checkout is on feat/other, expected feat/from-thread",
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(createPr).not.toHaveBeenCalled();
+  });
+
+  it("pushes and creates a PR only when thread state and current branch match", async () => {
+    const { deps, push, createPr } = createGithubPrDeps(namedThread, "feat/from-thread");
+
+    const response = await routeMessage(JSON.stringify(createPrRequest), deps);
+
+    expect(response.result).toEqual({
+      number: 42,
+      url: "https://github.com/Mzeey-Empire/mcode/pull/42",
+    });
+    expect(push).toHaveBeenCalledWith("C:/repo-worktree", "feat/from-thread");
+    expect(createPr).toHaveBeenCalledWith({
+      cwd: "C:/repo-worktree",
+      title: "Add branchless worktrees",
+      body: "Body",
+      baseBranch: "main",
+      isDraft: false,
+    });
+    expect(deps.threadService.linkPr).toHaveBeenCalledWith("thread-1", 42, "OPEN");
   });
 });
 

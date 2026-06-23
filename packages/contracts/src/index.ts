@@ -41,7 +41,7 @@ export {
 } from "./models/workspace-preview-uri.js";
 
 export { ThreadSchema, RecentThreadSchema, ThreadCheckoutStateSchema } from "./models/thread.js";
-export type { Thread, RecentThread } from "./models/thread.js";
+export type { Thread, RecentThread, ThreadCheckoutState } from "./models/thread.js";
 
 export { MessageSchema, PaginatedMessagesSchema } from "./models/message.js";
 export type { Message, PaginatedMessages } from "./models/message.js";

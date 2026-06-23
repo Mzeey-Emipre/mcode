@@ -169,3 +169,16 @@ describe("bootstrapDrizzle", () => {
     expect(rows[0].hash).toBe(baselineSqlHash());
   });
 });
+
+describe("drizzle journal", () => {
+  it("keeps branchless migration timestamps monotonic", () => {
+    const byTag = new Map(journal.entries.map((entry) => [entry.tag, entry.when]));
+
+    expect(byTag.get("0015_branchless_checkout_state")).toBeGreaterThan(
+      byTag.get("0014_message_mentions")!,
+    );
+    expect(byTag.get("0016_branchless_base_branch")).toBeGreaterThan(
+      byTag.get("0015_branchless_checkout_state")!,
+    );
+  });
+});

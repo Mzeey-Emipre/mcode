@@ -417,6 +417,7 @@ async function dispatch(
         params.title,
         params.mode,
         params.branch,
+        { branchless: params.mode === "worktree" },
       );
     case "thread.delete": {
       deps.ciWatcherService.unwatch(params.threadId);
@@ -512,16 +513,11 @@ async function dispatch(
       return;
     }
     case "git.createBranch": {
-      const path = resolveWorkspaceRepoPath(deps, params.workspaceId, params.threadId);
-      const branch = await deps.gitService.createBranch(path, params.name);
-      if (params.threadId) {
-        const updated = deps.threadRepo.updateCheckoutToNamedBranch(params.threadId, branch);
-        if (!updated) {
-          throw new Error(
-            `Failed to update checkout state for thread ${params.threadId}`,
-          );
-        }
-      }
+      const branch = await deps.threadService.createBranchForThread(
+        params.workspaceId,
+        params.threadId,
+        params.name,
+      );
       return { branch };
     }
     case "git.listWorktrees": {
@@ -1035,6 +1031,11 @@ async function dispatch(
           `Thread ${params.threadId} does not belong to workspace ${params.workspaceId}`,
         );
       }
+      if (thread.mode !== "worktree" || thread.checkout_state !== "named") {
+        throw new Error(
+          `Thread ${params.threadId} must be a named worktree checkout before creating a PR`,
+        );
+      }
 
       const repoPath = deps.gitService.resolveWorkingDir(
         workspace.path,
@@ -1044,6 +1045,12 @@ async function dispatch(
       const branch = thread.branch;
       if (!branch) throw new Error(`Missing branch for thread ${params.threadId}`);
       validateBranchName(branch);
+      const currentBranch = await deps.gitService.getCurrentBranchAt(repoPath);
+      if (!currentBranch || currentBranch === "HEAD" || currentBranch !== branch) {
+        throw new Error(
+          `Thread ${params.threadId} checkout is on ${currentBranch ?? "HEAD"}, expected ${branch}`,
+        );
+      }
 
       // Silent auto-push (no-op if already up to date)
       try {

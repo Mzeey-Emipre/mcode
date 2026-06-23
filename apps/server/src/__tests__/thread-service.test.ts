@@ -28,6 +28,7 @@ describe("ThreadService.delete", () => {
     mockGitService = {
       removeWorktree: vi.fn().mockResolvedValue(true),
       createWorktree: vi.fn(),
+      createBranch: vi.fn(),
       resolveWorkingDir: vi.fn(),
       listBranches: vi.fn(),
       getCurrentBranch: vi.fn(),
@@ -204,5 +205,45 @@ describe("ThreadService.delete", () => {
       worktreeName,
       { branchName: "feat/new" },
     );
+  });
+
+  it("creates a branch for a thread and marks its checkout state named", async () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    const thread = threadRepo.create(
+      ws.id,
+      "Branchless Thread",
+      "worktree",
+      "main",
+      true,
+      "claude",
+      undefined,
+      "branchless",
+      "main",
+    );
+    threadRepo.updateWorktreePath(thread.id, "/tmp/wt/main");
+    (mockGitService.resolveWorkingDir as ReturnType<typeof vi.fn>).mockReturnValue("/tmp/wt/main");
+    (mockGitService.createBranch as ReturnType<typeof vi.fn>).mockResolvedValue("feat/from-thread");
+
+    const branch = await threadService.createBranchForThread(
+      ws.id,
+      thread.id,
+      "feat/from-thread",
+    );
+
+    expect(branch).toBe("feat/from-thread");
+    expect(mockGitService.resolveWorkingDir).toHaveBeenCalledWith(
+      "/tmp/test",
+      "worktree",
+      "/tmp/wt/main",
+    );
+    expect(mockGitService.createBranch).toHaveBeenCalledWith(
+      "/tmp/wt/main",
+      "feat/from-thread",
+    );
+    expect(threadRepo.findById(thread.id)).toMatchObject({
+      branch: "feat/from-thread",
+      checkout_state: "named",
+      base_branch: null,
+    });
   });
 });

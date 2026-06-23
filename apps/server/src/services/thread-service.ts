@@ -130,6 +130,43 @@ export class ThreadService {
     return thread;
   }
 
+  /**
+   * Create a named branch in a thread's resolved checkout and persist the named checkout state.
+   */
+  async createBranchForThread(
+    workspaceId: string,
+    threadId: string | undefined,
+    name: string,
+  ): Promise<string> {
+    const workspace = this.workspaceRepo.findById(workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+
+    let path = workspace.path;
+    if (threadId) {
+      const thread = this.threadRepo.findById(threadId);
+      if (!thread) throw new Error(`Thread not found: ${threadId}`);
+      if (thread.workspace_id !== workspaceId) {
+        throw new Error(`Thread ${threadId} does not belong to workspace ${workspaceId}`);
+      }
+      path = this.gitService.resolveWorkingDir(
+        workspace.path,
+        thread.mode,
+        thread.worktree_path,
+      );
+    }
+
+    const branch = await this.gitService.createBranch(path, name);
+    if (threadId) {
+      const updated = this.threadRepo.updateCheckoutToNamedBranch(threadId, branch);
+      if (!updated) {
+        throw new Error(
+          `Failed to update checkout state for thread ${threadId}`,
+        );
+      }
+    }
+    return branch;
+  }
+
   /** List non-deleted threads for a workspace. */
   list(workspaceId: string): Thread[] {
     return this.threadRepo.listByWorkspace(workspaceId);
