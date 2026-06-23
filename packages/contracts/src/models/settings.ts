@@ -105,6 +105,14 @@ export const SERVER_HEAP_MAX_MB = 8192;
 /** Shipped default from older installs, migrated to {@link SERVER_HEAP_DEFAULT_MB}. */
 export const SERVER_HEAP_LEGACY_DEFAULT_MB = 96;
 
+const CursorUsageEmailSchema = z
+  .string()
+  .trim()
+  .max(320)
+  .refine((value) => value === "" || z.string().email().safeParse(value).success, {
+    message: "Must be empty or a valid email address",
+  });
+
 // ---------------------------------------------------------------------------
 // Settings schema
 // ---------------------------------------------------------------------------
@@ -390,7 +398,7 @@ export const SettingsSchema = lazySchema(() =>
              * Team member email used to select Cursor Admin API usage rows.
              * Empty string disables account-level usage lookup.
              */
-            usageEmail: z.string().trim().default(""),
+            usageEmail: CursorUsageEmailSchema.default(""),
           })
           .default({}),
       })
@@ -638,7 +646,7 @@ export const PartialSettingsSchema = lazySchema(() =>
             traceSessionUpdates: z.boolean().optional(),
             autoAnswerAskQuestions: z.boolean().optional(),
             echoAskQuestionsToTimeline: z.boolean().optional(),
-            usageEmail: z.string().trim().optional(),
+            usageEmail: CursorUsageEmailSchema.optional(),
           })
           .optional(),
         codex: z

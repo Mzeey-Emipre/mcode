@@ -157,40 +157,11 @@ function usageCategoryPercent(category: QuotaCategory): number {
   return (1 - category.remainingPercent) * 100;
 }
 
-function usageCategoryValueLabel(category: QuotaCategory): string {
-  if (category.isUnlimited) return "unlimited";
-  if (typeof category.used === "number" && typeof category.total === "number") {
-    return `${Math.round(category.used)} / ${Math.round(category.total)}`;
-  }
-  return `${Math.round(usageCategoryPercent(category))}%`;
-}
-
 function usageCategoryPriority(category: QuotaCategory): number {
   const label = category.label.trim();
   if (/^5[- ]hour/i.test(label)) return 0;
   if (/^weekly/i.test(label)) return 1;
   return 2;
-}
-
-function usageProgressClass(percent: number): string {
-  if (percent >= 90) return "bg-destructive";
-  if (percent >= 70) return "bg-primary";
-  return "bg-[var(--diff-add-strong)]";
-}
-
-function providerUsageName(providerId: string): string {
-  switch (providerId) {
-    case "codex":
-      return "Codex";
-    case "claude":
-      return "Claude";
-    case "copilot":
-      return "Copilot";
-    case "cursor":
-      return "Cursor";
-    default:
-      return providerId;
-  }
 }
 
 /**
@@ -223,77 +194,6 @@ export function formatThreadOverviewUsage(usageInfo: ProviderUsageInfo | undefin
       return `${usageCategoryShortLabel(category.label)} ${percent}%`;
     })
     .join(", ");
-}
-
-function formatThreadOverviewUsageTrigger(usageInfo: ProviderUsageInfo | undefined): string {
-  const categories = getThreadOverviewUsageCategories(usageInfo);
-  if (categories.length === 0) return "Unavailable";
-  return `${Math.round(usageCategoryPercent(categories[0]))}%`;
-}
-
-interface ThreadOverviewUsageMenuProps {
-  providerId: string;
-  usageInfo: ProviderUsageInfo | undefined;
-}
-
-function ThreadOverviewUsageMenu({ providerId, usageInfo }: ThreadOverviewUsageMenuProps) {
-  const categories = getThreadOverviewUsageCategories(usageInfo);
-
-  return (
-    <div data-testid="thread-overview-usage-popover" className="px-2 pb-2 pt-1">
-      <div className="flex items-start justify-between gap-3 pb-2">
-        <div className="min-w-0">
-          <div className="truncate text-xs font-semibold">{providerUsageName(providerId)} usage</div>
-          <div className="mt-0.5 text-[10px] text-muted-foreground">
-            Provider limits for this thread
-          </div>
-        </div>
-      </div>
-
-      {categories.length > 0 ? (
-        <div className="space-y-2.5">
-          {categories.map((category) => {
-            const percent = Math.max(0, Math.min(100, Math.round(usageCategoryPercent(category))));
-            return (
-              <div key={category.label} className="space-y-1.5 rounded-md bg-muted/30 px-2 py-2">
-                <div className="flex items-center justify-between gap-3 text-xs">
-                  <span className="min-w-0 truncate font-medium">
-                    {usageCategoryShortLabel(category.label)}
-                  </span>
-                  <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
-                    {usageCategoryValueLabel(category)}
-                  </span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-background/80">
-                  <div
-                    role="progressbar"
-                    aria-label={`${providerUsageName(providerId)} ${category.label}`}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={percent}
-                    className={cn(
-                      "h-full rounded-full transition-[width] duration-200 ease-out",
-                      usageProgressClass(percent),
-                    )}
-                    style={{ width: `${percent}%` }}
-                  />
-                </div>
-                {category.resetDate && (
-                  <div className="font-mono text-[10px] tabular-nums text-muted-foreground/80">
-                    resets {new Date(category.resetDate).toLocaleString()}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="rounded-md bg-muted/30 px-2 py-2 text-xs text-muted-foreground">
-          Usage limits unavailable for this provider.
-        </div>
-      )}
-    </div>
-  );
 }
 
 /**
@@ -1051,7 +951,6 @@ function ThreadOverviewPrRow({
 export function ThreadOverview({ thread }: ThreadOverviewProps) {
   const [localOpen, setLocalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
-  const [usageOpen, setUsageOpen] = useState(true);
   const [loadedChangeSummary, setLoadedChangeSummary] = useState<{
     threadId: string;
     snapshotKey: string;
@@ -1078,10 +977,6 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
   useEffect(() => {
     autoManagedRef.current = true;
   }, [thread.id]);
-
-  useEffect(() => {
-    setUsageOpen(true);
-  }, [thread.id, thread.provider]);
 
   // Whether there is room for the Overview to open by default. Driven by the
   // reactive content-row width so it tracks resizes and panel changes without
@@ -1166,29 +1061,13 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     (record) => record.usageByProvider[thread.provider],
   );
   const usageLabel = useMemo(() => formatThreadOverviewUsage(usageInfo), [usageInfo]);
-  const usageTriggerLabel = useMemo(
-    () => formatThreadOverviewUsageTrigger(usageInfo),
-    [usageInfo],
-  );
+  const usageRowLabel = usageLabel === "usage unavailable" ? usageLabel : `Usage ${usageLabel}`;
   const fetchProviderUsage = useThreadStore((state) => state.fetchProviderUsage);
 
-  const handleUsageOpenChange = useCallback(
-    () => {
-      setUsageOpen((current) => {
-        const nextOpen = !current;
-        if (nextOpen) {
-          void fetchProviderUsage(thread.id, thread.provider);
-        }
-        return nextOpen;
-      });
-    },
-    [fetchProviderUsage, thread.id, thread.provider],
-  );
-
   useEffect(() => {
-    if (!open || !usageOpen) return;
+    if (!open) return;
     void fetchProviderUsage(thread.id, thread.provider);
-  }, [fetchProviderUsage, open, thread.id, thread.provider, usageOpen]);
+  }, [fetchProviderUsage, open, thread.id, thread.provider]);
 
   useEffect(() => {
     if (!open) return;
@@ -1439,48 +1318,14 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
               </PopoverContent>
             </Popover>
 
-            <div className="w-full" data-testid="thread-overview-usage-section">
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
+            <div className="w-full px-2 py-2 text-xs" data-testid="thread-overview-usage-section">
+              <div
                 data-testid="thread-overview-usage"
                 aria-label={`Usage, ${usageLabel}`}
-                aria-expanded={usageOpen}
-                onClick={handleUsageOpenChange}
-                className={cn(
-                  "h-8 w-full cursor-pointer justify-between gap-2 px-2 text-xs",
-                  usageOpen && "bg-muted text-foreground",
-                )}
+                className="flex min-w-0 items-center gap-2 text-muted-foreground"
               >
-                <span className="flex min-w-0 items-center gap-2">
-                  <Gauge size={14} className="shrink-0 text-muted-foreground" />
-                  <span className="truncate text-xs font-medium">Usage</span>
-                </span>
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate font-mono text-xs tabular-nums text-muted-foreground">
-                    {usageTriggerLabel}
-                  </span>
-                  <ChevronDown
-                    size={13}
-                    aria-hidden
-                    className={cn(
-                      "shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
-                      usageOpen && "rotate-180",
-                    )}
-                  />
-                </span>
-              </Button>
-              <div
-                className="grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
-                style={{
-                  gridTemplateRows: usageOpen ? "1fr" : "0fr",
-                  opacity: usageOpen ? 1 : 0,
-                }}
-              >
-                <div className="min-h-0 overflow-hidden">
-                  <ThreadOverviewUsageMenu providerId={thread.provider} usageInfo={usageInfo} />
-                </div>
+                <Gauge size={14} aria-hidden className="shrink-0" />
+                <span className="min-w-0 truncate font-mono tabular-nums">{usageRowLabel}</span>
               </div>
             </div>
 

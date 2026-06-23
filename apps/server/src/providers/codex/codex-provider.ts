@@ -51,6 +51,7 @@ import { traceCodexIngest } from "./codex-trace.js";
 import type {
   TurnInputPart,
   CodexNotification,
+  CodexRateLimitWindow,
   CodexRateLimitsPayload,
   CodexTurnOptions,
   ReasoningEffort,
@@ -91,25 +92,25 @@ function codexRateLimitLabel(windowDurationMins: number | undefined, fallback: s
 }
 
 /** Maps Codex app-server account rate limits into shared usage categories. */
-export function mapCodexRateLimitsToUsage(payload: CodexRateLimitsPayload): ProviderUsageInfo {
+export function mapCodexRateLimitsToUsage(payload: unknown): ProviderUsageInfo {
   const categories: QuotaCategory[] = [];
-  const rateLimits = payload.rateLimits;
+  const rateLimits = readCodexRateLimits(payload);
   const windows = [
     { label: "Primary limit", limit: rateLimits?.primary ?? null },
     { label: "Secondary limit", limit: rateLimits?.secondary ?? null },
   ];
 
   for (const { label, limit } of windows) {
-    if (!limit || typeof limit.usedPercent !== "number" || !Number.isFinite(limit.usedPercent)) {
+    const usedPercent = limit?.usedPercent;
+    if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent)) {
       continue;
     }
-    const used = Math.max(0, Math.min(100, limit.usedPercent));
-    const resetDate =
-      typeof limit.resetsAt === "number" && Number.isFinite(limit.resetsAt)
-        ? new Date(limit.resetsAt * 1000).toISOString()
-        : undefined;
+    const windowDurationMins = limit?.windowDurationMins;
+    const resetsAt = limit?.resetsAt;
+    const used = Math.max(0, Math.min(100, usedPercent));
+    const resetDate = codexResetDate(resetsAt);
     categories.push({
-      label: codexRateLimitLabel(limit.windowDurationMins, label),
+      label: codexRateLimitLabel(windowDurationMins, label),
       used,
       total: 100,
       remainingPercent: Math.max(0, Math.min(1, (100 - used) / 100)),
@@ -119,6 +120,40 @@ export function mapCodexRateLimitsToUsage(payload: CodexRateLimitsPayload): Prov
   }
 
   return { providerId: "codex", quotaCategories: categories };
+}
+
+function readCodexRateLimits(payload: unknown): CodexRateLimitsPayload["rateLimits"] {
+  if (!isRecord(payload)) return undefined;
+  const rateLimits = payload.rateLimits;
+  if (!isRecord(rateLimits)) return undefined;
+  return {
+    primary: readCodexRateLimitWindow(rateLimits.primary),
+    secondary: readCodexRateLimitWindow(rateLimits.secondary),
+  };
+}
+
+function readCodexRateLimitWindow(value: unknown): CodexRateLimitWindow | null {
+  if (!isRecord(value)) return null;
+  const usedPercent = typeof value.usedPercent === "number" ? value.usedPercent : undefined;
+  const windowDurationMins =
+    typeof value.windowDurationMins === "number" && Number.isFinite(value.windowDurationMins)
+      ? value.windowDurationMins
+      : undefined;
+  const resetsAt =
+    typeof value.resetsAt === "number" && Number.isFinite(value.resetsAt)
+      ? value.resetsAt
+      : undefined;
+  return { usedPercent, windowDurationMins, resetsAt };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function codexResetDate(resetsAt: number | undefined): string | undefined {
+  if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) return undefined;
+  const resetDate = new Date(resetsAt * 1000);
+  return Number.isFinite(resetDate.getTime()) ? resetDate.toISOString() : undefined;
 }
 
 /** Internal: a newer `sendMessage` aborted this turn wait (not user-facing). */
@@ -776,7 +811,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         this.emit("skills_changed");
       }
       if (n.method === "account/rateLimits/updated") {
-        this.usageInfo = mapCodexRateLimitsToUsage(n.params as CodexRateLimitsPayload);
+        this.usageInfo = mapCodexRateLimitsToUsage(n.params);
         this.emit("event", {
           type: AgentEventType.QuotaUpdate,
           threadId,

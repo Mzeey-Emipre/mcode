@@ -5,8 +5,13 @@ import { logger } from "@mcode/shared";
 const CURSOR_SPEND_ENDPOINT = "https://api.cursor.com/teams/spend";
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 5_000;
+const MAX_RESPONSE_BYTES = 64 * 1024;
+const MAX_RESPONSE_CHARS = 64 * 1024;
 
 const CursorSpendMemberSchema = z.object({
+  email: z.string().optional(),
+  userEmail: z.string().optional(),
+  user_email: z.string().optional(),
   apiPercentUsed: z.number().finite().optional(),
   autoPercentUsed: z.number().finite().optional(),
   composerPercentUsed: z.number().finite().optional(),
@@ -14,18 +19,24 @@ const CursorSpendMemberSchema = z.object({
 });
 
 const CursorSpendResponseSchema = z.object({
-  teamMemberSpend: z.array(CursorSpendMemberSchema),
+  teamMemberSpend: z.array(z.unknown()),
 });
 
 interface CacheEntry {
+  key: string;
   expiresAt: number;
   categories: QuotaCategory[];
 }
 
+/** Options for constructing a Cursor Admin API usage source. */
 export interface CursorAdminUsageSourceOptions {
+  /** Cursor Admin API key, or a function that resolves it at fetch time. */
   apiKey: string | undefined | (() => string | undefined);
+  /** Team member email whose Cursor spend row must be selected exactly. */
   usageEmail: string | undefined | (() => string | undefined);
+  /** Optional fetch implementation used by tests or alternate runtimes. */
   fetchImpl?: typeof fetch;
+  /** Optional clock used for cache expiry tests. */
   now?: () => number;
 }
 
@@ -36,6 +47,7 @@ export class CursorAdminUsageSource {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
   private cache: CacheEntry | null = null;
+  private inFlight: { key: string; promise: Promise<QuotaCategory[]> } | null = null;
 
   /**
    * @param options API key, target email, and optional test seams.
@@ -51,13 +63,23 @@ export class CursorAdminUsageSource {
     const usageEmail = resolveOption(this.options.usageEmail)?.trim();
     if (!apiKey || !usageEmail) return [];
 
+    const cacheKey = cursorUsageCacheKey(apiKey, usageEmail);
     const cached = this.cache;
     const now = this.now();
-    if (cached && cached.expiresAt > now) return cached.categories;
+    if (cached && cached.key === cacheKey && cached.expiresAt > now) return cached.categories;
 
-    const categories = await this.fetchFresh(apiKey, usageEmail);
-    this.cache = { categories, expiresAt: now + CACHE_TTL_MS };
-    return categories;
+    if (this.inFlight?.key === cacheKey) return this.inFlight.promise;
+
+    const fetchPromise = this.fetchFresh(apiKey, usageEmail)
+      .then((categories) => {
+        this.cache = { key: cacheKey, categories, expiresAt: now + CACHE_TTL_MS };
+        return categories;
+      })
+      .finally(() => {
+        if (this.inFlight?.key === cacheKey) this.inFlight = null;
+      });
+    this.inFlight = { key: cacheKey, promise: fetchPromise };
+    return fetchPromise;
   }
 
   private async fetchFresh(apiKey: string, usageEmail: string): Promise<QuotaCategory[]> {
@@ -73,7 +95,7 @@ export class CursorAdminUsageSource {
         body: JSON.stringify({
           searchTerm: usageEmail,
           page: 1,
-          pageSize: 1,
+          pageSize: 10,
         }),
       });
     } catch (error) {
@@ -92,9 +114,25 @@ export class CursorAdminUsageSource {
       return [];
     }
 
+    const contentLength = response.headers.get("content-length");
+    if (contentLength && Number(contentLength) > MAX_RESPONSE_BYTES) {
+      logger.warn("Cursor usage unavailable", { reason: "response_too_large" });
+      return [];
+    }
+
+    let bodyText: string;
+    try {
+      bodyText = await readResponseTextCapped(response);
+    } catch (error) {
+      logger.warn("Cursor usage unavailable", {
+        reason: error instanceof ResponseTooLargeError ? "response_too_large" : "read_failed",
+      });
+      return [];
+    }
+
     let body: unknown;
     try {
-      body = await response.json();
+      body = JSON.parse(bodyText);
     } catch {
       logger.warn("Cursor usage unavailable", { reason: "invalid_json" });
       return [];
@@ -106,10 +144,21 @@ export class CursorAdminUsageSource {
       return [];
     }
 
-    const member = parsed.data.teamMemberSpend[0];
-    if (!member) return [];
+    const normalizedUsageEmail = normalizeEmail(usageEmail);
+    const matchingMember = parsed.data.teamMemberSpend.find((member) => {
+      const parsedMember = CursorSpendMemberSchema.safeParse(member);
+      if (!parsedMember.success) return false;
+      return normalizeEmail(cursorSpendMemberEmail(parsedMember.data)) === normalizedUsageEmail;
+    });
+    if (!matchingMember) return [];
 
-    const categories = mapCursorSpendMember(member);
+    const member = CursorSpendMemberSchema.safeParse(matchingMember);
+    if (!member.success) {
+      logger.warn("Cursor usage unavailable", { reason: "invalid_shape" });
+      return [];
+    }
+
+    const categories = mapCursorSpendMember(member.data);
     if (categories.length === 0) {
       logger.warn("Cursor usage unavailable", { reason: "missing_percentage_fields" });
     }
@@ -119,6 +168,50 @@ export class CursorAdminUsageSource {
 
 function resolveOption(value: string | undefined | (() => string | undefined)): string | undefined {
   return typeof value === "function" ? value() : value;
+}
+
+function cursorUsageCacheKey(apiKey: string, usageEmail: string): string {
+  return `${apiKey}\0${normalizeEmail(usageEmail)}`;
+}
+
+class ResponseTooLargeError extends Error {}
+
+async function readResponseTextCapped(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const text = await response.text();
+    if (text.length > MAX_RESPONSE_CHARS) throw new ResponseTooLargeError();
+    return text;
+  }
+
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let text = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytesRead += value.byteLength;
+    if (bytesRead > MAX_RESPONSE_BYTES) throw new ResponseTooLargeError();
+    text += decoder.decode(value, { stream: true });
+    if (text.length > MAX_RESPONSE_CHARS) throw new ResponseTooLargeError();
+  }
+
+  text += decoder.decode();
+  if (text.length > MAX_RESPONSE_CHARS) throw new ResponseTooLargeError();
+  return text;
+}
+
+function normalizeEmail(email: string | undefined): string {
+  return email?.trim().toLowerCase() ?? "";
+}
+
+function cursorSpendMemberEmail(member: {
+  email?: string;
+  userEmail?: string;
+  user_email?: string;
+}): string | undefined {
+  return member.email ?? member.userEmail ?? member.user_email;
 }
 
 /** Maps documented percentage-like Cursor spend fields into quota categories. */

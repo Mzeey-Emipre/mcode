@@ -40,4 +40,81 @@ describe("mapCodexRateLimitsToUsage", () => {
       quotaCategories: [],
     });
   });
+
+  it.each([undefined, null, "bad", 42, [], {}, { rateLimits: "bad" }])(
+    "returns empty categories for invalid payload %#",
+    (payload) => {
+      expect(mapCodexRateLimitsToUsage(payload)).toEqual({
+        providerId: "codex",
+        quotaCategories: [],
+      });
+    },
+  );
+
+  it("skips windows with invalid usedPercent values", () => {
+    expect(
+      mapCodexRateLimitsToUsage({
+        rateLimits: {
+          primary: { usedPercent: "42", windowDurationMins: 300, resetsAt: 1_779_326_286 },
+          secondary: { usedPercent: Number.NaN, windowDurationMins: 10_080 },
+        },
+      }),
+    ).toEqual({
+      providerId: "codex",
+      quotaCategories: [],
+    });
+  });
+
+  it("ignores invalid windowDurationMins and resetsAt without throwing", () => {
+    expect(
+      mapCodexRateLimitsToUsage({
+        rateLimits: {
+          primary: { usedPercent: 42, windowDurationMins: "300", resetsAt: "soon" },
+          secondary: { usedPercent: 18, windowDurationMins: Number.POSITIVE_INFINITY, resetsAt: Number.NaN },
+        },
+      }),
+    ).toEqual({
+      providerId: "codex",
+      quotaCategories: [
+        {
+          label: "Primary limit",
+          used: 42,
+          total: 100,
+          remainingPercent: 0.58,
+          resetDate: undefined,
+          isUnlimited: false,
+        },
+        {
+          label: "Secondary limit",
+          used: 18,
+          total: 100,
+          remainingPercent: 0.82,
+          resetDate: undefined,
+          isUnlimited: false,
+        },
+      ],
+    });
+  });
+
+  it("ignores out-of-range reset timestamps without throwing", () => {
+    expect(
+      mapCodexRateLimitsToUsage({
+        rateLimits: {
+          primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1e100 },
+        },
+      }),
+    ).toEqual({
+      providerId: "codex",
+      quotaCategories: [
+        {
+          label: "5-hour limit",
+          used: 42,
+          total: 100,
+          remainingPercent: 0.58,
+          resetDate: undefined,
+          isUnlimited: false,
+        },
+      ],
+    });
+  });
 });

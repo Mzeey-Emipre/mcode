@@ -240,14 +240,12 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("thread-overview-local")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toBeVisible();
     await expect(page.getByTestId("thread-overview-pr")).toBeVisible();
-    await expect(page.getByTestId("thread-overview-usage")).toContainText("Unavailable");
-    await expect(page.getByTestId("thread-overview-usage-popover")).toContainText(
-      "Usage limits unavailable for this provider.",
-    );
+    await expect(page.getByTestId("thread-overview-usage")).toHaveText(/^usage unavailable$/);
     await expect(page.getByTestId("thread-overview-usage")).toHaveAttribute(
-      "aria-expanded",
-      "true",
+      "aria-label",
+      "Usage, usage unavailable",
     );
+    await expect(page.getByTestId("thread-overview-usage-popover")).toHaveCount(0);
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toHaveCount(0);
     await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);
