@@ -171,13 +171,36 @@ function usageCategoryFillClass(category: QuotaCategory): string {
   return "bg-[var(--diff-add-strong)]";
 }
 
+const CODEX_OVERVIEW_QUOTA_PLACEHOLDERS: QuotaCategory[] = [
+  {
+    label: "5-hour limit",
+    used: 0,
+    total: 100,
+    remainingPercent: 1,
+    isUnlimited: false,
+  },
+  {
+    label: "Weekly limit",
+    used: 0,
+    total: 100,
+    remainingPercent: 1,
+    isUnlimited: false,
+  },
+];
+
+function getThreadOverviewQuotaPlaceholders(providerId: string | undefined): QuotaCategory[] {
+  if (providerId === "codex") return CODEX_OVERVIEW_QUOTA_PLACEHOLDERS;
+  return [];
+}
+
 /**
  * Returns capped quota categories in priority order for the Overview Usage panel.
  */
 export function getThreadOverviewUsageCategories(
   usageInfo: ProviderUsageInfo | undefined,
+  providerId = usageInfo?.providerId,
 ): QuotaCategory[] {
-  return (
+  const categories = (
     usageInfo?.quotaCategories
       .filter((category) => !category.isUnlimited)
       .sort((a, b) => (
@@ -185,13 +208,17 @@ export function getThreadOverviewUsageCategories(
         || usageCategoryPercent(b) - usageCategoryPercent(a)
       )) ?? []
   );
+  return categories.length > 0 ? categories : getThreadOverviewQuotaPlaceholders(providerId);
 }
 
 /**
  * Formats provider quota limits for compact Overview labels.
  */
-export function formatThreadOverviewUsage(usageInfo: ProviderUsageInfo | undefined): string | null {
-  const categories = getThreadOverviewUsageCategories(usageInfo);
+export function formatThreadOverviewUsage(
+  usageInfo: ProviderUsageInfo | undefined,
+  providerId = usageInfo?.providerId,
+): string | null {
+  const categories = getThreadOverviewUsageCategories(usageInfo, providerId);
   if (categories.length === 0) return null;
 
   return categories
@@ -1136,10 +1163,13 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     (record) => record.usageByProvider[thread.provider],
   );
   const usageCategories = useMemo(
-    () => getThreadOverviewUsageCategories(usageInfo).slice(0, 2),
-    [usageInfo],
+    () => getThreadOverviewUsageCategories(usageInfo, thread.provider).slice(0, 2),
+    [thread.provider, usageInfo],
   );
-  const usageLabel = useMemo(() => formatThreadOverviewUsage(usageInfo), [usageInfo]);
+  const usageLabel = useMemo(
+    () => formatThreadOverviewUsage(usageInfo, thread.provider),
+    [thread.provider, usageInfo],
+  );
   const fetchProviderUsage = useThreadStore((state) => state.fetchProviderUsage);
 
   useEffect(() => {

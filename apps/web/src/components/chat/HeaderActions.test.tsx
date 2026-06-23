@@ -388,6 +388,24 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-usage")).not.toHaveAttribute("aria-expanded");
   });
 
+  it("keeps Codex usage limits visible before provider quota data arrives", () => {
+    render(<HeaderActions thread={makeThread({ provider: "codex" })} />);
+
+    expect(screen.getByTestId("thread-overview-usage")).toHaveAttribute(
+      "aria-label",
+      "Usage, 5-hour 0%, weekly 0%",
+    );
+    expect(screen.getByRole("progressbar", { name: "5-hour usage" })).toHaveAttribute(
+      "aria-valuenow",
+      "0",
+    );
+    expect(screen.getByRole("progressbar", { name: "weekly usage" })).toHaveAttribute(
+      "aria-valuenow",
+      "0",
+    );
+    expect(screen.queryByText("usage unavailable")).not.toBeInTheDocument();
+  });
+
   it("prefills commit-or-push from the PR row when the branch is not ahead", () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
     render(<HeaderActions thread={makeThread()} />);
@@ -500,6 +518,10 @@ describe("formatThreadOverviewUsage", () => {
       }),
     ).toBeNull();
     expect(formatThreadOverviewUsage(undefined)).toBeNull();
+  });
+
+  it("returns Codex quota placeholders before provider quota data arrives", () => {
+    expect(formatThreadOverviewUsage(undefined, "codex")).toBe("5-hour 0%, weekly 0%");
   });
 });
 
