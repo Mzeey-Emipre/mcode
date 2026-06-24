@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { WorktreeInfo } from "@/transport/types";
+import { normalizeWorktreePath, worktreeBranchLabel } from "@/lib/worktree";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 
@@ -12,11 +13,6 @@ interface WorktreePickerProps {
   selectedPath: string;
   onSelect: (worktree: WorktreeInfo) => void;
   loading: boolean;
-}
-
-/** Normalize a path for comparison: lowercase, forward slashes, no trailing slash. */
-function normalizePath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
 }
 
 /** Searchable dropdown listing managed worktrees for attaching to an existing one. */
@@ -28,8 +24,8 @@ export function WorktreePicker({
 }: WorktreePickerProps) {
   const [open, setOpen] = useState(false);
 
-  const normalizedSelected = normalizePath(selectedPath);
-  const matched = worktrees.find((w) => normalizePath(w.path) === normalizedSelected);
+  const normalizedSelected = normalizeWorktreePath(selectedPath);
+  const matched = worktrees.find((w) => normalizeWorktreePath(w.path) === normalizedSelected);
   // When a path is pre-selected but the list hasn't loaded yet, show a spinner
   // rather than "Select worktree" so the user knows something is already chosen.
   const selectedName = matched?.name ?? (loading && selectedPath ? null : "Select worktree");
@@ -57,8 +53,9 @@ export function WorktreePicker({
               const wt = worktrees.find((w) => w.path === value);
               if (!wt) return 0;
               const q = search.toLowerCase();
+              const branchLabel = worktreeBranchLabel(wt);
               if (wt.name.toLowerCase().includes(q)) return 1;
-              if (wt.branch.toLowerCase().includes(q)) return 1;
+              if (branchLabel.toLowerCase().includes(q)) return 1;
               if (wt.path.toLowerCase().includes(q)) return 1;
               return 0;
             }}
@@ -80,14 +77,14 @@ export function WorktreePicker({
                       }}
                       className={cn(
                         "flex flex-col items-start px-3 py-1.5 text-xs",
-                        normalizePath(w.path) === normalizedSelected
+                        normalizeWorktreePath(w.path) === normalizedSelected
                           ? "bg-accent text-foreground"
                           : "text-popover-foreground",
                       )}
                     >
                       <span className="font-medium">{w.name}</span>
                       <span className="text-xs text-muted-foreground">
-                        {w.branch} &middot; {truncatePath(w.path)}
+                        {worktreeBranchLabel(w)} &middot; {truncatePath(w.path)}
                         {!w.managed && (
                           <Badge variant="secondary" size="sm" className="ml-1">external</Badge>
                         )}

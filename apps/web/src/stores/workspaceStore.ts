@@ -18,6 +18,7 @@ import { usePreviewReferenceQueueStore } from "./previewReferenceQueueStore";
 import { usePreviewTabsStore } from "./previewTabsStore";
 import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
 import { sanitizeCustomBranchInput } from "@/lib/branch-name";
+import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
 function generateBranchId(): string {
@@ -91,6 +92,7 @@ interface PendingThreadCreation {
   transportMode: "direct" | "worktree";
   branch: string;
   existingWorktreePath?: string;
+  existingWorktreeBaseBranch?: string;
   attachments?: AttachmentMeta[];
   reasoningLevel?: ReasoningLevel;
   provider?: string;
@@ -114,6 +116,7 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     pending.transportMode,
     pending.branch,
     pending.existingWorktreePath,
+    pending.existingWorktreeBaseBranch,
     pending.attachments,
     pending.reasoningLevel,
     pending.provider,
@@ -218,6 +221,7 @@ interface WorkspaceState {
     mode: "direct" | "worktree" | "existing-worktree";
     branch?: string;
     existingWorktreePath?: string;
+    existingWorktreeBaseBranch?: string;
     forkedFromMessageId?: string;
     permissionMode?: PermissionMode;
     reasoningLevel?: ReasoningLevel;
@@ -731,13 +735,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     let mode: "direct" | "worktree" = "direct";
     let branch = newThreadBranch || "main";
     let existingWorktreePath: string | undefined;
+    let existingWorktreeBaseBranch: string | undefined;
 
     if (newThreadMode === "worktree") {
       mode = "worktree";
     } else if (newThreadMode === "existing-worktree") {
       mode = "worktree";
       if (!selectedWorktree) throw new Error("No worktree selected");
-      branch = selectedWorktree.branch;
+      if (isDetachedWorktree(selectedWorktree)) {
+        if (!newThreadBranch) {
+          throw new Error("Select a base branch before attaching a detached worktree");
+        }
+        branch = newThreadBranch;
+        existingWorktreeBaseBranch = branch;
+      } else {
+        branch = selectedWorktree.branch;
+      }
       existingWorktreePath = selectedWorktree.path;
     }
 
@@ -758,6 +771,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       transportMode: mode,
       branch,
       existingWorktreePath,
+      existingWorktreeBaseBranch,
       attachments,
       reasoningLevel,
       provider,
@@ -778,6 +792,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       queuedMessage: captionForUi,
       transportMode: mode,
       branch,
+      checkoutState: existingWorktreePath
+        ? existingWorktreeBaseBranch
+          ? "branchless"
+          : "named"
+        : undefined,
+      baseBranch: existingWorktreeBaseBranch ?? null,
+      worktreePath: existingWorktreePath ?? null,
+      worktreeManaged: existingWorktreePath ? false : undefined,
       clientPreparingContext,
       model,
       provider,
@@ -820,8 +842,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     if (!workspaceId) throw new Error("No workspace selected");
 
     let transportMode: "direct" | "worktree" = "direct";
-    const branch = params.branch ?? "main";
+    let branch = params.branch ?? "main";
     let existingWorktreePath: string | undefined;
+    let existingWorktreeBaseBranch: string | undefined;
 
     if (params.mode === "worktree") {
       transportMode = "worktree";
@@ -831,6 +854,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
       transportMode = "worktree";
       existingWorktreePath = params.existingWorktreePath;
+      existingWorktreeBaseBranch = params.existingWorktreeBaseBranch;
+      const matchedWorktree = get().worktrees.find(
+        (wt) => normalizeWorktreePath(wt.path) === normalizeWorktreePath(params.existingWorktreePath!),
+      );
+      if (matchedWorktree && isDetachedWorktree(matchedWorktree)) {
+        const baseBranch = params.existingWorktreeBaseBranch ?? params.branch;
+        if (!baseBranch) {
+          throw new Error("Select a base branch before attaching a detached worktree");
+        }
+        branch = baseBranch;
+        existingWorktreeBaseBranch = baseBranch;
+      } else if (matchedWorktree) {
+        branch = matchedWorktree.branch;
+        existingWorktreeBaseBranch = undefined;
+      }
     }
 
     const clientPreparingContext =
@@ -850,6 +888,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       transportMode,
       branch,
       existingWorktreePath,
+      existingWorktreeBaseBranch,
       attachments: params.attachments,
       reasoningLevel: params.reasoningLevel,
       provider: params.provider,
@@ -872,6 +911,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       queuedMessage: branchCaptionForUi,
       transportMode,
       branch,
+      checkoutState: existingWorktreePath
+        ? existingWorktreeBaseBranch
+          ? "branchless"
+          : "named"
+        : undefined,
+      baseBranch: existingWorktreeBaseBranch ?? null,
+      worktreePath: existingWorktreePath ?? null,
+      worktreeManaged: existingWorktreePath ? false : undefined,
       clientPreparingContext,
       model: params.model,
       provider: params.provider,

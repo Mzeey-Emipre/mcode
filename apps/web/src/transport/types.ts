@@ -220,6 +220,7 @@ export interface McodeTransport {
     mode?: "direct" | "worktree",
     branch?: string,
     existingWorktreePath?: string,
+    existingWorktreeBaseBranch?: string,
     attachments?: AttachmentMeta[],
     reasoningLevel?: ReasoningLevel,
     provider?: string,

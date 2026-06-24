@@ -648,6 +648,7 @@ async function dispatch(
         params.mode,
         params.branch,
         params.existingWorktreePath,
+        params.existingWorktreeBaseBranch,
         params.attachments,
         params.reasoningLevel,
         params.provider,
