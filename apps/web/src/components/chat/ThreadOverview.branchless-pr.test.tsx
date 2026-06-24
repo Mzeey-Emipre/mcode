@@ -177,6 +177,8 @@ describe("ThreadOverview branchless Create PR", () => {
   beforeEach(() => {
     const thread = makeThread();
     mockWorkspaceState.threads = [thread];
+    mockWorkspaceState.prUrlsByThreadId = {};
+    mockWorkspaceState.checksById = {};
     mockWorkspaceState.worktreesLoadedForWorkspace = "ws-1";
     mockCreateBranch.mockReset().mockResolvedValue({ branch: "feat/issue-801" });
   });
@@ -215,6 +217,46 @@ describe("ThreadOverview branchless Create PR", () => {
     });
     expect(mockWorkspaceState.worktreesLoadedForWorkspace).toBeNull();
     expect(screen.queryByTestId("create-pr-dialog")).not.toBeInTheDocument();
+  });
+
+  it("clears stale PR metadata and caches when creating a named branch", async () => {
+    mockWorkspaceState.threads = [
+      makeThread({
+        pr_number: 42,
+        pr_status: "OPEN",
+      }),
+    ];
+    mockWorkspaceState.prUrlsByThreadId = {
+      "thread-1": "https://example.test/pr/42",
+      other: "https://example.test/pr/7",
+    };
+    mockWorkspaceState.checksById = {
+      "thread-1": { aggregate: "passing", runs: [], fetchedAt: 1 },
+      other: { aggregate: "no_checks", runs: [], fetchedAt: 2 },
+    };
+    render(<ThreadOverview thread={mockWorkspaceState.threads[0]} />);
+
+    fireEvent.click(screen.getByTestId("thread-overview-create-branch"));
+    fireEvent.change(screen.getByLabelText("Branch name"), {
+      target: { value: "feat/issue 801" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(mockWorkspaceState.threads[0]).toMatchObject({
+        branch: "feat/issue-801",
+        checkout_state: "named",
+        base_branch: null,
+        pr_number: null,
+        pr_status: null,
+      });
+    });
+    expect(mockWorkspaceState.prUrlsByThreadId).toEqual({
+      other: "https://example.test/pr/7",
+    });
+    expect(mockWorkspaceState.checksById).toEqual({
+      other: { aggregate: "no_checks", runs: [], fetchedAt: 2 },
+    });
   });
 
   it("keeps the branch creation dialog open when branch creation fails", async () => {

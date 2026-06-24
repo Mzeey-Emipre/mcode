@@ -1117,9 +1117,17 @@ function updateThreadToNamedBranch(threadId: string, branch: string): void {
             branch,
             checkout_state: "named" as const,
             base_branch: null,
+            pr_number: null,
+            pr_status: null,
           }
         : candidate,
     ),
+    prUrlsByThreadId: Object.fromEntries(
+      Object.entries(state.prUrlsByThreadId).filter(([candidateId]) => candidateId !== threadId),
+    ),
+    checksById: Object.fromEntries(
+      Object.entries(state.checksById).filter(([candidateId]) => candidateId !== threadId),
+    ) as typeof state.checksById,
     worktreesLoadedForWorkspace: null,
   }));
 }

@@ -119,6 +119,26 @@ describe("GitWatcherService", () => {
     expect(listener).toHaveBeenCalledWith("thread-1");
   });
 
+  it("still broadcasts checkout changes when the checkout-changed listener throws", async () => {
+    service.setThreadCheckoutChangedListener(() => {
+      throw new Error("listener failed");
+    });
+    await service.watchThreadWorktree("thread-1", "/repo-wt");
+
+    callbacks[0]("change", "HEAD");
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(broadcastMock).toHaveBeenCalledWith("thread.checkoutChanged", {
+      threadId: "thread-1",
+      workspaceId: "ws-1",
+      branch: "feat/thread",
+      checkoutState: "named",
+      baseBranch: null,
+      prNumber: null,
+      prStatus: null,
+    });
+  });
+
   it("does not invoke the checkout-changed listener when sync reports no checkout change", async () => {
     const listener = vi.fn();
     (threadService.syncCheckoutFromHead as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

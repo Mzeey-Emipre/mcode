@@ -47,15 +47,17 @@ export const WS_CHANNELS = {
     model: z.string(),
     provider: z.string(),
   }),
-  "thread.checkoutChanged": z.object({
-    threadId: z.string(),
-    workspaceId: z.string(),
-    branch: z.string(),
-    checkoutState: z.enum(["named", "branchless"]),
-    baseBranch: z.string().nullable(),
-    prNumber: z.number().nullable(),
-    prStatus: z.string().nullable(),
-  }),
+  "thread.checkoutChanged": lazySchema(() =>
+    z.object({
+      threadId: z.string(),
+      workspaceId: z.string(),
+      branch: z.string(),
+      checkoutState: z.enum(["named", "branchless"]),
+      baseBranch: z.string().nullable(),
+      prNumber: z.number().nullable(),
+      prStatus: z.string().nullable(),
+    }),
+  )(),
   "files.changed": z.object({
     workspaceId: z.string(),
     threadId: z.string().optional(),

@@ -3049,7 +3049,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 /></Suspense>
               </>
             )
-          ) : activeThread?.branch && isGitRepo ? (
+          ) : activeThread && isGitRepo ? (
             <BranchPicker
               branches={[]}
               selectedBranch={resolveThreadCheckoutLabel(activeThread)}

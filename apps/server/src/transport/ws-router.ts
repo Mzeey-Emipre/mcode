@@ -323,9 +323,6 @@ function watchReturnedThreadWorktree(deps: RouterDeps, thread: unknown): void {
 
 async function teardownWorkspaceThreads(deps: RouterDeps, workspaceId: string): Promise<void> {
   const threads = deps.threadRepo.listAllByWorkspace(workspaceId);
-  for (const thread of threads) {
-    deps.gitWatcherService?.unwatchThreadWorktree?.(thread.id);
-  }
   const results = await Promise.allSettled(
     threads.map((thread) => deps.threadTeardownService.teardownThread(thread.id)),
   );
@@ -334,6 +331,9 @@ async function teardownWorkspaceThreads(deps: RouterDeps, workspaceId: string): 
     throw new Error(
       `Workspace teardown failed for ${workspaceId}: ${failures.map(teardownFailureMessage).join("; ")}`,
     );
+  }
+  for (const thread of threads) {
+    deps.gitWatcherService?.unwatchThreadWorktree?.(thread.id);
   }
 }
 
@@ -440,12 +440,15 @@ async function dispatch(
     }
     case "thread.delete": {
       deps.ciWatcherService.unwatch(params.threadId);
-      deps.gitWatcherService?.unwatchThreadWorktree?.(params.threadId);
       await deps.threadTeardownService.teardownThread(params.threadId);
-      return await deps.threadService.delete(
+      const deleted = await deps.threadService.delete(
         params.threadId,
         params.cleanupWorktree,
       );
+      if (deleted) {
+        deps.gitWatcherService?.unwatchThreadWorktree?.(params.threadId);
+      }
+      return deleted;
     }
     case "thread.updateTitle":
       return deps.threadService.updateTitle(

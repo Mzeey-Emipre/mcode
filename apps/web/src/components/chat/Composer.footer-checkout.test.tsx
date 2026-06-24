@@ -9,6 +9,7 @@ describe("Composer footer checkout label", () => {
     const source = readFileSync(resolve(here, "Composer.tsx"), "utf8");
 
     expect(source).toContain('import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";');
+    expect(source).toContain(") : activeThread && isGitRepo ? (");
     expect(source).toContain("selectedBranch={resolveThreadCheckoutLabel(activeThread)}");
   });
 });

@@ -182,7 +182,14 @@ export class GitWatcherService {
           void this.threadService.syncCheckoutFromHead(threadId).then((result) => {
             if (!result?.changed) return;
             const { thread } = result;
-            this.onThreadCheckoutChanged?.(thread.id);
+            try {
+              this.onThreadCheckoutChanged?.(thread.id);
+            } catch (err) {
+              logger.warn("GitWatcherService: checkout-change listener failed", {
+                threadId: thread.id,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
             broadcast("thread.checkoutChanged", {
               threadId: thread.id,
               workspaceId: thread.workspace_id,
