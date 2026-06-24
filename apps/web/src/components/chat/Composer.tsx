@@ -103,6 +103,7 @@ import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { ProviderUnavailableBanner } from "./ProviderUnavailableBanner";
 import { appendBrowserCaptureFence } from "@/lib/browser-capture-append";
+import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
 import {
   collectBrowserCaptureSpillPaths,
   collectSpillPathsFromPendingAttachments,
@@ -3048,10 +3049,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 /></Suspense>
               </>
             )
-          ) : activeThread?.branch && isGitRepo ? (
+          ) : activeThread && isGitRepo ? (
             <BranchPicker
               branches={[]}
-              selectedBranch={activeThread.branch}
+              selectedBranch={resolveThreadCheckoutLabel(activeThread)}
               onSelect={() => {}}
               loading={false}
               locked={true}

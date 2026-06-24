@@ -274,6 +274,9 @@ const ciWatcherService = new CiWatcherService(githubService, (channel, data) => 
   broadcast(channel as Parameters<typeof broadcast>[0], data as Parameters<typeof broadcast>[1]);
   portPush.send(channel as Parameters<typeof portPush.send>[0], data as Parameters<typeof portPush.send>[1]);
 });
+gitWatcherService.setThreadCheckoutChangedListener((threadId) => {
+  ciWatcherService.unwatch(threadId);
+});
 
 // Wire up PTY sender to broadcast push events
 terminalService.setSender({
@@ -352,6 +355,11 @@ if (removed > 0) {
 const allWorkspaces = workspaceRepo.listAll();
 for (const ws of allWorkspaces) {
   gitWatcherService.watchWorkspace(ws.id, ws.path);
+  for (const thread of threadService.list(ws.id)) {
+    if (thread.mode === "worktree" && thread.worktree_path) {
+      gitWatcherService.watchThreadWorktree(thread.id, thread.worktree_path);
+    }
+  }
   if (!ws.is_git_repo && existsSync(join(ws.path, ".git"))) {
     workspaceRepo.setIsGitRepo(ws.id, true);
     logger.info("Corrected stale is_git_repo=false at startup", { workspaceId: ws.id, path: ws.path });

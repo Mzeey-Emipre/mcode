@@ -177,6 +177,8 @@ describe("ThreadOverview branchless Create PR", () => {
   beforeEach(() => {
     const thread = makeThread();
     mockWorkspaceState.threads = [thread];
+    mockWorkspaceState.prUrlsByThreadId = {};
+    mockWorkspaceState.checksById = {};
     mockWorkspaceState.worktreesLoadedForWorkspace = "ws-1";
     mockCreateBranch.mockReset().mockResolvedValue({ branch: "feat/issue-801" });
   });
@@ -187,14 +189,21 @@ describe("ThreadOverview branchless Create PR", () => {
     expect(canStartBranchlessCreatePr(makeThread({ mode: "direct" }))).toBe(false);
   });
 
-  it("creates a named branch before opening the existing PR dialog", async () => {
+  it("creates a named branch from the branchless worktree row", async () => {
     render(<ThreadOverview thread={makeThread()} />);
 
-    fireEvent.click(screen.getByTestId("workspace-menu-create-pr"));
+    expect(screen.getByText("HEAD")).toBeInTheDocument();
+    expect(screen.queryByTestId("workspace-menu-branch")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
+    expect(screen.getByTestId("workspace-menu-commit")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("thread-overview-create-branch"));
+    expect(screen.getByRole("heading", { name: "Work here" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Branch name"), {
-      target: { value: "feat/issue-801" },
+      target: { value: "feat/issue 801" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create branch and continue" }));
+    expect(screen.getByLabelText("Branch name")).toHaveValue("feat/issue-801");
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
       expect(mockCreateBranch).toHaveBeenCalledWith("ws-1", "feat/issue-801", "thread-1");
@@ -207,20 +216,58 @@ describe("ThreadOverview branchless Create PR", () => {
       base_branch: null,
     });
     expect(mockWorkspaceState.worktreesLoadedForWorkspace).toBeNull();
-    expect(await screen.findByTestId("create-pr-dialog")).toBeInTheDocument();
-    expect(screen.getByTestId("create-pr-branch")).toHaveTextContent("feat/issue-801");
-    expect(screen.getByTestId("create-pr-base")).toHaveTextContent("main");
+    expect(screen.queryByTestId("create-pr-dialog")).not.toBeInTheDocument();
   });
 
-  it("keeps the branch-name step open when branch creation fails", async () => {
+  it("clears stale PR metadata and caches when creating a named branch", async () => {
+    mockWorkspaceState.threads = [
+      makeThread({
+        pr_number: 42,
+        pr_status: "OPEN",
+      }),
+    ];
+    mockWorkspaceState.prUrlsByThreadId = {
+      "thread-1": "https://example.test/pr/42",
+      other: "https://example.test/pr/7",
+    };
+    mockWorkspaceState.checksById = {
+      "thread-1": { aggregate: "passing", runs: [], fetchedAt: 1 },
+      other: { aggregate: "no_checks", runs: [], fetchedAt: 2 },
+    };
+    render(<ThreadOverview thread={mockWorkspaceState.threads[0]} />);
+
+    fireEvent.click(screen.getByTestId("thread-overview-create-branch"));
+    fireEvent.change(screen.getByLabelText("Branch name"), {
+      target: { value: "feat/issue 801" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(mockWorkspaceState.threads[0]).toMatchObject({
+        branch: "feat/issue-801",
+        checkout_state: "named",
+        base_branch: null,
+        pr_number: null,
+        pr_status: null,
+      });
+    });
+    expect(mockWorkspaceState.prUrlsByThreadId).toEqual({
+      other: "https://example.test/pr/7",
+    });
+    expect(mockWorkspaceState.checksById).toEqual({
+      other: { aggregate: "no_checks", runs: [], fetchedAt: 2 },
+    });
+  });
+
+  it("keeps the branch creation dialog open when branch creation fails", async () => {
     mockCreateBranch.mockRejectedValueOnce(new Error("branch exists"));
     render(<ThreadOverview thread={makeThread()} />);
 
-    fireEvent.click(screen.getByTestId("workspace-menu-create-pr"));
+    fireEvent.click(screen.getByTestId("thread-overview-create-branch"));
     fireEvent.change(screen.getByLabelText("Branch name"), {
       target: { value: "feat/issue-801" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create branch and continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("branch exists");
     expect(screen.queryByTestId("create-pr-dialog")).not.toBeInTheDocument();

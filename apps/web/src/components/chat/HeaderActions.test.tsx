@@ -359,7 +359,7 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("workspace-menu-changes")).toHaveTextContent("Changes");
     expect(screen.queryByTestId("thread-overview-change-summary")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-repository")).not.toBeInTheDocument();
-    expect(screen.getByTestId("thread-overview-local")).toHaveTextContent("Local");
+    expect(screen.getByTestId("thread-overview-local")).toHaveTextContent("Worktree");
     expect(screen.getByTestId("thread-overview-local")).toHaveAttribute(
       "aria-label",
       expect.stringContaining("/repo/worktrees/feat-x"),
