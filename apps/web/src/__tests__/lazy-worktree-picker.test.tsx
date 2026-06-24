@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { lazy, Suspense, type ComponentProps } from "react";
 
 vi.mock("cmdk", () => ({
@@ -48,5 +48,26 @@ describe("WorktreePicker", () => {
       </Suspense>,
     );
     expect(await screen.findByText("feature-a")).toBeInTheDocument();
+  });
+
+  it("labels detached worktrees as HEAD", () => {
+    render(
+      <WorktreePicker
+        worktrees={[
+          {
+            name: "branchless-a",
+            branch: "(detached)",
+            path: "/repo/.worktrees/branchless-a",
+            managed: true,
+          },
+        ]}
+        selectedPath=""
+        onSelect={() => {}}
+        loading={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByText(/HEAD/)).toBeInTheDocument();
   });
 });

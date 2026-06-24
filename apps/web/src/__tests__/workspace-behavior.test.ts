@@ -478,6 +478,105 @@ describe("Workspace Behavior", () => {
   });
 
   describe("optimistic thread scaffolding", () => {
+    it("createAndSendMessage sends a base branch when attaching a detached existing worktree", async () => {
+      const ws = createMockWorkspace({ id: "ws-detached-existing" });
+      const created = createMockThread({
+        id: "detached-thread",
+        workspace_id: ws.id,
+        mode: "worktree",
+        branch: "main",
+        checkout_state: "branchless",
+        base_branch: "main",
+        worktree_path: "/repo/.worktrees/branchless-existing",
+        worktree_managed: false,
+      });
+
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: ws.id,
+        newThreadMode: "existing-worktree",
+        newThreadBranch: "main",
+        selectedWorktree: {
+          name: "branchless-existing",
+          path: "/repo/.worktrees/branchless-existing",
+          branch: "(detached)",
+          managed: true,
+        },
+      });
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(created);
+
+      await useWorkspaceStore.getState().createAndSendMessage("Hello", "gpt-5.5");
+
+      const call = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(call.slice(0, 8)).toEqual([
+        ws.id,
+        "Hello",
+        "gpt-5.5",
+        undefined,
+        "worktree",
+        "main",
+        "/repo/.worktrees/branchless-existing",
+        "main",
+      ]);
+    });
+
+    it("createAndSendMessage keeps named existing worktree attach metadata named", async () => {
+      const ws = createMockWorkspace({ id: "ws-named-existing" });
+      let resolveRpc!: (value: ReturnType<typeof createMockThread>) => void;
+      const rpcPromise = new Promise<ReturnType<typeof createMockThread>>((resolve) => {
+        resolveRpc = resolve;
+      });
+
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: ws.id,
+        newThreadMode: "existing-worktree",
+        newThreadBranch: "main",
+        selectedWorktree: {
+          name: "feature-existing",
+          path: "/repo/.worktrees/feature-existing",
+          branch: "feat/existing",
+          managed: true,
+        },
+      });
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockReturnValue(rpcPromise);
+
+      const done = useWorkspaceStore.getState().createAndSendMessage("Hello", "gpt-5.5");
+      await Promise.resolve();
+
+      const mid = useWorkspaceStore.getState();
+      expect(mid.threads[0]).toMatchObject({
+        mode: "worktree",
+        worktree_path: "/repo/.worktrees/feature-existing",
+        branch: "feat/existing",
+        checkout_state: "named",
+        base_branch: null,
+        worktree_managed: false,
+      });
+
+      const call = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(call.slice(0, 8)).toEqual([
+        ws.id,
+        "Hello",
+        "gpt-5.5",
+        undefined,
+        "worktree",
+        "feat/existing",
+        "/repo/.worktrees/feature-existing",
+        undefined,
+      ]);
+
+      resolveRpc(createMockThread({
+        id: "named-existing-thread",
+        workspace_id: ws.id,
+        mode: "worktree",
+        branch: "feat/existing",
+        worktree_path: "/repo/.worktrees/feature-existing",
+        worktree_managed: false,
+      }));
+      await done;
+    });
+
     it("createAndSendMessage shows a preparing placeholder before the RPC resolves", async () => {
       const ws = createMockWorkspace({ id: "ws-opt" });
       let resolveRpc!: (value: ReturnType<typeof createMockThread>) => void;

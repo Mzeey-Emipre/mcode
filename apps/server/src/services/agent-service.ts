@@ -8,7 +8,7 @@
 import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
 import { isAbsolute } from "path";
-import { logger } from "@mcode/shared";
+import { logger, validateBranchName } from "@mcode/shared";
 import { AgentEventType, isSessionEvictable } from "@mcode/contracts";
 import type {
   Thread,
@@ -874,6 +874,59 @@ export class AgentService {
     return buildInjectedFileMessage(input.text, files);
   }
 
+  private async createAttachedExistingWorktreeThread(params: {
+    workspaceId: string;
+    title: string;
+    existingWorktreePath: string;
+    provider: ProviderId;
+    baseBranch?: string;
+    lineage?: {
+      parentThreadId: string;
+      forkedFromMessageId: string;
+    };
+  }): Promise<Thread> {
+    const workspace = this.workspaceRepo.findById(params.workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${params.workspaceId}`);
+
+    const knownWorktrees = await this.gitService.listWorktrees(params.workspaceId);
+    const normalize = (p: string) =>
+      p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+    const normalizedInput = normalize(params.existingWorktreePath);
+    const matched = knownWorktrees.find(
+      (wt) => normalize(wt.path) === normalizedInput,
+    );
+    if (!matched) {
+      throw new Error("Path is not a recognized worktree");
+    }
+
+    const isDetached = matched.branch === "(detached)";
+    const branch = isDetached ? params.baseBranch : matched.branch;
+    if (!branch) {
+      throw new Error("Base branch is required when attaching a detached worktree");
+    }
+    if (isDetached && branch === "HEAD") {
+      throw new Error("Base branch cannot be HEAD when attaching a detached worktree");
+    }
+    validateBranchName(branch);
+
+    const thread = this.threadRepo.create(
+      params.workspaceId,
+      params.title,
+      "worktree",
+      branch,
+      false,
+      params.provider,
+      params.lineage,
+      isDetached ? "branchless" : "named",
+      isDetached ? branch : null,
+    );
+    this.threadRepo.updateWorktreePath(thread.id, params.existingWorktreePath);
+    return {
+      ...thread,
+      worktree_path: params.existingWorktreePath,
+    };
+  }
+
   /**
    * Create a new thread and immediately send the first message.
    * Generates a title from the content, creates the thread, sends,
@@ -887,6 +940,7 @@ export class AgentService {
     mode: "direct" | "worktree" = "direct",
     branch = "main",
     existingWorktreePath?: string,
+    existingWorktreeBaseBranch?: string,
     attachments: AttachmentMeta[] = [],
     reasoningLevel?: ReasoningLevel,
     provider: ProviderId = "claude",
@@ -907,7 +961,7 @@ export class AgentService {
     if (parentThreadId) {
       return this.createBranchedThread({
         workspaceId, content, model, permissionMode, mode, branch,
-        existingWorktreePath, attachments, mentions, reasoningLevel, provider,
+        existingWorktreePath, existingWorktreeBaseBranch, attachments, mentions, reasoningLevel, provider,
         interactionMode, parentThreadId, forkedFromMessageId, title,
         maxBudgetUsd, maxTurns,
         copilotAgent,
@@ -921,35 +975,13 @@ export class AgentService {
     let thread: Thread;
     let threadWarnings: string[] | undefined;
     if (existingWorktreePath) {
-      // Attach to existing worktree
-      const workspace = this.workspaceRepo.findById(workspaceId);
-      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-      const knownWorktrees = await this.gitService.listWorktrees(workspaceId);
-      const normalize = (p: string) =>
-        p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
-      const normalizedInput = normalize(existingWorktreePath);
-      const matched = knownWorktrees.find(
-        (wt) => normalize(wt.path) === normalizedInput,
-      );
-      if (!matched) {
-        throw new Error("Path is not a recognized worktree");
-      }
-
-      const canonicalBranch = matched.branch;
-      thread = this.threadRepo.create(
+      thread = await this.createAttachedExistingWorktreeThread({
         workspaceId,
         title,
-        "worktree",
-        canonicalBranch,
-        false,
+        existingWorktreePath,
         provider,
-      );
-      this.threadRepo.updateWorktreePath(thread.id, existingWorktreePath);
-      thread = {
-        ...thread,
-        worktree_path: existingWorktreePath,
-        branch: canonicalBranch,
-      };
+        baseBranch: existingWorktreeBaseBranch,
+      });
     } else if (mode === "worktree") {
       const createResult = await this.threadService.create(workspaceId, title, "worktree", branch, { branchless: true });
       threadWarnings = createResult.warnings;
@@ -1043,6 +1075,7 @@ export class AgentService {
     mode: "direct" | "worktree";
     branch: string;
     existingWorktreePath?: string;
+    existingWorktreeBaseBranch?: string;
     attachments: AttachmentMeta[];
     mentions: MessageMention[];
     reasoningLevel?: ReasoningLevel;
@@ -1061,7 +1094,7 @@ export class AgentService {
   }): Promise<Thread & { warnings?: string[] }> {
     const {
       workspaceId, content, model, permissionMode, mode, branch,
-      existingWorktreePath, attachments, mentions, reasoningLevel, provider,
+      existingWorktreePath, existingWorktreeBaseBranch, attachments, mentions, reasoningLevel, provider,
       interactionMode, parentThreadId, forkedFromMessageId, title,
       maxBudgetUsd, maxTurns,
       copilotAgent,
@@ -1121,17 +1154,14 @@ export class AgentService {
     let threadWarnings: string[] | undefined;
 
     if (existingWorktreePath) {
-      const workspace = this.workspaceRepo.findById(workspaceId);
-      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-      const knownWorktrees = await this.gitService.listWorktrees(workspaceId);
-      const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
-      const normalizedInput = normalize(existingWorktreePath);
-      const matched = knownWorktrees.find((wt) => normalize(wt.path) === normalizedInput);
-      if (!matched) throw new Error("Path is not a recognized worktree");
-
-      thread = this.threadRepo.create(workspaceId, title, "worktree", matched.branch, false, provider, lineage);
-      this.threadRepo.updateWorktreePath(thread.id, existingWorktreePath);
-      thread = { ...thread, worktree_path: existingWorktreePath, branch: matched.branch };
+      thread = await this.createAttachedExistingWorktreeThread({
+        workspaceId,
+        title,
+        existingWorktreePath,
+        provider,
+        lineage,
+        baseBranch: existingWorktreeBaseBranch,
+      });
     } else if (mode === "worktree") {
       const createResult = await this.threadService.create(workspaceId, title, "worktree", branch, { branchless: true });
       threadWarnings = createResult.warnings;

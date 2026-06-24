@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { isWindows } from "@/lib/platform";
 import { isCursorPermissionLockedToFull } from "@/lib/cursor-permission";
 import { isGoalControlCommand } from "@/lib/goal-command";
+import { isDetachedWorktree } from "@/lib/worktree";
 import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supportsUltrathink, supports1MContextWindow, supportsThinkingToggle, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector, ALL_MODE_OPTIONS } from "./ModeSelector";
@@ -1192,6 +1193,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const fetchingBranch = useWorkspaceStore((s) => s.fetchingBranch);
   const loadOpenPrs = useWorkspaceStore((s) => s.loadOpenPrs);
   const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
+  const selectedWorktreeIsDetached = isDetachedWorktree(selectedWorktree);
+  const branchSelectedWorktree = useMemo(
+    () => worktrees.find((wt) => wt.path === branchWorktreePath) ?? null,
+    [worktrees, branchWorktreePath],
+  );
+  const branchWorktreeIsDetached = isDetachedWorktree(branchSelectedWorktree);
 
   // Sync modelId + provider if thread record changes server-side (e.g. from another client).
   // Does NOT fire on SDK model fallback — fallback is stored transiently and does not
@@ -2079,6 +2086,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       let branchMode: "direct" | "worktree" | "existing-worktree" = "direct";
       let branchBranch = branchTargetBranch || activeThread?.branch || "";
       let branchWorktree: string | undefined;
+      let branchExistingWorktreeBaseBranch: string | undefined;
 
       if (branchExecMode === "worktree") {
         branchMode = "worktree";
@@ -2087,6 +2095,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         branchMode = "existing-worktree";
         branchWorktree = branchWorktreePath;
         if (!branchWorktreePath) return;
+        if (branchWorktreeIsDetached) {
+          branchBranch = branchTargetBranch || activeThread?.base_branch || activeThread?.branch || "main";
+          branchExistingWorktreeBaseBranch = branchBranch;
+        }
       }
 
       await branchThread({
@@ -2101,6 +2113,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         mode: branchMode,
         branch: branchBranch,
         existingWorktreePath: branchWorktree,
+        existingWorktreeBaseBranch: branchExistingWorktreeBaseBranch,
         forkedFromMessageId: branchFromMessageId,
         copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
         contextWindow: contextWindow ?? undefined,
@@ -2144,7 +2157,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     editorRef.current?.focus();
-  }, [input, mentions, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand]);
+  }, [input, mentions, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand]);
 
   // Reset the handoff-transition-seen flag whenever the user switches threads
   // so the guard below evaluates correctly for each new child thread.
@@ -2974,12 +2987,23 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 />
               </>
             ) : composerMode === "existing-worktree" ? (
-              <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
-                worktrees={worktrees}
-                selectedPath={selectedWorktree?.path ?? ""}
-                onSelect={setSelectedWorktree}
-                loading={worktreesLoading}
-              /></Suspense>
+              <>
+                {selectedWorktreeIsDetached && (
+                  <BranchPicker
+                    branches={branches}
+                    selectedBranch={newThreadBranch || "main"}
+                    onSelect={setNewThreadBranch}
+                    loading={branchesLoading}
+                    locked={false}
+                  />
+                )}
+                <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
+                  worktrees={worktrees}
+                  selectedPath={selectedWorktree?.path ?? ""}
+                  onSelect={setSelectedWorktree}
+                  loading={worktreesLoading}
+                /></Suspense>
+              </>
             ) : null
           ) : branchFromMessageId ? (
             // Branch mode: show execution controls for the child thread
@@ -3003,12 +3027,23 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 />
               </>
             ) : (
-              <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
-                worktrees={worktrees}
-                selectedPath={branchWorktreePath}
-                onSelect={(wt) => setBranchWorktreePath(wt.path)}
-                loading={worktreesLoading}
-              /></Suspense>
+              <>
+                {branchWorktreeIsDetached && (
+                  <BranchPicker
+                    branches={branches}
+                    selectedBranch={branchTargetBranch || activeThread?.base_branch || activeThread?.branch || "main"}
+                    onSelect={setBranchTargetBranch}
+                    loading={branchesLoading}
+                    locked={false}
+                  />
+                )}
+                <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
+                  worktrees={worktrees}
+                  selectedPath={branchWorktreePath}
+                  onSelect={(wt) => setBranchWorktreePath(wt.path)}
+                  loading={worktreesLoading}
+                /></Suspense>
+              </>
             )
           ) : activeThread?.branch && isGitRepo ? (
             <BranchPicker

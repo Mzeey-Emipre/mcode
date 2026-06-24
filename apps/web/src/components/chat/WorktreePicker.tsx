@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { WorktreeInfo } from "@/transport/types";
+import { worktreeBranchLabel } from "@/lib/worktree";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 
@@ -57,8 +58,9 @@ export function WorktreePicker({
               const wt = worktrees.find((w) => w.path === value);
               if (!wt) return 0;
               const q = search.toLowerCase();
+              const branchLabel = worktreeBranchLabel(wt);
               if (wt.name.toLowerCase().includes(q)) return 1;
-              if (wt.branch.toLowerCase().includes(q)) return 1;
+              if (branchLabel.toLowerCase().includes(q)) return 1;
               if (wt.path.toLowerCase().includes(q)) return 1;
               return 0;
             }}
@@ -87,7 +89,7 @@ export function WorktreePicker({
                     >
                       <span className="font-medium">{w.name}</span>
                       <span className="text-xs text-muted-foreground">
-                        {w.branch} &middot; {truncatePath(w.path)}
+                        {worktreeBranchLabel(w)} &middot; {truncatePath(w.path)}
                         {!w.managed && (
                           <Badge variant="secondary" size="sm" className="ml-1">external</Badge>
                         )}

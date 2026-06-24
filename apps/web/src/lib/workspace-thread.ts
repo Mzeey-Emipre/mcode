@@ -72,6 +72,10 @@ export function buildPlaceholderWorkspaceThread(params: {
   queuedMessage: string;
   transportMode: "direct" | "worktree";
   branch: string;
+  checkoutState?: Thread["checkout_state"];
+  baseBranch?: string | null;
+  worktreePath?: string | null;
+  worktreeManaged?: boolean;
   clientPreparingContext: ClientPreparingContext;
   model?: string | null;
   provider?: string | null;
@@ -86,17 +90,21 @@ export function buildPlaceholderWorkspaceThread(params: {
   forkedFromMessageId?: string | null;
 }): WorkspaceThread {
   const now = new Date().toISOString();
+  const checkoutState =
+    params.checkoutState ?? (params.transportMode === "worktree" ? "branchless" : "named");
+  const baseBranch =
+    params.baseBranch ?? (checkoutState === "branchless" ? params.branch : null);
   return {
     id: params.id,
     workspace_id: params.workspaceId,
     title: params.title,
     status: "active",
     mode: params.transportMode,
-    worktree_path: null,
+    worktree_path: params.worktreePath ?? null,
     branch: params.branch,
-    checkout_state: params.transportMode === "worktree" ? "branchless" : "named",
-    base_branch: params.transportMode === "worktree" ? params.branch : null,
-    worktree_managed: params.transportMode === "worktree",
+    checkout_state: checkoutState,
+    base_branch: baseBranch,
+    worktree_managed: params.worktreeManaged ?? (params.transportMode === "worktree"),
     issue_number: null,
     pr_number: null,
     pr_status: null,

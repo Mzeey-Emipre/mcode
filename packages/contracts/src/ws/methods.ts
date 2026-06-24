@@ -101,6 +101,7 @@ export const CreateAndSendSchema = lazySchema(() =>
     mode: ThreadModeSchema.optional(),
     branch: z.string().optional(),
     existingWorktreePath: z.string().optional(),
+    existingWorktreeBaseBranch: GitBranchNameSchema.optional(),
     attachments: z.array(AttachmentMetaSchema).max(MAX_ATTACHMENTS).optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
     mentions: MessageMentionsSchema.optional(),

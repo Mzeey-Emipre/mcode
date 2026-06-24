@@ -323,6 +323,36 @@ describe("GitService.removeWorktree", () => {
   });
 });
 
+describe("GitService.listWorktrees", () => {
+  it("includes detached worktrees instead of dropping entries without a branch line", async () => {
+    const mock = createMockGitExecutor();
+    const workspaceRepo = {
+      findById: vi.fn().mockReturnValue({ path: "/repo" }),
+    } as unknown as WorkspaceRepo;
+    const gitService = new GitService(workspaceRepo, mock.executor);
+    mock.execFn.mockResolvedValue({
+      stdout: [
+        "worktree /repo",
+        "HEAD 1111111",
+        "branch refs/heads/main",
+        "",
+        "worktree /mock/mcode/worktrees/repo/branchless-existing",
+        "HEAD 2222222",
+        "detached",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+
+    await expect(gitService.listWorktrees("ws-1")).resolves.toContainEqual({
+      name: "branchless-existing",
+      path: "/mock/mcode/worktrees/repo/branchless-existing",
+      branch: "(detached)",
+      managed: true,
+    });
+  });
+});
+
 describe("GitService.log", () => {
   let gitService: GitService;
   let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
