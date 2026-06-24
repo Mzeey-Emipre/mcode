@@ -890,10 +890,15 @@ export class AgentService {
 
     const knownWorktrees = await this.gitService.listWorktrees(params.workspaceId);
     const normalize = (p: string) =>
-      p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+      p.replace(/\\/g, "/").replace(/\/$/, "");
     const normalizedInput = normalize(params.existingWorktreePath);
     const matched = knownWorktrees.find(
-      (wt) => normalize(wt.path) === normalizedInput,
+      (wt) => {
+        const normalizedKnown = normalize(wt.path);
+        return process.platform === "win32"
+          ? normalizedKnown.toLowerCase() === normalizedInput.toLowerCase()
+          : normalizedKnown === normalizedInput;
+      },
     );
     if (!matched) {
       throw new Error("Path is not a recognized worktree");
@@ -920,10 +925,10 @@ export class AgentService {
       isDetached ? "branchless" : "named",
       isDetached ? branch : null,
     );
-    this.threadRepo.updateWorktreePath(thread.id, params.existingWorktreePath);
+    this.threadRepo.updateWorktreePath(thread.id, matched.path);
     return {
       ...thread,
-      worktree_path: params.existingWorktreePath,
+      worktree_path: matched.path,
     };
   }
 

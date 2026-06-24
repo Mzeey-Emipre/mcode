@@ -520,6 +520,28 @@ describe("Workspace Behavior", () => {
       ]);
     });
 
+    it("createAndSendMessage rejects detached existing worktree attach without a base branch", async () => {
+      const ws = createMockWorkspace({ id: "ws-detached-missing-base" });
+
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: ws.id,
+        newThreadMode: "existing-worktree",
+        newThreadBranch: "",
+        selectedWorktree: {
+          name: "branchless-existing",
+          path: "/repo/.worktrees/branchless-existing",
+          branch: "(detached)",
+          managed: true,
+        },
+      });
+
+      await expect(
+        useWorkspaceStore.getState().createAndSendMessage("Hello", "gpt-5.5"),
+      ).rejects.toThrow("Select a base branch before attaching a detached worktree");
+      expect(mockTransport.createAndSendMessage).not.toHaveBeenCalled();
+    });
+
     it("createAndSendMessage keeps named existing worktree attach metadata named", async () => {
       const ws = createMockWorkspace({ id: "ws-named-existing" });
       let resolveRpc!: (value: ReturnType<typeof createMockThread>) => void;
@@ -688,6 +710,83 @@ describe("Workspace Behavior", () => {
       expect(fin.threads[0]?.model).toBe("claude-opus-4-7");
       expect(fin.threads[0]?.reasoning_level).toBe("max");
       expect(fin.threads[0]?.context_window_mode).toBe("1m");
+    });
+
+    it("branchThread normalizes existing worktree paths before detached metadata lookup", async () => {
+      const ws = createMockWorkspace({ id: "ws-branch-detached-normalized" });
+      const parent = createMockThread({ id: "parent-detached-normalized", workspace_id: ws.id });
+      const created = createMockThread({
+        id: "branch-detached-thread",
+        workspace_id: ws.id,
+        mode: "worktree",
+        branch: "main",
+        checkout_state: "branchless",
+        base_branch: "main",
+        worktree_path: "C:/repo/.worktrees/branchless-existing",
+        worktree_managed: false,
+      });
+
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: ws.id,
+        threads: [parent],
+        worktrees: [{
+          name: "branchless-existing",
+          path: "C:/repo/.worktrees/branchless-existing",
+          branch: "(detached)",
+          managed: true,
+        }],
+      });
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(created);
+
+      await useWorkspaceStore.getState().branchThread({
+        sourceThreadId: parent.id,
+        content: "Branch this",
+        model: "gpt-5.5",
+        mode: "existing-worktree",
+        branch: "main",
+        existingWorktreePath: "C:\\repo\\.worktrees\\branchless-existing\\",
+      });
+
+      const call = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(call.slice(0, 8)).toEqual([
+        ws.id,
+        "Branch this",
+        "gpt-5.5",
+        undefined,
+        "worktree",
+        "main",
+        "C:\\repo\\.worktrees\\branchless-existing\\",
+        "main",
+      ]);
+    });
+
+    it("branchThread rejects detached existing worktree attach without a base branch", async () => {
+      const ws = createMockWorkspace({ id: "ws-branch-detached-missing-base" });
+      const parent = createMockThread({ id: "parent-detached-missing-base", workspace_id: ws.id });
+
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: ws.id,
+        threads: [parent],
+        worktrees: [{
+          name: "branchless-existing",
+          path: "/repo/.worktrees/branchless-existing",
+          branch: "(detached)",
+          managed: true,
+        }],
+      });
+
+      await expect(
+        useWorkspaceStore.getState().branchThread({
+          sourceThreadId: parent.id,
+          content: "Branch this",
+          model: "gpt-5.5",
+          mode: "existing-worktree",
+          existingWorktreePath: "/repo/.worktrees/branchless-existing",
+        }),
+      ).rejects.toThrow("Select a base branch before attaching a detached worktree");
+      expect(mockTransport.createAndSendMessage).not.toHaveBeenCalled();
     });
 
     it("when createAndSendMessage succeeds after the user navigates away, activeThreadId is not forced to the new thread", async () => {

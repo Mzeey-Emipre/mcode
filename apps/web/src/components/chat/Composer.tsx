@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 import { isWindows } from "@/lib/platform";
 import { isCursorPermissionLockedToFull } from "@/lib/cursor-permission";
 import { isGoalControlCommand } from "@/lib/goal-command";
-import { isDetachedWorktree } from "@/lib/worktree";
+import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
 import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supportsUltrathink, supports1MContextWindow, supportsThinkingToggle, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector, ALL_MODE_OPTIONS } from "./ModeSelector";
@@ -1195,7 +1195,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const fetchBranch = useWorkspaceStore((s) => s.fetchBranch);
   const selectedWorktreeIsDetached = isDetachedWorktree(selectedWorktree);
   const branchSelectedWorktree = useMemo(
-    () => worktrees.find((wt) => wt.path === branchWorktreePath) ?? null,
+    () => {
+      const normalizedPath = normalizeWorktreePath(branchWorktreePath);
+      return worktrees.find((wt) => normalizeWorktreePath(wt.path) === normalizedPath) ?? null;
+    },
     [worktrees, branchWorktreePath],
   );
   const branchWorktreeIsDetached = isDetachedWorktree(branchSelectedWorktree);

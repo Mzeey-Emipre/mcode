@@ -65,7 +65,7 @@ describe("AgentService.createAndSend existing worktree attach", () => {
       "default",
       "worktree",
       "main",
-      "/repo/.worktrees/branchless-existing",
+      "/repo/.worktrees/branchless-existing/",
       "main",
       [],
       undefined,

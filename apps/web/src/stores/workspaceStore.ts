@@ -18,15 +18,11 @@ import { usePreviewReferenceQueueStore } from "./previewReferenceQueueStore";
 import { usePreviewTabsStore } from "./previewTabsStore";
 import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
 import { sanitizeCustomBranchInput } from "@/lib/branch-name";
-import { isDetachedWorktree } from "@/lib/worktree";
+import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
 function generateBranchId(): string {
   return `mcode-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
 }
 
 /** Minimum interval between syncThreadPrs calls per workspace. */
@@ -747,7 +743,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       mode = "worktree";
       if (!selectedWorktree) throw new Error("No worktree selected");
       if (isDetachedWorktree(selectedWorktree)) {
-        branch = newThreadBranch || "main";
+        if (!newThreadBranch) {
+          throw new Error("Select a base branch before attaching a detached worktree");
+        }
+        branch = newThreadBranch;
         existingWorktreeBaseBranch = branch;
       } else {
         branch = selectedWorktree.branch;
@@ -857,11 +856,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       existingWorktreePath = params.existingWorktreePath;
       existingWorktreeBaseBranch = params.existingWorktreeBaseBranch;
       const matchedWorktree = get().worktrees.find(
-        (wt) => normalizePath(wt.path) === normalizePath(params.existingWorktreePath!),
+        (wt) => normalizeWorktreePath(wt.path) === normalizeWorktreePath(params.existingWorktreePath!),
       );
       if (matchedWorktree && isDetachedWorktree(matchedWorktree)) {
-        branch = params.existingWorktreeBaseBranch ?? branch;
-        existingWorktreeBaseBranch = branch;
+        const baseBranch = params.existingWorktreeBaseBranch ?? params.branch;
+        if (!baseBranch) {
+          throw new Error("Select a base branch before attaching a detached worktree");
+        }
+        branch = baseBranch;
+        existingWorktreeBaseBranch = baseBranch;
       } else if (matchedWorktree) {
         branch = matchedWorktree.branch;
         existingWorktreeBaseBranch = undefined;
