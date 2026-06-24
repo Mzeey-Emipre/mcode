@@ -284,7 +284,7 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);
     await expect(page.locator(".animate-overview-enter").first()).toBeVisible();
 
-    await expect(page.getByTestId("thread-overview-local")).toContainText("Local");
+    await expect(page.getByTestId("thread-overview-local")).toContainText("Worktree");
     await expect(page.getByTestId("thread-overview-repository")).toContainText(
       "REPOSITORY",
     );
@@ -356,6 +356,7 @@ test.describe("Consolidated chat header", () => {
     await expect(page.getByTestId("thread-overview-current-branch")).toContainText(
       "Uncommitted: 3 files",
     );
+    await expect(page.getByTestId("thread-overview-create-checkout-branch")).toBeEnabled();
   });
 
   test("panel toggle shows and hides the workspace-global right panel", async ({ page }) => {

@@ -308,8 +308,24 @@ function resolveWorkspaceRepoPath(
   );
 }
 
+function watchReturnedThreadWorktree(deps: RouterDeps, thread: unknown): void {
+  const maybeThread = thread as { id?: string; mode?: string; worktree_path?: string | null } | null;
+  if (maybeThread?.mode !== "worktree" || !maybeThread.worktree_path || !maybeThread.id) return;
+  void Promise.resolve(
+    deps.gitWatcherService?.watchThreadWorktree?.(maybeThread.id, maybeThread.worktree_path),
+  ).catch((err) => {
+    logger.warn("Failed to start thread worktree watcher", {
+      threadId: maybeThread.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+}
+
 async function teardownWorkspaceThreads(deps: RouterDeps, workspaceId: string): Promise<void> {
   const threads = deps.threadRepo.listAllByWorkspace(workspaceId);
+  for (const thread of threads) {
+    deps.gitWatcherService?.unwatchThreadWorktree?.(thread.id);
+  }
   const results = await Promise.allSettled(
     threads.map((thread) => deps.threadTeardownService.teardownThread(thread.id)),
   );
@@ -411,16 +427,20 @@ async function dispatch(
     }
     case "thread.recent":
       return deps.threadService.listRecent(params.limit);
-    case "thread.create":
-      return deps.threadService.create(
+    case "thread.create": {
+      const thread = await deps.threadService.create(
         params.workspaceId,
         params.title,
         params.mode,
         params.branch,
         { branchless: params.mode === "worktree" },
       );
+      watchReturnedThreadWorktree(deps, thread);
+      return thread;
+    }
     case "thread.delete": {
       deps.ciWatcherService.unwatch(params.threadId);
+      deps.gitWatcherService?.unwatchThreadWorktree?.(params.threadId);
       await deps.threadTeardownService.teardownThread(params.threadId);
       return await deps.threadService.delete(
         params.threadId,
@@ -639,8 +659,8 @@ async function dispatch(
         params.mentions,
       );
       return;
-    case "agent.createAndSend":
-      return deps.agentService.createAndSend(
+    case "agent.createAndSend": {
+      const thread = await deps.agentService.createAndSend(
         params.workspaceId,
         params.content,
         params.model,
@@ -664,6 +684,9 @@ async function dispatch(
         params.displayContent,
         params.mentions,
       );
+      watchReturnedThreadWorktree(deps, thread);
+      return thread;
+    }
     case "agent.stop":
       await deps.agentService.stopSession(params.threadId);
       return;

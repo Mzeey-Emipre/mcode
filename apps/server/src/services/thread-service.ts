@@ -288,4 +288,27 @@ export class ThreadService {
   findById(threadId: string): Thread | null {
     return this.threadRepo.findById(threadId);
   }
+
+  /**
+   * Sync a worktree thread's persisted checkout state from its current Git HEAD.
+   */
+  async syncCheckoutFromHead(threadId: string): Promise<{ thread: Thread; changed: boolean } | null> {
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread || thread.mode !== "worktree" || !thread.worktree_path) return null;
+
+    const currentBranch = await this.gitService.getCurrentBranchAt(thread.worktree_path);
+    const detached = !currentBranch || currentBranch === "HEAD";
+    const branch = detached ? "HEAD" : currentBranch;
+    const checkoutState = detached ? "branchless" : "named";
+    const baseBranch = detached
+      ? thread.base_branch ?? (thread.branch !== "HEAD" ? thread.branch : null)
+      : null;
+
+    return this.threadRepo.updateCheckoutFromHead(
+      threadId,
+      branch,
+      checkoutState,
+      baseBranch,
+    );
+  }
 }

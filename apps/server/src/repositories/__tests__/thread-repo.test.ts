@@ -77,6 +77,71 @@ describe("ThreadRepo.updateCheckoutToNamedBranch", () => {
   });
 });
 
+describe("ThreadRepo.updateCheckoutFromHead", () => {
+  let threadRepo: ThreadRepo;
+  let workspaceId: string;
+
+  beforeEach(() => {
+    const db = openMemoryDatabase();
+    container.reset();
+    container.registerInstance("Database", db);
+    threadRepo = container.resolve(ThreadRepo);
+    const workspaceRepo = container.resolve(WorkspaceRepo);
+    const ws = workspaceRepo.create("test-ws", "/tmp/ws", false);
+    workspaceId = ws.id;
+  });
+
+  it("promotes a branchless checkout to a named branch and clears stale PR metadata", () => {
+    const thread = threadRepo.create(workspaceId, "t", "worktree", "main", true, "claude", undefined, "branchless", "main");
+    threadRepo.updatePr(thread.id, 12, "OPEN");
+
+    const result = threadRepo.updateCheckoutFromHead(thread.id, "feat/new", "named", null);
+
+    expect(result?.changed).toBe(true);
+    expect(result?.thread).toMatchObject({
+      branch: "feat/new",
+      checkout_state: "named",
+      base_branch: null,
+      pr_number: null,
+      pr_status: null,
+    });
+  });
+
+  it("updates a named checkout to another named branch", () => {
+    const thread = threadRepo.create(workspaceId, "t", "worktree", "feat/old");
+
+    const result = threadRepo.updateCheckoutFromHead(thread.id, "feat/new", "named", null);
+
+    expect(result?.changed).toBe(true);
+    expect(result?.thread.branch).toBe("feat/new");
+    expect(result?.thread.checkout_state).toBe("named");
+  });
+
+  it("updates a named checkout to detached HEAD with previous branch as base", () => {
+    const thread = threadRepo.create(workspaceId, "t", "worktree", "feat/base");
+
+    const result = threadRepo.updateCheckoutFromHead(thread.id, "HEAD", "branchless", "feat/base");
+
+    expect(result?.changed).toBe(true);
+    expect(result?.thread).toMatchObject({
+      branch: "HEAD",
+      checkout_state: "branchless",
+      base_branch: "feat/base",
+    });
+  });
+
+  it("does not clear PR metadata when checkout branch and state are unchanged", () => {
+    const thread = threadRepo.create(workspaceId, "t", "worktree", "feat/same");
+    threadRepo.updatePr(thread.id, 34, "OPEN");
+
+    const result = threadRepo.updateCheckoutFromHead(thread.id, "feat/same", "named", null);
+
+    expect(result?.changed).toBe(false);
+    expect(result?.thread.pr_number).toBe(34);
+    expect(result?.thread.pr_status).toBe("OPEN");
+  });
+});
+
 describe("Migration 019 backfill", () => {
   it("backfills has_file_changes = 1 for threads with non-empty file changes in any snapshot", () => {
     const db = openMemoryDatabase();

@@ -35,6 +35,7 @@ describe("ThreadService.delete", () => {
       checkout: vi.fn(),
       listWorktrees: vi.fn(),
       fetchBranch: vi.fn(),
+      getCurrentBranchAt: vi.fn(),
     } as unknown as GitService;
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = {
@@ -244,6 +245,38 @@ describe("ThreadService.delete", () => {
       branch: "feat/from-thread",
       checkout_state: "named",
       base_branch: null,
+    });
+  });
+
+  it("syncs a branchless thread worktree to a named external branch", async () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    const thread = threadRepo.create(ws.id, "Branchless", "worktree", "main", true, "claude", undefined, "branchless", "main");
+    threadRepo.updateWorktreePath(thread.id, "/tmp/wt/main");
+    (mockGitService.getCurrentBranchAt as ReturnType<typeof vi.fn>).mockResolvedValue("feat/external");
+
+    const result = await threadService.syncCheckoutFromHead(thread.id);
+
+    expect(result?.changed).toBe(true);
+    expect(result?.thread).toMatchObject({
+      branch: "feat/external",
+      checkout_state: "named",
+      base_branch: null,
+    });
+  });
+
+  it("syncs a named thread worktree to detached HEAD", async () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    const thread = threadRepo.create(ws.id, "Named", "worktree", "feat/base");
+    threadRepo.updateWorktreePath(thread.id, "/tmp/wt/base");
+    (mockGitService.getCurrentBranchAt as ReturnType<typeof vi.fn>).mockResolvedValue("HEAD");
+
+    const result = await threadService.syncCheckoutFromHead(thread.id);
+
+    expect(result?.changed).toBe(true);
+    expect(result?.thread).toMatchObject({
+      branch: "HEAD",
+      checkout_state: "branchless",
+      base_branch: "feat/base",
     });
   });
 });

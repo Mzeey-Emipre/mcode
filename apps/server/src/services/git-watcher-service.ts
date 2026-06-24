@@ -12,6 +12,7 @@ import { broadcast } from "../transport/push";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index.js";
 import type { GitService } from "./git-service.js";
+import { ThreadService } from "./thread-service.js";
 
 /** Debounce delay in milliseconds to batch rapid HEAD file writes (e.g., during rebase). */
 const DEBOUNCE_MS = 200;
@@ -31,12 +32,20 @@ interface WatcherEntry {
 @injectable()
 export class GitWatcherService {
   private readonly watchers = new Map<string, WatcherEntry>();
+  private readonly threadWatchers = new Map<string, WatcherEntry>();
+  private onThreadCheckoutChanged: ((threadId: string) => void) | null = null;
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
     @inject("GitService") private readonly gitService: GitService,
+    @inject(ThreadService) private readonly threadService: ThreadService,
   ) {}
+
+  /** Register a callback invoked after a thread checkout branch/state changes. */
+  setThreadCheckoutChangedListener(listener: ((threadId: string) => void) | null): void {
+    this.onThreadCheckoutChanged = listener;
+  }
 
   /**
    * Resolve the absolute path to the HEAD file for the given workspace path.
@@ -146,6 +155,74 @@ export class GitWatcherService {
   }
 
   /**
+   * Start watching a worktree thread's HEAD file for external checkout changes.
+   */
+  async watchThreadWorktree(threadId: string, worktreePath: string): Promise<void> {
+    if (this.threadWatchers.has(threadId)) return;
+
+    const headFile = await this.resolveHeadFile(worktreePath);
+    if (!headFile) return;
+
+    const headDir = dirname(headFile);
+    const headName = basename(headFile);
+
+    let fsWatcher: FSWatcher;
+    try {
+      fsWatcher = watch(headDir, (_, filename) => {
+        if ((filename ?? headName) !== headName) return;
+
+        const entry = this.threadWatchers.get(threadId);
+        if (!entry) return;
+
+        if (entry.timer !== null) {
+          clearTimeout(entry.timer);
+        }
+        entry.timer = setTimeout(() => {
+          entry.timer = null;
+          void this.threadService.syncCheckoutFromHead(threadId).then((result) => {
+            if (!result?.changed) return;
+            const { thread } = result;
+            this.onThreadCheckoutChanged?.(thread.id);
+            broadcast("thread.checkoutChanged", {
+              threadId: thread.id,
+              workspaceId: thread.workspace_id,
+              branch: thread.branch,
+              checkoutState: thread.checkout_state,
+              baseBranch: thread.base_branch,
+              prNumber: thread.pr_number,
+              prStatus: thread.pr_status,
+            });
+          }).catch((err) => {
+            logger.warn("GitWatcherService: failed to sync thread checkout after HEAD change", {
+              threadId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }, DEBOUNCE_MS);
+      });
+
+      fsWatcher.on("error", (err) => {
+        logger.warn("GitWatcherService: thread watcher error, stopping watch", {
+          threadId,
+          headDir,
+          error: err.message,
+        });
+        this.unwatchThreadWorktree(threadId);
+      });
+    } catch (err) {
+      logger.warn("GitWatcherService: thread fs.watch failed, degrading gracefully", {
+        threadId,
+        headDir,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+
+    this.threadWatchers.set(threadId, { watcher: fsWatcher, timer: null });
+    logger.info("GitWatcherService: watching thread HEAD", { threadId, headDir, headName });
+  }
+
+  /**
    * Attempt to start watching a workspace that was previously detected as non-git.
    * Called on thread.list to catch `git init` within a session.
    * Returns true if the workspace is now a git repo and the watcher was started.
@@ -194,11 +271,32 @@ export class GitWatcherService {
     logger.info("GitWatcherService: stopped watching", { workspaceId });
   }
 
+  /** Stop watching a thread worktree HEAD file. */
+  unwatchThreadWorktree(threadId: string): void {
+    const entry = this.threadWatchers.get(threadId);
+    if (!entry) return;
+
+    if (entry.timer !== null) {
+      clearTimeout(entry.timer);
+    }
+    try {
+      entry.watcher.close();
+    } catch {
+      // Ignore close errors
+    }
+    this.threadWatchers.delete(threadId);
+    logger.info("GitWatcherService: stopped watching thread", { threadId });
+  }
+
   /** Close all active watchers. Called on server shutdown. */
   dispose(): void {
     const ids = [...this.watchers.keys()];
     for (const id of ids) {
       this.unwatchWorkspace(id);
+    }
+    const threadIds = [...this.threadWatchers.keys()];
+    for (const id of threadIds) {
+      this.unwatchThreadWorktree(id);
     }
     logger.info("GitWatcherService: all watchers disposed");
   }

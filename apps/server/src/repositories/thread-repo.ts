@@ -323,6 +323,46 @@ export class ThreadRepo {
     return this.findById(id);
   }
 
+  /**
+   * Persist an externally observed checkout state for a worktree thread.
+   * Clears stale PR metadata only when the branch or checkout discriminator changed.
+   */
+  updateCheckoutFromHead(
+    id: string,
+    branch: string,
+    checkoutState: "named" | "branchless",
+    baseBranch: string | null,
+  ): { thread: Thread; changed: boolean } | null {
+    const current = this.findById(id);
+    if (!current) return null;
+
+    const changed =
+      current.branch !== branch || current.checkout_state !== checkoutState;
+    if (
+      !changed &&
+      current.base_branch === baseBranch
+    ) {
+      return { thread: current, changed: false };
+    }
+
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `UPDATE threads
+         SET branch = ?,
+             checkout_state = ?,
+             base_branch = ?,
+             pr_number = CASE WHEN ? THEN NULL ELSE pr_number END,
+             pr_status = CASE WHEN ? THEN NULL ELSE pr_status END,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(branch, checkoutState, baseBranch, changed ? 1 : 0, changed ? 1 : 0, now, id);
+
+    const thread = this.findById(id);
+    return thread ? { thread, changed } : null;
+  }
+
   /** Soft-delete a thread by setting deleted_at and status to "deleted". */
   softDelete(id: string): boolean {
     const now = new Date().toISOString();

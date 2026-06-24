@@ -265,6 +265,52 @@ export function startPushListeners(): void {
     }),
   );
 
+  // thread.checkoutChanged: thread worktree HEAD changed outside Mcode
+  unsubs.push(
+    pushEmitter.on("thread.checkoutChanged", (data) => {
+      const {
+        threadId,
+        workspaceId,
+        branch,
+        checkoutState,
+        baseBranch,
+        prNumber,
+        prStatus,
+      } = data as {
+        threadId: string;
+        workspaceId: string;
+        branch: string;
+        checkoutState: "named" | "branchless";
+        baseBranch: string | null;
+        prNumber: number | null;
+        prStatus: string | null;
+      };
+      if (!threadId || !workspaceId || !branch) return;
+      useWorkspaceStore.setState((ws) => {
+        const prUrlsByThreadId = { ...ws.prUrlsByThreadId };
+        const checksById = { ...ws.checksById };
+        delete prUrlsByThreadId[threadId];
+        delete checksById[threadId];
+        return {
+          threads: ws.threads.map((t) =>
+            t.id === threadId
+              ? {
+                  ...t,
+                  branch,
+                  checkout_state: checkoutState,
+                  base_branch: baseBranch,
+                  pr_number: prNumber,
+                  pr_status: prStatus,
+                }
+              : t,
+          ),
+          prUrlsByThreadId,
+          checksById,
+        };
+      });
+    }),
+  );
+
   // files.changed: invalidate file autocomplete cache
   unsubs.push(
     pushEmitter.on("files.changed", (data) => {
