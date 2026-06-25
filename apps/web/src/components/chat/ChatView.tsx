@@ -28,6 +28,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { preparingStatusLabel, type WorkspaceThread } from "@/lib/workspace-thread";
 import { useReplyStore } from "@/stores/replyStore";
 import { getTransport } from "@/transport";
+import { useElementWidth } from "@/hooks/useElementWidth";
 import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
@@ -204,6 +205,8 @@ export function ChatView() {
 
   const connectionStatus = useConnectionStore((s) => s.status);
   const sendMessage = useThreadStore((s) => s.sendMessage);
+  const chatPaneRef = useRef<HTMLDivElement>(null);
+  const threadPaneWidth = useElementWidth(chatPaneRef);
   const reserveOverviewSpace = useOverviewStore((s) => s.reserveSpace);
   const overviewPaddingRight = reserveOverviewSpace ? overviewResponsivePaddingRight() : undefined;
 
@@ -443,7 +446,7 @@ export function ChatView() {
   const showEmptyState = !hasMessages && !isAgentRunning;
 
   return (
-    <div className="flex h-full flex-col bg-background" data-testid="chat-view">
+    <div ref={chatPaneRef} className="flex h-full flex-col bg-background" data-testid="chat-view">
       {/* Header */}
       <div className="flex h-11 items-center justify-between border-b border-border pr-4 pl-2">
         <div className="flex items-center gap-2">
@@ -484,7 +487,7 @@ export function ChatView() {
             </Tooltip>
           )}
         </div>
-        <HeaderActions thread={activeThread} />
+        <HeaderActions thread={activeThread} threadPaneWidth={threadPaneWidth} />
       </div>
 
       {/* Interrupted sessions banner — shown after server restart when threads were mid-task */}
@@ -520,6 +523,7 @@ export function ChatView() {
           virtualizer and discard cached row heights. MessageList resets its
           own per-thread state imperatively in a useEffect on activeThreadId. */}
       <div
+        data-testid="chat-message-stage"
         className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200"
         style={{ paddingRight: overviewPaddingRight }}
       >
@@ -543,6 +547,7 @@ export function ChatView() {
 
       {/* Composer area — plan question wizard floats above the composer input */}
       <div
+        data-testid="chat-composer-stage"
         className="relative flex-shrink-0 transition-[padding] duration-200"
         style={{ paddingRight: overviewPaddingRight }}
       >

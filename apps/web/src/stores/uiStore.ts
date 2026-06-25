@@ -12,6 +12,8 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 interface UiState {
   /** Whether the sidebar is collapsed. */
   sidebarCollapsed: boolean;
+  /** Whether the layout guard, not the user, collapsed the sidebar. */
+  sidebarCollapsedByLayout: boolean;
   /**
    * When true the project tree is open as a left-anchored floating panel rather
    * than a docked column (composer-first cramped layouts).
@@ -25,13 +27,17 @@ interface UiState {
    * the panel keeps its stored width, so toggling back restores side-by-side.
    */
   rightPanelMaximized: boolean;
+  /** Whether cramped layout, not the user, maximized the right panel. */
+  rightPanelMaximizedByLayout: boolean;
 
   /** Toggle sidebar collapsed state (expands floating when inline will not fit). */
   toggleSidebar: () => void;
   /** Expand the project tree inline when there is room, otherwise as a float. */
   expandSidebar: () => void;
   /** Collapse the project tree and exit floating mode. */
-  collapseSidebar: () => void;
+  collapseSidebar: (source?: "user" | "layout") => void;
+  /** Restore a sidebar that was collapsed only to protect the layout. */
+  restoreSidebarFromLayoutCollapse: () => void;
   /** Dismiss the floating project tree without changing docked expand state. */
   closeFloatingSidebar: () => void;
   /** Set shortcut help dialog open state. */
@@ -39,7 +45,7 @@ interface UiState {
   /** Toggle the right panel between maximized (full content area) and side-by-side. */
   toggleRightPanelMaximized: () => void;
   /** Set the right panel maximized state explicitly. */
-  setRightPanelMaximized: (maximized: boolean) => void;
+  setRightPanelMaximized: (maximized: boolean, source?: "user" | "layout") => void;
 }
 
 /** Minimum content-row width needed given the current right-panel visibility. */
@@ -60,9 +66,11 @@ function contentNeedForSidebarDock(rightPanelMaximized: boolean): number {
 /** Zustand store for global UI toggle state. Command palette state lives in commandPaletteStore. */
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarCollapsed: false,
+  sidebarCollapsedByLayout: false,
   sidebarFloating: false,
   shortcutHelpOpen: false,
   rightPanelMaximized: false,
+  rightPanelMaximizedByLayout: false,
 
   toggleSidebar: () => {
     if (get().sidebarCollapsed) get().expandSidebar();
@@ -73,14 +81,30 @@ export const useUiStore = create<UiState>((set, get) => ({
     const inline =
       canFitInlineSidebar(getOuterRowWidth(), contentNeed) &&
       getContentRowWidth() >= contentNeed;
-    set({ sidebarCollapsed: false, sidebarFloating: !inline });
+    set({ sidebarCollapsed: false, sidebarCollapsedByLayout: false, sidebarFloating: !inline });
   },
-  collapseSidebar: () => set({ sidebarCollapsed: true, sidebarFloating: false }),
-  closeFloatingSidebar: () => set({ sidebarFloating: false, sidebarCollapsed: true }),
+  collapseSidebar: (source = "user") =>
+    set({
+      sidebarCollapsed: true,
+      sidebarCollapsedByLayout: source === "layout",
+      sidebarFloating: false,
+    }),
+  restoreSidebarFromLayoutCollapse: () => {
+    if (!get().sidebarCollapsedByLayout) return;
+    set({ sidebarCollapsed: false, sidebarCollapsedByLayout: false, sidebarFloating: false });
+  },
+  closeFloatingSidebar: () =>
+    set({ sidebarFloating: false, sidebarCollapsed: true, sidebarCollapsedByLayout: false }),
   setShortcutHelpOpen: (open) =>
     set({ shortcutHelpOpen: open }),
   toggleRightPanelMaximized: () =>
-    set((s) => ({ rightPanelMaximized: !s.rightPanelMaximized })),
-  setRightPanelMaximized: (maximized) =>
-    set({ rightPanelMaximized: maximized }),
+    set((s) => ({
+      rightPanelMaximized: !s.rightPanelMaximized,
+      rightPanelMaximizedByLayout: false,
+    })),
+  setRightPanelMaximized: (maximized, source = "user") =>
+    set({
+      rightPanelMaximized: maximized,
+      rightPanelMaximizedByLayout: maximized && source === "layout",
+    }),
 }));

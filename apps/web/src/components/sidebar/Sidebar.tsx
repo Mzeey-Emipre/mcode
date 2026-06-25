@@ -63,7 +63,7 @@ export function Sidebar({
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={collapseSidebar}
+              onClick={() => collapseSidebar()}
               aria-label="Collapse sidebar"
               className="text-muted-foreground"
             >

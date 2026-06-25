@@ -92,6 +92,8 @@ export interface SelectedFile {
 export type RightPanelState = {
   readonly visible: boolean;
   readonly width: number;
+  /** Whether width came from adaptive auto-open sizing or an explicit user resize. */
+  readonly widthSource?: "auto" | "user";
   /**
    * The singleton tab types the user has opened, in open order. Empty means no
    * tab is open and the panel shows the card-grid empty state (ADR-0004). Tab
@@ -112,6 +114,7 @@ export function createDefaultRightPanelState(): RightPanelState {
   return {
     visible: false,
     width: getDefaultPanelWidthPx(),
+    widthSource: "auto",
     openTabs: [],
     activeTab: "tasks",
   };
@@ -225,6 +228,7 @@ function setPanelVisible(
 export const RIGHT_PANEL_DEFAULTS: RightPanelState = {
   visible: false,
   width: PANEL_DEFAULT_WIDTH,
+  widthSource: "auto",
   openTabs: [],
   activeTab: "tasks",
 } as const;
@@ -369,7 +373,12 @@ interface DiffState {
   showRightPanel: (workspaceId: string, threadId?: string | null) => void;
   /** Close the panel for a thread (per-thread) or the threadless shell (workspace). */
   hideRightPanel: (workspaceId: string, threadId?: string | null) => void;
-  setRightPanelWidth: (workspaceId: string, threadId: string | null | undefined, width: number) => void;
+  setRightPanelWidth: (
+    workspaceId: string,
+    threadId: string | null | undefined,
+    width: number,
+    source?: "auto" | "user" | "preserve",
+  ) => void;
   setRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
   /**
    * Close (remove) a singleton tab from the open set. When the closed tab was
@@ -488,12 +497,13 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   hideRightPanel: (workspaceId, threadId) =>
     set((state) => setPanelVisible(state, workspaceId, threadId, false)),
 
-  setRightPanelWidth: (workspaceId, threadId, width) =>
+  setRightPanelWidth: (workspaceId, threadId, width, source = "user") =>
     set((state) => {
       const current = effectiveRightPanel(state, workspaceId, threadId);
       return writeRightPanel(state, workspaceId, threadId, {
         ...current,
         width: clampWidth(width),
+        widthSource: source === "preserve" ? current.widthSource : source,
       });
     }),
 

@@ -13,13 +13,15 @@ import type { Thread } from "@/transport";
 /** Props for {@link HeaderActions}. */
 interface HeaderActionsProps {
   thread: Thread;
+  /** Current width of the chat pane that owns the composer and thread timeline. */
+  threadPaneWidth: number;
 }
 
 /**
  * Renders the chat-header action strip: open-in, thread Overview, and the
  * workspace-global right-panel toggle.
  */
-export function HeaderActions({ thread }: HeaderActionsProps) {
+export function HeaderActions({ thread, threadPaneWidth }: HeaderActionsProps) {
   const workspacePath = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === thread.workspace_id)?.path ?? null,
   );
@@ -54,7 +56,7 @@ export function HeaderActions({ thread }: HeaderActionsProps) {
 
       <span className="mx-0.5 h-5 w-px bg-border" aria-hidden />
 
-      <ThreadOverview thread={thread} />
+      <ThreadOverview thread={thread} threadPaneWidth={threadPaneWidth} />
 
       {/* Dedicated right-panel toggle for the workspace-global panel. */}
       <Tooltip>
