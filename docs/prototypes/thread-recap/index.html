@@ -632,7 +632,7 @@ const DETAIL = {
   row: {
     title: "Recap row",
     meta: "display only",
-    body: "The row shows a short line for what the active thread is doing. There is no regenerate button in this epic. The trigger is automatic and cost-gated."
+    body: "The row shows a short line for what the active thread is doing. It includes a small manual refresh action, and automatic generation stays tied to stale-thread return."
   },
   messages: {
     title: "Thread messages",
@@ -652,12 +652,12 @@ const DETAIL = {
   hook: {
     title: "useThreadRecap",
     meta: "client hook · all scheduling",
-    body: "The hook owns the panel gate, idle debounce, signature check, in-flight guard, failure guard, and delta assembly. Keeping this logic on the client avoids model calls for panels the user never opens."
+    body: "The hook owns manual refresh, stale-return auto generation, signature checks for auto calls, in-flight guard, failure guard, and delta assembly. Keeping this logic on the client avoids model calls for threads the user never revisits."
   },
   gates: {
     title: "Schedule?",
     meta: "token guard",
-    body: "The hook schedules auto recap only when the user returns to a stale thread, the thread is idle, the signature changed, and no matching request is already in flight or recently failed."
+    body: "The hook schedules auto recap only when the user returns to a stale thread, the thread is idle, the signature changed, and no matching request is already in flight or recently failed. Manual refresh bypasses the signature cache gate."
   },
   delta: {
     title: "Bounded delta",
@@ -667,7 +667,7 @@ const DETAIL = {
   blocked: {
     title: "No call",
     meta: "intentional outcome",
-    body: "Closed panel, mid-turn activity, unchanged signature, in-flight work, or a repeated failed signature all stop generation. This is the feature's main cost-control behavior."
+    body: "Mid-turn activity, in-flight work, or a repeated failed signature stop generation. For auto recap, unchanged signature also stops generation. Manual refresh can still request a fresh line for the same signature."
   },
   transport: {
     title: "Transport wrapper",
@@ -677,7 +677,7 @@ const DETAIL = {
   contract: {
     title: "WS_METHODS",
     meta: "packages/contracts",
-    body: "<code>recap.generate</code> takes <code>threadId</code> for telemetry, bounded <code>messages</code>, and <code>previousRecap</code>. It returns <code>{ text }</code>."
+    body: "<code>recap.generate</code> takes <code>threadId</code> for telemetry, <code>messages</code>, and <code>previousRecap</code>. The server validates bounds before prompt assembly and returns <code>{ text }</code>."
   },
   router: {
     title: "ws-router",
@@ -724,7 +724,7 @@ const FLOWS = {
     edges: ["e-messages", "e-gate", "e-assemble", "e-call", "e-contract", "e-router", "e-service", "e-result", "e-store", "e-render"],
     steps: [
       "The user clicks the row refresh action.",
-      "Manual refresh bypasses the five-minute stale-time threshold.",
+      "Manual refresh bypasses the five-minute stale-time threshold and same-signature cache reuse.",
       "It sends only the delta since <code>coveredMessageId</code> plus the previous recap.",
       "If nothing material changed, the model may return the previous recap unchanged.",
       "The cache advances to the latest covered message id."
@@ -751,7 +751,7 @@ const FLOWS = {
     steps: [
       "Panel closed means no generation, even if the thread changes.",
       "Mid-turn or streaming activity blocks generation until the thread is idle.",
-      "Matching cached, in-flight, or last-failed signatures also stop generation.",
+      "Matching cached or last-failed signatures stop auto generation. In-flight requests stop both auto and manual generation.",
       "Each stop saves a utility-model call."
     ]
   },

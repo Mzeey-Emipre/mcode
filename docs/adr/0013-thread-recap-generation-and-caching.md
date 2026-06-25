@@ -40,6 +40,11 @@ The server **stores nothing**: no `recaps` table, no migration, no thread-row
 field. This is the deliberate divergence from the diff [[Summary]], which does
 persist server-side.
 
+The RPC treats its payload as untrusted input. Even though the client selects
+bounded material, the server validates message count, per-message content
+length, `previousRecap` length, and total prompt material before prompt assembly,
+then rejects oversized requests early.
+
 **Caching - in memory, per thread, client-side.** The client store keeps a
 `recapByThread` map of `{ text, signature, coveredMessageId }`, held for the
 session and **not persisted**. `clearThread` drops the entry. On restart the map
@@ -55,8 +60,9 @@ all of it; generation is never wired into the transcript render or turn-event
 hot path:
 
 - **Manual request.** The Recap row offers a small refresh action. User intent is
-  enough to spend one bounded utility-model call, still subject to in-flight and
-  same-signature dedupe.
+  enough to spend one bounded utility-model call. Manual recap bypasses the
+  same-signature cache gate so the row can recover from a wrong recap, but still
+  dedupes in-flight requests.
 - **Auto on re-orientation.** Automatic generation can run only when the user
   returns to a stale thread: app focus returns, the active thread switches back
   to this thread, or the user opens the [[Overview]].
@@ -66,11 +72,11 @@ hot path:
 - **Minimum substance.** Auto recap waits until the thread has enough
   user/assistant conversation to summarize, modelled on Claude Code's
   "at least three turns" rule.
-- **Signature staleness.** A cheap hash of `[last message id, role, length, turn
-  state, pending flags]` gates the call; it is skipped when the signature matches
-  the cached, in-flight, or last-failed value. Only **user and assistant**
-  messages advance the signature - tool and work-log noise do not trigger a
-  regenerate by themselves.
+- **Auto signature staleness.** A cheap hash of `[last message id, role, length,
+  turn state, pending flags]` gates automatic generation; auto generation is
+  skipped when the signature matches the cached, in-flight, or last-failed
+  value. Only **user and assistant** messages advance the signature - tool and
+  work-log noise do not trigger a regenerate by themselves.
 - **Automatic-call cap.** Auto recap is capped per thread and signature in the
   current app session, with a cooldown before another auto generation can run.
   Manual recap remains available when the user decides the cost is worth it.
@@ -110,16 +116,17 @@ hot path:
 ## Consequences
 
 - A new **stateless** `recap.generate`-style RPC takes bounded material plus the
-  previous recap and returns text via `UtilityCompletionService`. The RPC
-  contract and the client store shape are the costly-to-reverse part of this
-  decision.
+  previous recap and returns text via `UtilityCompletionService`. The server
+  revalidates bounds before prompt assembly. The RPC contract and the client
+  store shape are the costly-to-reverse part of this decision.
 - The client store gains an in-memory `recapByThread` map (`text`, `signature`,
   `coveredMessageId`), not persisted, dropped by `clearThread` - mirroring the
   ADR-0011 / ADR-0012 cleanup discipline.
 - A client hook (mirroring Synara's `useThreadRecap`) owns the manual trigger,
-  stale-thread re-orientation trigger, signature staleness, auto-call cap, and
-  delta assembly. It must stay out of the transcript render and turn-event hot
-  paths.
+  stale-thread re-orientation trigger, auto signature staleness, auto-call cap,
+  and delta assembly. Manual refresh bypasses the same-signature cache gate but
+  not in-flight dedupe. The hook must stay out of the transcript render and
+  turn-event hot paths.
 - The recap reuses the diff summary's `UtilityCompletionService` call path but
   **not** its storage - a deliberate split: two AI-text features cache at
   different tiers because one is a durable record and the other is ephemeral UI.
