@@ -10,6 +10,7 @@ import { getTransportPayloadValidator } from "./payload-validation.js";
 
 const clients = new Set<WebSocket>();
 const threadSubscriptions = new Map<WebSocket, Set<string>>();
+const SUBSCRIPTION_SCOPED_CHANNELS = new Set<WsChannelName>(["agent.event"]);
 
 let _sessionCount = 0;
 const sessionChangeListeners: ((count: number) => void)[] = [];
@@ -117,10 +118,17 @@ export function broadcast(
     data: validation.data,
   });
   const threadId = payloadThreadId(validation.data);
+  const requiresThreadSubscription = SUBSCRIPTION_SCOPED_CHANNELS.has(channel);
 
   for (const ws of clients) {
     if (ws.readyState === ws.OPEN) {
-      if (threadId && !threadSubscriptions.get(ws)?.has(threadId)) continue;
+      if (
+        requiresThreadSubscription &&
+        threadId &&
+        !threadSubscriptions.get(ws)?.has(threadId)
+      ) {
+        continue;
+      }
       ws.send(payload);
     }
   }

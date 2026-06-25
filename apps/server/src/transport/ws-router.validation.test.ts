@@ -1,10 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WebSocket } from "ws";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
+import { _resetForTest, addClient } from "./push.js";
 import {
   resetTransportPayloadValidatorForTest,
   setTransportPayloadValidatorForTest,
   type TransportPayloadValidator,
 } from "./payload-validation.js";
+
+function fakeOpenSocket(received: Array<{ buf: Buffer; binary: boolean }>): WebSocket {
+  const ws: Partial<WebSocket> = {
+    readyState: 1,
+    OPEN: 1,
+    send: ((data: unknown, opts?: { binary?: boolean }) => {
+      const buf = Buffer.isBuffer(data)
+        ? data
+        : Buffer.from(data as Uint8Array);
+      received.push({ buf, binary: !!opts?.binary });
+    }) as WebSocket["send"],
+  };
+  return ws as WebSocket;
+}
 
 describe("routeMessage result validation seam", () => {
   afterEach(() => {
@@ -117,11 +133,27 @@ describe("routeMessage git.getRemoteUrl", () => {
 });
 
 describe("routeMessage git.createBranch", () => {
-  it("delegates branch creation and checkout-state persistence to ThreadService", async () => {
+  afterEach(() => {
+    _resetForTest();
+  });
+
+  it("delegates branch creation, then broadcasts the persisted checkout state", async () => {
+    const received: Array<{ buf: Buffer; binary: boolean }> = [];
+    addClient(fakeOpenSocket(received));
     const createBranchForThread = vi.fn().mockResolvedValue("feat/from-thread");
+    const findById = vi.fn().mockReturnValue({
+      id: "thread-1",
+      workspace_id: "ws-1",
+      branch: "feat/from-thread",
+      checkout_state: "named",
+      base_branch: null,
+      pr_number: null,
+      pr_status: null,
+    });
     const deps = {
       threadService: {
         createBranchForThread,
+        findById,
       },
     } as unknown as RouterDeps;
 
@@ -140,6 +172,19 @@ describe("routeMessage git.createBranch", () => {
       "thread-1",
       "feat/from-thread",
     );
+    expect(findById).toHaveBeenCalledWith("thread-1");
+    expect(JSON.parse(received[0].buf.toString("utf-8"))).toMatchObject({
+      channel: "thread.checkoutChanged",
+      data: {
+        threadId: "thread-1",
+        workspaceId: "ws-1",
+        branch: "feat/from-thread",
+        checkoutState: "named",
+        baseBranch: null,
+        prNumber: null,
+        prStatus: null,
+      },
+    });
   });
 
   it("returns an error when the new branch cannot be attached to the thread", async () => {
