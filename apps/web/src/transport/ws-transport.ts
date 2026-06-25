@@ -836,6 +836,8 @@ export function createWsTransport(
         model: string;
         createdAt: string;
       }>("diffSummary.generate", { threadId }),
+    generateRecap: (threadId, messages, previousRecap) =>
+      rpc<{ text: string }>("recap.generate", { threadId, messages, previousRecap }),
 
     readLatestHandoff: (threadId: string) =>
       rpc<{

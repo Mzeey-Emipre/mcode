@@ -88,14 +88,29 @@ const assistantMessage = {
   sequence: 2,
 };
 
+const followUpMessage = {
+  ...baseMsg,
+  id: "user-follow-up-demo",
+  role: "user" as const,
+  content: "Great, show that in the Overview too.",
+  sequence: 3,
+};
+
 test.use({ viewport: { width: 1920, height: 1080 } });
 
 test("Overview sources + humanized links demo", async ({ page }) => {
+  const recapText =
+    "Checking SVG alternatives and wiring the Overview surface so the team can compare options without reopening the transcript.";
+  let resolveRecap!: (value: { text: string }) => void;
+  const recapResult = new Promise<{ text: string }>((resolve) => {
+    resolveRecap = resolve;
+  });
+
   await mockWebSocketServer(page, {
     "workspace.list": [workspace],
     "thread.list": [thread],
     "conversation.page": {
-      messages: [userMessage, assistantMessage],
+      messages: [userMessage, assistantMessage, followUpMessage],
       hasMore: false,
       answeredPlanMessageIds: [],
       narrativeByMessage: {},
@@ -115,6 +130,7 @@ test("Overview sources + humanized links demo", async ({ page }) => {
       webUrl: "https://github.com/milex-consulting/CaravanFE",
     },
     "git.workingTreeFiles": [],
+    "recap.generate": () => recapResult,
   });
 
   await page.addInitScript((wsId: string) => {
@@ -130,10 +146,37 @@ test("Overview sources + humanized links demo", async ({ page }) => {
   await expect(page.getByTestId("markdown-link-file-icon")).toBeVisible();
   await page.screenshot({ path: "e2e/screenshots/demo/transcript-humanized-links.png", fullPage: false });
 
-  // Wide viewport: the Overview opens by default and shows repo + Sources.
+  // Wide viewport: the Overview opens by default and shows repo, Sources, and the closing Recap.
   await expect(page.getByTestId("thread-overview-body")).toBeVisible();
+  await expect(page.getByTestId("thread-overview-recap")).toBeVisible();
+  await expect(page.getByTestId("thread-overview-recap-skeleton")).toBeVisible();
+  await expect(page.getByTestId("thread-overview-recap-refresh")).toBeDisabled();
+  const refreshIconClass = await page
+    .getByTestId("thread-overview-recap-refresh")
+    .locator("svg")
+    .getAttribute("class");
+  expect(refreshIconClass ?? "").not.toContain("animate-spin");
+  await page.screenshot({ path: "e2e/screenshots/demo/overview-recap-skeleton.png", fullPage: false });
+  resolveRecap({ text: recapText });
+  await expect(page.getByTestId("thread-overview-recap-text")).toContainText("Checking SVG alternatives");
+  await expect(page.getByTestId("thread-overview-recap-skeleton")).toHaveCount(0);
+  const recapTextStyles = await page.getByTestId("thread-overview-recap-text").evaluate((node) => {
+    const styles = window.getComputedStyle(node);
+    return {
+      textOverflow: styles.textOverflow,
+      whiteSpace: styles.whiteSpace,
+    };
+  });
+  expect(recapTextStyles).toEqual({ textOverflow: "clip", whiteSpace: "normal" });
   await expect(page.getByTestId("thread-overview-repository")).toBeVisible();
   await expect(page.getByTestId("thread-overview-sources")).toBeVisible();
+  const recapFollowsSources = await page.evaluate(() => {
+    const sources = document.querySelector('[data-testid="thread-overview-sources"]');
+    const recap = document.querySelector('[data-testid="thread-overview-recap"]');
+    if (!sources || !recap) return false;
+    return Boolean(sources.compareDocumentPosition(recap) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(recapFollowsSources).toBe(true);
   const sourceCount = await page.getByTestId("thread-overview-source").count();
   expect(sourceCount).toBeGreaterThanOrEqual(5);
   await page.screenshot({ path: "e2e/screenshots/demo/overview-auto-open-sources.png", fullPage: false });
