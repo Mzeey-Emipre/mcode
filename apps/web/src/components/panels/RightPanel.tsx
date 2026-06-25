@@ -205,7 +205,9 @@ export function RightPanel() {
 
     const clampToSplit = () => {
       const max = maxPanelWidthInSplit(split.clientWidth);
-      if (panelWidthRef.current > max) setRightPanelWidth(activeWorkspaceId, activeThreadId, max);
+      if (panelWidthRef.current > max) {
+        setRightPanelWidth(activeWorkspaceId, activeThreadId, max, "preserve");
+      }
     };
 
     clampToSplit();
@@ -240,6 +242,7 @@ export function RightPanel() {
           activeWorkspaceId!,
           activeThreadId,
           Math.max(PANEL_MIN_WIDTH, Math.min(startWidth + delta, maxWidth)),
+          "user",
         );
       };
 
@@ -278,6 +281,7 @@ export function RightPanel() {
   return (
     <div
       ref={panelRootRef}
+      data-testid="right-panel"
       style={
         !panelVisible
           ? {
@@ -328,7 +332,7 @@ export function RightPanel() {
             panelWidth >= PANEL_WIDE_WIDTH
               ? narrow
               : Math.min(PANEL_WIDE_WIDTH, maxWidth);
-          setRightPanelWidth(activeWorkspaceId!, activeThreadId, Math.max(PANEL_MIN_WIDTH, target));
+          setRightPanelWidth(activeWorkspaceId!, activeThreadId, Math.max(PANEL_MIN_WIDTH, target), "user");
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -339,7 +343,7 @@ export function RightPanel() {
               panelWidth >= PANEL_WIDE_WIDTH
                 ? narrow
                 : Math.min(PANEL_WIDE_WIDTH, maxWidth);
-            setRightPanelWidth(activeWorkspaceId!, activeThreadId, Math.max(PANEL_MIN_WIDTH, target));
+            setRightPanelWidth(activeWorkspaceId!, activeThreadId, Math.max(PANEL_MIN_WIDTH, target), "user");
           }
         }}
       >

@@ -1,4 +1,4 @@
-import { getDefaultPanelWidthPx, useDiffStore } from "@/stores/diffStore";
+import { useDiffStore } from "@/stores/diffStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
@@ -8,14 +8,18 @@ import {
 } from "@/lib/composer-layout";
 
 /**
- * On first open, size the panel to ~half the content row instead of the fixed
- * default. Only applies while the scope still carries the built-in default
- * width, so a width the user has dragged is never overridden.
+ * On auto-owned opens, size the panel to ~half the current content row. A width
+ * the user dragged is marked user-owned and is never overridden here.
  */
 function applyHalfWidthIfUntouched(workspaceId: string, threadId?: string | null): void {
   const diff = useDiffStore.getState();
-  if (diff.getRightPanel(workspaceId, threadId).width !== getDefaultPanelWidthPx()) return;
-  diff.setRightPanelWidth(workspaceId, threadId, preferredSplitPanelWidth(getContentRowWidth()));
+  if (diff.getRightPanel(workspaceId, threadId).widthSource === "user") return;
+  diff.setRightPanelWidth(
+    workspaceId,
+    threadId,
+    preferredSplitPanelWidth(getContentRowWidth()),
+    "auto",
+  );
 }
 
 /**
@@ -30,7 +34,7 @@ export function applyMaximizeIfCramped(
 ): void {
   const panelWidth = useDiffStore.getState().getRightPanel(workspaceId, threadId).width;
   if (canFitSideBySidePanel(getContentRowWidth(), panelWidth)) return;
-  useUiStore.getState().setRightPanelMaximized(true);
+  useUiStore.getState().setRightPanelMaximized(true, "layout");
 }
 
 /**

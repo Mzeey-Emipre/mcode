@@ -9,7 +9,6 @@ import {
   minOuterWidthForInlineSidebar,
   setLayoutMeasurements,
 } from "@/lib/composer-layout";
-import { hideRightPanelAdaptive } from "@/lib/right-panel-layout";
 
 /** Inputs that affect composer-first layout enforcement. */
 export interface ComposerLayoutGuardOptions {
@@ -32,6 +31,7 @@ export function useComposerLayoutGuard(
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const sidebarFloating = useUiStore((s) => s.sidebarFloating);
   const rightPanelMaximized = useUiStore((s) => s.rightPanelMaximized);
+  const rightPanelMaximizedByLayout = useUiStore((s) => s.rightPanelMaximizedByLayout);
 
   useEffect(() => {
     if (opts.settingsOpen || opts.showLanding || !opts.activeWorkspaceId) return;
@@ -55,19 +55,39 @@ export function useComposerLayoutGuard(
       const panelInline = panelVisible && !ui.rightPanelMaximized;
       const sidebarDocked = !ui.sidebarCollapsed && !ui.sidebarFloating;
 
+      if (
+        panelVisible &&
+        ui.rightPanelMaximized &&
+        ui.rightPanelMaximizedByLayout &&
+        canFitSideBySidePanel(contentWidth, panelWidth)
+      ) {
+        ui.setRightPanelMaximized(false);
+        return;
+      }
+
+      if (ui.sidebarCollapsedByLayout) {
+        const contentNeed = panelInline
+          ? minContentWidthForSideBySidePanel(panelWidth)
+          : COMPOSER_MIN_WIDTH;
+        if (canFitInlineSidebar(outerWidth, contentNeed) && contentWidth >= contentNeed) {
+          ui.restoreSidebarFromLayoutCollapse();
+          return;
+        }
+      }
+
       if (panelInline && sidebarDocked) {
         const needAll = minOuterWidthForInlineSidebar(
           minContentWidthForSideBySidePanel(panelWidth),
         );
         if (outerWidth < needAll) {
-          hideRightPanelAdaptive(activeWorkspaceId, activeThreadId);
-          ui.collapseSidebar();
+          ui.setRightPanelMaximized(true, "layout");
+          ui.collapseSidebar("layout");
           return;
         }
       }
 
       if (panelInline && !canFitSideBySidePanel(contentWidth, panelWidth)) {
-        hideRightPanelAdaptive(activeWorkspaceId, activeThreadId);
+        ui.setRightPanelMaximized(true, "layout");
         return;
       }
 
@@ -78,7 +98,7 @@ export function useComposerLayoutGuard(
         : COMPOSER_MIN_WIDTH;
 
       if (contentWidth < contentNeed || !canFitInlineSidebar(outerWidth, contentNeed)) {
-        ui.collapseSidebar();
+        ui.collapseSidebar("layout");
       }
     };
 
@@ -110,5 +130,6 @@ export function useComposerLayoutGuard(
     sidebarCollapsed,
     sidebarFloating,
     rightPanelMaximized,
+    rightPanelMaximizedByLayout,
   ]);
 }
