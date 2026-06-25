@@ -35,14 +35,14 @@ export function buildThreadRecapPrompt(
     .join("\n\n");
 
   return `<role>
-You write a one-line recap of what the user is working on in this conversation.
+You write a short recap of what the user is working on in this conversation.
 </role>
 
 <rules>
 - Use only the previous recap and messages below
 - Summarize current conversational intent, not code diffs
 - Prefer concrete nouns and verbs from the conversation
-- Return one plain sentence
+- Return one to three plain sentences
 - No markdown, bullets, quotes, prefixes, or labels
 - Stay under ${THREAD_RECAP_OUTPUT_CHARS} characters
 </rules>

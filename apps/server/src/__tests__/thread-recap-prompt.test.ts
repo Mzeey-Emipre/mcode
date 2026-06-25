@@ -37,6 +37,16 @@ describe("buildThreadRecapPrompt", () => {
     expect(prompt).toContain("No previous recap.");
   });
 
+  it("allows short recap output to use up to three sentences", () => {
+    const prompt = buildThreadRecapPrompt(
+      [{ role: "user", content: "Continue the recap RPC." }],
+      null,
+    );
+
+    expect(prompt).toContain("Return one to three plain sentences");
+    expect(prompt).not.toContain("Return one plain sentence");
+  });
+
   it("escapes caller-controlled tags in messages and previous recap", () => {
     const prompt = buildThreadRecapPrompt(
       [
