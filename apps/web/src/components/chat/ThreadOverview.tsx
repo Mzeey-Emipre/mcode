@@ -43,10 +43,9 @@ import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useLayoutStore } from "@/stores/layoutStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
-import { getContentRowWidth, shouldAutoOpenOverview } from "@/lib/composer-layout";
+import { shouldAutoOpenOverview } from "@/lib/composer-layout";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
 import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
@@ -75,6 +74,8 @@ export type ThreadOverviewCiDot = "red" | "green" | null;
 /** Props for {@link ThreadOverview}. */
 interface ThreadOverviewProps {
   thread: Thread;
+  /** Width of the chat pane that contains this thread's timeline and composer. */
+  threadPaneWidth: number;
 }
 
 type SnapshotDiffStat = { filePath: string; additions: number; deletions: number };
@@ -1259,7 +1260,7 @@ function CreateThreadBranchDialog({
  * It replaces the old workspace dropdown with status rows tied to the active
  * thread: changed files, PR actions, and the thread's worktree mode.
  */
-export function ThreadOverview({ thread }: ThreadOverviewProps) {
+export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps) {
   const [localOpen, setLocalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
   const [createBranchOpen, setCreateBranchOpen] = useState(false);
@@ -1282,8 +1283,6 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
   // when the right panel or a narrow viewport leaves none, until the user takes
   // manual control of it for this thread.
   const panelVisible = useDiffStore((s) => s.getRightPanelVisible(thread.workspace_id, thread.id));
-  const panelWidth = useDiffStore((s) => s.getRightPanel(thread.workspace_id, thread.id).width);
-  const measuredContentRowWidth = useLayoutStore((s) => s.contentRowWidth);
   const [open, setOpen] = useState(false);
   const autoManagedRef = useRef(true);
   const lastAutoValueRef = useRef<boolean | null>(null);
@@ -1298,17 +1297,15 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     setCreateBranchOpen(false);
   }, [thread.id]);
 
-  // Whether there is room for the Overview to open by default. Driven by the
-  // reactive content-row width so it tracks resizes and panel changes without
-  // racing the layout guard's measurement.
+  // Whether there is room for the Overview to open by default. The chat pane
+  // width, not the surrounding split row, is the signal that matches what the
+  // user sees when the right panel opens.
   const hasRoom = useMemo(
     () =>
       shouldAutoOpenOverview({
-        contentRowWidth: measuredContentRowWidth || getContentRowWidth(),
-        rightPanelVisible: panelVisible,
-        rightPanelWidth: panelWidth,
+        threadPaneWidth,
       }),
-    [measuredContentRowWidth, panelVisible, panelWidth],
+    [threadPaneWidth],
   );
 
   // The Overview opens by default when there is room and steps aside when a
@@ -1332,13 +1329,19 @@ export function ThreadOverview({ thread }: ThreadOverviewProps) {
     setOpen(next);
   }, []);
 
-  // Reserve room on the right only when open AND there's space (wide view); on a
-  // small view the popover floats over the chat instead of squeezing it.
+  useEffect(() => {
+    if (!panelVisible || hasRoom || !open) return;
+
+    lastAutoValueRef.current = false;
+    autoManagedRef.current = true;
+    setOpen(false);
+  }, [hasRoom, open, panelVisible]);
+
   const setReserveSpace = useOverviewStore((s) => s.setReserveSpace);
   useEffect(() => {
-    setReserveSpace(open && hasRoom);
+    setReserveSpace(open && hasRoom && !panelVisible);
     return () => setReserveSpace(false);
-  }, [open, hasRoom, setReserveSpace]);
+  }, [hasRoom, open, panelVisible, setReserveSpace]);
 
   const {
     prable,

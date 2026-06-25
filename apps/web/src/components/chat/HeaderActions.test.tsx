@@ -216,6 +216,10 @@ function defaultWorkspaceState() {
   };
 }
 
+function renderHeaderActions(thread: Thread = makeThread()) {
+  return render(<HeaderActions thread={thread} threadPaneWidth={1400} />);
+}
+
 describe("HeaderActions - Create PR menu item", () => {
   beforeEach(() => {
     useThreadStore.setState({ records: new Map() });
@@ -229,7 +233,7 @@ describe("HeaderActions - Create PR menu item", () => {
 
   it("offers Create PR in the consolidated menu on a worktree thread", () => {
     mockUseHasCommitsAhead.mockReturnValue(true);
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     const item = screen.getByTestId("workspace-menu-create-pr");
     expect(item).toBeInTheDocument();
     expect(item).not.toBeDisabled();
@@ -237,7 +241,7 @@ describe("HeaderActions - Create PR menu item", () => {
 
   it("shows Commit or push instead of Create PR when no commits ahead of base", () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     expect(screen.getByTestId("workspace-menu-commit")).toBeInTheDocument();
     expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-pr-status")).not.toBeInTheDocument();
@@ -245,32 +249,32 @@ describe("HeaderActions - Create PR menu item", () => {
 
   it("disables Create PR while loading (null)", () => {
     mockUseHasCommitsAhead.mockReturnValue(null);
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     expect(screen.getByTestId("workspace-menu-create-pr")).toBeDisabled();
   });
 
   it("enables Create PR when commits exist ahead", () => {
     mockUseHasCommitsAhead.mockReturnValue(true);
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     expect(screen.getByTestId("workspace-menu-create-pr")).not.toBeDisabled();
   });
 
   it("offers Create PR on a named worktree thread regardless of branch name", () => {
     mockUseHasCommitsAhead.mockReturnValue(true);
-    render(<HeaderActions thread={makeThread({ branch: "main" })} />);
+    renderHeaderActions(makeThread({ branch: "main" }));
     expect(screen.getByTestId("workspace-menu-create-pr")).toBeInTheDocument();
   });
 
   it("hides Create PR and shows View PR when a PR already exists", () => {
     mockUseBranchPr.mockReturnValue({ number: 42, state: "OPEN", url: "https://github.com/test/pr/42" });
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     expect(screen.queryByTestId("workspace-menu-create-pr")).not.toBeInTheDocument();
     expect(screen.getByTestId("workspace-menu-open-pr")).toHaveTextContent("PR #42");
   });
 
   it("explains commit-or-push when no commits are ahead", () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     expect(screen.getByTestId("workspace-menu-commit")).toHaveAttribute(
       "title",
       expect.stringContaining("commit and push"),
@@ -279,7 +283,7 @@ describe("HeaderActions - Create PR menu item", () => {
 
   it("shows a loading title while commits-ahead state is unknown", () => {
     mockUseHasCommitsAhead.mockReturnValue(null);
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     expect(screen.getByTestId("workspace-menu-create-pr")).toHaveAttribute(
       "title",
       expect.stringContaining("Waiting for commits"),
@@ -298,40 +302,40 @@ describe("HeaderActions - PR-ability gating by mode", () => {
   });
 
   it("does not show the Create PR button for a direct-mode thread", () => {
-    render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
+    renderHeaderActions(makeThread({ mode: "direct" }));
     expect(screen.queryByRole("button", { name: /create pr/i })).not.toBeInTheDocument();
   });
 
   it("does not mount the create-PR dialog for a direct-mode thread", () => {
-    render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
+    renderHeaderActions(makeThread({ mode: "direct" }));
     expect(screen.queryByTestId("create-pr-dialog")).not.toBeInTheDocument();
   });
 
   it("mounts the create-PR dialog for a worktree thread", () => {
-    render(<HeaderActions thread={makeThread({ mode: "worktree" })} />);
+    renderHeaderActions(makeThread({ mode: "worktree" }));
     expect(screen.getByTestId("create-pr-dialog")).toBeInTheDocument();
   });
 
   it("does not mount the create-PR dialog for a branchless worktree thread", () => {
-    render(<HeaderActions thread={makeThread({ checkout_state: "branchless", base_branch: "main" })} />);
+    renderHeaderActions(makeThread({ checkout_state: "branchless", base_branch: "main" }));
     expect(screen.queryByTestId("create-pr-dialog")).not.toBeInTheDocument();
   });
 
   it("skips PR polling for a direct-mode thread", () => {
-    render(<HeaderActions thread={makeThread({ mode: "direct", branch: "feat/x" })} />);
+    renderHeaderActions(makeThread({ mode: "direct", branch: "feat/x" }));
     // Non-PR-able threads must not poll GitHub: both hooks receive null inputs.
     expect(mockUseBranchPr).toHaveBeenCalledWith(null, expect.anything());
     expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("", null, undefined);
   });
 
   it("polls GitHub for a worktree thread", () => {
-    render(<HeaderActions thread={makeThread({ mode: "worktree", branch: "feat/x" })} />);
+    renderHeaderActions(makeThread({ mode: "worktree", branch: "feat/x" }));
     expect(mockUseBranchPr).toHaveBeenCalledWith("feat/x", expect.anything());
     expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("ws-1", "feat/x", "thread-1");
   });
 
   it("skips PR polling for a branchless worktree thread", () => {
-    render(<HeaderActions thread={makeThread({ checkout_state: "branchless", base_branch: "main" })} />);
+    renderHeaderActions(makeThread({ checkout_state: "branchless", base_branch: "main" }));
     expect(mockUseBranchPr).toHaveBeenCalledWith(null, expect.anything());
     expect(mockUseHasCommitsAhead).toHaveBeenCalledWith("", null, undefined);
   });
@@ -349,12 +353,12 @@ describe("HeaderActions - consolidated header", () => {
   });
 
   it("renders the consolidated workspace menu trigger", () => {
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
   });
 
   it("renders the thread overview rows", () => {
-    render(<HeaderActions thread={makeThread({ worktree_path: "/repo/worktrees/feat-x" })} />);
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
     expect(screen.queryByText("Environment")).not.toBeInTheDocument();
     expect(screen.getByTestId("workspace-menu-changes")).toHaveTextContent("Changes");
     expect(screen.queryByTestId("thread-overview-change-summary")).not.toBeInTheDocument();
@@ -380,7 +384,7 @@ describe("HeaderActions - consolidated header", () => {
 
   it("renders usage limits as compact progress bars when quota data exists", () => {
     seedThreadUsage("thread-1", CLAUDE_USAGE);
-    render(<HeaderActions thread={makeThread({ worktree_path: "/repo/worktrees/feat-x" })} />);
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
 
     const usageTrigger = screen.getByTestId("thread-overview-usage");
     expect(usageTrigger).toHaveAttribute("aria-label", "Usage, 5-hour 12%, weekly 47%");
@@ -409,7 +413,7 @@ describe("HeaderActions - consolidated header", () => {
   });
 
   it("does not render Codex usage before provider quota data arrives", () => {
-    render(<HeaderActions thread={makeThread({ provider: "codex" })} />);
+    renderHeaderActions(makeThread({ provider: "codex" }));
 
     expect(screen.queryByTestId("thread-overview-usage")).not.toBeInTheDocument();
     expect(screen.queryByRole("progressbar", { name: "5-hour usage" })).not.toBeInTheDocument();
@@ -417,27 +421,27 @@ describe("HeaderActions - consolidated header", () => {
 
   it("prefills commit-or-push from the PR row when the branch is not ahead", () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     fireEvent.click(screen.getByTestId("workspace-menu-commit"));
     expect(mockSetPendingPrefill).toHaveBeenCalledWith(COMMIT_PREFILL);
   });
 
   it("renders a single dedicated right-panel toggle", () => {
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     const toggle = screen.getByTestId("header-panel-toggle");
     expect(toggle).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 
   it("collapses the old per-tab toggle icons (no terminal/preview/changes buttons)", () => {
-    render(<HeaderActions thread={makeThread()} />);
+    renderHeaderActions();
     expect(screen.queryByRole("button", { name: /toggle terminal/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /toggle preview/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /toggle changes/i })).not.toBeInTheDocument();
   });
 
   it("keeps the consolidated menu and panel toggle on a direct-mode thread", () => {
-    render(<HeaderActions thread={makeThread({ mode: "direct" })} />);
+    renderHeaderActions(makeThread({ mode: "direct" }));
     expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
     expect(screen.getByTestId("header-panel-toggle")).toBeInTheDocument();
   });

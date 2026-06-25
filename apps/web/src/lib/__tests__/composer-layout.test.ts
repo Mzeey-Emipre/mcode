@@ -55,25 +55,16 @@ describe("composer-layout", () => {
     expect(preferredSplitPanelWidth(600)).toBe(PANEL_MIN_WIDTH);
   });
 
-  it("auto-opens the Overview on a wide row with no panel", () => {
-    expect(
-      shouldAutoOpenOverview({ contentRowWidth: 1400, rightPanelVisible: false, rightPanelWidth: 440 }),
-    ).toBe(true);
+  it("auto-opens the Overview when the chat pane itself is wide", () => {
+    expect(shouldAutoOpenOverview({ threadPaneWidth: 1400 })).toBe(true);
   });
 
-  it("does not auto-open the Overview on a narrow row", () => {
-    expect(
-      shouldAutoOpenOverview({ contentRowWidth: 800, rightPanelVisible: false, rightPanelWidth: 440 }),
-    ).toBe(false);
+  it("does not auto-open the Overview when the chat pane itself is narrow", () => {
+    expect(shouldAutoOpenOverview({ threadPaneWidth: 800 })).toBe(false);
   });
 
-  it("auto-opens beside an open panel only when both still fit", () => {
-    expect(
-      shouldAutoOpenOverview({ contentRowWidth: 1400, rightPanelVisible: true, rightPanelWidth: 440 }),
-    ).toBe(true);
-    expect(
-      shouldAutoOpenOverview({ contentRowWidth: 1400, rightPanelVisible: true, rightPanelWidth: 1000 }),
-    ).toBe(false);
+  it("treats a right-panel-squeezed chat pane as too narrow even on a wide row", () => {
+    expect(shouldAutoOpenOverview({ threadPaneWidth: 960 })).toBe(false);
   });
 
   it("keeps the centered thread unpadded when the Overview can sit beside it", () => {

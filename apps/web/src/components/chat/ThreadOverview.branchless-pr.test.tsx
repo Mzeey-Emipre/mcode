@@ -81,18 +81,6 @@ vi.mock("@/stores/diffStore", async (importOriginal) => {
   };
 });
 
-vi.mock("@/stores/layoutStore", () => ({
-  useLayoutStore: vi.fn((selector: (state: unknown) => unknown) =>
-    selector({ contentRowWidth: 1200 }),
-  ),
-}));
-
-vi.mock("@/stores/overviewStore", () => ({
-  useOverviewStore: vi.fn((selector: (state: unknown) => unknown) =>
-    selector({ setReserveSpace: vi.fn() }),
-  ),
-}));
-
 vi.mock("@/stores/threadStore", () => ({
   useThreadStore: vi.fn((selector: (state: unknown) => unknown) =>
     selector({ records: new Map(), fetchProviderUsage: vi.fn() }),
@@ -190,7 +178,7 @@ describe("ThreadOverview branchless Create PR", () => {
   });
 
   it("creates a named branch from the branchless worktree row", async () => {
-    render(<ThreadOverview thread={makeThread()} />);
+    render(<ThreadOverview thread={makeThread()} threadPaneWidth={1400} />);
 
     expect(screen.getByText("HEAD")).toBeInTheDocument();
     expect(screen.queryByTestId("workspace-menu-branch")).not.toBeInTheDocument();
@@ -234,7 +222,7 @@ describe("ThreadOverview branchless Create PR", () => {
       "thread-1": { aggregate: "passing", runs: [], fetchedAt: 1 },
       other: { aggregate: "no_checks", runs: [], fetchedAt: 2 },
     };
-    render(<ThreadOverview thread={mockWorkspaceState.threads[0]} />);
+    render(<ThreadOverview thread={mockWorkspaceState.threads[0]} threadPaneWidth={1400} />);
 
     fireEvent.click(screen.getByTestId("thread-overview-create-branch"));
     fireEvent.change(screen.getByLabelText("Branch name"), {
@@ -261,7 +249,7 @@ describe("ThreadOverview branchless Create PR", () => {
 
   it("keeps the branch creation dialog open when branch creation fails", async () => {
     mockCreateBranch.mockRejectedValueOnce(new Error("branch exists"));
-    render(<ThreadOverview thread={makeThread()} />);
+    render(<ThreadOverview thread={makeThread()} threadPaneWidth={1400} />);
 
     fireEvent.click(screen.getByTestId("thread-overview-create-branch"));
     fireEvent.change(screen.getByLabelText("Branch name"), {
