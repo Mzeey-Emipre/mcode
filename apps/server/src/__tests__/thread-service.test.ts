@@ -214,12 +214,12 @@ describe("ThreadService.delete", () => {
       ws.id,
       "Branchless Thread",
       "worktree",
-      "main",
+      "release",
       true,
       "claude",
       undefined,
       "branchless",
-      "main",
+      "release",
     );
     threadRepo.updateWorktreePath(thread.id, "/tmp/wt/main");
     (mockGitService.resolveWorkingDir as ReturnType<typeof vi.fn>).mockReturnValue("/tmp/wt/main");
@@ -244,13 +244,13 @@ describe("ThreadService.delete", () => {
     expect(threadRepo.findById(thread.id)).toMatchObject({
       branch: "feat/from-thread",
       checkout_state: "named",
-      base_branch: null,
+      base_branch: "release",
     });
   });
 
   it("syncs a branchless thread worktree to a named external branch", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
-    const thread = threadRepo.create(ws.id, "Branchless", "worktree", "main", true, "claude", undefined, "branchless", "main");
+    const thread = threadRepo.create(ws.id, "Branchless", "worktree", "release", true, "claude", undefined, "branchless", "release");
     threadRepo.updateWorktreePath(thread.id, "/tmp/wt/main");
     (mockGitService.getCurrentBranchAt as ReturnType<typeof vi.fn>).mockResolvedValue("feat/external");
 
@@ -260,7 +260,7 @@ describe("ThreadService.delete", () => {
     expect(result?.thread).toMatchObject({
       branch: "feat/external",
       checkout_state: "named",
-      base_branch: null,
+      base_branch: "release",
     });
   });
 

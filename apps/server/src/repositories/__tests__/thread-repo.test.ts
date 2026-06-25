@@ -55,25 +55,25 @@ describe("ThreadRepo.updateCheckoutToNamedBranch", () => {
     workspaceId = ws.id;
   });
 
-  it("clears base_branch when a branchless checkout becomes a named branch", () => {
+  it("preserves base_branch when a branchless checkout becomes a named branch", () => {
     const thread = threadRepo.create(
       workspaceId,
       "branchless",
       "worktree",
-      "main",
+      "release",
       true,
       "claude",
       undefined,
       "branchless",
-      "main",
+      "release",
     );
 
     const updated = threadRepo.updateCheckoutToNamedBranch(thread.id, "feat/named");
 
     expect(updated?.checkout_state).toBe("named");
     expect(updated?.branch).toBe("feat/named");
-    expect(updated?.base_branch).toBeNull();
-    expect(threadRepo.findById(thread.id)?.base_branch).toBeNull();
+    expect(updated?.base_branch).toBe("release");
+    expect(threadRepo.findById(thread.id)?.base_branch).toBe("release");
   });
 });
 
@@ -91,8 +91,8 @@ describe("ThreadRepo.updateCheckoutFromHead", () => {
     workspaceId = ws.id;
   });
 
-  it("promotes a branchless checkout to a named branch and clears stale PR metadata", () => {
-    const thread = threadRepo.create(workspaceId, "t", "worktree", "main", true, "claude", undefined, "branchless", "main");
+  it("promotes a branchless checkout to a named branch, preserves base_branch, and clears stale PR metadata", () => {
+    const thread = threadRepo.create(workspaceId, "t", "worktree", "release", true, "claude", undefined, "branchless", "release");
     threadRepo.updatePr(thread.id, 12, "OPEN");
 
     const result = threadRepo.updateCheckoutFromHead(thread.id, "feat/new", "named", null);
@@ -101,7 +101,7 @@ describe("ThreadRepo.updateCheckoutFromHead", () => {
     expect(result?.thread).toMatchObject({
       branch: "feat/new",
       checkout_state: "named",
-      base_branch: null,
+      base_branch: "release",
       pr_number: null,
       pr_status: null,
     });

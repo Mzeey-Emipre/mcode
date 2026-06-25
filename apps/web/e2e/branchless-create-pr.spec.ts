@@ -24,9 +24,9 @@ const thread: Thread = {
   status: "paused",
   mode: "worktree",
   worktree_path: "/tmp/branchless-pr/.worktrees/thread-branchless-pr",
-  branch: "main",
+  branch: "release",
   checkout_state: "branchless",
-  base_branch: "main",
+  base_branch: "release",
   worktree_managed: true,
   issue_number: null,
   pr_number: null,
@@ -136,6 +136,7 @@ test.describe("Branchless Create PR", () => {
     await page.waitForSelector("[data-testid='chat-header-title']");
 
     await ensureOverviewOpen(page);
+    await expect(page.getByText("HEAD").first()).toBeVisible();
     await expect(page.getByTestId("thread-overview-create-branch")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toHaveCount(0);
     await expect(page.getByTestId("workspace-menu-create-pr")).toHaveCount(0);
@@ -152,7 +153,7 @@ test.describe("Branchless Create PR", () => {
     await expect.poll(() => getWorkspaceThread(page)).toMatchObject({
       branch: "feat/issue-801",
       checkout_state: "named",
-      base_branch: null,
+      base_branch: "release",
     });
     await expect(page.getByTestId("workspace-menu-branch")).toContainText("feat/issue-801");
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
@@ -166,7 +167,7 @@ test.describe("Branchless Create PR", () => {
     await expect(page.getByRole("heading", { name: "Create pull request" })).toBeVisible();
     const prDialog = page.getByLabel("Create pull request");
     await expect(prDialog.getByText("feat/issue-801")).toBeVisible();
-    await expect(prDialog.getByRole("button", { name: "Base branch" })).toContainText("main");
+    await expect(prDialog.getByRole("button", { name: "Base branch" })).toContainText("release");
 
     expect(createBranchCalls).toEqual([
       {

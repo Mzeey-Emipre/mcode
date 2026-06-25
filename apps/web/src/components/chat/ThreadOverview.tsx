@@ -1117,7 +1117,6 @@ function updateThreadToNamedBranch(threadId: string, branch: string): void {
             ...candidate,
             branch,
             checkout_state: "named" as const,
-            base_branch: null,
             pr_number: null,
             pr_status: null,
           }
