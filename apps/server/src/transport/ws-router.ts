@@ -541,6 +541,20 @@ async function dispatch(
         params.threadId,
         params.name,
       );
+      if (params.threadId) {
+        const thread = deps.threadService.findById(params.threadId);
+        if (thread) {
+          broadcast("thread.checkoutChanged", {
+            threadId: thread.id,
+            workspaceId: thread.workspace_id,
+            branch: thread.branch,
+            checkoutState: thread.checkout_state,
+            baseBranch: thread.base_branch,
+            prNumber: thread.pr_number,
+            prStatus: thread.pr_status,
+          });
+        }
+      }
       return { branch };
     }
     case "git.listWorktrees": {

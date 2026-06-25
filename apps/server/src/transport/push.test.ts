@@ -126,6 +126,31 @@ describe("broadcast", () => {
     expect(b).toHaveLength(1);
   });
 
+  it("broadcasts thread metadata events to clients subscribed to other threads", () => {
+    const a: Array<{ buf: Buffer; binary: boolean }> = [];
+    const b: Array<{ buf: Buffer; binary: boolean }> = [];
+    const wsA = fakeOpenSocket(a);
+    const wsB = fakeOpenSocket(b);
+    addClient(wsA);
+    addClient(wsB);
+    subscribeClientToThread(wsA, "thread-a");
+    subscribeClientToThread(wsB, "thread-b");
+
+    broadcast("thread.checkoutChanged", {
+      threadId: "thread-a",
+      workspaceId: "ws-1",
+      branch: "feat/thread",
+      checkoutState: "named",
+      baseBranch: null,
+      prNumber: null,
+      prStatus: null,
+    });
+
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+    expect(JSON.parse(b[0].buf.toString("utf-8")).data.threadId).toBe("thread-a");
+  });
+
   it("lets tests swap validating and pass-through payload adapters", () => {
     const validating: Array<{ buf: Buffer; binary: boolean }> = [];
     const validatingWs = fakeOpenSocket(validating);
