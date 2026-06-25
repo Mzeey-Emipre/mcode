@@ -178,7 +178,9 @@ describe("ThreadOverview branchless Create PR", () => {
   });
 
   it("creates a named branch from the branchless worktree row", async () => {
-    render(<ThreadOverview thread={makeThread()} threadPaneWidth={1400} />);
+    const thread = makeThread({ branch: "release", base_branch: "release" });
+    mockWorkspaceState.threads = [thread];
+    render(<ThreadOverview thread={thread} threadPaneWidth={1400} />);
 
     expect(screen.getByText("HEAD")).toBeInTheDocument();
     expect(screen.queryByTestId("workspace-menu-branch")).not.toBeInTheDocument();
@@ -201,7 +203,7 @@ describe("ThreadOverview branchless Create PR", () => {
       id: "thread-1",
       branch: "feat/issue-801",
       checkout_state: "named",
-      base_branch: null,
+      base_branch: "release",
     });
     expect(mockWorkspaceState.worktreesLoadedForWorkspace).toBeNull();
     expect(screen.queryByTestId("create-pr-dialog")).not.toBeInTheDocument();
@@ -212,6 +214,7 @@ describe("ThreadOverview branchless Create PR", () => {
       makeThread({
         pr_number: 42,
         pr_status: "OPEN",
+        base_branch: "release",
       }),
     ];
     mockWorkspaceState.prUrlsByThreadId = {
@@ -234,7 +237,7 @@ describe("ThreadOverview branchless Create PR", () => {
       expect(mockWorkspaceState.threads[0]).toMatchObject({
         branch: "feat/issue-801",
         checkout_state: "named",
-        base_branch: null,
+        base_branch: "release",
         pr_number: null,
         pr_status: null,
       });

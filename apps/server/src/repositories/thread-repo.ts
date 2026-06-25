@@ -316,7 +316,7 @@ export class ThreadRepo {
     const now = new Date().toISOString();
     const result = this.db
       .prepare(
-        "UPDATE threads SET branch = ?, checkout_state = 'named', base_branch = NULL, updated_at = ? WHERE id = ?",
+        "UPDATE threads SET branch = ?, checkout_state = 'named', updated_at = ? WHERE id = ?",
       )
       .run(branch, now, id);
     if (result.changes === 0) return null;
@@ -338,9 +338,13 @@ export class ThreadRepo {
 
     const changed =
       current.branch !== branch || current.checkout_state !== checkoutState;
+    const nextBaseBranch =
+      checkoutState === "named" && current.checkout_state === "branchless" && baseBranch === null
+        ? current.base_branch
+        : baseBranch;
     if (
       !changed &&
-      current.base_branch === baseBranch
+      current.base_branch === nextBaseBranch
     ) {
       return { thread: current, changed: false };
     }
@@ -357,7 +361,7 @@ export class ThreadRepo {
              updated_at = ?
          WHERE id = ?`,
       )
-      .run(branch, checkoutState, baseBranch, changed ? 1 : 0, changed ? 1 : 0, now, id);
+      .run(branch, checkoutState, nextBaseBranch, changed ? 1 : 0, changed ? 1 : 0, now, id);
 
     const thread = this.findById(id);
     return thread ? { thread, changed } : null;
