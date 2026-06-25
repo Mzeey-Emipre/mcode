@@ -41,6 +41,7 @@ import {
   DndContext,
   closestCenter,
   KeyboardSensor,
+  MeasuringStrategy,
   PointerSensor,
   useSensor,
   useSensors,
@@ -80,6 +81,12 @@ const EMPTY_THREADS: WorkspaceThread[] = [];
 
 /** Stable empty Set used as a sentinel when status filters don't need running/permission state. */
 const EMPTY_ID_SET = new Set<string>();
+const PROJECT_DND_MODIFIERS = [restrictToVerticalAxis];
+const PROJECT_DND_MEASURING = {
+  droppable: {
+    strategy: MeasuringStrategy.BeforeDragging,
+  },
+} as const;
 
 /**
  * Returns `prev` if it contains the same elements in the same order as `next`
@@ -674,7 +681,8 @@ export function ProjectTree() {
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={[restrictToVerticalAxis]}
+            modifiers={PROJECT_DND_MODIFIERS}
+            measuring={PROJECT_DND_MEASURING}
             autoScroll={projectTreeAutoScroll}
             onDragStart={handleProjectDragStart}
             onDragEnd={handleProjectDragEnd}
