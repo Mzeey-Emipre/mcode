@@ -294,6 +294,9 @@ export {
   SendMessageSchema,
   CreateAndSendSchema,
   CreateAndSendResultSchema,
+  RECAP_MAX_MESSAGES,
+  RECAP_MAX_MESSAGE_CONTENT_CHARS,
+  RECAP_MAX_PREVIOUS_RECAP_CHARS,
 } from "./ws/methods.js";
 export type { WsMethodName, CreateAndSendResult } from "./ws/methods.js";
 
@@ -326,6 +329,7 @@ export type {
   IProviderRegistry,
   TurnRequest,
   ProviderOptionsByProvider,
+  CompletionOptions,
 } from "./providers/interfaces.js";
 
 export * from "./providers/catalog.js";

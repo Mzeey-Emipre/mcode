@@ -60,6 +60,7 @@ import {
 import type { ProviderAvailabilityService } from "../services/provider-availability-service.js";
 import type { ModelCacheService } from "../services/model-cache-service.js";
 import type { DiffSummaryService } from "../services/diff-summary-service.js";
+import type { RecapService } from "../services/recap-service.js";
 import type { HandoffStorage } from "../services/handoff/handoff-storage.js";
 import { loadConversationPage } from "../services/conversation-page.js";
 import type { ThreadTeardownService } from "../services/thread-teardown-service.js";
@@ -180,6 +181,8 @@ export interface RouterDeps {
   filesystemBrowser: FilesystemBrowser;
   /** Generates and persists AI-powered diff summaries for threads. */
   diffSummaryService: DiffSummaryService;
+  /** Generates stateless AI-powered thread recaps from caller-supplied messages. */
+  recapService: RecapService;
   /** Tears down provider and terminal resources owned by a thread before deletion. */
   threadTeardownService: ThreadTeardownService;
 }
@@ -1028,6 +1031,12 @@ async function dispatch(
         cwd,
       );
     }
+    case "recap.generate":
+      return deps.recapService.generate({
+        threadId: params.threadId,
+        messages: params.messages,
+        previousRecap: params.previousRecap,
+      });
 
     // Memory pressure
     case "memory.setBackground":

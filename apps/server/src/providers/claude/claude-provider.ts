@@ -27,6 +27,7 @@ import type {
   QuotaCategory,
   PermissionDecision,
   PermissionRequest,
+  CompletionOptions,
 } from "@mcode/contracts";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
 import { listClaudeModels } from "./list-models.js";
@@ -446,7 +447,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
    * Spawns an ephemeral SDK subprocess (not persisted to disk) with tools
    * disabled and maxTurns: 1, collects the response text, then tears down.
    */
-  async complete(prompt: string, model: string, cwd: string): Promise<string> {
+  async complete(prompt: string, model: string, cwd: string, options: CompletionOptions = {}): Promise<string> {
     const backup = snapshotProcessEnv();
     try {
       const merged = this.envService.getEnv();
@@ -471,11 +472,12 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           tools: [],
           systemPrompt: "Respond with exactly what is requested. No questions, no commentary.",
           settingSources: [],
-          permissionMode: "default" as const,
-          persistSession: false,
-          includePartialMessages: true,
-        },
-      });
+            permissionMode: "default" as const,
+            persistSession: false,
+            includePartialMessages: true,
+            ...buildReasoningOptions(options.reasoningLevel, model),
+          },
+        });
 
       queue.push(toUserMessage(prompt, ephemeralId));
       // Close immediately: the message is already queued. This signals end-of-input

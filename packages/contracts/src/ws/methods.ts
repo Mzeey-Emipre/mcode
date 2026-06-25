@@ -33,6 +33,13 @@ import { ProviderAvailabilitySchema } from "../providers/availability.js";
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
 
+/** Maximum recap input messages accepted by recap.generate. */
+export const RECAP_MAX_MESSAGES = 80;
+/** Maximum characters accepted per recap input message. */
+export const RECAP_MAX_MESSAGE_CONTENT_CHARS = 4_000;
+/** Maximum characters accepted for the previous recap hint. */
+export const RECAP_MAX_PREVIOUS_RECAP_CHARS = 500;
+
 /** Schema for creating a new thread. */
 export const CreateThreadSchema = lazySchema(() =>
   z.object({
@@ -885,6 +892,20 @@ export const WS_METHODS = lazySchema(() => ({
       lastTurnId: z.string().nullable(),
       model: z.string(),
       createdAt: z.string(),
+    }),
+  },
+  /** Generate a stateless one-line conversational recap from caller-supplied messages. */
+  "recap.generate": {
+    params: z.object({
+      threadId: z.string(),
+      messages: z.array(z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().max(RECAP_MAX_MESSAGE_CONTENT_CHARS),
+      })).min(1).max(RECAP_MAX_MESSAGES),
+      previousRecap: z.string().max(RECAP_MAX_PREVIOUS_RECAP_CHARS).nullable(),
+    }),
+    result: z.object({
+      text: z.string(),
     }),
   },
 } as const));
