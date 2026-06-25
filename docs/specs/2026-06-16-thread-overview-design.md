@@ -19,7 +19,7 @@ Enrich the existing `header-workspace-menu` into a thread-scoped header popover,
 
 | Row | Shows | Action | Backing |
 |-----|-------|--------|---------|
-| **Recap** | AI one-line "what you're working on" | none (display) | new `recap.generate` RPC, in-memory cache (ADR-0013) |
+| **Recap** | AI one-line "what you're working on" | manual refresh | new `recap.generate` RPC, in-memory cache (ADR-0013) |
 | **Changes** | changed-file count | opens Review tab | existing `changes.toggle`; lands on the ADR-0011 per-thread default |
 | **Repository** | `org/repo` (or folder name) | opens the remote in the browser | new `git.getRemoteUrl` RPC |
 | **PR** | live PR status + CI | commit-or-push, create PR, open PR | reuse `PrSplitButton` / `ChecksPopover` / `useThreadGitActions` |
@@ -50,7 +50,7 @@ graph TD
     subgraph web["apps/web"]
         TO["ThreadOverview popover<br/>(enriches HeaderActions)"]
         UTGA["useThreadGitActions"]
-        URC["useThreadRecap hook<br/>(panel-gated trigger)"]
+        URC["useThreadRecap hook<br/>(manual + stale-return trigger)"]
         DS["diffStore<br/>(ADR-0011 / 0012 state)"]
         TS["threadStore<br/>(usageByProvider, recapByThread)"]
         WST["workspaceStore<br/>(fork via branchThread)"]
@@ -83,7 +83,7 @@ All four follow the canonical `diffSummary.*` idiom: an entry inside the `WS_MET
 
 ### `recap.generate`
 
-Stateless. The client owns the trigger and assembles the bounded material; the server builds the prompt, runs the utility model, and **stores nothing** (ADR-0013).
+Stateless. The client owns the trigger and assembles bounded material; the server revalidates those bounds, builds the prompt, runs the utility model, and **stores nothing** (ADR-0013).
 
 ```ts
 "recap.generate": {
@@ -99,7 +99,7 @@ Stateless. The client owns the trigger and assembles the bounded material; the s
 }
 ```
 
-Server: a `RecapService` with a pure `buildThreadRecapPrompt(messages, previousRecap)` and `sanitizeThreadRecap(text)` (mirroring `buildDiffSummaryPrompt` and Synara's `textGenerationShared`), calling `UtilityCompletionService.complete` (our haiku utility model, low reasoning effort). The prompt instructs the model to return the previous recap unchanged when nothing material changed. Output clipped to ~220 chars.
+Server: a `RecapService` with a pure `buildThreadRecapPrompt(messages, previousRecap)` and `sanitizeThreadRecap(text)` (mirroring `buildDiffSummaryPrompt` and Synara's `textGenerationShared`), calling `UtilityCompletionService.complete` (our haiku utility model, low reasoning effort). The handler and prompt builder validate the message count, per-message content length, `previousRecap` length, and total prompt material before prompt assembly, rejecting oversized payloads early. The prompt instructs the model to return the previous recap unchanged when nothing material changed. Output clipped to ~220 chars.
 
 ### `git.getRemoteUrl`
 
@@ -153,7 +153,7 @@ All panel container state (visibility, width, active tab, open-tabs set) becomes
 
 ### Recap cache (ADR-0013)
 
-`threadStore` gains an in-memory `recapByThread: Record<threadId, { text, signature, coveredMessageId }>`, never persisted, dropped by `clearThread`. A `useThreadRecap` hook owns the trigger: panel-gated (runs only while the Overview is open), idle-debounced (~12s first / ~35s refresh, reset on each new message, never mid-turn), signature-gated (hash of `[last message id, role, length, turn state, pending flags]`; only user/assistant messages advance it), and incremental (after the first recap, send only the delta since `coveredMessageId` plus the previous recap). The hook is an opt-in side effect of the open panel and never runs from the transcript render or turn-event path.
+`threadStore` gains an in-memory `recapByThread` entry per thread containing the recap text, the covered conversation signature, the covered message id, and generation timestamps. The entry is never persisted and is dropped by `clearThread`. A `useThreadRecap` hook owns manual refresh and auto generation on stale-thread re-orientation. Re-orientation means app focus return, switching back to a thread, or opening the Overview. Auto generation requires enough user/assistant conversation to summarize, no running turn, a changed signature, and a last completed turn at least about five minutes old. Manual refresh bypasses the stale-time threshold and the same-signature cache gate, but still dedupes in-flight requests. After the first recap, generation sends only the delta since `coveredMessageId` plus the previous recap. The hook is an opt-in side effect of re-orientation or row action and never runs from the transcript render or turn-event path.
 
 ### Usage row (reuse, no new fetch)
 
@@ -170,12 +170,14 @@ sequenceDiagram
     participant H as useThreadRecap
     participant T as ws-transport
     participant R as RecapService
-    U->>P: opens Overview
-    P->>H: panel open = true
+    U->>P: opens Overview or returns to thread
+    P->>H: re-orientation event
     H->>H: compute signature
-    alt signature unchanged or matches cache/in-flight
-        H-->>P: render cached recap
-    else stale and thread idle >= 12s/35s
+    alt matching request already in flight
+        H-->>P: keep pending state
+    else auto request and signature unchanged or matches cache/last-failed
+        H-->>P: render cached recap or quiet unavailable state
+    else manual request or auto-eligible stale thread
         H->>H: assemble bounded delta + previousRecap
         H->>T: recap.generate(threadId, messages, previousRecap)
         T->>R: dispatch
@@ -184,7 +186,7 @@ sequenceDiagram
         H->>H: write recapByThread[threadId]
         H-->>P: render recap
     end
-    Note over H: never fires mid-turn / while streaming;<br/>panel closed -> no calls at all
+    Note over H: auto waits for >= 5m since last completed turn;<br/>manual bypasses stale time and same-signature cache reuse
 ```
 
 ### Cross-provider switch
@@ -266,7 +268,7 @@ Test at the highest existing seam. Prior art and new seams, per area:
 | Recap | pure `buildThreadRecapPrompt` / `sanitizeThreadRecap`; reuse the already-tested `UtilityCompletionService` | `diff-summary-prompt.test.ts`, `utility-completion-service.test.ts` |
 | ADR-0011 default | extend `defaultReviewView` + per-thread override + `clearThread` cleanup | `review-views.test.ts`, `diffStore.test.ts` |
 | ADR-0012 panel state | copy-on-write fallback accessor | `diffStore.test.ts` `getRightPanelVisible` cases |
-| Recap scheduling | pure `shouldScheduleThreadRecapGeneration` + signature hash | Synara `threadRecap.ts` (hook is a thin wrapper, covered by E2E) |
+| Recap scheduling | pure `shouldScheduleThreadRecapGeneration` + signature hash + auto cap | Synara `threadRecap.ts`; Claude Code session recap behavior for manual and away-return prior art |
 | CI blob | pure `(pr, checks) -> "red" \| "green" \| null` | new, trivial |
 | Overview popover | extend `chat-header-consolidated.spec.ts` (drives `header-workspace-menu`); follow `sidebar-usage-popover.spec.ts` mechanics | both exist |
 
@@ -276,7 +278,7 @@ The RPC handlers stay thin pass-throughs and are not separately unit-tested - co
 
 - **`git.createBranch` name** crosses into a subprocess. Validate against a git-ref allowlist (reject empty, leading `-`, whitespace, `..`, shell metacharacters) before exec. Fail closed.
 - **`git.getRemoteUrl`** normalizes an externally-controlled git config value. Normalize once at the boundary; return `null` rather than a half-parsed URL when the remote is malformed or absent.
-- **`recap.generate` input** is bounded by the client (first pass ~6 messages, ~600 chars each, delta ~4 messages), and the server clips output to ~220 chars. The utility model runs at low reasoning effort. No unbounded retention: the recap cache is in-memory and per-thread.
+- **`recap.generate` input** is bounded by the client (first pass ~6 messages, ~600 chars each, delta ~4 messages) and revalidated on the server before prompt assembly. The server rejects oversized payloads and clips output to ~220 chars. The utility model runs at low reasoning effort. Auto generation is capped per thread and signature so repeated thread switching cannot create hidden spend. No unbounded retention: the recap cache is in-memory and per-thread.
 - **`thread.switchProvider` seq anchor**: write the internal handoff message at `nextSeq`, never a constant, to avoid a primary-key collision on a non-empty thread.
 
 ## Deferred and out of scope

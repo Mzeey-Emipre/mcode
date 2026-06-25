@@ -1,0 +1,831 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue 755 Thread Recap Plan</title>
+<script>
+  (function () {
+    var saved = localStorage.getItem("thread-recap-theme");
+    var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.classList.toggle("dark", dark);
+  })();
+</script>
+<style>
+  :root {
+    --bg: #f8f7f1;
+    --surface: #ffffff;
+    --surface-2: #efede4;
+    --surface-3: #e8e2d4;
+    --ink: #171715;
+    --body: #3f413d;
+    --muted: #777a70;
+    --line: #cbc7b9;
+    --line-soft: #e2decf;
+    --clay: #d36c4c;
+    --clay-soft: rgba(211, 108, 76, 0.13);
+    --olive: #70884f;
+    --olive-soft: rgba(112, 136, 79, 0.14);
+    --blue: #4f7f98;
+    --blue-soft: rgba(79, 127, 152, 0.13);
+    --amber: #b28a31;
+    --amber-soft: rgba(178, 138, 49, 0.16);
+    --danger: #a6493f;
+    --danger-soft: rgba(166, 73, 63, 0.12);
+    --zone: rgba(23, 23, 21, 0.025);
+    --shadow: rgba(30, 28, 20, 0.12);
+    --serif: ui-serif, Georgia, "Times New Roman", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  html.dark {
+    --bg: #171715;
+    --surface: #20201d;
+    --surface-2: #2a2a26;
+    --surface-3: #34332e;
+    --ink: #f8f7f1;
+    --body: #d8d3c5;
+    --muted: #9c9b92;
+    --line: #45443d;
+    --line-soft: #34332e;
+    --clay: #e58c6d;
+    --clay-soft: rgba(229, 140, 109, 0.16);
+    --olive: #9eb878;
+    --olive-soft: rgba(158, 184, 120, 0.15);
+    --blue: #82aac1;
+    --blue-soft: rgba(130, 170, 193, 0.16);
+    --amber: #d1ad55;
+    --amber-soft: rgba(209, 173, 85, 0.17);
+    --danger: #d47468;
+    --danger-soft: rgba(212, 116, 104, 0.16);
+    --zone: rgba(248, 247, 241, 0.035);
+    --shadow: rgba(0, 0, 0, 0.28);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--body);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .bar {
+    position: relative;
+    z-index: 2;
+    min-height: 68px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line-soft);
+    background: color-mix(in srgb, var(--bg) 93%, transparent);
+  }
+
+  .title {
+    min-width: 245px;
+  }
+
+  h1 {
+    margin: 0;
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 21px;
+    font-weight: 520;
+    line-height: 1.1;
+  }
+
+  .sub {
+    margin-top: 5px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .chips {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    gap: 7px;
+    justify-content: center;
+  }
+
+  .chip,
+  #themeToggle {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    padding: 8px 12px;
+    transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+  }
+
+  .chip:hover,
+  #themeToggle:hover {
+    border-color: var(--muted);
+    color: var(--ink);
+  }
+
+  .chip.on {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: var(--bg);
+  }
+
+  #themeToggle {
+    border-radius: 8px;
+    flex: none;
+  }
+
+  .stage {
+    position: relative;
+    height: calc(100vh - 68px);
+    min-height: 600px;
+  }
+
+  .stage svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .zone rect {
+    fill: var(--zone);
+    stroke: var(--line);
+    stroke-dasharray: 7 6;
+    stroke-width: 1.2;
+    rx: 18;
+  }
+
+  .zone .zone-title {
+    fill: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+
+  .zone .zone-note {
+    fill: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+  }
+
+  .node {
+    cursor: pointer;
+    transition: opacity 180ms ease, transform 140ms ease;
+  }
+
+  .node rect,
+  .node path {
+    fill: var(--surface);
+    stroke: var(--line);
+    stroke-width: 1.4;
+    transition: fill 160ms ease, stroke 160ms ease, stroke-width 160ms ease;
+  }
+
+  .node:hover rect,
+  .node:hover path,
+  .node.sel rect,
+  .node.sel path {
+    stroke: var(--clay);
+    stroke-width: 2;
+  }
+
+  .node .title-text {
+    fill: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 680;
+    pointer-events: none;
+  }
+
+  .node .meta-text,
+  .node .small-text {
+    fill: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    pointer-events: none;
+  }
+
+  .node .small-text {
+    font-size: 10px;
+  }
+
+  .node.ui rect { fill: var(--blue-soft); stroke: var(--blue); }
+  .node.gate rect, .node.gate path { fill: var(--amber-soft); stroke: var(--amber); }
+  .node.server rect { fill: var(--clay-soft); stroke: var(--clay); }
+  .node.store rect { fill: var(--olive-soft); stroke: var(--olive); }
+  .node.stop rect { fill: var(--danger-soft); stroke: var(--danger); }
+
+  .edge {
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 1.7;
+    marker-end: url(#arrow-muted);
+    opacity: 0.88;
+    transition: opacity 180ms ease, stroke 180ms ease;
+  }
+
+  .edge.soft {
+    stroke-dasharray: 6 6;
+  }
+
+  .edge.return {
+    marker-end: url(#arrow-olive);
+  }
+
+  .edge-label {
+    fill: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    transition: opacity 180ms ease, fill 180ms ease;
+  }
+
+  .stage.flowing .node,
+  .stage.flowing .zone {
+    opacity: 0.25;
+  }
+
+  .stage.flowing .edge,
+  .stage.flowing .edge-label {
+    opacity: 0.12;
+  }
+
+  .stage.flowing .node.lit,
+  .stage.flowing .zone.lit {
+    opacity: 1;
+  }
+
+  .stage.flowing .edge.lit {
+    opacity: 1;
+    stroke: var(--clay);
+    marker-end: url(#arrow-clay);
+    stroke-dasharray: 8 6;
+    animation: march 900ms linear infinite;
+  }
+
+  .stage.flowing .edge.return.lit {
+    stroke: var(--olive);
+    marker-end: url(#arrow-olive);
+  }
+
+  .stage.flowing .edge-label.lit {
+    opacity: 1;
+    fill: var(--clay);
+  }
+
+  @keyframes march {
+    to { stroke-dashoffset: -14; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stage.flowing .edge.lit { animation: none; }
+  }
+
+  .panel {
+    position: absolute;
+    z-index: 1;
+    width: min(365px, calc(100vw - 32px));
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 16px 38px var(--shadow);
+    padding: 15px 16px;
+  }
+
+  #detail {
+    right: 16px;
+    bottom: 16px;
+  }
+
+  #flowcap {
+    left: 16px;
+    bottom: 16px;
+    display: none;
+    width: min(450px, calc(100vw - 32px));
+  }
+
+  #flowcap.show { display: block; }
+
+  .panel h2,
+  .panel h3 {
+    margin: 0;
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 520;
+    line-height: 1.25;
+  }
+
+  .panel .meta {
+    margin: 4px 0 9px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .panel p,
+  .panel li {
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+
+  .panel p {
+    margin: 0;
+  }
+
+  .panel ol {
+    margin: 9px 0 0 18px;
+    padding: 0;
+  }
+
+  code {
+    color: var(--clay);
+    font-family: var(--mono);
+    font-size: 0.92em;
+  }
+
+  .status-strip {
+    position: absolute;
+    left: 18px;
+    top: 16px;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+    gap: 8px;
+    width: min(690px, calc(100vw - 420px));
+  }
+
+  .status {
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface) 86%, transparent);
+    padding: 9px 11px;
+  }
+
+  .status .k {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .status .v {
+    margin-top: 3px;
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 1050px) {
+    body { overflow: auto; }
+    .bar { align-items: flex-start; }
+    .chips { justify-content: flex-start; }
+    .stage { height: auto; min-height: 760px; overflow-x: auto; }
+    .stage svg { width: 1050px; max-width: none; height: 760px; }
+    .status-strip {
+      position: static;
+      width: auto;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin: 12px 16px 0;
+    }
+    #detail,
+    #flowcap {
+      position: static;
+      margin: 12px 16px;
+      width: auto;
+    }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="title">
+    <h1>Issue 755: Thread Recap</h1>
+    <div class="sub">Overview row, gated utility-model call, session cache</div>
+  </div>
+  <div class="chips" id="chips">
+    <button class="chip on" type="button" data-flow="all">Map</button>
+    <button class="chip" type="button" data-flow="first">Return stale</button>
+    <button class="chip" type="button" data-flow="refresh">Manual</button>
+    <button class="chip" type="button" data-flow="cache">Cache hit</button>
+    <button class="chip" type="button" data-flow="blocked">Blocked</button>
+    <button class="chip" type="button" data-flow="clear">Clear thread</button>
+  </div>
+  <button id="themeToggle" type="button">Theme</button>
+</header>
+
+<main class="stage" id="stage">
+  <div class="status-strip" aria-hidden="true">
+    <div class="status"><div class="k">Hard constraint</div><div class="v">No token waste</div></div>
+    <div class="status"><div class="k">Server state</div><div class="v">None</div></div>
+    <div class="status"><div class="k">Cache</div><div class="v">Memory only</div></div>
+    <div class="status"><div class="k">Dependency</div><div class="v">Epic 2 panel gate</div></div>
+  </div>
+
+  <svg viewBox="0 0 1540 940" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Plan diagram for issue 755 thread recap">
+    <defs>
+      <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"></path>
+      </marker>
+      <marker id="arrow-clay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" style="fill: var(--clay)"></path>
+      </marker>
+      <marker id="arrow-olive" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" style="fill: var(--olive)"></path>
+      </marker>
+    </defs>
+
+    <g class="zone" data-zone="ui">
+      <rect x="50" y="150" width="315" height="610"></rect>
+      <text class="zone-title" x="72" y="182">Overview UI</text>
+      <text class="zone-note" x="72" y="202">Epic 2 supplies the open gate</text>
+    </g>
+
+    <g class="zone" data-zone="client">
+      <rect x="410" y="150" width="400" height="610"></rect>
+      <text class="zone-title" x="432" y="182">Client trigger</text>
+      <text class="zone-note" x="432" y="202">cost control lives here</text>
+    </g>
+
+    <g class="zone" data-zone="wire">
+      <rect x="850" y="150" width="250" height="610"></rect>
+      <text class="zone-title" x="872" y="182">Transport</text>
+      <text class="zone-note" x="872" y="202">typed WS method</text>
+    </g>
+
+    <g class="zone" data-zone="server">
+      <rect x="1140" y="150" width="350" height="610"></rect>
+      <text class="zone-title" x="1162" y="182">Server utility path</text>
+      <text class="zone-note" x="1162" y="202">build prompt, run utility model, clip</text>
+    </g>
+
+    <path class="edge" id="e-open" d="M272,296 C330,296 360,296 438,296"></path>
+    <path class="edge" id="e-messages" d="M262,555 C332,585 374,584 438,560"></path>
+    <path class="edge soft" id="e-cache-read" d="M556,352 C508,420 504,548 522,610"></path>
+    <path class="edge" id="e-gate" d="M622,352 C622,382 622,400 622,430"></path>
+    <path class="edge" id="e-assemble" d="M690,548 C720,580 724,594 724,610"></path>
+    <path class="edge" id="e-call" d="M792,650 C828,650 844,650 880,650"></path>
+    <path class="edge" id="e-contract" d="M1000,642 C1045,642 1070,642 1168,642"></path>
+    <path class="edge" id="e-router" d="M1262,612 C1262,574 1262,552 1262,512"></path>
+    <path class="edge" id="e-service" d="M1262,452 C1262,410 1262,390 1262,352"></path>
+    <path class="edge" id="e-model" d="M1346,322 C1388,322 1402,322 1430,322"></path>
+    <path class="edge return" id="e-result" d="M1168,320 C970,292 644,350 536,610"></path>
+    <path class="edge return" id="e-store" d="M626,650 C586,650 572,650 608,650"></path>
+    <path class="edge return" id="e-render" d="M438,650 C368,610 318,506 272,398"></path>
+    <path class="edge soft" id="e-skip" d="M742,486 C800,502 830,536 880,590"></path>
+    <path class="edge soft" id="e-block" d="M622,430 C706,398 744,356 778,300"></path>
+    <path class="edge soft" id="e-clear" d="M262,674 C344,700 442,712 538,520"></path>
+
+    <text class="edge-label" data-e="e-open" x="335" y="282" text-anchor="middle">re-orientation</text>
+    <text class="edge-label" data-e="e-messages" x="346" y="592" text-anchor="middle">visible user + assistant messages</text>
+    <text class="edge-label" data-e="e-cache-read" x="500" y="500" text-anchor="middle">same signature</text>
+    <text class="edge-label" data-e="e-assemble" x="742" y="588">bounded material</text>
+    <text class="edge-label" data-e="e-call" x="836" y="636" text-anchor="middle">generateRecap</text>
+    <text class="edge-label" data-e="e-contract" x="1080" y="628" text-anchor="middle">recap.generate</text>
+    <text class="edge-label" data-e="e-service" x="1276" y="405">prompt + sanitize</text>
+    <text class="edge-label" data-e="e-result" x="1012" y="284" text-anchor="middle">text only, no server write</text>
+    <text class="edge-label" data-e="e-store" x="616" y="632" text-anchor="middle">cache text, signature, covered id</text>
+    <text class="edge-label" data-e="e-render" x="382" y="430" text-anchor="middle">render one line</text>
+    <text class="edge-label" data-e="e-block" x="724" y="372" text-anchor="middle">mid-turn, closed, unchanged, in flight</text>
+    <text class="edge-label" data-e="e-clear" x="398" y="718" text-anchor="middle">drop cache entry</text>
+
+    <g class="node ui" data-k="overview">
+      <rect x="86" y="250" width="186" height="92" rx="8"></rect>
+      <text class="title-text" x="108" y="282">ThreadOverview</text>
+      <text class="meta-text" x="108" y="304">popover open state</text>
+      <text class="small-text" x="108" y="322">hard dependency: epic 2</text>
+    </g>
+
+    <g class="node ui" data-k="row">
+      <rect x="86" y="360" width="186" height="92" rx="8"></rect>
+      <text class="title-text" x="108" y="392">Recap row</text>
+      <text class="meta-text" x="108" y="414">one-line display</text>
+      <text class="small-text" x="108" y="432">manual refresh action</text>
+    </g>
+
+    <g class="node ui" data-k="messages">
+      <rect x="86" y="510" width="176" height="92" rx="8"></rect>
+      <text class="title-text" x="108" y="542">Thread messages</text>
+      <text class="meta-text" x="108" y="564">user + assistant only</text>
+      <text class="small-text" x="108" y="582">tool noise ignored</text>
+    </g>
+
+    <g class="node ui stop" data-k="clear">
+      <rect x="86" y="638" width="176" height="72" rx="8"></rect>
+      <text class="title-text" x="108" y="670">clearThread</text>
+      <text class="meta-text" x="108" y="692">drops recap cache</text>
+    </g>
+
+    <g class="node store" data-k="cache">
+      <rect x="438" y="610" width="170" height="80" rx="8"></rect>
+      <text class="title-text" x="458" y="642">recapByThread</text>
+      <text class="meta-text" x="458" y="664">memory only</text>
+      <text class="small-text" x="458" y="682">text, signature, covered id</text>
+    </g>
+
+    <g class="node gate" data-k="hook">
+      <rect x="438" y="250" width="368" height="102" rx="8"></rect>
+      <text class="title-text" x="462" y="284">useThreadRecap</text>
+      <text class="meta-text" x="462" y="306">owns every trigger decision</text>
+      <text class="small-text" x="462" y="326">never runs from transcript render or turn events</text>
+    </g>
+
+    <g class="node gate" data-k="gates">
+      <path d="M622,392 L752,486 L622,580 L492,486 Z"></path>
+      <text class="title-text" x="622" y="466" text-anchor="middle">Schedule?</text>
+      <text class="meta-text" x="622" y="489" text-anchor="middle">panel, idle, signature</text>
+      <text class="small-text" x="622" y="510" text-anchor="middle">5m stale threshold</text>
+    </g>
+
+    <g class="node" data-k="delta">
+      <rect x="626" y="610" width="166" height="80" rx="8"></rect>
+      <text class="title-text" x="646" y="642">Bounded delta</text>
+      <text class="meta-text" x="646" y="664">previous recap</text>
+      <text class="small-text" x="646" y="682">plus new messages</text>
+    </g>
+
+    <g class="node stop" data-k="blocked">
+      <rect x="648" y="244" width="130" height="64" rx="8"></rect>
+      <text class="title-text" x="672" y="274">No call</text>
+      <text class="meta-text" x="672" y="294">token saved</text>
+    </g>
+
+    <g class="node" data-k="transport">
+      <rect x="880" y="592" width="120" height="100" rx="8"></rect>
+      <text class="title-text" x="902" y="624">Transport</text>
+      <text class="meta-text" x="902" y="646">typed wrapper</text>
+      <text class="small-text" x="902" y="666">no string dispatch</text>
+    </g>
+
+    <g class="node" data-k="contract">
+      <rect x="930" y="420" width="132" height="96" rx="8"></rect>
+      <text class="title-text" x="952" y="452">WS_METHODS</text>
+      <text class="meta-text" x="952" y="474">recap.generate</text>
+      <text class="small-text" x="952" y="492">params: messages, previousRecap</text>
+    </g>
+
+    <g class="node server" data-k="router">
+      <rect x="1168" y="592" width="188" height="100" rx="8"></rect>
+      <text class="title-text" x="1192" y="624">ws-router</text>
+      <text class="meta-text" x="1192" y="646">thin dispatch case</text>
+      <text class="small-text" x="1192" y="666">logic stays in service</text>
+    </g>
+
+    <g class="node server" data-k="service">
+      <rect x="1168" y="410" width="188" height="102" rx="8"></rect>
+      <text class="title-text" x="1192" y="444">RecapService</text>
+      <text class="meta-text" x="1192" y="466">prompt builder + sanitize</text>
+      <text class="small-text" x="1192" y="486">clips output near 220 chars</text>
+    </g>
+
+    <g class="node server" data-k="utility">
+      <rect x="1168" y="272" width="178" height="80" rx="8"></rect>
+      <text class="title-text" x="1192" y="304">Utility model</text>
+      <text class="meta-text" x="1192" y="326">low reasoning effort</text>
+      <text class="small-text" x="1192" y="342">same path as diff summary</text>
+    </g>
+
+    <g class="node server stop" data-k="nostore">
+      <rect x="1422" y="282" width="52" height="80" rx="8"></rect>
+      <text class="title-text" x="1448" y="315" text-anchor="middle">No</text>
+      <text class="meta-text" x="1448" y="336" text-anchor="middle">table</text>
+    </g>
+  </svg>
+
+  <section class="panel" id="flowcap" aria-live="polite">
+    <h2 id="f-name">Map</h2>
+    <div class="meta" id="f-meta">selected path</div>
+    <ol id="f-steps"></ol>
+  </section>
+
+  <section class="panel" id="detail" aria-live="polite">
+    <h3 id="d-title">Click a node</h3>
+    <div class="meta" id="d-meta">issue 755 plan</div>
+    <p id="d-body">Use the chips to light up the recap paths. Click any box to see what that slice owns and where it fits.</p>
+  </section>
+</main>
+
+<script>
+const DETAIL = {
+  overview: {
+    title: "ThreadOverview",
+    meta: "apps/web · depends on epic 2",
+    body: "The Overview popover supplies one re-orientation event. Issue 755 is hard-blocked until that surface exists, because the row hosts the recap and its manual refresh action."
+  },
+  row: {
+    title: "Recap row",
+    meta: "display only",
+    body: "The row shows a short line for what the active thread is doing. It includes a small manual refresh action, and automatic generation stays tied to stale-thread return."
+  },
+  messages: {
+    title: "Thread messages",
+    meta: "client-selected material",
+    body: "Only user and assistant messages advance the recap signature. Tool calls, work-log churn, and other noise do not trigger a new model call."
+  },
+  clear: {
+    title: "clearThread",
+    meta: "cleanup discipline",
+    body: "<code>clearThread</code> drops the in-memory recap entry. Restarting the app also resets the map, so the next Overview open regenerates once."
+  },
+  cache: {
+    title: "recapByThread",
+    meta: "threadStore · memory only",
+    body: "The cache stores <code>text</code>, <code>signature</code>, and <code>coveredMessageId</code>. It is never persisted, never written to localStorage, and never stored on the server."
+  },
+  hook: {
+    title: "useThreadRecap",
+    meta: "client hook · all scheduling",
+    body: "The hook owns manual refresh, stale-return auto generation, signature checks for auto calls, in-flight guard, failure guard, and delta assembly. Keeping this logic on the client avoids model calls for threads the user never revisits."
+  },
+  gates: {
+    title: "Schedule?",
+    meta: "token guard",
+    body: "The hook schedules auto recap only when the user returns to a stale thread, the thread is idle, the signature changed, and no matching request is already in flight or recently failed. Manual refresh bypasses the signature cache gate."
+  },
+  delta: {
+    title: "Bounded delta",
+    meta: "cheap prompt input",
+    body: "The first recap uses a small recent message window. Later recap calls send only new messages since <code>coveredMessageId</code> plus the previous recap."
+  },
+  blocked: {
+    title: "No call",
+    meta: "intentional outcome",
+    body: "Mid-turn activity, in-flight work, or a repeated failed signature stop generation. For auto recap, unchanged signature also stops generation. Manual refresh can still request a fresh line for the same signature."
+  },
+  transport: {
+    title: "Transport wrapper",
+    meta: "apps/web · ws-transport",
+    body: "The client calls a named wrapper such as <code>generateRecap</code>. Call sites do not dispatch raw method strings."
+  },
+  contract: {
+    title: "WS_METHODS",
+    meta: "packages/contracts",
+    body: "<code>recap.generate</code> takes <code>threadId</code> for telemetry, <code>messages</code>, and <code>previousRecap</code>. The server validates bounds before prompt assembly and returns <code>{ text }</code>."
+  },
+  router: {
+    title: "ws-router",
+    meta: "apps/server",
+    body: "The router adds one thin case for <code>recap.generate</code> and delegates to <code>RecapService</code>. The handler should stay boring."
+  },
+  service: {
+    title: "RecapService",
+    meta: "apps/server · prompt and sanitize",
+    body: "The service builds the recap prompt, calls <code>UtilityCompletionService.complete</code>, and sanitizes the returned text. Output is clipped near 220 characters."
+  },
+  utility: {
+    title: "Utility model",
+    meta: "cheap completion path",
+    body: "The recap reuses the utility completion path at low reasoning effort. The prompt can return the previous recap unchanged when nothing material changed."
+  },
+  nostore: {
+    title: "No server table",
+    meta: "ADR-0013",
+    body: "The server stores nothing. No recaps table, no migration, and no thread-row field. This keeps Recap separate from the durable diff Summary."
+  }
+};
+
+const FLOWS = {
+  first: {
+    name: "Return stale",
+    meta: "thread switch, app focus, or Overview open",
+    nodes: ["overview", "hook", "gates", "delta", "transport", "contract", "router", "service", "utility", "nostore", "cache", "row"],
+    zones: ["ui", "client", "wire", "server"],
+    edges: ["e-open", "e-gate", "e-assemble", "e-call", "e-contract", "e-router", "e-service", "e-model", "e-result", "e-store", "e-render"],
+    steps: [
+      "The user returns to a thread by switching back, refocusing the app, or opening <code>ThreadOverview</code>.",
+      "The hook requires a stale thread, about five minutes since the last completed turn.",
+      "It sends a bounded recent message window through <code>recap.generate</code>.",
+      "<code>RecapService</code> returns clipped text through the utility model path.",
+      "The client writes <code>recapByThread</code> and renders the row."
+    ]
+  },
+  refresh: {
+    name: "Manual",
+    meta: "user requests a fresh recap",
+    nodes: ["messages", "hook", "gates", "delta", "transport", "contract", "router", "service", "utility", "cache", "row"],
+    zones: ["ui", "client", "wire", "server"],
+    edges: ["e-messages", "e-gate", "e-assemble", "e-call", "e-contract", "e-router", "e-service", "e-result", "e-store", "e-render"],
+    steps: [
+      "The user clicks the row refresh action.",
+      "Manual refresh bypasses the five-minute stale-time threshold and same-signature cache reuse.",
+      "It sends only the delta since <code>coveredMessageId</code> plus the previous recap.",
+      "If nothing material changed, the model may return the previous recap unchanged.",
+      "The cache advances to the latest covered message id."
+    ]
+  },
+  cache: {
+    name: "Cache hit",
+    meta: "same signature, no model call",
+    nodes: ["overview", "hook", "cache", "row"],
+    zones: ["ui", "client"],
+    edges: ["e-open", "e-cache-read", "e-render"],
+    steps: [
+      "Opening the panel reads the cached recap for the active thread.",
+      "If the signature matches, the hook does not schedule a request.",
+      "The row renders immediately from memory."
+    ]
+  },
+  blocked: {
+    name: "Blocked",
+    meta: "expected no-call states",
+    nodes: ["hook", "gates", "blocked"],
+    zones: ["client"],
+    edges: ["e-gate", "e-block"],
+    steps: [
+      "Panel closed means no generation, even if the thread changes.",
+      "Mid-turn or streaming activity blocks generation until the thread is idle.",
+      "Matching cached or last-failed signatures stop auto generation. In-flight requests stop both auto and manual generation.",
+      "Each stop saves a utility-model call."
+    ]
+  },
+  clear: {
+    name: "Clear thread",
+    meta: "cache cleanup",
+    nodes: ["clear", "cache"],
+    zones: ["ui", "client"],
+    edges: ["e-clear"],
+    steps: [
+      "<code>clearThread</code> removes the thread's recap entry.",
+      "No persisted recap remains after restart or cleanup.",
+      "The next open for that thread follows the first-open path again."
+    ]
+  }
+};
+
+const stage = document.getElementById("stage");
+const nodes = Array.from(document.querySelectorAll(".node"));
+const zones = Array.from(document.querySelectorAll(".zone"));
+const edges = Array.from(document.querySelectorAll(".edge"));
+const labels = Array.from(document.querySelectorAll(".edge-label"));
+const chips = Array.from(document.querySelectorAll(".chip"));
+const flowcap = document.getElementById("flowcap");
+
+function setFlow(key) {
+  chips.forEach((chip) => chip.classList.toggle("on", chip.dataset.flow === key));
+  nodes.forEach((node) => node.classList.remove("lit"));
+  zones.forEach((zone) => zone.classList.remove("lit"));
+  edges.forEach((edge) => edge.classList.remove("lit"));
+  labels.forEach((label) => label.classList.remove("lit"));
+
+  if (key === "all") {
+    stage.classList.remove("flowing");
+    flowcap.classList.remove("show");
+    return;
+  }
+
+  const flow = FLOWS[key];
+  stage.classList.add("flowing");
+  flow.nodes.forEach((name) => document.querySelector(`.node[data-k="${name}"]`)?.classList.add("lit"));
+  flow.zones.forEach((name) => document.querySelector(`.zone[data-zone="${name}"]`)?.classList.add("lit"));
+  flow.edges.forEach((id) => document.getElementById(id)?.classList.add("lit"));
+  labels.forEach((label) => {
+    if (flow.edges.includes(label.dataset.e)) label.classList.add("lit");
+  });
+
+  document.getElementById("f-name").textContent = flow.name;
+  document.getElementById("f-meta").textContent = flow.meta;
+  document.getElementById("f-steps").innerHTML = flow.steps.map((step) => `<li>${step}</li>`).join("");
+  flowcap.classList.add("show");
+}
+
+chips.forEach((chip) => {
+  chip.addEventListener("click", () => setFlow(chip.dataset.flow));
+});
+
+nodes.forEach((node) => {
+  node.addEventListener("click", () => {
+    nodes.forEach((item) => item.classList.remove("sel"));
+    node.classList.add("sel");
+    const detail = DETAIL[node.dataset.k];
+    if (!detail) return;
+    document.getElementById("d-title").textContent = detail.title;
+    document.getElementById("d-meta").textContent = detail.meta;
+    document.getElementById("d-body").innerHTML = detail.body;
+  });
+});
+
+document.getElementById("themeToggle").addEventListener("click", () => {
+  const dark = !document.documentElement.classList.contains("dark");
+  document.documentElement.classList.toggle("dark", dark);
+  localStorage.setItem("thread-recap-theme", dark ? "dark" : "light");
+});
+</script>
+</body>
+</html>

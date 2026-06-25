@@ -611,16 +611,24 @@ surface. The Overview is a status-and-actions menu, not a diff lens.
 A short AI-generated one-line "what you're working on" for the active thread,
 shown at the top of the [[Overview]]. Produced by a stateless server RPC (our
 utility model) and cached **in memory per thread, never persisted** (resets on
-restart). Generation is deliberately frugal: panel-gated (runs only while the
-Overview is open), idle-debounced (fires after the thread goes quiet, ~12s
-first / ~35s refresh, never mid-turn), and signature-gated (regenerates only
-when user/assistant messages materially change, feeding just the new messages
-plus the previous recap). See ADR-0013.
+restart). Generation is deliberately frugal: user-triggered from the row, or
+automatic only when the user re-orients to a stale thread. Re-orientation means
+returning to the app, switching back to a thread, or opening the Overview. A
+thread is stale for Recap when its last completed turn is old enough (default:
+about five minutes), the conversation signature changed, and no turn is
+running. See ADR-0013.
 
 _Avoid_: confusing the Recap with [[Summary]] or [[Overview]]. [[Summary]]
 summarizes the **code diff** (a Review-tab lens); the Recap summarizes
 **conversational intent**. [[Overview]] is the **surface** that hosts the Recap,
 not the recap text itself.
+
+### Re-orientation
+The moment a user returns to a thread and needs to remember what it is about.
+In Mcode this is broader than terminal focus: it includes the app regaining
+focus, the user switching back to a thread, and opening the thread's
+[[Overview]]. Recap auto-generation keys off re-orientation rather than a timer
+that runs while the user is already watching the thread.
 
 ## Right panel
 
