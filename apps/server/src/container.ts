@@ -68,6 +68,7 @@ import { ShellEnvResolver } from "./services/shell-env-resolver";
 import { EnvService } from "./services/env-service";
 import { UtilityCompletionService } from "./services/utility-completion-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
+import { RecapService } from "./services/recap-service";
 import { ThreadTeardownService } from "./services/thread-teardown-service";
 import { RealGitExecutor } from "./services/git-executor/index.js";
 
@@ -435,6 +436,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     DiffSummaryService,
     { useClass: DiffSummaryService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    RecapService,
+    { useClass: RecapService },
     { lifecycle: Lifecycle.Singleton },
   );
 

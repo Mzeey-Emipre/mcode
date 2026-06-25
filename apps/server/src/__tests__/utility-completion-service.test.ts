@@ -62,6 +62,7 @@ describe("UtilityCompletionService", () => {
       "test prompt",
       "gpt-4.1-mini",
       "/tmp",
+      {},
     );
     expect(result).toEqual({ text: "summary result", model: "gpt-4.1-mini" });
   });
@@ -114,6 +115,25 @@ describe("UtilityCompletionService", () => {
       "prompt",
       "claude-haiku-4-5-20251001",
       "/tmp",
+      {},
+    );
+  });
+
+  it("passes optional completion options to the provider", async () => {
+    const provider = mockProvider(true);
+    registry = {
+      resolve: vi.fn().mockReturnValue(provider),
+    } as unknown as IProviderRegistry;
+
+    const settings = mockSettingsService({ utilityProvider: "claude" });
+    const svc = new UtilityCompletionService(settings, registry, availability);
+    await svc.complete("prompt", "/tmp", { reasoningLevel: "low" });
+
+    expect(provider.complete).toHaveBeenCalledWith(
+      "prompt",
+      "claude-haiku-4-5-20251001",
+      "/tmp",
+      { reasoningLevel: "low" },
     );
   });
 });

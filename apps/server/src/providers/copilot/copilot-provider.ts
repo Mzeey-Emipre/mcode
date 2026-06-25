@@ -46,6 +46,7 @@ import type {
   ProviderModelInfo,
   QuotaCategory,
   ProviderUsageInfo,
+  CompletionOptions,
 } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 
@@ -219,7 +220,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    * Creates a temporary session, sends the prompt, collects the response
    * text from SDK callbacks, then tears down the session.
    */
-  async complete(prompt: string, model: string, cwd: string): Promise<string> {
+  async complete(_prompt: string, _model: string, _cwd: string, _options?: CompletionOptions): Promise<string> {
+    const prompt = _prompt;
+    const model = _model;
+    const cwd = _cwd;
     await this.refreshClient();
     const notFoundMessage = this.cliNotFoundMessage();
     if (notFoundMessage) throw new Error(notFoundMessage);

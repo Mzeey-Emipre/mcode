@@ -54,6 +54,7 @@ import { WorkspaceEnricher } from "./services/workspace-enricher";
 import { FilesystemBrowser } from "./services/filesystem-browser";
 import { ModelCacheService } from "./services/model-cache-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
+import { RecapService } from "./services/recap-service";
 import { ThreadTeardownService } from "./services/thread-teardown-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage";
 import { WebSocket } from "ws";
@@ -252,6 +253,7 @@ const cleanupWorker = container.resolve(CleanupWorker);
 const threadTeardownService = container.resolve(ThreadTeardownService);
 const prDraftService = container.resolve(PrDraftService);
 const diffSummaryService = container.resolve(DiffSummaryService);
+const recapService = container.resolve(RecapService);
 const handoffStorage = container.resolve(HandoffStorage);
 const db = container.resolve<Database.Database>("Database");
 const jobObject = container.resolve<JobObject>("JobObject");
@@ -562,6 +564,7 @@ const { httpServer, wss } = createWsServer({
   enricher,
   filesystemBrowser,
   diffSummaryService,
+  recapService,
   handoffStorage,
   threadTeardownService,
   authToken: AUTH_TOKEN,

@@ -3,6 +3,11 @@ import type { WebSocket } from "ws";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
 import { _resetForTest, addClient } from "./push.js";
 import {
+  RECAP_MAX_MESSAGE_CONTENT_CHARS,
+  RECAP_MAX_MESSAGES,
+  RECAP_MAX_PREVIOUS_RECAP_CHARS,
+} from "@mcode/contracts";
+import {
   resetTransportPayloadValidatorForTest,
   setTransportPayloadValidatorForTest,
   type TransportPayloadValidator,
@@ -129,6 +134,134 @@ describe("routeMessage git.getRemoteUrl", () => {
       "Thread thread-1 does not belong to workspace ws-1",
     );
     expect(getRemoteUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("routeMessage recap.generate", () => {
+  it("delegates valid caller-supplied recap material without resolving thread state", async () => {
+    const generate = vi.fn().mockResolvedValue({ text: "Implementing recap.generate." });
+    const deps = {
+      recapService: { generate },
+      threadRepo: { findById: vi.fn() },
+      workspaceRepo: { findById: vi.fn() },
+      messageRepo: { listByThread: vi.fn() },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-recap",
+        method: "recap.generate",
+        params: {
+          threadId: "thread-1",
+          messages: [
+            { role: "user", content: "Build recap.generate." },
+            { role: "assistant", content: "Adding the RPC and tests." },
+          ],
+          previousRecap: null,
+        },
+      }),
+      deps,
+    );
+
+    expect(response.result).toEqual({ text: "Implementing recap.generate." });
+    expect(generate).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      messages: [
+        { role: "user", content: "Build recap.generate." },
+        { role: "assistant", content: "Adding the RPC and tests." },
+      ],
+      previousRecap: null,
+    });
+    expect(deps.threadRepo.findById).not.toHaveBeenCalled();
+    expect(deps.workspaceRepo.findById).not.toHaveBeenCalled();
+    expect(deps.messageRepo.listByThread).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid message roles before dispatch", async () => {
+    const generate = vi.fn();
+    const deps = {
+      recapService: { generate },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-recap-role",
+        method: "recap.generate",
+        params: {
+          threadId: "thread-1",
+          messages: [{ role: "system", content: "hidden context" }],
+          previousRecap: null,
+        },
+      }),
+      deps,
+    );
+
+    expect(response.error?.code).toBe("INVALID_PARAMS");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized recap payloads before prompt assembly", async () => {
+    const generate = vi.fn();
+    const deps = {
+      recapService: { generate },
+    } as unknown as RouterDeps;
+
+    const tooManyMessages = Array.from(
+      { length: RECAP_MAX_MESSAGES + 1 },
+      () => ({ role: "user", content: "hello" }),
+    );
+
+    for (const params of [
+      {
+        threadId: "thread-1",
+        messages: [{ role: "user", content: "x".repeat(RECAP_MAX_MESSAGE_CONTENT_CHARS + 1) }],
+        previousRecap: null,
+      },
+      {
+        threadId: "thread-1",
+        messages: tooManyMessages,
+        previousRecap: null,
+      },
+      {
+        threadId: "thread-1",
+        messages: [{ role: "user", content: "hello" }],
+        previousRecap: "x".repeat(RECAP_MAX_PREVIOUS_RECAP_CHARS + 1),
+      },
+    ]) {
+      const response = await routeMessage(
+        JSON.stringify({
+          id: "req-recap-oversized",
+          method: "recap.generate",
+          params,
+        }),
+        deps,
+      );
+
+      expect(response.error?.code).toBe("INVALID_PARAMS");
+    }
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects omitted previousRecap before dispatch", async () => {
+    const generate = vi.fn();
+    const deps = {
+      recapService: { generate },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-recap-previous-missing",
+        method: "recap.generate",
+        params: {
+          threadId: "thread-1",
+          messages: [{ role: "user", content: "Build recap.generate." }],
+        },
+      }),
+      deps,
+    );
+
+    expect(response.error?.code).toBe("INVALID_PARAMS");
+    expect(generate).not.toHaveBeenCalled();
   });
 });
 

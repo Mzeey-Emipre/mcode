@@ -1,7 +1,7 @@
 import { injectable, inject } from "tsyringe";
 import { logger } from "@mcode/shared";
 import { isCompletionCapable } from "@mcode/contracts";
-import type { IProviderRegistry, ProviderId } from "@mcode/contracts";
+import type { CompletionOptions, IProviderRegistry, ProviderId } from "@mcode/contracts";
 import { SettingsService } from "./settings-service.js";
 import { ProviderAvailabilityService } from "./provider-availability-service.js";
 
@@ -30,7 +30,7 @@ export class UtilityCompletionService {
    * Run a one-shot completion using the configured utility model.
    * Returns the generated text and the model ID that produced it.
    */
-  async complete(prompt: string, cwd: string): Promise<{ text: string; model: string }> {
+  async complete(prompt: string, cwd: string, options: CompletionOptions = {}): Promise<{ text: string; model: string }> {
     const settings = this.settingsService.get();
     const { provider: resolvedProvider, model: resolvedModel } =
       this.resolveProviderAndModel(settings);
@@ -57,7 +57,7 @@ export class UtilityCompletionService {
 
     model = model || UTILITY_MODEL_DEFAULTS[provider] || "claude-haiku-4-5-20251001";
 
-    const text = await agent.complete(prompt, model, cwd);
+    const text = await agent.complete(prompt, model, cwd, options);
     return { text, model };
   }
 

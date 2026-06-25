@@ -19,6 +19,12 @@ export type ProviderId = "claude" | "codex" | "gemini" | "copilot" | "cursor" | 
 /** How a provider's `resume` mechanism behaves when used to fork a session. */
 export type SessionForkBehavior = "clean" | "unsupported";
 
+/** Optional controls for one-shot utility completions. */
+export interface CompletionOptions {
+  /** Provider-specific reasoning effort for short utility tasks. */
+  reasoningLevel?: ReasoningLevel;
+}
+
 /**
  * Per-Provider knobs that ride on a {@link TurnRequest}, keyed by {@link ProviderId}.
  * Generic call sites cannot reach into the wrong Provider's knobs because the
@@ -164,7 +170,7 @@ export interface IAgentProvider {
 export interface ICompletionCapable extends IAgentProvider {
   readonly supportsCompletion: true;
   /** Run a one-shot prompt and return the raw text response. */
-  complete(prompt: string, model: string, cwd: string): Promise<string>;
+  complete(prompt: string, model: string, cwd: string, options?: CompletionOptions): Promise<string>;
 }
 
 /**

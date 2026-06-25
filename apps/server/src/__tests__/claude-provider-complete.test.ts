@@ -90,6 +90,9 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 
 vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+  normalizeReasoningLevelForModel: vi.fn((_modelId: string, level: string) => level),
+  supportsEffortParameter: vi.fn(() => true),
+  supportsThinkingToggle: vi.fn(() => false),
 }));
 
 import { ClaudeProvider } from "../providers/claude/claude-provider";
