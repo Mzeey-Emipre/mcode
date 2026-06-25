@@ -508,6 +508,12 @@ export interface McodeTransport {
     model: string;
     createdAt: string;
   }>;
+  /** Generate a stateless one-line conversational recap from bounded messages. */
+  generateRecap(
+    threadId: string,
+    messages: Array<{ role: "user" | "assistant"; content: string }>,
+    previousRecap: string | null,
+  ): Promise<{ text: string }>;
 
   // Memory pressure
   /** Notify server of window background/foreground state for memory management. */

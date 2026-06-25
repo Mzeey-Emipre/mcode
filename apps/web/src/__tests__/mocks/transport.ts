@@ -207,6 +207,7 @@ export const mockTransport: McodeTransport = {
     model: "mock-model",
     createdAt: new Date().toISOString(),
   }),
+  generateRecap: vi.fn().mockResolvedValue({ text: "Mock recap" }),
   readLatestHandoff: vi.fn().mockResolvedValue(null),
 };
 

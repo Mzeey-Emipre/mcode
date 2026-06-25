@@ -13,6 +13,7 @@ import {
   Loader2,
   Menu,
   Plus,
+  RefreshCw,
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ import { PrSplitButton } from "./PrSplitButton";
 import { ChecksPopover } from "./ChecksPopover";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
+import { useThreadRecap } from "@/hooks/useThreadRecap";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
@@ -576,6 +578,84 @@ function ThreadOverviewRepositoryRow({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface ThreadOverviewRecapRowProps {
+  recapText: string | null;
+  isGenerating: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}
+
+function ThreadOverviewRecapRow({
+  recapText,
+  isGenerating,
+  error,
+  onRefresh,
+}: ThreadOverviewRecapRowProps) {
+  const label = recapText ?? (error ? "Recap unavailable" : "Generate recap");
+  const refreshLabel = isGenerating ? "Refreshing recap" : "Refresh recap";
+
+  return (
+    <div
+      data-testid="thread-overview-recap"
+      className="w-full px-2.5 py-2.5"
+    >
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="shrink-0 text-xs font-medium text-muted-foreground">Recap</span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                type="button"
+                data-testid="thread-overview-recap-refresh"
+                aria-label={refreshLabel}
+                disabled={isGenerating}
+                onClick={onRefresh}
+                className={cn("-mr-1 shrink-0", isGenerating && "text-muted-foreground/45")}
+              >
+                <RefreshCw size={13} aria-hidden />
+              </Button>
+            }
+          />
+          <TooltipContent>{refreshLabel}</TooltipContent>
+        </Tooltip>
+      </div>
+      {isGenerating ? (
+        <div
+          data-testid="thread-overview-recap-skeleton"
+          role="status"
+          aria-label={refreshLabel}
+          className="mt-2 flex w-full flex-col gap-1.5"
+        >
+          <span className="sr-only">{refreshLabel}</span>
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              aria-hidden
+              className="h-2.5 rounded-full bg-muted/80 animate-[plan-fade_1.8s_ease-in-out_infinite]"
+              style={{
+                width: `${[88, 76, 48][i]}%`,
+                animationDelay: `${i * 0.16}s`,
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        <p
+          data-testid="thread-overview-recap-text"
+          className={cn(
+            "mt-2 max-w-[26rem] whitespace-normal break-words text-xs leading-[1.45]",
+            recapText ? "text-foreground/85" : "text-muted-foreground",
+          )}
+        >
+          {label}
+        </p>
+      )}
     </div>
   );
 }
@@ -1490,6 +1570,11 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const sourceMessages = useThreadStore((s) =>
     open ? (s.records.get(thread.id)?.messages ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
   );
+  const threadRecap = useThreadRecap({
+    threadId: thread.id,
+    messages: sourceMessages,
+    overviewOpen: open,
+  });
   const sources = useMemo(
     () => (open ? extractThreadSources(sourceMessages) : []),
     [open, sourceMessages],
@@ -1706,6 +1791,14 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 <ThreadOverviewSources sources={sources} onOpen={openSource} />
               </>
             )}
+
+            <Separator className="my-1.5" />
+            <ThreadOverviewRecapRow
+              recapText={threadRecap.recapText}
+              isGenerating={threadRecap.isGenerating}
+              error={threadRecap.error}
+              onRefresh={() => void threadRecap.refresh()}
+            />
     </div>
   );
 
