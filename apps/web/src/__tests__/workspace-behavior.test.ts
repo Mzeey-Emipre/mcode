@@ -360,12 +360,23 @@ describe("Workspace Behavior", () => {
           ],
         ]),
       });
+      useThreadStore.setState({
+        recapByThread: {
+          "t-del": {
+            text: "Delete this thread",
+            signature: "sig-del",
+            coveredMessageId: "msg-del",
+            generatedAt: "2026-06-25T10:00:00.000Z",
+          },
+        },
+      });
 
       await useWorkspaceStore.getState().deleteThread("t-del", false);
 
       const ts = useThreadStore.getState();
       expect(ts.runningThreadIds.has("t-del")).toBe(false);
       expect(hasTestThreadRecord("t-del")).toBe(false);
+      expect(ts.recapByThread["t-del"]).toBeUndefined();
     });
 
     it("preserves per-thread maps for other threads when deleting one", async () => {
@@ -388,6 +399,22 @@ describe("Workspace Behavior", () => {
           ["t-del", { ...createEmptyThreadRecord(), error: "del error" }],
         ]),
       });
+      useThreadStore.setState({
+        recapByThread: {
+          "t-keep": {
+            text: "Keep this thread",
+            signature: "sig-keep",
+            coveredMessageId: "msg-keep",
+            generatedAt: "2026-06-25T10:00:00.000Z",
+          },
+          "t-del": {
+            text: "Delete this thread",
+            signature: "sig-del",
+            coveredMessageId: "msg-del",
+            generatedAt: "2026-06-25T10:01:00.000Z",
+          },
+        },
+      });
 
       await useWorkspaceStore.getState().deleteThread("t-del", false);
 
@@ -395,9 +422,11 @@ describe("Workspace Behavior", () => {
       // Deleted thread is gone.
       expect(hasTestThreadRecord("t-del")).toBe(false);
       expect(ts.runningThreadIds.has("t-del")).toBe(false);
+      expect(ts.recapByThread["t-del"]).toBeUndefined();
       // Other thread is preserved.
       expect(getTestThreadError("t-keep")).toBe("keep error");
       expect(ts.runningThreadIds.has("t-keep")).toBe(true);
+      expect(ts.recapByThread["t-keep"]?.text).toBe("Keep this thread");
     });
 
     it("clears preview browser state and queued preview references for the deleted thread", async () => {
@@ -466,6 +495,28 @@ describe("Workspace Behavior", () => {
           ["t-2", { ...createEmptyThreadRecord(), error: "err-2", streaming: "text-2" }],
         ]),
       });
+      useThreadStore.setState({
+        recapByThread: {
+          "t-1": {
+            text: "Delete one",
+            signature: "sig-1",
+            coveredMessageId: "msg-1",
+            generatedAt: "2026-06-25T10:00:00.000Z",
+          },
+          "t-2": {
+            text: "Delete two",
+            signature: "sig-2",
+            coveredMessageId: "msg-2",
+            generatedAt: "2026-06-25T10:01:00.000Z",
+          },
+          "other-workspace-thread": {
+            text: "Keep other workspace",
+            signature: "sig-other",
+            coveredMessageId: "msg-other",
+            generatedAt: "2026-06-25T10:02:00.000Z",
+          },
+        },
+      });
 
       await useWorkspaceStore.getState().deleteWorkspace("ws-del");
 
@@ -474,6 +525,14 @@ describe("Workspace Behavior", () => {
       expect(ts.runningThreadIds.has("t-2")).toBe(false);
       expect(hasTestThreadRecord("t-1")).toBe(false);
       expect(hasTestThreadRecord("t-2")).toBe(false);
+      expect(ts.recapByThread).toEqual({
+        "other-workspace-thread": {
+          text: "Keep other workspace",
+          signature: "sig-other",
+          coveredMessageId: "msg-other",
+          generatedAt: "2026-06-25T10:02:00.000Z",
+        },
+      });
     });
   });
 
