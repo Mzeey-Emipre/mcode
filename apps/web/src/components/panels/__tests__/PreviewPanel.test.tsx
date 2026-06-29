@@ -5,31 +5,18 @@
  * 1. Unavailable state - when desktopBridge.preview is absent.
  * 2. Full panel state - when desktopBridge.preview is present (hooks mocked).
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { getDefaultSettings } from "@mcode/contracts";
+
+const { mockUsePreviewBridge } = vi.hoisted(() => ({
+  mockUsePreviewBridge: vi.fn(),
+}));
 
 // Mock hooks before importing the component under test.
 vi.mock("../hooks/usePreviewBridge", () => ({
-  usePreviewBridge: () => ({
-    inputUrl: "",
-    setInputUrl: vi.fn(),
-    navError: null,
-    canBack: false,
-    canFwd: false,
-    previewLoading: false,
-    pageTitle: null,
-    faviconUrl: null,
-    pageStatus: { url: null, title: null, favicon: null, phase: "loaded" },
-    storedUrl: "",
-    pushSync: vi.fn(),
-    refreshNav: vi.fn(),
-    onGoBack: vi.fn(),
-    onGoForward: vi.fn(),
-    onReload: vi.fn(),
-    onOpenExternal: vi.fn(),
-    onNavigate: vi.fn(),
-    onRetry: vi.fn(),
-  }),
+  usePreviewBridge: mockUsePreviewBridge,
+  formatNavError: (code: string) => code,
 }));
 
 // The panel only consumes usePreviewTabs for the header's "New page" action and
@@ -57,10 +44,47 @@ vi.mock("../hooks/usePreviewCapture", () => ({
   }),
 }));
 
-import { PreviewPanel } from "../PreviewPanel";
+import {
+  PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
+  PreviewPanel,
+  shouldRenderWebviewPreview,
+} from "../PreviewPanel";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
+
+function mockBridgeState(overrides: Record<string, unknown> = {}) {
+  const state = {
+    inputUrl: "",
+    setInputUrl: vi.fn(),
+    navError: null,
+    canBack: false,
+    canFwd: false,
+    previewLoading: false,
+    pageTitle: null,
+    faviconUrl: null,
+    pageStatus: { url: null, title: null, favicon: null, phase: "loaded" },
+    storedUrl: "",
+    pushSync: vi.fn(),
+    refreshNav: vi.fn(),
+    onGoBack: vi.fn(),
+    onGoForward: vi.fn(),
+    onReload: vi.fn(),
+    onOpenExternal: vi.fn(),
+    resolveNavigation: vi.fn().mockResolvedValue({ ok: true, url: "https://example.com" }),
+    onNavigate: vi.fn(),
+    onRetry: vi.fn(),
+    onForceReload: vi.fn(),
+    onClearCookies: vi.fn(),
+    onClearCache: vi.fn(),
+    onGetZoom: vi.fn().mockResolvedValue(1),
+    onSetZoom: vi.fn().mockResolvedValue(1),
+  };
+  return { ...state, ...overrides };
+}
 
 describe("PreviewPanel — unavailable state", () => {
   beforeEach(() => {
+    mockUsePreviewBridge.mockReturnValue(mockBridgeState());
     // Ensure no desktopBridge is present.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
@@ -69,6 +93,7 @@ describe("PreviewPanel — unavailable state", () => {
   afterEach(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
+    mockUsePreviewBridge.mockClear();
   });
 
   it("renders the unavailable state when desktopBridge is absent", () => {
@@ -109,14 +134,22 @@ describe("PreviewPanel — full panel state", () => {
           .mockResolvedValue({ canGoBack: false, canGoForward: false }),
         onPageStatus: vi.fn().mockReturnValue(() => {}),
         cancelCapture: vi.fn().mockResolvedValue(undefined),
+        adoptWebview: vi.fn().mockResolvedValue(undefined),
+        releaseWebview: vi.fn().mockResolvedValue(undefined),
       },
     };
+    useSettingsStore.getState()._applyPush(getDefaultSettings());
+    usePreviewSuppressionStore.setState({ count: 0 });
+    mockUsePreviewBridge.mockReturnValue(mockBridgeState());
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
+    useSettingsStore.getState()._applyPush(getDefaultSettings());
+    usePreviewSuppressionStore.setState({ count: 0 });
+    mockUsePreviewBridge.mockClear();
   });
 
   it("renders the full panel when desktopBridge is present", () => {
@@ -159,5 +192,108 @@ describe("PreviewPanel — full panel state", () => {
   it("no longer renders a horizontal tab strip (the rail is the page switcher)", () => {
     render(<PreviewPanel threadId="thread-1" />);
     expect(screen.queryByTestId("preview-tab-bar")).not.toBeInTheDocument();
+  });
+
+  it("uses the native preview path by default", () => {
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.queryByTestId("preview-webview-surface")).not.toBeInTheDocument();
+    expect(screen.getByTestId("browser-local-ports")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-surface")).toHaveClass(
+      "mx-2",
+      "mb-2",
+      "mt-1",
+      "rounded-md",
+      "border",
+      "bg-muted/10",
+    );
+  });
+
+  it("keeps the webview path flush while preserving the empty state", () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(screen.getByTestId("preview-webview-surface")).toBeInTheDocument();
+    expect(screen.queryByTestId("preview-webview")).not.toBeInTheDocument();
+    expect(screen.getByTestId("browser-local-ports")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-surface")).toHaveClass(
+      "z-0",
+      "overflow-hidden",
+      "rounded-tl-md",
+    );
+    expect(screen.getByTestId("preview-surface")).not.toHaveClass(
+      "mx-2",
+      "mb-2",
+      "mt-1",
+      "rounded-md",
+      "border",
+      "bg-muted/10",
+    );
+    expect(screen.getByTestId("browser-header").parentElement).toHaveClass(
+      "relative",
+      "z-20",
+    );
+    expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
+      expect.objectContaining({ forceHidden: true }),
+    );
+  });
+
+  it("renders the active URL in a live webview when the effective engine is webview", () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "https://example.com" }),
+    );
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const webview = screen.getByTestId("preview-webview");
+    expect(webview).toHaveAttribute("data-tab-id", PREVIEW_WEBVIEW_FALLBACK_TAB_ID);
+    expect(webview).toHaveAttribute("src", "https://example.com");
+    expect(webview).toHaveClass("relative", "z-0", "h-full", "w-full");
+    expect(screen.queryByTestId("browser-local-ports")).not.toBeInTheDocument();
+    expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
+      expect.objectContaining({ forceHidden: true }),
+    );
+  });
+
+  it("keeps the live webview mounted while the overflow menu is open", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "https://example.com" }),
+    );
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(screen.getByTestId("preview-webview")).toBeInTheDocument();
+    expect(usePreviewSuppressionStore.getState().count).toBe(0);
+    fireEvent.click(screen.getByLabelText("More browser tools"));
+
+    expect(await screen.findByTestId("browser-overflow-menu")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-webview")).toBeInTheDocument();
+    expect(usePreviewSuppressionStore.getState().count).toBe(0);
+  });
+
+  it("honors the webview engine in built and dev renderers", () => {
+    expect(shouldRenderWebviewPreview("webview")).toBe(true);
+    expect(shouldRenderWebviewPreview("webContentsView")).toBe(false);
+    expect(shouldRenderWebviewPreview(undefined)).toBe(false);
   });
 });

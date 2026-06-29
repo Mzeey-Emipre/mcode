@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Globe } from "lucide-react";
+import type { PreviewPageStatus } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
+import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { BrowserHeader } from "./BrowserHeader";
 import { LocalPortsEmptyState } from "./LocalPortsEmptyState";
 import { PreviewErrorPanel } from "./PreviewErrorPanel";
 import { PreviewPerfHud } from "./PreviewPerfHud";
-import { usePreviewBridge } from "./hooks/usePreviewBridge";
+import { PreviewWebview, type PreviewWebviewHandle } from "./PreviewWebview";
+import { formatNavError, usePreviewBridge } from "./hooks/usePreviewBridge";
 import {
   usePreviewCapture,
   type PreviewCaptureKind,
@@ -25,6 +29,14 @@ const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
 
 /** How long the capture confirmation badge stays visible after a successful attach. */
 const CAPTURE_CONFIRMATION_DURATION_MS = 2200;
+
+/** Fallback tab id used until the host tab list has loaded. */
+export const PREVIEW_WEBVIEW_FALLBACK_TAB_ID = "__mcode_webview_active_fallback__";
+
+/** Returns whether the flagged webview renderer should replace the native preview surface. */
+export function shouldRenderWebviewPreview(engine: string | undefined): boolean {
+  return engine === "webview";
+}
 
 export interface PreviewPanelProps {
   /** Thread that owns preview state (URL memory and future captures). */
@@ -45,8 +57,33 @@ export interface PreviewPanelProps {
  */
 export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const webviewRef = useRef<PreviewWebviewHandle | null>(null);
 
-  const bridge = usePreviewBridge({ threadId, workspaceId, surfaceRef });
+  const designModeActive = usePreviewDesignModeStore((s) => s.modes[threadId] === true);
+  const designModeToggle = usePreviewDesignModeStore((s) => s.toggle);
+  const designModeSetActive = usePreviewDesignModeStore((s) => s.setActive);
+  const omniboxFocusTick = usePreviewFocusStore((s) => s.omniboxFocusTick);
+  const previewRenderingEngine = useSettingsStore(
+    (s) => s.settings.preview.rendering.engine,
+  );
+  const showWebviewPreview = shouldRenderWebviewPreview(previewRenderingEngine);
+
+  const bridge = usePreviewBridge({
+    threadId,
+    workspaceId,
+    surfaceRef,
+    forceHidden: showWebviewPreview,
+  });
+  const [webviewSrc, setWebviewSrc] = useState<string | null>(null);
+  const [webviewNavError, setWebviewNavError] = useState<string | null>(null);
+  const [webviewCanBack, setWebviewCanBack] = useState(false);
+  const [webviewCanFwd, setWebviewCanFwd] = useState(false);
+  const [webviewPageStatus, setWebviewPageStatus] = useState<PreviewPageStatus>({
+    url: null,
+    title: null,
+    favicon: null,
+    phase: "loaded",
+  });
 
   // Inline capture confirmation. The composer chip lives in another panel and
   // may scroll off; this badge acknowledges the action where the user is
@@ -81,6 +118,91 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   // "New page" action for the header. Page switching/closing is driven from the
   // activity rail (the page switcher), so this panel no longer renders a strip.
   const tabs = usePreviewTabs(threadId);
+  const activeWebviewTabId =
+    tabs.tabSet?.activeTabId ?? PREVIEW_WEBVIEW_FALLBACK_TAB_ID;
+
+  useEffect(() => {
+    if (!showWebviewPreview) return;
+    const stored = bridge.storedUrl.trim();
+    if (!stored) {
+      setWebviewSrc(null);
+      setWebviewPageStatus({ url: null, title: null, favicon: null, phase: "loaded" });
+      return;
+    }
+    setWebviewSrc(stored);
+  }, [bridge.storedUrl, showWebviewPreview, threadId]);
+
+  const onWebviewPageStatus = useCallback((status: PreviewPageStatus): void => {
+    setWebviewPageStatus(status);
+    if (status.url) {
+      useDiffStore.getState().setPreviewUrlForThread(threadId, status.url);
+    }
+  }, [threadId]);
+
+  const onWebviewNavigate = useCallback(
+    (url: string): void => {
+      setWebviewNavError(null);
+      setWebviewPageStatus((status) => ({ ...status, phase: "loading" }));
+      void bridge.resolveNavigation(url).then((result) => {
+        if (!result.ok) {
+          setWebviewPageStatus((status) => ({ ...status, phase: "loaded" }));
+          setWebviewNavError(formatNavError(result.error));
+          return;
+        }
+        useDiffStore.getState().setPreviewUrlForThread(threadId, result.url);
+        setWebviewSrc(result.url);
+        setWebviewPageStatus({
+          url: result.url,
+          title: null,
+          favicon: null,
+          phase: "loading",
+        });
+        webviewRef.current?.navigate(result.url);
+      });
+    },
+    [bridge, threadId],
+  );
+
+  const onWebviewOpenExternal = useCallback((): void => {
+    const url = webviewRef.current?.getUrl() || webviewSrc;
+    if (url) void window.desktopBridge?.openExternalUrl(url);
+  }, [webviewSrc]);
+
+  const onWebviewGetZoom = useCallback(async (): Promise<number> => {
+    return (await webviewRef.current?.getZoom()) ?? 1;
+  }, []);
+
+  const onWebviewSetZoom = useCallback(async (factor: number): Promise<number> => {
+    return (await webviewRef.current?.setZoom(factor)) ?? factor;
+  }, []);
+
+  const effectivePageStatus = showWebviewPreview ? webviewPageStatus : bridge.pageStatus;
+  const effectiveInputUrl =
+    showWebviewPreview ? (webviewPageStatus.url ?? webviewSrc ?? "") : bridge.inputUrl;
+  const effectivePageTitle = showWebviewPreview ? webviewPageStatus.title : bridge.pageTitle;
+  const effectiveFaviconUrl = showWebviewPreview ? webviewPageStatus.favicon : bridge.faviconUrl;
+  const effectiveCanBack = showWebviewPreview ? webviewCanBack : bridge.canBack;
+  const effectiveCanFwd = showWebviewPreview ? webviewCanFwd : bridge.canFwd;
+  const effectivePreviewLoading = showWebviewPreview
+    ? webviewPageStatus.phase === "loading"
+    : bridge.previewLoading;
+  const effectiveNavError = showWebviewPreview ? webviewNavError : bridge.navError;
+  const effectiveNavigate = showWebviewPreview ? onWebviewNavigate : bridge.onNavigate;
+  const effectiveGoBack = showWebviewPreview
+    ? () => webviewRef.current?.goBack()
+    : bridge.onGoBack;
+  const effectiveGoForward = showWebviewPreview
+    ? () => webviewRef.current?.goForward()
+    : bridge.onGoForward;
+  const effectiveReload = showWebviewPreview
+    ? () => webviewRef.current?.reload()
+    : bridge.onReload;
+  const effectiveForceReload = showWebviewPreview
+    ? () => webviewRef.current?.forceReload()
+    : bridge.onForceReload;
+  const effectiveOpenExternal = showWebviewPreview ? onWebviewOpenExternal : bridge.onOpenExternal;
+  const effectiveGetZoom = showWebviewPreview ? onWebviewGetZoom : bridge.onGetZoom;
+  const effectiveSetZoom = showWebviewPreview ? onWebviewSetZoom : bridge.onSetZoom;
 
   // Page events flow through `preview:page-status`, not `preview:tabs-updated`
   // (P2), so the host-truth tab set lags the active page's live chrome. Publish
@@ -90,21 +212,16 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   // each tab's own persisted favicon rather than a stale overlay.
   useEffect(() => {
     usePreviewTabsStore.getState().setLiveChrome(threadId, {
-      title: bridge.pageStatus.title,
-      url: bridge.pageStatus.url,
-      favicon: bridge.pageStatus.favicon,
+      title: effectivePageStatus.title,
+      url: effectivePageStatus.url,
+      favicon: effectivePageStatus.favicon,
     });
-  }, [threadId, bridge.pageStatus]);
+  }, [threadId, effectivePageStatus]);
   useEffect(() => {
     return () => {
       usePreviewTabsStore.getState().setLiveChrome(threadId, null);
     };
   }, [threadId]);
-
-  const designModeActive = usePreviewDesignModeStore((s) => s.modes[threadId] === true);
-  const designModeToggle = usePreviewDesignModeStore((s) => s.toggle);
-  const designModeSetActive = usePreviewDesignModeStore((s) => s.setActive);
-  const omniboxFocusTick = usePreviewFocusStore((s) => s.omniboxFocusTick);
 
   // Design mode is a single state: "next click on the page captures the
   // element under the cursor, repeat until you turn the mode off." Toggling it
@@ -183,49 +300,54 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     );
   }
 
-  const hasLoadedPage = bridge.storedUrl.trim().length > 0;
+  const hasLoadedPage = showWebviewPreview
+    ? !!(webviewSrc ?? webviewPageStatus.url)
+    : bridge.storedUrl.trim().length > 0;
   const pageError =
-    bridge.pageStatus.phase === "error" ? bridge.pageStatus.error : undefined;
-  const showLocalPorts = !hasLoadedPage && !bridge.previewLoading && !pageError;
+    effectivePageStatus.phase === "error" ? effectivePageStatus.error : undefined;
+  const showLocalPorts = !hasLoadedPage && !effectivePreviewLoading && !pageError;
 
   return (
     <div
       data-testid="preview-panel"
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
-      <BrowserHeader
-        url={bridge.inputUrl}
-        pageTitle={bridge.pageTitle}
-        faviconUrl={bridge.faviconUrl}
-        hasLoadedPage={hasLoadedPage}
-        canBack={bridge.canBack}
-        canFwd={bridge.canFwd}
-        threadId={threadId}
-        designModeActive={designModeActive}
-        elementPickBusy={capture.elementPickBusy}
-        captureBusy={capture.captureBusy}
-        regionBusy={capture.regionBusy}
-        focusRequest={omniboxFocusTick}
-        onNavigate={bridge.onNavigate}
-        onGoBack={bridge.onGoBack}
-        onGoForward={bridge.onGoForward}
-        onReload={bridge.onReload}
-        onOpenExternal={bridge.onOpenExternal}
-        onToggleDesign={onToggleDesignMode}
-        onScreenshot={capture.onAddPictureReference}
-        onNewPage={tabs.newTab}
-        onForceReload={bridge.onForceReload}
-        onRegionCapture={capture.onAddRegionPictureReference}
-        onDumpContent={capture.onAddPageContextOnly}
-        onClearCookies={bridge.onClearCookies}
-        onClearCache={bridge.onClearCache}
-        onGetZoom={bridge.onGetZoom}
-        onSetZoom={bridge.onSetZoom}
-      />
+      <div className={cn(showWebviewPreview && "relative z-20")}>
+        <BrowserHeader
+          url={effectiveInputUrl}
+          pageTitle={effectivePageTitle}
+          faviconUrl={effectiveFaviconUrl}
+          hasLoadedPage={hasLoadedPage}
+          canBack={effectiveCanBack}
+          canFwd={effectiveCanFwd}
+          threadId={threadId}
+          designModeActive={designModeActive}
+          elementPickBusy={capture.elementPickBusy}
+          captureBusy={capture.captureBusy}
+          regionBusy={capture.regionBusy}
+          focusRequest={omniboxFocusTick}
+          onNavigate={effectiveNavigate}
+          onGoBack={effectiveGoBack}
+          onGoForward={effectiveGoForward}
+          onReload={effectiveReload}
+          onOpenExternal={effectiveOpenExternal}
+          onToggleDesign={onToggleDesignMode}
+          onScreenshot={capture.onAddPictureReference}
+          onNewPage={tabs.newTab}
+          onForceReload={effectiveForceReload}
+          onRegionCapture={capture.onAddRegionPictureReference}
+          onDumpContent={capture.onAddPageContextOnly}
+          onClearCookies={bridge.onClearCookies}
+          onClearCache={bridge.onClearCache}
+          onGetZoom={effectiveGetZoom}
+          onSetZoom={effectiveSetZoom}
+          suppressPreviewForOverlays={!showWebviewPreview}
+        />
+      </div>
 
-      {bridge.navError ? (
+      {effectiveNavError ? (
         <p className="flex-none px-3 py-1 text-xs text-destructive" role="status">
-          {bridge.navError}
+          {effectiveNavError}
         </p>
       ) : null}
 
@@ -236,37 +358,19 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
         ref={surfaceRef}
         role="region"
         aria-label="Page preview"
+        data-testid="preview-surface"
         className={cn(
-          "relative mx-2 mb-2 mt-1 min-h-[min(40vh,20rem)] min-w-0 flex-1 rounded-md border border-border/40 bg-muted/10",
+          "relative min-h-[min(40vh,20rem)] min-w-0 flex-1",
+          showWebviewPreview
+            ? "z-0 overflow-hidden rounded-tl-md"
+            : "mx-2 mb-2 mt-1 rounded-md border border-border/40 bg-muted/10",
           showLocalPorts && "overflow-y-auto",
-          // Clip the pinned freeze-frame when the surface shrinks mid-overlay.
-          bridge.freezeFrame && "overflow-hidden",
         )}
       >
-        {/* Freeze-frame stand-in: while an overlay (dialog, menu) suppresses
-            the native WebContentsView, this snapshot keeps the page visibly
-            present instead of leaving a blank hole. The live view composites
-            above it once remounted, so the swap back is invisible. Pinned to
-            its capture-time size and clipped by the surface so a resize while
-            frozen reveals/clips like a real viewport instead of stretching. */}
-        {bridge.freezeFrame ? (
-          <img
-            src={bridge.freezeFrame.url}
-            alt=""
-            aria-hidden
-            draggable={false}
-            data-testid="preview-freeze-frame"
-            className="pointer-events-none absolute left-0 top-0 max-w-none"
-            style={{
-              width: bridge.freezeFrame.width,
-              height: bridge.freezeFrame.height,
-            }}
-          />
-        ) : null}
         {/* Loading: thin indeterminate progress bar at top of content area.
             motion-safe gates the animation so users with prefers-reduced-motion
             get a static bar instead of a perpetual sweep. */}
-        {bridge.previewLoading ? (
+        {effectivePreviewLoading ? (
           <div
             data-testid="preview-loading-banner"
             className="absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden rounded-t-md"
@@ -302,22 +406,43 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             <span>{CAPTURE_KIND_LABEL[lastCapture]}</span>
           </div>
         ) : null}
+        {showWebviewPreview ? (
+          <div
+            data-testid="preview-webview-surface"
+            className="absolute inset-0 z-0 overflow-hidden rounded-tl-md"
+          >
+            {webviewSrc ? (
+              <PreviewWebview
+                ref={webviewRef}
+                threadId={threadId}
+                tabId={activeWebviewTabId}
+                src={webviewSrc}
+                className="relative z-0 h-full w-full"
+                onPageStatus={onWebviewPageStatus}
+                onNavigationStateChange={(state) => {
+                  setWebviewCanBack(state.canGoBack);
+                  setWebviewCanFwd(state.canGoForward);
+                }}
+              />
+            ) : null}
+          </div>
+        ) : null}
         {pageError ? (
           // Approach A: the native view is hidden (bridge syncs visible:false
           // while phase === "error"), so this HTML panel owns the surface and
           // names the failure with recovery actions.
           <PreviewErrorPanel
             error={pageError}
-            url={bridge.pageStatus.url}
-            canBack={bridge.canBack}
-            onRetry={() => void bridge.onRetry()}
-            onGoBack={() => void bridge.onGoBack()}
+            url={effectivePageStatus.url}
+            canBack={effectiveCanBack}
+            onRetry={() => void effectiveReload()}
+            onGoBack={() => void effectiveGoBack()}
           />
         ) : null}
         {showLocalPorts ? (
           <LocalPortsEmptyState
             active={showLocalPorts}
-            onOpenPort={(port) => bridge.onNavigate(`http://localhost:${port}`)}
+            onOpenPort={(port) => effectiveNavigate(`http://localhost:${port}`)}
           />
         ) : null}
       </div>

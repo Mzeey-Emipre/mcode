@@ -51,6 +51,11 @@ export type PreviewNavigateResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly error: string };
 
+/** Result of resolving preview navigation input without loading it. */
+export type PreviewResolveNavigationResult =
+  | { readonly ok: true; readonly url: string }
+  | { readonly ok: false; readonly error: string };
+
 /** Result of capturing the embedded preview viewport as a PNG for the composer. */
 export type PreviewPictureReferenceResult =
   | {
@@ -92,12 +97,8 @@ interface PreviewBridge {
     /** Active workspace id; scopes preview spill files under the Mcode app data directory. */
     workspaceId?: string | null;
   }): Promise<void>;
-  /**
-   * Capture the live preview as a data-URL freeze-frame, shown in place of the
-   * native view while overlays suppress it. Resolves null when nothing is
-   * mounted to capture.
-   */
-  captureSnapshot(): Promise<string | null>;
+  /** Resolve omnibox input to a safe preview URL without loading it. */
+  resolveNavigation(url: string, workspacePath?: string | null): Promise<PreviewResolveNavigationResult>;
   navigate(url: string, workspacePath?: string | null): Promise<PreviewNavigateResult>;
   goBack(): Promise<boolean>;
   goForward(): Promise<boolean>;

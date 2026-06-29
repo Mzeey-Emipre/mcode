@@ -69,6 +69,8 @@ export interface BrowserHeaderProps {
   readonly onGetZoom: () => Promise<number>;
   /** Set the guest's zoom factor (kebab). */
   readonly onSetZoom: (factor: number) => Promise<number>;
+  /** Whether overflow overlays must hide the native preview layer. */
+  readonly suppressPreviewForOverlays?: boolean;
 }
 
 /**
@@ -112,6 +114,7 @@ export function BrowserHeader({
   onClearCache,
   onGetZoom,
   onSetZoom,
+  suppressPreviewForOverlays = true,
 }: BrowserHeaderProps) {
   const {
     displayValue,
@@ -380,6 +383,7 @@ export function BrowserHeader({
         onClearCache={onClearCache}
         onGetZoom={onGetZoom}
         onSetZoom={onSetZoom}
+        suppressPreviewForOverlays={suppressPreviewForOverlays}
       />
     </div>
   );

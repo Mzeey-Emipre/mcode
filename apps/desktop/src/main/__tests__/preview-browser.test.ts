@@ -17,6 +17,16 @@ let ipcOnHandlers: Record<string, (...args: unknown[]) => unknown> = {};
 /** Tracks WebContentsView instances created during a test. */
 let createdViews: ReturnType<typeof makeWebContentsView>[] = [];
 
+/** Shared preview partition returned by the Electron session mock. */
+const previewPartition = {
+  setPermissionRequestHandler: vi.fn(),
+  webRequest: {
+    onCompleted: vi.fn(),
+  },
+  clearStorageData: vi.fn().mockResolvedValue(undefined),
+  clearCache: vi.fn().mockResolvedValue(undefined),
+};
+
 function makeWebContentsView() {
   const webContents = {
     isDestroyed: vi.fn().mockReturnValue(false),
@@ -33,8 +43,15 @@ function makeWebContentsView() {
     goBack: vi.fn(),
     goForward: vi.fn(),
     reload: vi.fn(),
+    reloadIgnoringCache: vi.fn(),
     insertCSS: vi.fn().mockResolvedValue("css-key"),
     removeInsertedCSS: vi.fn().mockResolvedValue(undefined),
+    session: {
+      clearStorageData: vi.fn().mockResolvedValue(undefined),
+      clearCache: vi.fn().mockResolvedValue(undefined),
+    },
+    getZoomFactor: vi.fn().mockReturnValue(1),
+    setZoomFactor: vi.fn(),
     on: vi.fn(),
     removeAllListeners: vi.fn(),
     setWindowOpenHandler: vi.fn(),
@@ -96,12 +113,7 @@ vi.mock("electron", () => ({
     }),
   },
   session: {
-    fromPartition: vi.fn(() => ({
-      setPermissionRequestHandler: vi.fn(),
-      webRequest: {
-        onCompleted: vi.fn(),
-      },
-    })),
+    fromPartition: vi.fn(() => previewPartition),
   },
   shell: {
     openExternal: vi.fn(),
@@ -194,6 +206,8 @@ let handlersRegistered = false;
 
 beforeEach(() => {
   createdViews = [];
+  previewPartition.clearStorageData.mockClear();
+  previewPartition.clearCache.mockClear();
   if (!handlersRegistered) {
     registerPreviewBrowserHandlers();
     handlersRegistered = true;
@@ -424,6 +438,90 @@ describe("preview-browser", () => {
       expect(result).toBe(true);
       expect(view.webContents.goForward).toHaveBeenCalled();
     });
+
+    it("reload calls webContents.reload", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+
+      await ipcHandlers["preview:reload"]!(fakeEvent(win));
+
+      expect(view.webContents.reload).toHaveBeenCalledOnce();
+      expect(view.webContents.reloadIgnoringCache).not.toHaveBeenCalled();
+    });
+
+    it("force-reload bypasses cache with reloadIgnoringCache", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+
+      await ipcHandlers["preview:force-reload"]!(fakeEvent(win));
+
+      expect(view.webContents.reloadIgnoringCache).toHaveBeenCalledOnce();
+      expect(view.webContents.reload).not.toHaveBeenCalled();
+    });
+
+    it("clear-cookies clears only cookie storage from the shared preview partition", async () => {
+      const win = createWindow();
+      await showPreview(win);
+
+      await ipcHandlers["preview:clear-cookies"]!(fakeEvent(win));
+
+      expect(previewPartition.clearStorageData).toHaveBeenCalledWith({
+        storages: ["cookies"],
+      });
+    });
+
+    it("clear-cache clears the shared preview partition cache", async () => {
+      const win = createWindow();
+      await showPreview(win);
+
+      await ipcHandlers["preview:clear-cache"]!(fakeEvent(win));
+
+      expect(previewPartition.clearCache).toHaveBeenCalledOnce();
+    });
+
+    it("clear-cookies works before a native preview view exists", async () => {
+      const win = createWindow();
+
+      await ipcHandlers["preview:clear-cookies"]!(fakeEvent(win));
+
+      expect(createdViews).toHaveLength(0);
+      expect(previewPartition.clearStorageData).toHaveBeenCalledWith({
+        storages: ["cookies"],
+      });
+    });
+
+    it("clear-cache works before a native preview view exists", async () => {
+      const win = createWindow();
+
+      await ipcHandlers["preview:clear-cache"]!(fakeEvent(win));
+
+      expect(createdViews).toHaveLength(0);
+      expect(previewPartition.clearCache).toHaveBeenCalledOnce();
+    });
+
+    it("get-zoom returns the clamped current zoom factor", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getZoomFactor.mockReturnValue(10);
+
+      const result = await ipcHandlers["preview:get-zoom"]!(fakeEvent(win));
+
+      expect(result).toBe(5);
+    });
+
+    it("set-zoom clamps and applies the zoom factor", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+
+      const result = await ipcHandlers["preview:set-zoom"]!(fakeEvent(win), 0.01);
+
+      expect(result).toBe(0.25);
+      expect(view.webContents.setZoomFactor).toHaveBeenCalledWith(0.25);
+    });
   });
 
   describe("local file preview", () => {
@@ -455,6 +553,29 @@ describe("preview-browser", () => {
         { ok: true } | { ok: false; error: string }
       >;
     }
+
+    /** Resolve via the preview:resolve-navigation handler without loading. */
+    async function resolveNavigation(
+      win: ReturnType<typeof makeWindow>,
+      url: string,
+      workspacePath?: string | null,
+    ) {
+      const ev = fakeEvent(win);
+      return ipcHandlers["preview:resolve-navigation"]!(
+        ev,
+        url,
+        workspacePath ?? null,
+      ) as Promise<{ ok: true; url: string } | { ok: false; error: string }>;
+    }
+
+    it("resolves a safe URL for renderer-hosted webview without creating a native view", async () => {
+      const win = createWindow();
+
+      const result = await resolveNavigation(win, "example.com");
+
+      expect(result).toEqual({ ok: true, url: "https://example.com" });
+      expect(createdViews).toHaveLength(0);
+    });
 
     it("navigates to an absolute file path", async () => {
       const win = createWindow();
