@@ -7,7 +7,7 @@
  * exits 0 on success, 1 on failure.
  *
  * This catches:
- * - Missing native modules (better-sqlite3, node-pty)
+ * - Missing native modules (better-sqlite3, koffi, node-pty)
  * - Broken asarUnpack configuration
  * - Server startup crashes invisible in the packaged app
  * - Import/require resolution failures in the CJS bundle
@@ -52,6 +52,7 @@ function findUnpackedServer() {
       renamedBinary: resolve(releaseDir, "win-unpacked/resources/bin/mcode-server.exe"),
       electron: resolve(releaseDir, "win-unpacked/Mcode.exe"),
       sqlite: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
+      koffi: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
     },
     // Linux (electron-builder uses package name as binary name)
     {
@@ -59,6 +60,7 @@ function findUnpackedServer() {
       renamedBinary: resolve(releaseDir, "linux-unpacked/resources/bin/mcode-server"),
       electron: resolve(releaseDir, "linux-unpacked/mcode-desktop"),
       sqlite: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
+      koffi: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
     },
     // macOS Intel
     {
@@ -66,6 +68,7 @@ function findUnpackedServer() {
       renamedBinary: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/bin/mcode-server"),
       electron: resolve(releaseDir, "mac/Mcode.app/Contents/MacOS/Mcode"),
       sqlite: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
+      koffi: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
     },
     // macOS ARM
     {
@@ -73,6 +76,7 @@ function findUnpackedServer() {
       renamedBinary: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/bin/mcode-server"),
       electron: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/MacOS/Mcode"),
       sqlite: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
+      koffi: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
     },
   ];
 
@@ -89,7 +93,7 @@ function findUnpackedServer() {
       const nodeBinding = resolve(c.sqlite, "better_sqlite3.node");
       const binding = existsSync(electronBinding) ? electronBinding : existsSync(nodeBinding) ? nodeBinding : undefined;
       const electronDir = useRenamed ? dirname(c.electron) : undefined;
-      return { server: c.server, electron: runtime, binding, electronDir };
+      return { server: c.server, electron: runtime, binding, electronDir, koffi: c.koffi };
     }
   }
   return null;
@@ -149,6 +153,13 @@ if (found.binding) {
 }
 
 if (!bundleOnly) {
+  if (!found.koffi || !existsSync(found.koffi)) {
+    console.error(`[smoke-test] ERROR: koffi native module missing at ${found.koffi}`);
+    console.error("  package config should include node_modules/koffi in files and asarUnpack.");
+    process.exit(1);
+  }
+  console.log(`[smoke-test] koffi module: ${found.koffi}`);
+
   const sdkTarget = inferPackagedSdkTarget(found.server);
   const claudeCli = findClaudeSdkCliPath(found.server, sdkTarget.platform, sdkTarget.arch);
   if (!claudeCli) {

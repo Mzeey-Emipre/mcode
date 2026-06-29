@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useDiffStore, createDefaultRightPanelState } from "@/stores/diffStore";
+import { useDiffStore } from "@/stores/diffStore";
 import {
   TERMINAL_PANEL_DEFAULTS,
   useTerminalStore,
@@ -32,23 +32,15 @@ export function TerminalPoolHost() {
   const terminalScopeId = activeThreadId ?? activeWorkspaceId;
   // The whole panel record is per-thread, falling back to the workspace record
   // for the threadless shell and uncustomized threads (ADR-0012).
-  const storedPanel = useDiffStore((s) =>
-    activeWorkspaceId
-      ? (activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined) ??
-        s.rightPanelFallbackByWorkspace[activeWorkspaceId]
-      : undefined,
-  );
-  const panelState = useMemo(
-    () => storedPanel ?? createDefaultRightPanelState(),
-    [storedPanel],
-  );
-  const panelVisible = useDiffStore((s) =>
-    activeWorkspaceId
-      ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId)
-      : false,
-  );
-  const terminalTabVisible =
-    panelVisible && panelState.activeTab === "terminal";
+  const terminalTabVisible = useDiffStore((s) => {
+    if (!activeWorkspaceId) return false;
+    const panel = s.getRightPanel(activeWorkspaceId, activeThreadId);
+    return (
+      panel.visible &&
+      panel.activeTab === "terminal" &&
+      panel.openTabs.includes("terminal")
+    );
+  });
 
   // #749: warm the xterm module cache as soon as the terminal tab opens so the
   // first view mounts without paying the cold dynamic-import cost.

@@ -22,6 +22,7 @@
         "@mcode/shared": "workspace:*",
         "better-sqlite3": "^12.0.0",
         "electron-updater": "^6.8.3",
+        "koffi": "^2.16.1",
         "node-pty": "^1.0.0",
         "uuid": "^11.1.0",
         "which": "^5.0.0",
