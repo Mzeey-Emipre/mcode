@@ -17,6 +17,7 @@ import { AnsweredSummary } from "./plan-questions/AnsweredSummary";
 import { PlanCard } from "./PlanCard";
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 import { DeltaBlock } from "./narrative/DeltaBlock";
+import { parseGoalStatusNotice } from "@/lib/goal-message";
 
 /**
  * Returns true when the assistant message body collapses to nothing visible
@@ -33,28 +34,6 @@ function isAssistantContentEmpty(content: string): boolean {
 }
 
 /** Parses the message content of a synthetic agent-error system message. Returns the error text, or null if not an agent error. */
-/**
- * Detect /goal-command confirmations emitted by AgentService. Returns a
- * structured render hint when the assistant message is one of the goal
- * status messages, or null for ordinary model output.
- */
-function parseGoalStatus(content: string): {
-  label: string;
-  condition?: string;
-  hint?: string;
-} | null {
-  const text = content.trim();
-  let m = /^Goal set: "([\s\S]+?)"\./.exec(text);
-  if (m) return { label: "Goal set", condition: m[1], hint: "/goal clear to remove" };
-  m = /^Active goal: "([\s\S]+?)"\./.exec(text);
-  if (m) return { label: "Active goal", condition: m[1], hint: "/goal clear to remove" };
-  m = /^Goal achieved in (\d+)s\./.exec(text);
-  if (m) return { label: "Goal achieved", hint: `${m[1]}s` };
-  if (/^Goal cleared\./.test(text)) return { label: "Goal cleared" };
-  if (/^No active goal\./.test(text)) return { label: "No active goal", hint: "/goal <condition> to set one" };
-  return null;
-}
-
 /**
  * Detect a user-typed /goal SET form (`/goal <condition>` with non-empty,
  * non-control argument). The server rewrites the wire payload into a
@@ -551,7 +530,7 @@ export const MessageBubble = memo(function MessageBubble({
   // chat-control notices, not model output — render them as a compact pill
   // rather than a full bubble.
   if (message.role === "assistant") {
-    const goal = parseGoalStatus(textContent);
+    const goal = parseGoalStatusNotice(textContent);
     if (goal) {
       // "Goal achieved" is the agent-side payoff — give it the same legible
       // receipt vocabulary as the user's "Sent as goal" marker rather than a

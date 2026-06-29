@@ -203,6 +203,32 @@ describe("GoalCommand", () => {
         /No active goal/,
       );
     });
+
+    it("reports no active goal when the provider returns a completed goal", async () => {
+      const provider = fakeGoalCapableProvider();
+      provider.getGoal.mockReturnValueOnce({
+        threadId,
+        objective: "ship the feature",
+        status: "complete",
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 19,
+        createdAt: 1,
+        updatedAt: 20,
+        providerId: "codex",
+        source: "codex",
+        controls: { canInspect: true, canClear: false },
+      } satisfies GoalState);
+      const cmd = build();
+
+      const outcome = await cmd.handle(ctx("/goal show", provider));
+
+      expect(outcome.kind).toBe("handled");
+      const { messages } = messageRepo.listByThread(threadId, 100);
+      expect(messages.find((m) => m.role === "assistant")?.content).toMatch(
+        /No active goal/,
+      );
+    });
   });
 
   describe("CLEAR form", () => {

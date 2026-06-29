@@ -5,6 +5,7 @@ import {
   AgentEventType,
   type GoalState,
   isGoalCapable,
+  isGoalOpen,
 } from "@mcode/contracts";
 import type { MessageRepo } from "../repositories/message-repo.js";
 import type { CommandContext, CommandOutcome, McodeCommand } from "./command-router.js";
@@ -74,7 +75,7 @@ export class GoalCommand implements McodeCommand {
       let replyText: string;
       if (arg === "" || lower === "show") {
         const current = await capable.getGoal(this.sessionName(threadId));
-        replyText = current
+        replyText = isGoalOpen(current)
           ? `Active goal: "${current.objective}". Use \`/goal clear\` to remove it.`
           : `No active goal. Use \`/goal <condition>\` to set one.`;
       } else {

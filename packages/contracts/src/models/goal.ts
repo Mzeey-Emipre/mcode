@@ -43,3 +43,42 @@ export const GoalStateSchema = lazySchema(() =>
 
 /** Normalized goal metadata surfaced by providers that support thread goals. */
 export type GoalState = z.infer<ReturnType<typeof GoalStateSchema>>;
+
+/** Identifies where a thread-goal lookup result came from. */
+export const GoalLookupSourceSchema = lazySchema(() =>
+  z.enum(["codex-native", "codex-cache", "claude-wrapper", "unsupported"]),
+);
+
+/** Identifies why a thread-goal lookup returned no authoritative open goal. */
+export const GoalLookupReasonSchema = lazySchema(() =>
+  z.enum(["not-materialized", "closed", "missing", "unsupported-provider"]),
+);
+
+/** Provider-neutral active-goal lookup result for thread switch hydration. */
+export const GoalLookupResultSchema = lazySchema(() =>
+  z.object({
+    goal: GoalStateSchema().nullable(),
+    authoritative: z.boolean(),
+    source: GoalLookupSourceSchema(),
+    reason: GoalLookupReasonSchema().optional(),
+  }),
+);
+
+/** Identifies where a thread-goal lookup result came from. */
+export type GoalLookupSource = z.infer<ReturnType<typeof GoalLookupSourceSchema>>;
+
+/** Identifies why a thread-goal lookup returned no authoritative open goal. */
+export type GoalLookupReason = z.infer<ReturnType<typeof GoalLookupReasonSchema>>;
+
+/** Provider-neutral active-goal lookup result for thread switch hydration. */
+export type GoalLookupResult = z.infer<ReturnType<typeof GoalLookupResultSchema>>;
+
+/** Returns true while a goal still needs provider or user follow-up. */
+export function isGoalOpen(goal: GoalState | null | undefined): goal is GoalState {
+  return goal != null && isGoalStatusOpen(goal.status);
+}
+
+/** Returns true for every non-terminal goal status. */
+export function isGoalStatusOpen(status: GoalStatus): boolean {
+  return status !== "complete";
+}

@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { container } from "tsyringe";
 import type Database from "better-sqlite3";
-import type { Thread, IProviderRegistry, GoalState } from "@mcode/contracts";
+import type { Thread, IProviderRegistry, GoalState, AgentEvent } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../store/database.js";
 import { ThreadRepo } from "../../repositories/thread-repo.js";
@@ -193,6 +193,94 @@ describe("AgentService.sendMessage — /goal command", () => {
     const { messages } = messageRepo.listByThread(thread.id, 100);
     const userMsg = messages.find((m) => m.role === "user");
     expect(userMsg?.content).toBe("/goal analyse this branch");
+  });
+
+  it("completes a direct say-goal when the assistant says the requested text", async () => {
+    const { svc, providerStub } = buildService(db);
+    const events: AgentEvent[] = [];
+    const activeGoal: GoalState = {
+      threadId: thread.id,
+      objective: "say hi",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 3,
+      createdAt: Date.now() - 3_000,
+      updatedAt: Date.now() - 3_000,
+      providerId: "claude",
+      source: "claude",
+      controls: { canInspect: true, canClear: true },
+    };
+    providerStub.getGoal
+      .mockReturnValueOnce(activeGoal)
+      .mockReturnValue(undefined);
+    providerStub.on("event", (event: AgentEvent) => events.push(event));
+    svc.init();
+
+    providerStub.emit("event", {
+      type: AgentEventType.Message,
+      threadId: thread.id,
+      content: "hi",
+      tokens: null,
+    } satisfies AgentEvent);
+
+    for (let i = 0; i < 20 && providerStub.clearGoal.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    expect(providerStub.clearGoal).toHaveBeenCalledWith(`mcode-${thread.id}`);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: AgentEventType.GoalUpdated,
+        threadId: thread.id,
+        goal: expect.objectContaining({
+          objective: "say hi",
+          status: "complete",
+          providerId: "claude",
+          controls: expect.objectContaining({ canClear: false }),
+        }),
+      }),
+      expect.objectContaining({
+        type: AgentEventType.GoalCleared,
+        threadId: thread.id,
+        providerId: "claude",
+        reason: "completed",
+      }),
+    ]));
+    expect(events.some(
+      (event) =>
+        event.type === AgentEventType.Message &&
+        /^Goal achieved in \d+s\.$/.test(event.content),
+    )).toBe(false);
+  });
+
+  it("does not complete broad goals from an arbitrary assistant answer", async () => {
+    const { svc, providerStub } = buildService(db);
+    providerStub.getGoal.mockReturnValueOnce({
+      threadId: thread.id,
+      objective: "fix the bug",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      providerId: "claude",
+      source: "claude",
+      controls: { canInspect: true, canClear: true },
+    } satisfies GoalState);
+    svc.init();
+
+    providerStub.emit("event", {
+      type: AgentEventType.Message,
+      threadId: thread.id,
+      content: "done",
+      tokens: null,
+    } satisfies AgentEvent);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(providerStub.clearGoal).not.toHaveBeenCalled();
   });
 
   it("rolls the installed goal back when the send fails so no Stop-hook gate lingers", async () => {

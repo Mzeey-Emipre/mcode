@@ -472,6 +472,10 @@ async function dispatch(
     case "thread.markViewed":
       deps.threadService.markViewed(params.threadId);
       return;
+    case "thread.goal.get":
+      return deps.agentService.getThreadGoal(params.threadId);
+    case "thread.goal.clear":
+      return deps.agentService.clearThreadGoal(params.threadId);
     case "thread.search":
       return deps.threadService.search({
         query: params.query,

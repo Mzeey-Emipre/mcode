@@ -10,7 +10,7 @@ import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { Query, SDKUserMessage, PostCompactHookInput, StopHookInput, CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
-import { AgentEventType, isVirtualBrowserContextAttachment } from "@mcode/contracts";
+import { AgentEventType, isGoalOpen, isVirtualBrowserContextAttachment } from "@mcode/contracts";
 import type {
   IAgentProvider,
   IGoalCapable,
@@ -22,6 +22,7 @@ import type {
   AgentEvent,
   AttachmentMeta,
   GoalState,
+  GoalLookupResult,
   ProviderModelInfo,
   ProviderUsageInfo,
   QuotaCategory,
@@ -2288,6 +2289,17 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   getGoal(sessionId: string): GoalState | undefined {
     const entry = this.goalsBySession.get(sessionId);
     return entry ? this.toGoalState(sessionId, entry) : undefined;
+  }
+
+  /** Return non-authoritative Claude-wrapper goal lookup metadata. */
+  getGoalLookup(sessionId: string): GoalLookupResult {
+    const goal = this.getGoal(sessionId);
+    return {
+      goal: isGoalOpen(goal) ? goal : null,
+      authoritative: false,
+      source: "claude-wrapper",
+      ...(goal ? {} : { reason: "missing" }),
+    };
   }
 
   /** Convert internal Claude goal metadata into the provider-neutral state. */

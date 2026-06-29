@@ -24,7 +24,7 @@ import type {
 } from "./types";
 import type { CreateAndSendResult } from "@mcode/contracts";
 import { emitPtyReconnectGap } from "@/components/terminal/ptyDataRegistry";
-import type { PaginatedMessages, ConversationPage, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability } from "@mcode/contracts";
+import type { PaginatedMessages, ConversationPage, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
@@ -653,6 +653,10 @@ export function createWsTransport(
     listRunning: () => rpc<string[]>("agent.listRunning", {}),
     subscribeThread: (threadId) => rpc<void>("push.subscribeThread", { threadId }),
     unsubscribeThread: (threadId) => rpc<void>("push.unsubscribeThread", { threadId }),
+    getThreadGoal: (threadId) =>
+      rpc<GoalLookupResult>("thread.goal.get", { threadId }),
+    clearThreadGoal: (threadId) =>
+      rpc<GoalLookupResult>("thread.goal.clear", { threadId }),
 
     // Messages
     getMessages: (threadId, limit, before?) =>

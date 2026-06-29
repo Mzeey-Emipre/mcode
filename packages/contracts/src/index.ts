@@ -55,10 +55,22 @@ export type { MessageMention } from "./models/mention.js";
 
 export {
   GoalControlsSchema,
+  GoalLookupReasonSchema,
+  GoalLookupResultSchema,
+  GoalLookupSourceSchema,
   GoalStateSchema,
   GoalStatusSchema,
+  isGoalOpen,
+  isGoalStatusOpen,
 } from "./models/goal.js";
-export type { GoalControls, GoalState, GoalStatus } from "./models/goal.js";
+export type {
+  GoalControls,
+  GoalLookupReason,
+  GoalLookupResult,
+  GoalLookupSource,
+  GoalState,
+  GoalStatus,
+} from "./models/goal.js";
 
 export {
   ConversationPageSchema,

@@ -32,6 +32,7 @@ import { ProviderUsageInfoSchema } from "../providers/usage.js";
 import { ProviderAvailabilitySchema } from "../providers/availability.js";
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
+import { GoalLookupResultSchema } from "../models/goal.js";
 
 /** Maximum recap input messages accepted by recap.generate. */
 export const RECAP_MAX_MESSAGES = 80;
@@ -271,6 +272,16 @@ export const WS_METHODS = lazySchema(() => ({
   "thread.markViewed": {
     params: z.object({ threadId: z.string() }),
     result: z.void(),
+  },
+  /** Return the active open goal for a thread without starting provider work. */
+  "thread.goal.get": {
+    params: z.object({ threadId: z.string() }),
+    result: GoalLookupResultSchema(),
+  },
+  /** Clear the active goal for a thread without sending a chat message. */
+  "thread.goal.clear": {
+    params: z.object({ threadId: z.string() }),
+    result: GoalLookupResultSchema(),
   },
   "thread.syncPrs": {
     params: z.object({ workspaceId: z.string() }),
