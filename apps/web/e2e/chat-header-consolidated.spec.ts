@@ -581,6 +581,8 @@ test.describe("Consolidated chat header CI trigger state", () => {
     await expect(summary).toHaveAttribute("aria-label", /1 failing/);
     await expect(summary).toHaveAttribute("aria-label", /1 green/);
     await expect(summary).not.toContainText("Checks failing");
+    await expect(summary).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(summary).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
 
     await summary.hover();
     await expect(page.getByText("Test Web E2E (shard 1/4)")).toBeVisible();

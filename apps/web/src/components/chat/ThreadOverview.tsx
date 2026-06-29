@@ -1130,12 +1130,7 @@ function ThreadOverviewPrActiveRow({
           }}
           onMouseEnter={() => setChecksOpen(true)}
           onFocus={() => setChecksOpen(true)}
-          className={cn(
-            "ml-6 flex h-7 w-[calc(100%-1.5rem)] cursor-pointer justify-between rounded-md border border-border/35 bg-muted/20 px-2 text-left hover:bg-muted/35",
-            checks.aggregate === "failing" && "border-[var(--diff-remove-strong)]/20 bg-[var(--diff-remove-strong)]/[0.07] hover:bg-[var(--diff-remove-strong)]/[0.1]",
-            checks.aggregate === "pending" && "border-[#e7a90b]/20 bg-[#e7a90b]/[0.07] hover:bg-[#e7a90b]/[0.1]",
-            checks.aggregate === "passing" && "border-[var(--diff-add-strong)]/20 bg-[var(--diff-add-strong)]/[0.07] hover:bg-[var(--diff-add-strong)]/[0.1]",
-          )}
+          className="ml-6 flex h-6 w-[calc(100%-1.5rem)] cursor-pointer justify-between rounded-none border-transparent bg-transparent px-0 text-left text-muted-foreground hover:bg-transparent hover:text-foreground dark:hover:bg-transparent"
         >
           <span className="flex min-w-0 items-center gap-2">
             <SummaryIcon
@@ -1148,7 +1143,7 @@ function ThreadOverviewPrActiveRow({
                 checks.aggregate === "pending" && "status-spin",
               )}
             />
-            <span className="truncate text-xs text-foreground/85">
+            <span className="truncate text-xs">
               {getCiOverviewSummaryLabel(checks)}
             </span>
           </span>
