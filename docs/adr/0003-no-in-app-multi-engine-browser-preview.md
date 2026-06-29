@@ -3,10 +3,11 @@
 Status: accepted
 
 We will **not** build multi-engine browser preview inside Mcode (issue #452, closed
-wontfix). The in-app preview stays Chromium-only via Electron's `WebContentsView`.
-Cross-browser verification is served by launching the user's **real installed
-browser** ("Open in browser", already on the roadmap via #554), not by embedding or
-bundling Firefox/WebKit.
+wontfix). The in-app preview stays Chromium-only via Electron. The rendering host
+may be `WebContentsView` or Electron `<webview>` (ADR-0016), but both are
+Chromium surfaces. Cross-browser verification is served by launching the user's
+**real installed browser** ("Open in browser", already on the roadmap via #554),
+not by embedding or bundling Firefox/WebKit.
 
 ## Why
 
@@ -34,7 +35,8 @@ options:
 
 The whole preview tooling surface (capture, design-mode inspect, region/element pick,
 and the Codex browser-use bridge over `webContents.debugger` CDP) is Chromium/CDP
-coupled and does not port to non-Chromium engines regardless.
+coupled and does not port to non-Chromium engines regardless. Changing the Electron
+host surface does not change this engine decision.
 
 ## Considered and rejected
 

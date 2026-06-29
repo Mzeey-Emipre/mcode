@@ -764,6 +764,18 @@ The embedded in-app browser panel that renders a web URL or a local file.
 It is the **Browser** tab type within the workspace-global right panel.
 Distinct from opening the page in the user's external browser.
 
+### Preview rendering host
+The Electron surface that owns a preview tab's live Chromium page. Mcode has
+two rendering hosts: **WebContentsView**, a native view managed by the main
+process, and **webview**, a renderer-owned Electron element. `WebContentsView`
+paints outside the React DOM stack, so React overlays must hide or suppress it
+while they are open. `webview` stays in the renderer tree, so React menus,
+dialogs, and other overlays can layer above it normally.
+
+The hidden setting `preview.rendering.engine` selects the host. Both values are
+Chromium-based; this setting is about Electron compositing, not Firefox,
+WebKit, or another browser engine.
+
 ### Preview tab
 One navigable page within the preview, belonging to a thread. A thread can
 hold several tabs; exactly one is the active tab at a time.
