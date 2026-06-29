@@ -10,8 +10,8 @@ import {
   patchThreadRecord,
 } from "@/stores/thread-record";
 import type { ThreadRecord } from "@/stores/thread-record";
-import { isGoalOpen } from "@mcode/contracts";
 import type { GoalLookupResult } from "@mcode/contracts";
+import { resolveGoalLookupGoal } from "@/lib/goal-lookup";
 import type {
   HydrateMode,
   ThreadHydratorDeps,
@@ -188,12 +188,9 @@ export class ThreadHydrator {
 
   /** Apply lookup result semantics to the live record and record cache. */
   private applyGoalLookup(threadId: string, lookup: GoalLookupResult): void {
-    const goal = isGoalOpen(lookup.goal) ? lookup.goal : null;
     this.deps.setState((state: ThreadHydratorWriteState) => {
       const current = getThreadRecord(state.records, threadId);
-      if (!goal && !lookup.authoritative && isGoalOpen(current.goal)) {
-        return {};
-      }
+      const goal = resolveGoalLookupGoal(lookup, current.goal);
       return {
         records: patchThreadRecord(state.records, threadId, { goal }),
       };
@@ -201,7 +198,7 @@ export class ThreadHydrator {
 
     const cached = getCachedRecord(threadId);
     if (!cached) return;
-    if (!goal && !lookup.authoritative && isGoalOpen(cached.goal)) return;
+    const goal = resolveGoalLookupGoal(lookup, cached.goal);
     cacheRecord(threadId, { ...cached, goal });
   }
 

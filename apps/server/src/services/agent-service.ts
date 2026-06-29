@@ -191,6 +191,7 @@ function parseHarnessTaskId(output: string): string | null {
 @injectable()
 export class AgentService {
   private readonly activeSessionIds = new Set<string>();
+  private readonly nativeGoalRefreshInFlight = new Set<string>();
   private initialized = false;
   /** Running context token estimate, per thread. Reset on compaction start; overwritten on turnComplete. */
   private lastContextByThread = new Map<string, number>();
@@ -1467,24 +1468,29 @@ export class AgentService {
     const source = providerId === "codex" ? "codex-native" as const : "claude-wrapper" as const;
     const cleared = await provider.clearGoal(sessionId);
     if (cleared) {
+      if (providerId === "codex" && provider.getGoalLookup) {
+        const lookup = await provider.getGoalLookup(sessionId);
+        if (lookup.source !== "codex-native" || lookup.authoritative !== true) {
+          return {
+            ...lookup,
+            goal: isGoalOpen(lookup.goal) ? lookup.goal : null,
+          };
+        }
+      }
       return { goal: null, authoritative: true, source };
     }
 
-    const goalAfterClear = await provider.getGoal(sessionId);
-    const currentGoal = isGoalOpen(goalAfterClear) ? goalAfterClear : null;
-    if (currentGoal) {
-      return {
-        goal: currentGoal,
-        authoritative: false,
-        source,
-        reason: "missing",
-      };
-    }
+    const lookup = provider.getGoalLookup
+      ? await provider.getGoalLookup(sessionId)
+      : {
+          goal: await provider.getGoal(sessionId),
+          authoritative: false,
+          source: providerId === "codex" ? "codex-cache" as const : "claude-wrapper" as const,
+          reason: "missing" as const,
+        };
     return {
-      goal: null,
-      authoritative: true,
-      source,
-      reason: "missing",
+      ...lookup,
+      goal: isGoalOpen(lookup.goal) ? lookup.goal : null,
     };
   }
 
@@ -2541,6 +2547,7 @@ export class AgentService {
 
   private refreshNativeClaudeGoalAfterTurn(threadId: string): void {
     if (this.activeSessionIds.has(threadId)) return;
+    if (this.nativeGoalRefreshInFlight.has(threadId)) return;
     const thread = this.threadRepo.findById(threadId);
     if (!thread || thread.provider !== "claude") return;
     const provider = this.providerRegistry.resolve("claude");
@@ -2551,30 +2558,35 @@ export class AgentService {
     }
 
     void (async () => {
-      const before = await provider.getGoal(sessionId);
-      if (!isGoalOpen(before)) return;
-      if (this.activeSessionIds.has(threadId)) return;
-      const result = await nativeClaude.runNativeGoalCommand(sessionId, "/goal");
-      if (result?.kind === "empty") {
-        const nowMs = Date.now();
-        this.emitProviderEvent(provider, {
-          type: AgentEventType.GoalUpdated,
-          threadId,
-          goal: {
-            ...before,
-            status: "complete",
-            timeUsedSeconds: elapsedGoalSeconds(before, nowMs),
-            updatedAt: nowMs,
-            controls: { ...before.controls, canClear: false },
-          },
-        } satisfies AgentEvent);
-        this.emitProviderEvent(provider, {
-          type: AgentEventType.GoalCleared,
-          threadId,
-          providerId: before.providerId ?? "claude",
-          reason: "completed",
-          turnId: before.turnId ?? null,
-        } satisfies AgentEvent);
+      this.nativeGoalRefreshInFlight.add(threadId);
+      try {
+        const before = await provider.getGoal(sessionId);
+        if (!isGoalOpen(before)) return;
+        if (this.activeSessionIds.has(threadId)) return;
+        const result = await nativeClaude.runNativeGoalCommand(sessionId, "/goal");
+        if (result?.kind === "empty") {
+          const nowMs = Date.now();
+          this.emitProviderEvent(provider, {
+            type: AgentEventType.GoalUpdated,
+            threadId,
+            goal: {
+              ...before,
+              status: "complete",
+              timeUsedSeconds: elapsedGoalSeconds(before, nowMs),
+              updatedAt: nowMs,
+              controls: { ...before.controls, canClear: false },
+            },
+          } satisfies AgentEvent);
+          this.emitProviderEvent(provider, {
+            type: AgentEventType.GoalCleared,
+            threadId,
+            providerId: before.providerId ?? "claude",
+            reason: "completed",
+            turnId: before.turnId ?? null,
+          } satisfies AgentEvent);
+        }
+      } finally {
+        this.nativeGoalRefreshInFlight.delete(threadId);
       }
     })().catch((err: unknown) => {
       logger.warn("Native Claude goal refresh failed", {
@@ -2596,8 +2608,7 @@ export class AgentService {
       }
 
       const cleared = await provider.clearGoal(sessionId);
-      const remainingGoal = cleared ? undefined : await provider.getGoal(sessionId);
-      if (!cleared && isGoalOpen(remainingGoal)) {
+      if (!cleared) {
         logger.warn("Direct-response goal matched but provider did not clear it", {
           threadId: event.threadId,
           providerId: goal.providerId,

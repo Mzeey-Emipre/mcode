@@ -617,8 +617,23 @@ export function ActiveGoalBar({
   const [isClearingGoal, setIsClearingGoal] = useState(false);
   const [lookupSource, setLookupSource] = useState<string | null>(null);
   const [lookupReason, setLookupReason] = useState<string | null>(null);
+  const actionScopeRef = useRef({ threadId, refreshRequestId: 0, clearRequestId: 0 });
   const refreshThreadGoal = useThreadStore((s) => s.refreshThreadGoal);
   const clearThreadGoal = useThreadStore((s) => s.clearThreadGoal);
+
+  useEffect(() => {
+    actionScopeRef.current = {
+      threadId,
+      refreshRequestId: actionScopeRef.current.refreshRequestId + 1,
+      clearRequestId: actionScopeRef.current.clearRequestId + 1,
+    };
+    setDetailsOpen(false);
+    setRefreshError(false);
+    setIsRefreshingGoal(false);
+    setIsClearingGoal(false);
+    setLookupSource(null);
+    setLookupReason(null);
+  }, [threadId]);
 
   useEffect(() => {
     if (!isGoalOpen(goal)) return;
@@ -635,25 +650,53 @@ export function ActiveGoalBar({
   const openDetails = (open: boolean) => {
     setDetailsOpen(open);
     if (!open) return;
+    const refreshRequestId = actionScopeRef.current.refreshRequestId + 1;
+    actionScopeRef.current = { ...actionScopeRef.current, threadId, refreshRequestId };
     setIsRefreshingGoal(true);
     setRefreshError(false);
     void refreshThreadGoal(threadId)
       .then((lookup) => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.refreshRequestId !== refreshRequestId
+        ) return;
         setLookupSource(lookup.source);
         setLookupReason(lookup.reason ?? null);
       })
       .catch(() => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.refreshRequestId !== refreshRequestId
+        ) return;
         setRefreshError(true);
       })
       .finally(() => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.refreshRequestId !== refreshRequestId
+        ) return;
         setIsRefreshingGoal(false);
       });
   };
   const handleClearGoal = () => {
     if (isClearingGoal) return;
+    const refreshRequestId = actionScopeRef.current.refreshRequestId + 1;
+    const clearRequestId = actionScopeRef.current.clearRequestId + 1;
+    actionScopeRef.current = {
+      ...actionScopeRef.current,
+      threadId,
+      refreshRequestId,
+      clearRequestId,
+    };
+    setIsRefreshingGoal(false);
+    setRefreshError(false);
     setIsClearingGoal(true);
     void clearThreadGoal(threadId)
       .then((lookup) => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.clearRequestId !== clearRequestId
+        ) return;
         setLookupSource(lookup.source);
         setLookupReason(lookup.reason ?? null);
         if (lookup.source === "unsupported") {
@@ -673,6 +716,10 @@ export function ActiveGoalBar({
         }
       })
       .catch((error) => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.clearRequestId !== clearRequestId
+        ) return;
         useToastStore.getState().show(
           "error",
           "Could not clear goal",
@@ -680,6 +727,10 @@ export function ActiveGoalBar({
         );
       })
       .finally(() => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.clearRequestId !== clearRequestId
+        ) return;
         setIsClearingGoal(false);
       });
   };

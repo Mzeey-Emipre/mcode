@@ -57,8 +57,9 @@ function clearableProvider(opts: {
   id?: "codex" | "claude";
   clearResult: boolean | Error;
   getResult?: GoalState | undefined;
+  getLookupResult?: GoalLookupResult;
 }): IGoalCapable {
-  return {
+  const provider = {
     id: opts.id ?? "codex",
     supportsCompletion: false,
     sessionForkOnResume: "unsupported",
@@ -75,6 +76,13 @@ function clearableProvider(opts: {
       : vi.fn().mockResolvedValue(opts.clearResult),
     getGoal: vi.fn().mockResolvedValue(opts.getResult),
   };
+  if (opts.getLookupResult) {
+    return {
+      ...provider,
+      getGoalLookup: vi.fn().mockResolvedValue(opts.getLookupResult),
+    };
+  }
+  return provider;
 }
 
 describe("AgentService.getThreadGoal", () => {
@@ -195,6 +203,32 @@ describe("AgentService.clearThreadGoal", () => {
     expect(provider.getGoal).not.toHaveBeenCalled();
   });
 
+  it("preserves Codex cache provenance when clear succeeds without native authority", async () => {
+    const provider = clearableProvider({
+      id: "codex",
+      clearResult: true,
+      getLookupResult: {
+        goal: null,
+        authoritative: false,
+        source: "codex-cache",
+        reason: "not-materialized",
+      },
+    });
+    const service = makeService({
+      thread: { id: "thread-1", provider: "codex" },
+      provider,
+    });
+
+    await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
+      goal: null,
+      authoritative: false,
+      source: "codex-cache",
+      reason: "not-materialized",
+    });
+    expect(provider.clearGoal).toHaveBeenCalledWith("mcode-thread-1");
+    expect(provider.getGoalLookup).toHaveBeenCalledWith("mcode-thread-1");
+  });
+
   it("uses the Claude wrapper source when Claude clear succeeds", async () => {
     const provider = clearableProvider({ id: "claude", clearResult: true });
     const service = makeService({
@@ -219,14 +253,38 @@ describe("AgentService.clearThreadGoal", () => {
     await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
       goal: openGoal,
       authoritative: false,
-      source: "codex-native",
+      source: "codex-cache",
       reason: "missing",
     });
     expect(provider.getGoal).toHaveBeenCalledTimes(1);
   });
 
-  it("reads once after clear false and returns authoritative missing when no goal is open", async () => {
+  it("reads once after clear false and returns non-authoritative cache missing when no goal is open", async () => {
     const provider = clearableProvider({ clearResult: false, getResult: { ...openGoal, status: "complete" } });
+    const service = makeService({
+      thread: { id: "thread-1", provider: "codex" },
+      provider,
+    });
+
+    await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
+      goal: null,
+      authoritative: false,
+      source: "codex-cache",
+      reason: "missing",
+    });
+    expect(provider.getGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses lookup provenance after clear false when the provider reports it", async () => {
+    const provider = clearableProvider({
+      clearResult: false,
+      getLookupResult: {
+        goal: null,
+        authoritative: true,
+        source: "codex-native",
+        reason: "missing",
+      },
+    });
     const service = makeService({
       thread: { id: "thread-1", provider: "codex" },
       provider,
@@ -238,7 +296,8 @@ describe("AgentService.clearThreadGoal", () => {
       source: "codex-native",
       reason: "missing",
     });
-    expect(provider.getGoal).toHaveBeenCalledTimes(1);
+    expect(provider.getGoal).not.toHaveBeenCalled();
+    expect(provider.getGoalLookup).toHaveBeenCalledWith("mcode-thread-1");
   });
 
   it("surfaces provider clear errors without follow-up reads", async () => {

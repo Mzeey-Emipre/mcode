@@ -24,6 +24,7 @@ import { shallowEqualBy } from "@/lib/shallowEqualBy";
 import { forgetScrollTop } from "@/components/chat/scrollPositionMemory";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
 import { isGoalControlCommand } from "@/lib/goal-command";
+import { resolveGoalLookupGoal } from "@/lib/goal-lookup";
 import { isGoalStatusNotice } from "@/lib/goal-message";
 import {
   createThreadHydrator,
@@ -633,10 +634,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   };
 
   const applyGoalLookup = (threadId: string, lookup: GoalLookupResult): void => {
-    const goal = lookup.authoritative || isGoalOpen(lookup.goal) ? lookup.goal : null;
+    const current = getRec(threadId);
+    const goal = resolveGoalLookupGoal(lookup, current.goal);
     patchRec(threadId, { goal });
     const cached = getCachedRecord(threadId);
-    if (cached) cacheRecord(threadId, { ...cached, goal });
+    if (cached) cacheRecord(threadId, { ...cached, goal: resolveGoalLookupGoal(lookup, cached.goal) });
   };
 
   /**

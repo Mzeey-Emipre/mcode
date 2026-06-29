@@ -57,4 +57,23 @@ describe("threadStore.clearThreadGoal", () => {
     expect(useThreadStore.getState().records.get(threadId)?.goal).toBeNull();
     expect(getCachedRecord(threadId)?.goal).toBeNull();
   });
+
+  it("preserves live and cached goals for non-authoritative null clear results", async () => {
+    const threadId = "thread-cache";
+    useThreadStore.setState({
+      records: seedThreadRecord(threadId, { goal }),
+    });
+    cacheRecord(threadId, { ...createEmptyThreadRecord(), goal });
+    (mockTransport.clearThreadGoal as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      goal: null,
+      authoritative: false,
+      source: "codex-cache",
+      reason: "missing",
+    });
+
+    await useThreadStore.getState().clearThreadGoal(threadId);
+
+    expect(useThreadStore.getState().records.get(threadId)?.goal).toEqual(goal);
+    expect(getCachedRecord(threadId)?.goal).toEqual(goal);
+  });
 });

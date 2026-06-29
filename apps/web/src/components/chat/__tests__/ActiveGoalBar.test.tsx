@@ -37,6 +37,12 @@ const goal: GoalState = {
   controls: { canInspect: true, canClear: true },
 };
 
+const otherGoal: GoalState = {
+  ...goal,
+  threadId: "thread-2",
+  objective: "Review the branch",
+};
+
 function lookup(overrides: Partial<GoalLookupResult> = {}): GoalLookupResult {
   return {
     goal,
@@ -106,6 +112,39 @@ describe("ActiveGoalBar", () => {
     resolveClear(lookup({ goal: null }));
   });
 
+  it("does not leave refresh pending when same-thread clear overlaps details refresh", async () => {
+    let resolveRefresh!: (result: GoalLookupResult) => void;
+    let resolveClear!: (result: GoalLookupResult) => void;
+    refreshThreadGoal.mockReturnValueOnce(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    clearThreadGoal.mockReturnValueOnce(new Promise((resolve) => {
+      resolveClear = resolve;
+    }));
+    render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+
+    await userEvent.click(screen.getByLabelText("Show active goal"));
+    await userEvent.click(await screen.findByRole("button", { name: "Clear" }));
+
+    await waitFor(() => expect(screen.getAllByText("Clearing...").length).toBeGreaterThanOrEqual(1));
+    resolveClear(lookup({
+      goal: null,
+      authoritative: false,
+      source: "codex-cache",
+      reason: "not-materialized",
+    }));
+    await waitFor(() => expect(screen.queryByText("Clearing...")).not.toBeInTheDocument());
+    expect(screen.getByText("codex-cache")).toBeInTheDocument();
+    expect(screen.getByText("not-materialized")).toBeInTheDocument();
+
+    resolveRefresh(lookup({ source: "codex-native", reason: "missing" }));
+    await waitFor(() => expect(screen.queryByText("Refreshing...")).not.toBeInTheDocument());
+    expect(screen.getByText("codex-cache")).toBeInTheDocument();
+    expect(screen.getByText("not-materialized")).toBeInTheDocument();
+    expect(screen.queryByText("codex-native")).not.toBeInTheDocument();
+    expect(screen.queryByText("missing")).not.toBeInTheDocument();
+  });
+
   it("shows a not-cleared toast for non-authoritative open-goal results", async () => {
     clearThreadGoal.mockResolvedValue(lookup({ authoritative: false }));
     render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
@@ -149,5 +188,24 @@ describe("ActiveGoalBar", () => {
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith("error", "Could not clear goal", "clear failed"),
     );
+  });
+
+  it("resets details and ignores stale refresh results after thread changes", async () => {
+    let resolveRefresh!: (result: GoalLookupResult) => void;
+    refreshThreadGoal.mockReturnValueOnce(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    const { rerender } = render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+
+    await userEvent.click(screen.getByLabelText("Show active goal"));
+    expect(refreshThreadGoal).toHaveBeenCalledWith("thread-1");
+
+    rerender(<ActiveGoalBar threadId="thread-2" goal={otherGoal} />);
+    resolveRefresh(lookup({ source: "codex-native", reason: "missing" }));
+    await waitFor(() => expect(screen.queryByText("Lookup source")).not.toBeInTheDocument());
+
+    await userEvent.click(screen.getByLabelText("Show active goal"));
+    expect(screen.getAllByText("Review the branch").length).toBeGreaterThanOrEqual(2);
+    await waitFor(() => expect(screen.getByText("codex-native")).toBeInTheDocument());
   });
 });

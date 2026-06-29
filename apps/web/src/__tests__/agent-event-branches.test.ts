@@ -783,6 +783,17 @@ describe("subagent count via markPriorToolCallsComplete", () => {
     expect(rec.messages.map((message) => message.id)).toEqual(["answer-1", "goal-1"]);
   });
 
+  it("keeps near-match goal receipt text as a normal assistant response", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.message",
+      params: { messageId: "answer-1", content: "Goal achieved in 19s. Here is the summary." },
+    });
+
+    const rec = readThreadField("thread-1", (record) => record);
+    expect(rec.currentTurnMessageId).toBe("answer-1");
+    expect(rec.assistantResponseKeys["answer-1"]).toBeDefined();
+  });
+
   it("clears active goal state when a goal update is complete", () => {
     useThreadStore.getState().handleAgentEvent("thread-1", {
       method: "session.goalUpdated",
