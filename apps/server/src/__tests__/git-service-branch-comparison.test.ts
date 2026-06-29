@@ -223,6 +223,27 @@ describe("GitService.resolveBranchComparison", () => {
     });
   });
 
+  it("does not expose git's detached pseudo-ref as a selectable branch", async () => {
+    setup({
+      current: "HEAD",
+      branches: [
+        { full: "(no branch)", short: "(no branch)", head: true },
+        { full: "refs/heads/main", short: "main" },
+        { full: "refs/remotes/origin/main", short: "origin/main" },
+      ],
+    });
+
+    const result = await gitService.resolveBranchComparison("ws", REPO);
+
+    expect(result).toMatchObject({
+      base: "origin/main",
+      target: "HEAD",
+      isUnborn: false,
+      isComparisonAvailable: true,
+    });
+    expect(result.refs.map((ref) => ref.name)).not.toContain("(no branch)");
+  });
+
   it("reports an explicit empty state on an unborn branch", async () => {
     setup({
       current: "main",

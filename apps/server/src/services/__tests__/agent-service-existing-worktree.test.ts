@@ -7,6 +7,7 @@ import { WorkspaceRepo } from "../../repositories/workspace-repo";
 import { MessageRepo } from "../../repositories/message-repo";
 import { AgentService } from "../agent-service";
 import type { GitService } from "../git-service";
+import type { ThreadService } from "../thread-service";
 
 function createAgentServiceHarness() {
   const db: Database.Database = openMemoryDatabase();
@@ -16,6 +17,9 @@ function createAgentServiceHarness() {
   const gitService = {
     listWorktrees: vi.fn(),
   } as unknown as GitService;
+  const threadService = {
+    create: vi.fn(),
+  } as unknown as ThreadService;
   const service = new AgentService(
     threadRepo,
     workspaceRepo,
@@ -23,7 +27,7 @@ function createAgentServiceHarness() {
     gitService,
     {} as never,
     {} as never,
-    {} as never,
+    threadService,
     {} as never,
     {} as never,
     {} as never,
@@ -42,10 +46,53 @@ function createAgentServiceHarness() {
   );
   vi.spyOn(service, "sendMessage").mockResolvedValue(undefined);
 
-  return { db, threadRepo, workspaceRepo, gitService, service };
+  return { db, threadRepo, workspaceRepo, gitService, threadService, service };
 }
 
 describe("AgentService.createAndSend existing worktree attach", () => {
+  it("creates a new worktree as branchless from the selected base branch", async () => {
+    const { threadRepo, workspaceRepo, threadService, service } = createAgentServiceHarness();
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const createdThread = {
+      ...threadRepo.create(
+        workspace.id,
+        "Work from feature base",
+        "worktree",
+        "feature/base",
+        true,
+        "claude",
+        undefined,
+        "branchless",
+        "feature/base",
+      ),
+      worktree_path: "/repo/.worktrees/feature-base",
+    };
+    vi.mocked(threadService.create).mockResolvedValue(createdThread);
+
+    const thread = await service.createAndSend(
+      workspace.id,
+      "Work from feature base",
+      "claude-sonnet-4-6",
+      "default",
+      "worktree",
+      "feature/base",
+    );
+
+    expect(threadService.create).toHaveBeenCalledWith(
+      workspace.id,
+      "Work from feature base",
+      "worktree",
+      "feature/base",
+      { branchless: true },
+    );
+    expect(thread).toMatchObject({
+      mode: "worktree",
+      branch: "feature/base",
+      checkout_state: "branchless",
+      base_branch: "feature/base",
+    });
+  });
+
   it("attaches a detached existing worktree as branchless with the selected base branch", async () => {
     const { workspaceRepo, gitService, service } = createAgentServiceHarness();
     const workspace = workspaceRepo.create("Repo", "/repo");

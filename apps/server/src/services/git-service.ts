@@ -1120,6 +1120,9 @@ export class GitService {
       const [fullRefname, refname, shortSha, head, worktreepath] = trimmed.split("|||");
       // Skip remote HEAD symrefs (refs/remotes/*/HEAD)
       if (!fullRefname || !refname || /\/HEAD$/.test(fullRefname)) continue;
+      // Detached checkouts appear as "(no branch)" in `git branch --format`.
+      // They are display-only pseudo refs; diff callers use HEAD instead.
+      if (fullRefname === "(no branch)" || refname === "(no branch)") continue;
 
       let type: GitBranch["type"];
       if (worktreepath && worktreepath.length > 0) {

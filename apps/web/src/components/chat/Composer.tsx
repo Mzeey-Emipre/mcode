@@ -25,6 +25,15 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -246,6 +255,12 @@ interface ComposerProps {
   branchFromMessageContent?: string;
   /** Called when the user exits fork mode (X button or Escape). */
   onBranchModeExit?: () => void;
+}
+
+interface PendingCheckoutConfirmation {
+  currentBranch: string;
+  targetBranch: string;
+  onConfirm: () => Promise<void>;
 }
 
 type AccessMode = PermissionMode;
@@ -733,6 +748,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     displayContent: string;
     mentions: MessageMention[];
   } | null>(null);
+  const [pendingCheckoutConfirmation, setPendingCheckoutConfirmation] =
+    useState<PendingCheckoutConfirmation | null>(null);
+  const [checkoutConfirming, setCheckoutConfirming] = useState(false);
   // Tracks whether we have seen the handoff transition away from "generating"
   // at least once since this thread was opened. Guards against queueing a
   // message when the user types during the server-initiated first turn on a
@@ -1247,12 +1265,19 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     [setNewThreadMode, loadWorktrees, workspaceId],
   );
 
+  useEffect(() => {
+    if (isNewThread && composerMode !== newThreadMode) {
+      setComposerModeLocal(newThreadMode);
+    }
+  }, [isNewThread, composerMode, newThreadMode]);
+
   // Sync composerMode with thread's persisted mode when switching threads
   useEffect(() => {
+    if (isNewThread) return;
     const mode = activeThread?.mode === "worktree" ? "worktree" : "direct";
     setComposerModeLocal(mode);
     setNewThreadMode(mode);
-  }, [activeThread?.mode, setNewThreadMode]);
+  }, [activeThread?.mode, isNewThread, setNewThreadMode]);
 
   // Force direct mode for non-git workspaces — worktree modes are not available without git
   useEffect(() => {
@@ -2001,22 +2026,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       return;
     }
 
-    // Validate worktree mode requirements
-    if (isNewThread && newThreadMode === "existing-worktree" && !selectedWorktree) {
-      return;
-    }
+    const submittedNewThreadMode = composerMode;
+    const submittedNewThreadBranch = newThreadBranch;
 
-    // Checkout confirmation for local mode when a different branch is selected
-    if (isNewThread && isGitRepo && newThreadMode === "direct" && newThreadBranch && workspaceId) {
-      const currentBranch = await useWorkspaceStore.getState().getCurrentBranch(workspaceId);
-      if (currentBranch && newThreadBranch !== currentBranch) {
-        const confirmed = window.confirm(
-          `You're on "${currentBranch}" but selected "${newThreadBranch}". Switch to "${newThreadBranch}"? This will checkout the branch.`,
-        );
-        if (!confirmed) return;
-        await useWorkspaceStore.getState().checkoutBranch(workspaceId, newThreadBranch);
-        clearFileListCache(workspaceId);
-      }
+    // Validate worktree mode requirements
+    if (isNewThread && submittedNewThreadMode === "existing-worktree" && !selectedWorktree) {
+      return;
     }
 
     const captureRows = buildAttachedBrowserCaptures(attachments);
@@ -2032,60 +2047,63 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
     const outboundDisplay = resolveOutboundDisplayContent(rawInput, undefined);
 
-    // ---- Normal send path ----
+    const continueSend = async () => {
+      // ---- Normal send path ----
 
-    if (
-      shouldQueueActiveThreadSubmit(
-        threadId,
-        isAgentRunning,
-        branchFromMessageId,
-        isNewThread,
-        trimmed,
-      )
-    ) {
-      enqueueCurrentComposerMessage(messageContent, outboundDisplay, captureRows);
-      return;
-    }
+      if (
+        shouldQueueActiveThreadSubmit(
+          threadId,
+          isAgentRunning,
+          branchFromMessageId,
+          isNewThread,
+          trimmed,
+        )
+      ) {
+        enqueueCurrentComposerMessage(messageContent, outboundDisplay, captureRows);
+        return;
+      }
 
-    setInput("");
-    setMentions([]);
-    if (editorRef.current) {
-      editorRef.current.update(() => {
-        const root = $getRoot();
-        root.clear();
-        root.append($createParagraphNode());
-      });
-    }
-    setDetectedPr(null);
-    setPrDismissed(false);
-    // Edit mode ends on send regardless of which path we took.
-    editingOriginalRef.current = null;
-    setEditingFromQueue(null);
-    useQueueStore.getState().setEditingThreadId(null);
-    const currentAttachments = collectAndClearAttachments();
-    if (threadId) clearDraftFromStore(threadId);
-    // Hide the reply bar with the composer reset; sendMessage still receives reply IDs from this render.
-    if (threadId) clearReply(threadId);
+      setInput("");
+      setMentions([]);
+      if (editorRef.current) {
+        editorRef.current.update(() => {
+          const root = $getRoot();
+          root.clear();
+          root.append($createParagraphNode());
+        });
+      }
+      setDetectedPr(null);
+      setPrDismissed(false);
+      // Edit mode ends on send regardless of which path we took.
+      editingOriginalRef.current = null;
+      setEditingFromQueue(null);
+      useQueueStore.getState().setEditingThreadId(null);
+      const currentAttachments = collectAndClearAttachments();
+      if (threadId) clearDraftFromStore(threadId);
+      // Hide the reply bar with the composer reset; sendMessage still receives reply IDs from this render.
+      if (threadId) clearReply(threadId);
 
-    if (isNewThread && workspaceId) {
-      await useWorkspaceStore
-        .getState()
-        .createAndSendMessage(
-          messageContent,
-          modelId,
-          access,
-          currentAttachments.length > 0 ? currentAttachments : undefined,
-          reasoning,
-          provider,
-          mode,
-          provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
-          contextWindow ?? undefined,
-          thinking ?? undefined,
-          provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
-          outboundDisplay,
-          selectedMentions,
-        );
-    } else if (branchFromMessageId && threadId) {
+      if (isNewThread && workspaceId) {
+        setNewThreadMode(submittedNewThreadMode);
+        setNewThreadBranch(submittedNewThreadBranch);
+        await useWorkspaceStore
+          .getState()
+          .createAndSendMessage(
+            messageContent,
+            modelId,
+            access,
+            currentAttachments.length > 0 ? currentAttachments : undefined,
+            reasoning,
+            provider,
+            mode,
+            provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
+            contextWindow ?? undefined,
+            thinking ?? undefined,
+            provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
+            outboundDisplay,
+            selectedMentions,
+          );
+      } else if (branchFromMessageId && threadId) {
       // Branch mode: create a child thread from the quoted message instead of sending.
       let branchMode: "direct" | "worktree" | "existing-worktree" = "direct";
       let branchBranch = branchTargetBranch || activeThread?.branch || "";
@@ -2126,42 +2144,62 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         mentions: selectedMentions,
       });
       onBranchModeExit?.();
-    } else if (threadId) {
-      await sendMessage(
-        threadId,
-        messageContent,
-        modelId,
-        access,
-        currentAttachments.length > 0 ? currentAttachments : undefined,
-        outboundDisplay,
-        reasoning,
-        provider,
-        provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
-        contextWindow ?? undefined,
-        thinking ?? undefined,
-        provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
-        replyContext?.messageId,
-        replyContext?.quotedText,
-        undefined,
-        selectedMentions,
-      );
-    }
+      } else if (threadId) {
+        await sendMessage(
+          threadId,
+          messageContent,
+          modelId,
+          access,
+          currentAttachments.length > 0 ? currentAttachments : undefined,
+          outboundDisplay,
+          reasoning,
+          provider,
+          provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
+          contextWindow ?? undefined,
+          thinking ?? undefined,
+          provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
+          replyContext?.messageId,
+          replyContext?.quotedText,
+          undefined,
+          selectedMentions,
+        );
+      }
 
-    // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
-    const { settings, loaded, update: updateSettings } = useSettingsStore.getState();
-    if (loaded && (mode !== settings.agent.defaults.mode || access !== settings.agent.defaults.permission)) {
-      void updateSettings({
-        agent: {
-          defaults: {
-            mode,
-            permission: access,
+      // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
+      const { settings, loaded, update: updateSettings } = useSettingsStore.getState();
+      if (loaded && (mode !== settings.agent.defaults.mode || access !== settings.agent.defaults.permission)) {
+        void updateSettings({
+          agent: {
+            defaults: {
+              mode,
+              permission: access,
+            },
           },
-        },
-      });
+        });
+      }
+
+      editorRef.current?.focus();
+    };
+
+    // Checkout confirmation for Direct mode when a different branch is selected.
+    if (isNewThread && isGitRepo && submittedNewThreadMode === "direct" && submittedNewThreadBranch && workspaceId) {
+      const currentBranch = await useWorkspaceStore.getState().getCurrentBranch(workspaceId);
+      if (currentBranch && submittedNewThreadBranch !== currentBranch) {
+        setPendingCheckoutConfirmation({
+          currentBranch,
+          targetBranch: submittedNewThreadBranch,
+          onConfirm: async () => {
+            await useWorkspaceStore.getState().checkoutBranch(workspaceId, submittedNewThreadBranch);
+            clearFileListCache(workspaceId);
+            await continueSend();
+          },
+        });
+        return;
+      }
     }
 
-    editorRef.current?.focus();
-  }, [input, mentions, attachments, isAgentRunning, isNewThread, newThreadMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand]);
+    await continueSend();
+  }, [input, mentions, attachments, isAgentRunning, isNewThread, composerMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch]);
 
   // Reset the handoff-transition-seen flag whenever the user switches threads
   // so the guard below evaluates correctly for each new child thread.
@@ -2299,6 +2337,25 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       setShowReasoningPicker(false);
     }
   }, [reasoningLevels.length, has1MCapability, hasThinkingCapability, provider]);
+
+  const cancelCheckoutConfirmation = useCallback(() => {
+    if (checkoutConfirming) return;
+    setPendingCheckoutConfirmation(null);
+    editorRef.current?.focus();
+  }, [checkoutConfirming]);
+
+  const confirmCheckoutAndSend = useCallback(async () => {
+    const pending = pendingCheckoutConfirmation;
+    if (!pending || checkoutConfirming) return;
+    setCheckoutConfirming(true);
+    try {
+      await pending.onConfirm();
+      setPendingCheckoutConfirmation(null);
+    } finally {
+      setCheckoutConfirming(false);
+      editorRef.current?.focus();
+    }
+  }, [pendingCheckoutConfirmation, checkoutConfirming]);
 
   return (
     <div className="relative px-8 py-4">
@@ -3070,6 +3127,31 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         onDismiss={slashCommand.onDismiss}
         onRetry={slashCommand.onRetry}
       />
+      <Dialog
+        open={pendingCheckoutConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open) cancelCheckoutConfirmation();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Switch branch?</DialogTitle>
+            <DialogDescription>
+              {pendingCheckoutConfirmation
+                ? `You're on "${pendingCheckoutConfirmation.currentBranch}" but selected "${pendingCheckoutConfirmation.targetBranch}". Switch to "${pendingCheckoutConfirmation.targetBranch}" before starting the thread?`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" disabled={checkoutConfirming} />}>
+              Cancel
+            </DialogClose>
+            <Button onClick={confirmCheckoutAndSend} disabled={checkoutConfirming}>
+              {checkoutConfirming ? "Switching..." : "Switch and send"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
