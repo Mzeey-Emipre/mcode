@@ -22,7 +22,7 @@ describe("PlanDocument annotation", () => {
   beforeAll(async () => {
     // Keep the full parallel suite from spending this test's timeout budget on the lazy import.
     await import("@/components/chat/MarkdownContent");
-  });
+  }, 30_000);
 
   beforeEach(() => {
     vi.clearAllMocks();

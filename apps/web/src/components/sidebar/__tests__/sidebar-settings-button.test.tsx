@@ -41,7 +41,7 @@ describe('Sidebar "Edit settings.json" button', () => {
 
     const mod = await import("../Sidebar");
     Sidebar = mod.Sidebar as typeof Sidebar;
-  });
+  }, 30_000);
 
   afterAll(() => {
     delete (window as unknown as Record<string, unknown>).desktopBridge;

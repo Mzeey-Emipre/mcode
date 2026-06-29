@@ -1,5 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { mockWebSocketServer } from "./helpers/e2e-helpers";
+import {
+  interceptZustandStores,
+  mockWebSocketServer,
+  type WsController,
+} from "./helpers/e2e-helpers";
 import { getDefaultSettings } from "@mcode/contracts";
 
 const MOCK_SETTINGS = getDefaultSettings();
@@ -46,6 +50,18 @@ const thread = {
   permission_mode: null,
   parent_thread_id: null,
   forked_from_message_id: null,
+};
+
+const openPrThread = {
+  ...thread,
+  pr_number: 42,
+  pr_status: "open",
+};
+
+const openPr = {
+  number: 42,
+  state: "OPEN",
+  url: "https://github.com/Mzeey-Empire/mcode/pull/42",
 };
 
 const usage = {
@@ -140,6 +156,76 @@ const branches = [
 /** The Overview body, whether docked (reflowed) or floating (popover). */
 const overviewContent = (page: import("@playwright/test").Page) =>
   page.getByTestId("thread-overview-body");
+
+async function waitForHydration(page: import("@playwright/test").Page): Promise<void> {
+  await page.waitForFunction(
+    () => (window as unknown as { __mcodeHydrationComplete?: boolean }).__mcodeHydrationComplete === true,
+  );
+}
+
+async function waitForChecksAggregate(
+  page: import("@playwright/test").Page,
+  threadId: string,
+  aggregate: "passing" | "failing" | "pending",
+): Promise<void> {
+  await page.waitForFunction(
+    ({ tid, agg }) => {
+      const stores =
+        (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
+          .__mcodeStores ?? [];
+      const workspaceStore = stores.find((store) => {
+        const state = store.getState();
+        return "checksById" in state && "threads" in state && "workspaces" in state;
+      });
+      const checksById = workspaceStore?.getState().checksById as
+        | Record<string, { aggregate?: string }>
+        | undefined;
+      return checksById?.[tid]?.aggregate === agg;
+    },
+    { tid: threadId, agg: aggregate },
+  );
+}
+
+function checks(aggregate: "passing" | "failing" | "pending") {
+  return {
+    aggregate,
+    runs: [],
+    fetchedAt: Date.now(),
+  };
+}
+
+function failingChecksWithRuns() {
+  return {
+    aggregate: "failing" as const,
+    fetchedAt: Date.now(),
+    runs: [
+      {
+        name: "Test Web E2E (shard 1/4)",
+        status: "completed" as const,
+        conclusion: "failure" as const,
+        startedAt: new Date(Date.now() - 120_000).toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: 120_000,
+      },
+      {
+        name: "Test",
+        status: "in_progress" as const,
+        conclusion: null,
+        startedAt: new Date(Date.now() - 8_000).toISOString(),
+        completedAt: null,
+        durationMs: null,
+      },
+      {
+        name: "Typecheck",
+        status: "completed" as const,
+        conclusion: "success" as const,
+        startedAt: new Date(Date.now() - 42_000).toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: 42_000,
+      },
+    ],
+  };
+}
 
 /** Opens the Overview if it isn't already (it auto-opens on wide viewports). */
 async function ensureOverviewOpen(page: import("@playwright/test").Page) {
@@ -398,5 +484,106 @@ test.describe("Consolidated chat header", () => {
       .evaluate((node) => getComputedStyle(node).paddingRight);
 
     expect(messageAreaPaddingRight).toBe("0px");
+  });
+});
+
+test.describe("Consolidated chat header CI trigger state", () => {
+  test.use({ viewport: { width: 1920, height: 1080 } });
+
+  let ws: WsController;
+
+  test.beforeEach(async ({ page }) => {
+    await interceptZustandStores(page);
+    await page.addInitScript((wsId: string) => {
+      localStorage.setItem(
+        "mcode-expanded-projects",
+        JSON.stringify({ [wsId]: true }),
+      );
+    }, WS_ID);
+
+    ws = await mockWebSocketServer(page, {
+      "workspace.list": [workspace],
+      "workspace.enrich": { items: [] },
+      "workspace.touchLastOpened": null,
+      "thread.list": [openPrThread],
+      "settings.get": MOCK_SETTINGS,
+      "provider.getUsage": usage,
+      "github.branchPr": openPr,
+      "git.log": [gitCommit],
+      "snapshot.listByThread": [snapshot],
+      "snapshot.getDiffStats": [],
+      "git.listBranches": branches,
+      "git.getRemoteUrl": {
+        label: "Mzeey-Empire/mcode",
+        webUrl: "https://github.com/Mzeey-Empire/mcode",
+      },
+      "git.workingTreeFiles": [],
+    });
+
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='thread-item']");
+    await page.locator("[data-testid='thread-item']").first().click();
+    await page.waitForSelector("[data-testid='chat-header-title']");
+    await waitForHydration(page);
+  });
+
+  test("updates the Overview trigger CI dot for pending, failing, and passing checks", async ({ page }) => {
+    const trigger = page.getByTestId("header-workspace-menu");
+    await expect(page.getByTestId("thread-overview-pr")).toContainText("PR #42");
+
+    await expect(trigger).toHaveAttribute("aria-label", "Thread overview");
+    await expect(trigger).toHaveAttribute("title", "Thread overview");
+    await expect(page.getByTestId("thread-overview-ci-red")).toHaveCount(0);
+    await expect(page.getByTestId("thread-overview-ci-green")).toHaveCount(0);
+
+    await ws.sendPush("thread.checksUpdated", {
+      threadId: openPrThread.id,
+      checks: checks("pending"),
+    });
+    await waitForChecksAggregate(page, openPrThread.id, "pending");
+
+    await expect(trigger).toHaveAttribute("aria-label", "Thread overview");
+    await expect(page.getByTestId("thread-overview-ci-red")).toHaveCount(0);
+    await expect(page.getByTestId("thread-overview-ci-green")).toHaveCount(0);
+
+    await ws.sendPush("thread.checksUpdated", {
+      threadId: openPrThread.id,
+      checks: checks("failing"),
+    });
+    await waitForChecksAggregate(page, openPrThread.id, "failing");
+
+    await expect(trigger).toHaveAttribute("aria-label", "Thread overview, CI checks failing");
+    await expect(trigger).toHaveAttribute("title", "Thread overview, CI checks failing");
+    await expect(page.getByTestId("thread-overview-ci-red")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-ci-green")).toHaveCount(0);
+
+    await ws.sendPush("thread.checksUpdated", {
+      threadId: openPrThread.id,
+      checks: checks("passing"),
+    });
+    await waitForChecksAggregate(page, openPrThread.id, "passing");
+
+    await expect(trigger).toHaveAttribute("aria-label", "Thread overview, CI checks passing");
+    await expect(trigger).toHaveAttribute("title", "Thread overview, CI checks passing");
+    await expect(page.getByTestId("thread-overview-ci-green")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-ci-red")).toHaveCount(0);
+  });
+
+  test("shows CI summary below the PR row and expands details from it", async ({ page }) => {
+    await ws.sendPush("thread.checksUpdated", {
+      threadId: openPrThread.id,
+      checks: failingChecksWithRuns(),
+    });
+    await waitForChecksAggregate(page, openPrThread.id, "failing");
+    await ensureOverviewOpen(page);
+
+    const summary = page.getByTestId("thread-overview-pr-status");
+    await expect(summary).toHaveAttribute("aria-label", /1 failing/);
+    await expect(summary).toHaveAttribute("aria-label", /1 green/);
+    await expect(summary).not.toContainText("Checks failing");
+
+    await summary.hover();
+    await expect(page.getByText("Test Web E2E (shard 1/4)")).toBeVisible();
+    await expect(page.getByText("Typecheck")).toBeVisible();
   });
 });

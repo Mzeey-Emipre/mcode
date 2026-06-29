@@ -76,7 +76,7 @@ export function PrSplitButton({
                 <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
                 <span className="truncate text-xs font-medium">{label}</span>
               </span>
-              <span className="flex shrink-0 items-center gap-1">
+              <span className="flex shrink-0 items-center gap-1.5">
                 {trailing ? (
                   <span
                     className="flex items-center"

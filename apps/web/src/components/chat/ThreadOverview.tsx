@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } fr
 import {
   Check,
   ChevronDown,
+  CircleCheck,
+  CircleX,
   Copy,
   Diff,
   ExternalLink,
@@ -17,7 +19,6 @@ import {
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -41,6 +42,11 @@ import { ChecksPopover } from "./ChecksPopover";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { useThreadRecap } from "@/hooks/useThreadRecap";
+import {
+  CI_ICON_STROKE,
+  getCiOverviewSummaryLabel,
+  getCiSummaryHeadline,
+} from "@/lib/ci-status";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
@@ -979,9 +985,9 @@ function getPrRowStatus(
   if (pr) {
     const state = pr.state.toLowerCase();
     if (state === "open") {
-      if (checks?.aggregate === "failing") return { label: "Checks failing", tone: "danger" };
-      if (checks?.aggregate === "passing") return { label: "Checks passing", tone: "positive" };
-      if (checks?.aggregate === "pending") return { label: "Checks running", tone: "neutral" };
+      if (checks?.aggregate === "failing") return { label: getCiSummaryHeadline(checks), tone: "danger" };
+      if (checks?.aggregate === "passing") return { label: getCiSummaryHeadline(checks), tone: "positive" };
+      if (checks?.aggregate === "pending") return { label: getCiSummaryHeadline(checks), tone: "neutral" };
       return { label: null, tone: "positive" };
     }
     if (state === "merged") return { label: "Merged", tone: "positive" };
@@ -1073,19 +1079,23 @@ function ThreadOverviewPrActiveRow({
   const [checksOpen, setChecksOpen] = useState(false);
   const status = getPrRowStatus(pr, hasCommitsAhead, checks);
   const detailText = getPrRowDetail(pr, openPrDetail);
-  const badgeVariant =
-    status.tone === "danger"
-      ? "destructive"
-      : status.tone === "positive"
-        ? "secondary"
-        : status.tone === "muted"
-          ? "outline"
-          : "ghost";
   const hasChecksData =
     pr.state.toLowerCase() === "open" &&
     checks != null &&
     checks.aggregate !== "no_checks";
   const canOpenChecks = hasChecksData && threadId.length > 0;
+  const SummaryIcon =
+    checks?.aggregate === "passing"
+      ? CircleCheck
+      : checks?.aggregate === "failing"
+        ? CircleX
+        : Loader2;
+  const summaryIconClass =
+    checks?.aggregate === "passing"
+      ? "text-[var(--diff-add-strong)]"
+      : checks?.aggregate === "failing"
+        ? "text-[var(--diff-remove-strong)]"
+        : "text-[#e7a90b]";
 
   useEffect(() => {
     if (!canOpenChecks) return;
@@ -1098,46 +1108,82 @@ function ThreadOverviewPrActiveRow({
     return dispose;
   }, [canOpenChecks]);
 
-  const statusBadge = status.label ? (
-    <Badge
-      variant={badgeVariant}
-      size="sm"
-      data-testid="thread-overview-pr-status"
-      className={cn("max-w-32 truncate", canOpenChecks && "cursor-pointer")}
-    >
-      {status.label}
-    </Badge>
-  ) : null;
-
   const rowLabel = detailText ?? `PR #${pr.number}`;
-  const trailingBadge =
-    statusBadge && canOpenChecks ? (
+  const checksSummary =
+    checks && canOpenChecks ? (
       <ChecksPopover
-        threadId={threadId}
-        prUrl={pr.url}
-        prTitle={openPrDetail?.title}
-        prAuthor={openPrDetail?.author}
         checks={checks!}
         open={checksOpen}
         onOpenChange={setChecksOpen}
       >
-        {statusBadge}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-testid="thread-overview-pr-status"
+          aria-label={`CI checks, ${getCiSummaryHeadline(checks)}`}
+          title={getCiSummaryHeadline(checks)}
+          onPointerDown={() => setChecksOpen(true)}
+          onClick={(event) => {
+            event.stopPropagation();
+            setChecksOpen(true);
+          }}
+          onMouseEnter={() => setChecksOpen(true)}
+          onFocus={() => setChecksOpen(true)}
+          className={cn(
+            "ml-6 flex h-7 w-[calc(100%-1.5rem)] cursor-pointer justify-between rounded-md border border-border/35 bg-muted/20 px-2 text-left hover:bg-muted/35",
+            checks.aggregate === "failing" && "border-[var(--diff-remove-strong)]/20 bg-[var(--diff-remove-strong)]/[0.07] hover:bg-[var(--diff-remove-strong)]/[0.1]",
+            checks.aggregate === "pending" && "border-[#e7a90b]/20 bg-[#e7a90b]/[0.07] hover:bg-[#e7a90b]/[0.1]",
+            checks.aggregate === "passing" && "border-[var(--diff-add-strong)]/20 bg-[var(--diff-add-strong)]/[0.07] hover:bg-[var(--diff-add-strong)]/[0.1]",
+          )}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <SummaryIcon
+              size={13}
+              strokeWidth={CI_ICON_STROKE}
+              aria-hidden
+              className={cn(
+                "shrink-0",
+                summaryIconClass,
+                checks.aggregate === "pending" && "status-spin",
+              )}
+            />
+            <span className="truncate text-xs text-foreground/85">
+              {getCiOverviewSummaryLabel(checks)}
+            </span>
+          </span>
+          <ChevronDown
+            size={12}
+            aria-hidden
+            className={cn(
+              "shrink-0 text-muted-foreground transition-transform duration-150",
+              checksOpen && "rotate-180",
+            )}
+          />
+        </Button>
       </ChecksPopover>
     ) : (
-      statusBadge
+      status.label ? (
+        <span
+          data-testid="thread-overview-pr-status"
+          className="ml-6 inline-flex h-6 items-center rounded-md px-2 text-[11px] text-muted-foreground"
+        >
+          {status.label}
+        </span>
+      ) : null
     );
 
   return (
-    <div data-testid="thread-overview-pr">
+    <div data-testid="thread-overview-pr" className="space-y-1">
       <PrSplitButton
         pr={pr}
         label={rowLabel}
         onCreatePr={onCreatePr}
         onOpenPr={onOpenPr}
-        trailing={trailingBadge}
         primaryButtonTestId="workspace-menu-open-pr"
         newPrButtonTestId="workspace-menu-new-pr"
       />
+      {checksSummary}
     </div>
   );
 }
@@ -1596,16 +1642,23 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   );
 
   const ciDot = useMemo(() => getThreadOverviewCiDot(pr, checks), [pr, checks]);
+  const triggerStatus =
+    ciDot === "red"
+      ? "Thread overview, CI checks failing"
+      : ciDot === "green"
+        ? "Thread overview, CI checks passing"
+        : "Thread overview";
   const modeLabel = thread.mode === "worktree" ? "Worktree" : "Direct";
   const checkoutLabel = resolveThreadCheckoutLabel(thread);
 
   const triggerButton = (
     <Button
+      key={triggerStatus}
       variant="ghost"
       size="icon-xs"
       type="button"
-      title="Thread overview"
-      aria-label="Thread overview"
+      title={triggerStatus}
+      aria-label={triggerStatus}
       data-testid="header-workspace-menu"
       className={cn(
         "relative cursor-pointer text-foreground/70 hover:bg-muted/40 hover:text-foreground",
