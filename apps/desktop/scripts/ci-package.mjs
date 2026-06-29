@@ -5,7 +5,7 @@
  *  1. electron-builder detects bun from PATH/lockfile and incorrectly invokes
  *     it via Node.js. We strip bun directories from PATH so it falls back to npm.
  *  2. npm does not support bun's workspace:* protocol. We strip workspace:*
- *     references but keep real-versioned deps (better-sqlite3, node-pty) so
+ *     references but keep real-versioned deps (better-sqlite3, koffi, node-pty) so
  *     electron-builder can install and rebuild the native bindings for the
  *     target platform.
  *  3. bun hoists native deps to sibling workspaces. We run `npm install` to
@@ -26,7 +26,7 @@ const pkgPath = resolve(desktopRoot, "package.json");
 
 // ---------------------------------------------------------------------------
 // 1. Strip workspace:* deps — npm cannot install them. Keep real-versioned
-//    deps (better-sqlite3, node-pty) so npm installs and electron-builder
+//    deps (better-sqlite3, koffi, node-pty) so npm installs and electron-builder
 //    rebuilds their native bindings. All other server JS is bundled in server.cjs.
 // ---------------------------------------------------------------------------
 

@@ -119,6 +119,35 @@ async function openTerminalTab(
   );
 }
 
+/** Closes the right-panel terminal tab via store state. */
+async function closeTerminalTab(
+  page: import("@playwright/test").Page,
+  workspaceId: string,
+  threadId: string,
+): Promise<void> {
+  await page.evaluate(
+    ({ wid, tid }) => {
+      const stores: unknown[] =
+        (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
+      const diffStore = stores.find((s: unknown) => {
+        const st = (s as { getState: () => Record<string, unknown> }).getState();
+        return "closeRightPanelTab" in st;
+      });
+      if (!diffStore) return;
+      (diffStore as {
+        getState: () => {
+          closeRightPanelTab: (
+            id: string,
+            threadId: string | null,
+            tab: string,
+          ) => void;
+        };
+      }).getState().closeRightPanelTab(wid, tid, "terminal");
+    },
+    { wid: workspaceId, tid: threadId },
+  );
+}
+
 /**
  * Adds a terminal to the store for a thread. In the new model this registers
  * the shell session so TerminalPoolHost knows to mount a view for it.
@@ -266,9 +295,6 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
 
     // The module initialises the counter to 0 on load and increments on mount.
     const counter = await liveTerminalCounter(page);
-    // counter may still be null if the module hasn't loaded; that is the honest
-    // infra-gap skip preserved from terminal-leak.spec.ts.
-    test.skip(counter === null, "TerminalView module not loaded (mock infra gap)");
     expect(counter).toBe(1);
   });
 
@@ -390,13 +416,144 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
       expect(mountMs).toBeGreaterThanOrEqual(0);
     } else {
       // Timing hook not set (unlikely in dev mode). Fall back to the WS counter.
-      // skip if we cannot confirm either way (mock infra limitation).
-      test.skip(
-        state.reattachCalls === 0,
-        "terminal.reattach counter and timing hook both unavailable (mock infra gap)",
-      );
       expect(state.reattachCalls).toBeGreaterThanOrEqual(1);
     }
+  });
+
+  test("closing and reopening the terminal tab disposes only the view", async ({
+    page,
+  }) => {
+    const calls: {
+      reattach: Array<{ ptyId?: string; lastSeq?: number }>;
+      kill: number;
+      killByThread: number;
+    } = { reattach: [], kill: 0, killByThread: 0 };
+    let replaySeq = 0;
+
+    const wsController = await mockWebSocketServer(page, {
+      ...BASE_OVERRIDES,
+      "terminal.reattach": (params: unknown) => {
+        calls.reattach.push(params as { ptyId?: string; lastSeq?: number });
+        replaySeq += 1;
+        return { gapped: false };
+      },
+      "terminal.kill": () => {
+        calls.kill += 1;
+        return true;
+      },
+      "terminal.killByThread": () => {
+        calls.killByThread += 1;
+        return true;
+      },
+    });
+    await interceptZustandStores(page);
+    await page.setViewportSize({ width: 1920, height: 900 });
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await page.waitForFunction(
+      () =>
+        (window as unknown as { __mcodeHydrationComplete?: boolean })
+          .__mcodeHydrationComplete === true,
+      { timeout: 30_000 },
+    );
+
+    await seedAndOpenTerminal(page, "thread-a", "pty-thread-a");
+    await expect(page.locator(".xterm").first()).toBeVisible({ timeout: 20_000 });
+
+    const originalPty = await page.evaluate(() => {
+      const stores: unknown[] =
+        (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
+      const termStore = stores.find((s: unknown) => {
+        const st = (s as { getState: () => Record<string, unknown> }).getState();
+        return "terminals" in st && "ptyToThread" in st;
+      }) as { getState: () => { terminals: Record<string, { id: string }[]> } };
+      return termStore.getState().terminals["thread-a"]?.[0]?.id ?? null;
+    });
+    expect(originalPty).toBe("pty-thread-a");
+
+    await page.evaluate(() => {
+      const stores: unknown[] =
+        (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
+      const termStore = stores.find((s: unknown) => {
+        const st = (s as { getState: () => Record<string, unknown> }).getState();
+        return "removeTerminal" in st && "removeAllTerminals" in st;
+      }) as {
+        getState: () => Record<string, unknown>;
+        setState: (patch: Record<string, unknown>) => void;
+      };
+      const state = termStore.getState();
+      const counters = { removeTerminal: 0, removeAllTerminals: 0 };
+      const removeTerminal = state.removeTerminal as (...args: unknown[]) => unknown;
+      const removeAllTerminals = state.removeAllTerminals as (...args: unknown[]) => unknown;
+      (window as unknown as { __mcodeTerminalCloseCounters?: typeof counters })
+        .__mcodeTerminalCloseCounters = counters;
+      termStore.setState({
+        removeTerminal: (...args: unknown[]) => {
+          counters.removeTerminal += 1;
+          return removeTerminal(...args);
+        },
+        removeAllTerminals: (...args: unknown[]) => {
+          counters.removeAllTerminals += 1;
+          return removeAllTerminals(...args);
+        },
+      });
+    });
+
+    await closeTerminalTab(page, WS_ID, "thread-a");
+    await expect(page.locator(".xterm")).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.locator("[aria-hidden='true'] .xterm")).toHaveCount(0);
+    await expect
+      .poll(() => liveTerminalCounter(page), { timeout: 10_000 })
+      .toBe(0);
+
+    const afterClose = await page.evaluate(() => {
+      const stores: unknown[] =
+        (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
+      const termStore = stores.find((s: unknown) => {
+        const st = (s as { getState: () => Record<string, unknown> }).getState();
+        return "terminals" in st && "removeTerminal" in st;
+      }) as {
+        getState: () => {
+          terminals: Record<string, { id: string }[]>;
+        };
+      };
+      const state = termStore.getState();
+      const counters = (window as unknown as {
+        __mcodeTerminalCloseCounters?: {
+          removeTerminal: number;
+          removeAllTerminals: number;
+        };
+      }).__mcodeTerminalCloseCounters;
+      return {
+        ptyId: state.terminals["thread-a"]?.[0]?.id ?? null,
+        removeTerminal: counters?.removeTerminal ?? null,
+        removeAllTerminals: counters?.removeAllTerminals ?? null,
+      };
+    });
+    expect(afterClose.ptyId).toBe(originalPty);
+    expect(afterClose.removeTerminal).toBe(0);
+    expect(afterClose.removeAllTerminals).toBe(0);
+    expect(calls.kill).toBe(0);
+    expect(calls.killByThread).toBe(0);
+
+    await openTerminalTab(page, WS_ID, "thread-a");
+    await expect(page.locator(".xterm").first()).toBeVisible({ timeout: 20_000 });
+
+    expect(calls.reattach.length).toBeGreaterThanOrEqual(2);
+    expect(calls.reattach.at(-1)).toEqual({
+      ptyId: "pty-thread-a",
+      lastSeq: -1,
+    });
+
+    await wsController.sendPush("terminal.data", {
+      ptyId: "pty-thread-a",
+      data: `scrollback-after-reopen-${replaySeq}\r\n`,
+      seq: replaySeq + 100,
+    });
+    await expect(page.locator(".xterm")).toContainText(
+      /scrollback-after-reopen-/,
+      { timeout: 10_000 },
+    );
   });
 
   // --- Scenario still valid in the new model ---
