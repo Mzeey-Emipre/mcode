@@ -41,10 +41,16 @@ function fakeGoalCapableProvider() {
     setGoal: vi.fn<(sid: string, condition: string) => GoalState>((_, condition) => makeGoal(condition)),
     clearGoal: vi.fn<(sid: string) => boolean>(() => true),
     getGoal: vi.fn<(sid: string) => GoalState | undefined>(() => undefined),
+    hasNativeGoalCommand: vi.fn<(sid: string) => boolean>(() => false),
+    setNativeGoalMirror: vi.fn<(sid: string, condition: string) => GoalState>((_, condition) => makeGoal(condition)),
+    clearNativeGoalMirror: vi.fn<(sid: string) => boolean>(() => true),
   }) as unknown as IAgentProvider & {
     setGoal: ReturnType<typeof vi.fn>;
     clearGoal: ReturnType<typeof vi.fn>;
     getGoal: ReturnType<typeof vi.fn>;
+    hasNativeGoalCommand: ReturnType<typeof vi.fn>;
+    setNativeGoalMirror: ReturnType<typeof vi.fn>;
+    clearNativeGoalMirror: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -228,6 +234,40 @@ describe("GoalCommand", () => {
       expect(messages.find((m) => m.role === "assistant")?.content).toMatch(
         /No active goal/,
       );
+    });
+
+    it("uses exact native /goal wire text when Claude support is proven", async () => {
+      const provider = fakeGoalCapableProvider();
+      provider.hasNativeGoalCommand.mockReturnValueOnce(true);
+      const cmd = build();
+
+      const outcome = await cmd.handle(ctx("/goal analyse this branch", provider));
+
+      expect(outcome.kind).toBe("rewrite");
+      if (outcome.kind !== "rewrite") throw new Error("expected rewrite");
+      expect(outcome.content).toBe("/goal analyse this branch");
+
+      await outcome.onDispatch?.();
+      expect(provider.setGoal).not.toHaveBeenCalled();
+      expect(provider.setNativeGoalMirror).toHaveBeenCalledWith(
+        `mcode-${threadId}`,
+        "analyse this branch",
+      );
+    });
+
+    it("does not clear the native mirror from control command rollback", async () => {
+      const provider = fakeGoalCapableProvider();
+      provider.hasNativeGoalCommand.mockReturnValueOnce(true);
+      const cmd = build();
+
+      const outcome = await cmd.handle(ctx("/goal clear", provider));
+
+      expect(outcome.kind).toBe("rewrite");
+      if (outcome.kind !== "rewrite") throw new Error("expected rewrite");
+      expect(outcome.content).toBe("/goal off");
+
+      await outcome.onRollback?.();
+      expect(provider.clearNativeGoalMirror).not.toHaveBeenCalled();
     });
   });
 

@@ -46,12 +46,12 @@ export type GoalState = z.infer<ReturnType<typeof GoalStateSchema>>;
 
 /** Identifies where a thread-goal lookup result came from. */
 export const GoalLookupSourceSchema = lazySchema(() =>
-  z.enum(["codex-native", "codex-cache", "claude-wrapper", "unsupported"]),
+  z.enum(["codex-native", "codex-cache", "claude-wrapper", "claude-native-command", "claude-cache", "unsupported"]),
 );
 
 /** Identifies why a thread-goal lookup returned no authoritative open goal. */
 export const GoalLookupReasonSchema = lazySchema(() =>
-  z.enum(["not-materialized", "closed", "missing", "unsupported-provider"]),
+  z.enum(["not-materialized", "closed", "missing", "unsupported-provider", "busy"]),
 );
 
 /** Provider-neutral active-goal lookup result for thread switch hydration. */

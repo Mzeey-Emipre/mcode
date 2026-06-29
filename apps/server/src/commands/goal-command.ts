@@ -23,6 +23,23 @@ interface GoalCommandDeps {
 const GOAL_COMMAND = /^\s*\/goal\b\s*(.*)$/s;
 const MAX_GOAL_OBJECTIVE_CHARS = 4000;
 
+interface ClaudeNativeGoalCommandProvider {
+  hasNativeGoalCommand(sessionId: string): boolean;
+  setNativeGoalMirror(sessionId: string, condition: string): GoalState;
+  clearNativeGoalMirror(sessionId: string): boolean;
+}
+
+function asClaudeNativeGoalCommandProvider(
+  provider: IAgentProvider,
+): ClaudeNativeGoalCommandProvider | null {
+  const candidate = provider as Partial<ClaudeNativeGoalCommandProvider>;
+  return typeof candidate.hasNativeGoalCommand === "function" &&
+    typeof candidate.setNativeGoalMirror === "function" &&
+    typeof candidate.clearNativeGoalMirror === "function"
+    ? (candidate as ClaudeNativeGoalCommandProvider)
+    : null;
+}
+
 /**
  * The `/goal` app-native command. Holds only server-lifetime deps; the resolved
  * provider arrives per send via {@link CommandContext}. Any provider that
@@ -68,10 +85,20 @@ export class GoalCommand implements McodeCommand {
 
     const arg = match[1].trim();
     const lower = arg.toLowerCase();
+    const session = this.sessionName(threadId);
+    const native = asClaudeNativeGoalCommandProvider(ctx.provider);
+    const useNative = native?.hasNativeGoalCommand(session) === true;
     const isControl =
       arg === "" || lower === "show" || lower === "clear" || lower === "reset";
 
     if (isControl) {
+      if (useNative) {
+        const nativeContent = lower === "clear" || lower === "reset" ? "/goal off" : "/goal";
+        return {
+          kind: "rewrite",
+          content: nativeContent,
+        };
+      }
       let replyText: string;
       if (arg === "" || lower === "show") {
         const current = await capable.getGoal(this.sessionName(threadId));
@@ -101,7 +128,21 @@ export class GoalCommand implements McodeCommand {
     // transcript. The setGoal() install is deferred to onDispatch (run by the
     // caller just before sendTurn) so a send failure can't leave a stale goal;
     // onRollback clears it if the send fails.
-    const session = this.sessionName(threadId);
+    if (useNative) {
+      return {
+        kind: "rewrite",
+        content: `/goal ${arg}`,
+        onDispatch: async () => {
+          const goal = native.setNativeGoalMirror(session, arg);
+          this.broadcastGoalUpdated(threadId, goal);
+        },
+        onRollback: async () => {
+          native.clearNativeGoalMirror(session);
+          this.broadcastGoalCleared(threadId, "rollback");
+        },
+      };
+    }
+
     return {
       kind: "rewrite",
       content:

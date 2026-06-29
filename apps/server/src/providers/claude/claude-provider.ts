@@ -10,7 +10,7 @@ import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { Query, SDKUserMessage, PostCompactHookInput, StopHookInput, CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
-import { AgentEventType, isGoalOpen, isVirtualBrowserContextAttachment } from "@mcode/contracts";
+import { AgentEventType, isVirtualBrowserContextAttachment } from "@mcode/contracts";
 import type {
   IAgentProvider,
   IGoalCapable,
@@ -46,6 +46,7 @@ import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/ses
 import { listDirectChildren } from "../../services/process-kill.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
 import type { SessionForker } from "@mcode/contracts";
+import { parseClaudeGoalCommandResult } from "./claude-goal-command-parser.js";
 
 /**
  * Default model slug used for side-channel and fallback paths.
@@ -82,6 +83,8 @@ interface ClaudeGoalEntry {
   readonly createdAt: number;
   readonly updatedAt: number;
 }
+
+type ClaudeNativeGoalSupport = "unknown" | "supported" | "unsupported";
 
 /**
  * Per-session state owned by the {@link SessionRuntime}. Holds the live SDK
@@ -336,6 +339,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
    * server restarts.
    */
   private goalsBySession = new Map<string, ClaudeGoalEntry>();
+  /** Native Claude Code `/goal` mirrors keyed by Mcode session id. */
+  private nativeGoalsBySession = new Map<string, ClaudeGoalEntry>();
+  /** Per-session native `/goal` capability, proven only by `system/init.slash_commands`. */
+  private nativeGoalSupportBySession = new Map<string, ClaudeNativeGoalSupport>();
   /**
    * Session IDs for which a stop was requested before the session was created.
    * Checked by doSendMessage after session creation; if found the session is
@@ -1712,6 +1719,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 awaitingResume = false;
                 break;
               }
+              const nativeGoalResult = parseClaudeGoalCommandResult(lastAssistantText, anyMsg);
+              if (nativeGoalResult) {
+                this.applyNativeGoalCommandResult(sessionId, nativeGoalResult);
+              }
               if (lastAssistantText) {
                 this.emit("event", {
                   type: AgentEventType.Message,
@@ -1844,11 +1855,20 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
             }
 
             case "system": {
+              if ((anyMsg.subtype as string) === "init") {
+                const slashCommands = anyMsg.slash_commands;
+                if (Array.isArray(slashCommands)) {
+                  this.observeNativeGoalCommands(
+                    sessionId,
+                    slashCommands,
+                    anyMsg.claude_code_version,
+                  );
+                }
               // subtype 'status' carries the SDK's compaction state.
               // Only emit a compacting event on known transitions to avoid
               // spurious "active: false" from unrelated status strings (e.g.
               // "idle", "ready") that the SDK may send during session lifecycle.
-              if ((anyMsg.subtype as string) === "status") {
+              } else if ((anyMsg.subtype as string) === "status") {
                 const sdkStatus = (anyMsg as { status?: string | null }).status;
                 if (sdkStatus === "compacting" && !sessionCompacting) {
                   sessionCompacting = true;
@@ -2264,9 +2284,115 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     };
   }
 
+  /** Return whether native Claude Code `/goal` has been proven for this session. */
+  hasNativeGoalCommand(sessionId: string): boolean {
+    return this.nativeGoalSupportBySession.get(sessionId) === "supported";
+  }
+
+  /** Records Claude Code slash-command availability observed from `system/init`. */
+  observeNativeGoalCommands(
+    sessionId: string,
+    slashCommands: readonly unknown[],
+    claudeCodeVersion?: unknown,
+  ): void {
+    const supported = slashCommands.includes("goal");
+    this.nativeGoalSupportBySession.set(
+      sessionId,
+      supported ? "supported" : "unsupported",
+    );
+    logger.debug("Claude native goal support observed", {
+      sessionId,
+      supported,
+      claudeCodeVersion,
+    });
+  }
+
+  /** Mark the native `/goal` command unavailable after Claude reports it disabled. */
+  private markNativeGoalUnavailable(sessionId: string): void {
+    this.nativeGoalSupportBySession.set(sessionId, "unsupported");
+    this.nativeGoalsBySession.delete(sessionId);
+  }
+
+  /** Install a local mirror for a native Claude Code goal command already dispatched. */
+  setNativeGoalMirror(sessionId: string, condition: string): GoalState {
+    const now = Date.now();
+    const existing = this.nativeGoalsBySession.get(sessionId);
+    const entry: ClaudeGoalEntry = {
+      objective: condition,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.nativeGoalsBySession.set(sessionId, entry);
+    return this.toGoalState(sessionId, entry);
+  }
+
+  /** Clear the local mirror for a native Claude Code goal command. */
+  clearNativeGoalMirror(sessionId: string): boolean {
+    return this.nativeGoalsBySession.delete(sessionId);
+  }
+
+  /** Apply a fail-closed native `/goal` parse result to the in-memory mirror. */
+  private applyNativeGoalCommandResult(
+    sessionId: string,
+    result: NonNullable<ReturnType<typeof parseClaudeGoalCommandResult>>,
+  ): void {
+    if (result.kind === "unavailable") {
+      this.markNativeGoalUnavailable(sessionId);
+      this.emit(`_nativeGoalCommandResult:${sessionId}`, result);
+      return;
+    }
+    if (result.kind === "active") {
+      this.setNativeGoalMirror(sessionId, result.objective);
+      this.emit(`_nativeGoalCommandResult:${sessionId}`, result);
+      return;
+    }
+    if (result.kind === "cleared" || result.kind === "empty") {
+      this.nativeGoalsBySession.delete(sessionId);
+    }
+    this.emit(`_nativeGoalCommandResult:${sessionId}`, result);
+  }
+
+  /** Dispatch a native `/goal` command into an idle Claude session and wait for its proven command result. */
+  async runNativeGoalCommand(
+    sessionId: string,
+    command: "/goal" | "/goal off",
+    timeoutMs = 20_000,
+  ): Promise<NonNullable<ReturnType<typeof parseClaudeGoalCommandResult>> | null> {
+    const entry = this.runtime.get(sessionId);
+    if (
+      !entry ||
+      this.nativeGoalSupportBySession.get(sessionId) !== "supported" ||
+      this.isBusy(entry)
+    ) {
+      return null;
+    }
+
+    const eventName = `_nativeGoalCommandResult:${sessionId}`;
+    const current = this.runtime.get(sessionId);
+    if (!current || current !== entry || this.isBusy(current)) {
+      return null;
+    }
+    const resultPromise = new Promise<NonNullable<ReturnType<typeof parseClaudeGoalCommandResult>> | null>((resolve) => {
+      let settled = false;
+      const done = (result: NonNullable<ReturnType<typeof parseClaudeGoalCommandResult>> | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.removeListener(eventName, onResult);
+        resolve(result);
+      };
+      const onResult = (result: NonNullable<ReturnType<typeof parseClaudeGoalCommandResult>>) => done(result);
+      const timer = setTimeout(() => done(null), timeoutMs);
+      this.once(eventName, onResult);
+    });
+
+    entry.pushMessage(toUserMessage(command, sessionId));
+    return resultPromise;
+  }
+
   /**
-   * Install a Claude-wrapper goal. Claude can enforce a stop gate, but cannot
-   * currently report achieved/paused/blocked lifecycle state back to Mcode.
+   * Install a Claude-wrapper goal. Claude can enforce a stop gate, but native
+   * `/goal` sessions keep their own mirror and bypass this Stop hook state.
    */
   setGoal(sessionId: string, condition: string): GoalState {
     const now = Date.now();
@@ -2287,15 +2413,23 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
   /** Return the active Claude-wrapper goal state for a session, or undefined. */
   getGoal(sessionId: string): GoalState | undefined {
-    const entry = this.goalsBySession.get(sessionId);
+    const entry = this.nativeGoalsBySession.get(sessionId) ?? this.goalsBySession.get(sessionId);
     return entry ? this.toGoalState(sessionId, entry) : undefined;
   }
 
   /** Return non-authoritative Claude-wrapper goal lookup metadata. */
   getGoalLookup(sessionId: string): GoalLookupResult {
-    const goal = this.getGoal(sessionId);
+    const nativeGoal = this.nativeGoalsBySession.get(sessionId);
+    if (nativeGoal) {
+      return {
+        goal: this.toGoalState(sessionId, nativeGoal),
+        authoritative: false,
+        source: "claude-cache",
+      };
+    }
+    const goal = this.goalsBySession.get(sessionId);
     return {
-      goal: isGoalOpen(goal) ? goal : null,
+      goal: goal ? this.toGoalState(sessionId, goal) : null,
       authoritative: false,
       source: "claude-wrapper",
       ...(goal ? {} : { reason: "missing" }),
@@ -2336,6 +2470,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       }
     }
     this.goalsBySession.delete(sessionId);
+    this.nativeGoalsBySession.delete(sessionId);
     const entry = this.runtime.get(sessionId);
     if (entry) {
       // The runtime's stop runs interrupt (closeQueue) → close (query.close) →
@@ -2504,6 +2639,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     this.pendingSpawnTurns.clear();
     this.sdkSessionIds.clear();
     this.goalsBySession.clear();
+    this.nativeGoalsBySession.clear();
+    this.nativeGoalSupportBySession.clear();
     logger.info("ClaudeProvider shutdown complete");
   }
 }

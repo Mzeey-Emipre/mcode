@@ -56,6 +56,8 @@ describe("goal lookup contract", () => {
       "codex-native",
       "codex-cache",
       "claude-wrapper",
+      "claude-native-command",
+      "claude-cache",
       "unsupported",
     ]);
     expect(GoalLookupReasonSchema().options).toEqual([
@@ -63,6 +65,7 @@ describe("goal lookup contract", () => {
       "closed",
       "missing",
       "unsupported-provider",
+      "busy",
     ]);
   });
 
