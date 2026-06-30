@@ -197,6 +197,18 @@ function usageCategoryFillClass(category: QuotaCategory): string {
 }
 
 /**
+ * Returns the Overview session-cost label only for provider-proven API-key billing.
+ */
+export function formatThreadOverviewSessionCost(
+  usageInfo: ProviderUsageInfo | undefined,
+): string | null {
+  if (usageInfo?.billingMode !== "api_key") return null;
+  const sessionCostUsd = usageInfo.sessionCostUsd;
+  if (typeof sessionCostUsd !== "number" || !Number.isFinite(sessionCostUsd)) return null;
+  return `$${sessionCostUsd.toFixed(2)} session`;
+}
+
+/**
  * Returns capped quota categories in priority order for the Overview Usage panel.
  */
 export function getThreadOverviewUsageCategories(
@@ -221,27 +233,54 @@ export function formatThreadOverviewUsage(
   providerId = usageInfo?.providerId,
 ): string | null {
   const categories = getThreadOverviewUsageCategories(usageInfo, providerId);
-  if (categories.length === 0) return null;
+  const costSummary = formatThreadOverviewSessionCost(usageInfo);
 
-  return categories
-    .slice(0, 2)
-    .map((category) => {
-      const percent = Math.round(usageCategoryPercent(category));
-      return `${usageCategoryShortLabel(category.label)} ${percent}%`;
-    })
-    .join(", ");
+  const quotaSummary = categories.length > 0
+    ? categories
+      .slice(0, 2)
+      .map((category) => {
+        const percent = Math.round(usageCategoryPercent(category));
+        return `${usageCategoryShortLabel(category.label)} ${percent}%`;
+      })
+      .join(", ")
+    : null;
+
+  return [quotaSummary, costSummary].filter(Boolean).join(", ") || null;
 }
 
 interface ThreadOverviewUsageBarsProps {
   categories: QuotaCategory[];
   summary: string;
+  sessionCostSummary: string | null;
 }
 
 const THREAD_OVERVIEW_USAGE_DETAILS_ID = "thread-overview-usage-details-panel";
 
 /** Expandable quota usage row for the Thread Overview popover. */
-function ThreadOverviewUsageBars({ categories, summary }: ThreadOverviewUsageBarsProps) {
+function ThreadOverviewUsageBars({
+  categories,
+  summary,
+  sessionCostSummary,
+}: ThreadOverviewUsageBarsProps) {
   const [open, setOpen] = useState(true);
+
+  if (categories.length === 0) {
+    return (
+      <div
+        data-testid="thread-overview-usage"
+        aria-label={`Usage, ${summary}`}
+        className="flex h-8 w-full items-center justify-between gap-3 px-2 text-left"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <Gauge size={14} aria-hidden className="shrink-0 text-muted-foreground" />
+          <span className="truncate text-xs font-medium">Usage</span>
+        </span>
+        <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+          {summary}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <Collapsible
@@ -321,6 +360,14 @@ function ThreadOverviewUsageBars({ categories, summary }: ThreadOverviewUsageBar
               </div>
             );
           })}
+          {sessionCostSummary ? (
+            <div className="flex items-baseline justify-between gap-3 pt-0.5">
+              <span className="min-w-0 truncate text-xs text-foreground/80">Session cost</span>
+              <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                {sessionCostSummary}
+              </span>
+            </div>
+          ) : null}
         </div>
       </AnimatedCollapsible>
     </Collapsible>
@@ -1515,6 +1562,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     () => formatThreadOverviewUsage(usageInfo, thread.provider),
     [thread.provider, usageInfo],
   );
+  const sessionCostSummary = useMemo(
+    () => formatThreadOverviewSessionCost(usageInfo),
+    [usageInfo],
+  );
   const fetchProviderUsage = useThreadStore((state) => state.fetchProviderUsage);
 
   useEffect(() => {
@@ -1801,8 +1852,12 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               </Popover>
             )}
 
-            {usageSummary && usageCategories.length > 0 && (
-              <ThreadOverviewUsageBars categories={usageCategories} summary={usageSummary} />
+            {usageSummary && (
+              <ThreadOverviewUsageBars
+                categories={usageCategories}
+                summary={usageSummary}
+                sessionCostSummary={sessionCostSummary}
+              />
             )}
 
             {branchlessCreatePr ? (

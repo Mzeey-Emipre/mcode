@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
-import { QuotaCategorySchema } from "../providers/usage.js";
+import { ProviderBillingModeSchema, QuotaCategorySchema } from "../providers/usage.js";
 import { StoredAttachmentSchema } from "../models/attachment.js";
 import { GoalStateSchema } from "../models/goal.js";
 
@@ -209,6 +209,7 @@ export const AgentEventSchema = lazySchema(() =>
       threadId: z.string(),
       providerId: z.string(),
       categories: z.array(QuotaCategorySchema()),
+      billingMode: ProviderBillingModeSchema().optional(),
       sessionCostUsd: z.number().optional(),
       serviceTier: z.enum(["standard", "priority", "batch"]).optional(),
       numTurns: z.number().int().optional(),
