@@ -79,6 +79,8 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: "./src/test-setup.ts",
     pool: "threads",
+    minWorkers: 1,
+    maxWorkers: 4,
     exclude: ["e2e/**", "node_modules/**"],
     env: {
       NODE_ENV: "test",

@@ -130,6 +130,49 @@ export function getInlineHeadline(checks: ChecksStatus): string | null {
   return null;
 }
 
+/** Returns the compact Codex-style CI summary used by the PR pill and popover. */
+export function getCiSummaryHeadline(
+  checks: ChecksStatus,
+  liveElapsed: string | null = null,
+): string {
+  const b = getBreakdown(checks);
+  switch (checks.aggregate) {
+    case "passing":
+      return b.total === 1 ? "1 check passed" : `All ${b.total} checks passed`;
+    case "failing":
+      return b.failing === 1
+        ? `1 failing · ${b.passing} green`
+        : `${b.failing} failing · ${b.passing} green`;
+    case "pending":
+      return liveElapsed
+        ? `${b.total - b.running}/${b.total} · running for ${liveElapsed}`
+        : `${b.running} running · ${b.passing} green`;
+    case "no_checks":
+      return "No checks configured";
+  }
+}
+
+/** Returns the compact visible Overview CI row label. */
+export function getCiOverviewSummaryLabel(checks: ChecksStatus): string {
+  const b = getBreakdown(checks);
+  switch (checks.aggregate) {
+    case "pending": {
+      const count = b.running;
+      return `${count} pending ${count === 1 ? "check" : "checks"}`;
+    }
+    case "failing": {
+      const count = b.failing;
+      return `${count} failing ${count === 1 ? "check" : "checks"}`;
+    }
+    case "passing": {
+      const count = b.passing;
+      return `${count} succeeded ${count === 1 ? "check" : "checks"}`;
+    }
+    case "no_checks":
+      return "No checks";
+  }
+}
+
 /** Find the first still-running check, for "currently running: lint" microcopy. */
 export function getLeadRunningName(checks: ChecksStatus): string | null {
   const running = checks.runs.find((r: CheckRun) => r.status !== "completed");

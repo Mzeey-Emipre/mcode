@@ -43,7 +43,7 @@ describe("GitDiffView commit selection", () => {
       expect(transport.getCommitFiles).toHaveBeenCalledWith("ws-1", "bbbbbbbb2"),
     );
 
-    expect(screen.getAllByText("selected.ts").length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getAllByText("selected.ts").length).toBeGreaterThan(0));
     expect(transport.getGitLog).not.toHaveBeenCalled();
   });
 

@@ -1,101 +1,92 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { CircleCheck, CircleX, Loader2, RefreshCw, ExternalLink, MinusCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+} from "react";
+import { createPortal } from "react-dom";
+import {
+  CircleCheck,
+  CircleX,
+  Loader2,
+  MinusCircle,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getTransport } from "@/transport";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { getCiVisual, getBreakdown, getLeadRunningName, CI_ICON_STROKE } from "@/lib/ci-status";
+import { CI_ICON_STROKE } from "@/lib/ci-status";
 import type { ChecksStatus, CheckRun } from "@mcode/contracts";
-import { openGitHubUrl } from "@/lib/open-url-in-preview";
 
 /** Props for {@link ChecksPopover}. */
 interface ChecksPopoverProps {
-  /** Thread ID used for refresh requests. */
-  threadId: string;
-  /** GitHub PR URL, used for the "View on GitHub" link. */
-  prUrl: string;
-  /** Optional PR title shown in the header. */
-  prTitle?: string;
-  /** Optional PR author shown below the title. */
-  prAuthor?: string;
   /** Latest CI check status to display. */
   checks: ChecksStatus;
-  /** Trigger element rendered inside the popover trigger. */
-  children: React.ReactNode;
-  /**
-   * Controlled open state. When provided the popover becomes fully controlled,
-   * letting callers (e.g. a keyboard shortcut handler) open it programmatically.
-   * When omitted the popover is uncontrolled and opens on click.
-   */
+  /** Trigger element rendered as the CI summary row. */
+  children: ReactElement;
+  /** Controlled open state. */
   open?: boolean;
-  /** Paired with `open` — called when Base UI wants to change the open state. */
+  /** Called when the local flyout open state should change. */
   onOpenChange?: (open: boolean) => void;
 }
 
-/** Lanes that runs can land in — controls grouping, colour, and sort priority. */
-type Lane = "failing" | "running" | "passing" | "other";
-
-/** Lane metadata used for the section header chrome. Only the failing lane carries a wash
- *  so the popover stays calm: urgency is carried by one surface, not three. */
-const LANE_META: Record<Lane, { label: string; icon: typeof CircleCheck; iconClass: string; wash: string; accent: string }> = {
-  failing: {
-    label: "Failing",
-    icon: CircleX,
-    iconClass: "text-[var(--diff-remove-strong)]",
-    wash: "bg-[var(--diff-remove-strong)]/[0.05]",
-    accent: "text-[var(--diff-remove-strong)]",
-  },
-  running: {
-    label: "Running",
-    icon: Loader2,
-    iconClass: "text-primary",
-    wash: "",
-    accent: "text-primary",
-  },
-  passing: {
-    label: "Passing",
-    icon: CircleCheck,
-    iconClass: "text-[var(--diff-add-strong)]",
-    wash: "",
-    accent: "text-[var(--diff-add-strong)]/85",
-  },
-  other: {
-    // "Other" rather than "Skipped" — this bucket also holds cancelled, neutral,
-    // action_required, and stale conclusions; calling them all skipped misleads triage.
-    label: "Other",
-    icon: MinusCircle,
-    iconClass: "text-muted-foreground/60",
-    wash: "",
-    accent: "text-muted-foreground",
-  },
-};
-
-function laneOf(run: CheckRun): Lane {
-  if (run.status !== "completed") return "running";
-  if (run.conclusion === "failure" || run.conclusion === "timed_out") return "failing";
-  if (run.conclusion === "success") return "passing";
-  return "other";
+interface CheckRunVisual {
+  icon: LucideIcon;
+  iconClassName: string;
+  label: string;
+  labelClassName: string;
+  spinning?: boolean;
 }
 
-/** Status icon for an individual check run, colour-matched to its lane. */
-function RunIcon({ run }: { run: CheckRun }) {
-  const lane = laneOf(run);
-  const Meta = LANE_META[lane];
-  return (
-    <Meta.icon
-      size={12}
-      className={cn(
-        Meta.iconClass,
-        "shrink-0",
-        lane === "running" && "status-spin",
-      )}
-      strokeWidth={CI_ICON_STROKE}
-    />
-  );
+interface FlyoutPosition {
+  left: number;
+  top: number;
 }
 
-/** Format a duration in milliseconds to a human-readable string. */
+const FLYOUT_WIDTH = 356;
+const FLYOUT_MAX_HEIGHT = 320;
+const FLYOUT_GAP = 8;
+const VIEWPORT_PADDING = 8;
+
+function getRunVisual(run: CheckRun): CheckRunVisual {
+  if (run.status !== "completed") {
+    return {
+      icon: Loader2,
+      iconClassName: "text-primary",
+      label: "Running",
+      labelClassName: "text-muted-foreground",
+      spinning: true,
+    };
+  }
+
+  switch (run.conclusion) {
+    case "success":
+      return {
+        icon: CircleCheck,
+        iconClassName: "text-[var(--diff-add-strong)]",
+        label: "Succeeded",
+        labelClassName: "text-muted-foreground",
+      };
+    case "failure":
+    case "timed_out":
+      return {
+        icon: CircleX,
+        iconClassName: "text-[var(--diff-remove-strong)]",
+        label: "Failed",
+        labelClassName: "text-muted-foreground",
+      };
+    default:
+      return {
+        icon: MinusCircle,
+        iconClassName: "text-muted-foreground/80",
+        label: run.conclusion ? run.conclusion.replace(/_/g, " ") : "Completed",
+        labelClassName: "text-muted-foreground",
+      };
+  }
+}
+
+/** Format a duration in milliseconds to a compact human-readable string. */
 function formatDuration(ms: number): string {
   if (ms < 1000) return "<1s";
   const secs = Math.round(ms / 1000);
@@ -105,343 +96,141 @@ function formatDuration(ms: number): string {
   return remainSecs > 0 ? `${mins}m ${remainSecs}s` : `${mins}m`;
 }
 
-/** Compute elapsed time since a startedAt timestamp, as a live-updating formatted string. */
-function useLiveElapsed(startedAtIso: string | null | undefined, active: boolean): string | null {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active || !startedAtIso) return;
-    const id = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(id);
-  }, [active, startedAtIso]);
-  if (!startedAtIso) return null;
-  const started = new Date(startedAtIso).getTime();
-  if (isNaN(started)) return null;
-  return formatDuration(now - started);
+function getMeasuredTrigger(trigger: HTMLElement): HTMLElement {
+  return trigger.firstElementChild instanceof HTMLElement
+    ? trigger.firstElementChild
+    : trigger;
 }
 
-/** Summarise the aggregate CI state as a headline string, e.g. "3 of 5 running". */
-function aggregateHeadline(checks: ChecksStatus, elapsedLive: string | null): string {
-  const b = getBreakdown(checks);
-  switch (checks.aggregate) {
-    case "passing":
-      return b.total === 1 ? "1 check passed" : `All ${b.total} checks passed`;
-    case "failing":
-      // Count only actually-passing runs as "green" — skipped/cancelled/neutral sit
-      // in b.other and must not be conflated with success.
-      return b.failing === 1
-        ? `1 failing · ${b.passing} green`
-        : `${b.failing} of ${b.total} failing`;
-    case "pending":
-      return elapsedLive
-        ? `${b.total - b.running}/${b.total} · running for ${elapsedLive}`
-        : `${b.total - b.running} of ${b.total} running`;
-    case "no_checks":
-      return "No checks configured";
-  }
+function calculateFlyoutPosition(trigger: HTMLElement): FlyoutPosition {
+  const rect = getMeasuredTrigger(trigger).getBoundingClientRect();
+  const canOpenRight =
+    rect.right + FLYOUT_GAP + FLYOUT_WIDTH + VIEWPORT_PADDING <= window.innerWidth;
+  const preferredLeft = canOpenRight
+    ? rect.right + FLYOUT_GAP
+    : rect.left - FLYOUT_GAP - FLYOUT_WIDTH;
+  const left = Math.max(
+    VIEWPORT_PADDING,
+    Math.min(preferredLeft, window.innerWidth - FLYOUT_WIDTH - VIEWPORT_PADDING),
+  );
+  const top = Math.max(
+    VIEWPORT_PADDING,
+    Math.min(rect.top, window.innerHeight - FLYOUT_MAX_HEIGHT - VIEWPORT_PADDING),
+  );
+  return { left, top };
 }
 
 /**
- * Popover that shows PR metadata and per-lane grouped CI check run details.
- *
- * Layout: premium editorial hierarchy.
- * - Chrome header: large status icon + aggregate headline + PR title/author
- * - Live progress strip when aggregate is pending
- * - Grouped run lanes: Failing → Running → Passing → Skipped
- *   - failing lane is auto-expanded with a red wash for urgency
- *   - each run carries a live elapsed time while running
- * - Footer: freshness label, refresh button, GitHub link
+ * Flat CI job flyout anchored to the Overview CI summary row.
  */
 export function ChecksPopover({
-  threadId,
-  prUrl,
-  prTitle,
-  prAuthor,
   checks,
   children,
   open,
   onOpenChange,
 }: ChecksPopoverProps) {
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState<FlyoutPosition | null>(null);
 
-  // Keep the staleness label current while the popover is mounted.
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    setRefreshError(false);
-    try {
-      const fresh = await getTransport().checkStatus(threadId, true);
-      useWorkspaceStore.setState((ws) => ({
-        checksById: { ...ws.checksById, [threadId]: fresh },
-      }));
-    } catch {
-      setRefreshError(true);
-    } finally {
-      setRefreshing(false);
-    }
-  }, [threadId]);
-
-  const handleOpenGitHub = useCallback(
-    (event: React.MouseEvent) => {
-      openGitHubUrl(prUrl, threadId, event);
-    },
-    [prUrl, threadId],
-  );
-
-  // Deep-link into GitHub's PR checks tab so devs can jump straight to the run logs
-  // from the failing-lane header. Uses the same protocol/host guard as handleOpenGitHub.
-  const handleOpenChecksTab = useCallback(
-    (event: React.MouseEvent) => {
-      openGitHubUrl(`${prUrl}/checks`, threadId, event);
-    },
-    [prUrl, threadId],
-  );
-
-  // Group runs by lane, ordered by priority.
-  const laned = useMemo(() => {
-    const groups: Record<Lane, CheckRun[]> = { failing: [], running: [], passing: [], other: [] };
-    for (const r of checks.runs) groups[laneOf(r)].push(r);
-    return groups;
+  const sortedRuns = useMemo(() => {
+    const priority = (run: CheckRun): number => {
+      if (run.status !== "completed") return 0;
+      if (run.conclusion === "success") return 1;
+      if (run.conclusion === "failure" || run.conclusion === "timed_out") return -1;
+      return 2;
+    };
+    return [...checks.runs].sort((a, b) => priority(a) - priority(b));
   }, [checks.runs]);
 
-  const breakdown = useMemo(() => getBreakdown(checks), [checks]);
+  const updatePosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    setPosition(calculateFlyoutPosition(triggerRef.current));
+  }, []);
 
-  // Lead running job for the subtitle ("currently running: lint").
-  const leadRunning = useMemo(
-    () => (checks.aggregate === "pending" ? getLeadRunningName(checks) : null),
-    [checks],
-  );
-  // Elapsed time of the lead running run, live-updating.
-  const leadRunningStartedAt = useMemo(() => {
-    if (checks.aggregate !== "pending") return null;
-    const r = checks.runs.find((x) => x.status !== "completed");
-    return r?.startedAt ?? null;
-  }, [checks]);
-  const liveElapsed = useLiveElapsed(leadRunningStartedAt, checks.aggregate === "pending");
+  const openFlyout = useCallback(() => {
+    updatePosition();
+    onOpenChange?.(true);
+  }, [onOpenChange, updatePosition]);
 
-  const elapsed = Math.round((now - checks.fetchedAt) / 1000);
-  const staleLabel =
-    elapsed < 5
-      ? "just now"
-      : elapsed < 60
-        ? `${elapsed}s ago`
-        : `${Math.floor(elapsed / 60)}m ago`;
+  const toggleFlyout = useCallback(() => {
+    updatePosition();
+    onOpenChange?.(!open);
+  }, [onOpenChange, open, updatePosition]);
 
-  const visual = getCiVisual(checks.aggregate);
-  const StatusIcon = visual.icon;
+  useEffect(() => {
+    if (!open) return;
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, updatePosition]);
 
-  // Visible lane order (skip empty).
-  const laneOrder: Lane[] = ["failing", "running", "passing", "other"];
-  const visibleLanes = laneOrder.filter((l) => laned[l].length > 0);
-
-  // Progress bar fill ratio — completed / total, used when pending.
-  const progressPercent = breakdown.total > 0
-    ? Math.round(((breakdown.passing + breakdown.failing + breakdown.other) / breakdown.total) * 100)
-    : 0;
+  const flyoutStyle: CSSProperties | undefined = position
+    ? { left: position.left, top: position.top, width: FLYOUT_WIDTH }
+    : undefined;
+  const flyout =
+    open && position ? (
+      <div
+        role="dialog"
+        data-testid="thread-overview-ci-popover"
+        style={flyoutStyle}
+        className="fixed z-50 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl"
+      >
+        <div className="max-h-[320px] overflow-y-auto py-1 scrollbar-on-hover">
+          {sortedRuns.length > 0 ? (
+            sortedRuns.map((run, index) => (
+              <RunRow key={`${run.name}-${index}`} run={run} />
+            ))
+          ) : (
+            <div className="px-4 py-3 text-xs text-muted-foreground">No checks configured</div>
+          )}
+        </div>
+      </div>
+    ) : null;
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger
-        className="inline-flex cursor-pointer"
-        aria-label="View CI check details"
+    <>
+      <div
+        ref={triggerRef}
+        onPointerDown={openFlyout}
+        onClick={toggleFlyout}
+        onMouseEnter={openFlyout}
+        onFocus={openFlyout}
+        className="w-full"
       >
         {children}
-      </PopoverTrigger>
-      <PopoverContent side="bottom" align="start" sideOffset={8} className="w-[340px] p-0 overflow-hidden">
-        {/* Header chrome */}
-        <div className={cn("px-4 pt-3.5 pb-3", visual.surface)}>
-          <div className="flex items-start gap-2.5">
-            <StatusIcon
-              size={18}
-              className={cn(
-                "shrink-0 mt-0.5",
-                visual.color,
-                checks.aggregate === "pending" && "status-spin",
-              )}
-              strokeWidth={CI_ICON_STROKE}
-            />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-foreground leading-tight">
-                {aggregateHeadline(checks, liveElapsed)}
-              </div>
-              {prTitle ? (
-                <div className="text-[11px] text-muted-foreground truncate mt-1 leading-snug">
-                  <span className="text-foreground/75">{prTitle}</span>
-                  {prAuthor && <span className="opacity-70"> · by {prAuthor}</span>}
-                </div>
-              ) : leadRunning ? (
-                <div className="text-[11px] text-muted-foreground truncate mt-1 leading-snug">
-                  Currently running: <span className="text-foreground/75">{leadRunning}</span>
-                </div>
-              ) : null}
-            </div>
-          </div>
+      </div>
 
-          {/* Progress strip — pending only */}
-          {checks.aggregate === "pending" && breakdown.total > 0 && (
-            <div className="mt-3 h-[3px] w-full rounded-full bg-muted/50 overflow-hidden">
-              <div
-                className="h-full bg-primary/90 transition-[width] duration-500 ease-out"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Lane groups */}
-        <div className="max-h-72 overflow-y-auto scrollbar-on-hover">
-          {visibleLanes.map((lane, laneIdx) => {
-            const runs = laned[lane];
-            const meta = LANE_META[lane];
-            const LaneIcon = meta.icon;
-            return (
-              <section
-                key={lane}
-                className={cn(
-                  "group",
-                  laneIdx > 0 && "border-t border-border/30",
-                  meta.wash,
-                )}
-              >
-                <header className="flex items-center gap-1.5 px-4 pt-2 pb-1">
-                  <LaneIcon
-                    size={10}
-                    className={cn(
-                      meta.iconClass,
-                      lane === "running" && "status-spin",
-                    )}
-                    strokeWidth={CI_ICON_STROKE}
-                  />
-                  <span className={cn("text-[10px] font-semibold uppercase tracking-wider", meta.accent)}>
-                    {meta.label}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground tabular-nums ml-1">
-                    {runs.length}
-                  </span>
-                  {/* Failing lane gets a jump-to-logs affordance. Keeps the header quiet
-                   * until hover, then reveals an external-link chip that deep-links to the
-                   * PR's checks tab where run logs live. */}
-                  {lane === "failing" && (
-                    <button
-                      type="button"
-                      onClick={handleOpenChecksTab}
-                      title="Open run logs on GitHub"
-                      className="ml-auto inline-flex items-center gap-1 text-[10px] text-[var(--diff-remove-strong)]/70 hover:text-[var(--diff-remove-strong)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity tracking-wider uppercase"
-                    >
-                      <span>view logs</span>
-                      <ExternalLink size={9} strokeWidth={CI_ICON_STROKE} />
-                    </button>
-                  )}
-                </header>
-                <ul className="pb-1.5">
-                  {runs.map((run, idx) => (
-                    // Composite key: matrix builds can produce duplicate `run.name`
-                    // across OS/Node legs, so the index disambiguates the React key.
-                    <RunRow key={`${run.name}-${idx}`} run={run} />
-                  ))}
-                </ul>
-              </section>
-            );
-          })}
-          {breakdown.total === 0 && (
-            <div className="text-xs text-muted-foreground text-center py-5">
-              No checks configured
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="border-t border-border/50" />
-        <div className="flex items-center justify-between px-4 py-2">
-          <button
-            onClick={handleOpenGitHub}
-            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ExternalLink size={10} className="opacity-60" />
-            View on GitHub
-          </button>
-          <div className="flex items-center gap-1.5">
-            {refreshError ? (
-              <button
-                type="button"
-                onClick={handleRefresh}
-                disabled={refreshing}
-                title="Last refresh failed — click to retry"
-                className="inline-flex items-center gap-1 text-[10px] text-[var(--diff-remove-strong)] hover:text-[var(--diff-remove-strong)]/80 transition-colors tabular-nums disabled:opacity-60"
-              >
-                <span>refresh failed</span>
-                <span className="underline underline-offset-2">retry</span>
-              </button>
-            ) : (
-              <>
-                <span className="text-[10px] text-muted-foreground tabular-nums">
-                  refreshed {staleLabel}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={handleRefresh}
-                  disabled={refreshing}
-                  aria-label="Refresh checks"
-                >
-                  <RefreshCw
-                    size={10}
-                    strokeWidth={CI_ICON_STROKE}
-                    className={cn(refreshing && "status-spin")}
-                  />
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+      {flyout ? createPortal(flyout, document.body) : null}
+    </>
   );
 }
 
-/** Single run row with live elapsed time while running, or static duration once completed. */
+/** Single CI run row in the flat Codex-style job list. */
 function RunRow({ run }: { run: CheckRun }) {
-  const lane = laneOf(run);
-  const isRunning = lane === "running";
-  const live = useLiveElapsed(run.startedAt, isRunning);
-
-  const tailLabel = isRunning
-    ? live ?? "running"
-    : run.durationMs != null
-      ? formatDuration(run.durationMs)
-      : null;
-
-  const tailClass = isRunning
-    ? "text-primary/90"
-    : lane === "failing"
-      ? "text-[var(--diff-remove-strong)]/90"
-      : "text-muted-foreground/80";
+  const visual = getRunVisual(run);
+  const Icon = visual.icon;
+  const title =
+    run.durationMs != null && run.status === "completed"
+      ? `${visual.label} in ${formatDuration(run.durationMs)}`
+      : visual.label;
 
   return (
-    <li
-      className={cn(
-        "flex items-center gap-2.5 px-4 py-[5px] text-xs",
-      )}
-    >
-      <RunIcon run={run} />
-      <span
-        className={cn(
-          "truncate flex-1",
-          lane === "failing" ? "text-[var(--diff-remove-strong)] font-medium" : "text-foreground/80",
-        )}
-      >
+    <div className="flex h-[30px] min-h-[30px] items-center gap-2 px-3.5 text-sm" title={title}>
+      <Icon
+        size={16}
+        strokeWidth={CI_ICON_STROKE}
+        className={cn("shrink-0", visual.iconClassName, visual.spinning && "status-spin")}
+      />
+      <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
         {run.name}
       </span>
-      {tailLabel && (
-        <span className={cn("font-mono text-[10px] shrink-0 tabular-nums", tailClass)}>
-          {tailLabel}
-        </span>
-      )}
-    </li>
+      <span className={cn("shrink-0 text-xs", visual.labelClassName)}>
+        {visual.label}
+      </span>
+    </div>
   );
 }
