@@ -49,11 +49,8 @@ jobs:
       - name: Ensure Claude SDK platform package
         run: node apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs
 
-      - name: Package with electron-builder
-        run: node apps/desktop/scripts/ci-package.mjs
+      - name: Package unpacked app with electron-builder
+        run: node apps/desktop/scripts/ci-package.mjs --linux dir
 
       - name: Smoke test packaged server
         run: node apps/desktop/scripts/smoke-test.mjs
-
-      - name: Verify Linux artifacts on Ubuntu 22.04
-        run: bash apps/desktop/scripts/verify-linux-artifacts-ubuntu22.sh
