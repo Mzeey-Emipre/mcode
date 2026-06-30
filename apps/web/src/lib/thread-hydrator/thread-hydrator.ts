@@ -38,6 +38,7 @@ export const BACKGROUND_PREFETCH_LIMIT = 100;
 export class ThreadHydrator {
   private readonly auxiliaryHydrator: AuxiliaryHydrator;
   private readonly activeHydrates = new Map<string, Promise<void>>();
+  private readonly backgroundHydrates = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: ThreadHydratorDeps) {
     this.auxiliaryHydrator = new AuxiliaryHydrator({
@@ -77,6 +78,29 @@ export class ThreadHydrator {
   private async hydrateBackground(threadId: string): Promise<void> {
     if (hasCachedRecord(threadId)) return;
 
+    const active = this.activeHydrates.get(threadId);
+    if (active) {
+      await active;
+      return;
+    }
+
+    const inFlight = this.backgroundHydrates.get(threadId);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const hydrate = this.fetchAndCacheBackground(threadId).finally(() => {
+      if (this.backgroundHydrates.get(threadId) === hydrate) {
+        this.backgroundHydrates.delete(threadId);
+      }
+    });
+    this.backgroundHydrates.set(threadId, hydrate);
+    await hydrate;
+  }
+
+  /** Cache-only fetch used by sidebar hover prefetches. */
+  private async fetchAndCacheBackground(threadId: string): Promise<void> {
     try {
       const workspaceThread = this.deps.getWorkspaceThread(threadId);
       const shouldFetchSnapshots = workspaceThread?.has_file_changes !== false;
@@ -117,13 +141,7 @@ export class ThreadHydrator {
 
     const cached = getCachedRecord(threadId);
     if (cached) {
-      this.restoreFromCache(threadId, cached);
-      void this.refreshThreadGoal(threadId);
-      this.auxiliaryHydrator.hydrate(threadId, {
-        freshnessTtlMs: HYDRATION_TTL_MS,
-        force: opts?.force,
-        commitFileChangesToStore: true,
-      });
+      this.restoreCachedActive(threadId, cached, opts);
       return;
     }
 
@@ -133,13 +151,54 @@ export class ThreadHydrator {
       return;
     }
 
-    const hydrate = this.fetchAndCommit(threadId, opts).finally(() => {
+    const hydrate = this.fetchActiveReusingBackground(threadId, opts).finally(() => {
       if (this.activeHydrates.get(threadId) === hydrate) {
         this.activeHydrates.delete(threadId);
       }
     });
     this.activeHydrates.set(threadId, hydrate);
     await hydrate;
+  }
+
+  /** Active-thread cache miss path, reusing hover prefetches when available. */
+  private async fetchActiveReusingBackground(
+    threadId: string,
+    opts?: ThreadHydratorOptions,
+  ): Promise<void> {
+    const background = this.backgroundHydrates.get(threadId);
+    if (background) {
+      this.prepareActiveLoad(threadId);
+      await background;
+
+      if (this.deps.getState().currentThreadId !== threadId) return;
+
+      const cached = getCachedRecord(threadId);
+      if (cached) {
+        this.restoreCachedActive(threadId, cached, opts, { bumpLoadEpoch: false });
+        return;
+      }
+
+      await this.fetchAndCommit(threadId, opts, { skipPrepare: true });
+      return;
+    }
+
+    await this.fetchAndCommit(threadId, opts);
+  }
+
+  /** Restore cached data to the active store and refresh auxiliary data. */
+  private restoreCachedActive(
+    threadId: string,
+    cached: ThreadRecord,
+    opts?: ThreadHydratorOptions,
+    restoreOpts?: { bumpLoadEpoch?: boolean },
+  ): void {
+    this.restoreFromCache(threadId, cached, restoreOpts);
+    void this.refreshThreadGoal(threadId);
+    this.auxiliaryHydrator.hydrate(threadId, {
+      freshnessTtlMs: HYDRATION_TTL_MS,
+      force: opts?.force,
+      commitFileChangesToStore: true,
+    });
   }
 
   /**
@@ -151,7 +210,11 @@ export class ThreadHydrator {
    * are typically stale relative to whatever the auxiliary writes settle to.
    * The auxiliary fanout that runs after restoration will refresh them anyway.
    */
-  private restoreFromCache(threadId: string, cached: ThreadRecord): void {
+  private restoreFromCache(
+    threadId: string,
+    cached: ThreadRecord,
+    opts?: { bumpLoadEpoch?: boolean },
+  ): void {
     this.deps.setState((state: ThreadHydratorWriteState) => {
       const current = getThreadRecord(state.records, threadId);
       // The cache snapshot predates in-flight narration, so for a running
@@ -174,7 +237,7 @@ export class ThreadHydrator {
           ...cached,
           error: null,
           loading: false,
-          loadEpoch: current.loadEpoch + 1,
+          loadEpoch: opts?.bumpLoadEpoch === false ? current.loadEpoch : current.loadEpoch + 1,
           isLoadingMore: false,
           lastHydratedAt: current.lastHydratedAt,
           permissions: current.permissions,
@@ -212,8 +275,8 @@ export class ThreadHydrator {
     }
   }
 
-  /** Cache-miss path: reset volatile state, fetch RPCs, commit, populate cache. */
-  private async fetchAndCommit(threadId: string, opts?: ThreadHydratorOptions): Promise<void> {
+  /** Prepare the live record for an active-thread load before the RPC settles. */
+  private prepareActiveLoad(threadId: string): void {
     const { getState, setState } = this.deps;
     const isRunning = getState().runningThreadIds.has(threadId);
 
@@ -244,24 +307,38 @@ export class ThreadHydrator {
           currentThreadId: threadId,
         };
       });
-    } else {
-      setState((state: ThreadHydratorWriteState) => {
-        const current = getThreadRecord(state.records, threadId);
-        return {
-          records: patchThreadRecord(state.records, threadId, {
-            loading: true,
-            error: null,
-            messages: [],
-            persistedToolCallCounts: {},
-            persistedFilesChanged: {},
-            latestTurnWithChanges: null,
-            isLoadingMore: false,
-            loadEpoch: current.loadEpoch + 1,
-            settings: this.deps.getWorkspaceThreadSettings(threadId),
-          }),
-          currentThreadId: threadId,
-        };
-      });
+      return;
+    }
+
+    setState((state: ThreadHydratorWriteState) => {
+      const current = getThreadRecord(state.records, threadId);
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          loading: true,
+          error: null,
+          messages: [],
+          persistedToolCallCounts: {},
+          persistedFilesChanged: {},
+          latestTurnWithChanges: null,
+          isLoadingMore: false,
+          loadEpoch: current.loadEpoch + 1,
+          settings: this.deps.getWorkspaceThreadSettings(threadId),
+        }),
+        currentThreadId: threadId,
+      };
+    });
+  }
+
+  /** Cache-miss path: reset volatile state, fetch RPCs, commit, populate cache. */
+  private async fetchAndCommit(
+    threadId: string,
+    opts?: ThreadHydratorOptions,
+    commitOpts?: { skipPrepare?: boolean },
+  ): Promise<void> {
+    const { getState, setState } = this.deps;
+
+    if (!commitOpts?.skipPrepare) {
+      this.prepareActiveLoad(threadId);
     }
 
     try {

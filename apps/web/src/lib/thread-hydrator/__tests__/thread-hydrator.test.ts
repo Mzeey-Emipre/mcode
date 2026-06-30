@@ -407,6 +407,36 @@ describe("ThreadHydrator", () => {
     expect(getCachedRecord(THREAD_A)?.messages).toEqual([msgA]);
   });
 
+  it("reuses an in-flight background prefetch when the same thread becomes active", async () => {
+    let resolvePage!: (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePage = resolve;
+        }),
+    );
+
+    const background = hydrator.hydrate(THREAD_A, "background");
+    await vi.waitFor(() => {
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+    });
+
+    const active = hydrator.hydrate(THREAD_A, "active");
+    await Promise.resolve();
+
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+
+    resolvePage({ messages: [msgA], hasMore: false, narrativeByMessage: {} });
+    await Promise.all([background, active]);
+
+    expect(getTestActiveMessages()).toEqual([msgA]);
+    expect(getCachedRecord(THREAD_A)?.messages).toEqual([msgA]);
+  });
+
   it("bumps load epoch on each hydrate so stale pagination is discarded", async () => {
     resetThreadStoreForTests({
       records: new Map<string, ThreadRecord>([
