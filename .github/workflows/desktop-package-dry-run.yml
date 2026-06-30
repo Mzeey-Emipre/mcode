@@ -1,0 +1,56 @@
+name: Desktop Package Dry Run
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/desktop-package-dry-run.yml"
+      - ".github/workflows/nightly-desktop.yml"
+      - ".github/workflows/build-release.yml"
+      - "apps/desktop/**"
+      - "scripts/build-server-dev-bundle.mjs"
+      - "package.json"
+      - "bun.lock"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package-linux-desktop:
+    name: Package Linux Desktop
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.14"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build main and renderer
+        run: bun run --cwd apps/desktop build
+
+      - name: Generate V8 snapshot
+        run: bun apps/desktop/scripts/generate-snapshot.mjs
+
+      - name: Install Python setuptools
+        shell: bash
+        run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools 2>/dev/null || pip install setuptools 2>/dev/null || true
+
+      - name: Ensure Claude SDK platform package
+        run: node apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs
+
+      - name: Package unpacked app with electron-builder
+        run: node apps/desktop/scripts/ci-package.mjs --linux dir
+
+      - name: Smoke test packaged server
+        run: node apps/desktop/scripts/smoke-test.mjs

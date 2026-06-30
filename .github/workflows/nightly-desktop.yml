@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   setup:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
       last_nightly_tag: ${{ steps.check.outputs.last_nightly_tag }}
@@ -126,16 +126,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: blacksmith-4vcpu-windows-2025
+          - os: blacksmith-2vcpu-windows-2025
             build-args: ""
             target-arch: ""
-          - os: blacksmith-4vcpu-ubuntu-2404
+          - os: blacksmith-2vcpu-ubuntu-2404
             build-args: ""
             target-arch: ""
-          - os: blacksmith-12vcpu-macos-26
+          - os: blacksmith-6vcpu-macos-26
             build-args: "--mac --arm64"
             target-arch: "arm64"
-          - os: blacksmith-12vcpu-macos-26
+          - os: blacksmith-6vcpu-macos-26
             build-args: "--mac --x64"
             target-arch: "x64"
 

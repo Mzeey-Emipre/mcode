@@ -11,7 +11,7 @@ concurrency:
 jobs:
   pr-title:
     name: PR Title
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: amannn/action-semantic-pull-request@v5
         env:
@@ -19,7 +19,7 @@ jobs:
 
   typecheck:
     name: Typecheck
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read
     env:
@@ -49,7 +49,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read
     env:
@@ -78,7 +78,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read
     env:
@@ -108,7 +108,7 @@ jobs:
 
   test-web-e2e:
     name: Test Web E2E (shard ${{ matrix.shard }}/4)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read
     # GitHub Actions sets CI=true, so playwright.config.ts switches to
@@ -191,7 +191,7 @@ jobs:
 
   build-check:
     name: Build Check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
