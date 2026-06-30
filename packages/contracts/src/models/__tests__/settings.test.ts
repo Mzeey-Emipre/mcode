@@ -39,6 +39,47 @@ describe("preview.memorySaver", () => {
   });
 });
 
+describe("preview.rendering", () => {
+  it("defaults the rendering engine to WebContentsView", () => {
+    expect(SettingsSchema().parse({}).preview.rendering.engine).toBe("webContentsView");
+    expect(getDefaultSettings().preview.rendering.engine).toBe("webContentsView");
+  });
+
+  it("accepts supported rendering engines", () => {
+    expect(
+      SettingsSchema().parse({
+        preview: { rendering: { engine: "webContentsView" } },
+      }).preview.rendering.engine,
+    ).toBe("webContentsView");
+    expect(
+      SettingsSchema().parse({
+        preview: { rendering: { engine: "webview" } },
+      }).preview.rendering.engine,
+    ).toBe("webview");
+  });
+
+  it("rejects unknown rendering engines in full and partial settings", () => {
+    expect(
+      SettingsSchema().safeParse({
+        preview: { rendering: { engine: "browserView" } },
+      }).success,
+    ).toBe(false);
+    expect(
+      PartialSettingsSchema().safeParse({
+        preview: { rendering: { engine: "browserView" } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a partial rendering override without backfilling memory-saver siblings", () => {
+    const p = PartialSettingsSchema().parse({
+      preview: { rendering: { engine: "webview" } },
+    });
+    expect(p.preview?.rendering?.engine).toBe("webview");
+    expect(p.preview?.memorySaver).toBeUndefined();
+  });
+});
+
 describe("settings.provider.cursor", () => {
   it("fills Cursor ACP tuning defaults", () => {
     const s = getDefaultSettings();

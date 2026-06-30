@@ -11,7 +11,8 @@ already throttled (`setBackgroundThrottling(true)`), but nothing ever releases a
 background tab's renderer, and hiding the panel or switching threads leaves
 renderers resident. Warm-tab count is unbounded, so a session that visits several
 pages or threads accumulates renderer processes and blows the < 150MB idle-memory
-target.
+target. ADR-0016 lets the live renderer be hosted by either `WebContentsView` or
+`webview`; this discard policy applies to both hosts.
 
 We want modern-browser "memory saver" behaviour. Two questions drove real
 trade-offs:
@@ -34,6 +35,11 @@ Reclaim memory by **discarding** background tabs (kill the renderer, keep a cold
 placeholder of title/URL/favicon), not by freezing them. Re-warming reloads the
 page; scroll and form state are intentionally not preserved. This matches Chrome
 Memory Saver / Edge sleeping-tabs discard semantics.
+
+Discard is host-agnostic. For `WebContentsView`, discard destroys the native
+guest view. For `webview`, discard releases the adopted guest and lets the
+renderer-owned element unmount. In both cases the tab keeps the same cold
+metadata and reloads on re-warm.
 
 The discard policy is a pure function of (warm tabs, active thread/tab, panel
 visibility, clock). It is visibility-aware:

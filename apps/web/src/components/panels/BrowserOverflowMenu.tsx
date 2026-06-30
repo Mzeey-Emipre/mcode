@@ -45,6 +45,8 @@ export interface BrowserOverflowMenuProps {
   readonly onGetZoom: () => Promise<number>;
   /** Set the guest's zoom factor; resolves to the clamped factor applied. */
   readonly onSetZoom: (factor: number) => Promise<number>;
+  /** Whether this menu must hide the native preview layer while open. */
+  readonly suppressPreviewForOverlays?: boolean;
 }
 
 /** "Soon" pill for menu entries that are planned but not yet wired. */
@@ -78,6 +80,7 @@ export function BrowserOverflowMenu({
   onClearCache,
   onGetZoom,
   onSetZoom,
+  suppressPreviewForOverlays = true,
 }: BrowserOverflowMenuProps) {
   const [open, setOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -87,10 +90,10 @@ export function BrowserOverflowMenu({
   // Hide the guest BrowserView for the menu's open lifetime so the HTML
   // popup paints on top instead of behind the native view.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !suppressPreviewForOverlays) return;
     increment();
     return () => decrement();
-  }, [open, increment, decrement]);
+  }, [open, suppressPreviewForOverlays, increment, decrement]);
 
   // Read the live zoom factor when the menu opens so the readout reflects the
   // guest's actual state (which navigation can reset) rather than a stale value.

@@ -32,6 +32,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.20.0"
+      - name: Configure node-gyp headers
+        shell: bash
+        run: |
+          node_dir="$(dirname "$(dirname "$(command -v node)")")"
+          test -f "$node_dir/include/node/common.gypi"
+          echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.2.14"
@@ -52,6 +61,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.20.0"
+      - name: Configure node-gyp headers
+        shell: bash
+        run: |
+          node_dir="$(dirname "$(dirname "$(command -v node)")")"
+          test -f "$node_dir/include/node/common.gypi"
+          echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.2.14"
@@ -73,6 +91,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.20.0"
+      - name: Configure node-gyp headers
+        shell: bash
+        run: |
+          node_dir="$(dirname "$(dirname "$(command -v node)")")"
+          test -f "$node_dir/include/node/common.gypi"
+          echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.2.14"
@@ -104,6 +131,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.20.0"
+      - name: Configure node-gyp headers
+        shell: bash
+        run: |
+          node_dir="$(dirname "$(dirname "$(command -v node)")")"
+          test -f "$node_dir/include/node/common.gypi"
+          echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.2.14"
@@ -158,6 +194,15 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.20.0"
+      - name: Configure node-gyp headers
+        shell: bash
+        run: |
+          node_dir="$(dirname "$(dirname "$(command -v node)")")"
+          test -f "$node_dir/include/node/common.gypi"
+          echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.2.14"

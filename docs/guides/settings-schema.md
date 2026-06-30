@@ -157,6 +157,16 @@ When adding a new setting, ask these questions in order:
     "provider": "",                      // Provider for PR draft generation, empty = inherit default
     "model": ""                          // Model for PR draft generation, empty = provider default
   },
+  "preview": {
+    "rendering": {
+      "engine": "webContentsView"         // "webContentsView" | "webview"; hidden preview host switch
+    },
+    "memorySaver": {
+      "maxWarm": 3,
+      "bgIdleMs": 300000,
+      "hiddenIdleMs": 60000
+    }
+  },
   "externalApps": {
     "defaultEditor": ""                  // Global default open-in app id, "" = auto-resolve
   }

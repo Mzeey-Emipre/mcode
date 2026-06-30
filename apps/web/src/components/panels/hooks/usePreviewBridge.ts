@@ -10,6 +10,7 @@ import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { resolveScopeBasePath } from "@/lib/resolve-scope-path";
+import type { PreviewResolveNavigationResult } from "@/transport/desktop-bridge";
 
 const NAV_ERROR_LABEL: Record<string, string> = {
   "no-bounds": "Wait for the panel to finish layout, then try again.",
@@ -28,18 +29,6 @@ export function formatNavError(code: string): string {
   return NAV_ERROR_LABEL[code] ?? code;
 }
 
-/**
- * Snapshot shown in the native view's place while an overlay suppresses it.
- * `width`/`height` are the surface's CSS-px size at capture time; the panel
- * pins the <img> to them so resizing while frozen clips instead of stretching.
- */
-export interface PreviewFreezeFrame {
-  /** JPEG data URL of the captured page. */
-  readonly url: string;
-  readonly width: number;
-  readonly height: number;
-}
-
 /** Options for the {@link usePreviewBridge} hook. */
 export interface UsePreviewBridgeOptions {
   /** Thread id that owns this preview session. */
@@ -48,6 +37,8 @@ export interface UsePreviewBridgeOptions {
   readonly workspaceId?: string | null;
   /** Ref to the DOM element whose bounds are synced to the native BrowserView. */
   readonly surfaceRef: RefObject<HTMLDivElement | null>;
+  /** Force the native preview surface hidden while another renderer owns it. */
+  readonly forceHidden?: boolean;
 }
 
 /** State and callbacks returned by {@link usePreviewBridge}. */
@@ -67,11 +58,6 @@ export interface PreviewBridgeState {
   readonly pageStatus: PreviewPageStatus;
   /** Persisted URL for the current thread (Zustand store). */
   readonly storedUrl: string;
-  /**
-   * Freeze-frame shown in the native view's place while an overlay
-   * suppresses it, or null when the live view owns the surface.
-   */
-  readonly freezeFrame: PreviewFreezeFrame | null;
   /** Push current bounds and visibility to the native BrowserView. */
   readonly pushSync: (visible: boolean) => Promise<void>;
   /** Refresh navigation state (canGoBack / canGoForward) from IPC. */
@@ -90,6 +76,8 @@ export interface PreviewBridgeState {
   /** Set the guest's zoom factor; resolves to the clamped factor applied. */
   readonly onSetZoom: (factor: number) => Promise<number>;
   readonly onOpenExternal: () => Promise<void>;
+  /** Resolve user input to a safe preview URL without loading the native view. */
+  readonly resolveNavigation: (url: string) => Promise<PreviewResolveNavigationResult>;
   /** Navigate the preview to the given URL or file path. */
   readonly onNavigate: (url: string) => void;
   /** Recover from an error state by reloading the failed page. */
@@ -104,6 +92,7 @@ export function usePreviewBridge({
   threadId,
   workspaceId,
   surfaceRef,
+  forceHidden = false,
 }: UsePreviewBridgeOptions): PreviewBridgeState {
   const [inputUrl, setInputUrl] = useState("");
   const [navError, setNavError] = useState<string | null>(null);
@@ -176,9 +165,9 @@ export function usePreviewBridge({
       // view hidden regardless of what the caller asked for, so stray
       // pushSync(true) calls (ResizeObserver, thread switch) cannot pop the
       // view back above an open overlay.
-      const suppressed = usePreviewSuppressionStore.getState().count > 0;
+      const suppressed = !forceHidden && usePreviewSuppressionStore.getState().count > 0;
       const effectiveVisible =
-        visible && !suppressed && phaseRef.current !== "error";
+        visible && !forceHidden && !suppressed && phaseRef.current !== "error";
       if (!effectiveVisible || !el) {
         await preview.sync({
           visible: false,
@@ -203,7 +192,7 @@ export function usePreviewBridge({
         workspaceId: workspaceId ?? null,
       });
     },
-    [threadId, workspaceId, surfaceRef],
+    [threadId, workspaceId, surfaceRef, forceHidden],
   );
 
   const pushSyncRef = useRef(pushSync);
@@ -255,67 +244,12 @@ export function usePreviewBridge({
 
   // While any modal/dialog overlay is open in the renderer the native
   // WebContentsView must be detached: it composites above all HTML and would
-  // occlude the overlay. Naively detaching leaves a blank hole where the page
-  // was, so on the first suppressor we grab a freeze-frame of the page and let
-  // it stand in. Order matters: capture while the view is still mounted
-  // (capturePage needs a painted surface), commit the <img>, wait a frame so
-  // it is on screen underneath the native view, then detach.
-  const [freezeFrame, setFreezeFrame] = useState<PreviewFreezeFrame | null>(null);
-  const suppressionCount = usePreviewSuppressionStore((s) => s.count);
-  const prevSuppressionRef = useRef(0);
+  // occlude the overlay. Webview surfaces are renderer-owned, so forceHidden
+  // keeps the native view detached without reacting to overlay suppression.
+  const rawSuppressionCount = usePreviewSuppressionStore((s) => s.count);
+  const suppressionCount = forceHidden ? 0 : rawSuppressionCount;
   useEffect(() => {
-    const prev = prevSuppressionRef.current;
-    prevSuppressionRef.current = suppressionCount;
-    if (suppressionCount === 0) {
-      // Remount first, clear the frame after: the live view paints above the
-      // <img> once attached, so the swap is invisible, whereas clearing early
-      // would flash the empty surface. Skip the clear if another suppressor
-      // opened while the sync was in flight.
-      void pushSyncRef.current(true).finally(() => {
-        if (usePreviewSuppressionStore.getState().count === 0) {
-          setFreezeFrame(null);
-        }
-      });
-      return;
-    }
-    if (prev > 0) {
-      // Nested suppressor (e.g. dialog over menu): the view is already hidden
-      // and the existing freeze-frame stays valid; capturing a detached view
-      // would yield an empty image.
-      void pushSyncRef.current(false);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      let frame: string | null = null;
-      // The surface rect at capture time, in CSS px. The <img> is pinned to
-      // this size so a resize while the overlay is open clips/reveals like a
-      // real frozen viewport instead of stretching the snapshot.
-      const rect = surfaceRef.current?.getBoundingClientRect() ?? null;
-      // Only a loaded page has pixels worth freezing; the empty/ports surface
-      // is plain HTML that overlays already stack above.
-      if (storedUrlRef.current.trim().length > 0 && rect) {
-        try {
-          frame = (await window.desktopBridge?.preview?.captureSnapshot?.()) ?? null;
-        } catch {
-          frame = null;
-        }
-      }
-      if (cancelled) return;
-      if (frame && rect) {
-        setFreezeFrame({ url: frame, width: rect.width, height: rect.height });
-        // Two RAFs ~= one painted frame: the <img> must be on screen before
-        // the native view detaches or the surface blanks for a frame.
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        );
-        if (cancelled) return;
-      }
-      void pushSyncRef.current(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    void pushSyncRef.current(suppressionCount === 0);
   }, [suppressionCount]);
 
   // Re-sync the native view on every error<->non-error transition: hide it when
@@ -413,6 +347,15 @@ export function usePreviewBridge({
     await preview.openExternal();
   }, []);
 
+  const resolveNavigation = useCallback(
+    async (url: string): Promise<PreviewResolveNavigationResult> => {
+      const preview = window.desktopBridge?.preview;
+      if (!preview?.resolveNavigation) return { ok: false, error: "no-window" };
+      return preview.resolveNavigation(url, basePath);
+    },
+    [basePath],
+  );
+
   const onRetry = useCallback(async () => {
     setNavError(null);
     await onReload();
@@ -445,7 +388,6 @@ export function usePreviewBridge({
     faviconUrl,
     pageStatus,
     storedUrl,
-    freezeFrame,
     pushSync,
     refreshNav,
     onGoBack,
@@ -457,6 +399,7 @@ export function usePreviewBridge({
     onGetZoom,
     onSetZoom,
     onOpenExternal,
+    resolveNavigation,
     onNavigate,
     onRetry,
   };

@@ -8,17 +8,21 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { usePreviewBridge, formatNavError } from "../usePreviewBridge";
+import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 
 // ---------------------------------------------------------------------------
 // diffStore mock – avoid pulling in the full Zustand store and its deps.
 // The hook reads s.previewUrlByThread[threadId] and calls
 // useDiffStore.getState().setPreviewUrlForThread. Both are stubbed here.
 // ---------------------------------------------------------------------------
-const mockSetPreviewUrlForThread = vi.fn();
+const { mockSetPreviewUrlForThread, mockPreviewUrlByThread } = vi.hoisted(() => ({
+  mockSetPreviewUrlForThread: vi.fn(),
+  mockPreviewUrlByThread: {} as Record<string, string>,
+}));
 
 vi.mock("@/stores/diffStore", () => ({
   useDiffStore: vi.fn((selector: (s: { previewUrlByThread: Record<string, string> }) => unknown) =>
-    selector({ previewUrlByThread: {} }),
+    selector({ previewUrlByThread: mockPreviewUrlByThread }),
   ),
 }));
 
@@ -61,6 +65,11 @@ function makeMockPreview() {
     goBack: vi.fn().mockResolvedValue(undefined),
     goForward: vi.fn().mockResolvedValue(undefined),
     reload: vi.fn().mockResolvedValue(undefined),
+    forceReload: vi.fn().mockResolvedValue(undefined),
+    clearCookies: vi.fn().mockResolvedValue(undefined),
+    clearCache: vi.fn().mockResolvedValue(undefined),
+    getZoom: vi.fn().mockResolvedValue(1),
+    setZoom: vi.fn().mockResolvedValue(1),
     openExternal: vi.fn().mockResolvedValue(undefined),
     getNavigationState: vi.fn().mockResolvedValue({ canGoBack: false, canGoForward: false }),
     onPageStatus: vi.fn().mockReturnValue(() => {}),
@@ -75,6 +84,11 @@ function makeMockPreview() {
 let mockRo: { observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
+  for (const key of Object.keys(mockPreviewUrlByThread)) {
+    delete mockPreviewUrlByThread[key];
+  }
+  usePreviewSuppressionStore.setState({ count: 0 });
+
   mockRo = { observe: vi.fn(), disconnect: vi.fn() };
   // Must be a real constructor (class/function), not an arrow fn, for `new ResizeObserver(...)` to work.
   const captured = mockRo;
@@ -89,6 +103,9 @@ beforeEach(() => {
 
 afterEach(() => {
   delete (window as unknown as Record<string, unknown>).desktopBridge;
+  act(() => {
+    usePreviewSuppressionStore.setState({ count: 0 });
+  });
   vi.clearAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -162,6 +179,90 @@ describe("usePreviewBridge", () => {
     expect(mockPreview.sync).toHaveBeenCalledWith(
       expect.objectContaining({ visible: true, threadId: "t-1" }),
     );
+  });
+
+  it("forces native sync hidden when forceHidden is enabled", async () => {
+    const mockPreview = makeMockPreview();
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+    const surfaceRef = makeSurfaceRef();
+    const { result, rerender } = renderHook(
+      ({ threadId }: { threadId: string }) =>
+        usePreviewBridge({
+          threadId,
+          workspaceId: "ws-1",
+          surfaceRef,
+          forceHidden: true,
+        }),
+      { initialProps: { threadId: "t-1" } },
+    );
+
+    await flushRaf();
+    await act(async () => {
+      await result.current.pushSync(true);
+      rerender({ threadId: "t-2" });
+    });
+
+    expect(mockPreview.sync).toHaveBeenCalled();
+    expect(mockPreview.sync.mock.calls).not.toContainEqual([
+      expect.objectContaining({ visible: true }),
+    ]);
+    expect(
+      mockPreview.sync.mock.calls.every(([payload]) => payload.visible === false),
+    ).toBe(true);
+  });
+
+  it("hides the native BrowserView during overlays without a freeze-frame", async () => {
+    const mockPreview = makeMockPreview();
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+    const { result } = renderHook(() =>
+      usePreviewBridge({
+        threadId: "t-1",
+        workspaceId: "ws-1",
+        surfaceRef: makeSurfaceRef(),
+      }),
+    );
+
+    await flushRaf();
+    mockPreview.sync.mockClear();
+    await act(async () => {
+      usePreviewSuppressionStore.getState().increment();
+      await Promise.resolve();
+    });
+
+    expect(mockPreview.sync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visible: false,
+        bounds: null,
+        threadId: "t-1",
+      }),
+    );
+    expect("freezeFrame" in result.current).toBe(false);
+  });
+
+  it("does not resync a renderer-owned webview during overlay suppression", async () => {
+    const mockPreview = makeMockPreview();
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+    const { result } = renderHook(() =>
+      usePreviewBridge({
+        threadId: "t-1",
+        workspaceId: "ws-1",
+        surfaceRef: makeSurfaceRef(),
+        forceHidden: true,
+      }),
+    );
+
+    await flushRaf();
+    mockPreview.sync.mockClear();
+    await act(async () => {
+      usePreviewSuppressionStore.getState().increment();
+      await Promise.resolve();
+    });
+
+    expect(mockPreview.sync).not.toHaveBeenCalled();
+    expect("freezeFrame" in result.current).toBe(false);
   });
 
   it("calls preview.sync with visible:false on unmount", async () => {
@@ -243,6 +344,107 @@ describe("usePreviewBridge", () => {
     });
 
     expect(mockPreview.reload).toHaveBeenCalledOnce();
+  });
+
+  it("calls preview.forceReload when onForceReload is invoked", async () => {
+    const mockPreview = makeMockPreview();
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+    const { result } = renderHook(() =>
+      usePreviewBridge({
+        threadId: "t-1",
+        workspaceId: "ws-1",
+        surfaceRef: makeSurfaceRef(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.onForceReload();
+    });
+
+    expect(mockPreview.forceReload).toHaveBeenCalledOnce();
+  });
+
+  it("calls preview.clearCookies when onClearCookies is invoked", async () => {
+    const mockPreview = makeMockPreview();
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+    const { result } = renderHook(() =>
+      usePreviewBridge({
+        threadId: "t-1",
+        workspaceId: "ws-1",
+        surfaceRef: makeSurfaceRef(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.onClearCookies();
+    });
+
+    expect(mockPreview.clearCookies).toHaveBeenCalledOnce();
+  });
+
+  it("calls preview.clearCache when onClearCache is invoked", async () => {
+    const mockPreview = makeMockPreview();
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+    const { result } = renderHook(() =>
+      usePreviewBridge({
+        threadId: "t-1",
+        workspaceId: "ws-1",
+        surfaceRef: makeSurfaceRef(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.onClearCache();
+    });
+
+    expect(mockPreview.clearCache).toHaveBeenCalledOnce();
+  });
+
+  it("returns preview zoom from onGetZoom", async () => {
+    const mockPreview = makeMockPreview();
+    mockPreview.getZoom.mockResolvedValue(1.25);
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+    const { result } = renderHook(() =>
+      usePreviewBridge({
+        threadId: "t-1",
+        workspaceId: "ws-1",
+        surfaceRef: makeSurfaceRef(),
+      }),
+    );
+
+    let zoom = 0;
+    await act(async () => {
+      zoom = await result.current.onGetZoom();
+    });
+
+    expect(zoom).toBe(1.25);
+    expect(mockPreview.getZoom).toHaveBeenCalledOnce();
+  });
+
+  it("returns applied zoom from onSetZoom", async () => {
+    const mockPreview = makeMockPreview();
+    mockPreview.setZoom.mockResolvedValue(1.5);
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+    const { result } = renderHook(() =>
+      usePreviewBridge({
+        threadId: "t-1",
+        workspaceId: "ws-1",
+        surfaceRef: makeSurfaceRef(),
+      }),
+    );
+
+    let applied = 0;
+    await act(async () => {
+      applied = await result.current.onSetZoom(1.5);
+    });
+
+    expect(applied).toBe(1.5);
+    expect(mockPreview.setZoom).toHaveBeenCalledWith(1.5);
   });
 
   it("calls preview.openExternal when onOpenExternal is invoked", async () => {

@@ -5,7 +5,7 @@
  * overflow kebab (clear-cookies, clear-cache, get-zoom, set-zoom).
  */
 
-import { BrowserWindow, ipcMain, shell } from "electron";
+import { BrowserWindow, ipcMain, session as electronSession, shell } from "electron";
 import { logger } from "@mcode/shared";
 import {
   ensureThreadTabSet,
@@ -36,9 +36,12 @@ import { onPreviewHidden, onPreviewVisible } from "./preview-discard-scheduler.j
 const MIN_ZOOM_FACTOR = 0.25;
 /** Upper bound on the preview zoom factor (500%), matching Chromium's ceiling. */
 const MAX_ZOOM_FACTOR = 5;
+/** Shared Electron storage partition for native and renderer-hosted previews. */
+const PREVIEW_PARTITION = "persist:mcode-preview";
 
-/** JPEG quality for the overlay freeze-frame snapshot (see preview:capture-snapshot). */
-const SNAPSHOT_JPEG_QUALITY = 82;
+type PreviewResolveNavigationResult =
+  | { ok: true; url: string }
+  | { ok: false; error: string };
 
 /** Clamp a requested zoom factor to the supported range and snap to whole percent. */
 function clampZoomFactor(factor: number): number {
@@ -66,6 +69,50 @@ export function looksLikeBareDomain(input: string): boolean {
   if (!hostPart.includes(".")) return false;
   const tld = hostPart.split(":")[0]!.split(".").pop() ?? "";
   return /^[a-z][a-z0-9-]{1,}$/i.test(tld);
+}
+
+/** Returns the shared storage session used by both preview rendering hosts. */
+function getPreviewStorageSession(): Electron.Session {
+  return electronSession.fromPartition(PREVIEW_PARTITION);
+}
+
+/** Resolve user omnibox input to a safe preview URL without loading it. */
+async function resolvePreviewNavigationTarget(
+  url: string,
+  workspacePath?: string | null,
+): Promise<PreviewResolveNavigationResult> {
+  const trimmed = url.trim();
+  if (!trimmed) return { ok: false, error: "empty-url" };
+
+  let target: string;
+
+  if (isMcodeWorkspacePreviewUrl(trimmed)) {
+    const resolved = await resolveMcodeWorkspacePreviewUrl(
+      trimmed,
+      workspacePath?.trim() ?? null,
+    );
+    if (!resolved.ok) return resolved;
+    target = resolved.url;
+  } else if (/^https?:\/\//i.test(trimmed)) {
+    target = trimmed;
+  } else if (/^file:\/\//i.test(trimmed)) {
+    const resolved = await resolveLocalFileUrl(trimmed, workspacePath?.trim() ?? null);
+    if (!resolved.ok) return resolved;
+    target = resolved.url;
+  } else if (looksLikeFilePath(trimmed)) {
+    const resolved = await resolveLocalFileUrl(trimmed, workspacePath?.trim() ?? null);
+    if (!resolved.ok) return resolved;
+    target = resolved.url;
+  } else if (looksLikeBareDomain(trimmed)) {
+    target = `https://${trimmed}`;
+  } else {
+    target = `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+  }
+
+  if (!isAllowedPreviewUrl(target)) {
+    return { ok: false, error: "invalid-url" };
+  }
+  return { ok: true, url: target };
 }
 
 /**
@@ -191,25 +238,18 @@ export function registerNavigationHandlers(): void {
     },
   );
 
-  // Freeze-frame for overlay suppression: the renderer captures the live page
-  // as a data URL right before it detaches the native view (which composites
-  // above all HTML), then shows the image in the view's place so an open
-  // dialog/menu floats over a frozen page instead of a blank hole. JPEG keeps
-  // the IPC payload small; the frame is a transient stand-in, not an artifact.
-  ipcMain.handle("preview:capture-snapshot", async (_event): Promise<string | null> => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return null;
-    const s = getSession(win);
-    const view = s.view;
-    if (!view || view.webContents.isDestroyed()) return null;
-    try {
-      const image = await view.webContents.capturePage();
-      if (image.isEmpty()) return null;
-      return `data:image/jpeg;base64,${image.toJPEG(SNAPSHOT_JPEG_QUALITY).toString("base64")}`;
-    } catch {
-      return null;
-    }
-  });
+  ipcMain.handle(
+    "preview:resolve-navigation",
+    async (
+      _event,
+      url: string,
+      workspacePath?: string | null,
+    ): Promise<PreviewResolveNavigationResult> => {
+      const win = BrowserWindow.fromWebContents(_event.sender);
+      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
+      return resolvePreviewNavigationTarget(url, workspacePath);
+    },
+  );
 
   ipcMain.handle(
     "preview:navigate",
@@ -221,40 +261,9 @@ export function registerNavigationHandlers(): void {
       const win = BrowserWindow.fromWebContents(_event.sender);
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
 
-      const trimmed = url.trim();
-      if (!trimmed) return { ok: false, error: "empty-url" };
-
-      let target: string;
-
-      if (isMcodeWorkspacePreviewUrl(trimmed)) {
-        const resolved = await resolveMcodeWorkspacePreviewUrl(
-          trimmed,
-          workspacePath?.trim() ?? null,
-        );
-        if (!resolved.ok) return resolved;
-        target = resolved.url;
-      } else if (/^https?:\/\//i.test(trimmed)) {
-        target = trimmed;
-      } else if (/^file:\/\//i.test(trimmed)) {
-        const resolved = await resolveLocalFileUrl(trimmed, workspacePath?.trim() ?? null);
-        if (!resolved.ok) return resolved;
-        target = resolved.url;
-      } else if (looksLikeFilePath(trimmed)) {
-        const resolved = await resolveLocalFileUrl(trimmed, workspacePath?.trim() ?? null);
-        if (!resolved.ok) return resolved;
-        target = resolved.url;
-      } else if (looksLikeBareDomain(trimmed)) {
-        target = `https://${trimmed}`;
-      } else {
-        // Fallback: treat as a Google search query. Mirrors dpcode's
-        // SEARCH_URL_PREFIX behavior so the omnibox "Search or enter URL"
-        // affordance always lands somewhere when the user just types words.
-        target = `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-      }
-
-      if (!isAllowedPreviewUrl(target)) {
-        return { ok: false, error: "invalid-url" };
-      }
+      const resolved = await resolvePreviewNavigationTarget(url, workspacePath);
+      if (!resolved.ok) return resolved;
+      const target = resolved.url;
 
       const s = getSession(win);
       if (!s.lastBounds) {
@@ -357,17 +366,13 @@ export function registerNavigationHandlers(): void {
   ipcMain.handle("preview:clear-cookies", async (_event) => {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return;
-    const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) return;
-    await s.view.webContents.session.clearStorageData({ storages: ["cookies"] });
+    await getPreviewStorageSession().clearStorageData({ storages: ["cookies"] });
   });
 
   ipcMain.handle("preview:clear-cache", async (_event) => {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return;
-    const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) return;
-    await s.view.webContents.session.clearCache();
+    await getPreviewStorageSession().clearCache();
   });
 
   ipcMain.handle("preview:get-zoom", (_event): number => {
