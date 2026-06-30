@@ -8,10 +8,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
+
 jobs:
   pr-title:
     name: PR Title
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
     steps:
       - uses: amannn/action-semantic-pull-request@v5
         env:
@@ -20,6 +24,7 @@ jobs:
   typecheck:
     name: Typecheck
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -28,6 +33,8 @@ jobs:
       # on 504s.
       SKIP_ELECTRON_REBUILD: "1"
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,14 +49,29 @@ jobs:
           test -f "$node_dir/include/node/common.gypi"
           echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        continue-on-error: true
         with:
-          bun-version: "1.2.14"
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+      - name: Cache Turbo outputs
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: .turbo/cache
+          key: ${{ runner.os }}-turbo-typecheck-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-typecheck-
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
 
   lint:
     name: Lint
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -57,6 +79,8 @@ jobs:
       # better-sqlite3 Electron prebuild so bun install does not flake on 504s.
       SKIP_ELECTRON_REBUILD: "1"
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,14 +95,39 @@ jobs:
           test -f "$node_dir/include/node/common.gypi"
           echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        continue-on-error: true
         with:
-          bun-version: "1.2.14"
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+      - name: Cache Turbo outputs
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: .turbo/cache
+          key: ${{ runner.os }}-turbo-lint-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-lint-
+      - name: Cache ESLint results
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: apps/web/node_modules/.cache/.eslintcache
+          key: ${{ runner.os }}-eslint-${{ hashFiles('bun.lock', 'apps/web/eslint.config.*', 'apps/web/src/**/*.{ts,tsx,js,jsx}') }}
+          restore-keys: |
+            ${{ runner.os }}-eslint-
       - run: bun install --frozen-lockfile
       - run: bun run lint
+        env:
+          DEBUG: eslint:lint-result-cache
 
   test:
     name: Test
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -87,6 +136,8 @@ jobs:
       # not flake on 504s.
       SKIP_ELECTRON_REBUILD: "1"
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,8 +152,22 @@ jobs:
           test -f "$node_dir/include/node/common.gypi"
           echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        continue-on-error: true
         with:
-          bun-version: "1.2.14"
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+      - name: Cache Turbo outputs
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: .turbo/cache
+          key: ${{ runner.os }}-turbo-test-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-test-
       - run: bun install --frozen-lockfile
       - run: bun run test
 
@@ -141,8 +206,14 @@ jobs:
           test -f "$node_dir/include/node/common.gypi"
           echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        continue-on-error: true
         with:
-          bun-version: "1.2.14"
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
       - run: bun install --frozen-lockfile
 
       # Read the resolved version straight from the lockfile (the source of truth
@@ -159,6 +230,7 @@ jobs:
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
@@ -192,6 +264,10 @@ jobs:
   build-check:
     name: Build Check
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -204,11 +280,24 @@ jobs:
           test -f "$node_dir/include/node/common.gypi"
           echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        continue-on-error: true
         with:
-          bun-version: "1.2.14"
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+      - name: Cache Turbo outputs
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: .turbo/cache
+          key: ${{ runner.os }}-turbo-build-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-build-
       - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/web build
-      - run: bun run --cwd apps/desktop build
+      - run: bun run build
 
       - name: Generate V8 snapshot
         run: bun apps/desktop/scripts/generate-snapshot.mjs
