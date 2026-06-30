@@ -5,7 +5,7 @@
  * 1. Unavailable state - when desktopBridge.preview is absent.
  * 2. Full panel state - when desktopBridge.preview is present (hooks mocked).
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { getDefaultSettings } from "@mcode/contracts";
 
@@ -80,6 +80,72 @@ function mockBridgeState(overrides: Record<string, unknown> = {}) {
     onSetZoom: vi.fn().mockResolvedValue(1),
   };
   return { ...state, ...overrides };
+}
+
+function installMockWebviewMethods(options: {
+  readonly loadURL?: (url: string) => Promise<void>;
+  readonly getURL?: () => string;
+  readonly getWebContentsId?: () => number;
+  readonly reload?: () => void;
+}): () => void {
+  const proto = HTMLElement.prototype as HTMLElement & {
+    loadURL?: (url: string) => Promise<void>;
+    getURL?: () => string;
+    getWebContentsId?: () => number;
+    reload?: () => void;
+  };
+  const loadURLDescriptor = Object.getOwnPropertyDescriptor(proto, "loadURL");
+  const getURLDescriptor = Object.getOwnPropertyDescriptor(proto, "getURL");
+  const getWebContentsIdDescriptor = Object.getOwnPropertyDescriptor(
+    proto,
+    "getWebContentsId",
+  );
+  const reloadDescriptor = Object.getOwnPropertyDescriptor(proto, "reload");
+  if (options.loadURL) {
+    Object.defineProperty(proto, "loadURL", {
+      configurable: true,
+      value: options.loadURL,
+    });
+  }
+  if (options.getURL) {
+    Object.defineProperty(proto, "getURL", {
+      configurable: true,
+      value: options.getURL,
+    });
+  }
+  Object.defineProperty(proto, "getWebContentsId", {
+    configurable: true,
+    value: options.getWebContentsId ?? (() => 1),
+  });
+  if (options.reload) {
+    Object.defineProperty(proto, "reload", {
+      configurable: true,
+      value: options.reload,
+    });
+  }
+
+  return () => {
+    if (loadURLDescriptor) {
+      Object.defineProperty(proto, "loadURL", loadURLDescriptor);
+    } else {
+      delete proto.loadURL;
+    }
+    if (getURLDescriptor) {
+      Object.defineProperty(proto, "getURL", getURLDescriptor);
+    } else {
+      delete proto.getURL;
+    }
+    if (getWebContentsIdDescriptor) {
+      Object.defineProperty(proto, "getWebContentsId", getWebContentsIdDescriptor);
+    } else {
+      delete proto.getWebContentsId;
+    }
+    if (reloadDescriptor) {
+      Object.defineProperty(proto, "reload", reloadDescriptor);
+    } else {
+      delete proto.reload;
+    }
+  };
 }
 
 describe("PreviewPanel — unavailable state", () => {
@@ -266,6 +332,136 @@ describe("PreviewPanel — full panel state", () => {
     expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
       expect.objectContaining({ forceHidden: true }),
     );
+  });
+
+  it("navigates changed webview URLs through src without an extra loadURL call", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    const resolveNavigation = vi
+      .fn()
+      .mockResolvedValue({ ok: true, url: "https://about.google/" });
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        storedUrl: "https://google.com/",
+        resolveNavigation,
+      }),
+    );
+
+    const loadURL = vi.fn().mockResolvedValue(undefined);
+    const restoreWebviewMethods = installMockWebviewMethods({
+      loadURL,
+      getURL: () => "https://google.com/",
+    });
+
+    try {
+      render(<PreviewPanel threadId="thread-1" />);
+
+      const input = screen.getByLabelText("Preview URL");
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: "https://about.google/" } });
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+      await waitFor(() => {
+        expect(resolveNavigation).toHaveBeenCalledWith("https://about.google/");
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("preview-webview")).toHaveAttribute(
+          "src",
+          "https://about.google/",
+        );
+      });
+      expect(loadURL).not.toHaveBeenCalled();
+    } finally {
+      restoreWebviewMethods();
+    }
+  });
+
+  it("does not rewrite src when stored URL already matches the live webview URL", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    let liveUrl = "https://google.com/";
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => liveUrl,
+    });
+
+    try {
+      mockUsePreviewBridge.mockReturnValue(
+        mockBridgeState({ storedUrl: "https://google.com/" }),
+      );
+      const { rerender } = render(<PreviewPanel threadId="thread-1" />);
+      const webview = screen.getByTestId("preview-webview");
+      expect(webview).toHaveAttribute("src", "https://google.com/");
+
+      liveUrl = "https://about.google/";
+      mockUsePreviewBridge.mockReturnValue(
+        mockBridgeState({ storedUrl: "https://about.google/" }),
+      );
+      rerender(<PreviewPanel threadId="thread-1" />);
+      await waitFor(() => {
+        expect(screen.getByTestId("preview-webview")).toHaveAttribute(
+          "src",
+          "https://google.com/",
+        );
+      });
+    } finally {
+      restoreWebviewMethods();
+    }
+  });
+
+  it("reloads instead of loadURL when navigating to the live webview URL", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    const resolveNavigation = vi
+      .fn()
+      .mockResolvedValue({ ok: true, url: "https://google.com/" });
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        storedUrl: "https://google.com/",
+        resolveNavigation,
+      }),
+    );
+
+    const loadURL = vi.fn().mockResolvedValue(undefined);
+    const reload = vi.fn();
+    const restoreWebviewMethods = installMockWebviewMethods({
+      loadURL,
+      reload,
+      getURL: () => "https://google.com/",
+    });
+
+    try {
+      render(<PreviewPanel threadId="thread-1" />);
+
+      const input = screen.getByLabelText("Preview URL");
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: "https://google.com/" } });
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+      await waitFor(() => {
+        expect(resolveNavigation).toHaveBeenCalledWith("https://google.com/");
+      });
+      await waitFor(() => {
+        expect(reload).toHaveBeenCalledTimes(1);
+      });
+      expect(loadURL).not.toHaveBeenCalled();
+    } finally {
+      restoreWebviewMethods();
+    }
   });
 
   it("keeps the live webview mounted while the overflow menu is open", async () => {
