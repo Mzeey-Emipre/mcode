@@ -341,8 +341,16 @@ test.describe("PreviewPanel — loaded header", () => {
   });
 
   test("rail and header stay borderless at the rounded panel corner", async ({ page }) => {
-    await expect(page.getByTestId("activity-rail")).not.toHaveClass(/border-r/);
-    await expect(page.getByTestId("browser-header")).not.toHaveClass(/border-b/);
+    const rail = page.getByTestId("activity-rail");
+    const header = page.getByTestId("browser-header");
+    await expect(rail).not.toHaveClass(/border-r/);
+    await expect(header).not.toHaveClass(/border-b/);
+
+    const [railBackground, headerBackground] = await Promise.all([
+      rail.evaluate((el) => getComputedStyle(el).backgroundColor),
+      header.evaluate((el) => getComputedStyle(el).backgroundColor),
+    ]);
+    expect(railBackground).toBe(headerBackground);
   });
 
   test("loaded bar shows the page title centered in the URL field", async ({ page }) => {
