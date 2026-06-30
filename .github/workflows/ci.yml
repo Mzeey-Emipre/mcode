@@ -8,6 +8,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
+
 jobs:
   pr-title:
     name: PR Title
@@ -48,6 +51,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -55,6 +59,7 @@ jobs:
             ${{ runner.os }}-bun-
       - name: Cache Turbo outputs
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: .turbo/cache
           key: ${{ runner.os }}-turbo-typecheck-${{ github.sha }}
@@ -92,6 +97,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -99,6 +105,7 @@ jobs:
             ${{ runner.os }}-bun-
       - name: Cache Turbo outputs
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: .turbo/cache
           key: ${{ runner.os }}-turbo-lint-${{ github.sha }}
@@ -106,6 +113,7 @@ jobs:
             ${{ runner.os }}-turbo-lint-
       - name: Cache ESLint results
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: apps/web/node_modules/.cache/.eslintcache
           key: ${{ runner.os }}-eslint-${{ hashFiles('bun.lock', 'apps/web/eslint.config.*', 'apps/web/src/**/*.{ts,tsx,js,jsx}') }}
@@ -146,6 +154,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -153,6 +162,7 @@ jobs:
             ${{ runner.os }}-bun-
       - name: Cache Turbo outputs
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: .turbo/cache
           key: ${{ runner.os }}-turbo-test-${{ github.sha }}
@@ -198,6 +208,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -219,6 +230,7 @@ jobs:
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
@@ -270,6 +282,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -277,6 +290,7 @@ jobs:
             ${{ runner.os }}-bun-
       - name: Cache Turbo outputs
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: .turbo/cache
           key: ${{ runner.os }}-turbo-build-${{ github.sha }}

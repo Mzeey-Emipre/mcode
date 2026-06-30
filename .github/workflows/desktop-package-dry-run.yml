@@ -19,6 +19,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
+
 jobs:
   package-linux-desktop:
     name: Package Linux Desktop
@@ -33,6 +36,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}

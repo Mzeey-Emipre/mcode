@@ -14,6 +14,9 @@ on:
 permissions:
   contents: write
 
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
+
 jobs:
   build:
     # Skip nightly per-build releases: the dedicated `nightly-desktop.yml`
@@ -48,6 +51,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-${{ hashFiles('bun.lock') }}

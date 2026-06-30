@@ -13,6 +13,9 @@ concurrency:
   group: nightly-desktop
   cancel-in-progress: true
 
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
+
 permissions:
   contents: write
 
@@ -149,6 +152,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-${{ hashFiles('bun.lock') }}
