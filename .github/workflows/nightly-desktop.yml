@@ -209,7 +209,7 @@ jobs:
         shell: bash
         run: |
           if /usr/bin/pgrep oahd >/dev/null 2>&1 || /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
-            /usr/bin/arch -x86_64 node apps/desktop/scripts/smoke-test.mjs
+            node apps/desktop/scripts/smoke-test.mjs
           else
             echo "Skipping x64 packaged-server smoke: Rosetta is unavailable on this macOS runner."
           fi
