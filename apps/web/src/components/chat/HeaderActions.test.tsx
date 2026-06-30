@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode, ReactElement } from "react";
 import type { Thread } from "@/transport/types";
 import type { ProviderUsageInfo, TurnSnapshot } from "@mcode/contracts";
+import { createMockMessage } from "@/__tests__/mocks/transport";
 
 // vi.hoisted runs before vi.mock hoisting, so these are available in mock factories.
 const {
@@ -106,7 +107,12 @@ vi.mock("@/hooks/useHasCommitsAhead", () => ({
 import { HeaderActions } from "./HeaderActions";
 import { COMMIT_PREFILL } from "@/hooks/useThreadGitActions";
 import { useThreadStore } from "@/stores/threadStore";
-import { patchThreadRecord } from "@/stores/thread-record";
+import { createEmptyThreadRecord, patchThreadRecord } from "@/stores/thread-record";
+import {
+  createThreadRecapSignature,
+  filterThreadRecapMessages,
+  resetThreadRecapRequestStateForTest,
+} from "@/hooks/useThreadRecap";
 import {
   getRepositoryFaviconUrl,
   getSafeRepositoryWebUrl,
@@ -223,7 +229,8 @@ function renderHeaderActions(thread: Thread = makeThread()) {
 
 describe("HeaderActions - Create PR menu item", () => {
   beforeEach(() => {
-    useThreadStore.setState({ records: new Map() });
+    resetThreadRecapRequestStateForTest();
+    useThreadStore.setState({ records: new Map(), recapByThread: {}, runningThreadIds: new Set() });
     const state = defaultWorkspaceState();
     mockWorkspaceSelector.mockImplementation(
       (selector: (s: unknown) => unknown) => selector(state),
@@ -381,6 +388,66 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.queryByTestId("thread-overview-usage")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-usage-popover")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-sources")).not.toBeInTheDocument();
+    expect(screen.getByTestId("thread-overview-recap-text")).toHaveTextContent("No recap yet");
+    expect(screen.getByTestId("thread-overview-recap-refresh")).toHaveAttribute(
+      "aria-label",
+      "Refresh recap",
+    );
+    expect(screen.getByTestId("thread-overview-recap")).not.toHaveTextContent(/stale|out of date|generate/i);
+  });
+
+  it("keeps older cached recap visible and exposes coverage times through the affordance", async () => {
+    const messages = [
+      createMockMessage({
+        id: "u1",
+        thread_id: "thread-1",
+        role: "user",
+        content: "Start the recap work.",
+        sequence: 1,
+        timestamp: "2026-06-25T10:00:00.000Z",
+      }),
+      createMockMessage({
+        id: "a2",
+        thread_id: "thread-1",
+        role: "assistant",
+        content: "Cached stopping point.",
+        sequence: 2,
+        timestamp: "2026-06-25T10:01:00.000Z",
+      }),
+      createMockMessage({
+        id: "u3",
+        thread_id: "thread-1",
+        role: "user",
+        content: "Newer follow-up.",
+        sequence: 3,
+        timestamp: "2026-06-25T10:04:00.000Z",
+      }),
+    ];
+    const coveredMessages = filterThreadRecapMessages(messages.slice(0, 2));
+    useThreadStore.setState({
+      records: new Map([["thread-1", { ...createEmptyThreadRecord(), messages }]]),
+      runningThreadIds: new Set(["thread-1"]),
+    });
+    useThreadStore.getState().recordThreadRecapGeneration({
+      threadId: "thread-1",
+      text: "Cached recap stays readable.",
+      signature: createThreadRecapSignature(coveredMessages),
+      coveredMessageId: "a2",
+      generatedAt: "2026-06-25T10:02:00.000Z",
+      source: "automatic",
+    });
+
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("thread-overview-recap-text")).toHaveTextContent(
+        "Cached recap stays readable.",
+      );
+    });
+    const coverage = screen.getByTestId("thread-overview-recap-coverage");
+    expect(coverage).toHaveAttribute("aria-label", expect.stringContaining("Covered through"));
+    expect(coverage).toHaveAttribute("aria-label", expect.stringContaining("Latest activity"));
+    expect(screen.getByTestId("thread-overview-recap")).not.toHaveTextContent(/stale|out of date|generate/i);
   });
 
   it("renders usage limits as compact progress bars when quota data exists", () => {
