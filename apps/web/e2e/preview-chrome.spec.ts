@@ -364,6 +364,9 @@ test.describe("PreviewPanel — loaded header", () => {
     await page.getByLabel("More browser tools").click();
     const menu = page.getByTestId("browser-overflow-menu");
     await expect(menu).toBeVisible();
+    await expect(menu).toHaveClass(/pointer-events-auto/);
+    await expect(menu.locator("..")).toHaveClass(/pointer-events-none/);
+    await expect(page.locator("[data-base-ui-inert][role='presentation']")).toHaveCount(0);
     await expect(menu.getByText("New page")).toBeVisible();
     await expect(menu.getByText("Force reload")).toBeVisible();
     await expect(menu.getByText("Dump page content")).toBeVisible();
