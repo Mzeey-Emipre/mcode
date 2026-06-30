@@ -569,6 +569,29 @@ test.describe("Consolidated chat header CI trigger state", () => {
     await expect(page.getByTestId("thread-overview-ci-red")).toHaveCount(0);
   });
 
+  test("keeps a trigger click active when CI status changes during the click", async ({ page }) => {
+    const trigger = page.getByTestId("header-workspace-menu");
+    await expect(page.getByTestId("thread-overview-body")).toBeVisible();
+
+    const box = await trigger.boundingBox();
+    expect(box).not.toBeNull();
+    const center = {
+      x: box!.x + box!.width / 2,
+      y: box!.y + box!.height / 2,
+    };
+
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.down();
+    await ws.sendPush("thread.checksUpdated", {
+      threadId: openPrThread.id,
+      checks: checks("failing"),
+    });
+    await waitForChecksAggregate(page, openPrThread.id, "failing");
+    await page.mouse.up();
+
+    await expect(page.getByTestId("thread-overview-body")).toBeHidden();
+  });
+
   test("shows CI summary below the PR row and expands details from it", async ({ page }) => {
     await ws.sendPush("thread.checksUpdated", {
       threadId: openPrThread.id,
