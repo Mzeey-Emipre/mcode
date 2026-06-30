@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, GoalLookupResult, GoalState } from "@mcode/contracts";
+import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, GoalLookupResult, GoalState } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import { PlanQuestionSchema, PERMISSION_MODES, INTERACTION_MODES, isGoalOpen } from "@mcode/contracts";
@@ -2656,6 +2656,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const categories = Array.isArray(params.categories)
         ? (params.categories as QuotaCategory[])
         : [];
+      const billingMode = params.billingMode as ProviderBillingMode | undefined;
       const sessionCostUsd = params.sessionCostUsd as number | undefined;
       const serviceTier = params.serviceTier as "standard" | "priority" | "batch" | undefined;
       const numTurns = params.numTurns as number | undefined;
@@ -2671,6 +2672,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                 [providerId]: {
                   providerId,
                   quotaCategories: categories.length > 0 ? categories : (existing?.quotaCategories ?? []),
+                  billingMode: billingMode ?? existing?.billingMode,
                   sessionCostUsd: sessionCostUsd ?? existing?.sessionCostUsd,
                   serviceTier: serviceTier ?? existing?.serviceTier,
                   numTurns: numTurns ?? existing?.numTurns,

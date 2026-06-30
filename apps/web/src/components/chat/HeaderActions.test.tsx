@@ -111,6 +111,7 @@ import {
   getRepositoryFaviconUrl,
   getSafeRepositoryWebUrl,
   getThreadOverviewCiDot,
+  formatThreadOverviewSessionCost,
   formatThreadOverviewUsage,
   hasVisibleThreadOverviewChangeSummary,
   resolveThreadOverviewChangeSummary,
@@ -419,6 +420,77 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.queryByRole("progressbar", { name: "5-hour usage" })).not.toBeInTheDocument();
   });
 
+  it("hides empty or unlimited-only usage without API-key billing mode", () => {
+    seedThreadUsage("thread-1", {
+      providerId: "claude",
+      billingMode: "plan",
+      quotaCategories: [
+        {
+          label: "Pay-as-you-go",
+          used: 2,
+          total: null,
+          remainingPercent: 1,
+          isUnlimited: true,
+        },
+      ],
+    });
+
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
+
+    expect(screen.queryByTestId("thread-overview-usage")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pay-as-you-go")).not.toBeInTheDocument();
+  });
+
+  it("renders API-key session cost when provider billing mode proves it", () => {
+    seedThreadUsage("thread-1", {
+      providerId: "claude",
+      billingMode: "api_key",
+      quotaCategories: [],
+      sessionCostUsd: 12.34,
+    });
+
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
+
+    const usageTrigger = screen.getByTestId("thread-overview-usage");
+    expect(usageTrigger).toHaveAttribute("aria-label", "Usage, $12.34 session");
+    expect(usageTrigger).toHaveTextContent("$12.34 session");
+    expect(screen.queryByTestId("thread-overview-usage-details")).not.toBeInTheDocument();
+  });
+
+  it("suppresses session cost for plan billing mode even when cost exists", () => {
+    seedThreadUsage("thread-1", {
+      providerId: "claude",
+      billingMode: "plan",
+      quotaCategories: [],
+      sessionCostUsd: 12.34,
+    });
+
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
+
+    expect(screen.queryByTestId("thread-overview-usage")).not.toBeInTheDocument();
+    expect(screen.queryByText("$12.34 session")).not.toBeInTheDocument();
+  });
+
+  it("suppresses session cost when billing mode is missing or unknown", () => {
+    seedThreadUsage("thread-1", {
+      providerId: "claude",
+      quotaCategories: [],
+      sessionCostUsd: 12.34,
+    });
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
+    expect(screen.queryByTestId("thread-overview-usage")).not.toBeInTheDocument();
+
+    useThreadStore.setState({ records: new Map() });
+    seedThreadUsage("thread-1", {
+      providerId: "claude",
+      billingMode: "unknown",
+      quotaCategories: [],
+      sessionCostUsd: 12.34,
+    });
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
+    expect(screen.queryByText("$12.34 session")).not.toBeInTheDocument();
+  });
+
   it("prefills commit-or-push from the PR row when the branch is not ahead", () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
     renderHeaderActions();
@@ -531,6 +603,41 @@ describe("formatThreadOverviewUsage", () => {
       }),
     ).toBeNull();
     expect(formatThreadOverviewUsage(undefined)).toBeNull();
+  });
+
+  it("renders session cost only for API-key billing mode", () => {
+    expect(
+      formatThreadOverviewSessionCost({
+        providerId: "claude",
+        billingMode: "api_key",
+        quotaCategories: [],
+        sessionCostUsd: 12.34,
+      }),
+    ).toBe("$12.34 session");
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "claude",
+        billingMode: "api_key",
+        quotaCategories: [],
+        sessionCostUsd: 12.34,
+      }),
+    ).toBe("$12.34 session");
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "claude",
+        billingMode: "plan",
+        quotaCategories: [],
+        sessionCostUsd: 12.34,
+      }),
+    ).toBeNull();
+    expect(
+      formatThreadOverviewUsage({
+        providerId: "claude",
+        billingMode: "unknown",
+        quotaCategories: [],
+        sessionCostUsd: 12.34,
+      }),
+    ).toBeNull();
   });
 
   it("does not fabricate Codex quota before provider quota data arrives", () => {

@@ -30,7 +30,7 @@ The `header-workspace-menu` becomes a thread-scoped popover, the Overview (`Thre
 11. As a developer, I want the Overview to show my thread's worktree path and branch, so that I know where the code lives.
 12. As a developer, I want to copy the branch name from the Overview, so that I can paste it elsewhere.
 13. As a developer, I want the Overview to show my active provider's usage and cost, so that I can judge remaining budget for this thread.
-14. As a developer on a provider without usage reporting, I want the Usage row to say usage is unavailable, so that the row degrades cleanly rather than erroring.
+14. As a developer on a provider without useful usage data, I want the Overview to hide the Usage row, so that the popover stays focused.
 15. As a developer, I want to create a new branch from the Overview that is created and checked out in place, so that I can branch this thread without a fork.
 16. As a developer, I want the new-branch action to reject unsafe branch names, so that I cannot inject arguments into the git command.
 17. As a developer, I want a CI status dot on the Overview trigger, so that I can see at a glance whether my thread's checks are failing or passing without opening the popover.
@@ -42,7 +42,7 @@ The `header-workspace-menu` becomes a thread-scoped popover, the Overview (`Thre
 - **Enrich, do not replace blindly.** `HeaderActions.tsx`'s `header-workspace-menu` becomes `ThreadOverview`, a popover. The existing PR affordances (`PrSplitButton`, `ChecksPopover`, `CreatePrDialog`) and the `useThreadGitActions(thread)` data (`prable`, `pr`, `hasCommitsAhead`, `checks`, `openPrDetail`, `dirPath`, commit-or-push, open-PR) are reused, not rebuilt.
 - **New RPC `git.getRemoteUrl`.** `GitService.getRemoteUrl(path)` runs `git remote get-url origin`, normalizes SSH and `.git` suffixes to an https web URL, derives the `org/repo` label, and falls back to the directory basename with a null URL when there is no remote. Normalization is server-side, validated once at the boundary. Follows the `diffSummary.*` wiring idiom (WS_METHODS entry, router case, named transport wrapper).
 - **New RPC `git.createBranch`.** `GitService.createBranch(path, name)` runs `git checkout -b <name>` (create plus checkout). The name is validated against a git-ref allowlist before exec (reject empty, leading `-`, whitespace, `..`, shell metacharacters); fail closed. Returns the created branch.
-- **Usage row reuses the existing path.** It reads `usageByProvider[thread.provider]` from the thread record, already populated by `fetchProviderUsage`. No new fetch and no new server code; providers without `getUsage` already return an empty-but-valid shape.
+- **Usage row reuses the existing path.** It reads `usageByProvider[thread.provider]` from the thread record, already populated by `fetchProviderUsage`. The row renders capped quota categories when present, or provider-proven API-key session cost when available. If neither exists, the row is hidden.
 - **CI blob is a pure derivation.** `(pr, checks) -> "red" | "green" | null` over the `checks`/`pr` already in `useThreadGitActions`. Red when failing, green when all passed, null otherwise. Active-thread scope.
 - **Changes row** triggers the existing `changes.toggle` command and relies on Epic 1 for the per-thread default (soft dependency - works without it).
 

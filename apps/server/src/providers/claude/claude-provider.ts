@@ -24,6 +24,7 @@ import type {
   GoalState,
   GoalLookupResult,
   ProviderModelInfo,
+  ProviderBillingMode,
   ProviderUsageInfo,
   QuotaCategory,
   PermissionDecision,
@@ -379,8 +380,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   private lastServiceTier?: "standard" | "priority" | "batch";
   private lastNumTurns?: number;
   private lastDurationMs?: number;
+  private readonly oauthUsageSource = new AnthropicOAuthUsageSource(readAnthropicOauthToken);
   private readonly usageSource: CompositeUsageSource = new CompositeUsageSource([
-    new AnthropicOAuthUsageSource(readAnthropicOauthToken),
+    this.oauthUsageSource,
     new AnthropicHeaderUsageSource(),
   ]);
 
@@ -1829,11 +1831,13 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
               // Invalidate the usage cache so the warm-refresh call from the
               // client picks up fresh plan utilization after this turn.
               this.usageSource.invalidate();
+              const billingMode = await this.resolveBillingMode();
               this.emit("event", {
                 type: AgentEventType.QuotaUpdate,
                 threadId,
                 providerId: "claude",
                 categories: [],
+                billingMode,
                 sessionCostUsd: this.lastSessionCostUsd,
                 serviceTier: this.lastServiceTier,
                 numTurns: this.lastNumTurns,
@@ -2541,6 +2545,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   /** Returns Claude plan utilization plus accumulated session stats. */
   async getUsage(): Promise<ProviderUsageInfo> {
     let categories: QuotaCategory[] | null = null;
+    const billingMode = await this.resolveBillingMode();
     try {
       categories = await this.usageSource.fetch();
     } catch (error) {
@@ -2551,11 +2556,19 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     return {
       providerId: "claude",
       quotaCategories: categories ?? [],
+      billingMode,
       sessionCostUsd: this.lastSessionCostUsd,
       serviceTier: this.lastServiceTier,
       numTurns: this.lastNumTurns,
       durationMs: this.lastDurationMs,
     };
+  }
+
+  /** Resolves Claude's provider-owned billing mode without exposing credentials. */
+  private async resolveBillingMode(): Promise<ProviderBillingMode> {
+    if (await this.oauthUsageSource.isAvailable()) return "plan";
+    if (Number.isFinite(this.lastSessionCostUsd)) return "api_key";
+    return "unknown";
   }
 
   /** Fetch available Claude models from the Anthropic REST API. */

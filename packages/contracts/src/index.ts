@@ -372,11 +372,13 @@ export type {
 export {
   TurnUsageSchema,
   QuotaCategorySchema,
+  ProviderBillingModeSchema,
   ProviderUsageInfoSchema,
 } from "./providers/usage.js";
 export type {
   TurnUsage,
   QuotaCategory,
+  ProviderBillingMode,
   ProviderUsageInfo,
 } from "./providers/usage.js";
 

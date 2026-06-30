@@ -132,8 +132,8 @@ Rendering rules:
 - Prefer category labels over provider-specific prose.
 - Show multiple relevant categories when space allows, for example `5-hour 42%, weekly 18%` or `API 63%, Auto 21%`.
 - If there is one category, show `Label 42%`.
-- If no capped category exists, show `usage unavailable`.
-- Do not render dollar amounts in this row.
+- If no capped category or provider-proven API-key session cost exists, hide the Usage row.
+- Do not render dollar amounts from quota categories in this row.
 - Add `data-testid="thread-overview-usage"`.
 
 ## Security Requirements
@@ -148,7 +148,7 @@ Rendering rules:
 
 ## Non-Goals
 
-- No pricing display in the Overview row.
+- No pricing display from quota categories in the Overview row.
 - No token cost display in the Overview row.
 - No paid overage display in the Overview row.
 - No dashboard scraping.
@@ -164,7 +164,7 @@ Rendering rules:
 - Cursor shows Auto or Composer usage percentage when the configured Admin API response supplies it.
 - Copilot shows a normalized quota category from existing `quotaSnapshots`.
 - Codex shows a quota category only when a supported machine-readable source exists.
-- Empty provider usage renders exactly `usage unavailable`.
+- Empty provider usage hides the Overview Usage row.
 - The Overview row reads the active provider from `thread.provider`.
 - Switching providers reads a different `usageByProvider` entry.
 - Opening the Overview does not start an unbounded poll or duplicate fetch loop.
@@ -194,7 +194,7 @@ Frontend:
   - Cursor API plus Auto categories
   - empty usage state
   - active provider switch
-  - cost fields ignored
+  - cost fields ignored unless provider-owned billing mode proves API-key usage
 
 ## Verification
 
@@ -203,7 +203,7 @@ For implementation work, verify in this order:
 1. Start the app with `node scripts/agent/demo.mjs` and open the printed URL.
 2. Seed or use a thread with Claude categories and observe `5-hour` or `weekly` usage in Overview.
 3. Seed or use a thread with Cursor percentage categories and observe API and Auto usage in Overview.
-4. Confirm no dollar amounts render in the Overview Usage row.
+4. Confirm dollar amounts render only for provider-proven API-key session cost.
 5. Confirm no browser console errors.
 6. Run `bun run verify`.
 7. Run focused E2E when changed:
@@ -214,12 +214,12 @@ For implementation work, verify in this order:
 
 Use this language in the PR body after implementation:
 
-> Implements the Overview Usage row and the provider-backed usage limit sources together. The row renders capped limit utilization only: Claude five-hour and weekly limits, Cursor API and Auto or Composer percentages when the Admin API supplies them, and existing Copilot quota snapshots. It deliberately excludes API prices, token costs, session cost, overage spend, and dashboard scraping.
+> Implements the Overview Usage row and the provider-backed usage limit sources together. The row renders capped limit utilization: Claude five-hour and weekly limits, Cursor API and Auto or Composer percentages when the Admin API supplies them, and existing Copilot quota snapshots. It excludes API prices, token costs, paid overage, and dashboard scraping.
 
 If Codex has no supported machine-readable usage source, add:
 
-> Codex remains `usage unavailable` because the current provider has no documented machine-readable account-limit source to normalize into `QuotaCategory`.
+> Codex hides the Overview Usage row until the provider has a documented machine-readable account-limit or API-key session-cost source.
 
 ## Implementation Prompt
 
-Implement GitHub issue #765 in this worktree with the revised scope in this brief. Add the Overview Usage row and provider-backed usage limit plumbing. Reuse Claude and Copilot usage sources. Add Cursor usage limits through a bounded, configured Admin API source. Investigate Codex and add `getUsage` only if a supported machine-readable source exists. Render capped usage-limit percentages only. Do not render prices, token costs, session cost, paid overage, or scraped dashboard data. Add focused backend and frontend tests, run live verification, then run `bun run verify`.
+Implement GitHub issue #765 in this worktree with the revised scope in this brief. Add the Overview Usage row and provider-backed usage limit plumbing. Reuse Claude and Copilot usage sources. Add Cursor usage limits through a bounded, configured Admin API source. Investigate Codex and add `getUsage` only if a supported machine-readable source exists. Render capped usage-limit percentages, plus provider-proven API-key session cost when available. Do not render prices, token costs, paid overage, or scraped dashboard data. Add focused backend and frontend tests, run live verification, then run `bun run verify`.

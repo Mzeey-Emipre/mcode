@@ -36,6 +36,14 @@ export const QuotaCategorySchema = lazySchema(() =>
 /** TypeScript type inferred from QuotaCategorySchema. */
 export type QuotaCategory = z.infer<ReturnType<typeof QuotaCategorySchema>>;
 
+/** Provider-owned billing mode for usage and cost display decisions. */
+export const ProviderBillingModeSchema = lazySchema(() =>
+  z.enum(["api_key", "plan", "unknown"]),
+);
+
+/** TypeScript type inferred from ProviderBillingModeSchema. */
+export type ProviderBillingMode = z.infer<ReturnType<typeof ProviderBillingModeSchema>>;
+
 /** Provider-level usage state. Quota and cost only - context/turn data is thread-scoped. */
 export const ProviderUsageInfoSchema = lazySchema(() =>
   z.object({
@@ -43,6 +51,8 @@ export const ProviderUsageInfoSchema = lazySchema(() =>
     providerId: z.string(),
     /** All quota buckets reported by this provider. */
     quotaCategories: z.array(QuotaCategorySchema()),
+    /** Provider-owned discriminator for whether usage is billed by API key, plan, or unknown mode. */
+    billingMode: ProviderBillingModeSchema().optional(),
     /** Accumulated cost for the current session in USD. Absent when the provider does not report cost. */
     sessionCostUsd: z.number().optional(),
     /** API service tier used for the last turn (Claude only). */
