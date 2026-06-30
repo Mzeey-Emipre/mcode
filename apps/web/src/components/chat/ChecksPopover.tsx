@@ -130,6 +130,7 @@ export function ChecksPopover({
   onOpenChange,
 }: ChecksPopoverProps) {
   const triggerRef = useRef<HTMLDivElement | null>(null);
+  const flyoutRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState<FlyoutPosition | null>(null);
 
   const sortedRuns = useMemo(() => {
@@ -147,16 +148,6 @@ export function ChecksPopover({
     setPosition(calculateFlyoutPosition(triggerRef.current));
   }, []);
 
-  const openFlyout = useCallback(() => {
-    updatePosition();
-    onOpenChange?.(true);
-  }, [onOpenChange, updatePosition]);
-
-  const toggleFlyout = useCallback(() => {
-    updatePosition();
-    onOpenChange?.(!open);
-  }, [onOpenChange, open, updatePosition]);
-
   useEffect(() => {
     if (!open) return;
     updatePosition();
@@ -168,6 +159,22 @@ export function ChecksPopover({
     };
   }, [open, updatePosition]);
 
+  useEffect(() => {
+    if (!open) return;
+
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (triggerRef.current?.contains(target) || flyoutRef.current?.contains(target)) return;
+      onOpenChange?.(false);
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointerDown);
+    };
+  }, [onOpenChange, open]);
+
   const flyoutStyle: CSSProperties | undefined = position
     ? { left: position.left, top: position.top, width: FLYOUT_WIDTH }
     : undefined;
@@ -176,6 +183,7 @@ export function ChecksPopover({
       <div
         role="dialog"
         data-testid="thread-overview-ci-popover"
+        ref={flyoutRef}
         style={flyoutStyle}
         className="fixed z-50 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl"
       >
@@ -193,14 +201,7 @@ export function ChecksPopover({
 
   return (
     <>
-      <div
-        ref={triggerRef}
-        onPointerDown={openFlyout}
-        onClick={toggleFlyout}
-        onMouseEnter={openFlyout}
-        onFocus={openFlyout}
-        className="w-full"
-      >
+      <div ref={triggerRef} className="w-full">
         {children}
       </div>
 

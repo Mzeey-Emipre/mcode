@@ -100,7 +100,7 @@ test.use({ viewport: { width: 1920, height: 1080 } });
 
 test("Overview sources + humanized links demo", async ({ page }) => {
   const recapText =
-    "Checking SVG alternatives and wiring the Overview surface so the team can compare options without reopening the transcript.";
+    "Checking SVG alternatives and wiring the Overview surface so the team can compare options without reopening the transcript. The current pass keeps source links, repository context, and recap details visible together so returning users can recover the thread state without scanning prior messages.";
   let resolveRecap!: (value: { text: string }) => void;
   const recapResult = new Promise<{ text: string }>((resolve) => {
     resolveRecap = resolve;
@@ -159,15 +159,18 @@ test("Overview sources + humanized links demo", async ({ page }) => {
   await page.screenshot({ path: "e2e/screenshots/demo/overview-recap-skeleton.png", fullPage: false });
   resolveRecap({ text: recapText });
   await expect(page.getByTestId("thread-overview-recap-text")).toContainText("Checking SVG alternatives");
+  await expect(page.getByTestId("thread-overview-recap-text")).toContainText("without scanning prior messages");
+  await expect(page.getByTestId("thread-overview-recap-text")).not.toContainText("...");
   await expect(page.getByTestId("thread-overview-recap-skeleton")).toHaveCount(0);
   const recapTextStyles = await page.getByTestId("thread-overview-recap-text").evaluate((node) => {
     const styles = window.getComputedStyle(node);
     return {
       textOverflow: styles.textOverflow,
       whiteSpace: styles.whiteSpace,
+      clipped: node.scrollHeight > node.clientHeight,
     };
   });
-  expect(recapTextStyles).toEqual({ textOverflow: "clip", whiteSpace: "normal" });
+  expect(recapTextStyles).toEqual({ textOverflow: "clip", whiteSpace: "normal", clipped: false });
   await expect(page.getByTestId("thread-overview-repository")).toBeVisible();
   await expect(page.getByTestId("thread-overview-sources")).toBeVisible();
   const recapFollowsSources = await page.evaluate(() => {

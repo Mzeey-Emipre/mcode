@@ -592,7 +592,7 @@ test.describe("Consolidated chat header CI trigger state", () => {
     await expect(page.getByTestId("thread-overview-body")).toBeHidden();
   });
 
-  test("shows CI summary below the PR row and expands details from it", async ({ page }) => {
+  test("shows CI summary below the PR row and toggles details from it", async ({ page }) => {
     await ws.sendPush("thread.checksUpdated", {
       threadId: openPrThread.id,
       checks: failingChecksWithRuns(),
@@ -606,9 +606,27 @@ test.describe("Consolidated chat header CI trigger state", () => {
     await expect(summary).not.toContainText("Checks failing");
     await expect(summary).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(summary).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+    const statusCircle = page.getByTestId("thread-overview-ci-status-circle");
+    await expect(statusCircle).toBeVisible();
+    await expect(statusCircle).toHaveClass(/rounded-full/);
+    await expect(statusCircle).toHaveCSS("background-image", /conic-gradient/);
 
     await summary.hover();
+    await expect(page.getByTestId("thread-overview-ci-popover")).toHaveCount(0);
+
+    await summary.click();
     await expect(page.getByText("Test Web E2E (shard 1/4)")).toBeVisible();
     await expect(page.getByText("Typecheck")).toBeVisible();
+    await expect(summary).toHaveAttribute("aria-expanded", "true");
+
+    await summary.click();
+    await expect(page.getByTestId("thread-overview-ci-popover")).toHaveCount(0);
+    await expect(summary).toHaveAttribute("aria-expanded", "false");
+
+    await summary.click();
+    await expect(page.getByTestId("thread-overview-ci-popover")).toBeVisible();
+    await page.getByTestId("workspace-menu-branch").click();
+    await expect(page.getByTestId("thread-overview-ci-popover")).toHaveCount(0);
+    await expect(page.getByTestId("thread-overview-branch-popover")).toBeVisible();
   });
 });

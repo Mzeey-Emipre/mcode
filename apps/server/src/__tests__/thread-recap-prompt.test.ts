@@ -86,11 +86,18 @@ describe("sanitizeThreadRecap", () => {
     );
   });
 
-  it("clips long output near 220 characters", () => {
+  it("preserves ordinary multi-sentence output without adding an ellipsis", () => {
     const result = sanitizeThreadRecap("x".repeat(400));
 
-    expect(result).toHaveLength(220);
-    expect(result.endsWith("...")).toBe(true);
+    expect(result).toHaveLength(400);
+    expect(result.endsWith("...")).toBe(false);
+  });
+
+  it("hard-caps pathological output without adding a visible ellipsis", () => {
+    const result = sanitizeThreadRecap("x".repeat(1_200));
+
+    expect(result).toHaveLength(1_000);
+    expect(result.endsWith("...")).toBe(false);
   });
 });
 
