@@ -13,10 +13,22 @@
  */
 import { test, expect, _electron as electron } from "@playwright/test";
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const DESKTOP_DIR = resolve(__dirname, "..");
 const MAIN_BUNDLE = join(DESKTOP_DIR, "dist", "main", "main.cjs");
+
+function electronLaunchEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key !== "ELECTRON_RUN_AS_NODE" && value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
 
 test.describe("Electron smoke", () => {
   test.beforeAll(() => {
@@ -28,7 +40,11 @@ test.describe("Electron smoke", () => {
   });
 
   test("first window opens and has the expected title", async () => {
-    const app = await electron.launch({ args: ["."], cwd: DESKTOP_DIR });
+    const app = await electron.launch({
+      args: ["."],
+      cwd: DESKTOP_DIR,
+      env: electronLaunchEnv(),
+    });
     const rendererErrors: string[] = [];
 
     try {
