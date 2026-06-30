@@ -450,7 +450,7 @@ export function ActivityRail({
   return (
     <div
       data-testid="activity-rail"
-      className="flex w-12 flex-none flex-col items-center gap-1 border-r border-border/40 py-2"
+      className="flex w-12 flex-none flex-col items-center gap-1 bg-foreground/[0.025] py-2"
     >
       {/* Maximize / restore sits at the rail head (not the foot) so it stays in
           the first tab stop and never scrolls off-screen on short viewports. */}

@@ -340,6 +340,11 @@ test.describe("PreviewPanel — loaded header", () => {
     await expect(page.getByLabel("More browser tools")).toBeVisible();
   });
 
+  test("rail and header stay borderless at the rounded panel corner", async ({ page }) => {
+    await expect(page.getByTestId("activity-rail")).not.toHaveClass(/border-r/);
+    await expect(page.getByTestId("browser-header")).not.toHaveClass(/border-b/);
+  });
+
   test("loaded bar shows the page title centered in the URL field", async ({ page }) => {
     await expect(page.getByLabel("Preview URL")).toHaveValue("Example");
   });
