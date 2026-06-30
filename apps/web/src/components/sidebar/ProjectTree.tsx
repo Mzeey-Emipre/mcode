@@ -1128,6 +1128,12 @@ function VirtualizedThreadList({
     }
   }, [inlineEdit, onSelectThread, onStartInlineEdit]);
 
+  const handleThreadDoubleClick = useCallback((threadId: string, title: string) => {
+    if (inlineEdit?.threadId === threadId) return;
+    lastClickTimeRef.current.delete(threadId);
+    onStartInlineEdit(threadId, title);
+  }, [inlineEdit, onStartInlineEdit]);
+
   // Recompute offset from the outer scroll viewport after each layout pass.
   // Stays in sync when workspaces above expand/collapse.
   useLayoutEffect(() => {
@@ -1212,6 +1218,7 @@ function VirtualizedThreadList({
                   }
                 }}
                 onClick={() => handleThreadClick(thread.id, thread.title)}
+                onDoubleClick={() => handleThreadDoubleClick(thread.id, thread.title)}
                 onContextMenu={(e) => onThreadContextMenu(e, thread)}
                 onMouseEnter={() => {
                   if (!thread.clientPreparing && !thread.clientError) {
