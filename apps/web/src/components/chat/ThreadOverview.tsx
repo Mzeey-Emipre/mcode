@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import {
   Check,
   ChevronDown,
-  CircleCheck,
-  CircleX,
   Copy,
   Diff,
   ExternalLink,
@@ -44,7 +42,7 @@ import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { useThreadRecap } from "@/hooks/useThreadRecap";
 import {
-  CI_ICON_STROKE,
+  getBreakdown,
   getCiOverviewSummaryLabel,
   getCiSummaryHeadline,
 } from "@/lib/ci-status";
@@ -107,6 +105,14 @@ type LoadedBranchState =
   | { status: "error"; branches: GitBranchRecord[]; uncommittedFiles: number | null };
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 type LocalCopyTarget = "path" | "branch";
+type CiSegmentName = "failing" | "running" | "passing" | "other";
+
+const CI_SEGMENT_COLORS: Record<CiSegmentName, string> = {
+  failing: "var(--diff-remove-strong)",
+  running: "#e7a90b",
+  passing: "var(--diff-add-strong)",
+  other: "var(--muted-foreground)",
+};
 
 /** Repository metadata rendered by the Overview Repository row. */
 export interface ThreadOverviewRepository {
@@ -1102,6 +1108,42 @@ export function getPrRowDetail(
   return null;
 }
 
+function getCiStatusCircleStyle(checks: ChecksStatus): CSSProperties {
+  const breakdown = getBreakdown(checks);
+  const total = breakdown.total || 1;
+  const segments = ([
+    { name: "failing", count: breakdown.failing },
+    { name: "running", count: breakdown.running },
+    { name: "passing", count: breakdown.passing },
+    { name: "other", count: breakdown.other },
+  ] satisfies Array<{ name: CiSegmentName; count: number }>).filter((segment) => segment.count > 0);
+
+  if (segments.length === 0) {
+    return { background: "var(--muted)" };
+  }
+
+  let cursor = 0;
+  const stops = segments.map((segment) => {
+    const start = cursor;
+    cursor += (segment.count / total) * 100;
+    const end = Math.min(100, cursor);
+    return `${CI_SEGMENT_COLORS[segment.name]} ${start}% ${end}%`;
+  });
+
+  return { background: `conic-gradient(${stops.join(", ")})` };
+}
+
+function ThreadOverviewCiStatusCircle({ checks }: { checks: ChecksStatus }) {
+  return (
+    <span
+      aria-hidden
+      data-testid="thread-overview-ci-status-circle"
+      className="size-3 shrink-0 rounded-full border border-border/70"
+      style={getCiStatusCircleStyle(checks)}
+    />
+  );
+}
+
 interface ThreadOverviewPrRowProps {
   pr: ThreadOverviewPr;
   hasCommitsAhead: boolean | null;
@@ -1175,18 +1217,6 @@ function ThreadOverviewPrActiveRow({
     checks != null &&
     checks.aggregate !== "no_checks";
   const canOpenChecks = hasChecksData && threadId.length > 0;
-  const SummaryIcon =
-    checks?.aggregate === "passing"
-      ? CircleCheck
-      : checks?.aggregate === "failing"
-        ? CircleX
-        : Loader2;
-  const summaryIconClass =
-    checks?.aggregate === "passing"
-      ? "text-[var(--diff-add-strong)]"
-      : checks?.aggregate === "failing"
-        ? "text-[var(--diff-remove-strong)]"
-        : "text-[#e7a90b]";
 
   useEffect(() => {
     if (!canOpenChecks) return;
@@ -1213,27 +1243,17 @@ function ThreadOverviewPrActiveRow({
           size="sm"
           data-testid="thread-overview-pr-status"
           aria-label={`CI checks, ${getCiSummaryHeadline(checks)}`}
+          aria-expanded={checksOpen}
+          aria-haspopup="dialog"
           title={getCiSummaryHeadline(checks)}
-          onPointerDown={() => setChecksOpen(true)}
           onClick={(event) => {
             event.stopPropagation();
-            setChecksOpen(true);
+            setChecksOpen((open) => !open);
           }}
-          onMouseEnter={() => setChecksOpen(true)}
-          onFocus={() => setChecksOpen(true)}
           className="ml-6 flex h-6 w-[calc(100%-1.5rem)] cursor-pointer justify-between rounded-none border-transparent bg-transparent px-0 text-left text-muted-foreground hover:bg-transparent hover:text-foreground dark:hover:bg-transparent"
         >
           <span className="flex min-w-0 items-center gap-2">
-            <SummaryIcon
-              size={13}
-              strokeWidth={CI_ICON_STROKE}
-              aria-hidden
-              className={cn(
-                "shrink-0",
-                summaryIconClass,
-                checks.aggregate === "pending" && "status-spin",
-              )}
-            />
+            <ThreadOverviewCiStatusCircle checks={checks} />
             <span className="truncate text-xs">
               {getCiOverviewSummaryLabel(checks)}
             </span>

@@ -7,7 +7,8 @@ export interface ThreadRecapMessage {
 /** Maximum prompt material characters accepted before recap prompt assembly. */
 export const THREAD_RECAP_MAX_MATERIAL_CHARS = 16_000;
 
-const THREAD_RECAP_OUTPUT_CHARS = 220;
+const THREAD_RECAP_TARGET_CHARS = 220;
+const THREAD_RECAP_MAX_OUTPUT_CHARS = 1_000;
 
 function escapePromptXmlText(value: string): string {
   return value
@@ -44,7 +45,7 @@ You write a short recap of what the user is working on in this conversation.
 - Prefer concrete nouns and verbs from the conversation
 - Return one to three plain sentences
 - No markdown, bullets, quotes, prefixes, or labels
-- Stay under ${THREAD_RECAP_OUTPUT_CHARS} characters
+- Aim for under ${THREAD_RECAP_TARGET_CHARS} characters
 </rules>
 
 <previous-recap>
@@ -67,8 +68,8 @@ export function sanitizeThreadRecap(text: string): string {
     .replace(/^["'`]+|["'`]+$/g, "")
     .trim();
 
-  if (oneLine.length <= THREAD_RECAP_OUTPUT_CHARS) return oneLine;
-  return `${oneLine.slice(0, THREAD_RECAP_OUTPUT_CHARS - 3).trimEnd()}...`;
+  if (oneLine.length <= THREAD_RECAP_MAX_OUTPUT_CHARS) return oneLine;
+  return oneLine.slice(0, THREAD_RECAP_MAX_OUTPUT_CHARS).trimEnd();
 }
 
 /**
