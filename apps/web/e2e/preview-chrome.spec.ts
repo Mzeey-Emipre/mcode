@@ -353,6 +353,26 @@ test.describe("PreviewPanel — loaded header", () => {
     expect(railBackground).toBe(headerBackground);
   });
 
+  test("chat and right panel meet at the draggable split line", async ({ page }) => {
+    const main = page.locator("main").first();
+    const panel = page.getByTestId("right-panel");
+    const separator = page.getByRole("separator", { name: "Resize panel" });
+
+    const [mainBox, panelBox] = await Promise.all([
+      main.boundingBox(),
+      panel.boundingBox(),
+    ]);
+    expect(mainBox).not.toBeNull();
+    expect(panelBox).not.toBeNull();
+    expect(Math.abs(mainBox!.x + mainBox!.width - panelBox!.x)).toBeLessThanOrEqual(1);
+
+    await expect(separator).toBeVisible();
+    const lineBackground = await separator.locator("span").evaluate((el) =>
+      getComputedStyle(el).backgroundColor,
+    );
+    expect(lineBackground).not.toBe("rgba(0, 0, 0, 0)");
+  });
+
   test("loaded bar shows the page title centered in the URL field", async ({ page }) => {
     await expect(page.getByLabel("Preview URL")).toHaveValue("Example");
   });

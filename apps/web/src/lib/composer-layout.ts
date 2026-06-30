@@ -8,8 +8,8 @@ import { useLayoutStore } from "@/stores/layoutStore";
 /** Inline project-tree width (`Sidebar` uses Tailwind `w-72`). */
 export const SIDEBAR_WIDTH_PX = 288;
 
-/** Gap between the project tree and the chat/panel row in App.tsx (`gap-1.5`). */
-export const LAYOUT_COLUMN_GAP_PX = 6;
+/** Gap between the project tree and the chat/panel row in App.tsx. */
+export const LAYOUT_COLUMN_GAP_PX = 0;
 
 /** Live measurements from App layout refs; updated by {@link setLayoutMeasurements}. */
 let measuredContentRowWidth = 0;
@@ -28,13 +28,13 @@ export function setLayoutMeasurements(contentRowWidth: number, outerRowWidth: nu
 /** Width of the chat + right-panel split row, or a conservative fallback before mount. */
 export function getContentRowWidth(): number {
   if (measuredContentRowWidth > 0) return measuredContentRowWidth;
-  return Math.max(COMPOSER_MIN_WIDTH, window.innerWidth - SIDEBAR_WIDTH_PX - 24);
+  return Math.max(COMPOSER_MIN_WIDTH, window.innerWidth - SIDEBAR_WIDTH_PX);
 }
 
 /** Width of the row that may include an inline project tree, or a fallback before mount. */
 export function getOuterRowWidth(): number {
   if (measuredOuterRowWidth > 0) return measuredOuterRowWidth;
-  return window.innerWidth - 12;
+  return window.innerWidth;
 }
 
 /**

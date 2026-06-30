@@ -323,18 +323,15 @@ export function App() {
   return (
     <TerminalPoolSlotProvider>
     <TooltipProvider delay={400}>
-      {/* Floating-panel layout: page chrome is a darker tone (--page) with small
-          gaps between panels. Each panel renders as a rounded surface that
-          appears lifted off the chrome — no inter-panel divider lines required. */}
       <div className="flex h-screen flex-col overflow-hidden bg-page text-foreground">
         <ConnectionBanner />
-        <div ref={outerRowRef} className="flex flex-1 gap-1.5 overflow-hidden p-1.5">
+        <div ref={outerRowRef} className="flex flex-1 overflow-hidden">
           {/* Docked project tree: hidden when collapsed, force-shown in settings,
               or shown as a float (see below). Maximize hides only the chat pane. */}
           {(!sidebarCollapsed || settingsOpen) && !sidebarFloating && (
             <div
               data-testid="sidebar-docked"
-              className="flex shrink-0 overflow-hidden rounded-lg shadow-sm"
+              className="flex shrink-0 overflow-hidden border-r border-border/45 bg-page"
             >
               <Sidebar
                 settingsOpen={settingsOpen}
@@ -370,12 +367,12 @@ export function App() {
           <div
             ref={contentRowRef}
             data-testid="content-row"
-            className="flex min-w-0 flex-1 gap-1.5 overflow-hidden"
+            className="flex min-w-0 flex-1 overflow-hidden"
           >
             {/* Chat / settings / landing: hidden when the right panel is maximized. */}
             {!rightPanelMaximized && (
             <main
-              className="flex-1 overflow-hidden rounded-lg bg-background shadow-sm"
+              className="flex-1 overflow-hidden bg-background"
               style={{ minWidth: COMPOSER_MIN_WIDTH }}
             >
               {settingsOpen ? (

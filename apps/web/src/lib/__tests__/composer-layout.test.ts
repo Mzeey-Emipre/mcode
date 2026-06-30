@@ -18,7 +18,7 @@ import {
 import { COMPOSER_MIN_WIDTH, PANEL_MIN_WIDTH, PANEL_SPLIT_GAP_PX } from "@/stores/diffStore";
 
 describe("composer-layout", () => {
-  it("computes side-by-side minimum from composer, gap, and panel width", () => {
+  it("computes side-by-side minimum from composer, divider, and panel width", () => {
     expect(minContentWidthForSideBySidePanel(440)).toBe(
       COMPOSER_MIN_WIDTH + PANEL_SPLIT_GAP_PX + 440,
     );
@@ -27,7 +27,7 @@ describe("composer-layout", () => {
     );
   });
 
-  it("computes inline sidebar minimum from content need and column gap", () => {
+  it("computes inline sidebar minimum from content need and column divider", () => {
     expect(minOuterWidthForInlineSidebar(COMPOSER_MIN_WIDTH)).toBe(
       COMPOSER_MIN_WIDTH + LAYOUT_COLUMN_GAP_PX + SIDEBAR_WIDTH_PX,
     );
