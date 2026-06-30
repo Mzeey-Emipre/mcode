@@ -1648,7 +1648,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
 
   const triggerButton = (
     <Button
-      key={triggerStatus}
       variant="ghost"
       size="icon-xs"
       type="button"
