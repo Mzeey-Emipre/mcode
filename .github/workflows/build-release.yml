@@ -40,13 +40,20 @@ jobs:
             target-arch: "x64"
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
         with:
-          bun-version: "1.2.14"
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-
+            ${{ runner.os }}-bun-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -149,6 +156,7 @@ jobs:
     # try to upload `latest-mac.yml` into a nightly release).
     if: ${{ (github.event.release.tag_name || inputs.tag) && !contains(github.event.release.tag_name, '-nightly.') }}
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - name: Download arm64 yml
         continue-on-error: true

@@ -19,6 +19,7 @@ permissions:
 jobs:
   setup:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
       last_nightly_tag: ${{ steps.check.outputs.last_nightly_tag }}
@@ -140,13 +141,20 @@ jobs:
             target-arch: "x64"
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
         with:
-          bun-version: "1.2.14"
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-
+            ${{ runner.os }}-bun-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -195,6 +203,16 @@ jobs:
       - name: Smoke test packaged server
         if: matrix.target-arch == '' || matrix.target-arch == 'arm64'
         run: node apps/desktop/scripts/smoke-test.mjs
+
+      - name: Smoke test packaged server under Rosetta
+        if: runner.os == 'macOS' && matrix.target-arch == 'x64'
+        shell: bash
+        run: |
+          if /usr/bin/pgrep oahd >/dev/null 2>&1 || /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            /usr/bin/arch -x86_64 node apps/desktop/scripts/smoke-test.mjs
+          else
+            echo "Skipping x64 packaged-server smoke: Rosetta is unavailable on this macOS runner."
+          fi
 
       - name: Verify Linux artifacts on Ubuntu 22.04
         if: runner.os == 'Linux'
@@ -256,6 +274,7 @@ jobs:
     needs: [setup, build]
     if: needs.setup.outputs.should_build == 'true'
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - name: Download arm64 yml
         continue-on-error: true
