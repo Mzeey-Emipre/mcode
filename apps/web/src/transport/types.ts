@@ -39,6 +39,7 @@ import type {
   CreateAndSendResult,
   ConversationPage,
   MessageMention,
+  GoalLookupResult,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -268,6 +269,10 @@ export interface McodeTransport {
   subscribeThread(threadId: string): Promise<void>;
   /** Remove this client connection's push subscription for a thread. */
   unsubscribeThread(threadId: string): Promise<void>;
+  /** Fetch the current active goal for a thread without starting provider work. */
+  getThreadGoal(threadId: string): Promise<GoalLookupResult>;
+  /** Clear the current active goal for a thread without sending a chat message. */
+  clearThreadGoal(threadId: string): Promise<GoalLookupResult>;
 
   // Thread mutations
   updateThreadTitle(threadId: string, title: string): Promise<boolean>;

@@ -34,6 +34,7 @@ import type {
   AgentEvent,
   AttachmentMeta,
   GoalState,
+  GoalLookupResult,
   MessageMention,
   PermissionDecision,
   PermissionRequest,
@@ -42,7 +43,7 @@ import type {
   QuotaCategory,
   SkillInfo,
 } from "@mcode/contracts";
-import { AgentEventType, CODEX_STATIC_MODELS, isVirtualBrowserContextAttachment } from "@mcode/contracts";
+import { AgentEventType, CODEX_STATIC_MODELS, isGoalOpen, isVirtualBrowserContextAttachment } from "@mcode/contracts";
 import { checkCodexVersion, meetsMinVersion } from "./codex-version.js";
 import { CodexAppServer, warmCodexAppServer } from "./codex-app-server.js";
 import type { CodexApprovalRequest } from "./codex-app-server.js";
@@ -637,8 +638,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   /** Mirror goal events from the mapper into the provider cache. */
   private recordGoalEvent(sessionId: string, event: AgentEvent): void {
     if (event.type === AgentEventType.GoalUpdated) {
-      this.goalsBySession.set(sessionId, event.goal);
-      if (event.goal.status === "complete") {
+      if (isGoalOpen(event.goal)) {
+        this.goalsBySession.set(sessionId, event.goal);
+      } else {
+        this.goalsBySession.delete(sessionId);
         this.pendingGoalObjectives.delete(sessionId);
       }
       return;
@@ -651,7 +654,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
   /** Emit a goal update and update the local mirror. */
   private emitGoalUpdated(sessionId: string, goal: GoalState): void {
-    this.goalsBySession.set(sessionId, goal);
+    if (isGoalOpen(goal)) {
+      this.goalsBySession.set(sessionId, goal);
+    } else {
+      this.goalsBySession.delete(sessionId);
+    }
     this.emit("event", {
       type: AgentEventType.GoalUpdated,
       threadId: goal.threadId ?? this.threadIdFromSession(sessionId),
@@ -722,7 +729,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   async getGoal(sessionId: string): Promise<GoalState | undefined> {
     const state = this.runtime.get(sessionId);
     if (!state?.server.isAlive) {
-      return this.goalsBySession.get(sessionId);
+      const cachedGoal = this.goalsBySession.get(sessionId);
+      return isGoalOpen(cachedGoal) ? cachedGoal : undefined;
     }
     const nativeGoal = await state.server.getGoal();
     if (!nativeGoal) {
@@ -730,8 +738,54 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       return undefined;
     }
     const goal = this.mapCodexGoal(sessionId, nativeGoal);
+    if (!isGoalOpen(goal)) {
+      this.goalsBySession.delete(sessionId);
+      return undefined;
+    }
     this.goalsBySession.set(sessionId, goal);
     return goal;
+  }
+
+  /** Return active goal lookup metadata without spawning inactive Codex sessions. */
+  async getGoalLookup(sessionId: string): Promise<GoalLookupResult> {
+    const state = this.runtime.get(sessionId);
+    if (!state?.server.isAlive) {
+      const cachedGoal = this.goalsBySession.get(sessionId);
+      return {
+        goal: isGoalOpen(cachedGoal) ? cachedGoal : null,
+        authoritative: false,
+        source: "codex-cache",
+        reason: "not-materialized",
+      };
+    }
+
+    const nativeGoal = await state.server.getGoal();
+    if (!nativeGoal) {
+      this.goalsBySession.delete(sessionId);
+      return {
+        goal: null,
+        authoritative: true,
+        source: "codex-native",
+      };
+    }
+
+    const goal = this.mapCodexGoal(sessionId, nativeGoal);
+    if (!isGoalOpen(goal)) {
+      this.goalsBySession.delete(sessionId);
+      return {
+        goal: null,
+        authoritative: true,
+        source: "codex-native",
+        reason: "closed",
+      };
+    }
+
+    this.goalsBySession.set(sessionId, goal);
+    return {
+      goal,
+      authoritative: true,
+      source: "codex-native",
+    };
   }
 
   /**

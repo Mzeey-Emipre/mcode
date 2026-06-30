@@ -120,6 +120,18 @@ export const mockTransport: McodeTransport = {
   listRunning: vi.fn().mockResolvedValue([]),
   subscribeThread: vi.fn().mockResolvedValue(undefined),
   unsubscribeThread: vi.fn().mockResolvedValue(undefined),
+  getThreadGoal: vi.fn().mockResolvedValue({
+    goal: null,
+    authoritative: true,
+    source: "unsupported",
+    reason: "unsupported-provider",
+  }),
+  clearThreadGoal: vi.fn().mockResolvedValue({
+    goal: null,
+    authoritative: true,
+    source: "unsupported",
+    reason: "unsupported-provider",
+  }),
   getMessages: vi.fn().mockResolvedValue({ messages: [], hasMore: false }),
   loadConversationPage: vi.fn(),
   createAndSendMessage: vi.fn(),

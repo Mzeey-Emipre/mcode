@@ -10,6 +10,8 @@ import {
   patchThreadRecord,
 } from "@/stores/thread-record";
 import type { ThreadRecord } from "@/stores/thread-record";
+import type { GoalLookupResult } from "@mcode/contracts";
+import { resolveGoalLookupGoal } from "@/lib/goal-lookup";
 import type {
   HydrateMode,
   ThreadHydratorDeps,
@@ -116,6 +118,7 @@ export class ThreadHydrator {
     const cached = getCachedRecord(threadId);
     if (cached) {
       this.restoreFromCache(threadId, cached);
+      void this.refreshThreadGoal(threadId);
       this.auxiliaryHydrator.hydrate(threadId, {
         freshnessTtlMs: HYDRATION_TTL_MS,
         force: opts?.force,
@@ -183,6 +186,32 @@ export class ThreadHydrator {
     });
   }
 
+  /** Apply lookup result semantics to the live record and record cache. */
+  private applyGoalLookup(threadId: string, lookup: GoalLookupResult): void {
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      const current = getThreadRecord(state.records, threadId);
+      const goal = resolveGoalLookupGoal(lookup, current.goal);
+      return {
+        records: patchThreadRecord(state.records, threadId, { goal }),
+      };
+    });
+
+    const cached = getCachedRecord(threadId);
+    if (!cached) return;
+    const goal = resolveGoalLookupGoal(lookup, cached.goal);
+    cacheRecord(threadId, { ...cached, goal });
+  }
+
+  /** Refresh one thread's active goal without blocking main hydration. */
+  private async refreshThreadGoal(threadId: string): Promise<void> {
+    try {
+      const lookup = await this.transport().getThreadGoal(threadId);
+      this.applyGoalLookup(threadId, lookup);
+    } catch {
+      // Best-effort hydration: message load remains the authoritative error surface.
+    }
+  }
+
   /** Cache-miss path: reset volatile state, fetch RPCs, commit, populate cache. */
   private async fetchAndCommit(threadId: string, opts?: ThreadHydratorOptions): Promise<void> {
     const { getState, setState } = this.deps;
@@ -239,11 +268,13 @@ export class ThreadHydrator {
       const workspaceThread = this.deps.getWorkspaceThread(threadId);
       const shouldFetchSnapshots = workspaceThread?.has_file_changes !== false;
 
-      const [pageResult, snapshots] = await Promise.all([
+      const goalLookupPromise = this.transport().getThreadGoal(threadId).catch(() => null);
+      const [pageResult, snapshots, goalLookup] = await Promise.all([
         this.transport().loadConversationPage(threadId, MESSAGE_FETCH_SIZE),
         shouldFetchSnapshots
           ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
           : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>),
+        goalLookupPromise,
       ]);
 
       if (getState().currentThreadId !== threadId) return;
@@ -283,6 +314,9 @@ export class ThreadHydrator {
       }
 
       cacheRecord(threadId, getThreadRecord(getState().records, threadId));
+      if (goalLookup) {
+        this.applyGoalLookup(threadId, goalLookup);
+      }
     } catch (e) {
       if (getState().currentThreadId === threadId) {
         setState((state: ThreadHydratorWriteState) => ({

@@ -33,6 +33,7 @@ import { shallowEqualBy } from "@/lib/shallowEqualBy";
 import { coerceTaskStatus } from "@/stores/taskStore";
 import { getTransport } from "@/transport";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
+import type { GoalState } from "@mcode/contracts";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -44,6 +45,22 @@ const THREAD_B = "thread-b";
 
 const msgA = createMockMessage({ id: "a1", thread_id: THREAD_A, content: "hello A", sequence: 1 });
 const msgB = createMockMessage({ id: "b1", thread_id: THREAD_B, content: "hello B", sequence: 1 });
+
+function makeGoal(threadId = THREAD_A): GoalState {
+  return {
+    threadId,
+    objective: `goal for ${threadId}`,
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    providerId: "codex",
+    source: "codex",
+    controls: { canInspect: true, canClear: true },
+  };
+}
 
 function makeCachedRecord(messages = [msgA]): ThreadRecord {
   return {
@@ -101,6 +118,12 @@ function resetStores() {
   (mockTransport.getThreadTasks as ReturnType<typeof vi.fn>).mockResolvedValue(null);
   (mockTransport.getThreadPlans as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (mockTransport.loadTurn as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (mockTransport.getThreadGoal as ReturnType<typeof vi.fn>).mockResolvedValue({
+    goal: null,
+    authoritative: false,
+    source: "codex-cache",
+    reason: "not-materialized",
+  });
 
   useWorkspaceStore.setState({
     threads: [
@@ -149,6 +172,59 @@ describe("ThreadHydrator", () => {
     expect(getTestActiveMessages()).toEqual([msgA]);
     expect(readActiveThreadField((r) => r.loading)).toBe(false);
     expect(getCachedRecord(THREAD_A)?.messages).toEqual([msgA]);
+  });
+
+  it("preserves an existing open goal when lookup returns non-authoritative null", async () => {
+    const goal = makeGoal();
+    resetThreadStoreForTests({
+      records: new Map<string, ThreadRecord>([
+        [THREAD_A, { ...createEmptyThreadRecord(), goal }],
+      ]),
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+
+    expect(readActiveThreadField((r) => r.goal)).toEqual(goal);
+    expect(getCachedRecord(THREAD_A)?.goal).toEqual(goal);
+  });
+
+  it("clears live and cached goals when lookup returns authoritative null", async () => {
+    const goal = makeGoal();
+    cacheRecord(THREAD_A, { ...makeCachedRecord(), goal });
+    (mockTransport.getThreadGoal as ReturnType<typeof vi.fn>).mockResolvedValue({
+      goal: null,
+      authoritative: true,
+      source: "unsupported",
+      reason: "unsupported-provider",
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+    await vi.waitFor(() => {
+      expect(readActiveThreadField((r) => r.goal)).toBeNull();
+    });
+
+    expect(getCachedRecord(THREAD_A)?.goal).toBeNull();
+  });
+
+  it("applies lookup goals only to the requested thread", async () => {
+    const goalA = makeGoal(THREAD_A);
+    const goalB = makeGoal(THREAD_B);
+    resetThreadStoreForTests({
+      records: new Map<string, ThreadRecord>([
+        [THREAD_B, { ...createEmptyThreadRecord(), goal: goalB }],
+      ]),
+    });
+    (mockTransport.getThreadGoal as ReturnType<typeof vi.fn>).mockResolvedValue({
+      goal: goalA,
+      authoritative: false,
+      source: "codex-cache",
+      reason: "not-materialized",
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+
+    expect(useThreadStore.getState().records.get(THREAD_A)?.goal).toEqual(goalA);
+    expect(useThreadStore.getState().records.get(THREAD_B)?.goal).toEqual(goalB);
   });
 
   it("skips auxiliary fanout on cache hit within the TTL window", async () => {

@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogClose,
@@ -94,6 +95,7 @@ import {
   MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME,
   isVirtualBrowserContextAttachment,
   attachmentAcceptAttribute,
+  isGoalOpen,
 } from "@mcode/contracts";
 import type {
   AttachedBrowserCapture,
@@ -572,6 +574,16 @@ function formatGoalElapsed(seconds: number): string {
   return `${hours}h ${remainingMinutes}m`;
 }
 
+function formatGoalDate(value: number): string {
+  return new Date(goalTimestampMs(value)).toLocaleString();
+}
+
+function normalizeGoalActionError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return "Try again.";
+}
+
 function goalStatusLabel(status: GoalState["status"]): string {
   switch (status) {
     case "paused":
@@ -590,7 +602,8 @@ function goalStatusLabel(status: GoalState["status"]): string {
   }
 }
 
-function ActiveGoalBar({
+/** Shows the active provider goal and exposes app-level goal actions. */
+export function ActiveGoalBar({
   threadId,
   goal,
 }: {
@@ -598,20 +611,129 @@ function ActiveGoalBar({
   goal: GoalState | null | undefined;
 }) {
   const [now, setNow] = useState(() => Date.now());
-  const sendMessage = useThreadStore((s) => s.sendMessage);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [refreshError, setRefreshError] = useState(false);
+  const [isRefreshingGoal, setIsRefreshingGoal] = useState(false);
+  const [isClearingGoal, setIsClearingGoal] = useState(false);
+  const [lookupSource, setLookupSource] = useState<string | null>(null);
+  const [lookupReason, setLookupReason] = useState<string | null>(null);
+  const actionScopeRef = useRef({ threadId, refreshRequestId: 0, clearRequestId: 0 });
+  const refreshThreadGoal = useThreadStore((s) => s.refreshThreadGoal);
+  const clearThreadGoal = useThreadStore((s) => s.clearThreadGoal);
 
   useEffect(() => {
-    if (!goal || goal.status === "complete") return;
+    actionScopeRef.current = {
+      threadId,
+      refreshRequestId: actionScopeRef.current.refreshRequestId + 1,
+      clearRequestId: actionScopeRef.current.clearRequestId + 1,
+    };
+    setDetailsOpen(false);
+    setRefreshError(false);
+    setIsRefreshingGoal(false);
+    setIsClearingGoal(false);
+    setLookupSource(null);
+    setLookupReason(null);
+  }, [threadId]);
+
+  useEffect(() => {
+    if (!isGoalOpen(goal)) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [goal?.createdAt, goal?.status]);
+  }, [goal]);
 
-  if (!goal || goal.status === "complete") return null;
+  if (!isGoalOpen(goal)) return null;
 
   const createdAt = goalTimestampMs(goal.createdAt);
   const elapsed = Math.max(goal.timeUsedSeconds, Math.floor((now - createdAt) / 1000));
   const canInspect = goal.controls.canInspect === true;
   const canClear = goal.controls.canClear === true;
+  const openDetails = (open: boolean) => {
+    setDetailsOpen(open);
+    if (!open) return;
+    const refreshRequestId = actionScopeRef.current.refreshRequestId + 1;
+    actionScopeRef.current = { ...actionScopeRef.current, threadId, refreshRequestId };
+    setIsRefreshingGoal(true);
+    setRefreshError(false);
+    void refreshThreadGoal(threadId)
+      .then((lookup) => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.refreshRequestId !== refreshRequestId
+        ) return;
+        setLookupSource(lookup.source);
+        setLookupReason(lookup.reason ?? null);
+      })
+      .catch(() => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.refreshRequestId !== refreshRequestId
+        ) return;
+        setRefreshError(true);
+      })
+      .finally(() => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.refreshRequestId !== refreshRequestId
+        ) return;
+        setIsRefreshingGoal(false);
+      });
+  };
+  const handleClearGoal = () => {
+    if (isClearingGoal) return;
+    const refreshRequestId = actionScopeRef.current.refreshRequestId + 1;
+    const clearRequestId = actionScopeRef.current.clearRequestId + 1;
+    actionScopeRef.current = {
+      ...actionScopeRef.current,
+      threadId,
+      refreshRequestId,
+      clearRequestId,
+    };
+    setIsRefreshingGoal(false);
+    setRefreshError(false);
+    setIsClearingGoal(true);
+    void clearThreadGoal(threadId)
+      .then((lookup) => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.clearRequestId !== clearRequestId
+        ) return;
+        setLookupSource(lookup.source);
+        setLookupReason(lookup.reason ?? null);
+        if (lookup.source === "unsupported") {
+          useToastStore.getState().show(
+            "error",
+            "Goal controls unavailable",
+            "This provider does not support app-level goal controls.",
+          );
+          return;
+        }
+        if (lookup.goal && !lookup.authoritative) {
+          useToastStore.getState().show(
+            "info",
+            "Goal was not cleared",
+            "The provider did not report an active goal to clear.",
+          );
+        }
+      })
+      .catch((error) => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.clearRequestId !== clearRequestId
+        ) return;
+        useToastStore.getState().show(
+          "error",
+          "Could not clear goal",
+          normalizeGoalActionError(error),
+        );
+      })
+      .finally(() => {
+        if (
+          actionScopeRef.current.threadId !== threadId ||
+          actionScopeRef.current.clearRequestId !== clearRequestId
+        ) return;
+        setIsClearingGoal(false);
+      });
+  };
 
   return (
     <div
@@ -620,32 +742,91 @@ function ActiveGoalBar({
     >
       <div className="min-w-0 flex items-center gap-2">
         <Target size={13} className="shrink-0 text-primary" aria-hidden="true" />
-        <span className="shrink-0 font-medium text-foreground">
+        <Badge variant="secondary" size="sm" className="shrink-0">
           {goalStatusLabel(goal.status)}
-        </span>
+        </Badge>
         <span className="shrink-0 text-muted-foreground/80">·</span>
         <span className="shrink-0 tabular-nums">{formatGoalElapsed(elapsed)}</span>
         <span className="truncate text-muted-foreground/80">{goal.objective}</span>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {isClearingGoal && !detailsOpen && (
+          <span className="text-muted-foreground">Clearing...</span>
+        )}
         {canInspect && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
+          <Popover open={detailsOpen} onOpenChange={openDetails}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <PopoverTrigger
+                    render={
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                        aria-label="Show active goal"
+                      >
+                        <Info size={13} />
+                      </Button>
+                    }
+                  />
+                }
+              />
+              <TooltipContent>Show active goal</TooltipContent>
+            </Tooltip>
+            <PopoverContent align="end" sideOffset={8} className="w-80 space-y-3 p-3 text-xs">
+              <div className="space-y-1">
+                <div className="font-medium text-foreground">{goal.objective}</div>
+                <div className="text-muted-foreground">{goalStatusLabel(goal.status)}</div>
+              </div>
+              <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
+                <span>Elapsed</span>
+                <span className="text-foreground">{formatGoalElapsed(elapsed)}</span>
+                <span>Tokens used</span>
+                <span className="text-foreground tabular-nums">{goal.tokensUsed}</span>
+                {goal.tokenBudget != null && (
+                  <>
+                    <span>Token budget</span>
+                    <span className="text-foreground tabular-nums">{goal.tokenBudget}</span>
+                  </>
+                )}
+                <span>Goal source</span>
+                <span className="text-foreground">{goal.source}</span>
+                <span>Updated</span>
+                <span className="text-foreground">{formatGoalDate(goal.updatedAt)}</span>
+                <span>Lookup source</span>
+                <span className="text-foreground">{lookupSource ?? "Refreshing"}</span>
+                {lookupReason && (
+                  <>
+                    <span>Lookup reason</span>
+                    <span className="text-foreground">{lookupReason}</span>
+                  </>
+                )}
+              </div>
+              {(isRefreshingGoal || refreshError || isClearingGoal) && (
+                <div className="text-muted-foreground">
+                  {isClearingGoal
+                    ? "Clearing..."
+                    : refreshError
+                      ? "Could not refresh goal details."
+                      : "Refreshing..."}
+                </div>
+              )}
+              {canClear && (
                 <Button
                   type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  aria-label="Show active goal"
-                  onClick={() => void sendMessage(threadId, "/goal show")}
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  disabled={isClearingGoal}
+                  onClick={handleClearGoal}
                 >
-                  <Info size={13} />
+                  {isClearingGoal ? "Clearing..." : "Clear"}
                 </Button>
-              }
-            />
-            <TooltipContent>Show active goal</TooltipContent>
-          </Tooltip>
+              )}
+            </PopoverContent>
+          </Popover>
         )}
         {canClear && (
           <Tooltip>
@@ -657,7 +838,8 @@ function ActiveGoalBar({
                   size="icon"
                   className="h-6 w-6 text-muted-foreground hover:text-destructive"
                   aria-label="Clear active goal"
-                  onClick={() => void sendMessage(threadId, "/goal clear")}
+                  disabled={isClearingGoal}
+                  onClick={handleClearGoal}
                 >
                   <Trash2 size={13} />
                 </Button>

@@ -2,7 +2,7 @@ import type { AgentEvent } from "../events/agent-event.js";
 import type { InteractionMode } from "../models/enums.js";
 import type { AttachmentMeta } from "../models/attachment.js";
 import type { MessageMention } from "../models/mention.js";
-import type { GoalState } from "../models/goal.js";
+import type { GoalLookupResult, GoalState } from "../models/goal.js";
 import type { PermissionDecision, PermissionRequest } from "../models/permission.js";
 import type { ContextWindowMode, ReasoningLevel } from "../models/settings.js";
 import type { SkillInfo } from "../skills.js";
@@ -193,6 +193,8 @@ export interface IGoalCapable extends IAgentProvider {
   clearGoal(sessionId: string): boolean | Promise<boolean>;
   /** Return the active goal state for a session, or undefined. */
   getGoal(sessionId: string): GoalState | undefined | Promise<GoalState | undefined>;
+  /** Return active goal lookup metadata without spawning or resuming provider work. */
+  getGoalLookup?(sessionId: string): GoalLookupResult | Promise<GoalLookupResult>;
 }
 
 /**

@@ -2,6 +2,7 @@ import type { PermissionDecision } from "@mcode/contracts";
 import type { Message, ToolCall, HookExecution } from "@/transport/types";
 import type { ThoughtSegment } from "./narrative/types";
 import { computeLiveStreamingText } from "./narrative/build-narrative";
+import { isGoalStatusNotice } from "@/lib/goal-message";
 
 /** Compile-time exhaustive check; throws at runtime for unhandled discriminants. */
 function assertNever(value: never): never {
@@ -581,16 +582,23 @@ export function buildVirtualItems(
   // Split volatile items: narrative-flow goes before the last assistant
   // message; permission requests go after it.
 
-  // Find the last assistant message, skipping any trailing items that appear
-  // after the message bubble (turn-changes, persisted-late-hooks,
-  // persisted-turn-footer).
+  // Find the last assistant answer, skipping trailing chrome and goal notices.
   let lastAssistantIdx = stableItems.length - 1;
   while (lastAssistantIdx >= 0) {
     const item = stableItems[lastAssistantIdx];
     if (
       item.type === "turn-changes" ||
       item.type === "persisted-late-hooks" ||
-      item.type === "persisted-turn-footer"
+      item.type === "persisted-turn-footer" ||
+      item.type === "persisted-narrative"
+    ) {
+      lastAssistantIdx--;
+      continue;
+    }
+    if (
+      item.type === "message" &&
+      item.message.role === "assistant" &&
+      isGoalStatusNotice(item.message.content)
     ) {
       lastAssistantIdx--;
       continue;

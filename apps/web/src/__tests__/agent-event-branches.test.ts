@@ -4,6 +4,7 @@ import {
   getTestThreadToolCalls,
   getTestThreadError,
   getTestThreadLastFallback,
+  readThreadField,
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -762,5 +763,100 @@ describe("subagent count via markPriorToolCallsComplete", () => {
     expect(countActiveSubagentCalls(getTestThreadToolCalls("thread-1"))).toBe(
       2,
     );
+  });
+
+  it("does not let goal receipts claim current turn response identity", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.message",
+      params: { messageId: "answer-1", content: "The rendering bug is fixed." },
+    });
+
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.message",
+      params: { messageId: "goal-1", content: "Goal achieved in 19s." },
+    });
+
+    const rec = readThreadField("thread-1", (record) => record);
+    expect(rec.currentTurnMessageId).toBe("answer-1");
+    expect(rec.assistantResponseKeys["answer-1"]).toBeDefined();
+    expect(rec.assistantResponseKeys["goal-1"]).toBeUndefined();
+    expect(rec.messages.map((message) => message.id)).toEqual(["answer-1", "goal-1"]);
+  });
+
+  it("keeps near-match goal receipt text as a normal assistant response", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.message",
+      params: { messageId: "answer-1", content: "Goal achieved in 19s. Here is the summary." },
+    });
+
+    const rec = readThreadField("thread-1", (record) => record);
+    expect(rec.currentTurnMessageId).toBe("answer-1");
+    expect(rec.assistantResponseKeys["answer-1"]).toBeDefined();
+  });
+
+  it("clears active goal state when a goal update is complete", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.goalUpdated",
+      params: {
+        goal: {
+          objective: "fix rendering",
+          status: "active",
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          source: "claude",
+          controls: { canInspect: true, canClear: true },
+        },
+      },
+    });
+    expect(readThreadField("thread-1", (record) => record.goal?.status)).toBe("active");
+
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.goalUpdated",
+      params: {
+        goal: {
+          objective: "fix rendering",
+          status: "complete",
+          tokenBudget: null,
+          tokensUsed: 10,
+          timeUsedSeconds: 19,
+          createdAt: 1,
+          updatedAt: 20,
+          source: "codex",
+          controls: { canInspect: true, canClear: false },
+        },
+      },
+    });
+
+    expect(readThreadField("thread-1", (record) => record.goal)).toBeNull();
+  });
+
+  it("clears active goal state when a goalCleared event arrives", () => {
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.goalUpdated",
+      params: {
+        goal: {
+          objective: "say hi",
+          status: "active",
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          source: "codex",
+          controls: { canInspect: true, canClear: true },
+        },
+      },
+    });
+    expect(readThreadField("thread-1", (record) => record.goal?.objective)).toBe("say hi");
+
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.goalCleared",
+      params: { providerId: "codex", reason: "completed" },
+    });
+
+    expect(readThreadField("thread-1", (record) => record.goal)).toBeNull();
   });
 });

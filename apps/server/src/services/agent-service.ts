@@ -9,7 +9,7 @@ import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
 import { isAbsolute } from "path";
 import { logger, validateBranchName } from "@mcode/shared";
-import { AgentEventType, isSessionEvictable } from "@mcode/contracts";
+import { AgentEventType, isGoalCapable, isGoalOpen, isSessionEvictable } from "@mcode/contracts";
 import type {
   Thread,
   AttachmentMeta,
@@ -26,6 +26,8 @@ import type {
   PlanOutput,
   PlanAction,
   MessageMention,
+  GoalState,
+  GoalLookupResult,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -110,6 +112,71 @@ const FORK_HISTORY_BUDGET_BYTES = 1_000_000;
 const FORK_HISTORY_PAGE_SIZE = 100;
 const FORK_HISTORY_MAX_MESSAGES = 500;
 const GOAL_ACHIEVED_RECEIPT_RE = /^Goal achieved in \d+s\.$/;
+const DIRECT_RESPONSE_GOAL_RE = /^\s*(?:say|reply|respond|answer)(?:\s+with)?\s+(.+?)\s*$/i;
+type AgentMessageEvent = Extract<AgentEvent, { type: "message" }>;
+
+interface ClaudeNativeGoalProvider {
+  hasNativeGoalCommand(sessionId: string): boolean;
+  runNativeGoalCommand(
+    sessionId: string,
+    command: "/goal" | "/goal off",
+  ): Promise<{ kind: "active"; objective: string } | { kind: "cleared"; objective: string } | { kind: "empty" } | { kind: "unavailable" } | null>;
+}
+
+function asClaudeNativeGoalProvider(provider: IAgentProvider): ClaudeNativeGoalProvider | null {
+  const candidate = provider as Partial<ClaudeNativeGoalProvider>;
+  return typeof candidate.hasNativeGoalCommand === "function" &&
+    typeof candidate.runNativeGoalCommand === "function"
+    ? (candidate as ClaudeNativeGoalProvider)
+    : null;
+}
+
+function stripSurroundingGoalQuotes(value: string): string {
+  const text = value.trim();
+  const pairs: Array<[string, string]> = [
+    ['"', '"'],
+    ["'", "'"],
+    ["`", "`"],
+    ["“", "”"],
+    ["‘", "’"],
+  ];
+  for (const [open, close] of pairs) {
+    if (text.startsWith(open) && text.endsWith(close) && text.length >= open.length + close.length) {
+      return text.slice(open.length, text.length - close.length).trim();
+    }
+  }
+  return text;
+}
+
+function normalizeDirectResponseGoalText(value: string): string {
+  return stripSurroundingGoalQuotes(value)
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function directResponseGoalTarget(objective: string): string | null {
+  const match = DIRECT_RESPONSE_GOAL_RE.exec(objective);
+  if (!match) return null;
+  const target = normalizeDirectResponseGoalText(match[1]);
+  return target.length > 0 ? target : null;
+}
+
+function satisfiesDirectResponseGoal(goal: GoalState, content: string): boolean {
+  const target = directResponseGoalTarget(goal.objective);
+  if (!target) return false;
+  return normalizeDirectResponseGoalText(content) === target;
+}
+
+function goalTimestampMs(value: number): number {
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
+function elapsedGoalSeconds(goal: GoalState, nowMs: number): number {
+  const elapsed = Math.floor((nowMs - goalTimestampMs(goal.createdAt)) / 1000);
+  return Math.max(goal.timeUsedSeconds, elapsed, 0);
+}
 
 /**
  * Extract the harness-assigned task id from a `TaskCreate` result line such as
@@ -124,6 +191,7 @@ function parseHarnessTaskId(output: string): string | null {
 @injectable()
 export class AgentService {
   private readonly activeSessionIds = new Set<string>();
+  private readonly nativeGoalRefreshInFlight = new Set<string>();
   private initialized = false;
   /** Running context token estimate, per thread. Reset on compaction start; overwritten on turnComplete. */
   private lastContextByThread = new Map<string, number>();
@@ -1307,6 +1375,125 @@ export class AgentService {
     }
   }
 
+  /** Return a thread's active open goal without starting provider work. */
+  async getThreadGoal(threadId: string): Promise<GoalLookupResult> {
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread) throw new Error(`Thread not found: ${threadId}`);
+
+    const providerId = (thread.provider ?? "claude") as ProviderId;
+    const provider = this.providerRegistry.resolve(providerId);
+    if (!isGoalCapable(provider)) {
+      return {
+        goal: null,
+        authoritative: true,
+        source: "unsupported",
+        reason: "unsupported-provider",
+      };
+    }
+
+    const sessionId = `mcode-${threadId}`;
+    const result = provider.getGoalLookup
+      ? await provider.getGoalLookup(sessionId)
+      : {
+          goal: await provider.getGoal(sessionId),
+          authoritative: false,
+          source: providerId === "codex" ? "codex-cache" as const : "claude-wrapper" as const,
+          reason: "missing" as const,
+        };
+    return {
+      ...result,
+      goal: isGoalOpen(result.goal) ? result.goal : null,
+    };
+  }
+
+  /** Clear a thread's active goal without writing transcript rows or starting a turn. */
+  async clearThreadGoal(threadId: string): Promise<GoalLookupResult> {
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread) throw new Error(`Thread not found: ${threadId}`);
+
+    const providerId = (thread.provider ?? "claude") as ProviderId;
+    const provider = this.providerRegistry.resolve(providerId);
+    if (!isGoalCapable(provider)) {
+      return {
+        goal: null,
+        authoritative: true,
+        source: "unsupported",
+        reason: "unsupported-provider",
+      };
+    }
+
+    const sessionId = `mcode-${threadId}`;
+    const nativeClaude = asClaudeNativeGoalProvider(provider);
+    if (nativeClaude?.hasNativeGoalCommand(sessionId) === true) {
+      const lookup = provider.getGoalLookup
+        ? await provider.getGoalLookup(sessionId)
+        : { goal: await provider.getGoal(sessionId), authoritative: false, source: "claude-cache" as const };
+      const currentGoal = isGoalOpen(lookup.goal) ? lookup.goal : null;
+      if (currentGoal && this.activeSessionIds.has(threadId)) {
+        return {
+          goal: currentGoal,
+          authoritative: false,
+          source: "claude-cache",
+          reason: "busy",
+        };
+      }
+
+      const result = await nativeClaude.runNativeGoalCommand(sessionId, "/goal off");
+      if (result?.kind === "cleared" || result?.kind === "empty") {
+        return {
+          goal: null,
+          authoritative: true,
+          source: "claude-native-command",
+        };
+      }
+      if (result?.kind === "unavailable") {
+        return {
+          goal: currentGoal,
+          authoritative: false,
+          source: "claude-cache",
+          reason: currentGoal ? "missing" : "not-materialized",
+        };
+      }
+      const goalAfterNativeClear = provider.getGoalLookup
+        ? (await provider.getGoalLookup(sessionId)).goal
+        : await provider.getGoal(sessionId);
+      return {
+        goal: isGoalOpen(goalAfterNativeClear) ? goalAfterNativeClear : currentGoal,
+        authoritative: false,
+        source: "claude-cache",
+        reason: "missing",
+      };
+    }
+
+    const source = providerId === "codex" ? "codex-native" as const : "claude-wrapper" as const;
+    const cleared = await provider.clearGoal(sessionId);
+    if (cleared) {
+      if (providerId === "codex" && provider.getGoalLookup) {
+        const lookup = await provider.getGoalLookup(sessionId);
+        if (lookup.source !== "codex-native" || lookup.authoritative !== true) {
+          return {
+            ...lookup,
+            goal: isGoalOpen(lookup.goal) ? lookup.goal : null,
+          };
+        }
+      }
+      return { goal: null, authoritative: true, source };
+    }
+
+    const lookup = provider.getGoalLookup
+      ? await provider.getGoalLookup(sessionId)
+      : {
+          goal: await provider.getGoal(sessionId),
+          authoritative: false,
+          source: providerId === "codex" ? "codex-cache" as const : "claude-wrapper" as const,
+          reason: "missing" as const,
+        };
+    return {
+      ...lookup,
+      goal: isGoalOpen(lookup.goal) ? lookup.goal : null,
+    };
+  }
+
   /** Stop the active turn and discard any pooled provider session for a deleted thread. */
   async teardownSession(threadId: string): Promise<void> {
     const sessionId = `mcode-${threadId}`;
@@ -1915,6 +2102,7 @@ export class AgentService {
               error: err instanceof Error ? err.message : String(err),
             });
           }
+          this.maybeCompleteDirectResponseGoal(provider, event);
           // A Message event marks the end of the turn. Any Agent calls still
           // on the stack are implicitly done - clear the stack so the next turn
           // starts clean (narrative-pipeline.md Trap 2 end-of-turn clear).
@@ -2148,6 +2336,7 @@ export class AgentService {
           if (!this.compactionInProgressByThread.has(event.threadId)) {
             this.trackSessionEnded(event.threadId);
             this.disarmTurnRetryWindow(event.threadId);
+            void this.refreshNativeClaudeGoalAfterTurn(event.threadId);
           }
 
           // Persist context usage so the tracker shows immediately on thread reload.
@@ -2346,6 +2535,113 @@ export class AgentService {
    */
   private normalizeProviderError(message: string, provider: string): string {
     return normalizeAgentProviderError(provider, message);
+  }
+
+  private emitProviderEvent(provider: IAgentProvider, event: AgentEvent): void {
+    const emitter = provider as unknown as {
+      emit?: (eventName: "event", event: AgentEvent) => boolean;
+    };
+    if (typeof emitter.emit !== "function") return;
+    emitter.emit.call(provider, "event", event);
+  }
+
+  private refreshNativeClaudeGoalAfterTurn(threadId: string): void {
+    if (this.activeSessionIds.has(threadId)) return;
+    if (this.nativeGoalRefreshInFlight.has(threadId)) return;
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread || thread.provider !== "claude") return;
+    const provider = this.providerRegistry.resolve("claude");
+    const nativeClaude = asClaudeNativeGoalProvider(provider);
+    const sessionId = `mcode-${threadId}`;
+    if (nativeClaude?.hasNativeGoalCommand(sessionId) !== true || !isGoalCapable(provider)) {
+      return;
+    }
+
+    void (async () => {
+      this.nativeGoalRefreshInFlight.add(threadId);
+      try {
+        const before = await provider.getGoal(sessionId);
+        if (!isGoalOpen(before)) return;
+        if (this.activeSessionIds.has(threadId)) return;
+        const result = await nativeClaude.runNativeGoalCommand(sessionId, "/goal");
+        if (result?.kind === "empty") {
+          const nowMs = Date.now();
+          this.emitProviderEvent(provider, {
+            type: AgentEventType.GoalUpdated,
+            threadId,
+            goal: {
+              ...before,
+              status: "complete",
+              timeUsedSeconds: elapsedGoalSeconds(before, nowMs),
+              updatedAt: nowMs,
+              controls: { ...before.controls, canClear: false },
+            },
+          } satisfies AgentEvent);
+          this.emitProviderEvent(provider, {
+            type: AgentEventType.GoalCleared,
+            threadId,
+            providerId: before.providerId ?? "claude",
+            reason: "completed",
+            turnId: before.turnId ?? null,
+          } satisfies AgentEvent);
+        }
+      } finally {
+        this.nativeGoalRefreshInFlight.delete(threadId);
+      }
+    })().catch((err: unknown) => {
+      logger.warn("Native Claude goal refresh failed", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
+  private maybeCompleteDirectResponseGoal(provider: IAgentProvider, event: AgentMessageEvent): void {
+    if (!isGoalCapable(provider)) return;
+    if (GOAL_ACHIEVED_RECEIPT_RE.test(event.content.trim())) return;
+
+    const sessionId = `mcode-${event.threadId}`;
+    void (async () => {
+      const goal = await provider.getGoal(sessionId);
+      if (!isGoalOpen(goal) || !satisfiesDirectResponseGoal(goal, event.content)) {
+        return;
+      }
+
+      const cleared = await provider.clearGoal(sessionId);
+      if (!cleared) {
+        logger.warn("Direct-response goal matched but provider did not clear it", {
+          threadId: event.threadId,
+          providerId: goal.providerId,
+          objective: goal.objective,
+        });
+        return;
+      }
+
+      const nowMs = Date.now();
+      this.emitProviderEvent(provider, {
+        type: AgentEventType.GoalUpdated,
+        threadId: event.threadId,
+        goal: {
+          ...goal,
+          status: "complete",
+          timeUsedSeconds: elapsedGoalSeconds(goal, nowMs),
+          updatedAt: nowMs,
+          controls: { ...goal.controls, canClear: false },
+        },
+      } satisfies AgentEvent);
+      this.emitProviderEvent(provider, {
+        type: AgentEventType.GoalCleared,
+        threadId: event.threadId,
+        providerId: goal.providerId ?? "unknown",
+        reason: "completed",
+        turnId: goal.turnId ?? null,
+      } satisfies AgentEvent);
+    })().catch((err: unknown) => {
+      logger.warn("Direct-response goal completion check failed", {
+        threadId: event.threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 
   /**

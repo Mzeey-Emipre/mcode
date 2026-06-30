@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, GoalState } from "@mcode/contracts";
+import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, GoalLookupResult, GoalState } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
-import { PlanQuestionSchema, PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
+import { PlanQuestionSchema, PERMISSION_MODES, INTERACTION_MODES, isGoalOpen } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
@@ -24,6 +24,8 @@ import { shallowEqualBy } from "@/lib/shallowEqualBy";
 import { forgetScrollTop } from "@/components/chat/scrollPositionMemory";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
 import { isGoalControlCommand } from "@/lib/goal-command";
+import { resolveGoalLookupGoal } from "@/lib/goal-lookup";
+import { isGoalStatusNotice } from "@/lib/goal-message";
 import {
   createThreadHydrator,
   registerThreadHydrator,
@@ -117,6 +119,10 @@ interface ThreadState {
   /** Mark a permission request as settled with its decision. */
   resolvePermissionRequest: (requestId: string, decision: PermissionDecision) => void;
   handleAgentEvent: (threadId: string, event: Record<string, unknown>) => void;
+  /** Refresh the provider-neutral goal lookup for a thread and update cached thread state. */
+  refreshThreadGoal: (threadId: string) => Promise<GoalLookupResult>;
+  /** Clear the active goal through the app RPC and update cached thread state. */
+  clearThreadGoal: (threadId: string) => Promise<GoalLookupResult>;
 
   /**
    * Fetch the persisted narrative (tools, thoughts, hooks) for an assistant
@@ -625,6 +631,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     patch: Partial<ThreadRecord> | ((current: ThreadRecord) => Partial<ThreadRecord>),
   ) => {
     set((s) => ({ records: patchThreadRecord(s.records, threadId, patch) }));
+  };
+
+  const applyGoalLookup = (threadId: string, lookup: GoalLookupResult): void => {
+    const current = getRec(threadId);
+    const goal = resolveGoalLookupGoal(lookup, current.goal);
+    patchRec(threadId, { goal });
+    const cached = getCachedRecord(threadId);
+    if (cached) cacheRecord(threadId, { ...cached, goal: resolveGoalLookupGoal(lookup, cached.goal) });
   };
 
   /**
@@ -1526,6 +1540,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     });
   },
 
+  refreshThreadGoal: async (threadId) => {
+    const lookup = await getTransport().getThreadGoal(threadId);
+    applyGoalLookup(threadId, lookup);
+    return lookup;
+  },
+
+  clearThreadGoal: async (threadId) => {
+    const lookup = await getTransport().clearThreadGoal(threadId);
+    applyGoalLookup(threadId, lookup);
+    return lookup;
+  },
+
   loadNarrativeForMessage: async (messageId) => {
     const currentId = get().currentThreadId;
     if (!currentId) return;
@@ -1623,13 +1649,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (method === "session.goalUpdated") {
       const goal = params.goal as GoalState | undefined;
       if (goal) {
-        patchRec(threadId, { goal });
+        const openGoal = isGoalOpen(goal) ? goal : null;
+        patchRec(threadId, { goal: openGoal });
+        const cached = getCachedRecord(threadId);
+        if (cached) cacheRecord(threadId, { ...cached, goal: openGoal });
       }
       return;
     }
 
     if (method === "session.goalCleared") {
       patchRec(threadId, { goal: null });
+      const cached = getCachedRecord(threadId);
+      if (cached) cacheRecord(threadId, { ...cached, goal: null });
       return;
     }
 
@@ -1706,6 +1737,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (method === "session.message") {
       markPriorToolCallsComplete();
       const content = (params.content as string) || "";
+      const isGoalNotice = isGoalStatusNotice(content);
       const attachments = parseStoredAttachments(params.attachments);
       if (content || attachments.length > 0 || params.messageId) {
         const message: Message = {
@@ -1732,19 +1764,32 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             lastSeg && lastSeg.endedAt === undefined
               ? [...segments.slice(0, -1), { ...lastSeg, endedAt: Date.now() }]
               : segments;
-          const { responseKey, nextLiveKey } = claimTurnResponseKey(
-            rec,
-            threadId,
-            message.id,
-          );
+
+          const responseIdentityPatch: Partial<
+            Pick<
+              ThreadRecord,
+              "assistantResponseKeys" | "currentTurnMessageId" | "currentTurnResponseKey"
+            >
+          > = isGoalNotice
+            ? {}
+            : (() => {
+                const { responseKey, nextLiveKey } = claimTurnResponseKey(
+                  rec,
+                  threadId,
+                  message.id,
+                );
+                return {
+                  currentTurnMessageId: message.id,
+                  currentTurnResponseKey: nextLiveKey,
+                  assistantResponseKeys: {
+                    ...rec.assistantResponseKeys,
+                    [message.id]: responseKey,
+                  },
+                };
+              })();
 
           const turnPatch = {
-            currentTurnMessageId: message.id,
-            currentTurnResponseKey: nextLiveKey,
-            assistantResponseKeys: {
-              ...rec.assistantResponseKeys,
-              [message.id]: responseKey,
-            },
+            ...responseIdentityPatch,
             streaming: "",
             streamingPreview: "",
             thoughtSegments: closedSegments,
@@ -1798,10 +1843,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               attachments: message.attachments,
             });
             const { messages: capped, evicted } = capMessages(replaced);
-            const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
-              nextAssistantResponseKeys,
-              capped,
-            );
+            const prunedAssistantResponseKeys = pruneAssistantResponseKeys(nextAssistantResponseKeys, capped);
             return {
               records: patchThreadRecord(state.records, threadId, {
                 ...turnPatch,
@@ -1819,7 +1861,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
           const { messages: capped, evicted } = capMessages([...rec.messages, message]);
           const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
-            turnPatch.assistantResponseKeys,
+            responseIdentityPatch.assistantResponseKeys ?? rec.assistantResponseKeys,
             capped,
           );
           return {

@@ -32,6 +32,7 @@ import { NarrativeIndicator } from "./narrative/NarrativeIndicator";
 import { PersistedLateHooks } from "./PersistedLateHooks";
 import { StickyUserMessage, STICKY_USER_MESSAGE_ESTIMATED_HEIGHT } from "./StickyUserMessage";
 import { registerCommand } from "@/lib/command-registry";
+import { isGoalStatusNotice } from "@/lib/goal-message";
 import { shouldShowStickyUserMessage, type StickyVisibilityVirtualizer } from "./sticky-user-message-visibility";
 import { resolveUserMessagePreview } from "./user-message-preview";
 
@@ -484,10 +485,12 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   }
 
   const volatileItems = useMemo(() => {
-    const lastMsg = messages[messages.length - 1];
+    const lastAssistantAnswer = [...messages]
+      .reverse()
+      .find((message) => message.role === "assistant" && !isGoalStatusNotice(message.content));
     const committedAssistantBody =
-      currentThreadId && !isAgentRunning && lastMsg?.role === "assistant"
-        ? lastMsg.content
+      currentThreadId && !isAgentRunning && lastAssistantAnswer
+        ? lastAssistantAnswer.content
         : undefined;
     return volatileItemsBuilderRef.current!(
       toolCalls,
