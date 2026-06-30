@@ -7,6 +7,7 @@ import {
   buildThreadRecapPayload,
   createThreadRecapSignature,
   filterThreadRecapMessages,
+  getThreadRecapCoverageGap,
   resetThreadRecapRequestStateForTest,
   shouldScheduleThreadRecapGeneration,
   useThreadRecap,
@@ -183,6 +184,84 @@ describe("thread recap signatures and payloads", () => {
   });
 });
 
+describe("thread recap coverage gap", () => {
+  it("returns no affordance metadata for fresh, missing, or invalid coverage", () => {
+    const messages = [
+      recapMessage("u1", 1, "user", "first", "2026-06-25T10:00:00.000Z"),
+      recapMessage("a2", 2, "assistant", "second", "2026-06-25T10:01:00.000Z"),
+      recapMessage("u3", 3, "user", "third", "2026-06-25T10:02:00.000Z"),
+    ];
+    const signature = createThreadRecapSignature(messages);
+    const cached = {
+      text: "fresh",
+      signature,
+      coveredMessageId: "u3",
+      generatedAt: new Date(NOW).toISOString(),
+    };
+
+    expect(getThreadRecapCoverageGap({ messages, cached: undefined, signature })).toEqual({
+      hasCoverageGap: false,
+      coveredThrough: null,
+      latestActivityAt: null,
+    });
+    expect(getThreadRecapCoverageGap({ messages, cached, signature })).toEqual({
+      hasCoverageGap: false,
+      coveredThrough: null,
+      latestActivityAt: null,
+    });
+    expect(
+      getThreadRecapCoverageGap({
+        messages,
+        cached: { ...cached, signature: "old", coveredMessageId: "missing" },
+        signature,
+      }),
+    ).toEqual({
+      hasCoverageGap: false,
+      coveredThrough: null,
+      latestActivityAt: null,
+    });
+    expect(
+      getThreadRecapCoverageGap({
+        messages: messages.map((message) =>
+          message.id === "u3" ? { ...message, timestamp: "not-a-date" } : message,
+        ),
+        cached: { ...cached, signature: "old", coveredMessageId: "a2" },
+        signature,
+      }),
+    ).toEqual({
+      hasCoverageGap: false,
+      coveredThrough: null,
+      latestActivityAt: null,
+    });
+  });
+
+  it("returns coverage and latest timestamps when cached text trails loaded activity", () => {
+    const messages = [
+      recapMessage("u1", 1, "user", "first", "2026-06-25T10:00:00.000Z"),
+      recapMessage("a2", 2, "assistant", "second", "2026-06-25T10:01:00.000Z"),
+      recapMessage("u3", 3, "user", "third", "2026-06-25T10:02:00.000Z"),
+    ];
+    const signature = createThreadRecapSignature(messages);
+
+    expect(
+      getThreadRecapCoverageGap({
+        messages,
+        cached: {
+          text: "older",
+          signature: "old",
+          coveredMessageId: "a2",
+          generatedAt: new Date(NOW).toISOString(),
+        },
+        signature,
+      }),
+    ).toEqual({
+      hasCoverageGap: true,
+      coveredThrough: "2026-06-25T10:01:00.000Z",
+      latestActivityAt: "2026-06-25T10:02:00.000Z",
+    });
+  });
+});
+
 describe("useThreadRecap", () => {
   beforeEach(() => {
     resetThreadRecapRequestStateForTest();
@@ -218,6 +297,38 @@ describe("useThreadRecap", () => {
     expect(useThreadStore.getState().recapByThread[THREAD_ID]?.text).toBe("Fresh recap");
   });
 
+  it("keeps cached recap visible and reports coverage metadata for newer loaded activity", () => {
+    const messages = [
+      ...hookMessages("2026-06-25T10:00:00.000Z"),
+      createMockMessage({
+        id: "a4",
+        thread_id: THREAD_ID,
+        role: "assistant",
+        content: "Later eligible answer.",
+        sequence: 4,
+        timestamp: "2026-06-25T10:03:00.000Z",
+      }),
+    ];
+    const coveredMessages = filterThreadRecapMessages(messages.slice(0, 3));
+    useThreadStore.getState().recordThreadRecapGeneration({
+      threadId: THREAD_ID,
+      text: "Cached recap",
+      signature: createThreadRecapSignature(coveredMessages),
+      coveredMessageId: "u3",
+      generatedAt: new Date(NOW).toISOString(),
+      source: "automatic",
+    });
+
+    const { result } = renderHook(() =>
+      useThreadRecap({ threadId: THREAD_ID, messages, overviewOpen: false }),
+    );
+
+    expect(result.current.recapText).toBe("Cached recap");
+    expect(result.current.hasCoverageGap).toBe(true);
+    expect(result.current.coveredThrough).toBe("2026-06-25T10:00:00.000Z");
+    expect(result.current.latestActivityAt).toBe("2026-06-25T10:03:00.000Z");
+  });
+
   it("manual refresh dedupes a matching in-flight request", async () => {
     let resolveRpc!: (value: { text: string }) => void;
     vi.mocked(mockTransport.generateRecap).mockReturnValue(
@@ -241,6 +352,72 @@ describe("useThreadRecap", () => {
       expect(mockTransport.generateRecap).toHaveBeenCalledTimes(1);
     });
     expect(useThreadStore.getState().recapByThread[THREAD_ID]?.text).toBe("Deduped recap");
+  });
+
+  it("reports pending state while manual refresh is in flight", async () => {
+    let resolveRpc!: (value: { text: string }) => void;
+    vi.mocked(mockTransport.generateRecap).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRpc = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() =>
+      useThreadRecap({ threadId: THREAD_ID, messages: hookMessages(), overviewOpen: false }),
+    );
+
+    let refreshPromise!: Promise<void>;
+    act(() => {
+      refreshPromise = result.current.refresh();
+    });
+
+    await waitFor(() => {
+      expect(result.current.isGenerating).toBe(true);
+    });
+
+    await act(async () => {
+      resolveRpc({ text: "Finished recap" });
+      await refreshPromise;
+    });
+
+    expect(result.current.isGenerating).toBe(false);
+  });
+
+  it("reports manual refresh failures without dropping cached metadata", async () => {
+    vi.mocked(mockTransport.generateRecap).mockRejectedValue(new Error("provider failed"));
+
+    const { result } = renderHook(() =>
+      useThreadRecap({ threadId: THREAD_ID, messages: hookMessages(), overviewOpen: false }),
+    );
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.error).toBe("provider failed");
+    expect(result.current.recapText).toBeNull();
+  });
+
+  it("returns no coverage affordance for a fresh same-signature cache", () => {
+    const messages = hookMessages("2026-06-25T10:00:00.000Z");
+    const signature = createThreadRecapSignature(filterThreadRecapMessages(messages));
+    useThreadStore.getState().recordThreadRecapGeneration({
+      threadId: THREAD_ID,
+      text: "Fresh cached recap",
+      signature,
+      coveredMessageId: "u3",
+      generatedAt: new Date(NOW).toISOString(),
+      source: "automatic",
+    });
+
+    const { result } = renderHook(() =>
+      useThreadRecap({ threadId: THREAD_ID, messages, overviewOpen: false }),
+    );
+
+    expect(result.current.recapText).toBe("Fresh cached recap");
+    expect(result.current.hasCoverageGap).toBe(false);
+    expect(result.current.coveredThrough).toBeNull();
+    expect(result.current.latestActivityAt).toBeNull();
   });
 
   it("runs automatic generation when the Overview opens from closed and gates pass", async () => {

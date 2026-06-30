@@ -59,6 +59,12 @@ export interface ThreadRecapScheduleInput {
 export interface UseThreadRecapResult {
   /** Current session-cached recap text, if one exists. */
   recapText: string | null;
+  /** Whether the cached recap covers an older eligible message than the latest one loaded. */
+  hasCoverageGap: boolean;
+  /** Timestamp of the message covered by the cached recap, if a gap is derivable. */
+  coveredThrough: string | null;
+  /** Timestamp of the latest eligible message, if a gap is derivable. */
+  latestActivityAt: string | null;
   /** Whether generation is currently in flight for this thread/signature. */
   isGenerating: boolean;
   /** Last manual or automatic generation failure for the current thread. */
@@ -209,6 +215,45 @@ export function buildThreadRecapPayload(
 }
 
 /**
+ * Derives whether cached recap coverage trails the latest loaded eligible message.
+ */
+export function getThreadRecapCoverageGap({
+  messages,
+  cached,
+  signature,
+}: {
+  /** Filtered persisted user and assistant messages. */
+  messages: readonly ThreadRecapMessage[];
+  /** Existing session-only cache entry for the thread, if any. */
+  cached: ThreadRecapCacheEntry | undefined;
+  /** Current deterministic message signature. */
+  signature: string;
+}): Pick<UseThreadRecapResult, "hasCoverageGap" | "coveredThrough" | "latestActivityAt"> {
+  const noGap = {
+    hasCoverageGap: false,
+    coveredThrough: null,
+    latestActivityAt: null,
+  };
+  if (!cached) return noGap;
+  if (cached.signature === signature) return noGap;
+
+  const coveredIndex = messages.findIndex((message) => message.id === cached.coveredMessageId);
+  const coveredMessage = coveredIndex >= 0 ? messages[coveredIndex] : undefined;
+  const latestMessage = messages.at(-1);
+  if (!coveredMessage || !latestMessage || coveredIndex >= messages.length - 1) return noGap;
+
+  const coveredTime = Date.parse(coveredMessage.timestamp);
+  const latestTime = Date.parse(latestMessage.timestamp);
+  if (!Number.isFinite(coveredTime) || !Number.isFinite(latestTime)) return noGap;
+
+  return {
+    hasCoverageGap: true,
+    coveredThrough: coveredMessage.timestamp,
+    latestActivityAt: latestMessage.timestamp,
+  };
+}
+
+/**
  * Generates and caches a thread Recap on manual refresh or stale re-orientation.
  */
 export function useThreadRecap({
@@ -229,6 +274,10 @@ export function useThreadRecap({
     [filteredMessages],
   );
   const cached = useThreadStore((state) => state.recapByThread?.[threadId]);
+  const coverageGap = useMemo(
+    () => getThreadRecapCoverageGap({ messages: filteredMessages, cached, signature }),
+    [cached, filteredMessages, signature],
+  );
   const recordThreadRecapGeneration = useThreadStore((state) => state.recordThreadRecapGeneration);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -371,6 +420,7 @@ export function useThreadRecap({
 
   return {
     recapText: cached?.text ?? null,
+    ...coverageGap,
     isGenerating,
     error,
     refresh: useCallback(() => generate("manual"), [generate]),

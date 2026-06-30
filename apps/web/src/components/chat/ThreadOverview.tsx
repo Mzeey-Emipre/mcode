@@ -11,6 +11,7 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
+  Info,
   Laptop,
   Loader2,
   Menu,
@@ -590,19 +591,38 @@ function ThreadOverviewRepositoryRow({
 
 interface ThreadOverviewRecapRowProps {
   recapText: string | null;
+  hasCoverageGap: boolean;
+  coveredThrough: string | null;
+  latestActivityAt: string | null;
   isGenerating: boolean;
   error: string | null;
   onRefresh: () => void;
 }
 
+function formatThreadRecapTime(timestamp: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
 function ThreadOverviewRecapRow({
   recapText,
+  hasCoverageGap,
+  coveredThrough,
+  latestActivityAt,
   isGenerating,
   error,
   onRefresh,
 }: ThreadOverviewRecapRowProps) {
-  const label = recapText ?? (error ? "Recap unavailable" : "Generate recap");
+  const label = recapText ?? (error ? "Recap unavailable" : "No recap yet");
   const refreshLabel = isGenerating ? "Refreshing recap" : "Refresh recap";
+  const coverageLabel = hasCoverageGap && coveredThrough && latestActivityAt
+    ? {
+      coveredThrough: formatThreadRecapTime(coveredThrough),
+      latestActivityAt: formatThreadRecapTime(latestActivityAt),
+    }
+    : null;
 
   return (
     <div
@@ -611,25 +631,49 @@ function ThreadOverviewRecapRow({
     >
       <div className="flex min-w-0 items-center justify-between gap-2">
         <span className="shrink-0 text-xs font-medium text-muted-foreground">Recap</span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                type="button"
-                data-testid="thread-overview-recap-refresh"
-                aria-label={refreshLabel}
-                disabled={isGenerating}
-                onClick={onRefresh}
-                className={cn("-mr-1 shrink-0", isGenerating && "text-muted-foreground/45")}
-              >
-                <RefreshCw size={13} aria-hidden />
-              </Button>
-            }
-          />
-          <TooltipContent>{refreshLabel}</TooltipContent>
-        </Tooltip>
+        <div className="-mr-1 flex shrink-0 items-center gap-0.5">
+          {coverageLabel ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    type="button"
+                    data-testid="thread-overview-recap-coverage"
+                    aria-label={`Covered through ${coverageLabel.coveredThrough}. Latest activity ${coverageLabel.latestActivityAt}`}
+                    className="shrink-0 text-muted-foreground/55 hover:text-muted-foreground focus-visible:text-muted-foreground"
+                  >
+                    <Info size={12} aria-hidden />
+                  </Button>
+                }
+              />
+              <TooltipContent side="bottom" align="end" className="flex-col items-start gap-0.5">
+                <span>Covered through {coverageLabel.coveredThrough}</span>
+                <span>Latest activity {coverageLabel.latestActivityAt}</span>
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  data-testid="thread-overview-recap-refresh"
+                  aria-label={refreshLabel}
+                  disabled={isGenerating}
+                  onClick={onRefresh}
+                  className={cn("shrink-0", isGenerating && "text-muted-foreground/45")}
+                >
+                  <RefreshCw size={13} aria-hidden />
+                </Button>
+              }
+            />
+            <TooltipContent>{refreshLabel}</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
       {isGenerating ? (
         <div
@@ -1843,6 +1887,9 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             <Separator className="my-1.5" />
             <ThreadOverviewRecapRow
               recapText={threadRecap.recapText}
+              hasCoverageGap={threadRecap.hasCoverageGap}
+              coveredThrough={threadRecap.coveredThrough}
+              latestActivityAt={threadRecap.latestActivityAt}
               isGenerating={threadRecap.isGenerating}
               error={threadRecap.error}
               onRefresh={() => void threadRecap.refresh()}

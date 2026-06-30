@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { mockWebSocketServer } from "./helpers/e2e-helpers";
+import { interceptZustandStores, mockWebSocketServer } from "./helpers/e2e-helpers";
 
 /**
  * Visual demo: the Overview popover (repository row + Sources favicon grid),
@@ -94,6 +94,7 @@ const followUpMessage = {
   role: "user" as const,
   content: "Great, show that in the Overview too.",
   sequence: 3,
+  timestamp: "2026-06-19T00:17:00.000Z",
 };
 
 test.use({ viewport: { width: 1920, height: 1080 } });
@@ -106,6 +107,7 @@ test("Overview sources + humanized links demo", async ({ page }) => {
     resolveRecap = resolve;
   });
 
+  await interceptZustandStores(page);
   await mockWebSocketServer(page, {
     "workspace.list": [workspace],
     "thread.list": [thread],
@@ -160,6 +162,47 @@ test("Overview sources + humanized links demo", async ({ page }) => {
   resolveRecap({ text: recapText });
   await expect(page.getByTestId("thread-overview-recap-text")).toContainText("Checking SVG alternatives");
   await expect(page.getByTestId("thread-overview-recap-skeleton")).toHaveCount(0);
+  await page.evaluate((threadId) => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+      setState: (state: Record<string, unknown>) => void;
+    };
+    const stores = (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const threadStore = stores.find((store) => {
+      const state = store.getState();
+      return "recapByThread" in state && "records" in state;
+    });
+    const state = threadStore?.getState();
+    if (!threadStore || !state) throw new Error("Thread store unavailable");
+
+    threadStore.setState({
+      recapByThread: {
+        ...(state.recapByThread as Record<string, unknown>),
+        [threadId]: {
+          text: "Cached recap stays readable while newer activity exists.",
+          signature: "older-signature",
+          coveredMessageId: "assistant-demo",
+          generatedAt: "2026-06-19T00:01:00.000Z",
+        },
+      },
+    });
+  }, thread.id);
+  await expect(page.getByTestId("thread-overview-recap-text")).toContainText(
+    "Cached recap stays readable",
+  );
+  await page.getByTestId("thread-overview-recap").screenshot({
+    path: "e2e/screenshots/demo/overview-recap-coverage-row.png",
+  });
+  await page.getByTestId("thread-overview-recap-coverage").hover();
+  await expect(page.getByText(/Covered through/)).toBeVisible();
+  await expect(page.getByText(/Latest activity/)).toBeVisible();
+  await page.screenshot({
+    path: "e2e/screenshots/demo/overview-recap-coverage-tooltip.png",
+    fullPage: false,
+  });
+  await page.getByTestId("thread-overview-recap-coverage").focus();
+  await expect(page.getByText(/Covered through/)).toBeVisible();
+  await expect(page.getByTestId("thread-overview-recap")).not.toContainText(/stale|out of date|generate/i);
   const recapTextStyles = await page.getByTestId("thread-overview-recap-text").evaluate((node) => {
     const styles = window.getComputedStyle(node);
     return {
