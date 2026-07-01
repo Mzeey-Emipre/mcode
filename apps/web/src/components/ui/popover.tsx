@@ -33,12 +33,12 @@ function PopoverContent({
         alignOffset={alignOffset}
         collisionPadding={collisionPadding}
         side={side}
-        className="isolate z-50"
+        className="pointer-events-none isolate z-50"
       >
         <PopoverPrimitive.Popup
           data-slot="popover-content"
           className={cn(
-            "w-72 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-md outline-none",
+            "pointer-events-auto w-72 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-md outline-none",
             className,
           )}
           {...props}

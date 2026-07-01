@@ -298,7 +298,7 @@ export function RightPanel() {
             }
       }
       className={cn(
-        "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg bg-background shadow-sm focus:outline-none",
+        "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background focus:outline-none",
         "transition-[width,min-width,max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
         !panelVisible && "pointer-events-none translate-x-2 opacity-0",
         panelVisible && "translate-x-0 opacity-100",
@@ -323,7 +323,7 @@ export function RightPanel() {
         aria-orientation="vertical"
         aria-label="Resize panel"
         tabIndex={0}
-        className="group absolute inset-y-0 left-0 z-20 flex w-3 cursor-col-resize items-stretch justify-center focus:outline-none"
+        className="group absolute inset-y-0 left-0 z-20 flex w-2 cursor-col-resize items-stretch justify-start focus:outline-none"
         onMouseDown={onDragStart}
         onDoubleClick={() => {
           const maxWidth = getMaxPanelWidth();
@@ -347,14 +347,11 @@ export function RightPanel() {
           }
         }}
       >
-        {/* Grip: transparent at rest (the panel's radius and shadow already
-            separate it from the chat — a resting hairline is redundant and
-            reads as a stray line). It brightens on hover, focus, and active
-            drag. Inset vertically (my-2.5) so it clears the panel's rounded
-            corners instead of being clipped by overflow-hidden. */}
+        {/* The split line is the resize affordance; keep it visible so the
+            docked panes separate by line, not by gap. */}
         <span
           aria-hidden
-          className="pointer-events-none my-2.5 w-px shrink-0 rounded-full bg-transparent transition-colors group-hover:bg-border group-focus-visible:w-0.5 group-focus-visible:bg-ring group-active:w-0.5 group-active:bg-muted-foreground/60"
+          className="pointer-events-none w-px shrink-0 bg-border/45 transition-colors group-hover:bg-border group-focus-visible:w-0.5 group-focus-visible:bg-ring group-active:w-0.5 group-active:bg-muted-foreground/60"
         />
       </div>
       )}

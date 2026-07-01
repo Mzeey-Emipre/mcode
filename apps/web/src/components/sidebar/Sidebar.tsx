@@ -41,7 +41,7 @@ export function Sidebar({
   };
 
   return (
-    <div className="flex h-full w-72 max-w-[55vw] flex-col bg-sidebar md:max-w-none">
+    <div className="flex h-full w-72 max-w-[55vw] flex-col bg-page md:max-w-none">
       {/* Header */}
       <div className="flex h-11 items-center justify-between border-b border-border/40 pl-2 pr-2.5">
         {settingsOpen ? (

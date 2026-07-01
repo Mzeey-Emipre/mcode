@@ -78,6 +78,12 @@ function realUrl(url: string | null | undefined): string | null {
   return url;
 }
 
+function isExpectedNavigationAbort(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; errno?: unknown };
+  return candidate.code === "ERR_ABORTED" || candidate.errno === -3;
+}
+
 export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewProps>(
   function PreviewWebview(
     {
@@ -136,7 +142,21 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         const el = ref.current;
         if (!el) return;
         if (el.loadURL) {
-          void el.loadURL(url);
+          void el.loadURL(url).catch((error: unknown) => {
+            if (isExpectedNavigationAbort(error)) return;
+            onPageStatus?.({
+              url: realUrl(url),
+              title: null,
+              favicon: null,
+              phase: "error",
+              error: {
+                kind: "network",
+                code: "ERR_FAILED",
+                message: "Navigation failed.",
+              },
+            });
+            emitNavigationState();
+          });
         } else {
           el.src = url;
         }
@@ -175,7 +195,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         return (await Promise.resolve(ref.current?.getZoomFactor?.())) ?? factor;
       },
     }),
-    [readUrl],
+    [emitNavigationState, onPageStatus, readUrl],
   );
 
   useEffect(() => {

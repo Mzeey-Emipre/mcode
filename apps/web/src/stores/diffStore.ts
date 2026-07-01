@@ -32,8 +32,8 @@ export const PANEL_MIN_WIDTH = 384;
  * cannot swallow the project tree and still crush the composer to one column.
  */
 export const COMPOSER_MIN_WIDTH = 480;
-/** Gap between chat main and right panel in App.tsx (`gap-1.5`). */
-export const PANEL_SPLIT_GAP_PX = 6;
+/** Gap between chat main and right panel in App.tsx. The visible split is a draggable line. */
+export const PANEL_SPLIT_GAP_PX = 0;
 /**
  * The panel's default width — a fixed value, not a fraction of the viewport, so
  * the panel opens at the same size on every startup, on every view, regardless of

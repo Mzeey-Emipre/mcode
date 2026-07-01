@@ -35,6 +35,7 @@ Use a hidden JSON setting:
 - Values: `"webContentsView"`, `"webview"`
 - Default: `"webContentsView"`
 - The `"webview"` flag uses the renderer-hosted `<webview>` path in every build.
+- After webview reaches parity, keep `webContentsView` hidden for one release as rollback, then remove it.
 - Settings UI: no row until `<webview>` passes parity and cross-platform overlay proof
 - Rollback: set `"webContentsView"` or delete the key
 - Environment override: none for v1
@@ -46,7 +47,7 @@ This follows the settings guide's max depth: `preview.rendering.engine`.
 | Feature | Webview Migration Requirement |
 |---------|-------------------------------|
 | Browser chrome, omnibox, nav buttons, favicon, title | React remains owner. Page status feeds the same state. |
-| Overlay behavior | Native path hides the native view while overlays are open. Webview path proves overlays render above the guest without snapshot hiding. |
+| Overlay behavior | Native path hides the native view while overlays are open. Webview path uses normal React stacking. Non-modal overlays only intercept pointer events on visible content; modal backdrops may block the page. |
 | Empty state and localhost quick-open | Keep behavior. Navigation still enters through main-process validation. |
 | Navigation, history, reload, force reload, open external | Route commands to the active guest record. |
 | Tabs and page switcher | Host tab identity remains source of truth. Renderer owns warm webview lifetime under the flag. |
@@ -60,7 +61,7 @@ This follows the settings guide's max depth: `preview.rendering.engine`.
 | Design mode viewport and inspect | Inspect can keep `executeJavaScript`. Viewport sizing moves to renderer CSS. |
 | Crash recovery and cooldown | Adopted webview crash surfaces the same error state and cooldown behavior. |
 | `window.open`, popups, permissions | Deny popups or route allowed URLs externally. Deny permissions by default. |
-| Scrollbar CSS injection | Reapply for webview guests if the visual policy still matters. |
+| Scrollbar CSS injection | Keep the same fallback scrollbar policy in both hosts while the host switch exists. The fallback uses no `!important` rules, so page-authored scrollbar styles win. Remove native-path injection when `WebContentsView` is removed. |
 | Zoom, cookies, cache, guest DevTools | Route to active guest. DevTools remains disabled for webview until a dev-only policy is added. |
 | Perf counters and dev HUD | Keep counters meaningful for both engines, adding webview adoption and overlay counters if needed. |
 
@@ -166,6 +167,9 @@ Promote `PreviewWebview` from adoption helper to active flagged surface. It moun
 Acceptance:
 
 - Loaded page, empty state, error state, thread switch, last-tab close, and panel hide match native behavior.
+- Webview guests receive the same thin preview scrollbar fallback after attach and after document navigation, without `!important` rules.
+- Page-authored scrollbar styles take precedence over the preview fallback in both hosts.
+- Native-path scrollbar injection stays only while `WebContentsView` remains available.
 - Native path stays available in the same build.
 
 ### Slice 4: Navigation, Status, and Security Parity
@@ -208,6 +212,8 @@ After slice 0 and parity tests pass, rely on normal React stacking for webview. 
 Acceptance:
 
 - Webview path uses normal React overlay stacking.
+- Non-modal overlay positioners are pointer-transparent and do not render an inert outside backdrop, so uncovered webview pixels still receive hover and pointer events.
+- Modal overlays may block the page while open.
 - Native path detaches while overlays are open and does not render a snapshot.
 - Dialog and dropdown tests assert that no freeze-frame element is rendered.
 
@@ -257,7 +263,6 @@ A visible Settings row would invite normal users onto an incomplete engine.
 
 - Should inactive warm webview tabs stay mounted, or unmount before discard?
 - Should guest DevTools work for webview guests in dev builds?
-- Does scrollbar CSS injection still matter for renderer-hosted webviews?
 
 ## References
 

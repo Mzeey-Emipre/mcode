@@ -329,7 +329,7 @@ describe("diffStore", () => {
   });
 
   describe("maxPanelWidthInSplit", () => {
-    it("reserves composer min width and split gap from the row width", () => {
+    it("reserves composer min width from the row width", () => {
       const split = 1200;
       expect(maxPanelWidthInSplit(split)).toBe(
         split - COMPOSER_MIN_WIDTH - PANEL_SPLIT_GAP_PX,

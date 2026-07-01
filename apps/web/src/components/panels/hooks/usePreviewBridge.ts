@@ -168,7 +168,7 @@ export function usePreviewBridge({
       const suppressed = !forceHidden && usePreviewSuppressionStore.getState().count > 0;
       const effectiveVisible =
         visible && !forceHidden && !suppressed && phaseRef.current !== "error";
-      if (!effectiveVisible || !el) {
+      if (!el) {
         await preview.sync({
           visible: false,
           bounds: null,
@@ -179,14 +179,25 @@ export function usePreviewBridge({
         return;
       }
       const r = el.getBoundingClientRect();
+      const bounds = {
+        x: Math.round(r.left),
+        y: Math.round(r.top),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      };
+      if (!effectiveVisible) {
+        await preview.sync({
+          visible: false,
+          bounds,
+          threadId,
+          resumeUrlHint: hint,
+          workspaceId: workspaceId ?? null,
+        });
+        return;
+      }
       await preview.sync({
         visible: true,
-        bounds: {
-          x: Math.round(r.left),
-          y: Math.round(r.top),
-          width: Math.round(r.width),
-          height: Math.round(r.height),
-        },
+        bounds,
         threadId,
         resumeUrlHint: hint,
         workspaceId: workspaceId ?? null,

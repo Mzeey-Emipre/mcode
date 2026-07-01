@@ -6,8 +6,11 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
-function DropdownMenu({ ...props }: MenuPrimitive.Root.Props) {
-  return <MenuPrimitive.Root data-slot="dropdown-menu" {...props} />
+/**
+ * Dropdown menu root that allows pointer interaction outside the popup by default.
+ */
+function DropdownMenu({ modal = false, ...props }: MenuPrimitive.Root.Props) {
+  return <MenuPrimitive.Root data-slot="dropdown-menu" modal={modal} {...props} />
 }
 
 function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
@@ -23,11 +26,15 @@ function DropdownMenuContent({
   Pick<MenuPrimitive.Positioner.Props, "align" | "sideOffset">) {
   return (
     <MenuPrimitive.Portal>
-      <MenuPrimitive.Positioner sideOffset={sideOffset} align={align} className="isolate z-50">
+      <MenuPrimitive.Positioner
+        sideOffset={sideOffset}
+        align={align}
+        className="pointer-events-none isolate z-50"
+      >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-content"
           className={cn(
-            "min-w-[8rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",
+            "pointer-events-auto min-w-[8rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",
             className,
           )}
           {...props}
@@ -133,11 +140,11 @@ function DropdownMenuSubTrigger({
 function DropdownMenuSubContent({ className, ...props }: MenuPrimitive.Popup.Props) {
   return (
     <MenuPrimitive.Portal>
-      <MenuPrimitive.Positioner className="isolate z-50">
+      <MenuPrimitive.Positioner className="pointer-events-none isolate z-50">
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-sub-content"
           className={cn(
-            "min-w-[8rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg",
+            "pointer-events-auto min-w-[8rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg",
             className,
           )}
           {...props}

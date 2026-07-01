@@ -154,7 +154,7 @@ export function BrowserHeader({
   return (
     <div
       data-testid="browser-header"
-      className="flex h-10 flex-none items-center gap-1 border-b border-border/60 px-2"
+      className="flex h-10 flex-none items-center gap-1 bg-background px-2"
     >
       <Tooltip>
         <TooltipTrigger

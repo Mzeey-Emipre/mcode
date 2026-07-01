@@ -75,6 +75,11 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     forceHidden: showWebviewPreview,
   });
   const [webviewSrc, setWebviewSrc] = useState<string | null>(null);
+  const webviewSrcRef = useRef<string | null>(null);
+  const setTrackedWebviewSrc = useCallback((nextSrc: string | null): void => {
+    webviewSrcRef.current = nextSrc;
+    setWebviewSrc(nextSrc);
+  }, []);
   const [webviewNavError, setWebviewNavError] = useState<string | null>(null);
   const [webviewCanBack, setWebviewCanBack] = useState(false);
   const [webviewCanFwd, setWebviewCanFwd] = useState(false);
@@ -122,15 +127,21 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     tabs.tabSet?.activeTabId ?? PREVIEW_WEBVIEW_FALLBACK_TAB_ID;
 
   useEffect(() => {
+    webviewSrcRef.current = webviewSrc;
+  }, [webviewSrc]);
+
+  useEffect(() => {
     if (!showWebviewPreview) return;
     const stored = bridge.storedUrl.trim();
     if (!stored) {
-      setWebviewSrc(null);
+      setTrackedWebviewSrc(null);
       setWebviewPageStatus({ url: null, title: null, favicon: null, phase: "loaded" });
       return;
     }
-    setWebviewSrc(stored);
-  }, [bridge.storedUrl, showWebviewPreview, threadId]);
+    if (webviewRef.current?.getUrl() === stored) return;
+    if (webviewSrcRef.current === stored) return;
+    setTrackedWebviewSrc(stored);
+  }, [bridge.storedUrl, setTrackedWebviewSrc, showWebviewPreview, threadId]);
 
   const onWebviewPageStatus = useCallback((status: PreviewPageStatus): void => {
     setWebviewPageStatus(status);
@@ -150,17 +161,26 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
           return;
         }
         useDiffStore.getState().setPreviewUrlForThread(threadId, result.url);
-        setWebviewSrc(result.url);
         setWebviewPageStatus({
           url: result.url,
           title: null,
           favicon: null,
           phase: "loading",
         });
-        webviewRef.current?.navigate(result.url);
+        const liveUrl = webviewRef.current?.getUrl();
+        const mountedSrc = webviewSrcRef.current;
+        if (liveUrl === result.url) {
+          webviewRef.current?.reload();
+          return;
+        }
+        if (mountedSrc === result.url) {
+          webviewRef.current?.navigate(result.url);
+          return;
+        }
+        setTrackedWebviewSrc(result.url);
       });
     },
-    [bridge, threadId],
+    [bridge, setTrackedWebviewSrc, threadId],
   );
 
   const onWebviewOpenExternal = useCallback((): void => {

@@ -2,11 +2,10 @@ import { test, expect, type Page } from "@playwright/test";
 import { mockWebSocketServer, interceptZustandStores } from "./helpers/e2e-helpers";
 
 /**
- * E2E coverage for the floating-panel UI overhaul:
+ * E2E coverage for the shell UI:
  *  1. Composer overflow popover (replaces inline Mode/Permissions/Tasks toggles).
  *  2. Right panel modal overlay at narrow viewports (<768px).
- *  3. Floating panel surfaces (page chrome darker than panel background, no
- *     inter-panel border lines).
+ *  3. Docked shell surfaces with dividers instead of visible gaps.
  */
 
 const now = new Date().toISOString();
@@ -143,12 +142,12 @@ test.describe("Composer options — narrow viewport (below md)", () => {
   });
 });
 
-test.describe("Floating panel surfaces", () => {
+test.describe("Docked shell surfaces", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page);
   });
 
-  test("page chrome uses --page token (darker than --background)", async ({ page }) => {
+  test("page chrome keeps a separate --page token", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
@@ -164,31 +163,49 @@ test.describe("Floating panel surfaces", () => {
     expect(tokens.page).not.toBe("");
     expect(tokens.background).not.toBe("");
 
-    // They must differ — page chrome is intentionally tone-shifted from panel bg.
+    // They must differ so the project tree can use chrome tone beside content.
     expect(tokens.page).not.toBe(tokens.background);
   });
 
-  test("main content panel uses rounded corners (no inter-panel border)", async ({ page }) => {
+  test("main content joins the shell without rounded internal corners", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
     const main = page.locator("main").first();
     const radius = await main.evaluate((el) => getComputedStyle(el).borderRadius);
-    // Tailwind rounded-lg compiles to non-zero radius.
-    expect(radius).not.toBe("0px");
-    expect(radius).not.toBe("");
+    expect(radius).toBe("0px");
   });
 
-  test("no inter-panel border on Sidebar (right edge)", async ({ page }) => {
+  test("sidebar uses page tone and touches the main content with a divider", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
-    // The sidebar's container shouldn't carry a right border anymore.
-    const sidebarRoot = page.locator(".bg-sidebar").first();
-    const rightBorder = await sidebarRoot.evaluate((el) =>
+    const sidebar = page.getByTestId("sidebar-docked");
+    const main = page.locator("main").first();
+    const metrics = await page.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.className = "bg-page";
+      document.body.append(probe);
+      const pageBackground = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return { pageBackground };
+    });
+    const sidebarBackground = await sidebar.evaluate((el) =>
+      getComputedStyle(el).backgroundColor,
+    );
+    const rightBorder = await sidebar.evaluate((el) =>
       getComputedStyle(el).borderRightWidth,
     );
-    expect(rightBorder).toBe("0px");
+    const [sidebarBox, mainBox] = await Promise.all([
+      sidebar.boundingBox(),
+      main.boundingBox(),
+    ]);
+
+    expect(sidebarBackground).toBe(metrics.pageBackground);
+    expect(rightBorder).toBe("1px");
+    expect(sidebarBox).not.toBeNull();
+    expect(mainBox).not.toBeNull();
+    expect(Math.abs(sidebarBox!.x + sidebarBox!.width - mainBox!.x)).toBeLessThanOrEqual(1);
   });
 });
 
@@ -220,19 +237,19 @@ test.describe("Right panel modal overlay (narrow viewport)", () => {
   });
 });
 
-test.describe("Visual regression — floating layout", () => {
+test.describe("Visual regression — docked layout", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page);
     // Must be called before page.goto so zustand.js is intercepted on load.
     await interceptZustandStores(page);
   });
 
-  test("captures wide-viewport screenshot (1280×800) showing floating panels", async ({ page }, testInfo) => {
+  test("captures wide-viewport screenshot (1280×800) showing docked panels", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     await page.screenshot({
-      path: testInfo.outputPath("floating-wide.png"),
+      path: testInfo.outputPath("docked-wide.png"),
       fullPage: false,
     });
   });
@@ -242,7 +259,7 @@ test.describe("Visual regression — floating layout", () => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     await page.screenshot({
-      path: testInfo.outputPath("floating-narrow.png"),
+      path: testInfo.outputPath("docked-narrow.png"),
       fullPage: false,
     });
   });
