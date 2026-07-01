@@ -1,6 +1,6 @@
 import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlanRecord } from "@mcode/contracts";
 import { usePlanStore } from "@/stores/planStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -32,6 +32,10 @@ const makePlan = (version: number, contentMd: string): PlanRecord => ({
 });
 
 describe("PlanPanel", () => {
+  beforeAll(async () => {
+    await import("@/components/chat/MarkdownContent");
+  }, 30_000);
+
   beforeEach(() => {
     resetThreadStoreForTests({
       currentThreadId: null,
@@ -73,5 +77,54 @@ describe("PlanPanel", () => {
     expect(content).toContain(versionTwo.contentMd);
     expect(content).not.toContain(versionOne.contentMd);
     expect(sendCall?.[15]).toBe("implement");
+  }, 15_000);
+
+  it("moves from an old active version to the latest generated plan when there are no annotations", async () => {
+    const versionOne = makePlan(1, "## Old path\n\nDo the old implementation.");
+    const versionTwo = makePlan(2, "## New path\n\nDo the new implementation.");
+    usePlanStore.setState({
+      plansByThread: { "thread-plan": [versionOne, versionTwo] },
+      activeVersionByThread: { "thread-plan": 1 },
+    });
+
+    render(<PlanPanel threadId="thread-plan" />);
+
+    await waitFor(() => {
+      expect(usePlanStore.getState().activeVersionByThread["thread-plan"]).toBeNull();
+    });
+    expect(await screen.findByText("Version 2 Plan")).toBeInTheDocument();
+    expect(screen.queryByText(/Viewing v1 of 2/)).not.toBeInTheDocument();
+  }, 15_000);
+
+  it("keeps the old active version when the user has annotation feedback drafted", async () => {
+    const versionOne = makePlan(1, "## Old path\n\nDo the old implementation.");
+    const versionTwo = makePlan(2, "## New path\n\nDo the new implementation.");
+    usePlanStore.setState({
+      plansByThread: { "thread-plan": [versionOne] },
+      activeVersionByThread: { "thread-plan": 1 },
+    });
+
+    render(<PlanPanel threadId="thread-plan" />);
+
+    const heading = await screen.findByText("Old path", {}, { timeout: 5000 });
+    fireEvent.click(heading);
+    const textarea = await screen.findByPlaceholderText("What should change in this section?", {}, { timeout: 5000 });
+    fireEvent.change(textarea, { target: { value: "keep reviewing this draft" } });
+    fireEvent.blur(textarea);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Feedback (1)" })).toBeInTheDocument();
+    });
+
+    act(() => {
+      usePlanStore.setState({
+        plansByThread: { "thread-plan": [versionOne, versionTwo] },
+        activeVersionByThread: { "thread-plan": 1 },
+      });
+    });
+
+    await expect(screen.findByText(/Viewing v1 of 2/)).resolves.toBeInTheDocument();
+    expect(usePlanStore.getState().activeVersionByThread["thread-plan"]).toBe(1);
+    expect(screen.getByText("Version 1 Plan")).toBeInTheDocument();
   }, 15_000);
 });

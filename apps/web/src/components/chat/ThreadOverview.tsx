@@ -11,6 +11,7 @@ import {
   Globe,
   Info,
   Laptop,
+  ListChecks,
   Loader2,
   Menu,
   Plus,
@@ -51,11 +52,13 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useOverviewStore } from "@/stores/overviewStore";
+import { usePlanStore } from "@/stores/planStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
 import { shouldAutoOpenOverview } from "@/lib/composer-layout";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
 import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
+import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { cn } from "@/lib/utils";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
 import {
@@ -67,6 +70,7 @@ import {
 import type {
   ChecksStatus,
   Message,
+  PlanRecord,
   ProviderUsageInfo,
   QuotaCategory,
   TurnSnapshot,
@@ -74,6 +78,8 @@ import type {
 
 /** Stable empty messages reference so the closed Overview never re-renders on new messages. */
 const EMPTY_MESSAGES: Message[] = [];
+/** Stable empty plans reference so closed Overview selectors never allocate. */
+const EMPTY_PLANS: readonly PlanRecord[] = [];
 
 /** CI dot shown on the Overview trigger for terminal check states. */
 export type ThreadOverviewCiDot = "red" | "green" | null;
@@ -1712,6 +1718,19 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     executeCommand("changes.toggle");
   }, []);
 
+  const plans = usePlanStore((s) => s.plansByThread[thread.id] ?? EMPTY_PLANS);
+  const latestPlan = useMemo(() => {
+    if (plans.length === 0) return null;
+    return [...plans].reverse().find((plan) => plan.status !== "superseded") ?? null;
+  }, [plans]);
+
+  const openLatestPlan = useCallback(() => {
+    if (!latestPlan) return;
+    usePlanStore.getState().setActiveVersion(thread.id, latestPlan.version);
+    showRightPanelAdaptive(thread.workspace_id, thread.id);
+    useDiffStore.getState().setRightPanelTab(thread.workspace_id, thread.id, "tasks");
+  }, [latestPlan, thread.id, thread.workspace_id]);
+
   const openRepository = useCallback(() => {
     if (!repository.webUrl) return;
     if (window.desktopBridge?.openExternalUrl) {
@@ -1830,6 +1849,26 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               status={repositoryStatus}
               onOpen={openRepository}
             />
+
+            {latestPlan && (
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                data-testid="thread-overview-plan"
+                onClick={openLatestPlan}
+                aria-label={`Plan, ${latestPlan.title}`}
+                className="h-8 w-full cursor-pointer justify-between gap-3 px-2 text-left"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <ListChecks size={14} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate text-xs font-medium">Plans</span>
+                </span>
+                <span className="min-w-0 max-w-[11rem] truncate text-xs text-muted-foreground">
+                  {latestPlan.title}
+                </span>
+              </Button>
+            )}
 
             <Popover open={localOpen} onOpenChange={setLocalOpen}>
               <PopoverTrigger

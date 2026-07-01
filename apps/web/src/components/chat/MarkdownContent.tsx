@@ -449,7 +449,7 @@ function makeComponents(
 
       // Suppress fenced blocks the model emits for plan mode. The wizard
       // renders questions from the parsed payload, and plan-output is
-      // displayed as a card / in the Scope panel, not as raw markdown.
+      // displayed in the Plan tab, not as raw markdown.
       if (rawFence === "plan-questions" || rawFence === "plan-output") return null;
 
       const code = String(children).replace(/\n$/, "");

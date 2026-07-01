@@ -17,7 +17,7 @@ function assertNever(value: never): never {
  * must append AFTER it (preserving chronological order: questions answered → new
  * turn's actions → response) rather than being split in ABOVE it. Plan-output
  * bubbles are intentionally excluded — their own turn's narrative belongs above
- * the PlanCard answer.
+ * the saved Plan tab answer.
  */
 function isPlanQuestionsMessage(content: string): boolean {
   return content.includes("```plan-questions");

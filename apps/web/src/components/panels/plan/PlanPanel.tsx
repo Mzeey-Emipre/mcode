@@ -15,7 +15,7 @@ interface PlanPanelProps {
 }
 
 /**
- * Plan section of the Scope tab. Renders the plan document with
+ * Plan tab content. Renders the saved plan document with
  * inline annotation support. Returns null when no plan exists.
  */
 export function PlanPanel({ threadId }: PlanPanelProps) {
@@ -74,9 +74,14 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
   );
 
   useEffect(() => {
+    if (activeVersion === null || comments.length > 0 || latestVersion <= activeVersion) return;
+    setActiveVersion(threadId, null);
+  }, [activeVersion, comments.length, latestVersion, setActiveVersion, threadId]);
+
+  useEffect(() => {
     const count = nonEmptyComments.length;
     if (count > prevNoteCountRef.current) {
-      feedbackBarRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      feedbackBarRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
     }
     prevNoteCountRef.current = count;
   }, [nonEmptyComments.length]);

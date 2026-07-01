@@ -43,30 +43,104 @@ export interface TaskItem {
 interface TaskState {
   /** Task items keyed by thread ID. */
   tasksByThread: Record<string, readonly TaskItem[]>;
+  /** Parent-agent tasks shown in the composer Task bubble, keyed by thread ID. */
+  taskBubbleByThread: Record<string, readonly TaskItem[]>;
+  /** Threads keeping unsettled prior tasks until the next turn reports parent tasks. */
+  pendingTaskBubbleReplacementByThread: Record<string, boolean>;
   /** Replace all tasks for a thread (top-level TodoWrite). */
   setTasks: (threadId: string, tasks: readonly TaskItem[]) => void;
   /** Replace only tasks belonging to a specific group, preserving other groups. */
   setTaskGroup: (threadId: string, group: string, tasks: readonly TaskItem[]) => void;
   /** Clear tasks for a thread (e.g. on deletion). */
   clearTasks: (threadId: string) => void;
+  /** Apply new-turn lifecycle rules to the composer Task bubble. */
+  prepareTaskBubbleForNewTurn: (threadId: string) => void;
+  /** Clear kept unsettled tasks when a new turn ends without parent-task updates. */
+  clearTaskBubbleIfAwaitingReplacement: (threadId: string) => void;
+}
+
+function parentTasks(tasks: readonly TaskItem[]): readonly TaskItem[] {
+  return tasks.filter((task) => task.group === "Tasks");
+}
+
+function allTasksSettled(tasks: readonly TaskItem[]): boolean {
+  return tasks.length > 0 && tasks.every(
+    (task) => task.status === "completed" || task.status === "cancelled",
+  );
 }
 
 /** Zustand store for per-thread task data. */
 export const useTaskStore = create<TaskState>((set) => ({
   tasksByThread: {},
+  taskBubbleByThread: {},
+  pendingTaskBubbleReplacementByThread: {},
   setTasks: (threadId, tasks) =>
-    set((s) => ({ tasksByThread: { ...s.tasksByThread, [threadId]: tasks } })),
+    set((s) => {
+      const visible = parentTasks(tasks);
+      const pending = { ...s.pendingTaskBubbleReplacementByThread };
+      delete pending[threadId];
+      return {
+        tasksByThread: { ...s.tasksByThread, [threadId]: tasks },
+        taskBubbleByThread: { ...s.taskBubbleByThread, [threadId]: visible },
+        pendingTaskBubbleReplacementByThread: pending,
+      };
+    }),
   setTaskGroup: (threadId, group, tasks) =>
     set((s) => {
       const existing = s.tasksByThread[threadId] ?? [];
       const otherGroups = existing.filter((t) => t.group !== group);
-      return { tasksByThread: { ...s.tasksByThread, [threadId]: [...otherGroups, ...tasks] } };
+      const pending = { ...s.pendingTaskBubbleReplacementByThread };
+      if (group === "Tasks") delete pending[threadId];
+      return {
+        tasksByThread: { ...s.tasksByThread, [threadId]: [...otherGroups, ...tasks] },
+        ...(group === "Tasks"
+          ? { taskBubbleByThread: { ...s.taskBubbleByThread, [threadId]: tasks } }
+          : {}),
+        pendingTaskBubbleReplacementByThread: pending,
+      };
     }),
   clearTasks: (threadId) =>
     set((s) => {
       const next = { ...s.tasksByThread };
+      const nextBubble = { ...s.taskBubbleByThread };
+      const nextPending = { ...s.pendingTaskBubbleReplacementByThread };
       delete next[threadId];
-      return { tasksByThread: next };
+      delete nextBubble[threadId];
+      delete nextPending[threadId];
+      return {
+        tasksByThread: next,
+        taskBubbleByThread: nextBubble,
+        pendingTaskBubbleReplacementByThread: nextPending,
+      };
+    }),
+  prepareTaskBubbleForNewTurn: (threadId) =>
+    set((s) => {
+      const visible = s.taskBubbleByThread[threadId] ?? parentTasks(s.tasksByThread[threadId] ?? []);
+      const nextBubble = { ...s.taskBubbleByThread };
+      const nextPending = { ...s.pendingTaskBubbleReplacementByThread };
+      if (visible.length === 0 || allTasksSettled(visible)) {
+        delete nextBubble[threadId];
+        delete nextPending[threadId];
+      } else {
+        nextBubble[threadId] = visible;
+        nextPending[threadId] = true;
+      }
+      return {
+        taskBubbleByThread: nextBubble,
+        pendingTaskBubbleReplacementByThread: nextPending,
+      };
+    }),
+  clearTaskBubbleIfAwaitingReplacement: (threadId) =>
+    set((s) => {
+      if (!s.pendingTaskBubbleReplacementByThread[threadId]) return {};
+      const nextBubble = { ...s.taskBubbleByThread };
+      const nextPending = { ...s.pendingTaskBubbleReplacementByThread };
+      delete nextBubble[threadId];
+      delete nextPending[threadId];
+      return {
+        taskBubbleByThread: nextBubble,
+        pendingTaskBubbleReplacementByThread: nextPending,
+      };
     }),
 }));
 

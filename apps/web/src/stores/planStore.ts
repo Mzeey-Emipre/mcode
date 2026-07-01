@@ -12,8 +12,23 @@ interface PlanState {
   /** Threads currently generating a new plan version. */
   generatingThreads: Set<string>;
 
+  /** Session-local live plan preview keyed by thread ID. Hydration never writes this. */
+  livePreviewByThread: Record<string, Pick<PlanRecord, "id" | "version" | "title">>;
+
+  /** Session-local dismissed preview versions keyed by thread ID. */
+  dismissedPreviewVersionsByThread: Record<string, readonly number[]>;
+
   /** Add or replace a plan in the thread's version list. */
   addPlan: (threadId: string, plan: PlanRecord) => void;
+
+  /** Show a session-local preview for a live-generated plan version. */
+  showLivePreview: (threadId: string, plan: PlanRecord) => void;
+
+  /** Dismiss the current session-local preview for a specific plan version. */
+  dismissLivePreview: (threadId: string, version: number) => void;
+
+  /** Clear any visible session-local preview for a thread. */
+  clearLivePreview: (threadId: string) => void;
 
   /** Set the actively viewed version for a thread. */
   setActiveVersion: (threadId: string, version: number | null) => void;
@@ -33,6 +48,8 @@ export const usePlanStore = create<PlanState>((set) => ({
   plansByThread: {},
   activeVersionByThread: {},
   generatingThreads: new Set(),
+  livePreviewByThread: {},
+  dismissedPreviewVersionsByThread: {},
 
   addPlan: (threadId, plan) =>
     set((state) => {
@@ -49,6 +66,41 @@ export const usePlanStore = create<PlanState>((set) => ({
           [...state.generatingThreads].filter((id) => id !== threadId),
         ),
       };
+    }),
+
+  showLivePreview: (threadId, plan) =>
+    set((state) => {
+      const dismissed = state.dismissedPreviewVersionsByThread[threadId] ?? [];
+      if (dismissed.includes(plan.version)) return {};
+      return {
+        livePreviewByThread: {
+          ...state.livePreviewByThread,
+          [threadId]: { id: plan.id, version: plan.version, title: plan.title },
+        },
+      };
+    }),
+
+  dismissLivePreview: (threadId, version) =>
+    set((state) => {
+      const dismissed = state.dismissedPreviewVersionsByThread[threadId] ?? [];
+      const nextDismissed = dismissed.includes(version) ? dismissed : [...dismissed, version];
+      const nextPreview = { ...state.livePreviewByThread };
+      if (nextPreview[threadId]?.version === version) delete nextPreview[threadId];
+      return {
+        livePreviewByThread: nextPreview,
+        dismissedPreviewVersionsByThread: {
+          ...state.dismissedPreviewVersionsByThread,
+          [threadId]: nextDismissed,
+        },
+      };
+    }),
+
+  clearLivePreview: (threadId) =>
+    set((state) => {
+      if (!(threadId in state.livePreviewByThread)) return {};
+      const next = { ...state.livePreviewByThread };
+      delete next[threadId];
+      return { livePreviewByThread: next };
     }),
 
   setActiveVersion: (threadId, version) =>
@@ -84,6 +136,15 @@ export const usePlanStore = create<PlanState>((set) => ({
       const { [threadId]: _omitPlans, ...rest } = state.plansByThread;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [threadId]: _omitVersion, ...restVersions } = state.activeVersionByThread;
-      return { plansByThread: rest, activeVersionByThread: restVersions };
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { [threadId]: _omitPreview, ...restPreviews } = state.livePreviewByThread;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { [threadId]: _omitDismissed, ...restDismissed } = state.dismissedPreviewVersionsByThread;
+      return {
+        plansByThread: rest,
+        activeVersionByThread: restVersions,
+        livePreviewByThread: restPreviews,
+        dismissedPreviewVersionsByThread: restDismissed,
+      };
     }),
 }));

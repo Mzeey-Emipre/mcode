@@ -4,7 +4,7 @@ import type { RightPanelTab } from "@/stores/diffStore";
 
 /**
  * Whether a thread is active. Tab availability is filtered by scope first: some
- * tab types (Review, Scope) only make sense once a thread exists, so they are
+ * tab types (Plan) only make sense once a thread exists, so they are
  * dropped when the panel runs threadless against the workspace root. See ADR-0004.
  */
 export type PanelScope = "threadless" | "thread";
@@ -44,7 +44,7 @@ export interface PanelTabType {
  * The revamp's tab-type catalog, in display order (ADR-0004). Order is the
  * single source of truth for how cards and rail entries are laid out, so the
  * availability helpers preserve it. Labels are the product language (Browser,
- * Review, Scope) even though the openable ids reuse the legacy
+ * Review, Plan) even though the openable ids reuse the legacy
  * {@link RightPanelTab} values (preview, changes, tasks).
  */
 export const PANEL_TAB_TYPES: readonly PanelTabType[] = [
@@ -85,9 +85,9 @@ export const PANEL_TAB_TYPES: readonly PanelTabType[] = [
   },
   {
     id: "tasks",
-    label: "Scope",
+    label: "Plan",
     icon: ListChecks,
-    blurb: "Plan and tasks",
+    blurb: "Read saved plans",
     needsThread: true,
     commandId: "tasks.toggle",
   },

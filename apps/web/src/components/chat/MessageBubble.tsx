@@ -14,7 +14,6 @@ import { FileAttachmentTile } from "./FileAttachmentTile";
 import { ImageAttachmentLightbox } from "./ImageAttachmentLightbox";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { AnsweredSummary } from "./plan-questions/AnsweredSummary";
-import { PlanCard } from "./PlanCard";
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 import { DeltaBlock } from "./narrative/DeltaBlock";
 import { parseGoalStatusNotice } from "@/lib/goal-message";
@@ -755,10 +754,6 @@ export const MessageBubble = memo(function MessageBubble({
             </Suspense>
           )}
         </div>
-      )}
-      {/* Plan card: shows when a plan was extracted from this message */}
-      {message.role === "assistant" && (
-        <PlanCard messageId={message.id} />
       )}
       <div
         className={assistantActionsClass}

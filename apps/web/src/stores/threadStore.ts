@@ -923,6 +923,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
     if (!isControlCommand) {
       dropPendingTextDeltas([threadId]);
+      useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
     }
 
     // Add user message to local state immediately (optimistic)
@@ -1707,6 +1708,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (method === "session.turnStarted") {
+      useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
       set((state) => {
         if (state.runningThreadIds.has(threadId)) return {};
         const next = new Set(state.runningThreadIds);
@@ -2372,6 +2374,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (method === "session.turnComplete" || method === "session.ended") {
+      useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(threadId);
       const costUsd = (params.costUsd as number) ?? null;
       const tokensIn = ((params.tokensIn as number) ?? (params.totalTokensIn as number)) ?? 0;
       const tokensOut = ((params.tokensOut as number) ?? (params.totalTokensOut as number)) ?? 0;
