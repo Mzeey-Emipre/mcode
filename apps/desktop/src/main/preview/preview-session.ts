@@ -3,7 +3,7 @@
  * All other preview modules import from here rather than maintaining their own state.
  */
 
-import { BrowserWindow, WebContentsView } from "electron";
+import { BrowserWindow, WebContentsView, type WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import type {
   AttachmentMeta,
@@ -91,7 +91,12 @@ export interface PreviewSession {
    */
   selectionOverlay: BrowserWindow | null;
   overlayPending:
-    | { mode: "region" | "element"; finish: (r: CaptureFinishResult) => void; hostWin: BrowserWindow }
+    | {
+        mode: "region" | "element";
+        finish: (r: CaptureFinishResult) => void;
+        hostWin: BrowserWindow;
+        webContents: WebContents;
+      }
     | null;
   /**
    * Active element-pick poll handle. The pick runs entirely inside the guest

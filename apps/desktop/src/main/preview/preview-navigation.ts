@@ -142,31 +142,41 @@ export function registerNavigationHandlers(): void {
       s.workspaceId = typeof ws === "string" && ws.trim().length > 0 ? ws.trim() : null;
       const b = payload.bounds;
       bumpPerf("setPanelBoundsCalls");
-      if (!payload.visible || !b || b.width < 4 || b.height < 4) {
+      const hasValidBounds = b && b.width >= 4 && b.height >= 4;
+      const tid = payload.threadId ?? null;
+      const switchedThread = tid != null && tid !== s.lastPreviewThreadId;
+      const prevBounds = s.lastBounds;
+      const incomingBounds = hasValidBounds
+        ? { x: b.x, y: b.y, width: b.width, height: b.height }
+        : null;
+      if (hasValidBounds) {
+        s.lastBounds = incomingBounds;
+        if (tid != null) {
+          ensureThreadTabSet(s, tid);
+        }
+        s.lastPreviewThreadId = tid;
+      }
+      if (!payload.visible || !incomingBounds) {
         hidePreview(win, s);
         onPreviewHidden(win, s);
         return;
       }
 
-      const prevBounds = s.lastBounds;
+      const bounds = incomingBounds;
       const sameBounds =
         prevBounds !== null &&
-        prevBounds.x === b.x &&
-        prevBounds.y === b.y &&
-        prevBounds.width === b.width &&
-        prevBounds.height === b.height;
+        prevBounds.x === bounds.x &&
+        prevBounds.y === bounds.y &&
+        prevBounds.width === bounds.width &&
+        prevBounds.height === bounds.height;
       if (sameBounds) {
         bumpPerf("setPanelBoundsNoopSkips");
       } else {
         bumpPerf("setPanelBoundsViewportUpdates");
       }
 
-      s.lastBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
-
       const hintRaw = payload.resumeUrlHint?.trim() ?? "";
       const hint = hintRaw.length > 0 && isAllowedPreviewUrl(hintRaw) ? hintRaw : null;
-      const tid = payload.threadId ?? null;
-      const switchedThread = tid != null && tid !== s.lastPreviewThreadId;
       const safeHint = await validateResumeUrl(hint);
 
       // Detach the prior thread's active view BEFORE picking the new one so
@@ -174,17 +184,12 @@ export function registerNavigationHandlers(): void {
       if (switchedThread && s.view) {
         unmountView(win, s.view);
       }
-      if (tid != null) {
-        ensureThreadTabSet(s, tid);
-      }
-      s.lastPreviewThreadId = tid;
-
       // ensureView resolves the (now-current) thread's active tab and either
       // returns its existing webContents or creates a fresh one. On a thread
       // switch this picks up the warm WebContentsView the user left behind,
       // so their scroll/form state survives.
       const view = ensureView(win, s);
-      view.setBounds(s.lastBounds);
+      view.setBounds(bounds);
       mountView(win, view);
 
       const wc = view.webContents;

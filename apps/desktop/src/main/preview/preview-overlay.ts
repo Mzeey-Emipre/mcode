@@ -12,6 +12,7 @@ import {
   type Bounds,
   type PreviewSession,
   getSession,
+  getActiveTab,
   clearIdle,
   resetIdle,
 } from "./preview-session.js";
@@ -25,6 +26,7 @@ import {
   sanitizeSelectorHintFromGuest,
   scrubHtmlExcerptForOutbound,
 } from "./preview-capture.js";
+import { findAdoptedWebContents } from "./preview-webview-adopt.js";
 
 /**
  * Element-pick runs entirely inside the guest page: capture-phase event handlers block
@@ -516,9 +518,20 @@ async function removeRgMarqueeHighlighter(wc: WebContents): Promise<void> {
   }
 }
 
-/** Prefer WebContentsView bounds; shell-reported rect can lag ResizeObserver. */
-function hostBoundsForHitTest(s: PreviewSession): Bounds | null {
-  if (s.view && !s.view.webContents.isDestroyed()) {
+function resolveActiveCaptureWebContents(s: PreviewSession): WebContents | null {
+  const threadId = s.lastPreviewThreadId;
+  if (threadId) {
+    const activeTab = getActiveTab(s, threadId);
+    const adopted = findAdoptedWebContents(threadId, activeTab.id);
+    if (adopted && !adopted.isDestroyed()) return adopted;
+  }
+  if (s.view && !s.view.webContents.isDestroyed()) return s.view.webContents;
+  return null;
+}
+
+/** Prefer WebContentsView bounds for native captures; webview captures use shell bounds. */
+function hostBoundsForHitTest(s: PreviewSession, webContents: WebContents): Bounds | null {
+  if (s.view?.webContents === webContents && !s.view.webContents.isDestroyed()) {
     try {
       const b = s.view.getBounds();
       if (b.width > 0 && b.height > 0) {
@@ -901,17 +914,18 @@ export function abortOverlayCapture(s: PreviewSession, error: string): void {
     clearTimeout(s.regionPollTimer);
     s.regionPollTimer = null;
   }
-  if (s.view && !s.view.webContents.isDestroyed()) {
+  const webContents = pending?.webContents ?? resolveActiveCaptureWebContents(s);
+  if (webContents && !webContents.isDestroyed()) {
     // Both modes are in-guest now. Tear down the right one based on pending
     // mode; when pending is null (cancel-without-session), strip both as a
     // belt-and-suspenders.
     if (pending?.mode === "region") {
-      void removeRgMarqueeHighlighter(s.view.webContents);
+      void removeRgMarqueeHighlighter(webContents);
     } else if (pending?.mode === "element") {
-      void removeEpPickHighlighter(s.view.webContents);
+      void removeEpPickHighlighter(webContents);
     } else {
-      void removeRgMarqueeHighlighter(s.view.webContents);
-      void removeEpPickHighlighter(s.view.webContents);
+      void removeRgMarqueeHighlighter(webContents);
+      void removeEpPickHighlighter(webContents);
     }
   }
   destroySelectionOverlayOnly(s);
@@ -977,7 +991,8 @@ export function registerOverlayHandlers(): void {
       }
 
       if (!s.lastBounds) return { ok: false, error: "no-bounds" };
-      if (!s.view || s.view.webContents.isDestroyed()) {
+      const webContents = resolveActiveCaptureWebContents(s);
+      if (!webContents) {
         return { ok: false, error: "no-preview" };
       }
 
@@ -991,11 +1006,11 @@ export function registerOverlayHandlers(): void {
           resolve(r);
         };
 
-        s.overlayPending = { mode: "region", finish: finishOnce, hostWin: win };
-        beginOverlaySession(s, s.view!.webContents);
+        s.overlayPending = { mode: "region", finish: finishOnce, hostWin: win, webContents };
+        beginOverlaySession(s, webContents);
 
         void (async (): Promise<void> => {
-          await injectRgMarqueeHighlighter(s.view!.webContents);
+          await injectRgMarqueeHighlighter(webContents);
           schedulePollRegion(s, win);
         })();
       });
@@ -1014,7 +1029,8 @@ export function registerOverlayHandlers(): void {
       }
 
       if (!s.lastBounds) return { ok: false, error: "no-bounds" };
-      if (!s.view || s.view.webContents.isDestroyed()) {
+      const webContents = resolveActiveCaptureWebContents(s);
+      if (!webContents) {
         return { ok: false, error: "no-preview" };
       }
 
@@ -1028,11 +1044,11 @@ export function registerOverlayHandlers(): void {
           resolve(r);
         };
 
-        s.overlayPending = { mode: "element", finish: finishOnce, hostWin: win };
-        beginOverlaySession(s, s.view!.webContents);
+        s.overlayPending = { mode: "element", finish: finishOnce, hostWin: win, webContents };
+        beginOverlaySession(s, webContents);
 
         void (async (): Promise<void> => {
-          await injectEpPickHighlighter(s.view!.webContents);
+          await injectEpPickHighlighter(webContents);
           schedulePoll(s, win);
         })();
       });
@@ -1079,14 +1095,15 @@ async function runRegionPollTick(s: PreviewSession, hostWin: BrowserWindow): Pro
     abortOverlayCapture(s, "no-window");
     return;
   }
-  if (!s.view || s.view.webContents.isDestroyed()) {
+  const webContents = pending.webContents;
+  if (webContents.isDestroyed()) {
     abortOverlayCapture(s, "no-preview");
     return;
   }
 
   let payload: RgPollPayload | null = null;
   try {
-    const raw: unknown = await s.view.webContents.executeJavaScript(RG_POLL_JS, true);
+    const raw: unknown = await webContents.executeJavaScript(RG_POLL_JS, true);
     const text = typeof raw === "string" ? raw : JSON.stringify(raw);
     payload = JSON.parse(text) as RgPollPayload;
   } catch {
@@ -1098,9 +1115,9 @@ async function runRegionPollTick(s: PreviewSession, hostWin: BrowserWindow): Pro
 
   if (!payload || payload.state === "gone") {
     // Guest reloaded / navigated. Re-inject so the next tick can resume.
-    if (s.view && !s.view.webContents.isDestroyed()) {
+    if (!webContents.isDestroyed()) {
       try {
-        await s.view.webContents.executeJavaScript(RG_INJECT_JS, true);
+        await webContents.executeJavaScript(RG_INJECT_JS, true);
       } catch {
         /* navigation still in flight */
       }
@@ -1143,7 +1160,8 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
     s.regionPollTimer = null;
   }
 
-  if (!s.view || s.view.webContents.isDestroyed()) {
+  const webContents = pending.webContents;
+  if (webContents.isDestroyed()) {
     if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-preview" });
     return;
@@ -1151,7 +1169,7 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
 
   const lb = s.lastBounds;
   if (!lb) {
-    await removeRgMarqueeHighlighter(s.view.webContents);
+    await removeRgMarqueeHighlighter(webContents);
     if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-bounds" });
     return;
@@ -1159,15 +1177,15 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
 
   const r = clampRectInPlace(rect, lb.width, lb.height);
   if (r.width < 4 || r.height < 4) {
-    await removeRgMarqueeHighlighter(s.view.webContents);
+    await removeRgMarqueeHighlighter(webContents);
     if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "region-too-small" });
     return;
   }
 
   try {
-    await removeRgMarqueeHighlighter(s.view.webContents);
-    const image = await s.view.webContents.capturePage(r);
+    await removeRgMarqueeHighlighter(webContents);
+    const image = await webContents.capturePage(r);
     const buffer = image.toPNG();
     if (buffer.length === 0) {
       if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
@@ -1176,7 +1194,7 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
     }
 
     const id = randomUUID();
-    const stem = previewCaptureFileStem(s.view.webContents.getURL());
+    const stem = previewCaptureFileStem(webContents.getURL());
     const name = `preview-region-${stem}-${Date.now()}.png`;
     const tempDir = join(app.getPath("temp"), "mcode-attachments");
     await mkdir(tempDir, { recursive: true });
@@ -1192,7 +1210,7 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
     };
 
     const capture = await buildBrowserCapturePayload(
-      s.view.webContents,
+      webContents,
       r,
       s.consoleBuffer,
       snapshotFailedRequestsForCapture(s),
@@ -1236,14 +1254,15 @@ async function runElementPickPollTick(s: PreviewSession, hostWin: BrowserWindow)
     abortOverlayCapture(s, "no-window");
     return;
   }
-  if (!s.view || s.view.webContents.isDestroyed()) {
+  const webContents = pending.webContents;
+  if (webContents.isDestroyed()) {
     abortOverlayCapture(s, "no-preview");
     return;
   }
 
   let payload: EpPollPayload | null = null;
   try {
-    const raw: unknown = await s.view.webContents.executeJavaScript(EP_POLL_JS, true);
+    const raw: unknown = await webContents.executeJavaScript(EP_POLL_JS, true);
     const text = typeof raw === "string" ? raw : JSON.stringify(raw);
     payload = JSON.parse(text) as EpPollPayload;
   } catch {
@@ -1255,9 +1274,9 @@ async function runElementPickPollTick(s: PreviewSession, hostWin: BrowserWindow)
 
   if (!payload || payload.state === "gone") {
     // Guest reloaded / navigated. Re-inject so the next tick can resume.
-    if (s.view && !s.view.webContents.isDestroyed()) {
+    if (!webContents.isDestroyed()) {
       try {
-        await s.view.webContents.executeJavaScript(EP_INJECT_JS, true);
+        await webContents.executeJavaScript(EP_INJECT_JS, true);
       } catch {
         /* navigation still in flight */
       }
@@ -1303,7 +1322,8 @@ async function finishElementPickCapture(
     s.elementPickPollTimer = null;
   }
 
-  if (!s.view || s.view.webContents.isDestroyed()) {
+  const webContents = pending.webContents;
+  if (webContents.isDestroyed()) {
     if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-preview" });
     return;
@@ -1311,15 +1331,15 @@ async function finishElementPickCapture(
 
   const lb = s.lastBounds;
   if (!lb) {
-    await removeEpPickHighlighter(s.view.webContents);
+    await removeEpPickHighlighter(webContents);
     if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-bounds" });
     return;
   }
 
-  const hit = await runElementHitTest(s.view.webContents, x, y, hostBoundsForHitTest(s));
+  const hit = await runElementHitTest(webContents, x, y, hostBoundsForHitTest(s, webContents));
   if (!hit || !hit.ok) {
-    await removeEpPickHighlighter(s.view.webContents);
+    await removeEpPickHighlighter(webContents);
     if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-hit" });
     return;
@@ -1327,15 +1347,15 @@ async function finishElementPickCapture(
 
   const r = clampRectInPlace(hit.bounds, lb.width, lb.height);
   if (r.width < 4 || r.height < 4) {
-    await removeEpPickHighlighter(s.view.webContents);
+    await removeEpPickHighlighter(webContents);
     if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "region-too-small" });
     return;
   }
 
   try {
-    await removeEpPickHighlighter(s.view.webContents);
-    const image = await s.view.webContents.capturePage(r);
+    await removeEpPickHighlighter(webContents);
+    const image = await webContents.capturePage(r);
     const buffer = image.toPNG();
     if (buffer.length === 0) {
       if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
@@ -1344,7 +1364,7 @@ async function finishElementPickCapture(
     }
 
     const id = randomUUID();
-    const stem = previewCaptureFileStem(s.view.webContents.getURL());
+    const stem = previewCaptureFileStem(webContents.getURL());
     const name = `preview-element-${stem}-${Date.now()}.png`;
     const tempDir = join(app.getPath("temp"), "mcode-attachments");
     await mkdir(tempDir, { recursive: true });
@@ -1360,7 +1380,7 @@ async function finishElementPickCapture(
     };
 
     const capture = await buildBrowserCapturePayload(
-      s.view.webContents,
+      webContents,
       r,
       s.consoleBuffer,
       snapshotFailedRequestsForCapture(s),

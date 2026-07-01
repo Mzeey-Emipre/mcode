@@ -17,6 +17,9 @@ let ipcOnHandlers: Record<string, (...args: unknown[]) => unknown> = {};
 /** Tracks WebContentsView instances created during a test. */
 let createdViews: ReturnType<typeof makeWebContentsView>[] = [];
 
+/** Mock Electron webContents registry for renderer-hosted webview adoption. */
+const mockWebContentsById = new Map<number, ReturnType<typeof makeWebContentsView>["webContents"]>();
+
 /** Shared preview partition returned by the Electron session mock. */
 const previewPartition = {
   setPermissionRequestHandler: vi.fn(),
@@ -53,15 +56,21 @@ function makeWebContentsView() {
     getZoomFactor: vi.fn().mockReturnValue(1),
     setZoomFactor: vi.fn(),
     on: vi.fn(),
+    once: vi.fn(),
+    removeListener: vi.fn(),
     removeAllListeners: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     setBackgroundThrottling: vi.fn(),
     executeJavaScript: vi.fn().mockResolvedValue(undefined),
+    capturePage: vi.fn().mockResolvedValue({
+      toPNG: vi.fn(() => Buffer.from("png-bytes")),
+    }),
     send: vi.fn(),
   };
   const view = {
     webContents,
     setBounds: vi.fn(),
+    getBounds: vi.fn().mockReturnValue(VALID_BOUNDS),
   };
   createdViews.push(view);
   return view;
@@ -103,6 +112,10 @@ vi.mock("electron", () => ({
   }),
   BrowserWindow: {
     fromWebContents: vi.fn(),
+    getAllWindows: vi.fn(() => testWindows),
+  },
+  webContents: {
+    fromId: vi.fn((id: number) => mockWebContentsById.get(id) ?? null),
   },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -127,7 +140,7 @@ vi.mock("@mcode/contracts", async () => {
   const actual = await vi.importActual<typeof import("@mcode/contracts")>("@mcode/contracts");
   return {
     ...actual,
-    clampMcodeBrowserCaptureV2: vi.fn(),
+    clampMcodeBrowserCaptureV2: vi.fn((value) => value),
     isBrowserCaptureSpillAppDataPath: vi.fn().mockReturnValue(false),
     MCODE_BROWSER_CAPTURE_V2_STRING_MAX: 100_000,
   };
@@ -135,7 +148,7 @@ vi.mock("@mcode/contracts", async () => {
 
 vi.mock("@mcode/shared", () => ({
   getMcodeDir: vi.fn().mockReturnValue("/tmp/mcode"),
-  redactMcodeBrowserCaptureV2: vi.fn(),
+  redactMcodeBrowserCaptureV2: vi.fn((value) => value),
   spillWorkspaceDirSegment: vi.fn().mockReturnValue("ws"),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -206,6 +219,7 @@ let handlersRegistered = false;
 
 beforeEach(() => {
   createdViews = [];
+  mockWebContentsById.clear();
   previewPartition.clearStorageData.mockClear();
   previewPartition.clearCache.mockClear();
   if (!handlersRegistered) {
@@ -1205,6 +1219,126 @@ describe("preview-browser", () => {
   });
 
   describe("design mode (Phase G)", () => {
+    it("element pick uses the active adopted webview when no native view exists", async () => {
+      vi.useFakeTimers();
+      try {
+        const win = createWindow();
+        const ev = fakeEvent(win);
+
+        await ipcHandlers["preview:sync"]!(ev, {
+          visible: false,
+          bounds: VALID_BOUNDS,
+          threadId: "thread-webview",
+          resumeUrlHint: "https://example.com",
+          workspaceId: "ws-1",
+        });
+
+        const adopted = makeWebContentsView().webContents;
+        adopted.executeJavaScript
+          .mockResolvedValueOnce(undefined)
+          .mockResolvedValueOnce(JSON.stringify({ state: "cancelled", seq: 1 }));
+        mockWebContentsById.set(42, adopted);
+
+        const adoptedResult = await ipcHandlers["preview:adopt-webview"]!(ev, {
+          threadId: "thread-webview",
+          tabId: sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId,
+          webContentsId: 42,
+        });
+        expect(adoptedResult).toEqual({ ok: true });
+        expect(sessions.get(win.id)!.view).toBeNull();
+
+        const capturePromise = ipcHandlers["preview:capture-picture-element-pick"]!(
+          ev,
+        ) as Promise<unknown>;
+        await Promise.resolve();
+
+        expect(adopted.executeJavaScript).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(120);
+        await expect(capturePromise).resolves.toEqual({ ok: false, error: "cancelled" });
+        expect(adopted.executeJavaScript).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("element pick capture stays on the same adopted webview through commit", async () => {
+      vi.useFakeTimers();
+      try {
+        const win = createWindow();
+        const ev = fakeEvent(win);
+        await ipcHandlers["preview:sync"]!(ev, {
+          visible: false,
+          bounds: VALID_BOUNDS,
+          threadId: "thread-webview",
+          resumeUrlHint: "https://example.com",
+          workspaceId: "ws-1",
+        });
+
+        const adopted = makeWebContentsView().webContents;
+        adopted.getURL.mockReturnValue("https://example.com/page");
+        adopted.executeJavaScript
+          .mockResolvedValueOnce(undefined)
+          .mockResolvedValueOnce(JSON.stringify({ state: "commit", seq: 1, x: 10, y: 20 }))
+          .mockResolvedValueOnce(
+            JSON.stringify({
+              ok: true,
+              bounds: { x: 8, y: 18, width: 120, height: 80 },
+              selectorHint: "button.primary",
+              htmlExcerpt: "<button>Attach</button>",
+            }),
+          )
+          .mockResolvedValueOnce(undefined)
+          .mockResolvedValueOnce(JSON.stringify({ visibleText: "Attach", scrollX: 0, scrollY: 0 }));
+        mockWebContentsById.set(43, adopted);
+
+        const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId;
+        await ipcHandlers["preview:adopt-webview"]!(ev, {
+          threadId: "thread-webview",
+          tabId,
+          webContentsId: 43,
+        });
+
+        const capturePromise = ipcHandlers["preview:capture-picture-element-pick"]!(
+          ev,
+        ) as Promise<{ ok: true; meta: { sizeBytes: number }; previewBytes: Uint8Array }>;
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(120);
+        const result = await capturePromise;
+
+        expect(result.ok).toBe(true);
+        expect(result.meta.sizeBytes).toBeGreaterThan(0);
+        expect(result.previewBytes.length).toBeGreaterThan(0);
+        expect(adopted.capturePage).toHaveBeenCalledWith({ x: 8, y: 18, width: 120, height: 80 });
+        expect(adopted.executeJavaScript).toHaveBeenCalledTimes(5);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("element pick still falls back to the native WebContentsView", async () => {
+      vi.useFakeTimers();
+      try {
+        const win = createWindow();
+        await showPreview(win);
+        const view = createdViews[0]!;
+        view.webContents.executeJavaScript
+          .mockResolvedValueOnce(undefined)
+          .mockResolvedValueOnce(JSON.stringify({ state: "cancelled", seq: 1 }));
+
+        const capturePromise = ipcHandlers["preview:capture-picture-element-pick"]!(
+          fakeEvent(win),
+        ) as Promise<unknown>;
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(120);
+
+        await expect(capturePromise).resolves.toEqual({ ok: false, error: "cancelled" });
+        expect(view.webContents.executeJavaScript).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("setViewport applies a named preset and centers within panel bounds", async () => {
       const win = createWindow();
       await showPreview(win);

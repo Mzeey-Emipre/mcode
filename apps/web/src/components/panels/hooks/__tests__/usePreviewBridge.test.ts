@@ -212,7 +212,7 @@ describe("usePreviewBridge", () => {
     ).toBe(true);
   });
 
-  it("hides the native BrowserView during overlays without a freeze-frame", async () => {
+  it("hides the native BrowserView during overlays while preserving panel bounds", async () => {
     const mockPreview = makeMockPreview();
     window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
 
@@ -234,7 +234,7 @@ describe("usePreviewBridge", () => {
     expect(mockPreview.sync).toHaveBeenCalledWith(
       expect.objectContaining({
         visible: false,
-        bounds: null,
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
         threadId: "t-1",
       }),
     );
