@@ -695,7 +695,7 @@ test.describe("Architecture: session.turnStarted → sidebar running dot", () =>
     );
   });
 
-  test("session.turnStarted populates runningThreadIds for the sidebar dot", async ({
+  test("session.turnStarted populates runningThreadIds for the sidebar spinner", async ({
     page,
   }) => {
     await setupWorkspaceState(page, {
@@ -709,13 +709,8 @@ test.describe("Architecture: session.turnStarted → sidebar running dot", () =>
     );
     await expect(threadRow).toBeVisible();
 
-    // The status dot is the first rounded-full span inside the row (non-PR thread).
-    const statusDot = threadRow.locator("span.rounded-full").first();
-
-    // Before the signal fires, the dot must NOT carry the running classes.
-    // Running state maps to `bg-primary status-pulse` per apps/web/src/lib/thread-status.ts.
-    await expect(statusDot).not.toHaveClass(/bg-primary/);
-    await expect(statusDot).not.toHaveClass(/status-pulse/);
+    // Before the signal fires, the row should show fallback time rather than a running marker.
+    await expect(threadRow.getByLabel("Running")).toHaveCount(0);
 
     await page.screenshot({
       path: "e2e/screenshots/running-signal-before.png",
@@ -747,9 +742,10 @@ test.describe("Architecture: session.turnStarted → sidebar running dot", () =>
     );
 
     // After injection the store should flag the thread as running and the
-    // sidebar dot should flip to the primary/pulsing state.
-    await expect(statusDot).toHaveClass(/bg-primary/);
-    await expect(statusDot).toHaveClass(/status-pulse/);
+    // sidebar marker should flip to the primary spinner.
+    const runningMarker = threadRow.getByLabel("Running");
+    await expect(runningMarker).toHaveClass(/text-primary/);
+    await expect(runningMarker).toHaveClass(/status-spin/);
 
     // Also confirm the store side-effect (handleAgentEvent wrote the id).
     const isRunning = await page.evaluate(

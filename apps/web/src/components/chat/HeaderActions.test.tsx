@@ -396,6 +396,13 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-recap")).not.toHaveTextContent(/stale|out of date|generate/i);
   });
 
+  it("uses the split-arrow worktree icon in the local overview row for worktree threads", () => {
+    renderHeaderActions(makeThread({ mode: "worktree", worktree_path: "/repo/worktrees/feat-x" }));
+
+    const icon = screen.getByTestId("thread-overview-local-mode-icon");
+    expect(icon.querySelector('path[d="M12 12H3.75M12 12L19.5 19.5M12 12L19.5 4.5"]')).toBeInTheDocument();
+  });
+
   it("keeps older cached recap visible and exposes coverage times through the affordance", async () => {
     const messages = [
       createMockMessage({
