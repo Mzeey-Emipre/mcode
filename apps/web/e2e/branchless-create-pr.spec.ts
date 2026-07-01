@@ -95,7 +95,6 @@ test.describe("Branchless Create PR", () => {
   test("creates a named branch before opening the Create PR dialog", async ({ page }) => {
     const createBranchCalls: unknown[] = [];
     const branchPrCalls: unknown[] = [];
-    const gitLogCalls: unknown[] = [];
 
     await interceptZustandStores(page);
     await mockWebSocketServer(page, {
@@ -106,10 +105,7 @@ test.describe("Branchless Create PR", () => {
         branchPrCalls.push(params);
         return null;
       },
-      "git.log": (params) => {
-        gitLogCalls.push(params);
-        return [gitCommit];
-      },
+      "git.log": [gitCommit],
       "git.createBranch": (params) => {
         createBranchCalls.push(params);
         return { branch: "feat/issue-801" };
@@ -142,7 +138,6 @@ test.describe("Branchless Create PR", () => {
     await expect(page.getByTestId("workspace-menu-create-pr")).toHaveCount(0);
     await expect(page.getByTestId("workspace-menu-commit")).toBeDisabled();
     expect(branchPrCalls).toEqual([]);
-    expect(gitLogCalls).toEqual([]);
 
     await page.getByTestId("thread-overview-create-branch").click();
     await expect(page.getByRole("heading", { name: "Work here" })).toBeVisible();

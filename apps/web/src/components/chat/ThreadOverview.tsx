@@ -18,6 +18,7 @@ import {
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
   Dialog,
   DialogContent,
@@ -1759,6 +1760,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
         ? "Thread overview, CI checks passing"
         : "Thread overview";
   const modeLabel = thread.mode === "worktree" ? "Worktree" : "Direct";
+  const LocalModeIcon = thread.mode === "worktree" ? WorktreeModeIcon : Laptop;
   const checkoutLabel = resolveThreadCheckoutLabel(thread);
 
   const triggerButton = (
@@ -1846,7 +1848,12 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                     )}
                   >
                     <span className="flex min-w-0 items-center gap-2">
-                      <Laptop size={14} className="shrink-0 text-muted-foreground" />
+                      <LocalModeIcon
+                        size={14}
+                        aria-hidden
+                        data-testid="thread-overview-local-mode-icon"
+                        className="shrink-0 text-muted-foreground"
+                      />
                       <span className="truncate text-xs font-medium">{modeLabel}</span>
                     </span>
                     <ChevronDown size={13} aria-hidden className="shrink-0 text-muted-foreground" />
