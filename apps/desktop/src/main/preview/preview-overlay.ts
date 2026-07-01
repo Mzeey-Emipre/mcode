@@ -12,7 +12,6 @@ import {
   type Bounds,
   type PreviewSession,
   getSession,
-  getActiveTab,
   clearIdle,
   resetIdle,
 } from "./preview-session.js";
@@ -26,7 +25,7 @@ import {
   sanitizeSelectorHintFromGuest,
   scrubHtmlExcerptForOutbound,
 } from "./preview-capture.js";
-import { findAdoptedWebContents } from "./preview-webview-adopt.js";
+import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
 
 /**
  * Element-pick runs entirely inside the guest page: capture-phase event handlers block
@@ -518,16 +517,7 @@ async function removeRgMarqueeHighlighter(wc: WebContents): Promise<void> {
   }
 }
 
-function resolveActiveCaptureWebContents(s: PreviewSession): WebContents | null {
-  const threadId = s.lastPreviewThreadId;
-  if (threadId) {
-    const activeTab = getActiveTab(s, threadId);
-    const adopted = findAdoptedWebContents(threadId, activeTab.id);
-    if (adopted && !adopted.isDestroyed()) return adopted;
-  }
-  if (s.view && !s.view.webContents.isDestroyed()) return s.view.webContents;
-  return null;
-}
+const resolveActiveCaptureWebContents = resolveActivePreviewWebContents;
 
 /** Prefer WebContentsView bounds for native captures; webview captures use shell bounds. */
 function hostBoundsForHitTest(s: PreviewSession, webContents: WebContents): Bounds | null {

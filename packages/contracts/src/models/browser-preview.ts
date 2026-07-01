@@ -264,3 +264,96 @@ export function clampAttachedBrowserCaptureForOutbound(att: AttachedBrowserCaptu
 }
 
 export type McodeBrowserCapture = McodeBrowserCaptureV1 | McodeBrowserCaptureV2;
+
+/** Max lengths for Preview annotation payload strings. */
+export const PREVIEW_ANNOTATION_STRING_MAX = {
+  note: 4000,
+  changeSummary: 1200,
+  pageIdentity: 2048,
+  targetLabel: 512,
+  visualValue: 512,
+} as const;
+
+const previewAnnotationVisualProposalSchema = z.object({
+  textColor: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  background: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  opacity: z.number().min(0).max(1).optional(),
+  font: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  fontSize: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  fontWeight: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderRadius: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderColor: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderWidth: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  width: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  height: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  padding: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  margin: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+});
+
+/**
+ * Visual style changes requested for a Preview annotation target.
+ */
+export const PreviewAnnotationVisualProposalSchema = lazySchema(() =>
+  previewAnnotationVisualProposalSchema.refine((value) => Object.keys(value).length > 0, {
+    message: "visual proposal must contain at least one change",
+  }),
+);
+
+export type PreviewAnnotationVisualProposal = z.infer<
+  ReturnType<typeof PreviewAnnotationVisualProposalSchema>
+>;
+
+/**
+ * One saved Preview annotation sent as part of an Annotation bundle.
+ */
+export const PreviewAnnotationPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      id: z.string().uuid(),
+      displayNumber: z.number().int().positive(),
+      pageIdentity: z.string().min(1).max(PREVIEW_ANNOTATION_STRING_MAX.pageIdentity),
+      pageContext: McodeBrowserCaptureV2Schema(),
+      targetContext: z.object({
+        label: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.targetLabel).nullable().optional(),
+        selectorHint: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.targetLabel).nullable().optional(),
+        bounds: BrowserPreviewBoundsSchema(),
+      }),
+      note: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.note).optional(),
+      changeSummary: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.changeSummary).optional(),
+      proposedChanges: PreviewAnnotationVisualProposalSchema().optional(),
+      snapshot: z.object({
+        id: z.string(),
+        name: z.string().max(255),
+        mimeType: z.literal("image/png"),
+        sizeBytes: z.number().int().nonnegative(),
+        sourcePath: z.string().max(1024),
+        capture: McodeBrowserCaptureV2Schema(),
+      }),
+    })
+    .refine((value) => Boolean(value.note?.trim() || value.proposedChanges), {
+      message: "annotation requires a note or proposed changes",
+      path: ["note"],
+    })
+    .refine((value) => Boolean(value.note?.trim() || value.changeSummary?.trim()), {
+      message: "annotation requires note or change summary text",
+      path: ["changeSummary"],
+    }),
+);
+
+export type PreviewAnnotationPayload = z.infer<
+  ReturnType<typeof PreviewAnnotationPayloadSchema>
+>;
+
+/**
+ * Structured Annotation bundle payload sent beside normal composer content.
+ */
+export const PreviewAnnotationBundleSchema = lazySchema(() =>
+  z.object({
+    schemaVersion: z.literal(1),
+    annotations: z.array(PreviewAnnotationPayloadSchema()).min(1),
+  }),
+);
+
+export type PreviewAnnotationBundle = z.infer<
+  ReturnType<typeof PreviewAnnotationBundleSchema>
+>;

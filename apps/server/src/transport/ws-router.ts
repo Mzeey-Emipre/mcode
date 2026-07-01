@@ -18,6 +18,7 @@ import {
   type WsMethodName,
   type IProviderRegistry,
   type ProviderUsageInfo,
+  type PreviewAnnotationBundle,
   getExtension,
   isSkillCatalogCapable,
 } from "@mcode/contracts";
@@ -58,6 +59,19 @@ import {
   isProviderAvailabilityError,
 } from "../services/provider-availability-errors.js";
 import type { ProviderAvailabilityService } from "../services/provider-availability-service.js";
+
+const PREVIEW_ANNOTATION_FENCE_START = "<!-- mcode-preview-annotations:v1";
+const PREVIEW_ANNOTATION_FENCE_END = "mcode-preview-annotations:end -->";
+
+/** Appends Preview Annotation structured data to provider-bound content if the client did not already do so. */
+function appendPreviewAnnotationsForAgent(
+  content: string,
+  previewAnnotations: PreviewAnnotationBundle | undefined,
+): string {
+  if (!previewAnnotations || previewAnnotations.annotations.length === 0) return content;
+  if (content.includes(PREVIEW_ANNOTATION_FENCE_START)) return content;
+  return `${content.trim()}\n\n${PREVIEW_ANNOTATION_FENCE_START}\n${JSON.stringify(previewAnnotations)}\n${PREVIEW_ANNOTATION_FENCE_END}`.trim();
+}
 import type { ModelCacheService } from "../services/model-cache-service.js";
 import type { DiffSummaryService } from "../services/diff-summary-service.js";
 import type { RecapService } from "../services/recap-service.js";
@@ -661,7 +675,7 @@ async function dispatch(
     case "agent.send":
       await deps.agentService.sendMessage(
         params.threadId,
-        params.content,
+        appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
         params.permissionMode ?? "default",
         params.model,
         params.attachments,
@@ -678,15 +692,16 @@ async function dispatch(
         undefined,
         params.replyToMessageId,
         params.quotedText,
-        params.displayContent,
+        params.displayContent ?? params.content,
         params.planAction,
         params.mentions,
+        params.previewAnnotations,
       );
       return;
     case "agent.createAndSend": {
       const thread = await deps.agentService.createAndSend(
         params.workspaceId,
-        params.content,
+        appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
         params.model,
         params.permissionMode,
         params.mode,
@@ -705,8 +720,9 @@ async function dispatch(
         params.contextWindow,
         params.thinking,
         params.codexFastMode,
-        params.displayContent,
+        params.displayContent ?? params.content,
         params.mentions,
+        params.previewAnnotations,
       );
       watchReturnedThreadWorktree(deps, thread);
       return thread;

@@ -18,6 +18,7 @@ function createTestDb(): Database.Database {
       timestamp TEXT NOT NULL,
       sequence INTEGER NOT NULL,
       attachments TEXT,
+      preview_annotations TEXT,
       mentions TEXT,
       reply_to_message_id TEXT,
       quoted_text TEXT,
@@ -67,7 +68,7 @@ describe("MessageRepo", () => {
       const stmt = db.prepare(
         `EXPLAIN QUERY PLAN
 WITH page AS (
-  SELECT m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal
+  SELECT m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal
   FROM messages m
   WHERE m.thread_id = ? AND m.is_internal = 0
   ORDER BY m.sequence DESC
@@ -254,6 +255,68 @@ ORDER BY page.sequence ASC`,
 
       expect(created.mentions).toEqual(mentions);
       expect(fetched?.mentions).toEqual(mentions);
+    });
+  });
+
+  describe("create with preview annotations", () => {
+    it("round-trips preview annotations through persisted message listing", () => {
+      const bundle = {
+        schemaVersion: 1 as const,
+        annotations: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            displayNumber: 1,
+            pageIdentity: "http://localhost:3000/settings",
+            pageContext: {
+              schemaVersion: 2 as const,
+              pageUrl: "http://localhost:3000/settings",
+              pageTitle: "Settings",
+              capturedAt: "2026-07-01T00:00:00.000Z",
+              bounds: { x: 0, y: 0, width: 800, height: 600 },
+            },
+            targetContext: {
+              label: "Save button",
+              selectorHint: "button[type='submit']",
+              bounds: { x: 12, y: 24, width: 120, height: 40 },
+            },
+            note: "Make this button easier to scan.",
+            changeSummary: "Increase contrast.",
+            snapshot: {
+              id: "snapshot-1",
+              name: "settings.png",
+              mimeType: "image/png" as const,
+              sizeBytes: 1234,
+              sourcePath: "C:\\temp\\settings.png",
+              capture: {
+                schemaVersion: 2 as const,
+                pageUrl: "http://localhost:3000/settings",
+                pageTitle: "Settings",
+                capturedAt: "2026-07-01T00:00:00.000Z",
+                bounds: { x: 0, y: 0, width: 800, height: 600 },
+              },
+            },
+          },
+        ],
+      };
+
+      repo.create(
+        "thread-1",
+        "user",
+        "",
+        1,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        bundle,
+      );
+
+      const { messages } = repo.listByThread("thread-1", 10);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toBe("");
+      expect(messages[0].previewAnnotations).toEqual(bundle);
     });
   });
 

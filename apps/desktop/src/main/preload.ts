@@ -293,6 +293,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       setInspect(enabled: boolean): Promise<unknown> {
         return ipcRenderer.invoke("preview:design.set-inspect", { enabled });
       },
+      setAnnotationGuard(enabled: boolean): Promise<unknown> {
+        return ipcRenderer.invoke("preview:design.set-annotation-guard", { enabled });
+      },
     },
     /**
      * Multi-tab control surface (Phase A of the in-app browser rewrite).

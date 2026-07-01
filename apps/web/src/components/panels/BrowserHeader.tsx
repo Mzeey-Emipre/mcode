@@ -312,8 +312,8 @@ export function BrowserHeader({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon-sm"
-                  aria-label="Design"
+                  size={designModeActive ? "sm" : "icon-sm"}
+                  aria-label={designModeActive ? "Annotating" : "Design"}
                   aria-pressed={designModeActive}
                   disabled={!threadId}
                   onClick={onToggleDesign}
@@ -328,6 +328,7 @@ export function BrowserHeader({
                   ) : (
                     <PenTool size={16} aria-hidden />
                   )}
+                  {designModeActive ? <span>Annotating</span> : null}
                 </Button>
               }
             />

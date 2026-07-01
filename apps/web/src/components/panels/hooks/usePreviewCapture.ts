@@ -2,8 +2,9 @@ import { useCallback, useState } from "react";
 import { useToastStore } from "@/stores/toastStore";
 import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
 import { MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME } from "@mcode/contracts";
-import type { McodeBrowserCapture } from "@mcode/contracts";
+import type { McodeBrowserCapture, PreviewAnnotationPayload } from "@mcode/contracts";
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
+import { normalizePreviewPageIdentity, usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
 
 type CaptureResult =
   | {
@@ -83,6 +84,10 @@ export interface PreviewCaptureState {
    */
   readonly onAddElementPickPictureReference: () => Promise<{ ok: boolean }>;
   readonly onAddPageContextOnly: () => Promise<void>;
+  /** Create a saved Preview annotation from an element pick instead of a normal attachment. */
+  readonly onAddElementAnnotation: () => Promise<{ ok: boolean }>;
+  /** Capture the full visible viewport for a saved Preview annotation. */
+  readonly captureAnnotationSnapshot: () => Promise<PreviewAnnotationPayload["snapshot"] | null>;
 }
 
 /**
@@ -254,6 +259,63 @@ export function usePreviewCapture({
     }
   }, [pushSync, threadId, onSuccess]);
 
+  const captureAnnotationSnapshot = useCallback(async (): Promise<PreviewAnnotationPayload["snapshot"] | null> => {
+    const preview = window.desktopBridge?.preview;
+    if (!preview?.capturePictureReference || !threadId) return null;
+    await pushSync(true);
+    let res: CaptureResult;
+    try {
+      res = (await preview.capturePictureReference()) as CaptureResult;
+    } catch {
+      useToastStore.getState().show("error", "Could not save annotation", "Screenshot failed.");
+      return null;
+    }
+    showCaptureErrorIfNeeded(res);
+    if (!res.ok || res.capture.schemaVersion !== 2) return null;
+    return {
+      id: res.meta.id,
+      name: res.meta.name,
+      mimeType: "image/png",
+      sizeBytes: res.meta.sizeBytes,
+      sourcePath: res.meta.sourcePath,
+      capture: res.capture,
+    };
+  }, [pushSync, threadId]);
+
+  const onAddElementAnnotation = useCallback(async (): Promise<{ ok: boolean }> => {
+    const preview = window.desktopBridge?.preview;
+    if (!preview?.capturePictureReferenceElementPick || !threadId) return { ok: false };
+
+    setElementPickBusy(true);
+    try {
+      await pushSync(true);
+      let res: CaptureResult;
+      try {
+        res = (await preview.capturePictureReferenceElementPick()) as CaptureResult;
+      } catch {
+        useToastStore.getState().show("error", "Could not capture preview", "Screenshot failed.");
+        return { ok: false };
+      }
+
+      showCaptureErrorIfNeeded(res);
+      if (!res.ok || res.capture.schemaVersion !== 2) return { ok: false };
+
+      usePreviewAnnotationStore.getState().setDraft(threadId, {
+        threadId,
+        pageIdentity: normalizePreviewPageIdentity(res.capture.pageUrl),
+        bounds: res.capture.bounds,
+        selectorHint: res.capture.selectorHint ?? null,
+        label: res.capture.selectorHint ?? null,
+        pageContext: res.capture,
+        note: "",
+      });
+      onSuccess?.("element");
+      return { ok: true };
+    } finally {
+      setElementPickBusy(false);
+    }
+  }, [pushSync, threadId, onSuccess]);
+
   return {
     captureBusy,
     regionBusy,
@@ -264,5 +326,7 @@ export function usePreviewCapture({
     onAddRegionPictureReference,
     onAddElementPickPictureReference,
     onAddPageContextOnly,
+    onAddElementAnnotation,
+    captureAnnotationSnapshot,
   };
 }

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Message, StoredAttachment } from "@/transport";
+import type { PreviewAnnotationBundle } from "@mcode/contracts";
 import { MessageBubble } from "../components/chat/MessageBubble";
 
 // Mock MarkdownContent to detect when it's used
@@ -49,6 +50,46 @@ function makeMessage(content: string): Message {
     sequence: 1,
     tool_calls: null,
     files_changed: null,
+  };
+}
+
+function makePreviewAnnotationBundle(): PreviewAnnotationBundle {
+  return {
+    schemaVersion: 1,
+    annotations: [
+      {
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        displayNumber: 1,
+        pageIdentity: "http://localhost:44354/product-preview",
+        pageContext: {
+          schemaVersion: 2,
+          pageUrl: "http://localhost:44354/product-preview",
+          pageTitle: "Product preview",
+          capturedAt: new Date().toISOString(),
+          bounds: { x: 0, y: 0, width: 1280, height: 720 },
+        },
+        targetContext: {
+          label: "html",
+          selectorHint: "html",
+          bounds: { x: 12, y: 16, width: 240, height: 80 },
+        },
+        note: "Make the product content flush with the edge on narrow screens.",
+        snapshot: {
+          id: "shot-1",
+          name: "annotation.png",
+          mimeType: "image/png",
+          sizeBytes: 128,
+          sourcePath: "preview/annotation.png",
+          capture: {
+            schemaVersion: 2,
+            pageUrl: "http://localhost:44354/product-preview",
+            pageTitle: "Product preview",
+            capturedAt: new Date().toISOString(),
+            bounds: { x: 12, y: 16, width: 240, height: 80 },
+          },
+        },
+      },
+    ],
   };
 }
 
@@ -147,6 +188,37 @@ describe("MessageBubble user messages", () => {
       `mcode-attachment://${threadUuid}/a2.png`,
     );
     expect(lb?.getAttribute("data-active-title")).toBe("two.png");
+  });
+
+  it("renders sent preview annotation chips for annotation-only messages", () => {
+    const message: Message = {
+      ...makeMessage(""),
+      previewAnnotations: makePreviewAnnotationBundle(),
+    };
+
+    const { getByTestId, queryByText } = render(<MessageBubble message={message} />);
+
+    expect(getByTestId("sent-preview-annotation-bundle-chip")).toHaveTextContent(
+      "1 annotation",
+    );
+    expect(queryByText("bundle")).not.toBeInTheDocument();
+  });
+
+  it("uses an annotation reply fallback for annotation-only messages", async () => {
+    const user = userEvent.setup();
+    const onReply = vi.fn();
+    const message: Message = {
+      ...makeMessage(""),
+      previewAnnotations: makePreviewAnnotationBundle(),
+    };
+
+    const { getByLabelText } = render(
+      <MessageBubble message={message} onReply={onReply} />,
+    );
+
+    await user.click(getByLabelText("Reply to this message"));
+
+    expect(onReply).toHaveBeenCalledWith("msg-1", "[Annotation]", "user");
   });
 });
 

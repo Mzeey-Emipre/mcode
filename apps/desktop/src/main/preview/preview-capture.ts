@@ -16,6 +16,7 @@ import {
 import { redactMcodeBrowserCaptureV2 } from "@mcode/shared";
 import { type Bounds, type PreviewSession, type CaptureFinishResult, sessions, getSession, resetIdle } from "./preview-session.js";
 import { persistBrowserCaptureSpill } from "./preview-spill.js";
+import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
 
 /**
  * Outcome of capturing the visible preview viewport as a PNG attachment.
@@ -393,8 +394,8 @@ export function registerWebRequestInterceptor(partition: Electron.Session): void
     const rt = String(details.resourceType ?? "other").slice(0, 32);
     const safeUrl = url.length > 2048 ? url.slice(0, 2048) : url;
     for (const s of sessions.values()) {
-      if (!s.view || s.view.webContents.isDestroyed()) continue;
-      if (s.view.webContents.id !== wcId) continue;
+      const activeWebContents = resolveActivePreviewWebContents(s);
+      if (!activeWebContents || activeWebContents.id !== wcId) continue;
       pushFailedRequest(s, { url: safeUrl, statusCode: code, resourceType: rt });
       return;
     }
@@ -411,19 +412,20 @@ export function registerCaptureHandlers(): void {
     if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
 
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) {
+    const activeWebContents = resolveActivePreviewWebContents(s);
+    if (!activeWebContents) {
       return { ok: false, error: "no-preview" };
     }
 
     try {
-      const image = await s.view.webContents.capturePage();
+      const image = await activeWebContents.capturePage();
       const buffer = image.toPNG();
       if (buffer.length === 0) {
         return { ok: false, error: "empty-capture" };
       }
 
       const id = randomUUID();
-      const stem = previewCaptureFileStem(s.view.webContents.getURL());
+      const stem = previewCaptureFileStem(activeWebContents.getURL());
       const name = `preview-${stem}-${Date.now()}.png`;
       const tempDir = join(app.getPath("temp"), "mcode-attachments");
       await mkdir(tempDir, { recursive: true });
@@ -443,7 +445,7 @@ export function registerCaptureHandlers(): void {
       const boundsCss =
         lb !== null ? viewportBoundsFallback(lb.width, lb.height) : viewportBoundsFallback(pngSize.width, pngSize.height);
       const capture = await buildBrowserCapturePayload(
-        s.view.webContents,
+        activeWebContents,
         boundsCss,
         s.consoleBuffer,
         snapshotFailedRequestsForCapture(s),
@@ -464,7 +466,8 @@ export function registerCaptureHandlers(): void {
     if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
 
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) {
+    const activeWebContents = resolveActivePreviewWebContents(s);
+    if (!activeWebContents) {
       return { ok: false, error: "no-preview" };
     }
 
@@ -476,7 +479,7 @@ export function registerCaptureHandlers(): void {
     try {
       const boundsCss = viewportBoundsFallback(lb.width, lb.height);
       const capture = await buildBrowserCapturePayload(
-        s.view.webContents,
+        activeWebContents,
         boundsCss,
         s.consoleBuffer,
         snapshotFailedRequestsForCapture(s),

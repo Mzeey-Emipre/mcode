@@ -197,6 +197,7 @@ async function injectPreviewBridge(
           Promise.resolve({ ok: true, data: { width: 0, height: 0 } } as const),
         resetViewport: noop,
         setInspect: () => Promise.resolve({ ok: true } as const),
+        setAnnotationGuard: () => Promise.resolve({ ok: true } as const),
       },
     };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -427,13 +428,19 @@ test.describe("PreviewPanel — loaded header", () => {
     await expect(menu.getByText("100%")).toBeVisible();
   });
 
-  test("design mode aria-pressed toggles on and back off", async ({ page }) => {
+  test("design mode shows compact annotation header before the first annotation", async ({ page }) => {
     const designBtn = page.getByRole("button", { name: "Design", exact: true });
     await expect(designBtn).toHaveAttribute("aria-pressed", "false");
     await designBtn.click();
-    await expect(designBtn).toHaveAttribute("aria-pressed", "true");
-    await designBtn.click();
-    await expect(designBtn).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByTestId("browser-header")).toHaveCount(0);
+    await expect(page.getByTestId("preview-annotation-header")).toBeVisible();
+    await expect(page.getByText("Pick a page target")).toBeVisible();
+    await expect(page.getByTestId("preview-annotation-send-state")).toBeDisabled();
+    await page.getByRole("button", { name: "Exit Design" }).click();
+    await expect(page.getByRole("button", { name: "Design", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 });
 

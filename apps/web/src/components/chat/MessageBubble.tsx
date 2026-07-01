@@ -18,6 +18,7 @@ import { PlanCard } from "./PlanCard";
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 import { DeltaBlock } from "./narrative/DeltaBlock";
 import { parseGoalStatusNotice } from "@/lib/goal-message";
+import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
 
 /**
  * Returns true when the assistant message body collapses to nothing visible
@@ -480,6 +481,8 @@ export const MessageBubble = memo(function MessageBubble({
     [message.attachments],
   );
   const textContent = useMemo(() => stripInjectedFiles(message.content), [message.content]);
+  const hasPreviewAnnotations =
+    (message.previewAnnotations?.annotations.length ?? 0) > 0;
 
   const isAnsweredPlanMessage = useThreadRecord(
     message.thread_id,
@@ -561,6 +564,7 @@ export const MessageBubble = memo(function MessageBubble({
   if (
     message.role === "user" &&
     !hasAttachments &&
+    !hasPreviewAnnotations &&
     textContent.startsWith(PLAN_ANSWER_MESSAGE_PREFIX)
   ) {
     return null;
@@ -620,6 +624,15 @@ export const MessageBubble = memo(function MessageBubble({
               </div>
             )}
 
+            {message.previewAnnotations ? (
+              <div className="flex justify-end">
+                <PreviewAnnotationBundleChip
+                  bundle={message.previewAnnotations}
+                  testId="sent-preview-annotation-bundle-chip"
+                />
+              </div>
+            ) : null}
+
           {userDisplayText.trim() && (
             <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground shadow-sm shadow-primary/15">
               {!userGoal && message.mentions?.length ? (
@@ -638,7 +651,12 @@ export const MessageBubble = memo(function MessageBubble({
                 let fallback = "[Attachment]";
                 if (!userDisplayText.trim()) {
                   const firstAtt = message.attachments?.[0];
-                  if (firstAtt?.mimeType.startsWith("image/")) fallback = "[Image attachment]";
+                  if (hasPreviewAnnotations) {
+                    fallback =
+                      message.previewAnnotations?.annotations.length === 1
+                        ? "[Annotation]"
+                        : "[Annotations]";
+                  } else if (firstAtt?.mimeType.startsWith("image/")) fallback = "[Image attachment]";
                   else if (firstAtt?.mimeType === "application/pdf") fallback = "[PDF attachment]";
                   else if (firstAtt) fallback = "[File attachment]";
                 }

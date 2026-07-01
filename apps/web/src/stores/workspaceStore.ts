@@ -5,7 +5,7 @@ import {
   buildPlaceholderWorkspaceThread,
   titleFromMessageContent,
 } from "@/lib/workspace-thread";
-import type { ChecksStatus, CreateAndSendResult, MessageMention } from "@mcode/contracts";
+import type { ChecksStatus, CreateAndSendResult, MessageMention, PreviewAnnotationBundle } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "./thread-record";
@@ -87,6 +87,8 @@ interface PendingThreadCreation {
   displayContent?: string;
   /** Selected typed mentions with offsets into content. */
   mentions?: MessageMention[];
+  /** Structured Preview Annotation bundle sent beside normal attachments. */
+  previewAnnotations?: PreviewAnnotationBundle;
   model: string;
   permissionMode?: PermissionMode;
   transportMode: "direct" | "worktree";
@@ -129,6 +131,7 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     pending.codexFastMode,
     pending.displayContent,
     pending.mentions,
+    pending.previewAnnotations,
   );
 }
 /**
@@ -210,6 +213,7 @@ interface WorkspaceState {
     codexFastMode?: boolean,
     displayContent?: string,
     mentions?: MessageMention[],
+    previewAnnotations?: PreviewAnnotationBundle,
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: {
@@ -726,6 +730,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     codexFastMode,
     displayContent,
     mentions,
+    previewAnnotations,
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
@@ -781,6 +786,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       thinking,
       codexFastMode,
       mentions,
+      previewAnnotations,
     };
 
     const captionForUi = displayContent ?? content;

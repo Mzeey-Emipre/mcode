@@ -179,6 +179,7 @@ interface PreviewDesignBridge {
   }): Promise<{ ok: true; data: { width: number; height: number } } | { ok: false; error: string }>;
   resetViewport(): Promise<{ ok: true } | { ok: false; error: string }>;
   setInspect(enabled: boolean): Promise<{ ok: true } | { ok: false; error: string }>;
+  setAnnotationGuard(enabled: boolean): Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 /** Wire-side result of a tab IPC call. */

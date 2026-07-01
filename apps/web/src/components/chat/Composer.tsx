@@ -114,7 +114,11 @@ import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { ProviderUnavailableBanner } from "./ProviderUnavailableBanner";
 import { appendBrowserCaptureFence } from "@/lib/browser-capture-append";
+import { appendPreviewAnnotationFence } from "@/lib/preview-annotation-append";
+import { usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
+import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
+import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
 import {
   collectBrowserCaptureSpillPaths,
   collectSpillPathsFromPendingAttachments,
@@ -904,6 +908,21 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
   const [composerMode, setComposerModeLocal] = useState<ComposerMode>("direct");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const annotationRows = usePreviewAnnotationStore((s) =>
+    threadId ? s.byThread[threadId] : undefined,
+  );
+  const annotationCount = annotationRows?.length ?? 0;
+  const annotationBundleForDisplay = useMemo(
+    () =>
+      annotationRows && annotationRows.length > 0
+        ? {
+            schemaVersion: 1 as const,
+            annotations: annotationRows.map(({ createdAt: _createdAt, ...annotation }) => annotation),
+          }
+        : undefined,
+    [annotationRows],
+  );
+  const setPreviewDesignModeActive = usePreviewDesignModeStore((s) => s.setActive);
   /**
    * When the user pulls a queued message back into the composer to edit, we
    * remember which message it was and what slot it held. Saving (send) and
@@ -1536,7 +1555,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     };
   }, [input, prDismissed, isNewThread]);
 
-  const hasContent = input.trim().length > 0 || attachments.length > 0;
+  const hasContent = input.trim().length > 0 || attachments.length > 0 || annotationCount > 0;
 
   // Detect stale worktree: thread is a worktree thread but its directory no longer exists.
   // Only check when worktrees have been loaded for THIS thread's workspace to avoid
@@ -2068,7 +2087,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const rawInput = composerMessage.text;
     const selectedMentions = composerMessage.mentions;
     const trimmed = rawInput.trim();
-    if (trimmed.length === 0 && attachments.length === 0) {
+    const outboundPreviewAnnotations = threadId
+      ? usePreviewAnnotationStore.getState().buildBundle(threadId)
+      : undefined;
+    if (trimmed.length === 0 && attachments.length === 0 && !outboundPreviewAnnotations) {
       // Empty submit while editing a queued message = the user emptied it
       // intentionally. Treat as "remove from queue" instead of silently
       // doing nothing (the message has already been popped on edit start).
@@ -2197,6 +2219,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       try {
         content =
           captureRows.length === 0 ? rawInput : appendBrowserCaptureFence(rawInput, captureRows);
+        content = appendPreviewAnnotationFence(content, outboundPreviewAnnotations);
         content = content.trim();
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Invalid page preview payload";
@@ -2221,6 +2244,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     try {
       messageContent =
         captureRows.length === 0 ? rawInput : appendBrowserCaptureFence(rawInput, captureRows);
+      messageContent = appendPreviewAnnotationFence(messageContent, outboundPreviewAnnotations);
       messageContent = messageContent.trim();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Invalid page preview payload";
@@ -2284,6 +2308,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
             outboundDisplay,
             selectedMentions,
+            outboundPreviewAnnotations,
           );
       } else if (branchFromMessageId && threadId) {
       // Branch mode: create a child thread from the quoted message instead of sending.
@@ -2344,7 +2369,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           replyContext?.quotedText,
           undefined,
           selectedMentions,
+          outboundPreviewAnnotations,
         );
+      }
+
+      if (threadId && outboundPreviewAnnotations) {
+        usePreviewAnnotationStore.getState().clearThread(threadId);
+        setPreviewDesignModeActive(threadId, false);
       }
 
       // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
@@ -2381,7 +2412,19 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     await continueSend();
-  }, [input, mentions, attachments, isAgentRunning, isNewThread, composerMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch]);
+  }, [input, mentions, attachments, annotationCount, isAgentRunning, isNewThread, composerMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setPreviewDesignModeActive]);
+
+  useEffect(() => {
+    if (!threadId) return;
+    const onSubmitComposer = (event: Event): void => {
+      const detail = (event as CustomEvent<{ readonly threadId?: string }>).detail;
+      if (detail?.threadId && detail.threadId !== threadId) return;
+      void handleSend();
+    };
+    window.addEventListener("mcode:submit-composer", onSubmitComposer);
+    return () =>
+      window.removeEventListener("mcode:submit-composer", onSubmitComposer);
+  }, [handleSend, threadId]);
 
   // Reset the handoff-transition-seen flag whenever the user switches threads
   // so the guard below evaluates correctly for each new child thread.
@@ -2755,6 +2798,15 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         </div>
 
         {/* Attachment previews */}
+        {threadId && annotationBundleForDisplay ? (
+          <div className="px-3 pt-2">
+            <PreviewAnnotationBundleChip
+              bundle={annotationBundleForDisplay}
+              testId="composer-annotation-bundle"
+              onRemove={() => usePreviewAnnotationStore.getState().clearThread(threadId)}
+            />
+          </div>
+        ) : null}
         <AttachmentPreview attachments={attachments} onRemove={removeAttachment} />
 
         {/* Compacting banner — shown while the SDK is summarising the context window */}

@@ -6,11 +6,18 @@
  * 2. Full panel state - when desktopBridge.preview is present (hooks mocked).
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { getDefaultSettings } from "@mcode/contracts";
 
-const { mockUsePreviewBridge } = vi.hoisted(() => ({
+const {
+  mockUsePreviewBridge,
+  mockOnAddElementAnnotation,
+  mockCaptureAnnotationSnapshot,
+} = vi.hoisted(() => ({
   mockUsePreviewBridge: vi.fn(),
+  mockOnAddElementAnnotation: vi.fn(),
+  mockCaptureAnnotationSnapshot: vi.fn(),
 }));
 
 // Mock hooks before importing the component under test.
@@ -41,6 +48,8 @@ vi.mock("../hooks/usePreviewCapture", () => ({
     onAddRegionPictureReference: vi.fn(),
     onAddElementPickPictureReference: vi.fn(),
     onAddPageContextOnly: vi.fn(),
+    onAddElementAnnotation: mockOnAddElementAnnotation,
+    captureAnnotationSnapshot: mockCaptureAnnotationSnapshot,
   }),
 }));
 
@@ -51,6 +60,11 @@ import {
 } from "../PreviewPanel";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
+import {
+  normalizePreviewPageIdentity,
+  usePreviewAnnotationStore,
+} from "@/stores/previewAnnotationStore";
+import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -148,6 +162,67 @@ function installMockWebviewMethods(options: {
   };
 }
 
+function installDraftAnnotation(overrides: Record<string, unknown> = {}) {
+  usePreviewAnnotationStore.getState().setDraft("thread-1", {
+    threadId: "thread-1",
+    pageIdentity: "",
+    bounds: { x: 20, y: 24, width: 120, height: 32 },
+    selectorHint: "button",
+    label: "button",
+    pageContext: {
+      schemaVersion: 2,
+      pageUrl: "https://example.com",
+      pageTitle: "Example",
+      capturedAt: "2026-07-01T00:00:00.000Z",
+      captureKind: "element",
+      bounds: { x: 20, y: 24, width: 120, height: 32 },
+      layoutViewport: { width: 800, height: 600 },
+    },
+    note: "",
+    ...overrides,
+  });
+}
+
+function installSavedAnnotation(
+  overrides: Record<string, unknown> = {},
+) {
+  const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
+  usePreviewAnnotationStore.getState().saveAnnotation("thread-1", {
+    threadId: "thread-1",
+    pageIdentity: normalizePreviewPageIdentity(pageUrl),
+    bounds: { x: 20, y: 24, width: 120, height: 32 },
+    selectorHint: "button",
+    label: "button",
+    pageContext: {
+      schemaVersion: 2,
+      pageUrl,
+      pageTitle: "Example",
+      capturedAt: "2026-07-01T00:00:00.000Z",
+      captureKind: "element",
+      bounds: { x: 20, y: 24, width: 120, height: 32 },
+      layoutViewport: { width: 800, height: 600 },
+    },
+    note: "Move this button",
+    snapshot: {
+      id: "capture-saved",
+      name: "Preview annotation",
+      mimeType: "image/png",
+      sizeBytes: 12,
+      sourcePath: "preview/capture-saved.png",
+      capture: {
+        schemaVersion: 2,
+        pageUrl,
+        pageTitle: "Example",
+        capturedAt: "2026-07-01T00:00:00.000Z",
+        captureKind: "element",
+        bounds: { x: 20, y: 24, width: 120, height: 32 },
+        layoutViewport: { width: 800, height: 600 },
+      },
+    },
+    ...overrides,
+  });
+}
+
 describe("PreviewPanel — unavailable state", () => {
   beforeEach(() => {
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
@@ -202,10 +277,32 @@ describe("PreviewPanel — full panel state", () => {
         cancelCapture: vi.fn().mockResolvedValue(undefined),
         adoptWebview: vi.fn().mockResolvedValue(undefined),
         releaseWebview: vi.fn().mockResolvedValue(undefined),
+        design: {
+          setAnnotationGuard: vi.fn().mockResolvedValue({ ok: true }),
+        },
       },
     };
+    mockOnAddElementAnnotation.mockResolvedValue({ ok: true });
+    mockCaptureAnnotationSnapshot.mockResolvedValue({
+      id: "capture-1",
+      name: "Preview annotation 1",
+      mimeType: "image/png",
+      sizeBytes: 12,
+      sourcePath: "preview/capture-1.png",
+      capture: {
+        schemaVersion: 2,
+        pageUrl: "https://example.com",
+        pageTitle: "Example",
+        capturedAt: "2026-07-01T00:00:00.000Z",
+        captureKind: "element",
+        bounds: { x: 20, y: 24, width: 120, height: 32 },
+        layoutViewport: { width: 800, height: 600 },
+      },
+    });
     useSettingsStore.getState()._applyPush(getDefaultSettings());
     usePreviewSuppressionStore.setState({ count: 0 });
+    usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
+    usePreviewDesignModeStore.setState({ modes: {} });
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
   });
 
@@ -215,7 +312,11 @@ describe("PreviewPanel — full panel state", () => {
     (window as any).desktopBridge = undefined;
     useSettingsStore.getState()._applyPush(getDefaultSettings());
     usePreviewSuppressionStore.setState({ count: 0 });
+    usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
+    usePreviewDesignModeStore.setState({ modes: {} });
     mockUsePreviewBridge.mockClear();
+    mockOnAddElementAnnotation.mockClear();
+    mockCaptureAnnotationSnapshot.mockClear();
   });
 
   it("renders the full panel when desktopBridge is present", () => {
@@ -491,5 +592,268 @@ describe("PreviewPanel — full panel state", () => {
     expect(shouldRenderWebviewPreview("webview")).toBe(true);
     expect(shouldRenderWebviewPreview("webContentsView")).toBe(false);
     expect(shouldRenderWebviewPreview(undefined)).toBe(false);
+  });
+
+  it("shows the compact annotation header while design mode has no saved annotations", () => {
+    usePreviewDesignModeStore.getState().setActive("thread-1", true);
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        inputUrl: "https://example.com/product-preview?productCode=QUAELE2010",
+        storedUrl: "https://example.com/product-preview?productCode=QUAELE2010",
+        pageStatus: {
+          url: "https://example.com/product-preview?productCode=QUAELE2010",
+          title: "Example",
+          favicon: null,
+          phase: "loaded",
+        },
+      }),
+    );
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(screen.queryByTestId("browser-header")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preview-annotation-header")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-annotation-title")).toHaveTextContent(
+      "DesignPick a page target",
+    );
+    expect(screen.getByTestId("preview-annotation-send-state")).toBeDisabled();
+  });
+
+  it("shows the saved-annotation command bar after the first annotation", () => {
+    usePreviewDesignModeStore.getState().setActive("thread-1", true);
+    const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
+    installSavedAnnotation();
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        inputUrl: pageUrl,
+        storedUrl: pageUrl,
+        pageStatus: {
+          url: pageUrl,
+          title: "Example",
+          favicon: null,
+          phase: "loaded",
+        },
+      }),
+    );
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(screen.queryByTestId("browser-header")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preview-annotation-header")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-annotation-title")).toHaveTextContent(
+      `Annotating · ${normalizePreviewPageIdentity(pageUrl)}`,
+    );
+    expect(screen.getByTestId("preview-annotation-send-state")).toHaveAccessibleName(
+      "Send 1 annotation",
+    );
+  });
+
+  it("shows saved annotations as marker-only until reopened", () => {
+    const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
+    installSavedAnnotation();
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        inputUrl: pageUrl,
+        storedUrl: pageUrl,
+        pageStatus: {
+          url: pageUrl,
+          title: "Example",
+          favicon: null,
+          phase: "loaded",
+        },
+      }),
+    );
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const marker = screen.getByRole("button", { name: "Edit annotation 1" });
+    expect(marker).toBeInTheDocument();
+    expect(marker).not.toHaveTextContent("1");
+    expect(
+      screen.queryByTestId("preview-annotation-target-highlight"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("preview-annotation-active-target-highlight"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(marker);
+
+    expect(screen.getByTestId("preview-annotation-bubble")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("preview-annotation-active-target-highlight"),
+    ).toHaveStyle({
+      left: "20px",
+      top: "24px",
+      width: "120px",
+      height: "32px",
+    });
+  });
+
+  it("shows saved annotation content when the marker is hovered", async () => {
+    const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
+    installSavedAnnotation();
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        inputUrl: pageUrl,
+        storedUrl: pageUrl,
+        pageStatus: {
+          url: pageUrl,
+          title: "Example",
+          favicon: null,
+          phase: "loaded",
+        },
+      }),
+    );
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    await userEvent.hover(screen.getByRole("button", { name: "Edit annotation 1" }));
+
+    expect(await screen.findByText("Move this button")).toBeInTheDocument();
+    expect(screen.getByText("button")).toBeInTheDocument();
+  });
+
+  it("keeps annotation advanced controls hidden in a new empty draft", () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(screen.getByTestId("preview-annotation-bubble")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Add a comment...")).toBeInTheDocument();
+    expect(screen.queryByTestId("preview-annotation-advanced")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("preview-annotation-save")).not.toBeInTheDocument();
+  });
+
+  it("outlines the target while the draft annotation bubble is open", () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(
+      screen.getByTestId("preview-annotation-active-target-highlight"),
+    ).toHaveStyle({
+      left: "20px",
+      top: "24px",
+      width: "120px",
+      height: "32px",
+    });
+  });
+
+  it("shows annotation save only after note text or visual edits exist", () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(screen.queryByTestId("preview-annotation-save")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Annotation note"), {
+      target: { value: "Needs stronger contrast" },
+    });
+    expect(screen.getByTestId("preview-annotation-save")).toBeInTheDocument();
+  });
+
+  it("focuses the annotation note when a draft bubble opens", async () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Annotation note")).toHaveFocus();
+    });
+  });
+
+  it("saves the annotation when Enter is pressed in the note", async () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const note = screen.getByLabelText("Annotation note");
+    fireEvent.change(note, { target: { value: "Use stronger contrast" } });
+    fireEvent.keyDown(note, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(
+        usePreviewAnnotationStore.getState().byThread["thread-1"],
+      ).toHaveLength(1);
+    });
+    expect(
+      usePreviewAnnotationStore.getState().byThread["thread-1"]?.[0]?.note,
+    ).toBe("Use stronger contrast");
+  });
+
+  it("saves and requests composer send when Ctrl+Enter is pressed", async () => {
+    const submitSpy = vi.fn();
+    window.addEventListener("mcode:submit-composer", submitSpy);
+    installDraftAnnotation();
+
+    try {
+      render(<PreviewPanel threadId="thread-1" />);
+
+      const note = screen.getByLabelText("Annotation note");
+      fireEvent.change(note, { target: { value: "Move this button" } });
+      fireEvent.keyDown(note, {
+        key: "Enter",
+        code: "Enter",
+        ctrlKey: true,
+      });
+
+      await waitFor(() => {
+        expect(submitSpy).toHaveBeenCalledTimes(1);
+      });
+      const event = submitSpy.mock.calls[0]?.[0] as CustomEvent<{
+        threadId?: string;
+      }>;
+      expect(event.detail.threadId).toBe("thread-1");
+    } finally {
+      window.removeEventListener("mcode:submit-composer", submitSpy);
+    }
+  });
+
+  it("guards the page while a design-mode annotation bubble is open", async () => {
+    usePreviewDesignModeStore.getState().setActive("thread-1", true);
+    installDraftAnnotation();
+
+    const { unmount } = render(<PreviewPanel threadId="thread-1" />);
+
+    const setAnnotationGuard = vi.mocked(
+      window.desktopBridge!.preview!.design.setAnnotationGuard,
+    );
+    await waitFor(() => {
+      expect(setAnnotationGuard).toHaveBeenCalledWith(true);
+    });
+
+    unmount();
+
+    await waitFor(() => {
+      expect(setAnnotationGuard).toHaveBeenCalledWith(false);
+    });
+  });
+
+  it("re-arms the element picker after saving a design-mode annotation", async () => {
+    usePreviewDesignModeStore.getState().setActive("thread-1", true);
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(mockOnAddElementAnnotation).not.toHaveBeenCalled();
+    const note = screen.getByLabelText("Annotation note");
+    fireEvent.change(note, { target: { value: "Tighten spacing" } });
+    fireEvent.keyDown(note, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(mockOnAddElementAnnotation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("opens compact advanced annotation controls from the tuning action", () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+
+    expect(screen.getByTestId("preview-annotation-advanced")).toBeInTheDocument();
+    expect(screen.getByLabelText("Delete annotation")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 });
