@@ -30,6 +30,7 @@
     "verify": "node scripts/agent/verify-tests.mjs --full",
     "verify:e2e": "node scripts/agent/verify-e2e.mjs",
     "verify:all": "node scripts/agent/verify-all.mjs",
+    "audit:baseline": "node scripts/security/check-bun-audit-baseline.mjs",
     "test:scripts": "node --test scripts/agent/__tests__/*.test.mjs"
   },
   "devDependencies": {
