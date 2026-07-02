@@ -738,10 +738,14 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     setOutsideWarned(false);
   };
 
-  const activeVisualAnnotation = activeAnnotationId
+  const activeVisualAnnotation = designModeActive && activeAnnotationId
     ? pageAnnotations.find((annotation) => annotation.id === activeAnnotationId)
     : undefined;
-  const openBubbleVisualProposal = openBubbleBase
+  const visibleOpenBubbleBase = designModeActive ? openBubbleBase : undefined;
+  const visiblePageAnnotations = designModeActive
+    ? pageAnnotations
+    : EMPTY_SAVED_ANNOTATIONS;
+  const openBubbleVisualProposal = visibleOpenBubbleBase
     ? cleanVisualProposal(bubbleVisuals)
     : undefined;
   const previewSurfaceWidth = surfaceRef.current?.clientWidth ?? 0;
@@ -889,7 +893,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             ) : null}
           </div>
         ) : null}
-        {pageAnnotations.map((annotation) => {
+        {visiblePageAnnotations.map((annotation) => {
           const targetLabel =
             annotation.targetContext.label?.trim() ||
             annotation.targetContext.selectorHint?.trim() ||
@@ -964,32 +968,32 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             }}
           />
         ) : null}
-        {openBubbleBase ? (
+        {visibleOpenBubbleBase ? (
           <div
             data-testid="preview-annotation-active-target-highlight"
             className="pointer-events-none absolute z-10 rounded-sm border-2 border-primary/80 bg-primary/10"
             style={{
-              left: openBubbleBase.bounds.x,
-              top: openBubbleBase.bounds.y,
-              width: openBubbleBase.bounds.width,
-              height: openBubbleBase.bounds.height,
+              left: visibleOpenBubbleBase.bounds.x,
+              top: visibleOpenBubbleBase.bounds.y,
+              width: visibleOpenBubbleBase.bounds.width,
+              height: visibleOpenBubbleBase.bounds.height,
             }}
           />
         ) : null}
-        {openBubbleBase && openBubbleVisualProposal ? (
+        {visibleOpenBubbleBase && openBubbleVisualProposal ? (
           <div
             data-testid="preview-annotation-visual-proposal"
             className="pointer-events-none absolute z-10 rounded-sm border border-dashed border-primary/80"
             style={{
-              left: openBubbleBase.bounds.x,
-              top: openBubbleBase.bounds.y,
-              minWidth: openBubbleBase.bounds.width,
-              minHeight: openBubbleBase.bounds.height,
+              left: visibleOpenBubbleBase.bounds.x,
+              top: visibleOpenBubbleBase.bounds.y,
+              minWidth: visibleOpenBubbleBase.bounds.width,
+              minHeight: visibleOpenBubbleBase.bounds.height,
               ...visualOverlayStyle(openBubbleVisualProposal),
             }}
           />
         ) : null}
-        {openBubbleBase ? (
+        {visibleOpenBubbleBase ? (
           <div
             ref={bubbleRef}
             data-testid="preview-annotation-bubble"
@@ -999,7 +1003,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               outsideWarned && "animate-pulse border-destructive",
             )}
             style={annotationBubbleStyle(
-              openBubbleBase.bounds,
+              visibleOpenBubbleBase.bounds,
               previewSurfaceWidth,
             )}
           >
@@ -1054,8 +1058,8 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               >
                 <div className="flex items-center justify-between bg-white/[0.06] px-4 py-2 text-xs text-neutral-200">
                   <span className="max-w-[15rem] truncate font-semibold">
-                    {openBubbleBase.label?.trim() ||
-                      openBubbleBase.selectorHint?.trim() ||
+                    {visibleOpenBubbleBase.label?.trim() ||
+                      visibleOpenBubbleBase.selectorHint?.trim() ||
                       "Element"}
                   </span>
                   <GripVertical

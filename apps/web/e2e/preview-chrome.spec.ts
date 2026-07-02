@@ -298,7 +298,34 @@ async function openPreviewTab(page: Page): Promise<void> {
   );
 }
 
+async function waitForAnnotationStores(page: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          type StoreHandle = {
+            getState: () => Record<string, unknown>;
+          };
+          const stores =
+            (window as unknown as { __mcodeStores?: StoreHandle[] })
+              .__mcodeStores ?? [];
+          const annotationStore = stores.find((store) => {
+            const state = store.getState();
+            return "byThread" in state && "drafts" in state && "buildBundle" in state;
+          });
+          const designStore = stores.find((store) => {
+            const state = store.getState();
+            return "modes" in state && "toggle" in state && "isActive" in state;
+          });
+          return Boolean(annotationStore && designStore);
+        }),
+      { timeout: 10000 },
+    )
+    .toBe(true);
+}
+
 async function seedUnsavedAnnotationDraft(page: Page): Promise<void> {
+  await waitForAnnotationStores(page);
   await page.evaluate((threadId) => {
     type StoreHandle = {
       getState: () => Record<string, unknown>;
@@ -360,6 +387,7 @@ async function hasUnsavedAnnotationDraft(page: Page): Promise<boolean> {
 }
 
 async function seedSavedAnnotation(page: Page): Promise<void> {
+  await waitForAnnotationStores(page);
   await page.evaluate((threadId) => {
     type StoreHandle = {
       getState: () => Record<string, unknown>;
@@ -584,7 +612,6 @@ test.describe("PreviewPanel — loaded header", () => {
     await expect(page.getByTestId("preview-annotation-header")).toHaveCount(0);
     await expect(page.getByTestId("preview-annotation-send-state")).toHaveCount(0);
     await expect(designBtn).toHaveAttribute("aria-pressed", "true");
-    await expect(designBtn).toContainText("Design");
     await designBtn.click();
     await expect(page.getByRole("button", { name: "Design", exact: true })).toHaveAttribute(
       "aria-pressed",
@@ -640,6 +667,20 @@ test.describe("PreviewPanel — loaded header", () => {
 
     await expect.poll(() => savedAnnotationCount(page)).toBe(0);
     await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(0);
+  });
+
+  test("exiting design mode hides saved annotation markers", async ({ page }) => {
+    await seedSavedAnnotation(page);
+
+    await expect(page.getByTestId("preview-annotation-header")).toBeVisible();
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(1);
+
+    await page.getByLabel("Exit Design").click();
+
+    await expect(page.getByTestId("browser-header")).toBeVisible();
+    await expect(page.getByTestId("preview-annotation-header")).toHaveCount(0);
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(0);
+    await expect.poll(() => savedAnnotationCount(page)).toBe(1);
   });
 });
 

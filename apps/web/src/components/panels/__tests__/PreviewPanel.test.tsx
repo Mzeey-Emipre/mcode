@@ -163,6 +163,7 @@ function installMockWebviewMethods(options: {
 }
 
 function installDraftAnnotation(overrides: Record<string, unknown> = {}) {
+  usePreviewDesignModeStore.getState().setActive("thread-1", true);
   usePreviewAnnotationStore.getState().setDraft("thread-1", {
     threadId: "thread-1",
     pageIdentity: "",
@@ -716,7 +717,34 @@ describe("PreviewPanel — full panel state", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("hides saved annotation markers when design mode is inactive", () => {
+    const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
+    installSavedAnnotation();
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        inputUrl: pageUrl,
+        storedUrl: pageUrl,
+        pageStatus: {
+          url: pageUrl,
+          title: "Example",
+          favicon: null,
+          phase: "loaded",
+        },
+      }),
+    );
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(usePreviewAnnotationStore.getState().byThread["thread-1"]).toHaveLength(
+      1,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Edit annotation 1" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows saved annotations as numbered markers until reopened", () => {
+    usePreviewDesignModeStore.getState().setActive("thread-1", true);
     const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
     installSavedAnnotation();
     mockUsePreviewBridge.mockReturnValue(
@@ -758,6 +786,7 @@ describe("PreviewPanel — full panel state", () => {
   });
 
   it("shows saved annotation content when the marker is hovered", async () => {
+    usePreviewDesignModeStore.getState().setActive("thread-1", true);
     const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
     installSavedAnnotation();
     mockUsePreviewBridge.mockReturnValue(
