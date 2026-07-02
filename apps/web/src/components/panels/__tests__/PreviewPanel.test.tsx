@@ -848,6 +848,37 @@ describe("PreviewPanel — full panel state", () => {
     expect(screen.getByTestId("preview-annotation-save")).toBeInTheDocument();
   });
 
+  it("shakes before discarding a dirty draft from outside clicks", async () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.change(screen.getByLabelText("Annotation note"), {
+      target: { value: "Needs stronger contrast" },
+    });
+    fireEvent.pointerDown(screen.getByTestId("preview-surface"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("preview-annotation-bubble")).toHaveClass(
+        "animate-preview-annotation-shake",
+      );
+    });
+    expect(
+      screen.queryByText("Click outside again to discard"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByTestId("preview-annotation-discard-overlay"));
+
+    await waitFor(() => {
+      expect(
+        usePreviewAnnotationStore.getState().drafts["thread-1"],
+      ).toBeUndefined();
+    });
+    expect(
+      screen.queryByTestId("preview-annotation-bubble"),
+    ).not.toBeInTheDocument();
+  });
+
   it("focuses the annotation note when a draft bubble opens", async () => {
     installDraftAnnotation();
 

@@ -521,11 +521,24 @@
 .animate-preview-loading {
   animation: preview-loading 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
+@keyframes preview-annotation-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+.animate-preview-annotation-shake {
+  animation: preview-annotation-shake 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
 @media (prefers-reduced-motion: reduce) {
   .animate-preview-loading {
     animation: none;
     width: 100% !important;
     opacity: 0.5;
+  }
+  .animate-preview-annotation-shake {
+    animation: none;
   }
 }
 

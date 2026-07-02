@@ -822,6 +822,31 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     };
   }, [designModeActive, hasOpenBubble]);
 
+  const closeOpenAnnotationBubble = useCallback((): void => {
+    usePreviewAnnotationStore.getState().setDraft(threadId, undefined);
+    setEditingAnnotationId(null);
+    setBubbleAdvancedOpen(false);
+    setOutsideWarned(false);
+  }, [threadId]);
+
+  const requestOutsideBubbleDiscard = useCallback((): void => {
+    if (!openBubbleBase) return;
+    if (!canSaveOpenBubble) {
+      closeOpenAnnotationBubble();
+      return;
+    }
+    if (!outsideWarned) {
+      setOutsideWarned(true);
+      return;
+    }
+    closeOpenAnnotationBubble();
+  }, [
+    canSaveOpenBubble,
+    closeOpenAnnotationBubble,
+    openBubbleBase,
+    outsideWarned,
+  ]);
+
   useEffect(() => {
     if (!openBubbleBase) return;
     const onPointerDown = (event: PointerEvent): void => {
@@ -833,36 +858,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       ) {
         return;
       }
-      if (
-        bubbleNote.trim().length === 0 &&
-        !hasVisualProposal(
-          cleanVisualProposal(bubbleVisuals, openBubbleBase.elementStyle),
-        )
-      ) {
-        usePreviewAnnotationStore.getState().setDraft(threadId, undefined);
-        setEditingAnnotationId(null);
-        setOutsideWarned(false);
-        return;
-      }
-      if (!outsideWarned) {
-        setOutsideWarned(true);
-        return;
-      }
-      usePreviewAnnotationStore.getState().setDraft(threadId, undefined);
-      setEditingAnnotationId(null);
-      setOutsideWarned(false);
+      requestOutsideBubbleDiscard();
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () =>
       document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [bubbleNote, bubbleVisuals, openBubbleBase, outsideWarned, threadId]);
-
-  const closeOpenAnnotationBubble = useCallback((): void => {
-    usePreviewAnnotationStore.getState().setDraft(threadId, undefined);
-    setEditingAnnotationId(null);
-    setBubbleAdvancedOpen(false);
-    setOutsideWarned(false);
-  }, [threadId]);
+  }, [openBubbleBase, requestOutsideBubbleDiscard]);
 
   const clearTransientAnnotationState = closeOpenAnnotationBubble;
 
@@ -1300,12 +1301,21 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
         ) : null}
         {visibleOpenBubbleBase ? (
           <div
+            aria-hidden
+            data-testid="preview-annotation-discard-overlay"
+            className="absolute inset-0 z-20 bg-transparent"
+          />
+        ) : null}
+        {visibleOpenBubbleBase ? (
+          <div
             ref={bubbleRef}
             data-testid="preview-annotation-bubble"
             className={cn(
-              "absolute z-30 w-[min(20.5rem,calc(100%-1rem))] overflow-hidden rounded-[1.65rem] border border-white/10 bg-[#282828] text-neutral-50 shadow-xl",
+              "absolute z-30 w-[min(20.5rem,calc(100%-1rem))] overflow-hidden rounded-[1.65rem] border bg-[#282828] text-neutral-50 shadow-xl",
+              outsideWarned
+                ? "animate-preview-annotation-shake border-destructive/80"
+                : "border-white/10",
               bubbleAdvancedOpen ? "max-h-[20.5rem]" : "min-h-11",
-              outsideWarned && "animate-pulse border-destructive",
             )}
             style={annotationBubbleStyle(
               visibleOpenBubbleBase.bounds,
@@ -1351,11 +1361,6 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                 </Button>
               ) : null}
             </div>
-            {outsideWarned ? (
-              <div className="px-4 pb-2 text-xs text-red-300" role="status">
-                Click outside again to discard
-              </div>
-            ) : null}
             {bubbleAdvancedOpen ? (
               <div
                 data-testid="preview-annotation-advanced"
