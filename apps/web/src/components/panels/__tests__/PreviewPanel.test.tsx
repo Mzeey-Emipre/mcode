@@ -908,9 +908,72 @@ describe("PreviewPanel — full panel state", () => {
         usePreviewAnnotationStore.getState().byThread["thread-1"],
       ).toHaveLength(1);
     });
+    expect(mockCaptureAnnotationSnapshot).toHaveBeenCalledWith({
+      activeDisplayNumber: 1,
+      activeBounds: { x: 20, y: 24, width: 120, height: 32 },
+      markers: [
+        {
+          displayNumber: 1,
+          bounds: { x: 20, y: 24, width: 120, height: 32 },
+        },
+      ],
+    });
     expect(
       usePreviewAnnotationStore.getState().byThread["thread-1"]?.[0]?.note,
     ).toBe("Use stronger contrast");
+  });
+
+  it("captures a new annotation with only its target highlighted and prior markers visible", async () => {
+    const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        inputUrl: pageUrl,
+        storedUrl: pageUrl,
+        pageStatus: {
+          url: pageUrl,
+          title: "Example",
+          favicon: null,
+          phase: "loaded",
+        },
+      }),
+    );
+    installSavedAnnotation();
+    installDraftAnnotation({
+      pageIdentity: normalizePreviewPageIdentity(pageUrl),
+      bounds: { x: 200, y: 120, width: 180, height: 44 },
+      pageContext: {
+        schemaVersion: 2,
+        pageUrl,
+        pageTitle: "Example",
+        capturedAt: "2026-07-01T00:00:00.000Z",
+        captureKind: "element",
+        bounds: { x: 200, y: 120, width: 180, height: 44 },
+        layoutViewport: { width: 800, height: 600 },
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const note = screen.getByLabelText("Annotation note");
+    fireEvent.change(note, { target: { value: "Move this search input" } });
+    fireEvent.keyDown(note, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(mockCaptureAnnotationSnapshot).toHaveBeenCalledWith({
+        activeDisplayNumber: 2,
+        activeBounds: { x: 200, y: 120, width: 180, height: 44 },
+        markers: [
+          {
+            displayNumber: 1,
+            bounds: { x: 20, y: 24, width: 120, height: 32 },
+          },
+          {
+            displayNumber: 2,
+            bounds: { x: 200, y: 120, width: 180, height: 44 },
+          },
+        ],
+      });
+    });
   });
 
   it("saves and requests composer send when Ctrl+Enter is pressed", async () => {

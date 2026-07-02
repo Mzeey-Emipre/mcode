@@ -3,6 +3,7 @@ import { useToastStore } from "@/stores/toastStore";
 import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
 import { MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME } from "@mcode/contracts";
 import type { McodeBrowserCapture, PreviewAnnotationPayload } from "@mcode/contracts";
+import type { PreviewAnnotationSnapshotRequest } from "@/transport/desktop-bridge";
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
 import { normalizePreviewPageIdentity, usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
 
@@ -87,7 +88,9 @@ export interface PreviewCaptureState {
   /** Create a saved Preview annotation from an element pick instead of a normal attachment. */
   readonly onAddElementAnnotation: () => Promise<{ ok: boolean }>;
   /** Capture the full visible viewport for a saved Preview annotation. */
-  readonly captureAnnotationSnapshot: () => Promise<PreviewAnnotationPayload["snapshot"] | null>;
+  readonly captureAnnotationSnapshot: (
+    overlay: PreviewAnnotationSnapshotRequest,
+  ) => Promise<PreviewAnnotationPayload["snapshot"] | null>;
 }
 
 /**
@@ -259,13 +262,15 @@ export function usePreviewCapture({
     }
   }, [pushSync, threadId, onSuccess]);
 
-  const captureAnnotationSnapshot = useCallback(async (): Promise<PreviewAnnotationPayload["snapshot"] | null> => {
+  const captureAnnotationSnapshot = useCallback(async (
+    overlay: PreviewAnnotationSnapshotRequest,
+  ): Promise<PreviewAnnotationPayload["snapshot"] | null> => {
     const preview = window.desktopBridge?.preview;
-    if (!preview?.capturePictureReference || !threadId) return null;
+    if (!preview?.captureAnnotationSnapshot || !threadId) return null;
     await pushSync(true);
     let res: CaptureResult;
     try {
-      res = (await preview.capturePictureReference()) as CaptureResult;
+      res = (await preview.captureAnnotationSnapshot(overlay)) as CaptureResult;
     } catch {
       useToastStore.getState().show("error", "Could not save annotation", "Screenshot failed.");
       return null;

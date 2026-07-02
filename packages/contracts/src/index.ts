@@ -165,6 +165,11 @@ export {
   isBrowserCaptureSpillAppDataPath,
   clampMcodeBrowserCaptureV2,
   clampAttachedBrowserCaptureForOutbound,
+  previewAnnotationSnapshotAttachmentName,
+  previewAnnotationSnapshotAttachmentMeta,
+  previewAnnotationSnapshotStoredAttachment,
+  previewAnnotationSnapshotAttachments,
+  previewAnnotationSnapshotStoredAttachments,
 } from "./models/browser-preview.js";
 export type {
   BrowserPreviewBounds,

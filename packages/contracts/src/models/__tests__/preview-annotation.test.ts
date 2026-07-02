@@ -3,6 +3,8 @@ import {
   MAX_ATTACHMENTS,
   PreviewAnnotationBundleSchema,
   SendMessageSchema,
+  previewAnnotationSnapshotAttachmentMeta,
+  previewAnnotationSnapshotStoredAttachment,
 } from "../../index.js";
 
 const capture = {
@@ -73,5 +75,21 @@ describe("PreviewAnnotationBundleSchema", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("derives image attachment metadata from the annotation snapshot", () => {
+    expect(previewAnnotationSnapshotAttachmentMeta(annotation)).toEqual({
+      id: "snap-1",
+      name: "Annotation 1 screenshot.png",
+      mimeType: "image/png",
+      sizeBytes: 123,
+      sourcePath: "C:/tmp/preview.png",
+    });
+    expect(previewAnnotationSnapshotStoredAttachment(annotation)).toEqual({
+      id: "snap-1",
+      name: "Annotation 1 screenshot.png",
+      mimeType: "image/png",
+      sizeBytes: 123,
+    });
   });
 });

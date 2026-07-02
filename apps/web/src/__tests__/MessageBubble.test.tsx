@@ -204,6 +204,41 @@ describe("MessageBubble user messages", () => {
     expect(queryByText("bundle")).not.toBeInTheDocument();
   });
 
+  it("renders preview annotation screenshots as inspectable image attachments", async () => {
+    const user = userEvent.setup();
+    const threadUuid = "550e8400-e29b-41d4-a716-446655440000";
+    const message: Message = {
+      ...makeMessage(""),
+      thread_id: threadUuid,
+      previewAnnotations: makePreviewAnnotationBundle(),
+      attachments: [
+        {
+          id: "shot-1",
+          name: "Annotation 1 screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 128,
+        },
+      ],
+    };
+
+    const { container, getByTestId } = render(<MessageBubble message={message} />);
+    const btn = container.querySelector(
+      '[aria-label="Preview image Annotation 1 screenshot.png"]',
+    );
+    expect(btn).toBeTruthy();
+
+    await user.click(btn!);
+
+    expect(getByTestId("sent-preview-annotation-bundle-chip")).toHaveTextContent(
+      "1 annotation",
+    );
+    const lb = container.querySelector("[data-testid='mock-lightbox']");
+    expect(lb?.getAttribute("data-active-src")).toBe(
+      `mcode-attachment://${threadUuid}/shot-1.png`,
+    );
+    expect(lb?.getAttribute("data-active-title")).toBe("Annotation 1 screenshot.png");
+  });
+
   it("uses an annotation reply fallback for annotation-only messages", async () => {
     const user = userEvent.setup();
     const onReply = vi.fn();

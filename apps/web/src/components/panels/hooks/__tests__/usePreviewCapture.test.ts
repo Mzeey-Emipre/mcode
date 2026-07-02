@@ -58,6 +58,7 @@ const mockPreview = {
   capturePictureReference: vi.fn(),
   capturePictureReferenceRegion: vi.fn(),
   capturePictureReferenceElementPick: vi.fn(),
+  captureAnnotationSnapshot: vi.fn(),
   capturePageContext: vi.fn(),
 };
 
@@ -110,6 +111,7 @@ describe("usePreviewCapture", () => {
       expect(typeof result.current.onAddRegionPictureReference).toBe("function");
       expect(typeof result.current.onAddElementPickPictureReference).toBe("function");
       expect(typeof result.current.onAddPageContextOnly).toBe("function");
+      expect(typeof result.current.captureAnnotationSnapshot).toBe("function");
     });
   });
 
@@ -332,6 +334,71 @@ describe("usePreviewCapture", () => {
       });
 
       expect(result.current.regionBusy).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // captureAnnotationSnapshot
+  // -------------------------------------------------------------------------
+
+  describe("captureAnnotationSnapshot", () => {
+    const overlay = {
+      activeDisplayNumber: 2,
+      activeBounds: { x: 40, y: 50, width: 120, height: 32 },
+      markers: [
+        { displayNumber: 1, bounds: { x: 10, y: 12, width: 80, height: 24 } },
+        { displayNumber: 2, bounds: { x: 40, y: 50, width: 120, height: 32 } },
+      ],
+    };
+
+    const capture = {
+      schemaVersion: 2 as const,
+      pageUrl: "https://example.com",
+      pageTitle: "Example",
+      capturedAt: "2026-07-02T00:00:00.000Z",
+      captureKind: "viewport" as const,
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    };
+
+    it("calls pushSync(true) before captureAnnotationSnapshot", async () => {
+      const opts = defaultOptions();
+      mockPreview.captureAnnotationSnapshot.mockResolvedValue(
+        makeCapturePngResult({ capture }),
+      );
+
+      const { result } = renderHook(() => usePreviewCapture(opts));
+
+      await act(async () => {
+        await result.current.captureAnnotationSnapshot(overlay);
+      });
+
+      expect(opts.pushSync).toHaveBeenCalledWith(true);
+      expect(mockPreview.captureAnnotationSnapshot).toHaveBeenCalledWith(overlay);
+      const pushOrder = opts.pushSync.mock.invocationCallOrder[0];
+      const captureOrder = mockPreview.captureAnnotationSnapshot.mock.invocationCallOrder[0];
+      expect(pushOrder).toBeLessThan(captureOrder);
+    });
+
+    it("returns snapshot metadata from the annotated capture result", async () => {
+      mockPreview.captureAnnotationSnapshot.mockResolvedValue(
+        makeCapturePngResult({ capture }),
+      );
+
+      const { result } = renderHook(() => usePreviewCapture(defaultOptions()));
+      let snapshot: Awaited<ReturnType<typeof result.current.captureAnnotationSnapshot>> = null;
+
+      await act(async () => {
+        snapshot = await result.current.captureAnnotationSnapshot(overlay);
+      });
+
+      expect(snapshot).toEqual({
+        id: "capture-id-1",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        sourcePath: "/tmp/capture.png",
+        capture,
+      });
     });
   });
 

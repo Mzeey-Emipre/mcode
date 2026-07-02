@@ -3,7 +3,13 @@ import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode,
 import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, GoalLookupResult, GoalState, PreviewAnnotationBundle } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
-import { PlanQuestionSchema, PERMISSION_MODES, INTERACTION_MODES, isGoalOpen } from "@mcode/contracts";
+import {
+  PlanQuestionSchema,
+  PERMISSION_MODES,
+  INTERACTION_MODES,
+  isGoalOpen,
+  previewAnnotationSnapshotStoredAttachments,
+} from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
@@ -227,6 +233,7 @@ export function scheduleDrainAfterEdit(threadId: string): void {
             next.quotedText,
             undefined,
             next.mentions,
+            next.previewAnnotations,
           );
         } catch {
           void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);
@@ -925,6 +932,20 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       dropPendingTextDeltas([threadId]);
     }
 
+    const storedComposerAttachments =
+      attachments?.map((a) => ({
+        id: a.id,
+        name: a.name,
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+      })) ?? [];
+    const storedPreviewAnnotationAttachments =
+      previewAnnotationSnapshotStoredAttachments(previewAnnotations);
+    const visibleAttachments = [
+      ...storedComposerAttachments,
+      ...storedPreviewAnnotationAttachments,
+    ];
+
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
     const userMessage: Message = {
@@ -938,12 +959,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       tokens_used: null,
       timestamp: new Date().toISOString(),
       sequence: messageSequenceFor(threadId),
-      attachments: attachments?.map((a) => ({
-        id: a.id,
-        name: a.name,
-        mimeType: a.mimeType,
-        sizeBytes: a.sizeBytes,
-      })) ?? null,
+      attachments: visibleAttachments.length > 0 ? visibleAttachments : null,
       previewAnnotations: previewAnnotations ?? null,
       mentions: mentions && mentions.length > 0 ? mentions : null,
       reply_to_message_id: replyToMessageId ?? null,
@@ -2641,6 +2657,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                   next.quotedText,
                   undefined,
                   next.mentions,
+                  next.previewAnnotations,
                 );
               } catch {
                 void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);

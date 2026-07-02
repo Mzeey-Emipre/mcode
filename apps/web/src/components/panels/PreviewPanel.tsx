@@ -18,6 +18,7 @@ import type {
   PreviewAnnotationVisualProposal,
   PreviewPageStatus,
 } from "@mcode/contracts";
+import type { PreviewAnnotationSnapshotRequest } from "@/transport/desktop-bridge";
 import { cn } from "@/lib/utils";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
@@ -697,7 +698,27 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       setOutsideWarned(true);
       return;
     }
-    const snapshot = await capture.captureAnnotationSnapshot();
+    const markerByDisplayNumber = new Map<
+      number,
+      PreviewAnnotationSnapshotRequest["markers"][number]
+    >();
+    for (const annotation of pageAnnotations) {
+      markerByDisplayNumber.set(annotation.displayNumber, {
+        displayNumber: annotation.displayNumber,
+        bounds: annotation.targetContext.bounds,
+      });
+    }
+    const activeDisplayNumber =
+      editingSavedAnnotation?.displayNumber ?? savedAnnotations.length + 1;
+    markerByDisplayNumber.set(activeDisplayNumber, {
+      displayNumber: activeDisplayNumber,
+      bounds: openBubbleBase.bounds,
+    });
+    const snapshot = await capture.captureAnnotationSnapshot({
+      activeDisplayNumber,
+      activeBounds: openBubbleBase.bounds,
+      markers: Array.from(markerByDisplayNumber.values()),
+    });
     if (!snapshot) return;
     const saved = usePreviewAnnotationStore.getState().saveAnnotation(
       threadId,

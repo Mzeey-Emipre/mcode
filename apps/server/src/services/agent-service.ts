@@ -9,7 +9,13 @@ import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
 import { isAbsolute } from "path";
 import { logger, validateBranchName } from "@mcode/shared";
-import { AgentEventType, isGoalCapable, isGoalOpen, isSessionEvictable } from "@mcode/contracts";
+import {
+  AgentEventType,
+  isGoalCapable,
+  isGoalOpen,
+  isSessionEvictable,
+  previewAnnotationSnapshotAttachments,
+} from "@mcode/contracts";
 import type {
   Thread,
   AttachmentMeta,
@@ -513,9 +519,16 @@ export class AgentService {
 
       const persistedUserText = messageDisplayContent ?? content;
 
+      const previewAnnotationAttachments =
+        previewAnnotationSnapshotAttachments(previewAnnotations);
+      const attachmentsForPersistence =
+        previewAnnotationAttachments.length > 0
+          ? [...attachments, ...previewAnnotationAttachments]
+          : attachments;
+
       const { stored, persisted } = await this.attachmentService.persist(
         threadId,
-        attachments,
+        attachmentsForPersistence,
       );
     // Persist the user message and (when answering plan questions) the
     // answered marker in a single transaction. If the marker insert fails

@@ -236,6 +236,7 @@ interface WorkspaceState {
     thinking?: boolean;
     codexFastMode?: boolean;
     mentions?: MessageMention[];
+    previewAnnotations?: PreviewAnnotationBundle;
   }) => Promise<Thread>;
   /**
    * Re-run server creation for a placeholder thread after {@link WorkspaceThread.clientError}.
@@ -906,6 +907,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       thinking: params.thinking,
       codexFastMode: params.codexFastMode,
       mentions: params.mentions,
+      previewAnnotations: params.previewAnnotations,
     };
 
     const branchCaptionForUi = params.displayContent ?? params.content;

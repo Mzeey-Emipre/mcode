@@ -1267,6 +1267,71 @@ describe("preview-browser", () => {
       expect(result.capture.visibleTextExcerpt).toContain("Visible adopted text");
     });
 
+    it("annotation snapshot burns marker and active highlight overlay into the captured viewport", async () => {
+      const win = createWindow();
+      const ev = fakeEvent(win);
+
+      await ipcHandlers["preview:sync"]!(ev, {
+        visible: false,
+        bounds: VALID_BOUNDS,
+        threadId: "thread-webview",
+        resumeUrlHint: "https://example.com",
+        workspaceId: "ws-1",
+      });
+
+      const adopted = makeWebContentsView().webContents;
+      adopted.getURL.mockReturnValue("https://example.com/page");
+      adopted.getTitle.mockReturnValue("Adopted page");
+      adopted.executeJavaScript
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(
+          JSON.stringify({
+            visibleText: "Visible adopted text",
+            headingOutline: "H1: Adopted",
+            interactiveOutline: "- [button] Save",
+            scrollX: 0,
+            scrollY: 4,
+            layoutWidth: 1024,
+            layoutHeight: 768,
+          }),
+        )
+        .mockResolvedValueOnce(undefined);
+      mockWebContentsById.set(46, adopted);
+
+      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId;
+      await ipcHandlers["preview:adopt-webview"]!(ev, {
+        threadId: "thread-webview",
+        tabId,
+        webContentsId: 46,
+      });
+
+      const result = await ipcHandlers["preview:capture-annotation-snapshot"]!(ev, {
+        activeDisplayNumber: 2,
+        activeBounds: { x: 200, y: 120, width: 180, height: 44 },
+        markers: [
+          { displayNumber: 1, bounds: { x: 20, y: 24, width: 120, height: 32 } },
+          { displayNumber: 2, bounds: { x: 200, y: 120, width: 180, height: 44 } },
+        ],
+      }) as {
+        ok: true;
+        capture: { pageUrl: string; pageTitle: string; visibleTextExcerpt?: string };
+      };
+
+      expect(result.ok).toBe(true);
+      expect(adopted.capturePage).toHaveBeenCalledTimes(1);
+      expect(adopted.capturePage).toHaveBeenCalledWith();
+      const overlayJs = adopted.executeJavaScript.mock.calls[0]![0] as string;
+      expect(overlayJs).toContain("__mcode_annotation_snapshot_overlay");
+      expect(overlayJs).toContain("mcode-annotation-highlight");
+      expect(overlayJs).toContain('"activeDisplayNumber":2');
+      expect(overlayJs).toContain('"displayNumber":1');
+      expect(overlayJs).toContain('"displayNumber":2');
+      const removeJs = adopted.executeJavaScript.mock.calls.at(-1)![0] as string;
+      expect(removeJs).toContain("__mcode_annotation_snapshot_overlay");
+      expect(removeJs).toContain("remove()");
+      expect(result.capture.visibleTextExcerpt).toContain("Visible adopted text");
+    });
+
     it("page context uses the active adopted webview when no native view exists", async () => {
       const win = createWindow();
       const ev = fakeEvent(win);

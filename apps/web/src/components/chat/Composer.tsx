@@ -1769,6 +1769,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         content: original.content,
         displayContent: original.displayContent,
         mentions: original.mentions,
+        previewAnnotations: original.previewAnnotations,
         attachments: original.attachments,
         model: original.model,
         permissionMode: original.permissionMode,
@@ -2090,7 +2091,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const outboundPreviewAnnotations = threadId
       ? usePreviewAnnotationStore.getState().buildBundle(threadId)
       : undefined;
-    if (trimmed.length === 0 && attachments.length === 0 && !outboundPreviewAnnotations) {
+    const effectivePreviewAnnotations =
+      outboundPreviewAnnotations ?? (editingFromQueue ? editingOriginalRef.current?.previewAnnotations : undefined);
+    if (trimmed.length === 0 && attachments.length === 0 && !effectivePreviewAnnotations) {
       // Empty submit while editing a queued message = the user emptied it
       // intentionally. Treat as "remove from queue" instead of silently
       // doing nothing (the message has already been popped on edit start).
@@ -2144,6 +2147,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         content,
         displayContent: displayContentResolved,
         mentions: selectedMentions.length > 0 ? selectedMentions : undefined,
+        previewAnnotations: effectivePreviewAnnotations,
         attachments: currentAttachments,
         model: modelId,
         permissionMode: access,
@@ -2164,6 +2168,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         : useQueueStore.getState().enqueue(threadId, payload);
       if (!enqueued) {
         void releaseBrowserCaptureSpills(browserCaptureSpillPaths);
+      }
+      if (enqueued && threadId && outboundPreviewAnnotations) {
+        usePreviewAnnotationStore.getState().clearThread(threadId);
+        setPreviewDesignModeActive(threadId, false);
       }
       if (editingFromQueue && enqueued) {
         useToastStore
@@ -2219,7 +2227,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       try {
         content =
           captureRows.length === 0 ? rawInput : appendBrowserCaptureFence(rawInput, captureRows);
-        content = appendPreviewAnnotationFence(content, outboundPreviewAnnotations);
+        content = appendPreviewAnnotationFence(content, effectivePreviewAnnotations);
         content = content.trim();
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Invalid page preview payload";
@@ -2244,7 +2252,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     try {
       messageContent =
         captureRows.length === 0 ? rawInput : appendBrowserCaptureFence(rawInput, captureRows);
-      messageContent = appendPreviewAnnotationFence(messageContent, outboundPreviewAnnotations);
+      messageContent = appendPreviewAnnotationFence(messageContent, effectivePreviewAnnotations);
       messageContent = messageContent.trim();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Invalid page preview payload";
@@ -2308,7 +2316,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
             outboundDisplay,
             selectedMentions,
-            outboundPreviewAnnotations,
+            effectivePreviewAnnotations,
           );
       } else if (branchFromMessageId && threadId) {
       // Branch mode: create a child thread from the quoted message instead of sending.
@@ -2349,6 +2357,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         thinking: thinking ?? undefined,
         codexFastMode: provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
         mentions: selectedMentions,
+        previewAnnotations: effectivePreviewAnnotations,
       });
       onBranchModeExit?.();
       } else if (threadId) {
@@ -2369,7 +2378,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           replyContext?.quotedText,
           undefined,
           selectedMentions,
-          outboundPreviewAnnotations,
+          effectivePreviewAnnotations,
         );
       }
 
@@ -2631,6 +2640,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 next.quotedText,
                 undefined,
                 next.mentions,
+                next.previewAnnotations,
               );
               const activeReply = useReplyStore.getState().getReply(threadId);
               if (
@@ -2668,6 +2678,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 popped.quotedText,
                 undefined,
                 popped.mentions,
+                popped.previewAnnotations,
               );
               const activeReply = useReplyStore.getState().getReply(threadId);
               if (

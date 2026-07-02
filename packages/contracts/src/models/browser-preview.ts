@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
+import type { AttachmentMeta, StoredAttachment } from "./attachment.js";
 
 /** Max lengths for {@link McodeBrowserCaptureV1} excerpt fields (matches Zod). */
 export const MCODE_BROWSER_CAPTURE_V1_STRING_MAX = {
@@ -357,3 +358,57 @@ export const PreviewAnnotationBundleSchema = lazySchema(() =>
 export type PreviewAnnotationBundle = z.infer<
   ReturnType<typeof PreviewAnnotationBundleSchema>
 >;
+
+/**
+ * Returns the filename shown for a saved annotation screenshot attachment.
+ */
+export function previewAnnotationSnapshotAttachmentName(displayNumber: number): string {
+  return `Annotation ${displayNumber} screenshot.png`;
+}
+
+/**
+ * Converts a saved preview annotation snapshot into normal attachment metadata.
+ */
+export function previewAnnotationSnapshotAttachmentMeta(
+  annotation: PreviewAnnotationPayload,
+): AttachmentMeta {
+  return {
+    id: annotation.snapshot.id,
+    name: previewAnnotationSnapshotAttachmentName(annotation.displayNumber),
+    mimeType: annotation.snapshot.mimeType,
+    sizeBytes: annotation.snapshot.sizeBytes,
+    sourcePath: annotation.snapshot.sourcePath,
+  };
+}
+
+/**
+ * Converts a saved preview annotation snapshot into stored attachment metadata.
+ */
+export function previewAnnotationSnapshotStoredAttachment(
+  annotation: PreviewAnnotationPayload,
+): StoredAttachment {
+  return {
+    id: annotation.snapshot.id,
+    name: previewAnnotationSnapshotAttachmentName(annotation.displayNumber),
+    mimeType: annotation.snapshot.mimeType,
+    sizeBytes: annotation.snapshot.sizeBytes,
+  };
+}
+
+/**
+ * Converts a preview annotation bundle into normal attachment metadata rows.
+ */
+export function previewAnnotationSnapshotAttachments(
+  bundle: PreviewAnnotationBundle | undefined,
+): AttachmentMeta[] {
+  return bundle?.annotations.map(previewAnnotationSnapshotAttachmentMeta) ?? [];
+}
+
+/**
+ * Converts a preview annotation bundle into stored attachment metadata rows.
+ */
+export function previewAnnotationSnapshotStoredAttachments(
+  bundle: PreviewAnnotationBundle | null | undefined,
+): StoredAttachment[] {
+  return bundle?.annotations.map(previewAnnotationSnapshotStoredAttachment) ?? [];
+}
