@@ -304,6 +304,17 @@
 .status-pulse {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+/* Ring spinner with a fading tail. A conic gradient supplies the fade and a
+ * radial mask hollows the disc into a ring — lucide's Loader2 arc can't fade
+ * because SVG strokes are a single flat color. */
+.spinner-tail-fade {
+  width: 13px;
+  height: 13px;
+  border-radius: 9999px;
+  background: conic-gradient(from 0deg, transparent 10%, currentColor 90%);
+  -webkit-mask-image: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.25px));
+  mask-image: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.25px));
+}
 @media (prefers-reduced-motion: reduce) {
   .status-spin,
   .status-pulse {
