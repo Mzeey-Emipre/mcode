@@ -84,11 +84,10 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     comingSoon: false,
     supportsCompletion: true,
     models: [
-      // Anthropic ends Fable 5 subscription access on 2026-06-22; Mcode
-      // auths via subscription, so the entry gates itself after that date.
       { id: "claude-fable-5", label: "Claude Fable 5", providerId: "claude",
-        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-fable-5"],
-        availableUntil: "2026-06-22" },
+        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-fable-5"] },
+      { id: "claude-sonnet-5", label: "Claude Sonnet 5", providerId: "claude",
+        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-sonnet-5"] },
       { id: "claude-opus-4-8", label: "Claude Opus 4.8", providerId: "claude",
         contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-opus-4-8"] },
       { id: "claude-opus-4-7", label: "Claude Opus 4.7", providerId: "claude",

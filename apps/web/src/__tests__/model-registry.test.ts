@@ -35,18 +35,25 @@ describe("pickProviderModelsForSettings", () => {
 });
 
 describe("ModelRegistry", () => {
-  it("MODEL_PROVIDERS contains Claude with 6 models", () => {
+  it("MODEL_PROVIDERS contains Claude with 7 models", () => {
     const claude = MODEL_PROVIDERS.find((p) => p.id === "claude");
     expect(claude).toBeTruthy();
-    expect(claude?.models).toHaveLength(6);
+    expect(claude?.models).toHaveLength(7);
     expect(claude?.comingSoon).toBe(false);
   });
 
-  it("findModelById returns Fable 5 with an availability end date", () => {
+  it("findModelById returns Fable 5 with no availability end date", () => {
     const model = findModelById("claude-fable-5");
     expect(model?.label).toBe("Claude Fable 5");
     expect(model?.providerId).toBe("claude");
-    expect(model?.availableUntil).toBe("2026-06-22");
+    expect(model?.availableUntil).toBeUndefined();
+    expect(isModelAvailable(model!)).toBe(true);
+  });
+
+  it("findModelById returns Sonnet 5", () => {
+    const model = findModelById("claude-sonnet-5");
+    expect(model?.label).toBe("Claude Sonnet 5");
+    expect(model?.providerId).toBe("claude");
   });
 
   it("isModelAvailable honors availableUntil inclusively in local time", () => {
