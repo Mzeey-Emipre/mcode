@@ -1,5 +1,4 @@
 import { Send, Trash2, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -34,6 +33,7 @@ export function PreviewAnnotationHeader({
 }: PreviewAnnotationHeaderProps) {
   const countLabel = `${bundleCount} annotation${bundleCount === 1 ? "" : "s"}`;
   const hasAnnotations = bundleCount > 0;
+  const titleLabel = hasAnnotations ? `Designing · ${pageLabel}` : "Designing";
 
   return (
     <div
@@ -77,15 +77,12 @@ export function PreviewAnnotationHeader({
         </Tooltip>
       ) : null}
       <div
-        className="flex min-w-0 flex-1 items-center gap-2"
+        className="flex min-w-0 flex-1 items-center"
         data-testid="preview-annotation-title"
-        title={hasAnnotations ? `Annotating · ${pageLabel}` : "Pick a page target"}
+        title={titleLabel}
       >
-        <Badge variant="secondary" size="sm" className="shrink-0">
-          Design
-        </Badge>
         <span className="min-w-0 truncate text-sm text-muted-foreground">
-          {hasAnnotations ? `Annotating · ${pageLabel}` : "Pick a page target"}
+          {titleLabel}
         </span>
       </div>
       <Button

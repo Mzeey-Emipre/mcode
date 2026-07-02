@@ -645,7 +645,7 @@ describe("PreviewPanel — full panel state", () => {
     expect(screen.queryByTestId("browser-header")).not.toBeInTheDocument();
     expect(screen.getByTestId("preview-annotation-header")).toBeInTheDocument();
     expect(screen.getByTestId("preview-annotation-title")).toHaveTextContent(
-      `Annotating · ${normalizePreviewPageIdentity(pageUrl)}`,
+      `Designing · ${normalizePreviewPageIdentity(pageUrl)}`,
     );
     expect(screen.getByTestId("preview-annotation-send-state")).toHaveAccessibleName(
       "Send 1 annotation",
