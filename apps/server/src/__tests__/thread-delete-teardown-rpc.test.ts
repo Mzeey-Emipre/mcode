@@ -20,7 +20,18 @@ function workspaceRequest(method: "workspace.delete" | "workspace.forceDelete"):
 
 function threadDeps(): RouterDeps {
   return {
-    ciWatcherService: { unwatch: vi.fn() },
+    ciWatcherService: {
+      teardownThread: vi.fn().mockResolvedValue(undefined),
+    },
+    githubService: {
+      cancelForRepoPath: vi.fn().mockResolvedValue(undefined),
+    },
+    threadRepo: {
+      findById: vi.fn().mockReturnValue({
+        id: "t-delete",
+        worktree_path: "C:/repo-worktree",
+      }),
+    },
     threadTeardownService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
     threadService: { delete: vi.fn().mockReturnValue(true) },
   } as unknown as RouterDeps;
@@ -30,7 +41,16 @@ function workspaceDeps(): RouterDeps {
   return {
     gitWatcherService: { unwatchWorkspace: vi.fn() },
     threadRepo: {
-      listAllByWorkspace: vi.fn().mockReturnValue([{ id: "t-1" }, { id: "t-2" }]),
+      listAllByWorkspace: vi.fn().mockReturnValue([
+        { id: "t-1", worktree_path: "C:/repo-worktree-1" },
+        { id: "t-2", worktree_path: "C:/repo-worktree-2" },
+      ]),
+    },
+    githubService: {
+      cancelForRepoPath: vi.fn().mockResolvedValue(undefined),
+    },
+    ciWatcherService: {
+      teardownThread: vi.fn().mockResolvedValue(undefined),
     },
     threadTeardownService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
     workspaceService: {
@@ -44,7 +64,10 @@ describe("thread.delete teardown", () => {
   it("tears down runtime resources before deleting the thread row", async () => {
     const d = threadDeps();
     const calls: string[] = [];
-    vi.mocked(d.ciWatcherService.unwatch).mockImplementation(() => {
+    vi.mocked(d.githubService.cancelForRepoPath).mockImplementation(async () => {
+      calls.push("github");
+    });
+    vi.mocked(d.ciWatcherService.teardownThread).mockImplementation(async () => {
       calls.push("ci");
     });
     vi.mocked(d.threadTeardownService.teardownThread).mockImplementation(async () => {
@@ -58,9 +81,11 @@ describe("thread.delete teardown", () => {
     const response = await routeMessage(threadDeleteRequest("t-delete"), d);
 
     expect(response).toEqual({ id: "delete-1", result: true });
+    expect(d.githubService.cancelForRepoPath).toHaveBeenCalledWith("C:/repo-worktree");
+    expect(d.ciWatcherService.teardownThread).toHaveBeenCalledWith("t-delete");
     expect(d.threadTeardownService.teardownThread).toHaveBeenCalledWith("t-delete");
     expect(d.threadService.delete).toHaveBeenCalledWith("t-delete", false);
-    expect(calls).toEqual(["ci", "teardown", "delete"]);
+    expect(calls).toEqual(["github", "ci", "teardown", "delete"]);
   });
 
   it("does not hide the thread when resource teardown fails", async () => {
@@ -83,6 +108,12 @@ describe("workspace delete teardown", () => {
   it("tears down child threads before soft-deleting the workspace", async () => {
     const d = workspaceDeps();
     const calls: string[] = [];
+    vi.mocked(d.githubService.cancelForRepoPath).mockImplementation(async (worktreePath) => {
+      calls.push(`github:${worktreePath}`);
+    });
+    vi.mocked(d.ciWatcherService.teardownThread).mockImplementation(async (threadId) => {
+      calls.push(`ci:${threadId}`);
+    });
     vi.mocked(d.threadTeardownService.teardownThread).mockImplementation(async (threadId) => {
       calls.push(`teardown:${threadId}`);
     });
@@ -95,9 +126,21 @@ describe("workspace delete teardown", () => {
 
     expect(response).toEqual({ id: "workspace-delete-1", result: true });
     expect(d.threadRepo.listAllByWorkspace).toHaveBeenCalledWith("workspace-1");
+    expect(d.githubService.cancelForRepoPath).toHaveBeenCalledWith("C:/repo-worktree-1");
+    expect(d.githubService.cancelForRepoPath).toHaveBeenCalledWith("C:/repo-worktree-2");
+    expect(d.ciWatcherService.teardownThread).toHaveBeenCalledWith("t-1");
+    expect(d.ciWatcherService.teardownThread).toHaveBeenCalledWith("t-2");
     expect(d.threadTeardownService.teardownThread).toHaveBeenCalledWith("t-1");
     expect(d.threadTeardownService.teardownThread).toHaveBeenCalledWith("t-2");
-    expect(calls).toEqual(["teardown:t-1", "teardown:t-2", "delete"]);
+    expect(calls).toEqual([
+      "github:C:/repo-worktree-1",
+      "github:C:/repo-worktree-2",
+      "ci:t-1",
+      "ci:t-2",
+      "teardown:t-1",
+      "teardown:t-2",
+      "delete",
+    ]);
   });
 
   it("does not hide the workspace when child thread teardown fails", async () => {

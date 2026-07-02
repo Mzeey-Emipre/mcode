@@ -5,9 +5,10 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { execFile } from "child_process";
+import { execFile, type ChildProcess } from "child_process";
 import type { PrInfo, PrDetail, ChecksStatus, CheckRun } from "@mcode/contracts";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
+import { killProcessTree } from "./process-kill.js";
 
 /**
  * Handles GitHub PR lookups and listing via the `gh` CLI.
@@ -26,7 +27,9 @@ export class GithubService {
   private readonly slugCache = new Map<string, { promise: Promise<string>; expiresAt: number }>();
 
   /** In-flight deduplication map for getCheckRuns to avoid redundant concurrent fetches. */
-  private readonly checkRunsInflight = new Map<string, Promise<ChecksStatus>>();
+  private readonly checkRunsInflight = new Map<string, CheckRunsInflight>();
+  /** Live gh subprocesses keyed by the repository path that owns their cwd. */
+  private readonly activeProcesses = new Set<TrackedGithubProcess>();
 
   /** Maximum number of gh subprocesses that may run concurrently. */
   private readonly maxConcurrent = 3;
@@ -36,6 +39,102 @@ export class GithubService {
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
   ) {}
+
+  /**
+   * Cancel an in-flight check-run lookup for one branch and repository path.
+   * Used before thread/worktree deletion so a running `gh` child cannot keep
+   * the worktree directory open on Windows.
+   */
+  async cancelCheckRuns(branch: string, repoPath: string): Promise<void> {
+    const key = this.inflightKey(branch, repoPath);
+    const inflight = this.checkRunsInflight.get(key);
+    if (inflight) {
+      inflight.cancelled = true;
+      this.checkRunsInflight.delete(key);
+      inflight.resolve(noChecks());
+    }
+
+    const normalized = normalizeRepoPath(repoPath);
+    await this.cancelProcesses(
+      (process) => process.checkRunsKey === key || process.repoPath === normalized,
+    );
+  }
+
+  /**
+   * Cancel every tracked gh subprocess running from a repository path.
+   * This is a broader cleanup hook for worktree removal and shutdown paths.
+   */
+  async cancelForRepoPath(repoPath: string): Promise<void> {
+    const normalized = normalizeRepoPath(repoPath);
+    for (const [key, inflight] of this.checkRunsInflight) {
+      if (inflight.repoPath !== normalized) continue;
+      inflight.cancelled = true;
+      this.checkRunsInflight.delete(key);
+      inflight.resolve(noChecks());
+    }
+    await this.cancelProcesses((process) => process.repoPath === normalized);
+  }
+
+  /** Cancel every in-flight gh subprocess owned by this service. */
+  async cancelAllInFlight(): Promise<void> {
+    for (const inflight of this.checkRunsInflight.values()) {
+      inflight.cancelled = true;
+      inflight.resolve(noChecks());
+    }
+    this.checkRunsInflight.clear();
+    await this.cancelProcesses(() => true);
+  }
+
+  private inflightKey(branch: string, repoPath: string): string {
+    return `${normalizeRepoPath(repoPath) ?? repoPath}\0${branch}`;
+  }
+
+  private trackProcess(
+    child: ChildProcess | undefined,
+    meta: { repoPath?: string | null; checkRunsKey?: string | null },
+  ): TrackedGithubProcess | null {
+    if (!child || typeof child.once !== "function") return null;
+
+    let tracked!: TrackedGithubProcess;
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => {
+      let finished = false;
+      finish = () => {
+        if (finished) return;
+        finished = true;
+        this.activeProcesses.delete(tracked);
+        resolve();
+      };
+    });
+
+    tracked = {
+      child,
+      repoPath: normalizeRepoPath(meta.repoPath),
+      checkRunsKey: meta.checkRunsKey ?? null,
+      done,
+      finish,
+    };
+
+    this.activeProcesses.add(tracked);
+    child.once("exit", finish);
+    child.once("close", finish);
+    child.once("error", finish);
+    return tracked;
+  }
+
+  private async cancelProcesses(
+    predicate: (process: TrackedGithubProcess) => boolean,
+  ): Promise<void> {
+    const matches = [...this.activeProcesses].filter(predicate);
+    await Promise.all(matches.map(async (tracked) => {
+      const pid = tracked.child.pid;
+      if (typeof pid === "number" && pid > 0) {
+        await killProcessTree(pid);
+      }
+      tracked.finish();
+      await tracked.done;
+    }));
+  }
 
   /**
    * Acquire a slot in the concurrency gate.
@@ -65,11 +164,13 @@ export class GithubService {
   /** Look up the PR associated with a branch in the given working directory. */
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null> {
     return new Promise((resolve) => {
-      execFile(
+      let tracked: TrackedGithubProcess | null = null;
+      const child = execFile(
         "gh",
         ["pr", "view", branch, "--json", "number,url,state"],
         { cwd, encoding: "utf-8", timeout: 10_000, windowsHide: true },
         (error, stdout) => {
+          tracked?.finish();
           if (error || !stdout) {
             resolve(null);
             return;
@@ -97,6 +198,7 @@ export class GithubService {
           }
         },
       );
+      tracked = this.trackProcess(child, { repoPath: cwd });
     });
   }
 
@@ -106,7 +208,8 @@ export class GithubService {
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
 
     return new Promise((resolve) => {
-      execFile(
+      let tracked: TrackedGithubProcess | null = null;
+      const child = execFile(
         "gh",
         [
           "pr",
@@ -118,6 +221,7 @@ export class GithubService {
         ],
         { cwd: workspace.path, encoding: "utf-8", timeout: 15_000, windowsHide: true },
         (error, stdout) => {
+          tracked?.finish();
           if (error || !stdout) {
             resolve([]);
             return;
@@ -153,6 +257,7 @@ export class GithubService {
           }
         },
       );
+      tracked = this.trackProcess(child, { repoPath: workspace.path });
     });
   }
 
@@ -182,11 +287,13 @@ export class GithubService {
     }
 
     return new Promise((resolve, reject) => {
-      execFile(
+      let tracked: TrackedGithubProcess | null = null;
+      const child = execFile(
         "gh",
         args,
         { cwd: input.cwd, encoding: "utf-8", timeout: 30_000, windowsHide: true },
         (error, stdout) => {
+          tracked?.finish();
           if (error) {
             reject(error);
             return;
@@ -203,6 +310,7 @@ export class GithubService {
           resolve({ number, url });
         },
       );
+      tracked = this.trackProcess(child, { repoPath: input.cwd });
     });
   }
 
@@ -223,32 +331,11 @@ export class GithubService {
       return { aggregate: "no_checks", runs: [], fetchedAt: Date.now() };
     }
 
-    const inflightKey = `${repoPath}\0${branch}`;
+    const inflightKey = this.inflightKey(branch, repoPath);
 
     // M6: Return an existing in-flight promise if one exists for this branch+repo pair.
     const inflight = this.checkRunsInflight.get(inflightKey);
-    if (inflight) return inflight;
-
-    const slug = await this.resolveRepoSlug(repoPath);
-
-    // Check again after async slug resolution - another caller may have already started the fetch.
-    const inflight2 = this.checkRunsInflight.get(inflightKey);
-    if (inflight2) return inflight2;
-
-    await this.acquire();
-
-    // Check once more after acquiring the semaphore slot.
-    const inflight3 = this.checkRunsInflight.get(inflightKey);
-    if (inflight3) { this.release(); return inflight3; }
-
-    let released = false;
-    /** Releases the concurrency slot at most once, guarding against double-release. */
-    const releaseOnce = (): void => {
-      if (!released) {
-        released = true;
-        this.release();
-      }
-    };
+    if (inflight) return inflight.promise;
 
     /** Explicit conclusion mapping - unknown values default to failure (conservative). */
     const conclusionMap: Record<string, CheckRun["conclusion"]> = {
@@ -261,129 +348,171 @@ export class GithubService {
       action_required: "failure", // blocks merge like a failure
     };
 
-    // Capture resolve externally so the inflight map can be set BEFORE execFile is called,
-    // preventing a race where a synchronous mock callback fires inside the Promise constructor
-    // and sees the map entry missing.
+    // Register before any await so deletion/shutdown can cancel queued or slug-resolving fetches.
     let resolvePromise!: (value: ChecksStatus) => void;
     const promise = new Promise<ChecksStatus>((res) => { resolvePromise = res; });
+    const inflightController: CheckRunsInflight = {
+      promise,
+      resolve: resolvePromise,
+      repoPath: normalizeRepoPath(repoPath),
+      branch,
+      cancelled: false,
+    };
+    this.checkRunsInflight.set(inflightKey, inflightController);
 
-    // Register before spawning - any concurrent caller arriving now will reuse this promise.
-    this.checkRunsInflight.set(inflightKey, promise);
+    const activeProcess: { current: TrackedGithubProcess | null } = { current: null };
+    let acquired = false;
+    let released = false;
+    /** Releases the concurrency slot at most once, guarding against double-release. */
+    const releaseOnce = (): void => {
+      if (acquired && !released) {
+        released = true;
+        this.release();
+      }
+    };
 
-    execFile(
-      "gh",
-      [
-        "api",
-        `repos/${slug}/commits/${encodeURIComponent(branch)}/check-runs`,
-        "--cache", "5s",
-        "-H", "Accept: application/vnd.github+json",
-        "--jq", ".check_runs | map({name: .name, status: .status, conclusion: .conclusion, startedAt: .started_at, completedAt: .completed_at, appId: .app.id})",
-      ],
-      { cwd: repoPath, encoding: "utf-8", timeout: 15_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true },
-      (error, stdout) => {
-        releaseOnce();
-        this.checkRunsInflight.delete(inflightKey);
-        const now = Date.now();
-        if (error || !stdout) {
-          resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: now });
+    void (async () => {
+      try {
+        const slug = await this.resolveRepoSlug(repoPath);
+        if (inflightController.cancelled) return;
+
+        await this.acquire();
+        acquired = true;
+        if (inflightController.cancelled) {
+          releaseOnce();
           return;
         }
-        try {
-          const items = JSON.parse(stdout) as Array<{
-            name?: string;
-            status?: string;
-            conclusion?: string | null;
-            startedAt?: string | null;
-            completedAt?: string | null;
-            appId?: number | null;
-          }>;
 
-          if (items.length === 0) {
-            resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: now });
-            return;
-          }
-
-          const rawRuns = items.map((item) => {
-            // M1: Missing status defaults to in_progress (not completed) to avoid false-green aggregate.
-            const status = (item.status ?? "in_progress") as CheckRun["status"];
-            // H1: Unknown conclusion values are mapped conservatively to failure.
-            const rawConclusion = item.conclusion ?? null;
-            const conclusion: CheckRun["conclusion"] = rawConclusion === null
-              ? null
-              : (conclusionMap[rawConclusion] ?? "failure");
-
-            let durationMs: number | null = null;
-            if (status === "completed" && item.startedAt && item.completedAt) {
-              durationMs = new Date(item.completedAt).getTime() - new Date(item.startedAt).getTime();
+        const child = execFile(
+          "gh",
+          [
+            "api",
+            `repos/${slug}/commits/${encodeURIComponent(branch)}/check-runs`,
+            "--cache", "5s",
+            "-H", "Accept: application/vnd.github+json",
+            "--jq", ".check_runs | map({name: .name, status: .status, conclusion: .conclusion, startedAt: .started_at, completedAt: .completed_at, appId: .app.id})",
+          ],
+          { cwd: repoPath, encoding: "utf-8", timeout: 15_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true },
+          (error, stdout) => {
+            activeProcess.current?.finish();
+            releaseOnce();
+            if (this.checkRunsInflight.get(inflightKey) === inflightController) {
+              this.checkRunsInflight.delete(inflightKey);
             }
-
-            return {
-              name: item.name ?? "unknown",
-              status,
-              conclusion,
-              durationMs,
-              startedAt: item.startedAt ?? null,
-              // appId is used only for dedup scoping — it is stripped before the result is returned.
-              appId: typeof item.appId === "number" ? item.appId : 0,
-            };
-          });
-
-          // D1: Deduplicate runs with the same (name, appId), keeping the most recently started one.
-          // GitHub returns check runs from every check suite on a commit, so re-runs or
-          // workflows triggered by multiple events produce duplicate entries (e.g., a passing
-          // run from suite A alongside a failing run from the newly-triggered suite B).
-          // Without dedup the aggregate can be stale and the list shows ghost duplicates.
-          //
-          // The dedup key includes appId so that two different GitHub Apps that both create a
-          // check named "validate-pr" (e.g., GitHub Actions + Greptile) are NOT collapsed —
-          // only runs from the same app are candidates for deduplication.
-          //
-          // Tie-breaking: null startedAt maps to "" which is lexicographically less than any
-          // ISO string, so a run with a known timestamp always wins over one without. When
-          // two runs share the same timestamp (or both are null), the first in API response
-          // order is kept — GitHub does not guarantee ordering between suite siblings, so
-          // either choice is equivalent.
-          const dedupMap = new Map<string, typeof rawRuns[0]>();
-          for (const run of rawRuns) {
-            const key = `${run.name}\0${run.appId}`;
-            const existing = dedupMap.get(key);
-            const existingTs = existing?.startedAt ?? "";
-            const runTs = run.startedAt ?? "";
-            if (!existing || runTs > existingTs) {
-              dedupMap.set(key, run);
+            if (inflightController.cancelled) return;
+            const now = Date.now();
+            if (error || !stdout) {
+              resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: now });
+              return;
             }
-          }
-          // Strip the internal appId field before passing runs to the caller.
-          const runs: CheckRun[] = [...dedupMap.values()].map(({ appId: _appId, ...run }) => run);
+            try {
+              const items = JSON.parse(stdout) as Array<{
+                name?: string;
+                status?: string;
+                conclusion?: string | null;
+                startedAt?: string | null;
+                completedAt?: string | null;
+                appId?: number | null;
+              }>;
 
-          let aggregate: "passing" | "failing" | "pending" | "no_checks";
-          if (runs.some((r) => r.conclusion === "failure" || r.conclusion === "timed_out")) {
-            aggregate = "failing";
-          } else if (runs.some((r) => r.status !== "completed")) {
-            aggregate = "pending";
-          } else {
-            aggregate = "passing";
-          }
+              if (items.length === 0) {
+                resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: now });
+                return;
+              }
 
-          // If all runs completed but none succeeded (all skipped/cancelled/neutral),
-          // treat as no_checks to avoid a misleading green badge.
-          if (aggregate === "passing" && !runs.some((r) => r.conclusion === "success")) {
-            aggregate = "no_checks";
-          }
+              const rawRuns = items.map((item) => {
+                // M1: Missing status defaults to in_progress (not completed) to avoid false-green aggregate.
+                const status = (item.status ?? "in_progress") as CheckRun["status"];
+                // H1: Unknown conclusion values are mapped conservatively to failure.
+                const rawConclusion = item.conclusion ?? null;
+                const conclusion: CheckRun["conclusion"] = rawConclusion === null
+                  ? null
+                  : (conclusionMap[rawConclusion] ?? "failure");
 
-          resolvePromise({ aggregate, runs, fetchedAt: now });
-        } catch {
-          resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: now });
+                let durationMs: number | null = null;
+                if (status === "completed" && item.startedAt && item.completedAt) {
+                  durationMs = new Date(item.completedAt).getTime() - new Date(item.startedAt).getTime();
+                }
+
+                return {
+                  name: item.name ?? "unknown",
+                  status,
+                  conclusion,
+                  durationMs,
+                  startedAt: item.startedAt ?? null,
+                  // appId is used only for dedup scoping; it is stripped before the result is returned.
+                  appId: typeof item.appId === "number" ? item.appId : 0,
+                };
+              });
+
+              // D1: Deduplicate runs with the same (name, appId), keeping the most recently started one.
+              // GitHub returns check runs from every check suite on a commit, so re-runs or
+              // workflows triggered by multiple events produce duplicate entries (e.g., a passing
+              // run from suite A alongside a failing run from the newly-triggered suite B).
+              // Without dedup the aggregate can be stale and the list shows ghost duplicates.
+              //
+              // The dedup key includes appId so that two different GitHub Apps that both create a
+              // check named "validate-pr" (e.g., GitHub Actions + Greptile) are NOT collapsed,
+              // only runs from the same app are candidates for deduplication.
+              //
+              // Tie-breaking: null startedAt maps to "" which is lexicographically less than any
+              // ISO string, so a run with a known timestamp always wins over one without. When
+              // two runs share the same timestamp (or both are null), the first in API response
+              // order is kept because GitHub does not guarantee ordering between suite siblings.
+              const dedupMap = new Map<string, typeof rawRuns[0]>();
+              for (const run of rawRuns) {
+                const key = `${run.name}\0${run.appId}`;
+                const existing = dedupMap.get(key);
+                const existingTs = existing?.startedAt ?? "";
+                const runTs = run.startedAt ?? "";
+                if (!existing || runTs > existingTs) {
+                  dedupMap.set(key, run);
+                }
+              }
+              // Strip the internal appId field before passing runs to the caller.
+              const runs: CheckRun[] = [...dedupMap.values()].map(({ appId: _appId, ...run }) => run);
+
+              let aggregate: "passing" | "failing" | "pending" | "no_checks";
+              if (runs.some((r) => r.conclusion === "failure" || r.conclusion === "timed_out")) {
+                aggregate = "failing";
+              } else if (runs.some((r) => r.status !== "completed")) {
+                aggregate = "pending";
+              } else {
+                aggregate = "passing";
+              }
+
+              // If all runs completed but none succeeded (all skipped/cancelled/neutral),
+              // treat as no_checks to avoid a misleading green badge.
+              if (aggregate === "passing" && !runs.some((r) => r.conclusion === "success")) {
+                aggregate = "no_checks";
+              }
+
+              resolvePromise({ aggregate, runs, fetchedAt: now });
+            } catch {
+              resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: now });
+            }
+          },
+        );
+        activeProcess.current = this.trackProcess(child, {
+          repoPath,
+          checkRunsKey: inflightKey,
+        });
+      } catch {
+        releaseOnce();
+        if (!inflightController.cancelled) {
+          resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: Date.now() });
         }
-      },
-    );
+      }
+    })();
 
     try {
       return await promise;
     } finally {
-      // M3: Guard covers the synchronous-throw path; the callback path already called releaseOnce().
       releaseOnce();
-      this.checkRunsInflight.delete(inflightKey);
+      if (this.checkRunsInflight.get(inflightKey) === inflightController) {
+        this.checkRunsInflight.delete(inflightKey);
+      }
+      activeProcess.current?.finish();
     }
   }
 
@@ -399,11 +528,13 @@ export class GithubService {
     if (cached) this.slugCache.delete(repoPath);
 
     const pending = new Promise<string>((resolve, reject) => {
-      execFile(
+      let tracked: TrackedGithubProcess | null = null;
+      const child = execFile(
         "gh",
         ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
         { cwd: repoPath, encoding: "utf-8", timeout: 10_000, windowsHide: true },
         (error, stdout) => {
+          tracked?.finish();
           if (error || !stdout.trim()) {
             this.slugCache.delete(repoPath); // evict so next call can retry
             reject(error ?? new Error("Failed to resolve repo slug"));
@@ -419,6 +550,7 @@ export class GithubService {
           resolve(trimmed);
         },
       );
+      tracked = this.trackProcess(child, { repoPath });
     });
 
     this.slugCache.set(repoPath, { promise: pending, expiresAt: Date.now() + GithubService.SLUG_TTL_MS });
@@ -482,4 +614,28 @@ export class GithubService {
       );
     });
   }
+}
+
+interface TrackedGithubProcess {
+  child: ChildProcess;
+  repoPath: string | null;
+  checkRunsKey: string | null;
+  done: Promise<void>;
+  finish(): void;
+}
+
+interface CheckRunsInflight {
+  promise: Promise<ChecksStatus>;
+  resolve: (value: ChecksStatus) => void;
+  repoPath: string | null;
+  branch: string;
+  cancelled: boolean;
+}
+
+function noChecks(): ChecksStatus {
+  return { aggregate: "no_checks", runs: [], fetchedAt: Date.now() };
+}
+
+function normalizeRepoPath(repoPath: string | null | undefined): string | null {
+  return repoPath ? repoPath.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() : null;
 }

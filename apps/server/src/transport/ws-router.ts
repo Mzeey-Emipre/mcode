@@ -327,7 +327,13 @@ function watchReturnedThreadWorktree(deps: RouterDeps, thread: unknown): void {
 async function teardownWorkspaceThreads(deps: RouterDeps, workspaceId: string): Promise<void> {
   const threads = deps.threadRepo.listAllByWorkspace(workspaceId);
   const results = await Promise.allSettled(
-    threads.map((thread) => deps.threadTeardownService.teardownThread(thread.id)),
+    threads.map(async (thread) => {
+      if (thread.worktree_path) {
+        await deps.githubService.cancelForRepoPath(thread.worktree_path);
+      }
+      await deps.ciWatcherService.teardownThread(thread.id);
+      await deps.threadTeardownService.teardownThread(thread.id);
+    }),
   );
   const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
   if (failures.length > 0) {
@@ -442,7 +448,11 @@ async function dispatch(
       return thread;
     }
     case "thread.delete": {
-      deps.ciWatcherService.unwatch(params.threadId);
+      const thread = deps.threadRepo.findById(params.threadId);
+      if (thread?.worktree_path) {
+        await deps.githubService.cancelForRepoPath(thread.worktree_path);
+      }
+      await deps.ciWatcherService.teardownThread(params.threadId);
       await deps.threadTeardownService.teardownThread(params.threadId);
       const deleted = await deps.threadService.delete(
         params.threadId,

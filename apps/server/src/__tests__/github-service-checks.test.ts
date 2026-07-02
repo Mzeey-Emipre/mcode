@@ -1,13 +1,21 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { EventEmitter } from "events";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 
 const { mockExecFile } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
 }));
+const { mockKillProcessTree } = vi.hoisted(() => ({
+  mockKillProcessTree: vi.fn(),
+}));
 
 vi.mock("child_process", () => ({
   execFile: mockExecFile,
+}));
+
+vi.mock("../services/process-kill.js", () => ({
+  killProcessTree: mockKillProcessTree,
 }));
 
 vi.mock("@mcode/shared", () => ({
@@ -19,11 +27,24 @@ import { GithubService } from "../services/github-service";
 
 type CallbackFn = (error: Error | null, stdout: string, stderr: string) => void;
 
+async function waitFor(
+  predicate: () => boolean,
+  message: string,
+  maxTurns = 100,
+): Promise<void> {
+  for (let i = 0; i < maxTurns; i++) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(message);
+}
+
 describe("GithubService.getCheckRuns", () => {
   let ghService: GithubService;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockKillProcessTree.mockResolvedValue(undefined);
     ghService = new GithubService({} as WorkspaceRepo);
     vi.spyOn(ghService, "resolveRepoSlug").mockResolvedValue("owner/test-repo");
   });
@@ -373,6 +394,95 @@ describe("GithubService.getCheckRuns", () => {
     expect(execFileCallCount).toBe(1);
     expect(result1.aggregate).toBe("passing");
     expect(result2.aggregate).toBe("passing");
+  });
+
+  it("cancelCheckRuns terminates the active gh process for that branch and repo", async () => {
+    let child!: EventEmitter & { pid: number };
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, _cb: CallbackFn) => {
+        child = Object.assign(new EventEmitter(), { pid: 4321 });
+        return child;
+      },
+    );
+
+    const pending = ghService.getCheckRuns("main", "/repo");
+    while (!child) {
+      await Promise.resolve();
+    }
+
+    await ghService.cancelCheckRuns("main", "/repo");
+    const result = await pending;
+
+    expect(mockKillProcessTree).toHaveBeenCalledWith(4321);
+    expect(result.aggregate).toBe("no_checks");
+  });
+
+  it("cancelCheckRuns resolves a lookup queued behind the concurrency gate before it spawns gh", async () => {
+    const children: Array<EventEmitter & { pid: number }> = [];
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, _cb: CallbackFn) => {
+        const child = Object.assign(new EventEmitter(), { pid: 5000 + children.length });
+        children.push(child);
+        return child;
+      },
+    );
+
+    const active = [
+      ghService.getCheckRuns("active-1", "/repo"),
+      ghService.getCheckRuns("active-2", "/repo"),
+      ghService.getCheckRuns("active-3", "/repo"),
+    ];
+    await waitFor(() => children.length === 3, "three active gh processes did not start");
+
+    const queued = ghService.getCheckRuns("queued", "/repo");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(children).toHaveLength(3);
+
+    await ghService.cancelCheckRuns("queued", "/repo");
+    await expect(queued).resolves.toMatchObject({ aggregate: "no_checks" });
+
+    await ghService.cancelAllInFlight();
+    await Promise.all(active);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(children).toHaveLength(3);
+  });
+
+  it("cancelCheckRuns resolves a lookup while repo slug resolution is still pending", async () => {
+    let resolveSlug!: (slug: string) => void;
+    vi.mocked(ghService.resolveRepoSlug).mockImplementationOnce(
+      () => new Promise<string>((resolve) => { resolveSlug = resolve; }),
+    );
+
+    const pending = ghService.getCheckRuns("main", "/repo");
+    await waitFor(
+      () => vi.mocked(ghService.resolveRepoSlug).mock.calls.length > 0,
+      "slug resolution did not start",
+    );
+
+    await ghService.cancelCheckRuns("main", "/repo");
+    await expect(pending).resolves.toMatchObject({ aggregate: "no_checks" });
+    resolveSlug("owner/test-repo");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it("cancelForRepoPath terminates active gh processes for normalized matching repo paths", async () => {
+    let child!: EventEmitter & { pid: number };
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, _cb: CallbackFn) => {
+        child = Object.assign(new EventEmitter(), { pid: 6789 });
+        return child;
+      },
+    );
+
+    const pending = ghService.getCheckRuns("main", "C:\\Repo\\Worktree\\");
+    await waitFor(() => Boolean(child), "gh process did not start");
+
+    await ghService.cancelForRepoPath("c:/repo/worktree");
+    await expect(pending).resolves.toMatchObject({ aggregate: "no_checks" });
+
+    expect(mockKillProcessTree).toHaveBeenCalledWith(6789);
   });
 });
 
