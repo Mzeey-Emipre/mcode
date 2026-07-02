@@ -700,8 +700,8 @@ function colorSwatchValue(
 
 function linkedPairActiveClass(active: boolean): string {
   return active
-    ? "border-sky-400/40 bg-sky-400/15 text-sky-300"
-    : "border-white/10 bg-[#202020] text-neutral-500 hover:text-neutral-200";
+    ? "border-sky-300/[0.45] bg-sky-300/[0.15] text-sky-200"
+    : "border-white/[0.08] bg-[#232323] text-neutral-500 hover:border-white/[0.15] hover:text-neutral-200";
 }
 
 function VisualLinkButton({
@@ -721,7 +721,7 @@ function VisualLinkButton({
       aria-label={label}
       aria-pressed={active}
       className={cn(
-        "size-5 rounded-full border p-0 hover:bg-white/10",
+        "size-5 rounded-full border p-0 shadow-none hover:bg-white/[0.08]",
         linkedPairActiveClass(active),
       )}
       onClick={onClick}
@@ -755,13 +755,13 @@ function InspectorValueInput({
         placeholder={affordance === "0-1" ? "0-1" : undefined}
         inputMode={affordance === "0-1" || affordance === "px" ? "decimal" : undefined}
         className={cn(
-          "h-7 rounded-[0.65rem] border-white/10 bg-[#303030] text-xs text-neutral-100 shadow-none placeholder:text-neutral-500 focus-visible:ring-white/20",
+          "h-7 rounded-md border-white/[0.08] bg-[#303030]/70 text-xs text-neutral-100 shadow-none placeholder:text-neutral-500 hover:border-white/[0.14] focus-visible:border-sky-300/40 focus-visible:ring-1 focus-visible:ring-sky-300/[0.35]",
           affordance === "px" && "pr-8",
           className,
         )}
       />
       {affordance === "px" ? (
-        <span className="pointer-events-none absolute right-2 text-xs text-neutral-400">
+        <span className="pointer-events-none absolute right-2 text-xs text-neutral-500">
           px
         </span>
       ) : null}
@@ -777,8 +777,8 @@ function InspectorRow({
   readonly children: ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2 text-xs text-neutral-300">
-      <span>{label}</span>
+    <div className="grid grid-cols-[5.25rem_minmax(0,1fr)] items-center gap-2 text-xs text-neutral-300">
+      <span className="truncate text-neutral-300/90">{label}</span>
       {children}
     </div>
   );
@@ -819,7 +819,7 @@ function ColorInspectorControl({
                 variant="ghost"
                 size="icon-xs"
                 aria-label={`Open ${label} picker`}
-                className="absolute left-2 z-10 size-4 rounded-full border border-white/20 p-0 shadow-sm hover:ring-2 hover:ring-white/20"
+                className="absolute left-2 z-10 size-4 rounded-full border border-white/25 p-0 shadow-none ring-1 ring-black/20 hover:ring-white/20"
                 style={{ background: swatch }}
               />
             }
@@ -830,7 +830,7 @@ function ColorInspectorControl({
             sideOffset={6}
             collisionPadding={8}
             data-preview-design-keep-open="true"
-            className="w-64 rounded-lg border-white/10 bg-[#303030] p-2.5 text-neutral-100 shadow-2xl"
+            className="w-64 rounded-lg border-white/10 bg-[#2f2f2f] p-2.5 text-neutral-100 shadow-2xl"
           >
             <div className="space-y-2.5">
               <Input
@@ -842,9 +842,9 @@ function ColorInspectorControl({
                   if (!next) return;
                   onChange(controlKey, formatColorValue(next, colorFormat));
                 }}
-                className="h-24 w-full rounded-md border-white/10 bg-[#252525] p-1"
+                className="h-24 w-full rounded-md border-white/[0.08] bg-[#252525] p-1"
               />
-              <div className="grid grid-cols-3 overflow-hidden rounded-md border border-white/10 bg-[#252525]">
+              <div className="grid grid-cols-3 overflow-hidden rounded-md border border-white/[0.08] bg-[#252525]">
                 {(["rgb", "hsl", "hex"] as const).map((format) => (
                   <Button
                     key={format}
@@ -854,10 +854,10 @@ function ColorInspectorControl({
                     aria-label={`Use ${format.toUpperCase()} for ${label}`}
                     aria-pressed={colorFormat === format}
                     className={cn(
-                      "h-7 rounded-none border-r border-white/10 text-xs uppercase last:border-r-0",
+                      "h-7 rounded-none border-r border-white/[0.08] text-xs uppercase last:border-r-0",
                       colorFormat === format
-                        ? "bg-white/12 text-white"
-                        : "text-neutral-400 hover:bg-white/8 hover:text-white",
+                        ? "bg-white/[0.12] text-white"
+                        : "text-neutral-400 hover:bg-white/[0.08] hover:text-white",
                     )}
                     onPointerDown={(event) => {
                       event.preventDefault();
@@ -883,7 +883,7 @@ function ColorInspectorControl({
             }, 0);
           }}
           onChange={(event) => onChange(controlKey, event.target.value)}
-          className="h-7 rounded-[0.65rem] border-white/10 bg-[#303030] pl-8 font-mono text-xs text-neutral-100 placeholder:text-neutral-500 focus-visible:ring-sky-400/50"
+          className="h-7 rounded-md border-white/[0.08] bg-[#303030]/70 pl-8 font-mono text-xs text-neutral-100 shadow-none placeholder:text-neutral-500 hover:border-white/[0.14] focus-visible:border-sky-300/40 focus-visible:ring-1 focus-visible:ring-sky-300/[0.35]"
         />
       </div>
     </InspectorRow>
@@ -902,8 +902,8 @@ function LinkedSizeControls({
   readonly values: PreviewAnnotationVisualProposal;
 }) {
   return (
-    <div className="grid grid-cols-[5.5rem_1.75rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1 text-xs text-neutral-300">
-      <span>Width</span>
+    <div className="grid grid-cols-[5.25rem_1.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1 text-xs text-neutral-300">
+      <span className="text-neutral-300/90">Width</span>
       <div className="row-span-2 flex items-center justify-center">
         <VisualLinkButton
           active={linked}
@@ -917,7 +917,7 @@ function LinkedSizeControls({
         value={values.width}
         onChange={onChange}
       />
-      <span>Height</span>
+      <span className="text-neutral-300/90">Height</span>
       <InspectorValueInput
         controlKey="height"
         label="Height"
@@ -943,11 +943,11 @@ function QuadInputStrip({
   readonly values: PreviewAnnotationVisualProposal;
 }) {
   return (
-    <div className="grid min-w-0 grid-cols-4 overflow-hidden rounded-[0.65rem] border border-white/10 bg-[#2d2d2d]">
+    <div className="grid min-w-0 grid-cols-4 overflow-hidden rounded-md border border-white/[0.08] bg-[#303030]/55">
       {entries.map((entry) => (
         <label
           key={entry.key}
-          className="relative min-w-0 border-r border-white/10 last:border-r-0"
+          className="relative min-w-0 border-r border-white/[0.08] last:border-r-0"
         >
           <span className="sr-only">{entry.ariaLabel}</span>
           <Input
@@ -956,7 +956,7 @@ function QuadInputStrip({
             value={displayVisualControlValue(entry.key, values[entry.key])}
             onChange={(event) => onChange(entry.key, event.target.value)}
             inputMode="decimal"
-            className="h-7 rounded-none border-0 bg-transparent px-0 text-center font-mono text-xs tabular-nums text-neutral-100 shadow-none placeholder:text-neutral-500 focus-visible:ring-1 focus-visible:ring-sky-400/50"
+            className="h-7 rounded-none border-0 bg-transparent px-0 text-center font-mono text-xs tabular-nums text-neutral-100 shadow-none placeholder:text-neutral-500 hover:bg-white/[0.03] focus-visible:ring-1 focus-visible:ring-sky-300/35"
           />
         </label>
       ))}
@@ -997,12 +997,12 @@ function ExpandableQuadGroup({
 }) {
   if (!expanded) {
     return (
-      <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2 text-xs text-neutral-300">
+      <div className="grid grid-cols-[5.25rem_minmax(0,1fr)] items-center gap-2 text-xs text-neutral-300">
         <Button
           type="button"
           variant="ghost"
           size="xs"
-          className="h-7 justify-start gap-1 rounded-md px-0 text-xs text-neutral-300 hover:bg-transparent hover:text-white"
+          className="-ml-1 h-7 justify-start gap-1 rounded-md px-1 text-xs text-neutral-300/90 hover:bg-transparent hover:text-white focus-visible:!border-white/[0.18] focus-visible:!ring-1 focus-visible:!ring-white/[0.18]"
           aria-expanded={false}
           onClick={() => onToggleExpanded(groupId)}
         >
@@ -1016,48 +1016,46 @@ function ExpandableQuadGroup({
 
   const [firstPair, secondPair] = linkedPairs;
   return (
-    <div className="space-y-1.5 border-t border-white/8 pt-2 text-xs text-neutral-300 first:border-t-0 first:pt-0">
+    <div className="grid grid-cols-[4.5rem_1.25rem_minmax(3rem,1fr)] items-center gap-x-1.5 gap-y-1.5 border-t border-white/[0.08] pt-2 text-xs text-neutral-300 first:border-t-0 first:pt-0">
       <Button
         type="button"
         variant="ghost"
         size="xs"
-        className="h-6 justify-start gap-1 rounded-md px-0 text-xs text-neutral-300 hover:bg-transparent hover:text-white"
+        className="col-span-3 -ml-1 h-6 w-[calc(100%+0.25rem)] justify-start gap-1 rounded-md px-1 text-xs text-neutral-300/90 hover:bg-white/[0.04] hover:text-white focus-visible:!border-white/[0.18] focus-visible:!bg-white/[0.06] focus-visible:!ring-1 focus-visible:!ring-white/[0.18]"
         aria-expanded
         onClick={() => onToggleExpanded(groupId)}
       >
         <ChevronDown size={13} aria-hidden />
         {label}
       </Button>
-      <div className="grid grid-cols-[5.5rem_1.75rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
-        {entries.map((entry, index) => {
-          const link =
-            index === 0 && firstPair
-              ? firstPair
-              : index === 2 && secondPair
-                ? secondPair
-                : undefined;
-          return (
-            <Fragment key={entry.key}>
-              <span>{entry.label}</span>
-              <div className="flex items-center justify-center">
-                {link ? (
-                  <VisualLinkButton
-                    active={Boolean(linkedPairState[link.id])}
-                    label={link.label}
-                    onClick={() => onToggleLinked(link.id)}
-                  />
-                ) : null}
-              </div>
-              <InspectorValueInput
-                controlKey={entry.key}
-                label={entry.ariaLabel}
-                value={values[entry.key]}
-                onChange={onChange}
-              />
-            </Fragment>
-          );
-        })}
-      </div>
+      {entries.map((entry, index) => {
+        const link =
+          index === 0 && firstPair
+            ? firstPair
+            : index === 2 && secondPair
+              ? secondPair
+              : undefined;
+        return (
+          <Fragment key={entry.key}>
+            <span className="truncate text-neutral-300/[0.85]">{entry.label}</span>
+            <div className="flex items-center justify-center">
+              {link ? (
+                <VisualLinkButton
+                  active={Boolean(linkedPairState[link.id])}
+                  label={link.label}
+                  onClick={() => onToggleLinked(link.id)}
+                />
+              ) : null}
+            </div>
+            <InspectorValueInput
+              controlKey={entry.key}
+              label={entry.ariaLabel}
+              value={values[entry.key]}
+              onChange={onChange}
+            />
+          </Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -2061,7 +2059,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             ref={bubbleRef}
             data-testid="preview-annotation-bubble"
             className={cn(
-              "absolute z-30 w-[min(20.5rem,calc(100%-1rem))] overflow-hidden rounded-[1.65rem] border bg-[#282828] text-neutral-50 shadow-xl",
+              "absolute z-30 w-[min(20.5rem,calc(100%-1rem))] overflow-hidden rounded-[1.55rem] border bg-[#282828] text-neutral-50 shadow-xl ring-1 ring-black/20",
               outsideWarned
                 ? "animate-preview-annotation-shake border-destructive/80"
                 : "border-white/10",
@@ -2077,7 +2075,10 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                className="shrink-0 rounded-full text-neutral-300 hover:bg-white/10 hover:text-white"
+                className={cn(
+                  "shrink-0 rounded-full text-neutral-300 hover:bg-white/10 hover:text-white",
+                  bubbleAdvancedOpen && "bg-white/10 text-white",
+                )}
                 data-testid="preview-annotation-advanced-toggle"
                 aria-label="Open annotation visual controls"
                 aria-expanded={bubbleAdvancedOpen}
@@ -2114,10 +2115,10 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             {bubbleAdvancedOpen ? (
               <div
                 data-testid="preview-annotation-advanced"
-                className="border-t border-white/10 bg-[#282828]"
+                className="border-t border-white/[0.08] bg-[#262626]"
               >
-                <div className="flex items-center justify-between bg-white/[0.06] px-4 py-2 text-xs text-neutral-200">
-                  <span className="max-w-[15rem] truncate font-semibold">
+                <div className="flex items-center justify-between border-b border-white/[0.08] bg-white/[0.045] px-4 py-1.5 text-xs text-neutral-200">
+                  <span className="max-w-[15rem] truncate font-semibold leading-5">
                     {visibleOpenBubbleBase.label?.trim() ||
                       visibleOpenBubbleBase.selectorHint?.trim() ||
                       "Element"}
@@ -2128,8 +2129,8 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                     aria-hidden
                   />
                 </div>
-                <div className="max-h-52 overflow-y-auto px-4 py-2.5 [scrollbar-color:rgb(115_115_115)_transparent] [scrollbar-width:thin]">
-                  <div className="space-y-2.5">
+                <div className="max-h-52 overflow-y-auto px-4 py-2 [scrollbar-color:rgb(115_115_115)_transparent] [scrollbar-width:thin]">
+                  <div className="space-y-2">
                     {VISUAL_CONTROL_FIELDS.map(([key, label]) => {
                       if (key in COLOR_CONTROL_DEFAULTS) {
                         const colorKey = key as ColorVisualProposalKey;
@@ -2198,12 +2199,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               </div>
             ) : null}
             {bubbleAdvancedOpen || editingAnnotationId ? (
-              <div className="flex items-center justify-between border-t border-white/10 px-3 py-2">
+              <div className="flex items-center justify-between border-t border-white/[0.08] bg-[#262626] px-3 py-2">
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className="rounded-full text-neutral-200 hover:bg-red-500/20 hover:text-red-100"
+                  className="rounded-full text-neutral-300 hover:bg-red-500/[0.18] hover:text-red-100"
                   aria-label="Delete annotation"
                   onClick={deleteOpenBubble}
                 >
@@ -2214,7 +2215,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-7 rounded-full px-3 text-neutral-100 hover:bg-white/10 hover:text-white"
+                    className="h-7 rounded-full px-3 text-neutral-100 hover:bg-white/[0.08] hover:text-white"
                     onClick={() => {
                       usePreviewAnnotationStore
                         .getState()
@@ -2229,7 +2230,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                   <Button
                     type="button"
                     size="sm"
-                    className="h-7 rounded-full bg-neutral-100 px-3 text-neutral-950 hover:bg-white"
+                    className="h-7 rounded-full bg-neutral-200 px-3 text-neutral-950 hover:bg-white disabled:bg-neutral-500/40 disabled:text-neutral-300"
                     disabled={!canSaveOpenBubble}
                     onClick={() => void saveOpenBubble()}
                   >
