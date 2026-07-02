@@ -5,7 +5,7 @@
  * 1. Unavailable state - when desktopBridge.preview is absent.
  * 2. Full panel state - when desktopBridge.preview is present (hooks mocked).
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { getDefaultSettings } from "@mcode/contracts";
@@ -650,6 +650,70 @@ describe("PreviewPanel — full panel state", () => {
     expect(screen.getByTestId("preview-annotation-send-state")).toHaveAccessibleName(
       "Send 1 annotation",
     );
+  });
+
+  it("confirms before discarding saved page annotations", async () => {
+    const user = userEvent.setup();
+    usePreviewDesignModeStore.getState().setActive("thread-1", true);
+    const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
+    installSavedAnnotation();
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        inputUrl: pageUrl,
+        storedUrl: pageUrl,
+        pageStatus: {
+          url: pageUrl,
+          title: "Example",
+          favicon: null,
+          phase: "loaded",
+        },
+      }),
+    );
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(usePreviewAnnotationStore.getState().byThread["thread-1"]).toHaveLength(
+      1,
+    );
+    await user.click(screen.getByLabelText("Discard page annotations"));
+
+    const cancelDialog = await screen.findByRole("dialog", {
+      name: "Delete page annotations?",
+    });
+    expect(
+      within(cancelDialog).getByText(
+        "This removes 1 saved annotation from this page.",
+      ),
+    ).toBeInTheDocument();
+    expect(usePreviewAnnotationStore.getState().byThread["thread-1"]).toHaveLength(
+      1,
+    );
+
+    await user.click(within(cancelDialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Delete page annotations?" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(usePreviewAnnotationStore.getState().byThread["thread-1"]).toHaveLength(
+      1,
+    );
+
+    await user.click(screen.getByLabelText("Discard page annotations"));
+    const deleteDialog = await screen.findByRole("dialog", {
+      name: "Delete page annotations?",
+    });
+    await user.click(within(deleteDialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(usePreviewAnnotationStore.getState().byThread["thread-1"]).toHaveLength(
+        0,
+      );
+    });
+    expect(
+      screen.queryByRole("button", { name: "Edit annotation 1" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows saved annotations as numbered markers until reopened", () => {

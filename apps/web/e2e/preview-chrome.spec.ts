@@ -359,6 +359,89 @@ async function hasUnsavedAnnotationDraft(page: Page): Promise<boolean> {
   }, THREAD.id);
 }
 
+async function seedSavedAnnotation(page: Page): Promise<void> {
+  await page.evaluate((threadId) => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+      setState: (patch: Record<string, unknown>) => void;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const annotationStore = stores.find((store) => {
+      const state = store.getState();
+      return "byThread" in state && "drafts" in state && "buildBundle" in state;
+    });
+    const designStore = stores.find((store) => {
+      const state = store.getState();
+      return "modes" in state && "toggle" in state && "isActive" in state;
+    });
+    if (!annotationStore) throw new Error("[E2E] annotation store not found");
+    if (!designStore) throw new Error("[E2E] design mode store not found");
+    annotationStore.setState({
+      byThread: {
+        [threadId]: [
+          {
+            id: "annotation-1",
+            createdAt: Date.now(),
+            displayNumber: 1,
+            pageIdentity: "https://example.com/",
+            pageContext: {
+              schemaVersion: 2,
+              pageUrl: "https://example.com/",
+              pageTitle: "Example",
+              capturedAt: "2026-07-01T00:00:00.000Z",
+              captureKind: "element",
+              bounds: { x: 20, y: 24, width: 220, height: 48 },
+              layoutViewport: { width: 800, height: 600 },
+            },
+            targetContext: {
+              label: "Search input",
+              selectorHint: "input[name='q']",
+              bounds: { x: 20, y: 24, width: 220, height: 48 },
+            },
+            note: "Move this field",
+            snapshot: {
+              id: "snapshot-1",
+              name: "Preview annotation 1",
+              mimeType: "image/png",
+              sizeBytes: 12,
+              sourcePath: "preview/snapshot-1.png",
+              capture: {
+                schemaVersion: 2,
+                pageUrl: "https://example.com/",
+                pageTitle: "Example",
+                capturedAt: "2026-07-01T00:00:00.000Z",
+                captureKind: "element",
+                bounds: { x: 20, y: 24, width: 220, height: 48 },
+                layoutViewport: { width: 800, height: 600 },
+              },
+            },
+          },
+        ],
+      },
+    });
+    designStore.setState({ modes: { [threadId]: true } });
+  }, THREAD.id);
+}
+
+async function savedAnnotationCount(page: Page): Promise<number> {
+  return page.evaluate((threadId) => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const annotationStore = stores.find((store) => {
+      const state = store.getState();
+      return "byThread" in state && "drafts" in state && "buildBundle" in state;
+    });
+    const byThread = annotationStore?.getState().byThread as
+      | Record<string, unknown[]>
+      | undefined;
+    return byThread?.[threadId]?.length ?? 0;
+  }, THREAD.id);
+}
+
 // ---------------------------------------------------------------------------
 // Tests — preview unavailable (no desktopBridge)
 // ---------------------------------------------------------------------------
@@ -522,6 +605,41 @@ test.describe("PreviewPanel — loaded header", () => {
     await expect(designBtn).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByTestId("preview-annotation-bubble")).toHaveCount(0);
     await expect.poll(() => hasUnsavedAnnotationDraft(page)).toBe(false);
+  });
+
+  test("discarding page annotations asks for confirmation", async ({ page }) => {
+    await seedSavedAnnotation(page);
+
+    await expect(page.getByTestId("preview-annotation-header")).toBeVisible();
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(1);
+    await expect.poll(() => savedAnnotationCount(page)).toBe(1);
+
+    await page.getByLabel("Discard page annotations").click();
+
+    const cancelDialog = page.getByRole("dialog", {
+      name: "Delete page annotations?",
+    });
+    await expect(cancelDialog).toBeVisible();
+    await expect(
+      cancelDialog.getByText("This removes 1 saved annotation from this page."),
+    ).toBeVisible();
+
+    await cancelDialog.getByRole("button", { name: "Cancel" }).click();
+
+    await expect(
+      page.getByRole("dialog", { name: "Delete page annotations?" }),
+    ).toHaveCount(0);
+    await expect.poll(() => savedAnnotationCount(page)).toBe(1);
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(1);
+
+    await page.getByLabel("Discard page annotations").click();
+    const deleteDialog = page.getByRole("dialog", {
+      name: "Delete page annotations?",
+    });
+    await deleteDialog.getByRole("button", { name: "Delete" }).click();
+
+    await expect.poll(() => savedAnnotationCount(page)).toBe(0);
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(0);
   });
 });
 
