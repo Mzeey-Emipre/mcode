@@ -124,17 +124,19 @@ test.describe("Sidebar thread preview", () => {
     });
   });
 
-  test("opens on hover and focus with read-only project, branch, and provider", async ({ page }) => {
+  test("opens on hover and focus with read-only project and branch; provider lives on the row", async ({ page }) => {
     const worktreeRow = page.locator('[data-testid="thread-item"][data-thread-id="thread-worktree"]');
     await expect(worktreeRow.getByLabel("Worktree mode")).toBeVisible();
     await expect(page.locator('[data-testid="thread-item"][data-thread-id="thread-direct"]').getByLabel("Worktree mode")).toHaveCount(0);
+
+    await expect(worktreeRow.getByLabel("Provider, Codex")).toBeVisible();
 
     await worktreeRow.hover();
     const hoverPreview = page.getByTestId("thread-preview-thread-worktree");
     await expect(hoverPreview).toBeVisible();
     await expect(page.getByLabel("Project, Preview Workspace")).toBeVisible();
     await expect(page.getByLabel("Branch, HEAD")).toBeVisible();
-    await expect(page.getByLabel("Provider, Codex")).toBeVisible();
+    await expect(hoverPreview.getByLabel(/^Provider,/)).toHaveCount(0);
     await expect(page.getByLabel(/^Status,/)).toHaveCount(0);
     await expect(hoverPreview).not.toContainText("Running");
     await expect(hoverPreview).not.toContainText("Ready");
@@ -183,6 +185,18 @@ test.describe("Sidebar thread preview", () => {
     expect(directTitle).not.toBeNull();
     expect(prTitle).not.toBeNull();
     expect(Math.abs((directTitle?.x ?? 0) - (prTitle?.x ?? 0))).toBeLessThanOrEqual(1);
+
+    // PR icons pin to a fixed left column (aligned with the workspace chevron);
+    // the provider icon sits in the row's indent, between the PR column and the title.
+    const prIcon = await prRow.getByTitle(/PR #42/).boundingBox();
+    const directProvider = await directRow.getByLabel("Provider, Claude").boundingBox();
+    const prProvider = await prRow.getByLabel("Provider, Claude").boundingBox();
+    expect(prIcon).not.toBeNull();
+    expect(directProvider).not.toBeNull();
+    expect(prProvider).not.toBeNull();
+    expect(Math.abs((directProvider?.x ?? 0) - (prProvider?.x ?? 0))).toBeLessThanOrEqual(1);
+    expect((prIcon?.x ?? 0) + (prIcon?.width ?? 0)).toBeLessThanOrEqual((prProvider?.x ?? 0) + 1);
+    expect((prProvider?.x ?? 0) + (prProvider?.width ?? 0)).toBeLessThanOrEqual((prTitle?.x ?? 0) + 1);
 
     await expect(page.locator('[data-testid="thread-item"][data-thread-id="thread-worktree"]').getByLabel("Running")).toBeVisible();
     await expect(page.locator('[data-testid="thread-item"][data-thread-id="thread-completed"]').getByLabel("Completed")).toBeVisible();

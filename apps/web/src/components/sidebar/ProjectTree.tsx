@@ -1091,10 +1091,9 @@ function SidebarThreadMarker({ marker, dim }: { marker: SidebarThreadMarker; dim
 
   if (marker.kind === "running") {
     return (
-      <Loader2
-        size={13}
+      <span
         aria-label={marker.label}
-        className={cn("shrink-0 status-spin text-primary", dim && "opacity-[0.72]")}
+        className={cn("shrink-0 status-spin spinner-tail-fade text-primary", dim && "opacity-[0.72]")}
       />
     );
   }
@@ -1140,19 +1139,12 @@ function SidebarThreadPreview({
   workspaceName: string;
   thread: WorkspaceThread;
 }) {
-  const provider = getProviderMeta(thread.provider);
-  const ProviderIcon = provider.icon;
   const checkoutLabel = resolveThreadCheckoutLabel(thread);
 
   return (
     <div data-testid={`thread-preview-${thread.id}`} className="w-64 space-y-2 text-popover-foreground">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1 font-medium text-xs leading-5">
-          {thread.title}
-        </div>
-        <span aria-label={`Provider, ${provider.label}`} className={cn("shrink-0 pt-0.5", provider.color)}>
-          <ProviderIcon size={14} />
-        </span>
+      <div className="min-w-0 font-medium text-xs leading-5">
+        {thread.title}
       </div>
       <div className="grid gap-1.5">
         <div aria-label={`Project, ${workspaceName}`} className="flex min-w-0 items-center gap-2">
@@ -1306,6 +1298,8 @@ function VirtualizedThreadList({
         // Opacity on the row would compound onto status markers; dim only the title cluster and timestamp.
         const scaffoldDim =
           (thread.clientPreparing || thread.clientError) && "opacity-[0.72]";
+        const providerMeta = getProviderMeta(thread.provider);
+        const RowProviderIcon = providerMeta.icon;
         const row = (
           <div
             role="button"
@@ -1334,20 +1328,30 @@ function VirtualizedThreadList({
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
             )}
-            style={{ paddingLeft: `${24 + depth * 12}px` }}
+            style={{ paddingLeft: `${42 + depth * 12}px` }}
           >
             {prable && thread.pr_number != null ? (() => {
               const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
               return (
                 <span
                   title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
-                  className="absolute top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center"
-                  style={{ left: `${6 + depth * 12}px` }}
+                  className="absolute left-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center"
                 >
                   <PrIcon size={12} className={prColor} />
                 </span>
               );
             })() : null}
+            <span
+              aria-label={`Provider, ${providerMeta.label}`}
+              className={cn(
+                "absolute top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center",
+                providerMeta.color,
+                scaffoldDim,
+              )}
+              style={{ left: `${22 + depth * 12}px` }}
+            >
+              <RowProviderIcon size={12} />
+            </span>
             <div
               className={cn(
                 "flex min-w-0 flex-1 items-center gap-2",
