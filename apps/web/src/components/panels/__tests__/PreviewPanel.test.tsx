@@ -648,7 +648,7 @@ describe("PreviewPanel — full panel state", () => {
     );
   });
 
-  it("shows saved annotations as marker-only until reopened", () => {
+  it("shows saved annotations as numbered markers until reopened", () => {
     const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
     installSavedAnnotation();
     mockUsePreviewBridge.mockReturnValue(
@@ -668,7 +668,7 @@ describe("PreviewPanel — full panel state", () => {
 
     const marker = screen.getByRole("button", { name: "Edit annotation 1" });
     expect(marker).toBeInTheDocument();
-    expect(marker).not.toHaveTextContent("1");
+    expect(marker).toHaveTextContent("1");
     expect(
       screen.queryByTestId("preview-annotation-target-highlight"),
     ).not.toBeInTheDocument();

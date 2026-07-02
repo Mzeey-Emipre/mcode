@@ -11,7 +11,6 @@ import {
   Check,
   Globe,
   GripVertical,
-  MessageCircle,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
@@ -911,7 +910,9 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                       aria-hidden
                     >
                       <span className="absolute -bottom-0.5 left-1.5 size-2 rotate-45 rounded-sm bg-primary" />
-                      <MessageCircle size={14} className="relative z-10" />
+                      <span className="relative z-10 text-xs font-semibold tabular-nums">
+                        {annotation.displayNumber}
+                      </span>
                     </span>
                   </Button>
                 }
