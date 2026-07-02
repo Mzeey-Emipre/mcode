@@ -38,6 +38,11 @@ import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js
  * paints opaque (black), hiding the page underneath. Injecting into the guest keeps the
  * amber highlight visible on top of real page pixels.
  */
+const EP_CHAT_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><path fill="#f59e0b" stroke="#111827" stroke-width="1.5" d="M14 3.5c6.1 0 10.8 3.8 10.8 8.7s-4.7 8.7-10.8 8.7c-1.1 0-2.2-.1-3.2-.4L5 24l1.8-5C4.6 17.4 3.2 15 3.2 12.2 3.2 7.3 7.9 3.5 14 3.5Z"/><circle cx="10.6" cy="12.3" r="1.2" fill="#fff"/><circle cx="14" cy="12.3" r="1.2" fill="#fff"/><circle cx="17.4" cy="12.3" r="1.2" fill="#fff"/></svg>`;
+const EP_CHAT_CURSOR_CSS = `url('data:image/svg+xml,${encodeURIComponent(
+  EP_CHAT_CURSOR_SVG,
+)}') 8 8, pointer`;
+
 const EP_INJECT_JS = `(function(){
   if (window.__mcodeEpTeardown) return;
   var HL_ID = "__mcode_ep_hl", TIP_ID = "__mcode_ep_tip";
@@ -48,7 +53,7 @@ const EP_INJECT_JS = `(function(){
   // cyan. Inlined as a literal because injected JS cannot read host CSS vars.
   // The tip's foreground sits at oklch(0.18 0.01 75) - very dark, slight warm
   // tint - which gives high contrast against the amber pill.
-  style.textContent = "#__mcode_ep_hl{position:fixed;left:0;top:0;width:0;height:0;pointer-events:none;border:2px solid oklch(0.72 0.17 75);box-sizing:border-box;z-index:2147483646;display:none;box-shadow:0 0 0 1px rgba(0,0,0,.35) inset;border-radius:2px}#__mcode_ep_tip{position:fixed;left:0;top:0;pointer-events:none;z-index:2147483647;display:none;max-width:min(360px,calc(100vw - 12px));font:600 11px/1.2 ui-sans-serif,system-ui,sans-serif;color:oklch(0.18 0.01 75);background:oklch(0.72 0.17 75);border-radius:3px 3px 0 0;padding:3px 7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 4px rgba(0,0,0,.25)}#__mcode_ep_tip[data-flipped=\\"1\\"]{border-radius:0 0 3px 3px}html.__mcode_ep_active,html.__mcode_ep_active *{cursor:crosshair !important}";
+  style.textContent = "#__mcode_ep_hl{position:fixed;left:0;top:0;width:0;height:0;pointer-events:none;border:2px solid oklch(0.72 0.17 75);box-sizing:border-box;z-index:2147483646;display:none;box-shadow:0 0 0 1px rgba(0,0,0,.35) inset;border-radius:2px}#__mcode_ep_tip{position:fixed;left:0;top:0;pointer-events:none;z-index:2147483647;display:none;max-width:min(360px,calc(100vw - 12px));font:600 11px/1.2 ui-sans-serif,system-ui,sans-serif;color:oklch(0.18 0.01 75);background:oklch(0.72 0.17 75);border-radius:3px 3px 0 0;padding:3px 7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 4px rgba(0,0,0,.25)}#__mcode_ep_tip[data-flipped=\\"1\\"]{border-radius:0 0 3px 3px}html.__mcode_ep_active,html.__mcode_ep_active *{cursor:${EP_CHAT_CURSOR_CSS} !important}";
   (document.head || document.documentElement).appendChild(style);
   var box = document.createElement("div");
   box.id = HL_ID;

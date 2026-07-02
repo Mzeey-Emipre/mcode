@@ -1348,6 +1348,10 @@ describe("preview-browser", () => {
         await Promise.resolve();
 
         expect(adopted.executeJavaScript).toHaveBeenCalledTimes(1);
+        const injectedPicker = adopted.executeJavaScript.mock.calls[0]![0] as string;
+        expect(injectedPicker).toContain("data:image/svg+xml");
+        expect(injectedPicker).toContain("pointer !important");
+        expect(injectedPicker).not.toContain("cursor:crosshair !important");
 
         await vi.advanceTimersByTimeAsync(120);
         await expect(capturePromise).resolves.toEqual({ ok: false, error: "cancelled" });
