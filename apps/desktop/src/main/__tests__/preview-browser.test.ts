@@ -1284,6 +1284,7 @@ describe("preview-browser", () => {
       adopted.getTitle.mockReturnValue("Adopted page");
       adopted.executeJavaScript
         .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(
           JSON.stringify({
             visibleText: "Visible adopted text",
@@ -1326,6 +1327,12 @@ describe("preview-browser", () => {
       expect(overlayJs).toContain('"activeDisplayNumber":2');
       expect(overlayJs).toContain('"displayNumber":1');
       expect(overlayJs).toContain('"displayNumber":2');
+      const waitForPaintJs = adopted.executeJavaScript.mock.calls[1]![0] as string;
+      expect(waitForPaintJs).toContain("requestAnimationFrame");
+      expect(waitForPaintJs).toContain("__mcode_annotation_snapshot_overlay");
+      expect(adopted.executeJavaScript.mock.invocationCallOrder[1]).toBeLessThan(
+        adopted.capturePage.mock.invocationCallOrder[0]!,
+      );
       const removeJs = adopted.executeJavaScript.mock.calls.at(-1)![0] as string;
       expect(removeJs).toContain("__mcode_annotation_snapshot_overlay");
       expect(removeJs).toContain("remove()");

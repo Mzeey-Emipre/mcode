@@ -340,6 +340,35 @@ const REMOVE_ANNOTATION_SNAPSHOT_OVERLAY_JS = `(function(){
   document.querySelectorAll('style[data-mcode-annotation-snapshot="1"]').forEach(function (node) { node.remove(); });
 })()`;
 
+const WAIT_FOR_ANNOTATION_SNAPSHOT_OVERLAY_PAINT_JS = `(function(){
+  return new Promise(function(resolve) {
+    try {
+      var root = document.getElementById("__mcode_annotation_snapshot_overlay");
+      if (!root) {
+        resolve(false);
+        return;
+      }
+      var settled = false;
+      var finish = function(value) {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      var raf = window.requestAnimationFrame || function(cb) { return setTimeout(cb, 16); };
+      raf(function() {
+        raf(function() {
+          finish(true);
+        });
+      });
+      setTimeout(function() {
+        finish(true);
+      }, 80);
+    } catch (err) {
+      resolve(false);
+    }
+  });
+})()`;
+
 function buildAnnotationSnapshotOverlayJs(payload: AnnotationSnapshotRequest): string {
   const json = JSON.stringify(payload);
   return `(function(){
@@ -596,6 +625,13 @@ export function registerCaptureHandlers(): void {
 
       try {
         await activeWebContents.executeJavaScript(buildAnnotationSnapshotOverlayJs(overlay), true);
+        const overlayPainted = await activeWebContents.executeJavaScript(
+          WAIT_FOR_ANNOTATION_SNAPSHOT_OVERLAY_PAINT_JS,
+          true,
+        );
+        if (overlayPainted !== true) {
+          return { ok: false, error: "capture-failed" };
+        }
         const image = await activeWebContents.capturePage();
         const buffer = image.toPNG();
         if (buffer.length === 0) {
