@@ -702,8 +702,8 @@ describe("buildVirtualItems (combined)", () => {
     expect(streamingIdx).toBeGreaterThan(a1Idx);
   });
 
-  it("still splits before a trailing plan-output (PlanCard) message so its narrative sits above it", () => {
-    // A persisted plan-output bubble renders as the PlanCard answer. Its own
+  it("still splits before a trailing plan-output message so its narrative sits above it", () => {
+    // A persisted plan-output-only message is suppressed by MessageBubble. Its own
     // turn's narrative legitimately belongs ABOVE it, so the split must still
     // apply here — only plan-questions bubbles are excluded.
     const messages = [

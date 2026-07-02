@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 describe("PanelEmptyState — scope filter", () => {
-  it("threadless: shows Browser, Terminal, Files, and Review (dual-scope) but not Scope", () => {
+  it("threadless: shows Browser, Terminal, Files, and Review (dual-scope) but not Plan", () => {
     render(<PanelEmptyState scope="threadless" openTabs={[]} onOpen={vi.fn()} />);
     expect(screen.getByTestId("panel-card-preview")).toBeInTheDocument();
     expect(screen.getByTestId("panel-card-terminal")).toBeInTheDocument();
@@ -25,10 +25,11 @@ describe("PanelEmptyState — scope filter", () => {
     expect(screen.queryByTestId("panel-card-tasks")).not.toBeInTheDocument();
   });
 
-  it("thread: also shows Scope", () => {
+  it("thread: also shows Plan", () => {
     render(<PanelEmptyState scope="thread" openTabs={[]} onOpen={vi.fn()} />);
     expect(screen.getByTestId("panel-card-changes")).toBeInTheDocument();
     expect(screen.getByTestId("panel-card-tasks")).toBeInTheDocument();
+    expect(screen.getByText("Plan")).toBeInTheDocument();
   });
 });
 

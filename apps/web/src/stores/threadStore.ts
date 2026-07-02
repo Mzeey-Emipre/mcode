@@ -190,12 +190,17 @@ function clearDequeueTimer(threadId: string) {
   }
 }
 
+function hasPendingPlanQuestions(threadId: string): boolean {
+  return getThreadRecord(useThreadStore.getState().records, threadId).planQuestionsStatus === "pending";
+}
+
 /**
  * Resume auto-drain for a thread that was paused while the user edited a
  * queued message. Schedules the same 400ms-delayed check used by the
  * turnComplete handler. No-op when the thread is busy or the queue is empty.
  */
 export function scheduleDrainAfterEdit(threadId: string): void {
+  if (hasPendingPlanQuestions(threadId)) return;
   clearDequeueTimer(threadId);
   const timer = setTimeout(() => {
     dequeueTimers.delete(threadId);
@@ -205,6 +210,7 @@ export function scheduleDrainAfterEdit(threadId: string): void {
     if (!threadExists) return;
     if (useThreadStore.getState().runningThreadIds.has(threadId)) return;
     if (useQueueStore.getState().editingThreadId === threadId) return;
+    if (hasPendingPlanQuestions(threadId)) return;
 
     const next = useQueueStore.getState().dequeueNext(threadId);
     if (next) {
@@ -923,6 +929,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
     if (!isControlCommand) {
       dropPendingTextDeltas([threadId]);
+      useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
     }
 
     // Add user message to local state immediately (optimistic)
@@ -1707,6 +1714,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (method === "session.turnStarted") {
+      useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
       set((state) => {
         if (state.runningThreadIds.has(threadId)) return {};
         const next = new Set(state.runningThreadIds);
@@ -2372,6 +2380,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (method === "session.turnComplete" || method === "session.ended") {
+      useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(threadId);
       const costUsd = (params.costUsd as number) ?? null;
       const tokensIn = ((params.tokensIn as number) ?? (params.totalTokensIn as number)) ?? 0;
       const tokensOut = ((params.tokensOut as number) ?? (params.totalTokensOut as number)) ?? 0;
@@ -2604,6 +2613,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Skip dequeue when a guardrail stopped the session to avoid restarting
       // an agent that was intentionally capped by budget or turn limits.
       if (method === "session.turnComplete" && !isGuardrailStop) {
+        if (hasPendingPlanQuestions(threadId)) return;
         clearDequeueTimer(threadId);
         const timer = setTimeout(() => {
           dequeueTimers.delete(threadId);
@@ -2617,6 +2627,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           // Skip auto-drain while the user is editing a queued message.
           // The queue will resume when the edit is saved or cancelled.
           if (useQueueStore.getState().editingThreadId === threadId) return;
+          if (hasPendingPlanQuestions(threadId)) return;
 
           const next = useQueueStore.getState().dequeueNext(threadId);
           if (next) {

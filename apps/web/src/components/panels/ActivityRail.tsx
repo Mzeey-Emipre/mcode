@@ -20,7 +20,7 @@ import {
 import type { RightPanelTab } from "@/stores/diffStore";
 import { cn } from "@/lib/utils";
 
-/** Aggregate task completion across a thread's parent tasks (Scope glance). */
+/** Legacy task completion payload kept for tab API compatibility. */
 export interface ScopeProgress {
   readonly done: number;
   readonly total: number;
@@ -49,12 +49,12 @@ function tabKeycap(type: PanelTabType): string | null {
 function railAccessibleLabel(
   id: RightPanelTab,
   label: string,
-  scope: ScopeProgress,
+  _scope: ScopeProgress,
   changesCount: number,
   changesFresh: boolean,
 ): string {
   if (id === "tasks") {
-    return scope.total > 0 ? `${label}, ${scope.done} of ${scope.total} tasks done` : label;
+    return label;
   }
   if (id === "changes") {
     if (changesCount === 0) return label;
@@ -65,7 +65,7 @@ function railAccessibleLabel(
 }
 
 /**
- * Compact glance status under a rail icon: Scope task progress and the Review
+ * Compact glance status under a rail icon: Review
  * file count. Returns null for tabs with nothing to report so a calm icon stays
  * a bare glyph. Mirrors the One Lamp Rule — the active icon tints amber while
  * its status text stays legible.
@@ -73,33 +73,16 @@ function railAccessibleLabel(
 function RailStatus({
   id,
   active,
-  scope,
   changesCount,
   changesFresh,
 }: {
   id: RightPanelTab;
   active: boolean;
-  scope: ScopeProgress;
   changesCount: number;
   changesFresh: boolean;
 }) {
   if (id === "tasks") {
-    if (scope.total === 0) return null;
-    const complete = scope.done === scope.total;
-    return (
-      <span
-        className={cn(
-          "font-mono text-[9px] font-medium leading-none tabular-nums",
-          complete
-            ? "text-[var(--diff-add-strong)]"
-            : active
-              ? "text-current"
-              : "text-muted-foreground",
-        )}
-      >
-        {scope.done}/{scope.total}
-      </span>
-    );
+    return null;
   }
   if (id === "changes") {
     if (changesCount === 0) return null;
@@ -165,7 +148,6 @@ function RailTab({
         <RailStatus
           id={id}
           active={active}
-          scope={scope}
           changesCount={changesCount}
           changesFresh={changesFresh}
         />

@@ -3,7 +3,7 @@ import { useDiffStore, type RightPanelTab } from "@/stores/diffStore";
 import { PANEL_TAB_TYPES } from "@/lib/panel-tabs";
 import { hideRightPanelAdaptive, showRightPanelAdaptive } from "@/lib/right-panel-layout";
 
-/** Whether a tab type only makes sense once a thread exists (Scope, and Review until it goes dual-scope). */
+/** Whether a tab type only makes sense once a thread exists. */
 function tabNeedsThread(tab: RightPanelTab): boolean {
   return PANEL_TAB_TYPES.find((type) => type.id === tab)?.needsThread ?? false;
 }
@@ -14,7 +14,7 @@ function tabNeedsThread(tab: RightPanelTab): boolean {
  * and hide the panel if it is already the active tab. One key thus toggles its
  * surface. See ADR-0004 and issue #612.
  *
- * Thread-only tabs (Scope, and Review until it goes dual-scope) have nothing to
+ * Thread-only tabs have nothing to
  * show against the workspace root, so their shortcut is inert when no thread is
  * active — this mirrors the availability model, which drops `needsThread` tab
  * types from the threadless creatable set.

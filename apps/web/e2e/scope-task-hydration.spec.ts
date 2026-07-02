@@ -6,7 +6,7 @@ const now = new Date().toISOString();
 
 const WORKSPACE = {
   id: "ws-scope-task-hydration",
-  name: "Scope Task Hydration",
+  name: "Task Bubble Hydration",
   path: "/tmp/scope-task-hydration",
   provider_config: {},
   is_git_repo: false,
@@ -20,7 +20,7 @@ const WORKSPACE = {
 const THREAD: Thread = {
   id: "thread-scope-task-hydration",
   workspace_id: WORKSPACE.id,
-  title: "Scope Task Hydration Thread",
+  title: "Task Bubble Hydration Thread",
   status: "paused",
   mode: "direct",
   worktree_path: null,
@@ -50,7 +50,7 @@ type StoredTask = {
   group?: string;
 };
 
-async function seedScopeThread(page: Page): Promise<void> {
+async function seedTaskBubbleThread(page: Page): Promise<void> {
   await page.evaluate(
     ({ workspace, thread }) => {
       const stores: unknown[] =
@@ -174,8 +174,16 @@ async function emitUpdatePlan(page: Page, task: string): Promise<void> {
   );
 }
 
-test.describe("Scope task hydration", () => {
-  test("replaces idle tasks from persistence but preserves running live task groups", async ({
+async function expandTaskBubble(page: Page, label: RegExp): Promise<void> {
+  await expect(page.getByText(label)).toBeVisible();
+  const bubble = page.getByText(label).locator("xpath=ancestor::button[1]");
+  if ((await bubble.getAttribute("aria-expanded")) !== "true") {
+    await bubble.click();
+  }
+}
+
+test.describe("Task bubble hydration", () => {
+  test("replaces idle parent tasks from persistence but preserves running live parent tasks", async ({
     page,
   }, testInfo) => {
     let persistedTasks: StoredTask[] = [
@@ -199,8 +207,9 @@ test.describe("Scope task hydration", () => {
           .__mcodeHydrationComplete === true,
       { timeout: 30_000 },
     );
-    await seedScopeThread(page);
+    await seedTaskBubbleThread(page);
     await loadMessages(page);
+    await expandTaskBubble(page, /0\/1 steps/i);
     await expect(page.getByText("Old stale task")).toBeVisible();
 
     persistedTasks = [
@@ -213,10 +222,12 @@ test.describe("Scope task hydration", () => {
     await setRunningAndResetHydration(page, false);
     await loadMessages(page);
 
+    await expandTaskBubble(page, /1\/1 steps/i);
     await expect(page.getByText("New persisted task from hydration")).toBeVisible();
     await expect(page.getByText("Old stale task")).toHaveCount(0);
 
     await emitUpdatePlan(page, "Live running task stays visible");
+    await expandTaskBubble(page, /0\/1 steps/i);
     await expect(page.getByText("Live running task stays visible")).toBeVisible();
 
     persistedTasks = [
@@ -231,6 +242,6 @@ test.describe("Scope task hydration", () => {
 
     await expect(page.getByText("Live running task stays visible")).toBeVisible();
     await expect(page.getByText("Persisted stale while running")).toHaveCount(0);
-    await page.screenshot({ path: testInfo.outputPath("scope-task-hydration.png") });
+    await page.screenshot({ path: testInfo.outputPath("task-bubble-hydration.png") });
   });
 });

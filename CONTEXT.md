@@ -149,8 +149,9 @@ composer mode and to model configuration.
 A thread state where the agent produces a structured plan instead of
 executing changes. The agent reasons, searches the codebase, drafts a plan
 document, and presents it for the user to approve, revise, or reject.
-Exited via the SDK's `ExitPlanMode` tool, after which the thread switches
-to Build mode and the agent can act on the plan.
+Distinct from the Plan tab, which is a right-panel surface for viewing saved
+plan documents. Exited via the SDK's `ExitPlanMode` tool, after which the
+thread switches to Build mode and the agent can act on the plan.
 
 ### Build mode
 The opposite of Plan mode: the thread state where the agent actually
@@ -582,6 +583,10 @@ workspace-root view of changes and branches stays the Review tab's job.
 The Overview offers two ways to take the thread further, split by what each does
 to *this* thread. Both anchor at the thread tail (not a picked message):
 
+When a thread has a saved plan, the Overview includes a Plans section with
+the latest non-superseded plan title. The title is a one-line link into the
+Plan tab; older versions stay in the Plan tab.
+
 For branchless worktrees, the Overview shows the checkout as `HEAD` from the
 selected base branch and makes Create branch the next git action. After Create
 branch succeeds, the Overview shows the named branch like any other worktree
@@ -634,11 +639,11 @@ that runs while the user is already watching the thread.
 
 ### Right panel
 The workspace-level surface docked to the right of the chat, hosting a set
-of typed tabs (Browser, Terminal, Review, Scope, and later Files). The
-panel itself — its visibility, width, and active tab — is **workspace-global**
+of typed tabs (Browser, Terminal, Review, Plan, and later Files). The
+panel itself, its visibility, width, and active tab, is **workspace-global**
 and persists with no thread open. Each tab type sets its own availability:
 some (Browser, Terminal) run against the **workspace root** when no thread
-exists; others (Scope) require a thread. This replaces the former model
+exists; others (Plan) require a thread. This replaces the former model
 where the entire panel was thread-scoped and could not render without a
 thread. (Per-tab *content* scope — e.g. whether a thread keeps its own
 Browser tabs — is defined on each tab type below, not here.)
@@ -646,7 +651,7 @@ Browser tabs — is defined on each tab type below, not here.)
 ### Tab availability
 The rule set governing which tab types a user can create at a given moment.
 Every top-level tab is a **singleton** — at most one Browser, one Terminal,
-one Review, one Scope, one Files. Multiplicity lives *inside* a tab (the
+one Review, one Plan, one Files. Multiplicity lives *inside* a tab (the
 Browser holds many pages, the Terminal many shells), never as duplicate
 top-level tabs. The set of **creatable** types is filtered twice: by
 **scope** (types needing a thread are dropped when no thread is active) and
@@ -654,6 +659,36 @@ by **cardinality** (singletons already open are dropped). When exactly one
 type is creatable, the add affordance opens it directly instead of showing
 a menu; when none are, the add affordance is hidden. The empty panel and
 the add menu present this same creatable-types set.
+
+### Plan tab
+The right-panel tab that shows a thread's saved plan documents. It is
+thread-only and contains the plan artifact itself, not the agent's live task
+list.
+_Avoid_: Scope tab
+
+### Plan preview
+The composer-adjacent preview shown after a plan is generated for the active
+thread. It shows only the plan title, ellipsized to one line, plus View plan
+and dismiss actions; opening the Plan tab or dismissing the preview closes it.
+It is transient and separate from the saved plan document. Dismissal applies
+to the visible plan version only; a newer generated plan version shows a fresh
+preview. Preview dismissal is session-local UI state; it is not persisted. The
+plan preview appears only from a live generated-plan event; saved plans loaded
+during app startup do not create previews. The plan preview replaces transcript
+plan artifact cards; generated plans stay out of assistant messages.
+
+### Task bubble
+The composer-adjacent surface that shows the agent's current task list for
+the active thread. Collapsed, it shows one aggregate status circle and a
+settled-over-total count; clicking it expands the list upward above the
+composer. Its status circle is derived from parent-agent tasks: active when
+any task is in progress, completed when every task is completed or cancelled,
+pending when no task has started, and mixed when settled and pending tasks
+coexist. It clears as soon as the user sends a new turn if every task is
+completed or cancelled. The task bubble shows only parent-agent tasks;
+sub-agent task groups stay with the narrative timeline where delegated work is
+attributed. It is separate from the Plan tab.
+_Avoid_: Scope task list
 
 ### Terminal tab
 The right-panel tab that hosts one or more **shell sessions** against the

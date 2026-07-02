@@ -53,7 +53,7 @@ function approxBase64DecodedBytes(encoded: string): number {
  * - `branch.changed` -- refreshes branch list and updates current branch if not manually overridden
  * - `plan.questions` -- model-proposed plan questions forwarded to threadStore wizard
  * - `plan.answered` -- server committed an answered marker; dismisses the wizard on this client
- * - `plan.generated` -- server extracted a structured plan; updates planStore and opens Plan tab
+ * - `plan.generated` -- server extracted a structured plan; updates planStore and shows live preview for the active thread
  * - `permission.request` -- tool permission awaiting user decision
  * - `permission.resolved` -- a permission was settled (by user or session stop)
  * - `providers.availability` -- server-pushed provider availability snapshot forwarded to providerAvailabilityStore
@@ -489,6 +489,9 @@ export function startPushListeners(): void {
       if (!threadId || !plan) return;
 
       usePlanStore.getState().addPlan(threadId, plan);
+      if (useWorkspaceStore.getState().activeThreadId === threadId) {
+        usePlanStore.getState().showLivePreview(threadId, plan);
+      }
     }),
   );
 
