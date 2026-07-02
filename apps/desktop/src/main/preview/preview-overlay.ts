@@ -7,7 +7,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { BrowserWindow, app, ipcMain, type WebContents } from "electron";
-import { type AttachmentMeta } from "@mcode/contracts";
+import {
+  PREVIEW_ANNOTATION_STRING_MAX,
+  type AttachmentMeta,
+  type BrowserPreviewElementStyle,
+} from "@mcode/contracts";
 import {
   type Bounds,
   type PreviewSession,
@@ -466,6 +470,7 @@ type HitTestResult =
       bounds: Bounds;
       selectorHint: string | null;
       htmlExcerpt: string | null;
+      elementStyle: BrowserPreviewElementStyle | null;
     }
   | { ok: false; code: string };
 
@@ -747,6 +752,38 @@ function buildHitTestJs(overlayX: number, overlayY: number, hostWidth: number, h
     var h0 = Math.max(1, Math.round(r.height));
     return { x: x0, y: y0, width: w0, height: h0 };
   }
+  function cleanStyleValue(value) {
+    var text = String(value == null ? "" : value).replace(/[\\u0000-\\u001F\\u007F]/g, " ").trim();
+    return text ? text.slice(0, 512) : null;
+  }
+  function setStyleValue(target, key, value) {
+    var clean = cleanStyleValue(value);
+    if (clean) target[key] = clean;
+  }
+  function pxStyleValue(value) {
+    return Number.isFinite(value) ? Math.max(0, Math.round(value)) + "px" : null;
+  }
+  function computedElementStyle(el, rect) {
+    var next = {};
+    try {
+      var cs = window.getComputedStyle(el);
+      setStyleValue(next, "textColor", cs.color);
+      setStyleValue(next, "background", cs.backgroundColor);
+      var opacity = Number(cs.opacity);
+      if (Number.isFinite(opacity)) next.opacity = Math.max(0, Math.min(1, opacity));
+      setStyleValue(next, "font", cs.fontFamily);
+      setStyleValue(next, "fontSize", cs.fontSize);
+      setStyleValue(next, "fontWeight", cs.fontWeight);
+      setStyleValue(next, "borderRadius", cs.borderRadius);
+      setStyleValue(next, "borderColor", cs.borderColor);
+      setStyleValue(next, "borderWidth", cs.borderWidth);
+      setStyleValue(next, "width", pxStyleValue(rect.width));
+      setStyleValue(next, "height", pxStyleValue(rect.height));
+      setStyleValue(next, "padding", cs.padding);
+      setStyleValue(next, "margin", cs.margin);
+    } catch (styleErr) {}
+    return Object.keys(next).length ? next : null;
+  }
   /** getBoundingClientRect in a subframe is relative to that frame; fixed overlays in the root need root layout coords. */
   function boundingRectInRootLayoutViewport(el) {
     var br = el.getBoundingClientRect();
@@ -788,6 +825,7 @@ function buildHitTestJs(overlayX: number, overlayY: number, hostWidth: number, h
     var r = boundingRectInRootLayoutViewport(el);
     var rbGuest = roundBounds(r);
     var selectorHint = selectorHintFor(el);
+    var elementStyle = computedElementStyle(el, r);
     var htmlExcerpt = null;
     if (typeof HTMLInputElement !== "undefined" && el instanceof HTMLInputElement && el.type === "password") {
       htmlExcerpt = null;
@@ -809,12 +847,51 @@ function buildHitTestJs(overlayX: number, overlayY: number, hostWidth: number, h
       ok: true,
       bounds: rbGuest,
       selectorHint: selectorHint,
-      htmlExcerpt: htmlExcerpt
+      htmlExcerpt: htmlExcerpt,
+      elementStyle: elementStyle
     });
   } catch (err) {
     return JSON.stringify({ ok: false, code: "hit-test-error" });
   }
 })()`;
+}
+
+const ELEMENT_STYLE_STRING_KEYS = [
+  "textColor",
+  "background",
+  "font",
+  "fontSize",
+  "fontWeight",
+  "borderRadius",
+  "borderColor",
+  "borderWidth",
+  "width",
+  "height",
+  "padding",
+  "margin",
+] as const;
+
+function sanitizeElementStyleValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.replace(/[\u0000-\u001F\u007F]/g, " ").trim();
+  if (!text) return undefined;
+  return text.length > PREVIEW_ANNOTATION_STRING_MAX.visualValue
+    ? text.slice(0, PREVIEW_ANNOTATION_STRING_MAX.visualValue)
+    : text;
+}
+
+function parseElementStylePayload(value: unknown): BrowserPreviewElementStyle | null {
+  if (!value || typeof value !== "object") return null;
+  const p = value as Record<string, unknown>;
+  const next: BrowserPreviewElementStyle = {};
+  for (const key of ELEMENT_STYLE_STRING_KEYS) {
+    const text = sanitizeElementStyleValue(p[key]);
+    if (text) next[key] = text;
+  }
+  if (typeof p.opacity === "number" && Number.isFinite(p.opacity)) {
+    next.opacity = Math.min(1, Math.max(0, p.opacity));
+  }
+  return Object.keys(next).length > 0 ? next : null;
 }
 
 /** Validates hit-test JSON from the guest so spoofed shapes never become typed results. */
@@ -839,6 +916,7 @@ function parseHitTestPayload(parsed: unknown): HitTestResult | null {
     bounds,
     selectorHint,
     htmlExcerpt,
+    elementStyle: parseElementStylePayload(p.elementStyle),
   };
 }
 
@@ -1384,6 +1462,7 @@ async function finishElementPickCapture(
         captureKind: "element",
         selectorHint: hit.selectorHint,
         htmlExcerpt: hit.htmlExcerpt,
+        elementStyle: hit.elementStyle,
       },
     );
 

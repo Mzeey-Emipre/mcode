@@ -1450,6 +1450,15 @@ describe("preview-browser", () => {
               bounds: { x: 8, y: 18, width: 120, height: 80 },
               selectorHint: "button.primary",
               htmlExcerpt: "<button>Attach</button>",
+              elementStyle: {
+                textColor: "rgb(255, 255, 255)",
+                background: "rgb(10, 52, 92)",
+                opacity: 0.8,
+                font: "Inter, sans-serif",
+                fontSize: "14px",
+                width: "120px",
+                height: "80px",
+              },
             }),
           )
           .mockResolvedValueOnce(undefined)
@@ -1465,7 +1474,12 @@ describe("preview-browser", () => {
 
         const capturePromise = ipcHandlers["preview:capture-picture-element-pick"]!(
           ev,
-        ) as Promise<{ ok: true; meta: { sizeBytes: number }; previewBytes: Uint8Array }>;
+        ) as Promise<{
+          ok: true;
+          meta: { sizeBytes: number };
+          previewBytes: Uint8Array;
+          capture: { elementStyle?: Record<string, unknown> };
+        }>;
         await Promise.resolve();
         await vi.advanceTimersByTimeAsync(120);
         const result = await capturePromise;
@@ -1473,6 +1487,12 @@ describe("preview-browser", () => {
         expect(result.ok).toBe(true);
         expect(result.meta.sizeBytes).toBeGreaterThan(0);
         expect(result.previewBytes.length).toBeGreaterThan(0);
+        expect(result.capture.elementStyle).toMatchObject({
+          textColor: "rgb(255, 255, 255)",
+          background: "rgb(10, 52, 92)",
+          opacity: 0.8,
+          fontSize: "14px",
+        });
         expect(adopted.capturePage).toHaveBeenCalledWith({ x: 8, y: 18, width: 120, height: 80 });
         expect(adopted.executeJavaScript).toHaveBeenCalledTimes(5);
       } finally {

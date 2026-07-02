@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   BrowserPreviewBounds,
+  BrowserPreviewElementStyle,
   McodeBrowserCaptureV2,
   PreviewAnnotationBundle,
   PreviewAnnotationPayload,
@@ -23,6 +24,8 @@ export interface PreviewDraftAnnotation {
   readonly snapshot?: PreviewAnnotationPayload["snapshot"];
   /** Full page context captured with the snapshot. */
   readonly pageContext: McodeBrowserCaptureV2;
+  /** Current computed visual style for the selected element. */
+  readonly elementStyle?: BrowserPreviewElementStyle;
   /** User note text. */
   readonly note: string;
   /** Proposed visual style changes. */

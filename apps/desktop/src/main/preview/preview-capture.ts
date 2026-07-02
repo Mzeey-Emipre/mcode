@@ -411,6 +411,7 @@ export async function buildBrowserCapturePayload(
     captureKind?: "viewport" | "region" | "element";
     selectorHint?: string | null;
     htmlExcerpt?: string | null;
+    elementStyle?: McodeBrowserCaptureV2["elementStyle"] | null;
   },
 ): Promise<McodeBrowserCaptureV2> {
   const ctx = await captureGuestPageContextForCapture(webContents);
@@ -436,6 +437,9 @@ export async function buildBrowserCapturePayload(
   }
   if (tail) {
     out.consoleTail = tail;
+  }
+  if (extras?.elementStyle && Object.keys(extras.elementStyle).length > 0) {
+    out.elementStyle = extras.elementStyle;
   }
   if (ctx && !ctx.error) {
     if (ctx.visibleText != null && ctx.visibleText.length > 0) {

@@ -1052,4 +1052,69 @@ describe("PreviewPanel — full panel state", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
+
+  it("prefills advanced annotation controls from the selected element style", () => {
+    installDraftAnnotation({
+      elementStyle: {
+        textColor: "rgb(255, 255, 255)",
+        background: "rgb(10, 52, 92)",
+        opacity: 0.75,
+        font: "Inter, sans-serif",
+        fontSize: "14px",
+        width: "120px",
+        height: "32px",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+
+    expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+      "rgb(255, 255, 255)",
+    );
+    expect(within(advanced).getByLabelText("Background")).toHaveValue(
+      "rgb(10, 52, 92)",
+    );
+    expect(within(advanced).getByLabelText("Opacity")).toHaveValue("0.75");
+    expect(within(advanced).getByLabelText("Font")).toHaveValue(
+      "Inter, sans-serif",
+    );
+    expect(within(advanced).getByLabelText(/Font size/)).toHaveValue("14px");
+    expect(screen.queryByTestId("preview-annotation-save")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(
+      screen.queryByTestId("preview-annotation-visual-proposal"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("saves only advanced fields changed away from the selected element style", async () => {
+    installDraftAnnotation({
+      elementStyle: {
+        textColor: "rgb(255, 255, 255)",
+        background: "rgb(10, 52, 92)",
+        opacity: 0.75,
+        fontSize: "14px",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    fireEvent.change(
+      within(screen.getByTestId("preview-annotation-advanced")).getByLabelText(
+        /Font size/,
+      ),
+      { target: { value: "18px" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(usePreviewAnnotationStore.getState().byThread["thread-1"]).toHaveLength(1);
+    });
+    expect(
+      usePreviewAnnotationStore.getState().byThread["thread-1"]?.[0]?.proposedChanges,
+    ).toEqual({ fontSize: "18px" });
+  });
 });

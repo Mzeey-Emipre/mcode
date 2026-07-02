@@ -27,6 +27,42 @@ export const MCODE_BROWSER_CAPTURE_SPILL_APP_DATA_PATH_MAX = 200;
 /** Max length for {@link McodeBrowserCaptureV2.spillAbsolutePath} (native absolute path for tools). */
 export const MCODE_BROWSER_CAPTURE_SPILL_ABSOLUTE_PATH_MAX = 640;
 
+/** Max lengths for Preview annotation payload strings. */
+export const PREVIEW_ANNOTATION_STRING_MAX = {
+  note: 4000,
+  changeSummary: 1200,
+  pageIdentity: 2048,
+  targetLabel: 512,
+  visualValue: 512,
+} as const;
+
+const browserPreviewElementStyleSchema = z.object({
+  textColor: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  background: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  opacity: z.number().min(0).max(1).optional(),
+  font: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  fontSize: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  fontWeight: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderRadius: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderColor: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderWidth: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  width: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  height: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  padding: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  margin: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+});
+
+/**
+ * Computed visual details for the selected Preview element, used to prefill annotation controls.
+ */
+export const BrowserPreviewElementStyleSchema = lazySchema(() =>
+  browserPreviewElementStyleSchema,
+);
+
+export type BrowserPreviewElementStyle = z.infer<
+  ReturnType<typeof BrowserPreviewElementStyleSchema>
+>;
+
 /** App-data-relative POSIX path: `browser-capture-spill/<workspaceDir>/<uuid>.json`. */
 const SPILL_APP_DATA_PATH_RE =
   /^browser-capture-spill\/[a-zA-Z0-9_-]{1,80}\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/i;
@@ -163,6 +199,8 @@ export const McodeBrowserCaptureV2Schema = lazySchema(() =>
     consoleTail: z.string().max(MCODE_BROWSER_CAPTURE_V2_STRING_MAX.consoleTail).optional(),
     viewportScroll: viewportScrollSchema.optional(),
     layoutViewport: layoutViewportSchema.optional(),
+    /** Computed styles for an element pick, bounded and sanitized at the IPC boundary. */
+    elementStyle: BrowserPreviewElementStyleSchema().optional(),
     /** Recent HTTP subresource failures observed in the preview session (capped, best-effort). */
     failedRequests: z.array(failedRequestEntrySchema).max(24).optional(),
     /**
@@ -210,6 +248,41 @@ function clampOptStr(s: string | undefined, max: number): string | undefined {
   return clampStrLen(s, max);
 }
 
+const BROWSER_PREVIEW_ELEMENT_STYLE_STRING_KEYS = [
+  "textColor",
+  "background",
+  "font",
+  "fontSize",
+  "fontWeight",
+  "borderRadius",
+  "borderColor",
+  "borderWidth",
+  "width",
+  "height",
+  "padding",
+  "margin",
+] as const;
+
+function clampBrowserPreviewElementStyle(
+  style: BrowserPreviewElementStyle | undefined,
+): BrowserPreviewElementStyle | undefined {
+  if (!style) return undefined;
+  const next: BrowserPreviewElementStyle = { ...style };
+  for (const key of BROWSER_PREVIEW_ELEMENT_STYLE_STRING_KEYS) {
+    if (next[key] !== undefined) {
+      next[key] = clampStrLen(next[key], PREVIEW_ANNOTATION_STRING_MAX.visualValue);
+    }
+  }
+  if (next.opacity !== undefined) {
+    if (Number.isFinite(next.opacity)) {
+      next.opacity = Math.min(1, Math.max(0, next.opacity));
+    } else {
+      delete next.opacity;
+    }
+  }
+  return next;
+}
+
 /**
  * Truncates v2 excerpt strings and failed-request fields to schema caps. Run after PII redaction
  * so expanded placeholders still fit {@link McodeBrowserCaptureV2Schema}.
@@ -239,6 +312,9 @@ export function clampMcodeBrowserCaptureV2<T extends McodeBrowserCaptureV2>(capt
       resourceType: clampOptStr(e.resourceType, m.failedRequestResourceType),
     }));
   }
+  if (next.elementStyle !== undefined) {
+    next.elementStyle = clampBrowserPreviewElementStyle(next.elementStyle);
+  }
   if (next.spillAbsolutePath !== undefined) {
     next.spillAbsolutePath = clampStrLen(next.spillAbsolutePath, MCODE_BROWSER_CAPTURE_SPILL_ABSOLUTE_PATH_MAX);
   }
@@ -266,36 +342,11 @@ export function clampAttachedBrowserCaptureForOutbound(att: AttachedBrowserCaptu
 
 export type McodeBrowserCapture = McodeBrowserCaptureV1 | McodeBrowserCaptureV2;
 
-/** Max lengths for Preview annotation payload strings. */
-export const PREVIEW_ANNOTATION_STRING_MAX = {
-  note: 4000,
-  changeSummary: 1200,
-  pageIdentity: 2048,
-  targetLabel: 512,
-  visualValue: 512,
-} as const;
-
-const previewAnnotationVisualProposalSchema = z.object({
-  textColor: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  background: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  opacity: z.number().min(0).max(1).optional(),
-  font: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  fontSize: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  fontWeight: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  borderRadius: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  borderColor: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  borderWidth: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  width: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  height: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  padding: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-  margin: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
-});
-
 /**
  * Visual style changes requested for a Preview annotation target.
  */
 export const PreviewAnnotationVisualProposalSchema = lazySchema(() =>
-  previewAnnotationVisualProposalSchema.refine((value) => Object.keys(value).length > 0, {
+  browserPreviewElementStyleSchema.refine((value) => Object.keys(value).length > 0, {
     message: "visual proposal must contain at least one change",
   }),
 );

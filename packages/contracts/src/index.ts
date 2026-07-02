@@ -148,6 +148,7 @@ export type { FileCategory } from "./models/file-types.js";
 export {
   BrowserPreviewBoundsSchema,
   BrowserPreviewCaptureKindSchema,
+  BrowserPreviewElementStyleSchema,
   McodeBrowserCaptureV1Schema,
   AttachedBrowserCaptureV1Schema,
   McodeBrowserCaptureV2Schema,
@@ -174,6 +175,7 @@ export {
 export type {
   BrowserPreviewBounds,
   BrowserPreviewCaptureKind,
+  BrowserPreviewElementStyle,
   McodeBrowserCaptureV1,
   AttachedBrowserCaptureV1,
   McodeBrowserCaptureV2,

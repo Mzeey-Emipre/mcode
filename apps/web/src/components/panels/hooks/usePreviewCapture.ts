@@ -305,6 +305,10 @@ export function usePreviewCapture({
       showCaptureErrorIfNeeded(res);
       if (!res.ok || res.capture.schemaVersion !== 2) return { ok: false };
 
+      const elementStyle =
+        res.capture.elementStyle && Object.keys(res.capture.elementStyle).length > 0
+          ? res.capture.elementStyle
+          : undefined;
       usePreviewAnnotationStore.getState().setDraft(threadId, {
         threadId,
         pageIdentity: normalizePreviewPageIdentity(res.capture.pageUrl),
@@ -312,6 +316,7 @@ export function usePreviewCapture({
         selectorHint: res.capture.selectorHint ?? null,
         label: res.capture.selectorHint ?? null,
         pageContext: res.capture,
+        ...(elementStyle ? { elementStyle } : {}),
         note: "",
       });
       onSuccess?.("element");

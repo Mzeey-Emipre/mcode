@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME } from "@mcode/contracts";
 import { usePreviewCapture } from "../usePreviewCapture";
+import { usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
 
 // ---------------------------------------------------------------------------
 // Store mocks — must be declared before the module is imported.
@@ -72,6 +73,7 @@ beforeEach(() => {
   window.desktopBridge = {
     preview: mockPreview,
   } as unknown as typeof window.desktopBridge;
+  usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
 
   // jsdom does not implement URL.createObjectURL
   URL.createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
@@ -80,6 +82,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete (window as unknown as Record<string, unknown>).desktopBridge;
+  usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
   vi.clearAllMocks();
 });
 
@@ -472,6 +475,49 @@ describe("usePreviewCapture", () => {
       });
 
       expect(result.current.elementPickBusy).toBe(false);
+    });
+  });
+
+  describe("onAddElementAnnotation", () => {
+    it("stores selected element style details on the draft", async () => {
+      mockPreview.capturePictureReferenceElementPick.mockResolvedValue(
+        makeCapturePngResult({
+          capture: {
+            schemaVersion: 2,
+            pageUrl: "https://example.com/products#details",
+            pageTitle: "Products",
+            capturedAt: "2026-07-01T00:00:00.000Z",
+            captureKind: "element",
+            selectorHint: "button.buy",
+            bounds: { x: 10, y: 20, width: 120, height: 40 },
+            elementStyle: {
+              textColor: "rgb(255, 255, 255)",
+              background: "rgb(10, 52, 92)",
+              opacity: 0.75,
+              font: "Inter, sans-serif",
+              fontSize: "14px",
+            },
+          },
+        }),
+      );
+
+      const { result } = renderHook(() => usePreviewCapture(defaultOptions()));
+
+      await act(async () => {
+        await result.current.onAddElementAnnotation();
+      });
+
+      expect(usePreviewAnnotationStore.getState().drafts[THREAD_ID]).toMatchObject({
+        pageIdentity: "https://example.com/products",
+        selectorHint: "button.buy",
+        elementStyle: {
+          textColor: "rgb(255, 255, 255)",
+          background: "rgb(10, 52, 92)",
+          opacity: 0.75,
+          font: "Inter, sans-serif",
+          fontSize: "14px",
+        },
+      });
     });
   });
 

@@ -112,20 +112,42 @@ function hasVisualProposal(
 
 function cleanVisualProposal(
   value: PreviewAnnotationVisualProposal,
+  baseline?: PreviewDraftAnnotation["elementStyle"],
 ): PreviewAnnotationVisualProposal | undefined {
   const next: Record<string, string | number> = {};
   for (const [key] of VISUAL_CONTROL_FIELDS) {
-    const entry = value[key];
-    if (typeof entry === "number") {
-      if (Number.isFinite(entry)) next[key] = Math.min(1, Math.max(0, entry));
-      continue;
-    }
-    const trimmed = String(entry ?? "").trim();
-    if (trimmed) next[key] = trimmed;
+    const normalized = normalizeVisualControlValue(key, value[key]);
+    if (normalized === undefined) continue;
+    const baselineValue = normalizeVisualControlValue(key, baseline?.[key]);
+    if (normalized === baselineValue) continue;
+    next[key] = normalized;
   }
   return Object.keys(next).length > 0
     ? (next as PreviewAnnotationVisualProposal)
     : undefined;
+}
+
+function normalizeVisualControlValue(
+  key: VisualControlField,
+  value: unknown,
+): string | number | undefined {
+  if (key === "opacity") {
+    const numeric =
+      typeof value === "number" ? value : Number(String(value ?? "").trim());
+    return Number.isFinite(numeric) ? Math.min(1, Math.max(0, numeric)) : undefined;
+  }
+  const trimmed = String(value ?? "").trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function initialVisualControls(
+  elementStyle: PreviewDraftAnnotation["elementStyle"],
+  proposedChanges: PreviewAnnotationVisualProposal | undefined,
+): PreviewAnnotationVisualProposal {
+  return {
+    ...(elementStyle ?? {}),
+    ...(proposedChanges ?? {}),
+  };
 }
 
 function visualOverlayStyle(
@@ -202,6 +224,8 @@ function draftFromSaved(
   threadId: string,
   annotation: SavedPreviewAnnotation,
 ): PreviewDraftAnnotation {
+  const elementStyle =
+    annotation.pageContext.elementStyle ?? annotation.snapshot.capture.elementStyle;
   return {
     threadId,
     pageIdentity: annotation.pageIdentity,
@@ -210,6 +234,7 @@ function draftFromSaved(
     label: annotation.targetContext.label,
     snapshot: annotation.snapshot,
     pageContext: annotation.pageContext,
+    ...(elementStyle ? { elementStyle } : {}),
     note: annotation.note ?? "",
     proposedChanges: annotation.proposedChanges,
   };
@@ -486,10 +511,13 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     (editingSavedAnnotation
       ? draftFromSaved(threadId, editingSavedAnnotation)
       : undefined);
+  const openBubbleProposedChanges = openBubbleBase
+    ? cleanVisualProposal(bubbleVisuals, openBubbleBase.elementStyle)
+    : undefined;
   const canSaveOpenBubble =
     Boolean(openBubbleBase) &&
     (bubbleNote.trim().length > 0 ||
-      hasVisualProposal(cleanVisualProposal(bubbleVisuals)));
+      hasVisualProposal(openBubbleProposedChanges));
   const hasOpenBubble = Boolean(openBubbleBase);
   const openBubbleFocusKey = draftAnnotation
     ? `draft:${draftAnnotation.pageIdentity}:${draftAnnotation.bounds.x}:${draftAnnotation.bounds.y}:${draftAnnotation.bounds.width}:${draftAnnotation.bounds.height}`
@@ -523,15 +551,28 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     setEditingAnnotationId(null);
     setActiveAnnotationId(null);
     setBubbleNote(draftAnnotation.note);
-    setBubbleVisuals(draftAnnotation.proposedChanges ?? {});
+    setBubbleVisuals(
+      initialVisualControls(
+        draftAnnotation.elementStyle,
+        draftAnnotation.proposedChanges,
+      ),
+    );
     setBubbleAdvancedOpen(false);
     setOutsideWarned(false);
   }, [draftAnnotation]);
 
   useEffect(() => {
     if (!editingSavedAnnotation) return;
+    const elementStyle =
+      editingSavedAnnotation.pageContext.elementStyle ??
+      editingSavedAnnotation.snapshot.capture.elementStyle;
     setBubbleNote(editingSavedAnnotation.note ?? "");
-    setBubbleVisuals(editingSavedAnnotation.proposedChanges ?? {});
+    setBubbleVisuals(
+      initialVisualControls(
+        elementStyle,
+        editingSavedAnnotation.proposedChanges,
+      ),
+    );
     setBubbleAdvancedOpen(false);
     setOutsideWarned(false);
   }, [editingSavedAnnotation]);
@@ -566,7 +607,9 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       if (target && bubbleRef.current?.contains(target)) return;
       if (
         bubbleNote.trim().length === 0 &&
-        !hasVisualProposal(cleanVisualProposal(bubbleVisuals))
+        !hasVisualProposal(
+          cleanVisualProposal(bubbleVisuals, openBubbleBase.elementStyle),
+        )
       ) {
         usePreviewAnnotationStore.getState().setDraft(threadId, undefined);
         setEditingAnnotationId(null);
@@ -693,7 +736,10 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     options: { readonly sendAfterSave?: boolean } = {},
   ): Promise<void> => {
     if (!openBubbleBase) return;
-    const proposedChanges = cleanVisualProposal(bubbleVisuals);
+    const proposedChanges = cleanVisualProposal(
+      bubbleVisuals,
+      openBubbleBase.elementStyle,
+    );
     if (bubbleNote.trim().length === 0 && !proposedChanges) {
       setOutsideWarned(true);
       return;
@@ -767,7 +813,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     ? pageAnnotations
     : EMPTY_SAVED_ANNOTATIONS;
   const openBubbleVisualProposal = visibleOpenBubbleBase
-    ? cleanVisualProposal(bubbleVisuals)
+    ? cleanVisualProposal(bubbleVisuals, visibleOpenBubbleBase.elementStyle)
     : undefined;
   const previewSurfaceWidth = surfaceRef.current?.clientWidth ?? 0;
   const showAnnotationCommandBar = designModeActive && bundleCount > 0;
