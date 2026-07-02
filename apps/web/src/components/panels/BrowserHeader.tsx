@@ -5,7 +5,7 @@ import {
   ArrowUpRight,
   Camera,
   Loader2,
-  MessageCircle,
+  PenTool,
   RotateCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -326,7 +326,7 @@ export function BrowserHeader({
                   {elementPickBusy ? (
                     <Loader2 size={16} className="animate-spin" aria-hidden />
                   ) : (
-                    <MessageCircle size={16} aria-hidden />
+                    <PenTool size={16} aria-hidden />
                   )}
                   {designModeActive ? <span>Design</span> : null}
                 </Button>
