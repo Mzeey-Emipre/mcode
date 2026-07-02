@@ -428,15 +428,16 @@ test.describe("PreviewPanel — loaded header", () => {
     await expect(menu.getByText("100%")).toBeVisible();
   });
 
-  test("design mode shows compact annotation header before the first annotation", async ({ page }) => {
+  test("design mode keeps browser chrome before the first annotation", async ({ page }) => {
     const designBtn = page.getByRole("button", { name: "Design", exact: true });
     await expect(designBtn).toHaveAttribute("aria-pressed", "false");
     await designBtn.click();
-    await expect(page.getByTestId("browser-header")).toHaveCount(0);
-    await expect(page.getByTestId("preview-annotation-header")).toBeVisible();
-    await expect(page.getByText("Pick a page target")).toBeVisible();
-    await expect(page.getByTestId("preview-annotation-send-state")).toBeDisabled();
-    await page.getByRole("button", { name: "Exit Design" }).click();
+    await expect(page.getByTestId("browser-header")).toBeVisible();
+    await expect(page.getByTestId("preview-annotation-header")).toHaveCount(0);
+    await expect(page.getByTestId("preview-annotation-send-state")).toHaveCount(0);
+    await expect(designBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(designBtn).toContainText("Design");
+    await designBtn.click();
     await expect(page.getByRole("button", { name: "Design", exact: true })).toHaveAttribute(
       "aria-pressed",
       "false",

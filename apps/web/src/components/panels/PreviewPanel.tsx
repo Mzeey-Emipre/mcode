@@ -728,6 +728,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     ? cleanVisualProposal(bubbleVisuals)
     : undefined;
   const previewSurfaceWidth = surfaceRef.current?.clientWidth ?? 0;
+  const showAnnotationCommandBar = designModeActive && bundleCount > 0;
 
   return (
     <div
@@ -735,7 +736,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <div className={cn(showWebviewPreview && "relative z-20")}>
-        {designModeActive ? (
+        {showAnnotationCommandBar ? (
           <PreviewAnnotationHeader
             pageCount={pageAnnotations.length}
             bundleCount={bundleCount}

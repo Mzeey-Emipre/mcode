@@ -594,7 +594,7 @@ describe("PreviewPanel — full panel state", () => {
     expect(shouldRenderWebviewPreview(undefined)).toBe(false);
   });
 
-  it("shows the compact annotation header while design mode has no saved annotations", () => {
+  it("keeps browser chrome visible while design mode has no saved annotations", () => {
     usePreviewDesignModeStore.getState().setActive("thread-1", true);
     mockUsePreviewBridge.mockReturnValue(
       mockBridgeState({
@@ -611,12 +611,16 @@ describe("PreviewPanel — full panel state", () => {
 
     render(<PreviewPanel threadId="thread-1" />);
 
-    expect(screen.queryByTestId("browser-header")).not.toBeInTheDocument();
-    expect(screen.getByTestId("preview-annotation-header")).toBeInTheDocument();
-    expect(screen.getByTestId("preview-annotation-title")).toHaveTextContent(
-      "DesignPick a page target",
-    );
-    expect(screen.getByTestId("preview-annotation-send-state")).toBeDisabled();
+    expect(screen.getByTestId("browser-header")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("preview-annotation-header"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("preview-annotation-send-state"),
+    ).not.toBeInTheDocument();
+    const designButton = screen.getByRole("button", { name: "Design" });
+    expect(designButton).toHaveAttribute("aria-pressed", "true");
+    expect(designButton).toHaveTextContent("Design");
   });
 
   it("shows the saved-annotation command bar after the first annotation", () => {
