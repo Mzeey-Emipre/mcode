@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -6,11 +7,15 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   Check,
+  ChevronDown,
+  ChevronRight,
   Globe,
   GripVertical,
+  Link2,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
@@ -46,6 +51,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -65,6 +75,21 @@ const ANNOTATION_BUBBLE_MAX_WIDTH_PX = 336;
 const ANNOTATION_BUBBLE_MARGIN_PX = 8;
 
 type VisualProposalKey = keyof PreviewAnnotationVisualProposal;
+type ColorVisualProposalKey = Extract<
+  VisualProposalKey,
+  "textColor" | "background" | "borderColor"
+>;
+type ColorFormat = "rgb" | "hsl" | "hex";
+type VisualLinkPairId =
+  | "size"
+  | "padding:block"
+  | "padding:inline"
+  | "margin:block"
+  | "margin:inline"
+  | "border:block"
+  | "border:inline"
+  | "radius:top"
+  | "radius:bottom";
 
 const VISUAL_CONTROL_FIELDS = [
   ["textColor", "Text color"],
@@ -73,56 +98,104 @@ const VISUAL_CONTROL_FIELDS = [
   ["font", "Font"],
   ["fontSize", "Font size"],
   ["fontWeight", "Font weight"],
-  ["borderRadius", "Border radius"],
   ["borderColor", "Border color"],
-  ["width", "Width"],
-  ["height", "Height"],
 ] as const satisfies readonly (readonly [VisualProposalKey, string])[];
 
 const BOX_SIDE_ORDER = [
-  ["left", "L"],
   ["top", "T"],
-  ["right", "R"],
   ["bottom", "B"],
+  ["left", "L"],
+  ["right", "R"],
 ] as const;
 
 type BoxSide = (typeof BOX_SIDE_ORDER)[number][0];
 
+const RADIUS_CORNER_ORDER = [
+  ["topLeft", "TL", "Top left"],
+  ["topRight", "TR", "Top right"],
+  ["bottomLeft", "BL", "Bottom left"],
+  ["bottomRight", "BR", "Bottom right"],
+] as const;
+
+type RadiusCorner = (typeof RADIUS_CORNER_ORDER)[number][0];
+
 const BOX_CONTROL_GROUPS = [
   {
+    id: "padding",
     label: "Padding",
     shorthand: "padding",
     keys: {
-      left: "paddingLeft",
       top: "paddingTop",
-      right: "paddingRight",
       bottom: "paddingBottom",
+      left: "paddingLeft",
+      right: "paddingRight",
     },
   },
   {
+    id: "margin",
     label: "Margin",
     shorthand: "margin",
     keys: {
-      left: "marginLeft",
       top: "marginTop",
-      right: "marginRight",
       bottom: "marginBottom",
+      left: "marginLeft",
+      right: "marginRight",
     },
   },
   {
+    id: "border",
     label: "Border",
     shorthand: "borderWidth",
     keys: {
-      left: "borderLeftWidth",
       top: "borderTopWidth",
-      right: "borderRightWidth",
       bottom: "borderBottomWidth",
+      left: "borderLeftWidth",
+      right: "borderRightWidth",
     },
   },
 ] as const satisfies readonly {
+  readonly id: "padding" | "margin" | "border";
   readonly label: string;
   readonly shorthand: VisualProposalKey;
   readonly keys: Record<BoxSide, VisualProposalKey>;
+}[];
+type BoxControlGroup = (typeof BOX_CONTROL_GROUPS)[number];
+
+const RADIUS_CONTROL_GROUP = {
+  id: "radius",
+  label: "Radius",
+  shorthand: "borderRadius",
+  keys: {
+    topLeft: "borderTopLeftRadius",
+    topRight: "borderTopRightRadius",
+    bottomLeft: "borderBottomLeftRadius",
+    bottomRight: "borderBottomRightRadius",
+  },
+} as const satisfies {
+  readonly id: "radius";
+  readonly label: string;
+  readonly shorthand: VisualProposalKey;
+  readonly keys: Record<RadiusCorner, VisualProposalKey>;
+};
+type RadiusControlGroup = typeof RADIUS_CONTROL_GROUP;
+type ExpandableVisualGroupId = BoxControlGroup["id"] | RadiusControlGroup["id"];
+
+const VISUAL_LINK_PAIRS = [
+  { id: "size", keys: ["width", "height"] },
+  { id: "padding:block", keys: ["paddingTop", "paddingBottom"] },
+  { id: "padding:inline", keys: ["paddingLeft", "paddingRight"] },
+  { id: "margin:block", keys: ["marginTop", "marginBottom"] },
+  { id: "margin:inline", keys: ["marginLeft", "marginRight"] },
+  { id: "border:block", keys: ["borderTopWidth", "borderBottomWidth"] },
+  { id: "border:inline", keys: ["borderLeftWidth", "borderRightWidth"] },
+  { id: "radius:top", keys: ["borderTopLeftRadius", "borderTopRightRadius"] },
+  {
+    id: "radius:bottom",
+    keys: ["borderBottomLeftRadius", "borderBottomRightRadius"],
+  },
+] as const satisfies readonly {
+  readonly id: VisualLinkPairId;
+  readonly keys: readonly [VisualProposalKey, VisualProposalKey];
 }[];
 
 const VISUAL_PROPOSAL_KEYS = [
@@ -133,6 +206,10 @@ const VISUAL_PROPOSAL_KEYS = [
   "fontSize",
   "fontWeight",
   "borderRadius",
+  "borderTopLeftRadius",
+  "borderTopRightRadius",
+  "borderBottomRightRadius",
+  "borderBottomLeftRadius",
   "borderColor",
   "width",
   "height",
@@ -159,6 +236,10 @@ const COLOR_CONTROL_DEFAULTS: Partial<Record<VisualProposalKey, string>> = {
 const PIXEL_CONTROL_FIELDS = new Set<VisualProposalKey>([
   "fontSize",
   "borderRadius",
+  "borderTopLeftRadius",
+  "borderTopRightRadius",
+  "borderBottomRightRadius",
+  "borderBottomLeftRadius",
   "width",
   "height",
   "paddingTop",
@@ -213,6 +294,7 @@ function normalizeVisualControlValue(
   value: unknown,
 ): string | number | undefined {
   if (key === "opacity") {
+    if (String(value ?? "").trim() === "") return undefined;
     const numeric =
       typeof value === "number" ? value : Number(String(value ?? "").trim());
     return Number.isFinite(numeric) ? Math.min(1, Math.max(0, numeric)) : undefined;
@@ -231,12 +313,32 @@ function parseCssBoxValue(value: unknown): Record<BoxSide, string> | undefined {
   return { left, top, right, bottom };
 }
 
+function parseCssRadiusValue(
+  value: unknown,
+): Record<RadiusCorner, string> | undefined {
+  const radiusText = String(value ?? "").split("/")[0]?.trim() ?? "";
+  const parts = radiusText.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  const topLeft = parts[0];
+  const topRight = parts[1] ?? topLeft;
+  const bottomRight = parts[2] ?? topLeft;
+  const bottomLeft = parts[3] ?? topRight;
+  return { topLeft, topRight, bottomRight, bottomLeft };
+}
+
 function boxGroupForKey(
   key: VisualProposalKey,
 ): (typeof BOX_CONTROL_GROUPS)[number] | undefined {
   return BOX_CONTROL_GROUPS.find((group) =>
     BOX_SIDE_ORDER.some(([side]) => group.keys[side] === key),
   );
+}
+
+function radiusCornerForKey(key: VisualProposalKey): RadiusCorner | undefined {
+  for (const [corner] of RADIUS_CORNER_ORDER) {
+    if (RADIUS_CONTROL_GROUP.keys[corner] === key) return corner;
+  }
+  return undefined;
 }
 
 function boxSideForKey(key: VisualProposalKey): BoxSide | undefined {
@@ -257,11 +359,13 @@ function baselineVisualControlValue(
   if (direct !== undefined) return direct;
   const group = boxGroupForKey(key);
   const side = boxSideForKey(key);
-  if (!group || !side) return undefined;
-  return parseCssBoxValue(baseline[group.shorthand])?.[side];
+  if (group && side) return parseCssBoxValue(baseline[group.shorthand])?.[side];
+  const corner = radiusCornerForKey(key);
+  if (!corner) return undefined;
+  return parseCssRadiusValue(baseline[RADIUS_CONTROL_GROUP.shorthand])?.[corner];
 }
 
-function expandBoxShorthands(
+function expandVisualShorthands(
   value: PreviewAnnotationVisualProposal | PreviewDraftAnnotation["elementStyle"] | undefined,
 ): PreviewAnnotationVisualProposal {
   const next: PreviewAnnotationVisualProposal = {};
@@ -274,6 +378,13 @@ function expandBoxShorthands(
       if (value[key] === undefined) next[key] = parsed[side];
     }
   }
+  const parsedRadius = parseCssRadiusValue(value[RADIUS_CONTROL_GROUP.shorthand]);
+  if (parsedRadius) {
+    for (const [corner] of RADIUS_CORNER_ORDER) {
+      const key = RADIUS_CONTROL_GROUP.keys[corner];
+      if (value[key] === undefined) next[key] = parsedRadius[corner];
+    }
+  }
   return next;
 }
 
@@ -283,9 +394,9 @@ function initialVisualControls(
 ): PreviewAnnotationVisualProposal {
   return {
     ...(elementStyle ?? {}),
-    ...expandBoxShorthands(elementStyle),
+    ...expandVisualShorthands(elementStyle),
     ...(proposedChanges ?? {}),
-    ...expandBoxShorthands(proposedChanges),
+    ...expandVisualShorthands(proposedChanges),
   };
 }
 
@@ -299,6 +410,28 @@ function parseCssPx(value: unknown): number | undefined {
   if (!match) return undefined;
   const numeric = Number(match[0]);
   return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function displayVisualControlValue(
+  key: VisualProposalKey,
+  value: unknown,
+): string {
+  if (value === undefined || value === null) return "";
+  const text = String(value);
+  if (!PIXEL_CONTROL_FIELDS.has(key)) return text;
+  const match = text.trim().match(/^(-?\d+(?:\.\d+)?)px$/i);
+  return match?.[1] ?? text;
+}
+
+function encodeVisualControlValue(
+  key: VisualProposalKey,
+  rawValue: string,
+): string | number {
+  const trimmed = rawValue.trim();
+  if (key === "opacity") return trimmed ? Number(trimmed) : "";
+  if (!PIXEL_CONTROL_FIELDS.has(key) || !trimmed) return rawValue;
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return `${trimmed}px`;
+  return rawValue;
 }
 
 function proposalSideDeltaPx(
@@ -385,6 +518,10 @@ function visualOverlayStyle(
     fontSize: value.fontSize,
     fontWeight: value.fontWeight,
     borderRadius: value.borderRadius,
+    borderTopLeftRadius: value.borderTopLeftRadius,
+    borderTopRightRadius: value.borderTopRightRadius,
+    borderBottomRightRadius: value.borderBottomRightRadius,
+    borderBottomLeftRadius: value.borderBottomLeftRadius,
     borderColor: value.borderColor,
     borderWidth: value.borderWidth,
     borderTopWidth: value.borderTopWidth,
@@ -407,13 +544,555 @@ function visualControlAffordance(
   return undefined;
 }
 
+interface RgbaColor {
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+  readonly a?: number;
+}
+
+function clampColorChannel(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function componentToHex(value: number): string {
+  return clampColorChannel(value).toString(16).padStart(2, "0").toUpperCase();
+}
+
+function colorToHex(color: RgbaColor): string {
+  return `#${componentToHex(color.r)}${componentToHex(color.g)}${componentToHex(color.b)}`;
+}
+
+function rgbToHsl(color: RgbaColor): { h: number; s: number; l: number } {
+  const r = clampColorChannel(color.r) / 255;
+  const g = clampColorChannel(color.g) / 255;
+  const b = clampColorChannel(color.b) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const delta = max - min;
+  const s = l > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+  let h = 0;
+  if (max === r) h = (g - b) / delta + (g < b ? 6 : 0);
+  if (max === g) h = (b - r) / delta + 2;
+  if (max === b) h = (r - g) / delta + 4;
+  return { h: h * 60, s, l };
+}
+
+function hueToRgb(p: number, q: number, t: number): number {
+  let next = t;
+  if (next < 0) next += 1;
+  if (next > 1) next -= 1;
+  if (next < 1 / 6) return p + (q - p) * 6 * next;
+  if (next < 1 / 2) return q;
+  if (next < 2 / 3) return p + (q - p) * (2 / 3 - next) * 6;
+  return p;
+}
+
+function hslToRgb(h: number, s: number, l: number, a?: number): RgbaColor {
+  const hue = (((h % 360) + 360) % 360) / 360;
+  const sat = clampUnit(s);
+  const light = clampUnit(l);
+  if (sat === 0) {
+    const gray = clampColorChannel(light * 255);
+    return { r: gray, g: gray, b: gray, ...(a !== undefined ? { a } : {}) };
+  }
+  const q = light < 0.5 ? light * (1 + sat) : light + sat - light * sat;
+  const p = 2 * light - q;
+  return {
+    r: clampColorChannel(hueToRgb(p, q, hue + 1 / 3) * 255),
+    g: clampColorChannel(hueToRgb(p, q, hue) * 255),
+    b: clampColorChannel(hueToRgb(p, q, hue - 1 / 3) * 255),
+    ...(a !== undefined ? { a } : {}),
+  };
+}
+
+function parseColorValue(value: unknown): RgbaColor | undefined {
+  const text = String(value ?? "").trim();
+  if (!text) return undefined;
+  const hex = text.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const raw = hex[1]!;
+    const full =
+      raw.length === 3
+        ? raw
+            .split("")
+            .map((part) => part + part)
+            .join("")
+        : raw;
+    return {
+      r: parseInt(full.slice(0, 2), 16),
+      g: parseInt(full.slice(2, 4), 16),
+      b: parseInt(full.slice(4, 6), 16),
+    };
+  }
+  const rgb = text.match(
+    /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i,
+  );
+  if (rgb) {
+    return {
+      r: clampColorChannel(Number(rgb[1])),
+      g: clampColorChannel(Number(rgb[2])),
+      b: clampColorChannel(Number(rgb[3])),
+      ...(rgb[4] !== undefined ? { a: clampUnit(Number(rgb[4])) } : {}),
+    };
+  }
+  const hsl = text.match(
+    /^hsla?\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%(?:\s*,\s*([\d.]+))?\s*\)$/i,
+  );
+  if (hsl) {
+    return hslToRgb(
+      Number(hsl[1]),
+      Number(hsl[2]) / 100,
+      Number(hsl[3]) / 100,
+      hsl[4] !== undefined ? clampUnit(Number(hsl[4])) : undefined,
+    );
+  }
+  return undefined;
+}
+
+function detectColorFormat(value: unknown): ColorFormat {
+  const text = String(value ?? "").trim();
+  if (/^#?[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(text)) return "hex";
+  if (/^hsla?\(/i.test(text)) return "hsl";
+  return "rgb";
+}
+
+function formatColorValue(color: RgbaColor, format: ColorFormat): string {
+  const alpha = color.a !== undefined && color.a < 1 ? clampUnit(color.a) : undefined;
+  if (format === "hex") return colorToHex(color);
+  if (format === "hsl") {
+    const hsl = rgbToHsl(color);
+    const base = `${Math.round(hsl.h)}, ${Math.round(hsl.s * 100)}%, ${Math.round(hsl.l * 100)}%`;
+    return alpha !== undefined ? `hsla(${base}, ${alpha})` : `hsl(${base})`;
+  }
+  const base = `${clampColorChannel(color.r)}, ${clampColorChannel(color.g)}, ${clampColorChannel(color.b)}`;
+  return alpha !== undefined ? `rgba(${base}, ${alpha})` : `rgb(${base})`;
+}
+
+function colorEditableSelectionRange(
+  value: string,
+): readonly [number, number] | undefined {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("#")) return [1, trimmed.length];
+  const open = trimmed.indexOf("(");
+  const close = trimmed.lastIndexOf(")");
+  if (open >= 0 && close > open) return [open + 1, close];
+  return undefined;
+}
+
 function colorSwatchValue(
   key: VisualProposalKey,
   value: unknown,
 ): string | undefined {
   if (!(key in COLOR_CONTROL_DEFAULTS)) return undefined;
-  const candidate = String(value ?? "").trim();
-  return candidate || COLOR_CONTROL_DEFAULTS[key];
+  const parsed = parseColorValue(value);
+  if (parsed) return formatColorValue(parsed, "rgb");
+  return COLOR_CONTROL_DEFAULTS[key];
+}
+
+function linkedPairActiveClass(active: boolean): string {
+  return active
+    ? "border-sky-400/40 bg-sky-400/15 text-sky-300"
+    : "border-white/10 bg-[#202020] text-neutral-500 hover:text-neutral-200";
+}
+
+function VisualLinkButton({
+  active,
+  label,
+  onClick,
+}: {
+  readonly active: boolean;
+  readonly label: string;
+  readonly onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      aria-label={label}
+      aria-pressed={active}
+      className={cn(
+        "size-5 rounded-full border p-0 hover:bg-white/10",
+        linkedPairActiveClass(active),
+      )}
+      onClick={onClick}
+    >
+      <Link2 size={11} aria-hidden />
+    </Button>
+  );
+}
+
+function InspectorValueInput({
+  controlKey,
+  label,
+  value,
+  onChange,
+  className,
+}: {
+  readonly controlKey: VisualProposalKey;
+  readonly label: string;
+  readonly value: unknown;
+  readonly onChange: (key: VisualProposalKey, value: string | number) => void;
+  readonly className?: string;
+}) {
+  const affordance = visualControlAffordance(controlKey);
+  return (
+    <span className="relative flex min-w-0 items-center">
+      <Input
+        size="xs"
+        aria-label={label}
+        value={displayVisualControlValue(controlKey, value)}
+        onChange={(event) => onChange(controlKey, event.target.value)}
+        placeholder={affordance === "0-1" ? "0-1" : undefined}
+        className={cn(
+          "h-7 rounded-[0.65rem] border-white/10 bg-[#303030] text-xs text-neutral-100 placeholder:text-neutral-500 focus-visible:ring-white/20",
+          affordance === "px" && "pr-8",
+          className,
+        )}
+      />
+      {affordance === "px" ? (
+        <span className="pointer-events-none absolute right-2 text-xs text-neutral-400">
+          px
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function InspectorRow({
+  label,
+  children,
+}: {
+  readonly label: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2 text-xs text-neutral-300">
+      <span>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function ColorInspectorControl({
+  colorFormat,
+  controlKey,
+  label,
+  value,
+  onChange,
+  onFormatChange,
+}: {
+  readonly colorFormat: ColorFormat;
+  readonly controlKey: ColorVisualProposalKey;
+  readonly label: string;
+  readonly value: unknown;
+  readonly onChange: (key: VisualProposalKey, value: string | number) => void;
+  readonly onFormatChange: (key: ColorVisualProposalKey, format: ColorFormat) => void;
+}) {
+  const parsed = parseColorValue(value);
+  const fallback = parseColorValue(COLOR_CONTROL_DEFAULTS[controlKey]) ?? {
+    r: 0,
+    g: 0,
+    b: 0,
+  };
+  const pickerColor = parsed ?? fallback;
+  const swatch = colorSwatchValue(controlKey, value);
+  const displayValue = String(value ?? "");
+  return (
+    <InspectorRow label={label}>
+      <div className="relative flex min-w-0 items-center">
+        <Popover>
+          <PopoverTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Open ${label} picker`}
+                className="absolute left-2 z-10 size-4 rounded-full border border-white/20 p-0 shadow-sm hover:ring-2 hover:ring-white/20"
+                style={{ background: swatch }}
+              />
+            }
+          />
+          <PopoverContent
+            side="bottom"
+            align="start"
+            sideOffset={6}
+            collisionPadding={8}
+            data-preview-design-keep-open="true"
+            className="w-64 rounded-lg border-white/10 bg-[#303030] p-2.5 text-neutral-100 shadow-2xl"
+          >
+            <div className="space-y-2.5">
+              <Input
+                type="color"
+                aria-label={`Color picker for ${label}`}
+                value={colorToHex(pickerColor)}
+                onChange={(event) => {
+                  const next = parseColorValue(event.target.value);
+                  if (!next) return;
+                  onChange(controlKey, formatColorValue(next, colorFormat));
+                }}
+                className="h-24 w-full rounded-md border-white/10 bg-[#252525] p-1"
+              />
+              <div className="grid grid-cols-3 overflow-hidden rounded-md border border-white/10 bg-[#252525]">
+                {(["rgb", "hsl", "hex"] as const).map((format) => (
+                  <Button
+                    key={format}
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    aria-label={`Use ${format.toUpperCase()} for ${label}`}
+                    aria-pressed={colorFormat === format}
+                    className={cn(
+                      "h-7 rounded-none border-r border-white/10 text-xs uppercase last:border-r-0",
+                      colorFormat === format
+                        ? "bg-white/12 text-white"
+                        : "text-neutral-400 hover:bg-white/8 hover:text-white",
+                    )}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      onFormatChange(controlKey, format);
+                    }}
+                  >
+                    {format}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+        <Input
+          size="xs"
+          aria-label={label}
+          value={displayValue}
+          onFocus={(event) => {
+            const range = colorEditableSelectionRange(event.currentTarget.value);
+            if (!range) return;
+            window.setTimeout(() => {
+              event.currentTarget.setSelectionRange(range[0], range[1]);
+            }, 0);
+          }}
+          onChange={(event) => onChange(controlKey, event.target.value)}
+          className="h-7 rounded-[0.65rem] border-white/10 bg-[#303030] pl-8 font-mono text-xs text-neutral-100 placeholder:text-neutral-500 focus-visible:ring-sky-400/50"
+        />
+      </div>
+    </InspectorRow>
+  );
+}
+
+function LinkedSizeControls({
+  linked,
+  onChange,
+  onToggleLinked,
+  values,
+}: {
+  readonly linked: boolean;
+  readonly onChange: (key: VisualProposalKey, value: string | number) => void;
+  readonly onToggleLinked: () => void;
+  readonly values: PreviewAnnotationVisualProposal;
+}) {
+  return (
+    <div className="grid grid-cols-[5.5rem_1.75rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1 text-xs text-neutral-300">
+      <span>Width</span>
+      <div className="row-span-2 flex items-center justify-center">
+        <VisualLinkButton
+          active={linked}
+          label="Link width and height"
+          onClick={onToggleLinked}
+        />
+      </div>
+      <InspectorValueInput
+        controlKey="width"
+        label="Width"
+        value={values.width}
+        onChange={onChange}
+      />
+      <span>Height</span>
+      <InspectorValueInput
+        controlKey="height"
+        label="Height"
+        value={values.height}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
+function QuadInputStrip({
+  entries,
+  onChange,
+  values,
+}: {
+  readonly entries: readonly {
+    readonly key: VisualProposalKey;
+    readonly ariaLabel: string;
+    readonly label: string;
+    readonly shortLabel: string;
+  }[];
+  readonly onChange: (key: VisualProposalKey, value: string | number) => void;
+  readonly values: PreviewAnnotationVisualProposal;
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-4 overflow-hidden rounded-[0.65rem] border border-white/10 bg-[#303030]">
+      {entries.map((entry) => (
+        <label
+          key={entry.key}
+          className="relative min-w-0 border-r border-white/10 last:border-r-0"
+        >
+          <span className="sr-only">{entry.ariaLabel}</span>
+          <Input
+            size="xs"
+            aria-label={entry.ariaLabel}
+            value={displayVisualControlValue(entry.key, values[entry.key])}
+            onChange={(event) => onChange(entry.key, event.target.value)}
+            className="h-7 rounded-none border-0 bg-transparent px-1 text-center font-mono text-xs text-neutral-100 shadow-none placeholder:text-neutral-500 focus-visible:ring-1 focus-visible:ring-sky-400/50"
+          />
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function ExpandableQuadGroup({
+  entries,
+  expanded,
+  groupId,
+  label,
+  linkedPairs,
+  linkedPairState,
+  onChange,
+  onToggleExpanded,
+  onToggleLinked,
+  values,
+}: {
+  readonly entries: readonly {
+    readonly key: VisualProposalKey;
+    readonly ariaLabel: string;
+    readonly label: string;
+    readonly shortLabel: string;
+  }[];
+  readonly expanded: boolean;
+  readonly groupId: ExpandableVisualGroupId;
+  readonly label: string;
+  readonly linkedPairs: readonly {
+    readonly id: VisualLinkPairId;
+    readonly label: string;
+  }[];
+  readonly linkedPairState: Partial<Record<VisualLinkPairId, boolean>>;
+  readonly onChange: (key: VisualProposalKey, value: string | number) => void;
+  readonly onToggleExpanded: (groupId: ExpandableVisualGroupId) => void;
+  readonly onToggleLinked: (pairId: VisualLinkPairId) => void;
+  readonly values: PreviewAnnotationVisualProposal;
+}) {
+  if (!expanded) {
+    return (
+      <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2 text-xs text-neutral-300">
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="h-7 justify-start gap-1 rounded-md px-0 text-xs text-neutral-300 hover:bg-transparent hover:text-white"
+          aria-expanded={false}
+          onClick={() => onToggleExpanded(groupId)}
+        >
+          <ChevronRight size={13} aria-hidden />
+          {label}
+        </Button>
+        <QuadInputStrip entries={entries} values={values} onChange={onChange} />
+      </div>
+    );
+  }
+
+  const [firstPair, secondPair] = linkedPairs;
+  return (
+    <div className="space-y-1.5 border-t border-white/8 pt-2 text-xs text-neutral-300 first:border-t-0 first:pt-0">
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        className="h-6 justify-start gap-1 rounded-md px-0 text-xs text-neutral-300 hover:bg-transparent hover:text-white"
+        aria-expanded
+        onClick={() => onToggleExpanded(groupId)}
+      >
+        <ChevronDown size={13} aria-hidden />
+        {label}
+      </Button>
+      <div className="grid grid-cols-[5.5rem_1.75rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+        {entries.map((entry, index) => {
+          const link =
+            index === 0 && firstPair
+              ? firstPair
+              : index === 2 && secondPair
+                ? secondPair
+                : undefined;
+          return (
+            <Fragment key={entry.key}>
+              <span>{entry.label}</span>
+              <div className="flex items-center justify-center">
+                {link ? (
+                  <VisualLinkButton
+                    active={Boolean(linkedPairState[link.id])}
+                    label={link.label}
+                    onClick={() => onToggleLinked(link.id)}
+                  />
+                ) : null}
+              </div>
+              <InspectorValueInput
+                controlKey={entry.key}
+                label={entry.ariaLabel}
+                value={values[entry.key]}
+                onChange={onChange}
+              />
+            </Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function boxGroupEntries(group: BoxControlGroup) {
+  return BOX_SIDE_ORDER.map(([side, shortLabel]) => ({
+    key: group.keys[side],
+    ariaLabel: `${group.label} ${side}`,
+    label: titleCase(side),
+    shortLabel,
+  }));
+}
+
+function radiusGroupEntries(group: RadiusControlGroup) {
+  return RADIUS_CORNER_ORDER.map(([corner, shortLabel, label]) => ({
+    key: group.keys[corner],
+    ariaLabel: `${group.label} ${label.toLowerCase()}`,
+    label,
+    shortLabel,
+  }));
+}
+
+function groupLinkPairs(
+  groupId: ExpandableVisualGroupId,
+): readonly { readonly id: VisualLinkPairId; readonly label: string }[] {
+  if (groupId === "radius") {
+    return [
+      { id: "radius:top", label: "Link top radius corners" },
+      { id: "radius:bottom", label: "Link bottom radius corners" },
+    ];
+  }
+  return [
+    { id: `${groupId}:block` as VisualLinkPairId, label: `Link ${groupId} top and bottom` },
+    { id: `${groupId}:inline` as VisualLinkPairId, label: `Link ${groupId} left and right` },
+  ];
 }
 
 function annotationBubbleStyle(
@@ -514,6 +1193,15 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   const [bubbleVisuals, setBubbleVisuals] =
     useState<PreviewAnnotationVisualProposal>({});
   const [bubbleAdvancedOpen, setBubbleAdvancedOpen] = useState(false);
+  const [expandedVisualGroups, setExpandedVisualGroups] = useState<
+    Partial<Record<ExpandableVisualGroupId, boolean>>
+  >({});
+  const [linkedVisualPairs, setLinkedVisualPairs] = useState<
+    Partial<Record<VisualLinkPairId, boolean>>
+  >({});
+  const [colorFormats, setColorFormats] = useState<
+    Partial<Record<ColorVisualProposalKey, ColorFormat>>
+  >({});
   const [outsideWarned, setOutsideWarned] = useState(false);
   const bubbleRef = useRef<HTMLDivElement | null>(null);
   const bubbleNoteInputRef = useRef<HTMLInputElement | null>(null);
@@ -846,6 +1534,64 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     openBubbleBase,
     outsideWarned,
   ]);
+
+  const linkedPeersForKey = useCallback(
+    (key: VisualProposalKey): VisualProposalKey[] => {
+      return VISUAL_LINK_PAIRS.flatMap((pair) => {
+        if (!linkedVisualPairs[pair.id]) return [];
+        if (!(pair.keys as readonly VisualProposalKey[]).includes(key)) return [];
+        return pair.keys.filter((candidate) => candidate !== key);
+      });
+    },
+    [linkedVisualPairs],
+  );
+
+  const updateBubbleVisualControl = useCallback(
+    (key: VisualProposalKey, rawValue: string | number): void => {
+      const nextValue =
+        typeof rawValue === "number"
+          ? rawValue
+          : encodeVisualControlValue(key, rawValue);
+      const linkedPeers = linkedPeersForKey(key);
+      setBubbleVisuals((prev) => {
+        const next: Record<string, string | number> = { ...prev, [key]: nextValue };
+        for (const peer of linkedPeers) next[peer] = nextValue;
+        return next as PreviewAnnotationVisualProposal;
+      });
+      setOutsideWarned(false);
+    },
+    [linkedPeersForKey],
+  );
+
+  const toggleVisualLinkPair = useCallback(
+    (pairId: VisualLinkPairId): void => {
+      const pair = VISUAL_LINK_PAIRS.find((candidate) => candidate.id === pairId);
+      if (!pair) return;
+      const willEnable = !linkedVisualPairs[pairId];
+      setLinkedVisualPairs((prev) => ({ ...prev, [pairId]: willEnable }));
+      if (!willEnable) return;
+      setBubbleVisuals((prev) => {
+        const source = prev[pair.keys[0]];
+        if (source === undefined || String(source).trim() === "") return prev;
+        return {
+          ...prev,
+          [pair.keys[1]]: source,
+        };
+      });
+      setOutsideWarned(false);
+    },
+    [linkedVisualPairs],
+  );
+
+  const updateColorFormat = useCallback(
+    (key: ColorVisualProposalKey, format: ColorFormat): void => {
+      setColorFormats((prev) => ({ ...prev, [key]: format }));
+      const parsed = parseColorValue(bubbleVisuals[key]);
+      if (!parsed) return;
+      updateBubbleVisualControl(key, formatColorValue(parsed, format));
+    },
+    [bubbleVisuals, updateBubbleVisualControl],
+  );
 
   useEffect(() => {
     if (!openBubbleBase) return;
@@ -1381,95 +2127,67 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                 <div className="max-h-52 overflow-y-auto px-4 py-2.5 [scrollbar-color:rgb(115_115_115)_transparent] [scrollbar-width:thin]">
                   <div className="space-y-2.5">
                     {VISUAL_CONTROL_FIELDS.map(([key, label]) => {
-                      const affordance = visualControlAffordance(key);
+                      if (key in COLOR_CONTROL_DEFAULTS) {
+                        const colorKey = key as ColorVisualProposalKey;
+                        return (
+                          <ColorInspectorControl
+                            key={key}
+                            controlKey={colorKey}
+                            colorFormat={
+                              colorFormats[colorKey] ??
+                              detectColorFormat(bubbleVisuals[colorKey])
+                            }
+                            label={label}
+                            value={bubbleVisuals[colorKey]}
+                            onChange={updateBubbleVisualControl}
+                            onFormatChange={updateColorFormat}
+                          />
+                        );
+                      }
                       const value = bubbleVisuals[key];
-                      const swatch = colorSwatchValue(key, value);
                       return (
-                        <label
+                        <InspectorRow
                           key={key}
-                          className="grid grid-cols-[7.25rem_minmax(0,1fr)] items-center gap-2 text-xs text-neutral-300"
+                          label={label}
                         >
-                          <span>{label}</span>
-                          <span className="relative flex min-w-0 items-center">
-                            {swatch ? (
-                              <span
-                                className="pointer-events-none absolute left-2 z-10 size-4 rounded-full border border-white/10"
-                                style={{ background: swatch }}
-                                aria-hidden
-                              />
-                            ) : null}
-                            <Input
-                              size="xs"
-                              value={String(value ?? "")}
-                              onChange={(event) => {
-                                const rawValue = event.target.value;
-                                const nextValue =
-                                  key === "opacity" && rawValue.trim() !== ""
-                                    ? Number(rawValue)
-                                    : rawValue;
-                                setBubbleVisuals((prev) => ({
-                                  ...prev,
-                                  [key]: nextValue,
-                                }));
-                                setOutsideWarned(false);
-                              }}
-                              placeholder={
-                                affordance === "0-1" ? "0-1" : undefined
-                              }
-                              className={cn(
-                                "h-7 rounded-[0.65rem] border-white/10 bg-[#303030] text-neutral-100 placeholder:text-neutral-500 focus-visible:ring-white/20",
-                                swatch && "pl-8",
-                                affordance === "px" && "pr-8",
-                              )}
-                            />
-                            {affordance === "px" ? (
-                              <span className="pointer-events-none absolute right-2 text-xs text-neutral-400">
-                                px
-                              </span>
-                            ) : null}
-                          </span>
-                        </label>
+                          <InspectorValueInput
+                            controlKey={key}
+                            label={label}
+                            value={value}
+                            onChange={updateBubbleVisualControl}
+                          />
+                        </InspectorRow>
                       );
                     })}
-                    {BOX_CONTROL_GROUPS.map((group) => (
-                      <div
-                        key={group.label}
-                        className="grid grid-cols-[7.25rem_minmax(0,1fr)] items-center gap-2 text-xs text-neutral-300"
-                      >
-                        <span>{group.label}</span>
-                        <div className="grid min-w-0 grid-cols-4 gap-1">
-                          {BOX_SIDE_ORDER.map(([side, shortLabel]) => {
-                            const key = group.keys[side];
-                            const value = bubbleVisuals[key];
-                            return (
-                              <label key={key} className="relative min-w-0">
-                                <span className="sr-only">
-                                  {group.label} {side}
-                                </span>
-                                <span
-                                  className="pointer-events-none absolute left-1.5 top-1/2 z-10 -translate-y-1/2 font-mono text-[10px] text-neutral-500"
-                                  aria-hidden
-                                >
-                                  {shortLabel}
-                                </span>
-                                <Input
-                                  size="xs"
-                                  aria-label={`${group.label} ${side}`}
-                                  value={String(value ?? "")}
-                                  onChange={(event) => {
-                                    setBubbleVisuals((prev) => ({
-                                      ...prev,
-                                      [key]: event.target.value,
-                                    }));
-                                    setOutsideWarned(false);
-                                  }}
-                                  className="h-7 rounded-[0.55rem] border-white/10 bg-[#303030] pl-5 pr-1 text-[11px] text-neutral-100 placeholder:text-neutral-500 focus-visible:ring-white/20"
-                                />
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
+                    <LinkedSizeControls
+                      linked={Boolean(linkedVisualPairs.size)}
+                      values={bubbleVisuals}
+                      onChange={updateBubbleVisualControl}
+                      onToggleLinked={() => toggleVisualLinkPair("size")}
+                    />
+                    {[...BOX_CONTROL_GROUPS, RADIUS_CONTROL_GROUP].map((group) => (
+                      <ExpandableQuadGroup
+                        key={group.id}
+                        groupId={group.id}
+                        label={group.label}
+                        entries={
+                          group.id === "radius"
+                            ? radiusGroupEntries(group)
+                            : boxGroupEntries(group)
+                        }
+                        expanded={Boolean(expandedVisualGroups[group.id])}
+                        linkedPairs={groupLinkPairs(group.id)}
+                        linkedPairState={linkedVisualPairs}
+                        values={bubbleVisuals}
+                        onChange={updateBubbleVisualControl}
+                        onToggleExpanded={(groupId) => {
+                          setExpandedVisualGroups((prev) => ({
+                            ...prev,
+                            [groupId]: !prev[groupId],
+                          }));
+                        }}
+                        onToggleLinked={toggleVisualLinkPair}
+                      />
                     ))}
                   </div>
                 </div>

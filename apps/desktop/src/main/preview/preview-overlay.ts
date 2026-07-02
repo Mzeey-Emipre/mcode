@@ -775,6 +775,10 @@ function buildHitTestJs(overlayX: number, overlayY: number, hostWidth: number, h
       setStyleValue(next, "fontSize", cs.fontSize);
       setStyleValue(next, "fontWeight", cs.fontWeight);
       setStyleValue(next, "borderRadius", cs.borderRadius);
+      setStyleValue(next, "borderTopLeftRadius", cs.borderTopLeftRadius);
+      setStyleValue(next, "borderTopRightRadius", cs.borderTopRightRadius);
+      setStyleValue(next, "borderBottomRightRadius", cs.borderBottomRightRadius);
+      setStyleValue(next, "borderBottomLeftRadius", cs.borderBottomLeftRadius);
       setStyleValue(next, "borderColor", cs.borderColor);
       setStyleValue(next, "borderWidth", cs.borderWidth);
       setStyleValue(next, "borderTopWidth", cs.borderTopWidth);
@@ -875,6 +879,10 @@ const ELEMENT_STYLE_STRING_KEYS = [
   "fontSize",
   "fontWeight",
   "borderRadius",
+  "borderTopLeftRadius",
+  "borderTopRightRadius",
+  "borderBottomRightRadius",
+  "borderBottomLeftRadius",
   "borderColor",
   "borderWidth",
   "borderTopWidth",

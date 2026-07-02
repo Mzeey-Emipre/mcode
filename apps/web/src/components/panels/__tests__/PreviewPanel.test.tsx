@@ -1185,16 +1185,112 @@ describe("PreviewPanel — full panel state", () => {
     expect(within(advanced).getByLabelText("Font")).toHaveValue(
       "Inter, sans-serif",
     );
-    expect(within(advanced).getByLabelText(/Font size/)).toHaveValue("14px");
-    expect(within(advanced).getByLabelText("Padding left")).toHaveValue("96px");
-    expect(within(advanced).getByLabelText("Padding top")).toHaveValue("20px");
-    expect(within(advanced).getByLabelText("Margin right")).toHaveValue("0px");
-    expect(within(advanced).getByLabelText("Border left")).toHaveValue("4px");
+    expect(within(advanced).getByLabelText(/Font size/)).toHaveValue("14");
+    expect(within(advanced).getByLabelText("Padding left")).toHaveValue("96");
+    expect(within(advanced).getByLabelText("Padding top")).toHaveValue("20");
+    expect(within(advanced).getByLabelText("Margin right")).toHaveValue("0");
+    expect(within(advanced).getByLabelText("Border left")).toHaveValue("4");
     expect(screen.queryByTestId("preview-annotation-save")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(
       screen.queryByTestId("preview-annotation-visual-proposal"),
     ).not.toBeInTheDocument();
+  });
+
+  it("links width and height edits when the size anchor is active", () => {
+    installDraftAnnotation({
+      elementStyle: {
+        width: "120px",
+        height: "32px",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    fireEvent.click(within(advanced).getByLabelText("Link width and height"));
+    fireEvent.change(within(advanced).getByLabelText("Width"), {
+      target: { value: "160" },
+    });
+
+    expect(within(advanced).getByLabelText("Height")).toHaveValue("160");
+    expect(screen.getByTestId("preview-annotation-visual-proposal")).toHaveStyle({
+      width: "160px",
+      height: "160px",
+    });
+  });
+
+  it("expands box controls and links paired padding values", () => {
+    installDraftAnnotation({
+      elementStyle: {
+        paddingTop: "0px",
+        paddingBottom: "0px",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    fireEvent.click(within(advanced).getByRole("button", { name: "Padding" }));
+    fireEvent.click(within(advanced).getByLabelText("Link padding top and bottom"));
+    fireEvent.change(within(advanced).getByLabelText("Padding top"), {
+      target: { value: "12" },
+    });
+
+    expect(within(advanced).getByLabelText("Padding bottom")).toHaveValue("12");
+  });
+
+  it("prefills expandable border radius corner controls", () => {
+    installDraftAnnotation({
+      elementStyle: {
+        borderRadius: "4px 8px 12px 16px",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    fireEvent.click(within(advanced).getByRole("button", { name: "Radius" }));
+
+    expect(within(advanced).getByLabelText("Radius top left")).toHaveValue("4");
+    expect(within(advanced).getByLabelText("Radius top right")).toHaveValue("8");
+    expect(within(advanced).getByLabelText("Radius bottom right")).toHaveValue("12");
+    expect(within(advanced).getByLabelText("Radius bottom left")).toHaveValue("16");
+  });
+
+  it("formats color controls across RGB, HSL, and HEX", async () => {
+    const user = userEvent.setup();
+    installDraftAnnotation({
+      elementStyle: {
+        textColor: "rgb(255, 255, 255)",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    await user.click(within(advanced).getByLabelText("Open Text color picker"));
+    await user.click(await screen.findByLabelText("Use HEX for Text color"));
+
+    await waitFor(() => {
+      expect(within(advanced).getByLabelText("Text color")).toHaveValue("#FFFFFF");
+    });
+
+    fireEvent.change(screen.getByLabelText("Color picker for Text color"), {
+      target: { value: "#336699" },
+    });
+    expect(within(advanced).getByLabelText("Text color")).toHaveValue("#336699");
+
+    await user.click(screen.getByLabelText("Use HSL for Text color"));
+    await waitFor(() => {
+      expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+        "hsl(210, 50%, 40%)",
+      );
+    });
   });
 
   it("updates the active visual highlight as side controls change", () => {
