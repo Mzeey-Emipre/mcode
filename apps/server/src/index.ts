@@ -712,8 +712,8 @@ async function shutdown(): Promise<void> {
   // 8a. Dispose cleanup worker
   cleanupWorker.dispose();
 
-  // 8b. Dispose CI check watcher timers
-  ciWatcherService.dispose();
+  // 8b. Dispose CI check watcher timers and in-flight GitHub CLI children
+  await ciWatcherService.dispose();
 
   // 9. Close all WebSocket clients and shut down the WS server
   for (const client of wss.clients) {

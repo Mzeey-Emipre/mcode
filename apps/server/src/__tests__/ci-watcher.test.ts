@@ -16,12 +16,20 @@ function makeChecks(aggregate: ChecksStatus["aggregate"]): ChecksStatus {
 
 describe("CiWatcherService", () => {
   let watcher: CiWatcherService;
-  let mockGithubService: { getCheckRuns: ReturnType<typeof vi.fn> };
+  let mockGithubService: {
+    getCheckRuns: ReturnType<typeof vi.fn>;
+    cancelCheckRuns: ReturnType<typeof vi.fn>;
+    cancelAllInFlight: ReturnType<typeof vi.fn>;
+  };
   let mockBroadcast: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    mockGithubService = { getCheckRuns: vi.fn() };
+    mockGithubService = {
+      getCheckRuns: vi.fn(),
+      cancelCheckRuns: vi.fn().mockResolvedValue(undefined),
+      cancelAllInFlight: vi.fn().mockResolvedValue(undefined),
+    };
     // Default: return no_checks so watch() immediate fetch resolves without side effects.
     mockGithubService.getCheckRuns.mockResolvedValue(makeChecks("no_checks"));
     mockBroadcast = vi.fn();
@@ -31,8 +39,8 @@ describe("CiWatcherService", () => {
     );
   });
 
-  afterEach(() => {
-    watcher.dispose();
+  afterEach(async () => {
+    await watcher.dispose();
     vi.useRealTimers();
   });
 
@@ -45,6 +53,43 @@ describe("CiWatcherService", () => {
     watcher.watch("t1", 42, "main", "/repo");
     watcher.unwatch("t1");
     expect(watcher.isWatching("t1")).toBe(false);
+  });
+
+  it("teardownThread() removes the entry and cancels an in-flight check fetch", async () => {
+    watcher.watch("t1", 42, "main", "/repo", { skipInitialFetch: true });
+
+    await watcher.teardownThread("t1");
+
+    expect(watcher.isWatching("t1")).toBe(false);
+    expect(mockGithubService.cancelCheckRuns).toHaveBeenCalledWith("main", "/repo");
+  });
+
+  it("dispose() cancels all in-flight GitHub CLI processes", async () => {
+    await watcher.dispose();
+
+    expect(mockGithubService.cancelAllInFlight).toHaveBeenCalled();
+  });
+
+  it("unwatch() clears post-push bump timers before they fetch checks", async () => {
+    watcher.watch("t1", 42, "main", "/repo", { skipInitialFetch: true });
+    mockGithubService.getCheckRuns.mockClear();
+
+    watcher.scheduleBumpAfterPush("t1");
+    watcher.unwatch("t1");
+    await vi.advanceTimersByTimeAsync(25_000);
+
+    expect(mockGithubService.getCheckRuns).not.toHaveBeenCalled();
+  });
+
+  it("dispose() clears post-push bump timers before they fetch checks", async () => {
+    watcher.watch("t1", 42, "main", "/repo", { skipInitialFetch: true });
+    mockGithubService.getCheckRuns.mockClear();
+
+    watcher.scheduleBumpAfterPush("t1");
+    await watcher.dispose();
+    await vi.advanceTimersByTimeAsync(25_000);
+
+    expect(mockGithubService.getCheckRuns).not.toHaveBeenCalled();
   });
 
   it("broadcasts when check state changes on tick", async () => {
