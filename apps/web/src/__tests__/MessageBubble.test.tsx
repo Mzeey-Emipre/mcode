@@ -221,6 +221,10 @@ describe("MessageBubble user messages", () => {
       "src",
       `mcode-attachment://${threadUuid}/shot-1.png`,
     );
+    expect(document.querySelector('[data-slot="tooltip-arrow"]')).toHaveClass(
+      "bg-popover",
+      "fill-popover",
+    );
   });
 
   it("renders preview annotation screenshots as inspectable image attachments", async () => {

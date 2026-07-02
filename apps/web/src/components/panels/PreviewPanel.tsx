@@ -1260,6 +1260,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                 side="top"
                 sideOffset={8}
                 className="max-w-72 flex-col items-start gap-1.5 rounded-lg border border-white/10 bg-[#262626] px-3 py-2 text-neutral-100 shadow-xl"
+                arrowClassName="bg-[#262626] fill-[#262626]"
               >
                 <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs text-neutral-300">
                   {targetLabel}

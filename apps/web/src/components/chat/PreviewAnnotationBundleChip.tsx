@@ -96,6 +96,7 @@ export function PreviewAnnotationBundleChip({
         align="end"
         sideOffset={8}
         className="w-[min(22rem,calc(100vw-2rem))] max-w-none items-stretch rounded-xl border border-border/70 bg-popover p-2.5 text-popover-foreground shadow-xl"
+        arrowClassName="bg-popover fill-popover"
       >
         <div className="max-h-72 min-w-0 space-y-2 overflow-y-auto pr-1">
           {bundle.annotations.map((annotation) => {
