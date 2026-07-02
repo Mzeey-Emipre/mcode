@@ -1,5 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
-import { mockWebSocketServer } from "./helpers/e2e-helpers";
+import {
+  interceptZustandStores,
+  mockWebSocketServer,
+} from "./helpers/e2e-helpers";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -295,6 +298,67 @@ async function openPreviewTab(page: Page): Promise<void> {
   );
 }
 
+async function seedUnsavedAnnotationDraft(page: Page): Promise<void> {
+  await page.evaluate((threadId) => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+      setState: (patch: Record<string, unknown>) => void;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const annotationStore = stores.find((store) => {
+      const state = store.getState();
+      return "byThread" in state && "drafts" in state && "buildBundle" in state;
+    });
+    const designStore = stores.find((store) => {
+      const state = store.getState();
+      return "modes" in state && "toggle" in state && "isActive" in state;
+    });
+    if (!annotationStore) throw new Error("[E2E] annotation store not found");
+    if (!designStore) throw new Error("[E2E] design mode store not found");
+    annotationStore.setState({
+      drafts: {
+        [threadId]: {
+          threadId,
+          pageIdentity: "https://example.com/",
+          bounds: { x: 20, y: 24, width: 220, height: 48 },
+          selectorHint: "input[name='q']",
+          label: "Search input",
+          pageContext: {
+            schemaVersion: 2,
+            pageUrl: "https://example.com/",
+            pageTitle: "Example",
+            capturedAt: "2026-07-01T00:00:00.000Z",
+            captureKind: "element",
+            bounds: { x: 20, y: 24, width: 220, height: 48 },
+            layoutViewport: { width: 800, height: 600 },
+          },
+          note: "",
+        },
+      },
+    });
+    designStore.setState({ modes: { [threadId]: true } });
+  }, THREAD.id);
+}
+
+async function hasUnsavedAnnotationDraft(page: Page): Promise<boolean> {
+  return page.evaluate((threadId) => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const annotationStore = stores.find((store) => {
+      const state = store.getState();
+      return "byThread" in state && "drafts" in state && "buildBundle" in state;
+    });
+    const drafts = annotationStore?.getState().drafts as
+      | Record<string, unknown>
+      | undefined;
+    return Boolean(drafts?.[threadId]);
+  }, THREAD.id);
+}
+
 // ---------------------------------------------------------------------------
 // Tests — preview unavailable (no desktopBridge)
 // ---------------------------------------------------------------------------
@@ -315,6 +379,7 @@ test.describe("PreviewPanel — desktopBridge absent", () => {
 
 test.describe("PreviewPanel — loaded header", () => {
   test.beforeEach(async ({ page }) => {
+    await interceptZustandStores(page);
     await injectPreviewBridge(page, { loaded: true });
     await openAppAtThread(page);
     await openPreviewTab(page);
@@ -442,6 +507,21 @@ test.describe("PreviewPanel — loaded header", () => {
       "aria-pressed",
       "false",
     );
+  });
+
+  test("exiting design mode removes an unsaved annotation draft", async ({ page }) => {
+    await seedUnsavedAnnotationDraft(page);
+
+    const designBtn = page.getByRole("button", { name: "Design", exact: true });
+    await expect(designBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("preview-annotation-bubble")).toBeVisible();
+    await expect.poll(() => hasUnsavedAnnotationDraft(page)).toBe(true);
+
+    await designBtn.click();
+
+    await expect(designBtn).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByTestId("preview-annotation-bubble")).toHaveCount(0);
+    await expect.poll(() => hasUnsavedAnnotationDraft(page)).toBe(false);
   });
 });
 

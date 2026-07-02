@@ -765,6 +765,42 @@ describe("PreviewPanel — full panel state", () => {
     });
   });
 
+  it("discards an unsaved draft when design mode exits from browser chrome", async () => {
+    usePreviewDesignModeStore.getState().setActive("thread-1", true);
+    const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({
+        inputUrl: pageUrl,
+        storedUrl: pageUrl,
+        pageStatus: {
+          url: pageUrl,
+          title: "Example",
+          favicon: null,
+          phase: "loaded",
+        },
+      }),
+    );
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(screen.getByTestId("preview-annotation-bubble")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Design" }));
+
+    await waitFor(() => {
+      expect(
+        usePreviewAnnotationStore.getState().drafts["thread-1"],
+      ).toBeUndefined();
+    });
+    expect(
+      screen.queryByTestId("preview-annotation-bubble"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Design" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
   it("saves the annotation when Enter is pressed in the note", async () => {
     installDraftAnnotation();
 

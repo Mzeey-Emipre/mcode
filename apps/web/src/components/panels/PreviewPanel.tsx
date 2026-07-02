@@ -585,6 +585,14 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       document.removeEventListener("pointerdown", onPointerDown, true);
   }, [bubbleNote, bubbleVisuals, openBubbleBase, outsideWarned, threadId]);
 
+  const clearTransientAnnotationState = useCallback((): void => {
+    usePreviewAnnotationStore.getState().setDraft(threadId, undefined);
+    setActiveAnnotationId(null);
+    setEditingAnnotationId(null);
+    setBubbleAdvancedOpen(false);
+    setOutsideWarned(false);
+  }, [threadId]);
+
   // Design mode is a single state: "next click on the page captures the
   // element under the cursor, repeat until you turn the mode off." Toggling it
   // off cancels any in-flight capture so the picker never sticks.
@@ -592,6 +600,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     const willActivate = !designModeActive;
     designModeToggle(threadId);
     if (!willActivate) {
+      clearTransientAnnotationState();
       void window.desktopBridge?.preview?.cancelCapture();
     }
   };
@@ -606,6 +615,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       if (!result.ok) {
         // Cancel / error / Esc-in-guest: exit the mode entirely so the
         // user has a single, consistent way to escape a sticky picker.
+        clearTransientAnnotationState();
         designModeSetActive(threadId, false);
       }
     };
@@ -618,6 +628,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     hasOpenBubble,
     threadId,
     capture.onAddElementAnnotation,
+    clearTransientAnnotationState,
     designModeSetActive,
   ]);
 
@@ -632,12 +643,18 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopImmediatePropagation();
+      clearTransientAnnotationState();
       designModeSetActive(threadId, false);
       void window.desktopBridge?.preview?.cancelCapture();
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [designModeActive, designModeSetActive, threadId]);
+  }, [
+    clearTransientAnnotationState,
+    designModeActive,
+    designModeSetActive,
+    threadId,
+  ]);
 
   if (!window.desktopBridge?.preview) {
     return (
@@ -748,6 +765,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             }}
             onSend={requestComposerSubmit}
             onExit={() => {
+              clearTransientAnnotationState();
               designModeSetActive(threadId, false);
               void window.desktopBridge?.preview?.cancelCapture();
             }}
