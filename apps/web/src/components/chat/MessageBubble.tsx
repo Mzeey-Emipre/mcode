@@ -628,6 +628,7 @@ export const MessageBubble = memo(function MessageBubble({
               <div className="flex justify-end">
                 <PreviewAnnotationBundleChip
                   bundle={message.previewAnnotations}
+                  threadId={message.thread_id}
                   testId="sent-preview-annotation-bundle-chip"
                 />
               </div>

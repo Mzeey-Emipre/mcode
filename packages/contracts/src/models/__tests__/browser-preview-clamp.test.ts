@@ -36,11 +36,13 @@ describe("browser capture clamp", () => {
       bounds: { x: 0, y: 0, width: 1, height: 1 },
       elementStyle: {
         textColor: "x".repeat(700),
+        paddingLeft: "y".repeat(700),
         opacity: 2,
       },
     };
     const clamped = clampMcodeBrowserCaptureV2(row);
     expect(clamped.elementStyle?.textColor).toHaveLength(PREVIEW_ANNOTATION_STRING_MAX.visualValue);
+    expect(clamped.elementStyle?.paddingLeft).toHaveLength(PREVIEW_ANNOTATION_STRING_MAX.visualValue);
     expect(clamped.elementStyle?.opacity).toBe(1);
     expect(() => McodeBrowserCaptureV2Schema().parse(clamped)).not.toThrow();
   });

@@ -1465,6 +1465,10 @@ describe("preview-browser", () => {
                 fontSize: "14px",
                 width: "120px",
                 height: "80px",
+                paddingLeft: "20px",
+                paddingTop: "4px",
+                marginRight: "8px",
+                borderBottomWidth: "2px",
               },
             }),
           )
@@ -1499,6 +1503,10 @@ describe("preview-browser", () => {
           background: "rgb(10, 52, 92)",
           opacity: 0.8,
           fontSize: "14px",
+          paddingLeft: "20px",
+          paddingTop: "4px",
+          marginRight: "8px",
+          borderBottomWidth: "2px",
         });
         expect(adopted.capturePage).toHaveBeenCalledWith({ x: 8, y: 18, width: 120, height: 80 });
         expect(adopted.executeJavaScript).toHaveBeenCalledTimes(5);

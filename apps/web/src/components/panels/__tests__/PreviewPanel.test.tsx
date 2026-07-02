@@ -858,6 +858,76 @@ describe("PreviewPanel — full panel state", () => {
     });
   });
 
+  it("closes only the open annotation bubble on Escape", async () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(screen.getByTestId("preview-annotation-bubble")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    await waitFor(() => {
+      expect(
+        usePreviewAnnotationStore.getState().drafts["thread-1"],
+      ).toBeUndefined();
+    });
+    expect(usePreviewDesignModeStore.getState().isActive("thread-1")).toBe(true);
+    expect(
+      screen.queryByTestId("preview-annotation-bubble"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("exits design mode on Escape when no annotation bubble is open", async () => {
+    usePreviewDesignModeStore.getState().setActive("thread-1", true);
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    await waitFor(() => {
+      expect(usePreviewDesignModeStore.getState().isActive("thread-1")).toBe(false);
+    });
+    expect(window.desktopBridge?.preview?.cancelCapture).toHaveBeenCalled();
+  });
+
+  it("handles app-level Escape without closing design mode when a bubble is open", async () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const event = new CustomEvent("mcode:preview-design-escape", {
+      cancelable: true,
+      detail: { threadId: "thread-1" },
+    });
+    const notCancelled = window.dispatchEvent(event);
+
+    expect(notCancelled).toBe(false);
+    await waitFor(() => {
+      expect(
+        usePreviewAnnotationStore.getState().drafts["thread-1"],
+      ).toBeUndefined();
+    });
+    expect(usePreviewDesignModeStore.getState().isActive("thread-1")).toBe(true);
+  });
+
+  it("keeps the open annotation when the rail maximize control is clicked", () => {
+    installDraftAnnotation();
+    const maximize = document.createElement("button");
+    maximize.setAttribute("data-preview-design-keep-open", "true");
+    document.body.append(maximize);
+
+    try {
+      render(<PreviewPanel threadId="thread-1" />);
+
+      fireEvent.pointerDown(maximize);
+
+      expect(usePreviewAnnotationStore.getState().drafts["thread-1"]).toBeDefined();
+      expect(screen.getByTestId("preview-annotation-bubble")).toBeInTheDocument();
+    } finally {
+      maximize.remove();
+    }
+  });
+
   it("discards an unsaved draft when design mode exits from browser chrome", async () => {
     usePreviewDesignModeStore.getState().setActive("thread-1", true);
     const pageUrl = "https://example.com/product-preview?productCode=QUAELE2010";
@@ -1063,6 +1133,9 @@ describe("PreviewPanel — full panel state", () => {
         fontSize: "14px",
         width: "120px",
         height: "32px",
+        padding: "20px 96px",
+        margin: "0px",
+        borderWidth: "1px 2px 3px 4px",
       },
     });
 
@@ -1082,11 +1155,43 @@ describe("PreviewPanel — full panel state", () => {
       "Inter, sans-serif",
     );
     expect(within(advanced).getByLabelText(/Font size/)).toHaveValue("14px");
+    expect(within(advanced).getByLabelText("Padding left")).toHaveValue("96px");
+    expect(within(advanced).getByLabelText("Padding top")).toHaveValue("20px");
+    expect(within(advanced).getByLabelText("Margin right")).toHaveValue("0px");
+    expect(within(advanced).getByLabelText("Border left")).toHaveValue("4px");
     expect(screen.queryByTestId("preview-annotation-save")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(
       screen.queryByTestId("preview-annotation-visual-proposal"),
     ).not.toBeInTheDocument();
+  });
+
+  it("updates the active visual highlight as side controls change", () => {
+    installDraftAnnotation({
+      elementStyle: {
+        paddingLeft: "20px",
+        paddingRight: "20px",
+        paddingTop: "0px",
+        paddingBottom: "0px",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    fireEvent.change(
+      within(screen.getByTestId("preview-annotation-advanced")).getByLabelText(
+        "Padding left",
+      ),
+      { target: { value: "40px" } },
+    );
+
+    expect(screen.getByTestId("preview-annotation-visual-proposal")).toHaveStyle({
+      left: "0px",
+      top: "24px",
+      width: "140px",
+      height: "32px",
+    });
   });
 
   it("saves only advanced fields changed away from the selected element style", async () => {
@@ -1116,5 +1221,44 @@ describe("PreviewPanel — full panel state", () => {
     expect(
       usePreviewAnnotationStore.getState().byThread["thread-1"]?.[0]?.proposedChanges,
     ).toEqual({ fontSize: "18px" });
+  });
+
+  it("saves side-control changes and captures their adjusted highlight bounds", async () => {
+    installDraftAnnotation({
+      elementStyle: {
+        paddingLeft: "20px",
+        paddingRight: "20px",
+        paddingTop: "0px",
+        paddingBottom: "0px",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    fireEvent.change(
+      within(screen.getByTestId("preview-annotation-advanced")).getByLabelText(
+        "Padding left",
+      ),
+      { target: { value: "40px" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(usePreviewAnnotationStore.getState().byThread["thread-1"]).toHaveLength(1);
+    });
+    expect(
+      usePreviewAnnotationStore.getState().byThread["thread-1"]?.[0]?.proposedChanges,
+    ).toEqual({ paddingLeft: "40px" });
+    expect(mockCaptureAnnotationSnapshot).toHaveBeenCalledWith({
+      activeDisplayNumber: 1,
+      activeBounds: { x: 0, y: 24, width: 140, height: 32 },
+      markers: [
+        {
+          displayNumber: 1,
+          bounds: { x: 20, y: 24, width: 120, height: 32 },
+        },
+      ],
+    });
   });
 });

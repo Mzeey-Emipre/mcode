@@ -462,6 +462,7 @@ export function ActivityRail({
         aria-label={maximized ? "Restore panel" : "Maximize panel"}
         title={maximized ? "Restore panel" : "Maximize panel"}
         data-testid="rail-maximize-toggle"
+        data-preview-design-keep-open="true"
       >
         {maximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
       </Button>

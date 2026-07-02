@@ -64,6 +64,8 @@ const CAPTURE_CONFIRMATION_DURATION_MS = 2200;
 const ANNOTATION_BUBBLE_MAX_WIDTH_PX = 336;
 const ANNOTATION_BUBBLE_MARGIN_PX = 8;
 
+type VisualProposalKey = keyof PreviewAnnotationVisualProposal;
+
 const VISUAL_CONTROL_FIELDS = [
   ["textColor", "Text color"],
   ["background", "Background"],
@@ -73,28 +75,104 @@ const VISUAL_CONTROL_FIELDS = [
   ["fontWeight", "Font weight"],
   ["borderRadius", "Border radius"],
   ["borderColor", "Border color"],
-  ["borderWidth", "Border width"],
   ["width", "Width"],
   ["height", "Height"],
-  ["padding", "Padding"],
-  ["margin", "Margin"],
+] as const satisfies readonly (readonly [VisualProposalKey, string])[];
+
+const BOX_SIDE_ORDER = [
+  ["left", "L"],
+  ["top", "T"],
+  ["right", "R"],
+  ["bottom", "B"],
 ] as const;
 
-type VisualProposalKey = keyof PreviewAnnotationVisualProposal;
-type VisualControlField = (typeof VISUAL_CONTROL_FIELDS)[number][0];
+type BoxSide = (typeof BOX_SIDE_ORDER)[number][0];
 
-const COLOR_CONTROL_DEFAULTS: Partial<Record<VisualControlField, string>> = {
+const BOX_CONTROL_GROUPS = [
+  {
+    label: "Padding",
+    shorthand: "padding",
+    keys: {
+      left: "paddingLeft",
+      top: "paddingTop",
+      right: "paddingRight",
+      bottom: "paddingBottom",
+    },
+  },
+  {
+    label: "Margin",
+    shorthand: "margin",
+    keys: {
+      left: "marginLeft",
+      top: "marginTop",
+      right: "marginRight",
+      bottom: "marginBottom",
+    },
+  },
+  {
+    label: "Border",
+    shorthand: "borderWidth",
+    keys: {
+      left: "borderLeftWidth",
+      top: "borderTopWidth",
+      right: "borderRightWidth",
+      bottom: "borderBottomWidth",
+    },
+  },
+] as const satisfies readonly {
+  readonly label: string;
+  readonly shorthand: VisualProposalKey;
+  readonly keys: Record<BoxSide, VisualProposalKey>;
+}[];
+
+const VISUAL_PROPOSAL_KEYS = [
+  "textColor",
+  "background",
+  "opacity",
+  "font",
+  "fontSize",
+  "fontWeight",
+  "borderRadius",
+  "borderColor",
+  "width",
+  "height",
+  "paddingTop",
+  "paddingRight",
+  "paddingBottom",
+  "paddingLeft",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft",
+  "borderTopWidth",
+  "borderRightWidth",
+  "borderBottomWidth",
+  "borderLeftWidth",
+] as const satisfies readonly VisualProposalKey[];
+
+const COLOR_CONTROL_DEFAULTS: Partial<Record<VisualProposalKey, string>> = {
   textColor: "rgb(10, 52, 92)",
   background: "rgba(0, 0, 0, 0)",
   borderColor: "rgb(10, 52, 92)",
 };
 
-const PIXEL_CONTROL_FIELDS = new Set<VisualControlField>([
+const PIXEL_CONTROL_FIELDS = new Set<VisualProposalKey>([
   "fontSize",
   "borderRadius",
-  "borderWidth",
   "width",
   "height",
+  "paddingTop",
+  "paddingRight",
+  "paddingBottom",
+  "paddingLeft",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft",
+  "borderTopWidth",
+  "borderRightWidth",
+  "borderBottomWidth",
+  "borderLeftWidth",
 ]);
 
 const EMPTY_SAVED_ANNOTATIONS: SavedPreviewAnnotation[] = [];
@@ -115,10 +193,13 @@ function cleanVisualProposal(
   baseline?: PreviewDraftAnnotation["elementStyle"],
 ): PreviewAnnotationVisualProposal | undefined {
   const next: Record<string, string | number> = {};
-  for (const [key] of VISUAL_CONTROL_FIELDS) {
+  for (const key of VISUAL_PROPOSAL_KEYS) {
     const normalized = normalizeVisualControlValue(key, value[key]);
     if (normalized === undefined) continue;
-    const baselineValue = normalizeVisualControlValue(key, baseline?.[key]);
+    const baselineValue = normalizeVisualControlValue(
+      key,
+      baselineVisualControlValue(key, baseline),
+    );
     if (normalized === baselineValue) continue;
     next[key] = normalized;
   }
@@ -128,7 +209,7 @@ function cleanVisualProposal(
 }
 
 function normalizeVisualControlValue(
-  key: VisualControlField,
+  key: VisualProposalKey,
   value: unknown,
 ): string | number | undefined {
   if (key === "opacity") {
@@ -140,13 +221,152 @@ function normalizeVisualControlValue(
   return trimmed ? trimmed : undefined;
 }
 
+function parseCssBoxValue(value: unknown): Record<BoxSide, string> | undefined {
+  const parts = String(value ?? "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  const top = parts[0];
+  const right = parts[1] ?? top;
+  const bottom = parts[2] ?? top;
+  const left = parts[3] ?? right;
+  return { left, top, right, bottom };
+}
+
+function boxGroupForKey(
+  key: VisualProposalKey,
+): (typeof BOX_CONTROL_GROUPS)[number] | undefined {
+  return BOX_CONTROL_GROUPS.find((group) =>
+    BOX_SIDE_ORDER.some(([side]) => group.keys[side] === key),
+  );
+}
+
+function boxSideForKey(key: VisualProposalKey): BoxSide | undefined {
+  for (const [side] of BOX_SIDE_ORDER) {
+    if (BOX_CONTROL_GROUPS.some((group) => group.keys[side] === key)) {
+      return side;
+    }
+  }
+  return undefined;
+}
+
+function baselineVisualControlValue(
+  key: VisualProposalKey,
+  baseline?: PreviewDraftAnnotation["elementStyle"],
+): unknown {
+  if (!baseline) return undefined;
+  const direct = baseline[key];
+  if (direct !== undefined) return direct;
+  const group = boxGroupForKey(key);
+  const side = boxSideForKey(key);
+  if (!group || !side) return undefined;
+  return parseCssBoxValue(baseline[group.shorthand])?.[side];
+}
+
+function expandBoxShorthands(
+  value: PreviewAnnotationVisualProposal | PreviewDraftAnnotation["elementStyle"] | undefined,
+): PreviewAnnotationVisualProposal {
+  const next: PreviewAnnotationVisualProposal = {};
+  if (!value) return next;
+  for (const group of BOX_CONTROL_GROUPS) {
+    const parsed = parseCssBoxValue(value[group.shorthand]);
+    if (!parsed) continue;
+    for (const [side] of BOX_SIDE_ORDER) {
+      const key = group.keys[side];
+      if (value[key] === undefined) next[key] = parsed[side];
+    }
+  }
+  return next;
+}
+
 function initialVisualControls(
   elementStyle: PreviewDraftAnnotation["elementStyle"],
   proposedChanges: PreviewAnnotationVisualProposal | undefined,
 ): PreviewAnnotationVisualProposal {
   return {
     ...(elementStyle ?? {}),
+    ...expandBoxShorthands(elementStyle),
     ...(proposedChanges ?? {}),
+    ...expandBoxShorthands(proposedChanges),
+  };
+}
+
+function parseCssPx(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  const text = String(value ?? "").trim();
+  if (!text) return undefined;
+  const match = text.match(/^-?\d+(?:\.\d+)?/);
+  if (!match) return undefined;
+  const numeric = Number(match[0]);
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function proposalSideDeltaPx(
+  value: PreviewAnnotationVisualProposal | undefined,
+  baseline: PreviewDraftAnnotation["elementStyle"] | undefined,
+  group: (typeof BOX_CONTROL_GROUPS)[number],
+  side: BoxSide,
+): number {
+  if (!value) return 0;
+  const key = group.keys[side];
+  const direct = parseCssPx(value[key]);
+  const shorthand = parseCssBoxValue(value[group.shorthand])?.[side];
+  const next = direct ?? parseCssPx(shorthand);
+  if (next === undefined) return 0;
+  const baselineValue = parseCssPx(baselineVisualControlValue(key, baseline)) ?? 0;
+  return next - baselineValue;
+}
+
+function visualProposalBounds(
+  bounds: PreviewDraftAnnotation["bounds"],
+  value: PreviewAnnotationVisualProposal | undefined,
+  baseline?: PreviewDraftAnnotation["elementStyle"],
+): PreviewDraftAnnotation["bounds"] {
+  if (!value) return bounds;
+  const padding = BOX_CONTROL_GROUPS[0];
+  const margin = BOX_CONTROL_GROUPS[1];
+  const border = BOX_CONTROL_GROUPS[2];
+  const leftGrow =
+    proposalSideDeltaPx(value, baseline, margin, "left") +
+    proposalSideDeltaPx(value, baseline, padding, "left") +
+    proposalSideDeltaPx(value, baseline, border, "left");
+  const topGrow =
+    proposalSideDeltaPx(value, baseline, margin, "top") +
+    proposalSideDeltaPx(value, baseline, padding, "top") +
+    proposalSideDeltaPx(value, baseline, border, "top");
+  const rightGrow =
+    proposalSideDeltaPx(value, baseline, margin, "right") +
+    proposalSideDeltaPx(value, baseline, padding, "right") +
+    proposalSideDeltaPx(value, baseline, border, "right");
+  const bottomGrow =
+    proposalSideDeltaPx(value, baseline, margin, "bottom") +
+    proposalSideDeltaPx(value, baseline, padding, "bottom") +
+    proposalSideDeltaPx(value, baseline, border, "bottom");
+  return {
+    x: bounds.x - leftGrow,
+    y: bounds.y - topGrow,
+    width:
+      Math.max(1, parseCssPx(value.width) ?? bounds.width) +
+      leftGrow +
+      rightGrow,
+    height:
+      Math.max(1, parseCssPx(value.height) ?? bounds.height) +
+      topGrow +
+      bottomGrow,
+  };
+}
+
+function visualProposalGeometryStyle(
+  bounds: PreviewDraftAnnotation["bounds"],
+  value: PreviewAnnotationVisualProposal | undefined,
+  baseline?: PreviewDraftAnnotation["elementStyle"],
+): CSSProperties {
+  const proposedBounds = visualProposalBounds(bounds, value, baseline);
+  return {
+    left: proposedBounds.x,
+    top: proposedBounds.y,
+    width: proposedBounds.width,
+    height: proposedBounds.height,
   };
 }
 
@@ -154,6 +374,9 @@ function visualOverlayStyle(
   value: PreviewAnnotationVisualProposal | undefined,
 ): CSSProperties {
   if (!value) return {};
+  const hasBorderWidth = BOX_SIDE_ORDER.some(([side]) =>
+    Boolean(value[BOX_CONTROL_GROUPS[2].keys[side]]),
+  );
   return {
     color: value.textColor,
     background: value.background,
@@ -164,16 +387,19 @@ function visualOverlayStyle(
     borderRadius: value.borderRadius,
     borderColor: value.borderColor,
     borderWidth: value.borderWidth,
-    width: value.width,
-    height: value.height,
-    padding: value.padding,
-    margin: value.margin,
-    borderStyle: value.borderColor || value.borderWidth ? "solid" : undefined,
+    borderTopWidth: value.borderTopWidth,
+    borderRightWidth: value.borderRightWidth,
+    borderBottomWidth: value.borderBottomWidth,
+    borderLeftWidth: value.borderLeftWidth,
+    borderStyle: value.borderColor || value.borderWidth || hasBorderWidth
+      ? "solid"
+      : undefined,
+    boxSizing: "border-box",
   };
 }
 
 function visualControlAffordance(
-  key: VisualControlField,
+  key: VisualProposalKey,
 ): "swatch" | "px" | "0-1" | undefined {
   if (key in COLOR_CONTROL_DEFAULTS) return "swatch";
   if (key === "opacity") return "0-1";
@@ -182,7 +408,7 @@ function visualControlAffordance(
 }
 
 function colorSwatchValue(
-  key: VisualControlField,
+  key: VisualProposalKey,
   value: unknown,
 ): string | undefined {
   if (!(key in COLOR_CONTROL_DEFAULTS)) return undefined;
@@ -281,9 +507,6 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     (s) => s.byThread[threadId]?.length ?? 0,
   );
   const draftAnnotation = usePreviewAnnotationStore((s) => s.drafts[threadId]);
-  const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(
-    null,
-  );
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(
     null,
   );
@@ -549,7 +772,6 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   useEffect(() => {
     if (!draftAnnotation) return;
     setEditingAnnotationId(null);
-    setActiveAnnotationId(null);
     setBubbleNote(draftAnnotation.note);
     setBubbleVisuals(
       initialVisualControls(
@@ -606,6 +828,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       const target = event.target as Node | null;
       if (target && bubbleRef.current?.contains(target)) return;
       if (
+        target instanceof Element &&
+        target.closest("[data-preview-design-keep-open]")
+      ) {
+        return;
+      }
+      if (
         bubbleNote.trim().length === 0 &&
         !hasVisualProposal(
           cleanVisualProposal(bubbleVisuals, openBubbleBase.elementStyle),
@@ -629,13 +857,29 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       document.removeEventListener("pointerdown", onPointerDown, true);
   }, [bubbleNote, bubbleVisuals, openBubbleBase, outsideWarned, threadId]);
 
-  const clearTransientAnnotationState = useCallback((): void => {
+  const closeOpenAnnotationBubble = useCallback((): void => {
     usePreviewAnnotationStore.getState().setDraft(threadId, undefined);
-    setActiveAnnotationId(null);
     setEditingAnnotationId(null);
     setBubbleAdvancedOpen(false);
     setOutsideWarned(false);
   }, [threadId]);
+
+  const clearTransientAnnotationState = closeOpenAnnotationBubble;
+
+  const handleDesignEscape = useCallback((): void => {
+    if (hasOpenBubble) {
+      closeOpenAnnotationBubble();
+      return;
+    }
+    closeOpenAnnotationBubble();
+    designModeSetActive(threadId, false);
+    void window.desktopBridge?.preview?.cancelCapture();
+  }, [
+    closeOpenAnnotationBubble,
+    designModeSetActive,
+    hasOpenBubble,
+    threadId,
+  ]);
 
   // Design mode is a single state: "next click on the page captures the
   // element under the cursor, repeat until you turn the mode off." Toggling it
@@ -687,18 +931,24 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      clearTransientAnnotationState();
-      designModeSetActive(threadId, false);
-      void window.desktopBridge?.preview?.cancelCapture();
+      handleDesignEscape();
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [
-    clearTransientAnnotationState,
-    designModeActive,
-    designModeSetActive,
-    threadId,
-  ]);
+  }, [designModeActive, handleDesignEscape]);
+
+  useEffect(() => {
+    if (!designModeActive) return;
+    const onDesignEscape = (event: Event): void => {
+      const detail = (event as CustomEvent<{ threadId?: string }>).detail;
+      if (detail?.threadId && detail.threadId !== threadId) return;
+      event.preventDefault();
+      handleDesignEscape();
+    };
+    window.addEventListener("mcode:preview-design-escape", onDesignEscape);
+    return () =>
+      window.removeEventListener("mcode:preview-design-escape", onDesignEscape);
+  }, [designModeActive, handleDesignEscape, threadId]);
 
   if (!window.desktopBridge?.preview) {
     return (
@@ -760,13 +1010,18 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       displayNumber: activeDisplayNumber,
       bounds: openBubbleBase.bounds,
     });
+    const activeHighlightBounds = visualProposalBounds(
+      openBubbleBase.bounds,
+      proposedChanges,
+      openBubbleBase.elementStyle,
+    );
     const snapshot = await capture.captureAnnotationSnapshot({
       activeDisplayNumber,
-      activeBounds: openBubbleBase.bounds,
+      activeBounds: activeHighlightBounds,
       markers: Array.from(markerByDisplayNumber.values()),
     });
     if (!snapshot) return;
-    const saved = usePreviewAnnotationStore.getState().saveAnnotation(
+    usePreviewAnnotationStore.getState().saveAnnotation(
       threadId,
       {
         ...openBubbleBase,
@@ -776,7 +1031,6 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       },
       editingAnnotationId ?? undefined,
     );
-    setActiveAnnotationId(saved.id);
     setEditingAnnotationId(null);
     setOutsideWarned(false);
     if (options.sendAfterSave) requestComposerSubmit();
@@ -799,15 +1053,11 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     } else {
       usePreviewAnnotationStore.getState().setDraft(threadId, undefined);
     }
-    setActiveAnnotationId(null);
     setEditingAnnotationId(null);
     setBubbleAdvancedOpen(false);
     setOutsideWarned(false);
   };
 
-  const activeVisualAnnotation = designModeActive && activeAnnotationId
-    ? pageAnnotations.find((annotation) => annotation.id === activeAnnotationId)
-    : undefined;
   const visibleOpenBubbleBase = designModeActive ? openBubbleBase : undefined;
   const visiblePageAnnotations = designModeActive
     ? pageAnnotations
@@ -990,16 +1240,15 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                       transform: "translate(-50%, -50%)",
                     }}
                     onClick={() => {
-                      setActiveAnnotationId(annotation.id);
                       setEditingAnnotationId(annotation.id);
                     }}
                     aria-label={`Edit annotation ${annotation.displayNumber}`}
                   >
                     <span
-                      className="relative flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md ring-2 ring-background/85 transition-transform duration-150 group-hover/marker:scale-105 group-focus-visible/marker:scale-105"
+                      className="relative flex size-7 items-center justify-center rounded-full bg-primary/80 text-primary-foreground/90 shadow-sm ring-1 ring-background/80 transition-transform duration-150 group-hover/marker:scale-105 group-focus-visible/marker:scale-105"
                       aria-hidden
                     >
-                      <span className="absolute -bottom-0.5 left-1.5 size-2 rotate-45 rounded-sm bg-primary" />
+                      <span className="absolute -bottom-0.5 left-1.5 size-2 rotate-45 rounded-sm bg-primary/80" />
                       <span className="relative z-10 text-xs font-semibold tabular-nums">
                         {annotation.displayNumber}
                       </span>
@@ -1022,19 +1271,6 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             </Tooltip>
           );
         })}
-        {activeVisualAnnotation?.proposedChanges ? (
-          <div
-            data-testid="preview-annotation-visual-proposal"
-            className="pointer-events-none absolute z-10 rounded-sm border border-dashed border-primary/80"
-            style={{
-              left: activeVisualAnnotation.targetContext.bounds.x,
-              top: activeVisualAnnotation.targetContext.bounds.y,
-              minWidth: activeVisualAnnotation.targetContext.bounds.width,
-              minHeight: activeVisualAnnotation.targetContext.bounds.height,
-              ...visualOverlayStyle(activeVisualAnnotation.proposedChanges),
-            }}
-          />
-        ) : null}
         {visibleOpenBubbleBase ? (
           <div
             data-testid="preview-annotation-active-target-highlight"
@@ -1052,11 +1288,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             data-testid="preview-annotation-visual-proposal"
             className="pointer-events-none absolute z-10 rounded-sm border border-dashed border-primary/80"
             style={{
-              left: visibleOpenBubbleBase.bounds.x,
-              top: visibleOpenBubbleBase.bounds.y,
-              minWidth: visibleOpenBubbleBase.bounds.width,
-              minHeight: visibleOpenBubbleBase.bounds.height,
               ...visualOverlayStyle(openBubbleVisualProposal),
+              ...visualProposalGeometryStyle(
+                visibleOpenBubbleBase.bounds,
+                openBubbleVisualProposal,
+                visibleOpenBubbleBase.elementStyle,
+              ),
             }}
           />
         ) : null}
@@ -1139,7 +1376,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                   <div className="space-y-2.5">
                     {VISUAL_CONTROL_FIELDS.map(([key, label]) => {
                       const affordance = visualControlAffordance(key);
-                      const value = bubbleVisuals[key as VisualProposalKey];
+                      const value = bubbleVisuals[key];
                       const swatch = colorSwatchValue(key, value);
                       return (
                         <label
@@ -1188,6 +1425,46 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                         </label>
                       );
                     })}
+                    {BOX_CONTROL_GROUPS.map((group) => (
+                      <div
+                        key={group.label}
+                        className="grid grid-cols-[7.25rem_minmax(0,1fr)] items-center gap-2 text-xs text-neutral-300"
+                      >
+                        <span>{group.label}</span>
+                        <div className="grid min-w-0 grid-cols-4 gap-1">
+                          {BOX_SIDE_ORDER.map(([side, shortLabel]) => {
+                            const key = group.keys[side];
+                            const value = bubbleVisuals[key];
+                            return (
+                              <label key={key} className="relative min-w-0">
+                                <span className="sr-only">
+                                  {group.label} {side}
+                                </span>
+                                <span
+                                  className="pointer-events-none absolute left-1.5 top-1/2 z-10 -translate-y-1/2 font-mono text-[10px] text-neutral-500"
+                                  aria-hidden
+                                >
+                                  {shortLabel}
+                                </span>
+                                <Input
+                                  size="xs"
+                                  aria-label={`${group.label} ${side}`}
+                                  value={String(value ?? "")}
+                                  onChange={(event) => {
+                                    setBubbleVisuals((prev) => ({
+                                      ...prev,
+                                      [key]: event.target.value,
+                                    }));
+                                    setOutsideWarned(false);
+                                  }}
+                                  className="h-7 rounded-[0.55rem] border-white/10 bg-[#303030] pl-5 pr-1 text-[11px] text-neutral-100 placeholder:text-neutral-500 focus-visible:ring-white/20"
+                                />
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>

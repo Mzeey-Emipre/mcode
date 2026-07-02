@@ -204,6 +204,25 @@ describe("MessageBubble user messages", () => {
     expect(queryByText("bundle")).not.toBeInTheDocument();
   });
 
+  it("shows each annotation screenshot thumbnail in the chip hover", async () => {
+    const user = userEvent.setup();
+    const threadUuid = "550e8400-e29b-41d4-a716-446655440000";
+    const message: Message = {
+      ...makeMessage(""),
+      thread_id: threadUuid,
+      previewAnnotations: makePreviewAnnotationBundle(),
+    };
+
+    const { findByTestId, getByTestId } = render(<MessageBubble message={message} />);
+
+    await user.hover(getByTestId("sent-preview-annotation-bundle-chip"));
+
+    expect(await findByTestId("preview-annotation-hover-thumbnail")).toHaveAttribute(
+      "src",
+      `mcode-attachment://${threadUuid}/shot-1.png`,
+    );
+  });
+
   it("renders preview annotation screenshots as inspectable image attachments", async () => {
     const user = userEvent.setup();
     const threadUuid = "550e8400-e29b-41d4-a716-446655440000";

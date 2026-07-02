@@ -777,10 +777,22 @@ function buildHitTestJs(overlayX: number, overlayY: number, hostWidth: number, h
       setStyleValue(next, "borderRadius", cs.borderRadius);
       setStyleValue(next, "borderColor", cs.borderColor);
       setStyleValue(next, "borderWidth", cs.borderWidth);
+      setStyleValue(next, "borderTopWidth", cs.borderTopWidth);
+      setStyleValue(next, "borderRightWidth", cs.borderRightWidth);
+      setStyleValue(next, "borderBottomWidth", cs.borderBottomWidth);
+      setStyleValue(next, "borderLeftWidth", cs.borderLeftWidth);
       setStyleValue(next, "width", pxStyleValue(rect.width));
       setStyleValue(next, "height", pxStyleValue(rect.height));
       setStyleValue(next, "padding", cs.padding);
+      setStyleValue(next, "paddingTop", cs.paddingTop);
+      setStyleValue(next, "paddingRight", cs.paddingRight);
+      setStyleValue(next, "paddingBottom", cs.paddingBottom);
+      setStyleValue(next, "paddingLeft", cs.paddingLeft);
       setStyleValue(next, "margin", cs.margin);
+      setStyleValue(next, "marginTop", cs.marginTop);
+      setStyleValue(next, "marginRight", cs.marginRight);
+      setStyleValue(next, "marginBottom", cs.marginBottom);
+      setStyleValue(next, "marginLeft", cs.marginLeft);
     } catch (styleErr) {}
     return Object.keys(next).length ? next : null;
   }
@@ -865,10 +877,22 @@ const ELEMENT_STYLE_STRING_KEYS = [
   "borderRadius",
   "borderColor",
   "borderWidth",
+  "borderTopWidth",
+  "borderRightWidth",
+  "borderBottomWidth",
+  "borderLeftWidth",
   "width",
   "height",
   "padding",
+  "paddingTop",
+  "paddingRight",
+  "paddingBottom",
+  "paddingLeft",
   "margin",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft",
 ] as const;
 
 function sanitizeElementStyleValue(value: unknown): string | undefined {

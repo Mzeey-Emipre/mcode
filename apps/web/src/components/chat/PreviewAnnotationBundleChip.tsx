@@ -4,6 +4,7 @@ import { MessageCircle, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { buildStoredAttachmentImageSrc } from "@/lib/attachment-url";
 import { cn } from "@/lib/utils";
 
 const MAX_DETAIL_LENGTH = 220;
@@ -34,6 +35,8 @@ function annotationDetail(annotation: PreviewAnnotationPayload): string {
 export interface PreviewAnnotationBundleChipProps {
   /** Saved Preview annotation payloads to summarize. */
   readonly bundle: PreviewAnnotationBundle;
+  /** Thread that owns the persisted annotation screenshots. */
+  readonly threadId?: string;
   /** Optional removal action. Hidden until hover or focus. */
   readonly onRemove?: () => void;
   /** Extra classes for the chip root. */
@@ -45,6 +48,7 @@ export interface PreviewAnnotationBundleChipProps {
 /** Renders a responsive annotation summary chip with hoverable per-annotation details. */
 export function PreviewAnnotationBundleChip({
   bundle,
+  threadId,
   onRemove,
   className,
   testId = "preview-annotation-bundle-chip",
@@ -94,28 +98,50 @@ export function PreviewAnnotationBundleChip({
         className="w-[min(22rem,calc(100vw-2rem))] max-w-none items-stretch rounded-xl border border-border/70 bg-popover p-2.5 text-popover-foreground shadow-xl"
       >
         <div className="max-h-72 min-w-0 space-y-2 overflow-y-auto pr-1">
-          {bundle.annotations.map((annotation) => (
-            <div
-              key={annotation.id}
-              className="min-w-0 border-b border-border/50 pb-2 last:border-b-0 last:pb-0"
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold tabular-nums text-primary-foreground">
-                  {annotation.displayNumber}
-                </span>
-                <Badge
-                  variant="secondary"
-                  size="sm"
-                  className="min-w-0 max-w-full truncate font-mono font-normal text-muted-foreground"
-                >
-                  {annotationTargetLabel(annotation)}
-                </Badge>
+          {bundle.annotations.map((annotation) => {
+            const snapshotSrc = threadId
+              ? buildStoredAttachmentImageSrc(
+                  threadId,
+                  annotation.snapshot.id,
+                  annotation.snapshot.mimeType,
+                )
+              : null;
+            return (
+              <div
+                key={annotation.id}
+                className="grid min-w-0 grid-cols-[minmax(0,1fr)_4.5rem] gap-2 border-b border-border/50 pb-2 last:border-b-0 last:pb-0"
+              >
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/80 text-xs font-semibold tabular-nums text-primary-foreground/90">
+                      {annotation.displayNumber}
+                    </span>
+                    <Badge
+                      variant="secondary"
+                      size="sm"
+                      className="min-w-0 max-w-full truncate font-mono font-normal text-muted-foreground"
+                    >
+                      {annotationTargetLabel(annotation)}
+                    </Badge>
+                  </div>
+                  <p className="mt-1.5 min-w-0 whitespace-pre-wrap break-words text-xs leading-snug text-popover-foreground">
+                    {annotationDetail(annotation)}
+                  </p>
+                </div>
+                {snapshotSrc ? (
+                  <span className="block h-14 overflow-hidden rounded-md border border-border/60 bg-muted/30">
+                    <img
+                      src={snapshotSrc}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                      data-testid="preview-annotation-hover-thumbnail"
+                    />
+                  </span>
+                ) : null}
               </div>
-              <p className="mt-1.5 min-w-0 whitespace-pre-wrap break-words text-xs leading-snug text-popover-foreground">
-                {annotationDetail(annotation)}
-              </p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </TooltipContent>
     </Tooltip>

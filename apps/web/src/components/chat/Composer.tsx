@@ -2813,6 +2813,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           <div className="px-3 pt-2">
             <PreviewAnnotationBundleChip
               bundle={annotationBundleForDisplay}
+              threadId={threadId}
               testId="composer-annotation-bundle"
               onRemove={() => usePreviewAnnotationStore.getState().clearThread(threadId)}
             />
