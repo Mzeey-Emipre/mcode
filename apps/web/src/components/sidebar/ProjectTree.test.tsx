@@ -1,4 +1,4 @@
-import { render, screen, act, fireEvent } from "@testing-library/react";
+import { render, screen, act, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Thread } from "@/transport/types";
 
@@ -617,6 +617,7 @@ describe("ProjectTree PR-ability gating by mode", () => {
     expect(preview).toHaveTextContent("Branchless Thread");
     expect(screen.getByLabelText("Project, Test Project")).toBeInTheDocument();
     expect(screen.getByLabelText("Branch, HEAD")).toBeInTheDocument();
+    expect(within(preview).queryByLabelText(/^Provider,/)).toBeNull();
     expect(screen.getByLabelText("Provider, Codex")).toBeInTheDocument();
     expect(screen.queryByLabelText(/^Status,/)).toBeNull();
     expect(preview).not.toHaveTextContent("Ready");
