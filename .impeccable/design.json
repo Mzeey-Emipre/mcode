@@ -19,6 +19,21 @@
           "oklch(0.92 0.06 75)"
         ]
       },
+      "cool-link": {
+        "role": "secondary",
+        "displayName": "Cool Link",
+        "canonical": "oklch(0.7 0.14 260)",
+        "tonalRamp": [
+          "oklch(0.20 0.06 260)",
+          "oklch(0.30 0.09 260)",
+          "oklch(0.40 0.12 260)",
+          "oklch(0.50 0.16 260)",
+          "oklch(0.60 0.15 260)",
+          "oklch(0.70 0.14 260)",
+          "oklch(0.80 0.10 260)",
+          "oklch(0.92 0.04 260)"
+        ]
+      },
       "patina-sage": {
         "role": "tertiary",
         "displayName": "Patina Sage",
@@ -64,19 +79,19 @@
           "oklch(0.93 0 0)"
         ]
       },
-      "warm-neutral": {
+      "cool-off-white": {
         "role": "neutral",
-        "displayName": "Warm Off-White",
-        "canonical": "oklch(0.99 0.005 75)",
+        "displayName": "Cool Off-White",
+        "canonical": "oklch(0.99 0.005 260)",
         "tonalRamp": [
-          "oklch(0.18 0.005 75)",
-          "oklch(0.50 0.005 75)",
-          "oklch(0.90 0.005 75)",
-          "oklch(0.945 0.008 75)",
-          "oklch(0.955 0.005 75)",
-          "oklch(0.985 0.005 75)",
-          "oklch(0.99 0.005 75)",
-          "oklch(0.995 0.003 75)"
+          "oklch(0.18 0.005 260)",
+          "oklch(0.50 0.005 260)",
+          "oklch(0.90 0.005 260)",
+          "oklch(0.945 0.008 260)",
+          "oklch(0.955 0.005 260)",
+          "oklch(0.985 0.005 260)",
+          "oklch(0.99 0.005 260)",
+          "oklch(0.995 0.003 260)"
         ]
       }
     },
@@ -90,7 +105,7 @@
     "shadows": [
       { "name": "focus-ring", "value": "0 0 0 3px oklch(0.62 0.19 264 / 0.2)", "purpose": "Cool-ring focus affordance on inputs and buttons." },
       { "name": "focus-ring-offset", "value": "0 0 0 2px var(--background), 0 0 0 4px var(--ring)", "purpose": "Keyboard focus on dense adjacent controls where a flat ring would bleed into the neighbor." },
-      { "name": "amber-edge-glow", "value": "-2px 0 8px -1px oklch(0.72 0.17 75 / 0.35)", "purpose": "Single deliberate amber edge cue at a panel boundary. Not a card style." }
+      { "name": "lamp-edge-glow", "value": "-2px 0 8px -1px color-mix(in oklch, var(--primary), transparent 65%)", "purpose": "Single deliberate lamp edge cue at a panel boundary. Not a card style." }
     ],
     "motion": [
       { "name": "ease-out-quart", "value": "cubic-bezier(0.25, 1, 0.5, 1)", "purpose": "Primary UI easing: wizard reveals, tile and nav entrances, question transitions." },
@@ -106,7 +121,7 @@
       "refersTo": "button-primary",
       "description": "The single primary action. Filament Amber fill, used once per surface.",
       "html": "<button class=\"ds-btn-primary\">Run agent</button>",
-      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; height: 2rem; padding: 0 0.625rem; font-family: 'Public Sans', ui-sans-serif, system-ui, sans-serif; font-size: 0.875rem; font-weight: 500; color: oklch(0.98 0 0); background: oklch(0.72 0.17 75); border: 1px solid transparent; border-radius: 0.625rem; cursor: pointer; transition: background 0.15s, transform 0.1s; } .ds-btn-primary:hover { background: oklch(0.72 0.17 75 / 0.8); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: none; border-color: oklch(0.62 0.19 264); box-shadow: 0 0 0 3px oklch(0.62 0.19 264 / 0.5); }"
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; height: 2rem; padding: 0 0.625rem; font-family: 'Public Sans', ui-sans-serif, system-ui, sans-serif; font-size: 0.875rem; font-weight: 500; color: oklch(0.15 0.005 260); background: oklch(0.72 0.17 75); border: 1px solid transparent; border-radius: 0.625rem; cursor: pointer; transition: background 0.15s, transform 0.1s; } .ds-btn-primary:hover { background: oklch(0.72 0.17 75 / 0.8); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: none; border-color: oklch(0.62 0.19 264); box-shadow: 0 0 0 3px oklch(0.62 0.19 264 / 0.5); }"
     },
     {
       "name": "Ghost Button",
@@ -162,7 +177,7 @@
     "overview": "Mcode is the surface a developer keeps open all evening on a second monitor while five agents run in parallel. It is not a destination; it is an instrument panel that sits next to the editor, the terminal, and the browser, built for the glance rather than the read. The register is editorial and typeset, closer to a code editor or terminal than a SaaS dashboard; density is a feature. Color is rationed: a warm amber primary on a matte cool-slate canvas, with sage for additions and clay for removals. Dark is the default canvas because the product is used in the evening; a warm light counterpart exists for daytime.",
     "keyCharacteristics": [
       "Glance-first: status communicated by tinted dots and small monochrome glyphs, never paragraphs.",
-      "Dark-primary, warm-amber accent on cool-slate surfaces; light theme is the warm-neutral counterpart.",
+      "Dark-primary, Filament Amber accent on cool-slate surfaces; light theme is the cool-neutral counterpart.",
       "Tonal lift instead of divider lines: panels float a few percent off the page.",
       "Monospace carries machine facts (SHAs, counts, timestamps, status labels); Public Sans carries human prose.",
       "Keyboard-first: shortcuts are first-class, not hidden.",
@@ -170,6 +185,7 @@
     ],
     "rules": [
       { "name": "The One Lamp Rule", "body": "Filament Amber is the only brand color. It appears on a small fraction of any screen (the active row, the primary action, the live dot). Its rarity is what makes a glance land.", "section": "colors" },
+      { "name": "The Cold-Surface Rule", "body": "Anything with area is cold; only points of light are warm. Surfaces, fills, and blocks of content (including the user's message bubble) are slate neutrals, never a field of amber. Links, focus, and charts take the cool family (cool-link, cool-ring), not the lamp.", "section": "colors" },
       { "name": "The Semantic-Only Sage/Clay Rule", "body": "Sage and clay are never decoration. They mean addition/good and removal/error.", "section": "colors" },
       { "name": "The Tinted-Neutral Rule", "body": "Neutrals are never pure gray. Dark surfaces carry 0.005 chroma toward cool hue 260; light surfaces 0.005 toward warm hue 75.", "section": "colors" },
       { "name": "The Mono-Is-Machine Rule", "body": "Monospace marks machine-authored facts only. Counts and timestamps additionally take tabular-nums.", "section": "typography" },

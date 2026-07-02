@@ -62,7 +62,7 @@ describe("MarkdownContent link handling", () => {
     const link = container.querySelector("a");
     const favicon = screen.getByTestId("markdown-link-favicon");
 
-    expect(link).toHaveClass("text-primary");
+    expect(link).toHaveClass("text-link");
     expect(screen.getByTestId("markdown-link-favicon-frame")).toBeInTheDocument();
     expect(favicon).toHaveAttribute("src", "https://example.com/favicon.ico");
     expect(favicon).toHaveClass("favicon-image-shadow");
@@ -377,12 +377,12 @@ describe("MarkdownContent variant styling", () => {
       expect(code?.className).toContain("bg-muted");
     });
 
-    it("renders links with text-primary", () => {
+    it("renders links with cool text-link", () => {
       const { container } = render(
         <MarkdownContent content="[link](https://example.com)" />,
       );
       const link = container.querySelector("a");
-      expect(link?.className).toContain("text-primary");
+      expect(link?.className).toContain("text-link");
     });
 
     it("passes disableHighlighting=false to CodeBlock", () => {
@@ -395,20 +395,20 @@ describe("MarkdownContent variant styling", () => {
   });
 
   describe("variant='user'", () => {
-    it("renders inline code with bg-primary-foreground/15", () => {
+    it("renders inline code with a foreground tint visible on the accent bubble", () => {
       const { container } = render(
         <MarkdownContent content="Use `foo` here" variant="user" />,
       );
       const code = container.querySelector("code");
-      expect(code?.className).toContain("bg-primary-foreground/15");
+      expect(code?.className).toContain("bg-foreground/10");
     });
 
-    it("renders links with text-primary-foreground", () => {
+    it("renders links with cool text-link", () => {
       const { container } = render(
         <MarkdownContent content="[link](https://example.com)" variant="user" />,
       );
       const link = container.querySelector("a");
-      expect(link?.className).toContain("text-primary-foreground");
+      expect(link?.className).toContain("text-link");
     });
 
     it("renders user links with the same favicon treatment", () => {
@@ -420,12 +420,12 @@ describe("MarkdownContent variant styling", () => {
       );
     });
 
-    it("renders blockquote with border-primary-foreground/40", () => {
+    it("renders blockquote with the neutral border treatment", () => {
       const { container } = render(
         <MarkdownContent content="> quote" variant="user" />,
       );
       const blockquote = container.querySelector("blockquote");
-      expect(blockquote?.className).toContain("border-primary-foreground/40");
+      expect(blockquote?.className).toContain("border-border");
     });
 
     it("passes disableHighlighting=true to CodeBlock", () => {

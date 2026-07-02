@@ -6,44 +6,47 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Warm light theme — minimal chroma (0.005) at hue 75 to harmonize with amber primary */
+  /* Cool light theme: minimal chroma (0.005) at hue 260 so the amber lamp remains a point accent */
   /* --page sits a few percent below --background so floating panel surfaces read as
      slightly elevated against the page chrome. Replaces inter-panel divider lines. */
-  --page: oklch(0.955 0.005 75);
-  --background: oklch(0.99 0.005 75);
-  --foreground: oklch(0.18 0.005 75);
-  --card: oklch(0.985 0.005 75);
-  --card-foreground: oklch(0.18 0.005 75);
-  --popover: oklch(0.99 0.005 75);
-  --popover-foreground: oklch(0.18 0.005 75);
+  --page: oklch(0.955 0.005 260);
+  --background: oklch(0.99 0.005 260);
+  --foreground: oklch(0.18 0.005 260);
+  --card: oklch(0.985 0.005 260);
+  --card-foreground: oklch(0.18 0.005 260);
+  --popover: oklch(0.99 0.005 260);
+  --popover-foreground: oklch(0.18 0.005 260);
   --primary: oklch(0.52 0.17 75);
   --primary-foreground: oklch(0.984 0 0);
-  --secondary: oklch(0.95 0.005 75);
-  --secondary-foreground: oklch(0.22 0.005 75);
-  --muted: oklch(0.955 0.005 75);
-  --muted-foreground: oklch(0.5 0.005 75);
-  --accent: oklch(0.95 0.005 75);
-  --accent-foreground: oklch(0.18 0.005 75);
+  --secondary: oklch(0.95 0.005 260);
+  --secondary-foreground: oklch(0.22 0.005 260);
+  --muted: oklch(0.955 0.005 260);
+  --muted-foreground: oklch(0.5 0.005 260);
+  --accent: oklch(0.95 0.005 260);
+  --accent-foreground: oklch(0.18 0.005 260);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.9 0.005 75);
-  --input: oklch(0.9 0.005 75);
+  --border: oklch(0.9 0.005 260);
+  --input: oklch(0.9 0.005 260);
   --ring: oklch(0.52 0.17 75);
-  --chart-1: oklch(0.87 0.005 75);
-  --chart-2: oklch(0.556 0.005 75);
-  --chart-3: oklch(0.439 0.005 75);
-  --chart-4: oklch(0.371 0.005 75);
-  --chart-5: oklch(0.269 0.005 75);
+  /* Links stay distinct from the primary: slightly hue-shifted so the accent
+     is reserved for actions and live state (One Lamp Rule). */
+  --link: oklch(0.5 0.16 260);
+  --chart-1: oklch(0.87 0.005 260);
+  --chart-2: oklch(0.556 0.005 260);
+  --chart-3: oklch(0.439 0.005 260);
+  --chart-4: oklch(0.371 0.005 260);
+  --chart-5: oklch(0.269 0.005 260);
   --radius: 0.625rem;
-  --sidebar: oklch(0.945 0.008 75);
-  --sidebar-foreground: oklch(0.18 0.005 75);
+  --sidebar: oklch(0.945 0.008 260);
+  --sidebar-foreground: oklch(0.18 0.005 260);
   --sidebar-primary: oklch(0.52 0.17 75);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.92 0.008 75);
-  --sidebar-accent-foreground: oklch(0.22 0.005 75);
-  --sidebar-border: oklch(0.88 0.008 75);
+  --sidebar-accent: oklch(0.92 0.008 260);
+  --sidebar-accent-foreground: oklch(0.22 0.005 260);
+  --sidebar-border: oklch(0.88 0.008 260);
   --sidebar-ring: oklch(0.52 0.17 75);
 
-  /* Diff palette — sage (additions) and clay (removals), hue-shifted to harmonize with warm amber */
+  /* Diff palette — sage (additions) and clay (removals), semantic hues independent of the brand accent */
   --diff-add-bg: oklch(0.96 0.035 145);
   --diff-add-bg-hover: oklch(0.93 0.055 145);
   --diff-add-gutter: oklch(0.78 0.10 145);
@@ -66,8 +69,10 @@
   --card-foreground: oklch(0.93 0 0);
   --popover: oklch(0.19 0.005 260);
   --popover-foreground: oklch(0.93 0 0);
+  /* Dark text on amber accent: at L 0.72 a near-white foreground
+     cannot reach 4.5:1, ink can. */
   --primary: oklch(0.72 0.17 75);
-  --primary-foreground: oklch(0.98 0 0);
+  --primary-foreground: oklch(0.15 0.005 260);
   --secondary: oklch(0.24 0.005 260);
   --secondary-foreground: oklch(0.93 0 0);
   --muted: oklch(0.22 0.005 260);
@@ -78,6 +83,7 @@
   --border: oklch(0.28 0.005 260);
   --input: oklch(0.24 0.005 260);
   --ring: oklch(0.62 0.19 264);
+  --link: oklch(0.7 0.14 260);
   --chart-1: oklch(0.62 0.19 264);
   --chart-2: oklch(0.55 0.005 260);
   --chart-3: oklch(0.44 0.005 260);
@@ -127,6 +133,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-link: var(--link);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -369,7 +376,7 @@
   }
 }
 
-/* Changes-tab freshness ring: a short amber pulse that fires when new changed
+/* Changes-tab freshness ring: a short accent pulse that fires when new changed
  * files land while the user is on another tab, then settles to the steady
  * amber count. Two iterations so it registers without nagging. */
 @keyframes changes-fresh-ring {
@@ -490,7 +497,7 @@
    accent the first time it persists, acknowledging the submit. */
 @keyframes wizard-marker-echo {
   0%   { background-color: transparent; }
-  30%  { background-color: oklch(0.72 0.17 75 / 0.12); }
+  30%  { background-color: color-mix(in oklch, var(--primary), transparent 88%); }
   100% { background-color: transparent; }
 }
 .animate-wizard-marker-echo {
@@ -512,7 +519,7 @@
 }
 
 .glow-primary {
-  box-shadow: -2px 0 8px -1px oklch(0.72 0.17 75 / 0.35);
+  box-shadow: -2px 0 8px -1px color-mix(in oklch, var(--primary), transparent 65%);
 }
 
 .animate-shimmer-text {

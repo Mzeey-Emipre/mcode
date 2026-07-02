@@ -77,7 +77,7 @@ function MentionedUserText({
     nodes.push(
       <span
         key={`${mention.id}-${mention.range.start}`}
-        className="rounded-md bg-primary-foreground/20 px-1 py-0.5 font-medium"
+        className="rounded-md bg-foreground/10 px-1 py-0.5 font-medium"
       >
         {text.slice(mention.range.start, mention.range.end)}
       </span>,
@@ -620,7 +620,7 @@ export const MessageBubble = memo(function MessageBubble({
             )}
 
           {userDisplayText.trim() && (
-            <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground shadow-sm shadow-primary/15">
+            <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-accent px-3 py-1.5 text-sm text-accent-foreground">
               {!userGoal && message.mentions?.length ? (
                 <MentionedUserText text={userDisplayText} mentions={message.mentions} />
               ) : (
