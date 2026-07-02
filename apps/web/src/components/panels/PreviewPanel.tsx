@@ -428,7 +428,7 @@ function encodeVisualControlValue(
   rawValue: string,
 ): string | number {
   const trimmed = rawValue.trim();
-  if (key === "opacity") return trimmed ? Number(trimmed) : "";
+  if (key === "opacity") return trimmed;
   if (!PIXEL_CONTROL_FIELDS.has(key) || !trimmed) return rawValue;
   if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return `${trimmed}px`;
   return rawValue;
@@ -510,10 +510,12 @@ function visualOverlayStyle(
   const hasBorderWidth = BOX_SIDE_ORDER.some(([side]) =>
     Boolean(value[BOX_CONTROL_GROUPS[2].keys[side]]),
   );
+  const normalizedOpacity = normalizeVisualControlValue("opacity", value.opacity);
   return {
     color: value.textColor,
     background: value.background,
-    opacity: value.opacity,
+    opacity:
+      typeof normalizedOpacity === "number" ? normalizedOpacity : undefined,
     fontFamily: value.font,
     fontSize: value.fontSize,
     fontWeight: value.fontWeight,
@@ -751,8 +753,9 @@ function InspectorValueInput({
         value={displayVisualControlValue(controlKey, value)}
         onChange={(event) => onChange(controlKey, event.target.value)}
         placeholder={affordance === "0-1" ? "0-1" : undefined}
+        inputMode={affordance === "0-1" || affordance === "px" ? "decimal" : undefined}
         className={cn(
-          "h-7 rounded-[0.65rem] border-white/10 bg-[#303030] text-xs text-neutral-100 placeholder:text-neutral-500 focus-visible:ring-white/20",
+          "h-7 rounded-[0.65rem] border-white/10 bg-[#303030] text-xs text-neutral-100 shadow-none placeholder:text-neutral-500 focus-visible:ring-white/20",
           affordance === "px" && "pr-8",
           className,
         )}
@@ -940,7 +943,7 @@ function QuadInputStrip({
   readonly values: PreviewAnnotationVisualProposal;
 }) {
   return (
-    <div className="grid min-w-0 grid-cols-4 overflow-hidden rounded-[0.65rem] border border-white/10 bg-[#303030]">
+    <div className="grid min-w-0 grid-cols-4 overflow-hidden rounded-[0.65rem] border border-white/10 bg-[#2d2d2d]">
       {entries.map((entry) => (
         <label
           key={entry.key}
@@ -952,7 +955,8 @@ function QuadInputStrip({
             aria-label={entry.ariaLabel}
             value={displayVisualControlValue(entry.key, values[entry.key])}
             onChange={(event) => onChange(entry.key, event.target.value)}
-            className="h-7 rounded-none border-0 bg-transparent px-1 text-center font-mono text-xs text-neutral-100 shadow-none placeholder:text-neutral-500 focus-visible:ring-1 focus-visible:ring-sky-400/50"
+            inputMode="decimal"
+            className="h-7 rounded-none border-0 bg-transparent px-0 text-center font-mono text-xs tabular-nums text-neutral-100 shadow-none placeholder:text-neutral-500 focus-visible:ring-1 focus-visible:ring-sky-400/50"
           />
         </label>
       ))}

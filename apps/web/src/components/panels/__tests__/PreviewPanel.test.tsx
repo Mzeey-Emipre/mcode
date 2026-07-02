@@ -1197,6 +1197,30 @@ describe("PreviewPanel — full panel state", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("allows opacity decimals while editing", () => {
+    installDraftAnnotation({
+      elementStyle: {
+        opacity: 1,
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const opacity = within(
+      screen.getByTestId("preview-annotation-advanced"),
+    ).getByLabelText("Opacity");
+
+    fireEvent.change(opacity, { target: { value: "." } });
+    expect(opacity).toHaveValue(".");
+
+    fireEvent.change(opacity, { target: { value: "0.5" } });
+    expect(opacity).toHaveValue("0.5");
+    expect(screen.getByTestId("preview-annotation-visual-proposal")).toHaveStyle({
+      opacity: "0.5",
+    });
+  });
+
   it("links width and height edits when the size anchor is active", () => {
     installDraftAnnotation({
       elementStyle: {
